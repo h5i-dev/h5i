@@ -1,4 +1,5 @@
 use crate::error::H5iError;
+use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -16,6 +17,11 @@ impl DeltaStore {
 
     /// 自分の更新分を追記する
     pub fn append_update(&self, data: &[u8]) -> Result<(), H5iError> {
+        // 親ディレクトリ (.h5i/delta) が存在することを確認
+        if let Some(parent) = self.log_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| H5iError::Io(e))?;
+        }
+
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
