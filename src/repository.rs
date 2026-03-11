@@ -397,12 +397,16 @@ impl H5iRepository {
 
         for hunk in blame.iter() {
             let commit_id = hunk.final_commit_id();
-            let record = self.load_h5i_record(commit_id)?;
+            let record = self.load_h5i_record(commit_id).ok();
             let agent_info = record
-                .ai_metadata
+                .as_ref()
+                .and_then(|r| r.ai_metadata.as_ref())
                 .map(|a| format!("AI:{}", a.agent_id))
                 .unwrap_or_else(|| "Human".to_string());
-            let test_passed = record.test_metrics.map(|tm| tm.coverage > 0.0);
+            let test_passed = record
+                .as_ref()
+                .and_then(|r| r.test_metrics.as_ref())
+                .map(|tm| tm.coverage > 0.0);
 
             for i in 0..hunk.lines_in_hunk() {
                 let line_idx = hunk.final_start_line() + i - 1;
@@ -1112,15 +1116,8 @@ mod tests {
     use yrs::{Doc, Text, Transact, Update};
 
     fn setup_test_repo(root: &std::path::Path) -> H5iRepository {
-        let repo = Repository::init(root).unwrap();
-        let h5i_root = root.join(".h5i");
-        fs::create_dir_all(h5i_root.join("metadata")).unwrap();
-        fs::create_dir_all(h5i_root.join("delta")).unwrap();
-
-        H5iRepository {
-            git_repo: repo,
-            h5i_root,
-        }
+        let _repo = Repository::init(root).unwrap();
+        H5iRepository::open(root).expect("Failed to open repo")
     }
 
     fn create_commit(
