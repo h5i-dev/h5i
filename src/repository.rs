@@ -1112,9 +1112,6 @@ mod tests {
     use tempfile::tempdir;
     use yrs::{Doc, Text, Transact, Update};
 
-    // --- テスト用ヘルパー ---
-
-    /// テスト用の Git リポジトリを初期化し、H5iRepository を返す
     fn setup_test_repo(root: &std::path::Path) -> H5iRepository {
         let repo = Repository::init(root).unwrap();
         let h5i_root = root.join(".h5i");
@@ -1127,7 +1124,6 @@ mod tests {
         }
     }
 
-    /// Git コミットを作成するヘルパー
     fn create_commit(
         repo: &Repository,
         message: &str,
@@ -1138,7 +1134,6 @@ mod tests {
         let mut index = repo.index().unwrap();
         let path = std::path::Path::new(file_path);
 
-        // ファイルを物理的に書き込んでインデックスに追加
         fs::write(repo.workdir().unwrap().join(path), content).unwrap();
         index.add_path(path).unwrap();
         let tree_id = index.write_tree().unwrap();
@@ -1149,18 +1144,14 @@ mod tests {
             .unwrap()
     }
 
-    // --- テストケース ---
-
     #[test]
     fn test_get_content_at_oid() {
         let dir = tempdir().unwrap();
         let h5i_repo = setup_test_repo(dir.path());
         let git_repo = &h5i_repo.git_repo;
 
-        // 1. コミットを作成
         let oid = create_commit(git_repo, "initial", "hello.txt", "hello world", &[]);
 
-        // 2. 取得検証
         let content = h5i_repo
             .get_content_at_oid(oid, std::path::Path::new("hello.txt"))
             .unwrap();
@@ -1174,10 +1165,9 @@ mod tests {
         let git_repo = &h5i_repo.git_repo;
         let file_path = "main.py";
 
-        // --- 1. Base (共通祖先) ---
         let base_content = "def main():\n    pass";
         let base_oid = create_commit(git_repo, "base", file_path, base_content, &[]);
-        // ベース時点のデルタも保存（空の状態からの挿入として記録）
+
         let base_update = {
             let doc = Doc::new();
             let text = doc.get_or_insert_text("code");
@@ -1187,16 +1177,16 @@ mod tests {
         };
         h5i_repo.persist_delta_for_commit(base_oid, file_path, &base_update)?;
 
-        // --- 2. OURS (自分側の変更) ---
+        // --- 2. OURS ---
         let (our_oid, our_update) = {
             let doc = Doc::new();
             let text = doc.get_or_insert_text("code");
-            // ベースを再現
+
             let mut txn = doc.transact_mut();
             txn.apply_update(Update::decode_v1(&base_update)?)?;
-            // 変更を加える
+
             text.insert(&mut txn, 0, "# OURS COMMENT\n");
-            let update = txn.encode_update_v1(); // ここでは「差分」ではなく「全状態」として一旦扱う（簡易化のため）
+            let update = txn.encode_update_v1();
 
             let base_commit = git_repo.find_commit(base_oid)?;
             let oid = create_commit(
@@ -1210,14 +1200,14 @@ mod tests {
         };
         h5i_repo.persist_delta_for_commit(our_oid, file_path, &our_update)?;
 
-        // --- 3. THEIRS (相手側の変更) ---
+        // --- 3. THEIRS ---
         git_repo.set_head_detached(base_oid)?;
         let (their_oid, their_update) = {
             let doc = Doc::new();
             let text = doc.get_or_insert_text("code");
             let mut txn = doc.transact_mut();
             txn.apply_update(Update::decode_v1(&base_update)?)?;
-            // 変更を加える
+
             text.push(&mut txn, "\nprint('done')");
             let update = txn.encode_update_v1();
 
@@ -1233,10 +1223,10 @@ mod tests {
         };
         h5i_repo.persist_delta_for_commit(their_oid, file_path, &their_update)?;
 
-        // --- 4. Merge 実行 ---
+        // --- 4. Merge ---
         let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
 
-        // --- 5. 検証 ---
+        // --- 5. Verify ---
         println!("Final Merged Text:\n{}", merged_text);
         assert!(merged_text.contains("# OURS COMMENT"));
         assert!(merged_text.contains("print('done')"));
