@@ -1,4 +1,4 @@
-use git2::Repository;
+use git2::{Blob, Repository};
 use git2::{Commit, Index, ObjectType, Oid, Signature};
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
@@ -270,7 +270,7 @@ impl H5iRepository {
             // サイドカーデータを読み取る。なければ Git 情報から最小構成を作成
             let record = self
                 .load_h5i_record(oid)
-                .unwrap_or_else(|_| H5iCommitRecord::from_git_only(&self.git_repo, oid));
+                .unwrap_or_else(|_| H5iCommitRecord::minimal_from_git(&self.git_repo, oid));
             logs.push(record);
         }
         Ok(logs)
@@ -346,11 +346,39 @@ impl H5iRepository {
                     line_content: lines[line_idx].to_string(),
                     commit_id: commit_id.to_string(),
                     agent_info: agent_info.clone(),
-                    is_semantic_match: false,
+                    is_semantic_change: false,
+                    line_number: todo!(),
+                    test_passed: todo!(),
                 });
             }
         }
         Ok(results)
+    }
+
+    /// HEAD コミットから指定されたパスの Blob (ファイルの実体) を取得する。
+    pub fn get_blob_at_head(&self, path: &Path) -> Result<Blob, H5iError> {
+        // 1. HEAD リファレンスを取得し、コミットまで解決する
+        let head_commit = self.get_head_commit()?;
+
+        // 2. コミットからツリー（ファイル構造のスナップショット）を取得
+        let tree = head_commit.tree()?;
+
+        // 3. ツリー内から指定されたパスののエントリを探す
+        let entry = tree
+            .get_path(path)
+            .map_err(|_| H5iError::RecordNotFound(format!("Path not found in HEAD: {:?}", path)))?;
+
+        // 4. エントリが Blob (ファイル) であることを確認
+        if entry.kind() != Some(ObjectType::Blob) {
+            return Err(H5iError::Ast(format!(
+                "Path is not a file (blob): {:?}",
+                path
+            )));
+        }
+
+        // 5. OID を使用して実際の Blob オブジェクトを検索して返す
+        let blob = self.git_repo.find_blob(entry.id())?;
+        Ok(blob)
     }
 
     /// AST ベースの Blame (構造ハッシュの変化を追跡)
@@ -388,7 +416,7 @@ impl H5iRepository {
         &self,
         path: &Path,
         use_ast: bool,
-    ) -> Result<Vec<crate::blame::H5iBlameEntry>, H5iError> {
+    ) -> Result<Vec<crate::blame::BlameResult>, H5iError> {
         if use_ast {
             // 1. 最新のレコードから AST ハッシュ履歴を取得
             // 2. 構造が変わったコミットを特定
@@ -397,5 +425,87 @@ impl H5iRepository {
             // 標準の git2 blame を実行し、メタデータを Join する
             self.compute_line_blame(path)
         }
+    }
+}
+
+impl H5iRepository {
+    /// 従来の行ベース (1D) の Blame を高度化して実行
+    pub fn compute_line_blame(&self, path: &Path) -> Result<Vec<BlameResult>, H5iError> {
+        let blame = self.git_repo.blame_file(path, None)?;
+        let blob = self.get_blob_at_head(path)?;
+        let content = std::str::from_utf8(blob.content())
+            .map_err(|_| H5iError::Ast("File content is not valid UTF-8".to_string()))?;
+        let lines: Vec<&str> = content.lines().collect();
+
+        let mut results = Vec::new();
+
+        for hunk in blame.iter() {
+            let commit_id = hunk.final_commit_id();
+            // サイドカーデータをロード（なければ Git から最小構成を作成）
+            let record = self.load_h5i_record(commit_id)?;
+
+            let agent_info = record
+                .ai_metadata
+                .map(|ai| format!("AI:{}", ai.model_name))
+                .unwrap_or_else(|| "Human".to_string());
+
+            let test_passed = record.test_metrics.map(|tm| tm.coverage > 0.0); // 簡易判定
+
+            for i in 0..hunk.lines_in_hunk() {
+                let line_idx = hunk.final_start_line() + i - 1;
+                if line_idx < lines.len() {
+                    results.push(BlameResult {
+                        line_number: line_idx + 1,
+                        line_content: lines[line_idx].to_string(),
+                        commit_id: commit_id.to_string(),
+                        agent_info: agent_info.clone(),
+                        is_semantic_change: false, // Lineモードでは一律 false
+                        test_passed,
+                    });
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// ASTハッシュの変化 (Structural Dimension) に基づく Blame
+    /// 行が移動していても、ロジックが本質的に変更された瞬間を追跡する
+    pub fn compute_semantic_blame(&self, path: &Path) -> Result<Vec<BlameResult>, H5iError> {
+        // 基本的な行情報は Git Blame から取得
+        let mut line_results = self.compute_line_blame(path)?;
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| H5iError::InvalidPath("Invalid path encoding".to_string()))?;
+
+        for result in &mut line_results {
+            let oid = git2::Oid::from_str(&result.commit_id)?;
+            let record = self.load_h5i_record(oid)?;
+
+            // 1. このコミットに AST ハッシュが含まれているか確認
+            if let Some(hashes) = record.ast_hashes {
+                if let Some(current_ast_hash) = hashes.get(path_str) {
+                    // 2. 親コミットの AST ハッシュと比較
+                    if let Some(parent_oid_str) = record.parent_oid {
+                        let parent_oid = git2::Oid::from_str(&parent_oid_str)?;
+                        if let Ok(parent_record) = self.load_h5i_record(parent_oid) {
+                            let parent_ast_hash = parent_record
+                                .ast_hashes
+                                .and_then(|h| h.get(path_str).cloned());
+
+                            // 親とハッシュが異なる場合、このコミットは「セマンティックな変更」
+                            if Some(current_ast_hash.clone()) != parent_ast_hash {
+                                result.is_semantic_change = true;
+                            }
+                        }
+                    } else {
+                        // 親がいない（最初のコミット）で AST があれば、それはセマンティックな誕生
+                        result.is_semantic_change = true;
+                    }
+                }
+            }
+        }
+
+        Ok(line_results)
     }
 }
