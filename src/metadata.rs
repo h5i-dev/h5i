@@ -69,3 +69,96 @@ impl H5iCommitRecord {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use git2::{Oid, Repository, Signature};
+    use tempfile::tempdir;
+
+    /// Gitリポジトリとコミットを作成するためのテストヘルパー
+    fn setup_git_repo() -> (tempfile::TempDir, Repository) {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let repo = Repository::init(dir.path()).expect("Failed to init repo");
+        (dir, repo)
+    }
+
+    /// ダミーのコミットを作成するヘルパー
+    fn create_dummy_commit(repo: &Repository, message: &str, parents: &[&git2::Commit]) -> Oid {
+        let sig = Signature::now("H5i Test", "test@h5i.io").expect("Failed to create signature");
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+
+        repo.commit(Some("HEAD"), &sig, &sig, message, &tree, parents)
+            .expect("Failed to create commit")
+    }
+
+    #[test]
+    fn test_minimal_from_git_root_commit() {
+        let (_dir, repo) = setup_git_repo();
+
+        // 1. 親なしの最初（Root）のコミットを作成
+        let root_oid = create_dummy_commit(&repo, "Initial commit", &[]);
+
+        // 2. テスト対象関数の実行
+        let record = H5iCommitRecord::minimal_from_git(&repo, root_oid);
+
+        // 3. 検証
+        assert_eq!(record.git_oid, root_oid.to_string());
+        assert_eq!(
+            record.parent_oid, None,
+            "Root commit should not have a parent"
+        );
+        assert!(record.ai_metadata.is_none());
+        assert!(record.test_metrics.is_none());
+        assert!(record.ast_hashes.is_none());
+
+        // タイムスタンプが極端に離れていないか（数秒以内の誤差を許容）
+        let now = Utc::now().timestamp();
+        assert!((record.timestamp.timestamp() - now).abs() < 5);
+    }
+
+    #[test]
+    fn test_minimal_from_git_child_commit() {
+        let (_dir, repo) = setup_git_repo();
+
+        // 1. Rootコミットを作成
+        let root_oid = create_dummy_commit(&repo, "Root", &[]);
+        let root_commit = repo.find_commit(root_oid).unwrap();
+
+        // 2. Childコミットを作成 (Rootを親に指定)
+        let child_oid = create_dummy_commit(&repo, "Child", &[&root_commit]);
+
+        // 3. テスト対象関数の実行
+        let record = H5iCommitRecord::minimal_from_git(&repo, child_oid);
+
+        // 4. 検証
+        assert_eq!(record.git_oid, child_oid.to_string());
+        assert_eq!(
+            record.parent_oid,
+            Some(root_oid.to_string()),
+            "Child should correctly identify its first parent OID"
+        );
+    }
+
+    #[test]
+    fn test_timestamp_conversion_precision() {
+        let (_dir, repo) = setup_git_repo();
+
+        // 特定の時間を指定したシグネチャでコミット
+        let fixed_time = 1700000000; // 2023-11-14頃
+        let sig = Signature::new("Test", "test@h5i.io", &git2::Time::new(fixed_time, 0)).unwrap();
+
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let oid = repo
+            .commit(None, &sig, &sig, "Fixed time commit", &tree, &[])
+            .unwrap();
+
+        let record = H5iCommitRecord::minimal_from_git(&repo, oid);
+
+        // chronoの変換が正確か検証
+        assert_eq!(record.timestamp.timestamp(), fixed_time);
+    }
+}
