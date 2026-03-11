@@ -5,6 +5,18 @@ use std::path::PathBuf;
 
 use crate::error::H5iError;
 
+/// Computes the SHA-256 hash of a string and returns the hexadecimal representation.
+///
+/// This helper function is used to deterministically map file paths to
+/// delta log filenames inside the `.h5i/delta` directory.
+///
+/// # Parameters
+///
+/// - `input`: The input string to hash.
+///
+/// # Returns
+///
+/// A lowercase hexadecimal string representing the SHA-256 digest.
 pub fn sha256_hash(input: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -12,20 +24,50 @@ pub fn sha256_hash(input: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Persistent storage for CRDT update logs.
+///
+/// `DeltaStore` maintains an append-only binary log containing
+/// serialized CRDT updates for a single source file.
+///
+/// Each source file maps to a unique log file under:
+///
+/// `.h5i/delta/<sha256(file_path)>.bin`
+///
+/// The log format is:
+///
+/// `[length: u32][update bytes]`
 pub struct DeltaStore {
     log_path: PathBuf,
 }
 
 impl DeltaStore {
     pub fn new(repo_root: PathBuf, file_path: &str) -> Self {
-        let hash = sha256_hash(file_path); // ファイルパスをハッシュ化してファイル名に
+        let hash = sha256_hash(file_path); // Hash the file path to generate a stable log filename
         let log_path = repo_root.join(".h5i/delta").join(format!("{}.bin", hash));
         Self { log_path }
     }
+}
 
-    /// 自分の更新分を追記する
+impl DeltaStore {
+    /// Appends a CRDT update to the delta log.
+    ///
+    /// Updates are stored in a binary format:
+    ///
+    /// `[data_length (u32)][binary update data]`
+    ///
+    /// This method ensures that the parent directory exists
+    /// before writing the update.
+    ///
+    /// # Parameters
+    ///
+    /// - `data`: Serialized CRDT update bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory cannot be created
+    /// or if writing to the log file fails.
     pub fn append_update(&self, data: &[u8]) -> Result<(), H5iError> {
-        // 親ディレクトリ (.h5i/delta) が存在することを確認
+        // Ensure the parent directory (.h5i/delta) exists
         if let Some(parent) = self.log_path.parent() {
             fs::create_dir_all(parent).map_err(|e| H5iError::Io(e))?;
         }
@@ -35,14 +77,81 @@ impl DeltaStore {
             .append(true)
             .open(&self.log_path)?;
 
-        // [データ長(u32)][バイナリデータ] の形式で保存
         let len = data.len() as u32;
         file.write_all(&len.to_le_bytes())?;
         file.write_all(data)?;
         Ok(())
     }
 
-    /// 全ての操作ログを読み出す
+    /// Saves a full CRDT snapshot and resets the delta log.
+    ///
+    /// Snapshotting stores the complete document state and
+    /// removes previous incremental updates. This prevents
+    /// the log from growing indefinitely.
+    ///
+    /// Snapshot files are stored alongside the delta log
+    /// using the `.snapshot` extension.
+    ///
+    /// # Parameters
+    ///
+    /// - `state_v1`: Serialized CRDT document state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the snapshot cannot be written
+    /// or if the existing log cannot be removed.
+    pub fn save_snapshot(&self, state_v1: &[u8]) -> Result<(), H5iError> {
+        let snapshot_path = self.log_path.with_extension("snapshot");
+        fs::write(&snapshot_path, state_v1).map_err(|e| H5iError::Io(e))?;
+
+        // After snapshotting, clear the old delta log
+        if self.log_path.exists() {
+            fs::remove_file(&self.log_path).map_err(|e| H5iError::Io(e))?;
+        }
+        Ok(())
+    }
+
+    /// Compacts multiple CRDT updates into a single merged update.
+    ///
+    /// Compaction reduces disk usage by merging several small
+    /// updates into one larger update using Yrs' merge functionality.
+    ///
+    /// If fewer than two updates exist, compaction is skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if updates cannot be read, merged,
+    /// or written back to disk.
+    pub fn compact(&self) -> Result<(), H5iError> {
+        let updates = self.read_all_updates()?;
+        if updates.len() < 2 {
+            return Ok(());
+        }
+
+        let merged = yrs::merge_updates_v1(&updates).map_err(|e| H5iError::Crdt(e.to_string()))?;
+
+        // Replace the log with the merged update
+        fs::remove_file(&self.log_path).ok();
+        self.append_update(&merged)?;
+
+        Ok(())
+    }
+}
+impl DeltaStore {
+    /// Reads all updates from the delta log.
+    ///
+    /// This method parses the append-only log and returns
+    /// each stored update as a byte vector.
+    ///
+    /// If the log file does not exist, an empty vector is returned.
+    ///
+    /// # Returns
+    ///
+    /// A vector containing all serialized CRDT updates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the log file cannot be read.
     pub fn read_all_updates(&self) -> Result<Vec<Vec<u8>>, H5iError> {
         if !self.log_path.exists() {
             return Ok(vec![]);
@@ -63,57 +172,39 @@ impl DeltaStore {
         Ok(updates)
     }
 
-    /// 1. Snapshotting: 現在の完全な状態を保存し、それ以前のログを実質的にリセットする
-    pub fn save_snapshot(&self, state_v1: &[u8]) -> Result<(), H5iError> {
-        let snapshot_path = self.log_path.with_extension("snapshot");
-        fs::write(&snapshot_path, state_v1).map_err(|e| H5iError::Io(e))?;
-
-        // スナップショットが取れたら、古いデルタログをクリア（またはリネームして退避）
-        if self.log_path.exists() {
-            fs::remove_file(&self.log_path).map_err(|e| H5iError::Io(e))?;
-        }
-        Ok(())
-    }
-
-    /// 2. Compaction: 複数の小さいUpdateを1つの大きなUpdateにマージしてディスクを節約
-    pub fn compact(&self) -> Result<(), H5iError> {
-        let updates = self.read_all_updates()?;
-        if updates.len() < 2 {
-            return Ok(());
-        }
-
-        // yrs のマージ機能を使用
-        let merged = yrs::merge_updates_v1(&updates).map_err(|e| H5iError::Crdt(e.to_string()))?;
-
-        // ログを一度消して、マージされた1つのデータで書き直す
-        fs::remove_file(&self.log_path).ok();
-        self.append_update(&merged)?;
-
-        println!(
-            "📦 Compaction complete: {} updates -> 1 merged update",
-            updates.len()
-        );
-        Ok(())
-    }
-
-    /// 指定されたオフセットから新しく追記された更新分だけを読み出す。
-    /// 返り値: (新規更新データのリスト, 次回読み出し用のオフセット)
+    /// Reads only newly appended updates starting from a given offset.
+    ///
+    /// This method enables incremental synchronization by reading
+    /// only updates that were appended after the last read position.
+    ///
+    /// # Parameters
+    ///
+    /// - `offset`: Byte offset indicating where reading should begin.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing:
+    ///
+    /// - `Vec<Vec<u8>>`: Newly discovered updates
+    /// - `u64`: The next offset for subsequent reads
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the log file cannot be accessed or read.
     pub fn read_new_updates(&self, mut offset: u64) -> Result<(Vec<Vec<u8>>, u64), H5iError> {
         if !self.log_path.exists() {
             return Ok((vec![], 0));
         }
 
-        // ロックを使わず、個別のファイルハンドルを作成して mut で扱う
         let mut file = File::open(&self.log_path).map_err(H5iError::Io)?;
 
-        // 指定されたオフセットまで移動 (mut が必要)
+        // Seek to the requested offset
         file.seek(SeekFrom::Start(offset)).map_err(H5iError::Io)?;
 
         let mut new_updates = Vec::new();
 
         loop {
             let mut len_buf = [0u8; 4];
-            // 長さ情報の読み込み
             if file.read_exact(&mut len_buf).is_err() {
                 break; // EOF
             }
@@ -122,7 +213,7 @@ impl DeltaStore {
             let mut data = vec![0u8; len];
 
             if file.read_exact(&mut data).is_err() {
-                break; // 書き込み途中の不完全なデータ
+                break; // Incomplete data (likely mid-write)
             }
 
             offset += 4 + len as u64;
@@ -233,23 +324,24 @@ mod tests {
         Ok(())
     }
 
-    /// 1. Snapshotのテスト: デルタログが消去され、スナップショットが生成されるか
+    /// 1. Snapshot test: verifies that the delta log is removed
+    /// and a snapshot file is created successfully.
     #[test]
     fn test_save_snapshot_clears_delta_log() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
         let repo_root = dir.path().to_path_buf();
         let store = DeltaStore::new(repo_root, "test.rs");
 
-        // 複数のアップデートを書き込む
+        // Write multiple updates to the delta log
         store.append_update(&[1, 2, 3])?;
         store.append_update(&[4, 5, 6])?;
         assert!(store.log_path.exists());
 
-        // スナップショットを保存
+        // Save a snapshot
         let dummy_state = vec![0xDE, 0xAD, 0xBE, 0xEF];
         store.save_snapshot(&dummy_state)?;
 
-        // 検証: デルタログ (.bin) が消え、スナップショット (.snapshot) が存在すること
+        // Verify that the delta log (.bin) is removed and the snapshot (.snapshot) exists
         assert!(
             !store.log_path.exists(),
             "Delta log should be removed after snapshot"
@@ -257,48 +349,49 @@ mod tests {
         let snapshot_path = store.log_path.with_extension("snapshot");
         assert!(snapshot_path.exists(), "Snapshot file should be created");
 
-        // 検証: 内容が正しいこと
+        // Verify that the snapshot content is correct
         let saved_data = std::fs::read(snapshot_path)?;
         assert_eq!(saved_data, dummy_state);
 
         Ok(())
     }
 
-    /// 2. Compactionのテスト: 複数のUpdateが1つに統合され、CRDT状態が維持されるか
+    /// 2. Compaction test: verifies that multiple updates are merged into
+    /// a single update while preserving the CRDT state.
     #[test]
     fn test_compact_integrates_multiple_updates() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
         let repo_root = dir.path().to_path_buf();
         let store = DeltaStore::new(repo_root, "compaction_test.rs");
 
-        // 実際に yrs を使って意味のある Update を生成
+        // Generate meaningful CRDT updates using yrs
         let doc = Doc::new();
         let text = doc.get_or_insert_text("code");
 
         let mut updates = Vec::new();
 
-        // 操作1: "Hello " を挿入
+        // Operation 1: insert "Hello "
         {
             let mut txn = doc.transact_mut();
             text.insert(&mut txn, 0, "Hello ");
             updates.push(txn.encode_update_v1());
         }
-        // 操作2: "World" を挿入
+        // Operation 2: insert "World"
         {
             let mut txn = doc.transact_mut();
             text.insert(&mut txn, 6, "World");
             updates.push(txn.encode_update_v1());
         }
 
-        // デルタストアに保存
+        // Store the updates in the delta store
         for u in &updates {
             store.append_update(u)?;
         }
 
-        // Compaction 実行
+        // Run compaction
         store.compact()?;
 
-        // 検証: ログ内のエントリー数が 1 になっていること
+        // Verify that the log now contains only a single update
         let read_updates = store.read_all_updates()?;
         assert_eq!(
             read_updates.len(),
@@ -306,7 +399,8 @@ mod tests {
             "Should be compacted into a single update"
         );
 
-        // セマンティック検証: マージされたデータを新しい Doc に適用して "Hello World" になるか
+        // Semantic verification:
+        // Apply the merged update to a new document and check if the result is "Hello World"
         let new_doc = Doc::new();
         let new_text = new_doc.get_or_insert_text("code");
         {
@@ -318,7 +412,8 @@ mod tests {
         Ok(())
     }
 
-    /// 3. エッジケース: 更新が1つしかない場合の Compaction は何もしない
+    /// 3. Edge case test: compaction should be a no-op
+    /// when only a single update exists.
     #[test]
     fn test_compact_noop_for_single_update() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
