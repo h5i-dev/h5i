@@ -263,7 +263,6 @@ mod tests {
         // Create the source file beforehand
         fs::write(&file_path, "fn main() {}")?;
 
-        // 2. セッションの作成 (引数の順番を new(repo_root, file_path) に合わせる)
         let session = LocalSession::new(repo_root, file_path)?;
 
         // Simulate an external agent update
@@ -390,7 +389,7 @@ mod tests {
         let new_session = LocalSession::new(repo_root, file_path)?;
         let final_text = new_session.get_current_text();
         assert!(final_text.contains("baseline"));
-        assert!(final_text.contains("xxxxx"));
+        assert!(final_text.contains("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxbaseline"));
 
         Ok(())
     }
