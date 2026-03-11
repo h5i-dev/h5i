@@ -37,7 +37,7 @@ pub fn sha256_hash(input: &str) -> String {
 ///
 /// `[length: u32][update bytes]`
 pub struct DeltaStore {
-    log_path: PathBuf,
+    pub log_path: PathBuf,
 }
 
 impl DeltaStore {

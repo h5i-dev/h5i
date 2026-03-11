@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use yrs::updates::decoder::Decode;
 use yrs::{Doc, GetString, Text, TextRef, Transact, Update};
+use yrs::{ReadTxn, StateVector};
 
 use crate::delta_store::DeltaStore;
 use crate::error::H5iError;
@@ -84,35 +85,13 @@ impl LocalSession {
 impl LocalSession {
     /// Flushes pending CRDT updates and synchronizes the file on disk.
     ///
-    /// This method should typically be called before committing changes.
-    ///
-    /// Steps performed:
-    ///
-    /// 1. Encode the latest CRDT update.
-    /// 2. Append the update to the shared binary delta log.
-    /// 3. Optionally perform log compaction or snapshotting.
-    /// 4. Write the merged CRDT text to the actual filesystem file.
+    /// This method writes the merged CRDT text to the actual filesystem file.
     ///
     /// # Errors
     ///
     /// Returns an error if writing to the delta log or filesystem fails.
     pub fn flush_and_sync_file(&mut self) -> Result<(), crate::error::H5iError> {
-        // Encode the current document update
         let txn = self.doc.transact_mut();
-        let update = txn.encode_update_v1();
-
-        // Append to the shared binary log (.h5i/delta/...)
-        self.delta_store.append_update(&update)?;
-        self.update_count += 1;
-
-        // Example strategy: compact every 10 updates, snapshot every 50
-        if self.update_count % 50 == 0 {
-            // let state = txn.encode_state_as_update_v1(sv);
-            // self.delta_store.save_snapshot(&state)?;
-        } else if self.update_count % 10 == 0 {
-            self.delta_store.compact()?;
-        }
-
         // Write the latest merged text to the actual file
         let final_text = self.text_ref.get_string(&txn);
         std::fs::write(&self.target_fs_path, final_text)?;
@@ -149,7 +128,7 @@ impl LocalSession {
         content: &str,
     ) -> Result<(), crate::error::H5iError> {
         // Apply edit in the Yrs CRDT
-        let mut txn = self.doc.transact_mut();
+        let mut txn: yrs::TransactionMut<'_> = self.doc.transact_mut();
 
         // Capture the state vector before editing (useful for delta extraction)
         self.text_ref.insert(&mut txn, offset, content);
@@ -157,6 +136,16 @@ impl LocalSession {
         // Extract and store the CRDT update
         let update = txn.encode_update_v1();
         self.delta_store.append_update(&update)?;
+
+        // Trigger maintenance logic so tests can pass
+        self.update_count += 1;
+        if self.update_count % 50 == 0 {
+            //let state = txn.encode_;
+            let full_state = txn.encode_diff_v1(&StateVector::default());
+            self.delta_store.save_snapshot(&full_state)?;
+        } else if self.update_count % 10 == 0 {
+            self.delta_store.compact()?;
+        }
 
         // Map the CRDT result back to the real source file
         let merged_text = self.text_ref.get_string(&txn);
@@ -252,10 +241,7 @@ mod tests {
         let mut session = LocalSession::new(repo_root.clone(), file_path.clone())?;
 
         // Edit and Flush
-        {
-            let mut txn = session.doc.transact_mut();
-            session.text_ref.insert(&mut txn, 14, "\nprint('world')");
-        }
+        session.apply_local_edit(14, "\nprint('world')")?;
         session.flush_and_sync_file()?;
 
         let updated_content = fs::read_to_string(&file_path)?;
@@ -264,13 +250,6 @@ mod tests {
 
         let delta_path = repo_root.join(".h5i/delta");
         assert!(delta_path.exists());
-        /*
-        assert!(delta_path.exists());
-        let delta_size = fs::metadata(&delta_path)?.len();
-        assert!(
-            delta_size > 0,
-            "Delta store should have recorded the update"
-        );*/
 
         Ok(())
     }
@@ -330,5 +309,89 @@ mod tests {
 
         // Verify that our H5iError::Io or InvalidPath is returned
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_session_compaction_logic() -> crate::error::Result<()> {
+        let dir = tempdir().unwrap();
+        let repo_root = dir.path().to_path_buf();
+        let file_path = repo_root.join("compact_test.txt");
+
+        // Initial setup: File must exist
+        fs::write(&file_path, "initial content")?;
+
+        let mut session = LocalSession::new(repo_root.clone(), file_path.clone())?;
+
+        // 1. Perform 9 edits (compaction threshold is 10)
+        for i in 0..9 {
+            session.apply_local_edit(0, &format!("edit{} ", i))?;
+        }
+
+        // Verify that we have multiple updates in the log before compaction
+        let updates_before = session.delta_store.read_all_updates()?;
+        assert!(updates_before.len() == 9);
+
+        // 2. Perform the 10th edit to trigger compaction
+        // flush_and_sync_file will evaluate session.update_count % 10 == 0
+        session.apply_local_edit(0, "compaction_trigger ")?;
+        session.flush_and_sync_file()?;
+
+        // 3. Verification: The delta log should now be merged into a single entry
+        let updates_after = session.delta_store.read_all_updates()?;
+        assert_eq!(
+            updates_after.len(),
+            1,
+            "Delta log should be compacted into exactly 1 binary entry"
+        );
+
+        // 4. Content Integrity: Ensure data is still correct after compaction
+        let content = fs::read_to_string(&file_path)?;
+        assert!(content.contains("compaction_trigger"));
+        assert!(content.contains("initial content"));
+        assert!(content.contains("edit0"));
+        assert!(content.contains("edit8"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_session_snapshot_logic() -> crate::error::Result<()> {
+        let dir = tempdir().unwrap();
+        let repo_root = dir.path().to_path_buf();
+        let file_path = repo_root.join("snapshot_test.txt");
+
+        // Initial setup
+        fs::write(&file_path, "baseline")?;
+
+        let mut session = LocalSession::new(repo_root.clone(), file_path.clone())?;
+
+        // 1. Perform 50 edits to trigger the snapshot threshold
+        for _ in 0..50 {
+            session.apply_local_edit(0, "x")?;
+        }
+        session.flush_and_sync_file()?;
+
+        // 2. Verification: The .snapshot file should be created
+        let snapshot_path = session.delta_store.log_path.with_extension("snapshot");
+        assert!(
+            snapshot_path.exists(),
+            "Snapshot file should be created at the 50th update"
+        );
+
+        // 3. Verification: The incremental delta log (.bin) should be cleared (deleted) after snapshot
+        // based on the logic in DeltaStore::save_snapshot
+        assert!(
+            !session.delta_store.log_path.exists(),
+            "Incremental log should be removed to save space after snapshotting"
+        );
+
+        // 4. Restoration: Re-initialize a session to ensure it can hydrate from the snapshot
+        // Note: This requires sync_from_disk to be updated to look for .snapshot files
+        let new_session = LocalSession::new(repo_root, file_path)?;
+        let final_text = new_session.get_current_text();
+        assert!(final_text.contains("baseline"));
+        assert!(final_text.contains("xxxxx"));
+
+        Ok(())
     }
 }
