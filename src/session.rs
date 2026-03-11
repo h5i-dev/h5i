@@ -17,7 +17,7 @@ impl LocalAgentSession {
     /// コミット直前に呼び出し、未保存の CRDT 変更を強制的にログへ書き出す
     pub fn flush_and_sync_file(&mut self) -> Result<(), crate::error::H5iError> {
         // 現在のドキュメントの差分をエンコード
-        let mut txn = self.doc.transact_mut(); // y-crdt のトランザクション
+        let txn = self.doc.transact_mut(); // y-crdt のトランザクション
         let update = txn.encode_update_v1(); // 最新の更新分を取得
 
         // 共有バイナリログ (.h5i/delta/...) に追記

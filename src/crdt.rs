@@ -1,7 +1,6 @@
-use yrs::{Doc, GetString, Text, TextRef, Transact};
+use yrs::{Doc, GetString, Transact};
 
 use crate::error::H5iError;
-use crate::repository::H5iRepository;
 
 pub struct CrdtSession {
     doc: Doc,

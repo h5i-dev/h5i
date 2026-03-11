@@ -1,6 +1,6 @@
 use crate::error::H5iError;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 
 pub struct DeltaStore {

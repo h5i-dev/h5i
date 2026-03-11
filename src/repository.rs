@@ -1,5 +1,5 @@
 use git2::{Blob, Repository};
-use git2::{Commit, Index, ObjectType, Oid, Signature};
+use git2::{Commit, ObjectType, Oid, Signature};
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
 use std::fs;
@@ -414,14 +414,14 @@ impl H5iRepository {
         &self.h5i_root
     }
 
-    fn get_head_commit(&self) -> Result<Commit, git2::Error> {
+    fn get_head_commit(&self) -> Result<Commit<'_>, git2::Error> {
         let obj = self.git_repo.head()?.resolve()?.peel(ObjectType::Commit)?;
         obj.into_commit()
             .map_err(|_| git2::Error::from_str("Not a commit"))
     }
 
     /// HEAD コミットから指定されたパスの Blob (ファイルの実体) を取得する。
-    pub fn get_blob_at_head(&self, path: &Path) -> Result<Blob, H5iError> {
+    pub fn get_blob_at_head(&self, path: &Path) -> Result<Blob<'_>, H5iError> {
         // 1. HEAD リファレンスを取得し、コミットまで解決する
         let head_commit = self.get_head_commit()?;
 
@@ -469,7 +469,7 @@ impl H5iRepository {
 
     /// 外部から提供された S式 (AST) をサイドカーに保存し、そのハッシュを返す。
     /// AST はオプショナルな機能であるため、提供された場合のみこの処理が呼ばれる。
-    pub fn save_ast_to_sidecar(&self, file_path: &str, sexp: &str) -> Result<String, H5iError> {
+    pub fn save_ast_to_sidecar(&self, _file_path: &str, sexp: &str) -> Result<String, H5iError> {
         // 1. S式のコンテンツハッシュを計算
         // これにより、内容が同じであれば同じファイルとして扱われる（デデュープ）
         let mut hasher = Sha256::new();
