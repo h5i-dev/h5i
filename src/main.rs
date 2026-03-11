@@ -1,10 +1,12 @@
+fn main() {}
+
+/*
+
 use clap::{Parser, Subcommand};
 use h5i_core::repository::H5iRepository;
 use h5i_core::session::LocalAgentSession;
 use h5i_core::watcher::start_h5i_watcher;
 use std::path::PathBuf;
-
-/*
 
 #[derive(Parser)]
 #[command(name = "h5i", about = "Advanced Git for the AI Era")]
