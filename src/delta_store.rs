@@ -1,8 +1,9 @@
-use crate::error::H5iError;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+
+use crate::error::H5iError;
 
 pub struct DeltaStore {
     log_path: PathBuf,
