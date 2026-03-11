@@ -1,9 +1,7 @@
 use crate::error::Result;
 use crate::session::LocalSession;
 use notify::{Config, EventKind, RecursiveMode, Watcher};
-use std::path::Path;
 use std::sync::mpsc::channel;
-use std::time::Duration;
 
 pub fn start_h5i_watcher(mut session: LocalSession) -> Result<()> {
     let (tx, rx) = channel();
