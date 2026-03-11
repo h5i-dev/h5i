@@ -347,122 +347,102 @@ impl H5iRepository {
 // ============================================================
 
 impl H5iRepository {
+    /// Computes blame information for a file using the specified mode.
+    ///
+    /// This function acts as a dispatcher that selects the appropriate
+    /// blame algorithm based on the provided [`BlameMode`].
+    ///
+    /// # Modes
+    ///
+    /// - `BlameMode::Line` – Standard line-based blame using Git history.
+    /// - `BlameMode::Ast` – Semantic blame based on AST structure changes.
+    ///
+    /// # Parameters
+    ///
+    /// - `path` – Path to the target file within the repository.
+    /// - `mode` – The blame computation strategy.
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of [`BlameResult`] entries describing the origin
+    /// of each line (or semantic unit) in the file.
     pub fn blame(
         &self,
         path: &std::path::Path,
         mode: BlameMode,
-    ) -> anyhow::Result<Vec<BlameResult>> {
+    ) -> Result<Vec<BlameResult>, H5iError> {
         match mode {
             BlameMode::Line => self.blame_by_line(path),
             BlameMode::Ast => self.blame_by_ast(path),
         }
     }
 
-    pub fn get_blame(
-        &self,
-        path: &Path,
-        use_ast: bool,
-    ) -> Result<Vec<crate::blame::BlameResult>, H5iError> {
-        if use_ast {
-            // 1. 最新のレコードから AST ハッシュ履歴を取得
-            // 2. 構造が変わったコミットを特定
-            self.compute_semantic_blame(path)
-        } else {
-            // 標準の git2 blame を実行し、メタデータを Join する
-            self.compute_line_blame(path)
-        }
-    }
-
-    /// 行ベースの Blame (Git 標準 + AI メタデータ)
-    fn blame_by_line(&self, path: &std::path::Path) -> anyhow::Result<Vec<BlameResult>> {
+    /// Performs line-based blame (Git standard + AI metadata).
+    ///
+    /// This method uses the native Git blame algorithm and enriches
+    /// the results with `h5i` metadata, including AI provenance
+    /// information when available.
+    ///
+    /// Each line in the file is mapped to the commit that last
+    /// modified it.
+    fn blame_by_line(&self, path: &std::path::Path) -> Result<Vec<BlameResult>, H5iError> {
         let blame = self.git_repo.blame_file(path, None)?;
         let mut results = Vec::new();
 
-        // ファイル内容を読み込み
-        let blob = self.get_blob_at_head(path)?;
-        let lines: Vec<&str> = std::str::from_utf8(blob.content())?.lines().collect();
-
-        for hunk in blame.iter() {
-            let commit_id = hunk.final_commit_id();
-            let record = self.load_h5i_record(commit_id).ok();
-            let agent_info = record
-                .and_then(|r| r.ai_metadata)
-                .map(|a| format!("AI:{}", a.agent_id))
-                .unwrap_or_else(|| "Human".to_string());
-
-            for i in 0..hunk.lines_in_hunk() {
-                let line_idx = hunk.final_start_line() + i - 1;
-                results.push(BlameResult {
-                    line_content: lines[line_idx].to_string(),
-                    commit_id: commit_id.to_string(),
-                    agent_info: agent_info.clone(),
-                    is_semantic_change: false,
-                    line_number: todo!(),
-                    test_passed: todo!(),
-                });
-            }
-        }
-        Ok(results)
-    }
-
-    /// AST ベースの Blame (構造ハッシュの変化を追跡)
-    fn blame_by_ast(
-        &self,
-        path: &std::path::Path,
-    ) -> anyhow::Result<Vec<crate::blame::BlameResult>> {
-        // 1. 最新のレコードから対象ファイルの AST ハッシュを取得
-        // 2. 履歴を遡り、そのハッシュが「最後に変化した」コミットを特定
-        // 3. そのコミットの AI 情報を取得
-        // 注意: 外部ツールが提供した AST が不正確な場合は、Line ベースにフォールバック表示
-        println!("Note: Semantic tracking depends on externally provided AST hashes.");
-        self.blame_by_line(path) // プロトタイプでは Line ベースで結果を表示しつつ、AST情報を付与
-    }
-
-    /// 従来の行ベース (1D) の Blame を高度化して実行
-    pub fn compute_line_blame(&self, path: &Path) -> Result<Vec<BlameResult>, H5iError> {
-        let blame = self.git_repo.blame_file(path, None)?;
+        // Load the file content at HEAD
         let blob = self.get_blob_at_head(path)?;
         let content = std::str::from_utf8(blob.content())
             .map_err(|_| H5iError::Ast("File content is not valid UTF-8".to_string()))?;
         let lines: Vec<&str> = content.lines().collect();
 
-        let mut results = Vec::new();
-
         for hunk in blame.iter() {
             let commit_id = hunk.final_commit_id();
-            // サイドカーデータをロード（なければ Git から最小構成を作成）
             let record = self.load_h5i_record(commit_id)?;
-
             let agent_info = record
                 .ai_metadata
-                .map(|ai| format!("AI:{}", ai.model_name))
+                .map(|a| format!("AI:{}", a.agent_id))
                 .unwrap_or_else(|| "Human".to_string());
-
-            let test_passed = record.test_metrics.map(|tm| tm.coverage > 0.0); // 簡易判定
+            let test_passed = record.test_metrics.map(|tm| tm.coverage > 0.0);
 
             for i in 0..hunk.lines_in_hunk() {
                 let line_idx = hunk.final_start_line() + i - 1;
                 if line_idx < lines.len() {
                     results.push(BlameResult {
-                        line_number: line_idx + 1,
                         line_content: lines[line_idx].to_string(),
                         commit_id: commit_id.to_string(),
                         agent_info: agent_info.clone(),
-                        is_semantic_change: false, // Lineモードでは一律 false
+                        is_semantic_change: false,
+                        line_number: line_idx + 1,
                         test_passed,
                     });
                 }
             }
         }
-
         Ok(results)
     }
 
-    /// ASTハッシュの変化 (Structural Dimension) に基づく Blame
-    /// 行が移動していても、ロジックが本質的に変更された瞬間を追跡する
-    pub fn compute_semantic_blame(&self, path: &Path) -> Result<Vec<BlameResult>, H5iError> {
-        // 基本的な行情報は Git Blame から取得
-        let mut line_results = self.compute_line_blame(path)?;
+    /// Performs semantic blame based on AST hash changes (structural dimension).
+    ///
+    /// Unlike traditional blame, which tracks line modifications,
+    /// semantic blame identifies the commit where the logical structure
+    /// of the code last changed.
+    ///
+    /// This allows the system to detect meaningful code modifications
+    /// even when lines are moved or reformatted.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Compute standard line-based blame results.
+    /// 2. Retrieve AST hashes associated with each commit.
+    /// 3. Compare AST hashes with the parent commit.
+    /// 4. Mark the commit as a semantic change if the hash differs.
+    ///
+    /// # Returns
+    ///
+    /// Returns blame results annotated with the `is_semantic_change` flag.
+    pub fn blame_by_ast(&self, path: &Path) -> Result<Vec<BlameResult>, H5iError> {
+        // Base line information from Git blame
+        let mut line_results = self.blame_by_line(path)?;
         let path_str = path
             .to_str()
             .ok_or_else(|| H5iError::InvalidPath("Invalid path encoding".to_string()))?;
@@ -471,10 +451,10 @@ impl H5iRepository {
             let oid = git2::Oid::from_str(&result.commit_id)?;
             let record = self.load_h5i_record(oid)?;
 
-            // 1. このコミットに AST ハッシュが含まれているか確認
+            // 1. Check if this commit contains an AST hash
             if let Some(hashes) = record.ast_hashes {
                 if let Some(current_ast_hash) = hashes.get(path_str) {
-                    // 2. 親コミットの AST ハッシュと比較
+                    // 2. Compare with the parent commit's AST hash
                     if let Some(parent_oid_str) = record.parent_oid {
                         let parent_oid = git2::Oid::from_str(&parent_oid_str)?;
                         if let Ok(parent_record) = self.load_h5i_record(parent_oid) {
@@ -482,13 +462,13 @@ impl H5iRepository {
                                 .ast_hashes
                                 .and_then(|h| h.get(path_str).cloned());
 
-                            // 親とハッシュが異なる場合、このコミットは「セマンティックな変更」
+                            // If hashes differ, this commit represents a semantic change
                             if Some(current_ast_hash.clone()) != parent_ast_hash {
                                 result.is_semantic_change = true;
                             }
                         }
                     } else {
-                        // 親がいない（最初のコミット）で AST があれば、それはセマンティックな誕生
+                        // No parent (initial commit): the AST introduction is semantic
                         result.is_semantic_change = true;
                     }
                 }
