@@ -397,12 +397,16 @@ impl H5iRepository {
 
         for hunk in blame.iter() {
             let commit_id = hunk.final_commit_id();
-            let record = self.load_h5i_record(commit_id)?;
+            let record = self.load_h5i_record(commit_id).ok();
             let agent_info = record
-                .ai_metadata
+                .as_ref()
+                .and_then(|r| r.ai_metadata.as_ref())
                 .map(|a| format!("AI:{}", a.agent_id))
                 .unwrap_or_else(|| "Human".to_string());
-            let test_passed = record.test_metrics.map(|tm| tm.coverage > 0.0);
+            let test_passed = record
+                .as_ref()
+                .and_then(|r| r.test_metrics.as_ref())
+                .map(|tm| tm.coverage > 0.0);
 
             for i in 0..hunk.lines_in_hunk() {
                 let line_idx = hunk.final_start_line() + i - 1;
@@ -780,12 +784,11 @@ impl H5iRepository {
         oid: Oid,
         file_path: &str,
     ) -> Result<Vec<u8>, H5iError> {
-        let file_hash = sha256_hash(file_path);
-        let delta_path = self
-            .h5i_root
-            .join("deltas")
-            .join(oid.to_string())
-            .join(format!("{}.bin", file_hash));
+        let delta_path = DeltaStore::committed_path(
+            &self.h5i_root.parent().unwrap(),
+            &oid.to_string(),
+            file_path,
+        );
 
         if !delta_path.exists() {
             return Err(H5iError::Internal("Delta not found for this commit".into()));
@@ -1113,15 +1116,8 @@ mod tests {
     use yrs::{Doc, Text, Transact, Update};
 
     fn setup_test_repo(root: &std::path::Path) -> H5iRepository {
-        let repo = Repository::init(root).unwrap();
-        let h5i_root = root.join(".h5i");
-        fs::create_dir_all(h5i_root.join("metadata")).unwrap();
-        fs::create_dir_all(h5i_root.join("delta")).unwrap();
-
-        H5iRepository {
-            git_repo: repo,
-            h5i_root,
-        }
+        let _repo = Repository::init(root).unwrap();
+        H5iRepository::open(root).expect("Failed to open repo")
     }
 
     fn create_commit(
@@ -1144,6 +1140,91 @@ mod tests {
             .unwrap()
     }
 
+    // --- 1. Lifecycle & Basic Info ---
+
+    #[test]
+    fn test_repository_open_initializes_directories() {
+        let dir = tempdir().unwrap();
+        let repo = setup_test_repo(dir.path());
+
+        // Ensure .h5i subdirectories are created
+        assert!(repo.h5i_root.join("ast").exists());
+        assert!(repo.h5i_root.join("metadata").exists());
+        assert!(repo.h5i_root.join("crdt").exists());
+        assert_eq!(repo.h5i_path(), &repo.h5i_root);
+    }
+
+    #[test]
+    fn test_load_h5i_record_fallback_to_git() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+
+        // Create a commit without using h5i_repo.commit (no sidecar)
+        let oid = create_commit(
+            h5i_repo.git(),
+            "legacy commit",
+            "legacy.txt",
+            "old data",
+            &vec![],
+        );
+
+        // h5i_log should fallback to minimal record
+        let logs = h5i_repo.h5i_log(1).unwrap();
+        assert_eq!(logs[0].git_oid, oid.to_string());
+        assert!(logs[0].ai_metadata.is_none());
+    }
+
+    #[test]
+    fn test_blame_line_mode() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let path = Path::new("README.md");
+
+        create_commit(
+            h5i_repo.git(),
+            "initial",
+            "README.md",
+            "Line 1\nLine 2",
+            &vec![],
+        );
+
+        let results = h5i_repo.blame(path, BlameMode::Line).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].line_content, "Line 1");
+    }
+
+    #[test]
+    fn test_ast_sidecar_storage() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let sexp = "(module (fn main))";
+
+        let hash = h5i_repo.save_ast_to_sidecar("main.rs", sexp).unwrap();
+        let ast_file = h5i_repo.h5i_root.join("ast").join(format!("{}.sexp", hash));
+
+        assert!(ast_file.exists());
+        assert_eq!(fs::read_to_string(ast_file).unwrap(), sexp);
+    }
+
+    // --- 4. Merge & CRDT Delta Logic ---
+
+    #[test]
+    fn test_persist_and_load_delta_for_commit() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let oid = Oid::from_str("0123456789abcdef0123456789abcdef01234567").unwrap();
+        let delta_data = vec![1, 2, 3, 4, 5];
+
+        h5i_repo
+            .persist_delta_for_commit(oid, "test.txt", &delta_data)
+            .unwrap();
+        let loaded = h5i_repo
+            .load_specific_delta_for_commit(oid, "test.txt")
+            .unwrap();
+
+        assert_eq!(loaded, delta_data);
+    }
+
     #[test]
     fn test_get_content_at_oid() {
         let dir = tempdir().unwrap();
@@ -1156,6 +1237,22 @@ mod tests {
             .get_content_at_oid(oid, std::path::Path::new("hello.txt"))
             .unwrap();
         assert_eq!(content, "hello world");
+    }
+
+    #[test]
+    fn test_scan_test_metrics_detection() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let path = dir.path().join("test_file.rs");
+        let content = "
+            // h5_i_test_start
+            fn test_logic() { assert!(true); }
+            // h5_i_test_end
+        ";
+        fs::write(&path, content).unwrap();
+
+        let metrics = h5i_repo.scan_test_metrics(&path).unwrap();
+        assert!(!metrics.test_suite_hash.is_empty());
     }
 
     #[test]

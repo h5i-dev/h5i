@@ -92,7 +92,6 @@ impl LocalSession {
     /// Returns an error if writing to the delta log or filesystem fails.
     pub fn flush_and_sync_file(&mut self) -> Result<(), crate::error::H5iError> {
         let txn = self.doc.transact_mut();
-        // Write the latest merged text to the actual file
         let final_text = self.text_ref.get_string(&txn);
         std::fs::write(&self.target_fs_path, final_text)?;
 
@@ -169,8 +168,16 @@ impl LocalSession {
     ///
     /// Returns an error if updates cannot be decoded or applied.
     pub fn sync_from_disk(&mut self, target_path: &Path) -> Result<(), crate::error::H5iError> {
-        let updates = self.delta_store.read_all_updates()?;
+        // 1. Try to load from snapshot first
+        let snapshot_path = self.delta_store.snapshot_path();
+        if snapshot_path.exists() {
+            let data = fs::read(&snapshot_path)?;
+            let mut txn = self.doc.transact_mut();
+            txn.apply_update(Update::decode_v1(&data)?)?;
+        }
 
+        // 2. Apply remaining incremental updates
+        let updates = self.delta_store.read_all_updates()?;
         if updates.is_empty() {
             // Case 1: No updates exist — load the file contents
             let content = fs::read_to_string(target_path).map_err(H5iError::Io)?;
