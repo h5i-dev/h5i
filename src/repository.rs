@@ -1143,6 +1143,139 @@ mod tests {
             .unwrap()
     }
 
+    fn create_test_commit(repo: &Repository, path: &str, content: &str, msg: &str) -> Oid {
+        let mut index = repo.index().unwrap();
+        let full_path = repo.workdir().unwrap().join(path);
+        fs::write(&full_path, content).unwrap();
+        index.add_path(Path::new(path)).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = Signature::now("tester", "test@h5i.io").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &[])
+            .unwrap()
+    }
+
+    // --- 1. Lifecycle & Basic Info ---
+
+    #[test]
+    fn test_repository_open_initializes_directories() {
+        let dir = tempdir().unwrap();
+        let repo = setup_test_repo(dir.path());
+
+        // Ensure .h5i subdirectories are created
+        assert!(repo.h5i_root.join("ast").exists());
+        assert!(repo.h5i_root.join("metadata").exists());
+        assert!(repo.h5i_root.join("crdt").exists());
+        assert_eq!(repo.h5i_path(), &repo.h5i_root);
+    }
+
+    #[test]
+    fn test_load_h5i_record_fallback_to_git() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+
+        // Create a commit without using h5i_repo.commit (no sidecar)
+        let oid = create_test_commit(h5i_repo.git(), "legacy.txt", "old data", "legacy commit");
+
+        // h5i_log should fallback to minimal record
+        let logs = h5i_repo.h5i_log(1).unwrap();
+        assert_eq!(logs[0].git_oid, oid.to_string());
+        assert!(logs[0].ai_metadata.is_none());
+    }
+
+    #[test]
+    fn test_blame_line_mode() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let path = Path::new("README.md");
+
+        create_test_commit(h5i_repo.git(), "README.md", "Line 1\nLine 2", "initial");
+
+        let results = h5i_repo.blame(path, BlameMode::Line).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].line_content, "Line 1");
+    }
+
+    #[test]
+    fn test_ast_sidecar_storage() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let sexp = "(module (fn main))";
+
+        let hash = h5i_repo.save_ast_to_sidecar("main.rs", sexp).unwrap();
+        let ast_file = h5i_repo.h5i_root.join("ast").join(format!("{}.sexp", hash));
+
+        assert!(ast_file.exists());
+        assert_eq!(fs::read_to_string(ast_file).unwrap(), sexp);
+    }
+
+    // --- 4. Merge & CRDT Delta Logic ---
+
+    #[test]
+    fn test_persist_and_load_delta_for_commit() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let oid = Oid::from_str("0123456789abcdef0123456789abcdef01234567").unwrap();
+        let delta_data = vec![1, 2, 3, 4, 5];
+
+        h5i_repo
+            .persist_delta_for_commit(oid, "test.txt", &delta_data)
+            .unwrap();
+        let loaded = h5i_repo
+            .load_specific_delta_for_commit(oid, "test.txt")
+            .unwrap();
+
+        assert_eq!(loaded, delta_data);
+    }
+
+    #[test]
+    fn test_merge_h5i_logic_convergence() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let git_repo = h5i_repo.git();
+        let file_path = "app.py";
+
+        // Base
+        let base_content = "def start(): pass";
+        let base_oid = create_test_commit(git_repo, file_path, base_content, "base");
+
+        // OURS: Insert comment at top
+        let ours_update = {
+            let doc = Doc::new();
+            let text = doc.get_or_insert_text("code");
+            let mut txn = doc.transact_mut();
+            text.push(&mut txn, base_content);
+            text.insert(&mut txn, 0, "# OURS\n");
+            txn.encode_update_v1()
+        };
+        let our_oid = create_test_commit(git_repo, file_path, "# OURS\ndef start(): pass", "ours");
+        h5i_repo.persist_delta_for_commit(our_oid, file_path, &ours_update)?;
+
+        // THEIRS: Insert print at bottom
+        let theirs_update = {
+            let doc = Doc::new();
+            let text = doc.get_or_insert_text("code");
+            let mut txn = doc.transact_mut();
+            text.push(&mut txn, base_content);
+            text.push(&mut txn, "\nprint('done')");
+            txn.encode_update_v1()
+        };
+        let their_oid = create_test_commit(
+            git_repo,
+            file_path,
+            "def start(): pass\nprint('done')",
+            "theirs",
+        );
+        h5i_repo.persist_delta_for_commit(their_oid, file_path, &theirs_update)?;
+
+        // CRDT Merge Logic
+        let merged = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
+
+        assert!(merged.contains("# OURS"));
+        assert!(merged.contains("print('done')"));
+        Ok(())
+    }
+
     #[test]
     fn test_get_content_at_oid() {
         let dir = tempdir().unwrap();
@@ -1155,6 +1288,22 @@ mod tests {
             .get_content_at_oid(oid, std::path::Path::new("hello.txt"))
             .unwrap();
         assert_eq!(content, "hello world");
+    }
+
+    #[test]
+    fn test_scan_test_metrics_detection() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let path = dir.path().join("test_file.rs");
+        let content = "
+            // h5_i_test_start
+            fn test_logic() { assert!(true); }
+            // h5_i_test_end
+        ";
+        fs::write(&path, content).unwrap();
+
+        let metrics = h5i_repo.scan_test_metrics(&path).unwrap();
+        assert!(!metrics.test_suite_hash.is_empty());
     }
 
     #[test]
