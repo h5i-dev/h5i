@@ -1,6 +1,5 @@
 pub mod ast;
 pub mod blame;
-//pub mod crdt;
 pub mod delta_store;
 pub mod error;
 pub mod metadata;
@@ -9,4 +8,4 @@ pub mod session;
 pub mod watcher;
 
 pub use repository::H5iRepository;
-pub use session::LocalAgentSession;
+pub use session::LocalSession;

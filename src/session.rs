@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use yrs::updates::decoder::Decode;
 use yrs::{Doc, GetString, Text, TextRef, Transact, Update};
 
-pub struct LocalAgentSession {
+pub struct LocalSession {
     pub doc: Doc,
     pub text_ref: TextRef,
     pub delta_store: DeltaStore,
@@ -14,7 +14,7 @@ pub struct LocalAgentSession {
     pub last_read_offset: u64, // ← 追加
 }
 
-impl LocalAgentSession {
+impl LocalSession {
     /// コミット直前に呼び出し、未保存の CRDT 変更を強制的にログへ書き出す
     pub fn flush_and_sync_file(&mut self) -> Result<(), crate::error::H5iError> {
         // 現在のドキュメントの差分をエンコード
@@ -41,7 +41,7 @@ impl LocalAgentSession {
     }
 }
 
-impl LocalAgentSession {
+impl LocalSession {
     pub fn new(repo_root: PathBuf, target_path: PathBuf) -> Result<Self, crate::error::H5iError> {
         // 1. The ACTUAL source code must exist to start a session
         if !target_path.exists() {
@@ -148,7 +148,7 @@ mod tests {
     use yrs::updates::decoder::Decode;
     use yrs::{Doc, Text, Transact};
 
-    use crate::session::LocalAgentSession;
+    use crate::session::LocalSession;
 
     #[test]
     fn test_session_initialization_and_flush() -> crate::error::Result<()> {
@@ -161,7 +161,7 @@ mod tests {
         fs::write(&file_path, "print('hello')")?;
 
         // Fix: Pass the existing code path and the repo root
-        let mut session = LocalAgentSession::new(repo_root.clone(), file_path.clone())?;
+        let mut session = LocalSession::new(repo_root.clone(), file_path.clone())?;
 
         // Edit and Flush
         {
@@ -197,11 +197,11 @@ mod tests {
         fs::write(&file_path, "fn main() {}")?;
 
         // 2. セッションの作成 (引数の順番を new(repo_root, file_path) に合わせる)
-        let session = LocalAgentSession::new(repo_root, file_path)?;
+        let session = LocalSession::new(repo_root, file_path)?;
 
         // 3. 外部エージェントの更新をシミュレート
         let remote_doc = Doc::new();
-        // 重要: LocalAgentSession 内の識別子 "code" と合わせる必要があります
+        // 重要: LocalSession 内の識別子 "code" と合わせる必要があります
         let remote_text = remote_doc.get_or_insert_text("code");
 
         let remote_update = {
@@ -241,7 +241,7 @@ mod tests {
         let non_existent = dir.path().join("ghost.txt");
         let delta = dir.path().join("delta.bin");
 
-        let result = LocalAgentSession::new(non_existent, delta);
+        let result = LocalSession::new(non_existent, delta);
 
         // Verify that our H5iError::Io or InvalidPath is returned
         assert!(result.is_err());
