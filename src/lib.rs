@@ -6,6 +6,7 @@ pub mod error;
 pub mod metadata;
 pub mod repository;
 pub mod session;
+pub mod watcher;
 
 pub use repository::H5iRepository;
 pub use session::LocalAgentSession;

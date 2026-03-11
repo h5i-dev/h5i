@@ -3,13 +3,15 @@ use crate::error::H5iError;
 use std::fs;
 use std::path::{Path, PathBuf};
 use yrs::updates::decoder::Decode;
-use yrs::{Doc, GetString, Text, TextRef, Transact, Update};
+use yrs::{Doc, GetString, ReadTxn, Text, TextRef, Transact, Update};
 
 pub struct LocalAgentSession {
     pub doc: Doc,
     pub text_ref: TextRef,
     pub delta_store: DeltaStore,
     pub target_fs_path: PathBuf,
+    pub update_count: usize,
+    pub last_read_offset: u64, // ← 追加
 }
 
 impl LocalAgentSession {
@@ -21,6 +23,15 @@ impl LocalAgentSession {
 
         // 共有バイナリログ (.h5i/delta/...) に追記
         self.delta_store.append_update(&update)?;
+        self.update_count += 1;
+
+        // 10回ごとにコンパクション、50回ごとにスナップショットをとる例
+        if self.update_count % 50 == 0 {
+            // let state = txn.encode_state_as_update_v1(sv);
+            // self.delta_store.save_snapshot(&state)?;
+        } else if self.update_count % 10 == 0 {
+            self.delta_store.compact()?;
+        }
 
         // 最新のテキストを実際のファイルに反映
         let final_text = self.text_ref.get_string(&txn);
@@ -49,6 +60,8 @@ impl LocalAgentSession {
             text_ref,
             delta_store,
             target_fs_path: target_path.clone(),
+            update_count: 0,
+            last_read_offset: 0,
         };
 
         // 起動時に既存の操作ログを全て適用して最新状態にする
@@ -104,6 +117,25 @@ impl LocalAgentSession {
         // 3. 実際のソースコードファイルにマッピング（人間やLinterが見る場所）
         let merged_text = self.text_ref.get_string(&txn);
         fs::write(&self.target_fs_path, merged_text)?;
+
+        Ok(())
+    }
+
+    /// 他のエージェントの変更を「差分だけ」マージ
+    pub fn sync_from_shared_log(&mut self) -> Result<(), crate::error::H5iError> {
+        // 前回のオフセットから読み込み開始
+        let (new_updates, next_offset) =
+            self.delta_store.read_new_updates(self.last_read_offset)?;
+
+        if !new_updates.is_empty() {
+            let mut txn = self.doc.transact_mut();
+            for data in new_updates {
+                let update = yrs::Update::decode_v1(&data)?;
+                txn.apply_update(update);
+            }
+            // 読み込みに成功した分だけオフセットを進める
+            self.last_read_offset = next_offset;
+        }
 
         Ok(())
     }

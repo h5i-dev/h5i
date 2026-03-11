@@ -1,8 +1,10 @@
 use crate::error::H5iError;
 use std::fs;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::sync::RwLock;
+use yrs::Update;
 
 pub struct DeltaStore {
     log_path: PathBuf,
@@ -53,6 +55,76 @@ impl DeltaStore {
             updates.push(data);
         }
         Ok(updates)
+    }
+
+    /// 1. Snapshotting: 現在の完全な状態を保存し、それ以前のログを実質的にリセットする
+    pub fn save_snapshot(&self, state_v1: &[u8]) -> Result<(), H5iError> {
+        let snapshot_path = self.log_path.with_extension("snapshot");
+        fs::write(&snapshot_path, state_v1).map_err(|e| H5iError::Io(e))?;
+
+        // スナップショットが取れたら、古いデルタログをクリア（またはリネームして退避）
+        if self.log_path.exists() {
+            fs::remove_file(&self.log_path).map_err(|e| H5iError::Io(e))?;
+        }
+        Ok(())
+    }
+
+    /// 2. Compaction: 複数の小さいUpdateを1つの大きなUpdateにマージしてディスクを節約
+    pub fn compact(&self) -> Result<(), H5iError> {
+        let updates = self.read_all_updates()?;
+        if updates.len() < 2 {
+            return Ok(());
+        }
+
+        // yrs のマージ機能を使用
+        let merged = yrs::merge_updates_v1(&updates).map_err(|e| H5iError::Crdt(e.to_string()))?;
+
+        // ログを一度消して、マージされた1つのデータで書き直す
+        fs::remove_file(&self.log_path).ok();
+        self.append_update(&merged)?;
+
+        println!(
+            "📦 Compaction complete: {} updates -> 1 merged update",
+            updates.len()
+        );
+        Ok(())
+    }
+
+    /// 指定されたオフセットから新しく追記された更新分だけを読み出す。
+    /// 返り値: (新規更新データのリスト, 次回読み出し用のオフセット)
+    /// ロックを一旦排して、シンプルに差分読み込みを行う
+    pub fn read_new_updates(&self, mut offset: u64) -> Result<(Vec<Vec<u8>>, u64), H5iError> {
+        if !self.log_path.exists() {
+            return Ok((vec![], 0));
+        }
+
+        // ロックを使わず、個別のファイルハンドルを作成して mut で扱う
+        let mut file = File::open(&self.log_path).map_err(H5iError::Io)?;
+
+        // 指定されたオフセットまで移動 (mut が必要)
+        file.seek(SeekFrom::Start(offset)).map_err(H5iError::Io)?;
+
+        let mut new_updates = Vec::new();
+
+        loop {
+            let mut len_buf = [0u8; 4];
+            // 長さ情報の読み込み
+            if file.read_exact(&mut len_buf).is_err() {
+                break; // EOF
+            }
+
+            let len = u32::from_le_bytes(len_buf) as usize;
+            let mut data = vec![0u8; len];
+
+            if file.read_exact(&mut data).is_err() {
+                break; // 書き込み途中の不完全なデータ
+            }
+
+            offset += 4 + len as u64;
+            new_updates.push(data);
+        }
+
+        Ok((new_updates, offset))
     }
 }
 

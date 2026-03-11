@@ -1,17 +1,20 @@
 use git2::{Blob, Repository};
 use git2::{Commit, ObjectType, Oid, Signature};
-use sha2::{Digest as _, Sha256};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use yrs::updates::decoder::Decode;
+use yrs::{GetString, Text, Transact};
 
 use crate::blame::{BlameMode, BlameResult};
+use crate::delta_store::DeltaStore;
 use crate::error::H5iError;
 use crate::metadata::{AiMetadata, H5iCommitRecord, TestMetrics};
 
 pub struct H5iRepository {
     git_repo: Repository,
-    h5i_root: PathBuf,
+    pub h5i_root: PathBuf,
 }
 
 // ============================================================
@@ -402,6 +405,71 @@ impl H5iRepository {
 }
 
 // ============================================================
+// Resolve Conflict
+// ============================================================
+
+impl H5iRepository {
+    /// 二つのブランチ（またはコミット）間のCRDT操作を統合し、コンフリクトなしのテキストを生成する
+    pub fn merge_h5i_logic(
+        &self,
+        our_oid: Oid,
+        their_oid: Oid,
+        file_path: &str,
+    ) -> Result<String, H5iError> {
+        // 1. マージベース（共通の祖先）を特定
+        let base_oid = self.git_repo.merge_base(our_oid, their_oid)?;
+
+        // 2. 新しい Doc を用意
+        let doc = yrs::Doc::new();
+        let text_ref = doc.get_or_insert_text("code");
+        let mut txn = doc.transact_mut();
+
+        // 3. マージベース時点の状態をロード (スナップショットがあればそれを使用)
+        if let Ok(base_record) = self.load_h5i_record(base_oid) {
+            // ベース時点のテキストを初期状態として注入
+            let base_blob = self.get_blob_at_oid(base_oid, Path::new(file_path))?;
+            text_ref.push(&mut txn, &String::from_utf8_lossy(base_blob.content()));
+        }
+
+        // 4. 共通祖先から OURS (自分) までの全更新を収集して適用
+        self.apply_updates_between(base_oid, our_oid, file_path, &mut txn)?;
+
+        // 5. 共通祖先から THEIRS (相手) までの全更新を収集して適用
+        // ここが CRDT の魔法：順番に関係なく、最終的な状態は一致する
+        self.apply_updates_between(base_oid, their_oid, file_path, &mut txn)?;
+
+        Ok(text_ref.get_string(&txn))
+    }
+
+    /// 特定の範囲のコミットに紐づくデルタログをすべて適用する補助関数
+    fn apply_updates_between(
+        &self,
+        base: Oid,
+        tip: Oid,
+        file_path: &str,
+        txn: &mut yrs::TransactionMut,
+    ) -> Result<(), H5iError> {
+        let mut revwalk = self.git_repo.revwalk()?;
+        revwalk.push(tip)?;
+        revwalk.hide(base)?; // base 以降のコミットのみ対象
+
+        for oid_res in revwalk {
+            let oid = oid_res?;
+            if let Ok(record) = self.load_h5i_record(oid) {
+                // 各コミットに紐づく微細な操作ログを DeltaStore から取得して適用
+                // (実装簡略化のため、ここではコミット時の metadata から辿る想定)
+                let delta_store = DeltaStore::new(self.h5i_root.clone(), file_path);
+                let updates = delta_store.read_all_updates()?;
+                for data in updates {
+                    txn.apply_update(yrs::Update::decode_v1(&data)?);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+// ============================================================
 // Internal helpers
 // ============================================================
 
@@ -444,6 +512,43 @@ impl H5iRepository {
         // 5. OID を使用して実際の Blob オブジェクトを検索して返す
         let blob = self.git_repo.find_blob(entry.id())?;
         Ok(blob)
+    }
+
+    /// 指定された OID (コミット等) における特定のパスの Blob を取得する
+    pub fn get_blob_at_oid(&self, oid: Oid, path: &Path) -> Result<Blob, H5iError> {
+        // 1. OID からコミットオブジェクトを探す
+        let commit = self
+            .git_repo
+            .find_commit(oid)
+            .map_err(|e| H5iError::Internal(format!("Commit not found {}: {}", oid, e)))?;
+
+        // 2. コミットに紐づくツリー（ディレクトリ構造）を取得
+        let tree = commit.tree().map_err(|e| {
+            H5iError::Internal(format!("Failed to get tree for commit {}: {}", oid, e))
+        })?;
+
+        // 3. ツリーの中から指定されたパスのエントリを探す
+        let entry = tree.get_path(path).map_err(|_| {
+            H5iError::InvalidPath(format!("Path {:?} not found in commit {}", path, oid))
+        })?;
+
+        // 4. エントリの ID から実際のデータ（Blob）を取得
+        let blob = self.git_repo.find_blob(entry.id()).map_err(|e| {
+            H5iError::Internal(format!("Failed to find blob for path {:?}: {}", path, e))
+        })?;
+
+        Ok(blob)
+    }
+
+    /// (便利関数) 指定された OID の内容を String として取得する
+    pub fn get_content_at_oid(&self, oid: Oid, path: &Path) -> Result<String, H5iError> {
+        let blob = self.get_blob_at_oid(oid, path)?;
+
+        // UTF-8 チェックを行いながら文字列に変換
+        let content = std::str::from_utf8(blob.content())
+            .map_err(|_| H5iError::Internal(format!("File at {:?} is not valid UTF-8", path)))?;
+
+        Ok(content.to_string())
     }
 
     /// // h5_i_test_start ～ // h5_i_test_end を抽出してハッシュ化
