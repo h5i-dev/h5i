@@ -3,8 +3,6 @@ use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use std::sync::RwLock;
-use yrs::Update;
 
 pub struct DeltaStore {
     log_path: PathBuf,

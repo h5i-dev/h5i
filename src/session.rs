@@ -3,7 +3,7 @@ use crate::error::H5iError;
 use std::fs;
 use std::path::{Path, PathBuf};
 use yrs::updates::decoder::Decode;
-use yrs::{Doc, GetString, ReadTxn, Text, TextRef, Transact, Update};
+use yrs::{Doc, GetString, Text, TextRef, Transact, Update};
 
 pub struct LocalAgentSession {
     pub doc: Doc,
@@ -131,7 +131,7 @@ impl LocalAgentSession {
             let mut txn = self.doc.transact_mut();
             for data in new_updates {
                 let update = yrs::Update::decode_v1(&data)?;
-                txn.apply_update(update);
+                txn.apply_update(update)?;
             }
             // 読み込みに成功した分だけオフセットを進める
             self.last_read_offset = next_offset;
