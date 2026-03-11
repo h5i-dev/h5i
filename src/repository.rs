@@ -23,7 +23,37 @@ pub struct H5iRepository {
 // ============================================================
 
 impl H5iRepository {
-    /// 既存のGitリポジトリからh5iコンテキストを初期化/開く
+    /// Opens or initializes an `h5i` context for an existing Git repository.
+    ///
+    /// This function discovers the Git repository starting from the given path
+    /// and ensures that the `.h5i` metadata directory exists inside the
+    /// repository root.
+    ///
+    /// If the `.h5i` directory does not exist, it will be created along with
+    /// several subdirectories used by the system:
+    ///
+    /// - `ast/` – stores hashed AST representations for tracked files
+    /// - `metadata/` – stores commit-related metadata (e.g., AI provenance)
+    /// - `crdt/` – stores CRDT state or collaboration data
+    ///
+    /// # Parameters
+    ///
+    /// - `path`: A path inside the target Git repository (or the repository root).
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`H5iRepository`] instance containing:
+    ///
+    /// - the discovered Git repository handle
+    /// - the `.h5i` root directory path
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    ///
+    /// - a Git repository cannot be discovered from the given path
+    /// - the repository root directory cannot be determined
+    /// - the `.h5i` directories cannot be created
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, H5iError> {
         let git_repo = Repository::discover(path)?;
         let h5i_root = git_repo
@@ -52,7 +82,58 @@ impl H5iRepository {
 // ============================================================
 
 impl H5iRepository {
-    /// Gitコミットを実行し、h5i拡張データをアトミックに紐付ける
+    /// Creates a Git commit and atomically associates it with h5i extended metadata.
+    ///
+    /// This function performs a standard Git commit while collecting and storing
+    /// additional `h5i` sidecar data. The extra metadata may include:
+    ///
+    /// - **AI provenance metadata** describing AI-assisted code generation
+    /// - **AST hashes** derived from source files using an optional parser
+    /// - **Test provenance metrics** extracted from staged test files
+    ///
+    /// The collected metadata is stored separately in the `.h5i` directory
+    /// and linked to the Git commit via the commit OID.
+    ///
+    /// The operation proceeds in three phases:
+    ///
+    /// 1. **Pre-processing staged files**
+    ///    - Optionally generate AST representations using the provided parser.
+    ///    - Optionally extract test-related metrics.
+    ///
+    /// 2. **Git commit creation**
+    ///    - Uses the `git2` API to write the index tree and create a commit.
+    ///
+    /// 3. **Sidecar metadata persistence**
+    ///    - A corresponding `H5iCommitRecord` is created and stored under `.h5i`.
+    ///
+    /// # Parameters
+    ///
+    /// - `message` – Commit message.
+    /// - `author` – Git author signature.
+    /// - `committer` – Git committer signature.
+    /// - `ai_meta` – Optional AI provenance metadata associated with the commit.
+    /// - `enable_test_tracking` – Enables automatic test provenance detection.
+    /// - `ast_parser` – Optional externally injected parser that converts a file
+    ///   into an AST S-expression representation.
+    ///
+    /// # Returns
+    ///
+    /// Returns the [`Oid`] of the newly created Git commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    ///
+    /// - the Git index cannot be accessed or written
+    /// - the commit cannot be created
+    /// - AST sidecar data cannot be persisted
+    /// - the `h5i` metadata record cannot be stored
+    ///
+    /// # Notes
+    ///
+    /// The AST parser is injected as a function pointer to keep the repository
+    /// layer language-agnostic. This allows external tools to supply parsers
+    /// for different programming languages without modifying the core system.
     pub fn commit(
         &self,
         message: &str,
@@ -60,21 +141,21 @@ impl H5iRepository {
         committer: &Signature,
         ai_meta: Option<AiMetadata>,
         enable_test_tracking: bool,
-        ast_parser: Option<&dyn Fn(&Path) -> Option<String>>, // 外部注入のオプショナルパーサー
+        ast_parser: Option<&dyn Fn(&Path) -> Option<String>>, // Optional externally injected parser
     ) -> Result<Oid, H5iError> {
         let mut index = self.git_repo.index()?;
 
-        // 1. オプショナル機能の実行準備
+        // 1. Prepare optional features
         let mut ast_hashes = None;
         let mut test_metrics = None;
 
-        // ステージングされたファイルを走査
+        // Scan staged files
         for entry in index.iter() {
             let path_bytes = &entry.path;
             let path_str = std::str::from_utf8(path_bytes).unwrap();
             let full_path = self.git_repo.workdir().unwrap().join(path_str);
 
-            // A. AST生成 (オプショナル)
+            // A. AST generation (optional)
             if let Some(parser) = ast_parser {
                 let hashes = ast_hashes.get_or_insert_with(HashMap::new);
                 if let Some(sexp) = parser(&full_path) {
@@ -83,13 +164,13 @@ impl H5iRepository {
                 }
             }
 
-            // B. テストプロビナンスの取得 (オプショナル)
+            // B. Extract test provenance (optional)
             if enable_test_tracking && test_metrics.is_none() {
                 test_metrics = self.scan_test_block(&full_path);
             }
         }
 
-        // 2. 標準 Git コミットの作成 (git2-rs API を利用)
+        // 2. Create the standard Git commit (using the git2-rs API)
         let tree_id = index.write_tree()?;
         let tree = self.git_repo.find_tree(tree_id)?;
         let parent_commit = self.get_head_commit().ok();
@@ -102,7 +183,7 @@ impl H5iRepository {
             self.git_repo
                 .commit(Some("HEAD"), author, committer, message, &tree, &parents)?;
 
-        // 3. h5i サイドカーレコードの保存
+        // 3. Persist the h5i sidecar record
         let record = H5iCommitRecord {
             git_oid: commit_oid.to_string(),
             parent_oid: parent_commit.map(|p| p.id().to_string()),
