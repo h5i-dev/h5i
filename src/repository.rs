@@ -702,6 +702,7 @@ impl H5iRepository {
         doc: &mut yrs::Doc,
     ) -> Result<(), H5iError> {
         let mut revwalk = self.git_repo.revwalk()?;
+        revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)?;
         revwalk.push(tip)?;
         revwalk.hide(base)?;
 
@@ -832,7 +833,7 @@ impl H5iRepository {
     /// # Storage layout
     ///
     /// ```text
-    /// .h5i/deltas/<commit_oid>/<file_hash>.bin
+    /// .h5i/delta/<commit_oid>/<file_hash>.bin
     /// ```
     ///
     /// # Parameters
@@ -847,7 +848,7 @@ impl H5iRepository {
         update_data: &[u8],
     ) -> Result<(), H5iError> {
         let file_hash = sha256_hash(file_path);
-        let delta_dir = self.h5i_root.join("deltas").join(oid.to_string());
+        let delta_dir = self.h5i_root.join("delta").join(oid.to_string());
 
         // Create directory if necessary
         std::fs::create_dir_all(&delta_dir).map_err(|e| H5iError::Io(e))?;
@@ -1370,6 +1371,153 @@ mod tests {
         assert!(merged_text.contains("print('done')"));
         assert!(merged_text.contains("def main():"));
 
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use crate::repository::H5iRepository;
+    use crate::session::LocalSession;
+    use git2::{Repository, Signature};
+    use std::fs;
+    use tempfile::tempdir;
+
+    /// Helper to setup both Git and H5i repositories in a temp directory.
+    fn setup_integration_context(root: &std::path::Path) -> H5iRepository {
+        // First, initialize a standard Git repository
+        Repository::init(root).expect("Failed to init git repo");
+        // Then, open it as an H5i repository (which creates .h5i/ folders)
+        H5iRepository::open(root).expect("Failed to open h5i repo")
+    }
+
+    #[test]
+    fn test_full_session_to_repository_commit_flow() -> crate::error::Result<()> {
+        let dir = tempdir().unwrap();
+        let repo_path = dir.path();
+
+        // 1. Initialize Context
+        let h5i_repo = setup_integration_context(repo_path);
+        let git_repo = h5i_repo.git();
+        let file_path = "logic.rs";
+        let full_file_path = repo_path.join(file_path);
+
+        // Initial physical file for Git tracking
+        fs::write(&full_file_path, "// Initial content\n")?;
+
+        // 2. Start a LocalSession (Simulation of 'h5i start')
+        let mut session = LocalSession::new(h5i_repo.h5i_root.clone(), full_file_path.clone())?;
+
+        // 3. Apply edits via Session
+        session.apply_local_edit(0, "// AI Optimized\n")?;
+        let session_text = session.get_current_text();
+
+        // 4. Prepare Git Commit
+        let sig = Signature::now("h5i-integration-test", "test@h5i.io")?;
+        let mut index = git_repo.index()?;
+        index.add_path(std::path::Path::new(file_path))?;
+        index.write()?;
+
+        let oid = h5i_repo.commit(
+            "Integrated commit with CRDT",
+            &sig,
+            &sig,
+            None,  // ai_meta
+            false, // tests
+            None,  // ast
+        )?;
+
+        // 5. BRIDGE: Transition Active Delta -> Committed Delta
+        // This simulates the 'h5i commit' logic where current session work is frozen.
+        let active_updates = session.delta_store.read_all_updates()?;
+        let merged_delta = yrs::merge_updates_v1(&active_updates)
+            .map_err(|e| crate::error::H5iError::Crdt(e.to_string()))?;
+
+        h5i_repo.persist_delta_for_commit(oid, file_path, &merged_delta)?;
+
+        // 6. VERIFICATION: Does the Repository OID match the Session State?
+        let content_from_git = h5i_repo.get_content_at_oid(oid, std::path::Path::new(file_path))?;
+        assert_eq!(
+            content_from_git, session_text,
+            "Content at OID must match the final CRDT session text"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cross_branch_merge_using_session_history() -> crate::error::Result<()> {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_integration_context(dir.path());
+        let git_repo = h5i_repo.git();
+        let file_path = "app.py";
+        let full_path = dir.path().join(file_path);
+
+        // --- PHASE 1: Base Commit ---
+        let base_content = "def main():\n    pass";
+        fs::write(&full_path, base_content)?;
+
+        let sig = Signature::now("user", "user@test.com")?;
+        let mut index = git_repo.index()?;
+        index.add_path(std::path::Path::new(file_path))?;
+        index.write()?;
+        let base_oid = h5i_repo.commit("base", &sig, &sig, None, false, None)?;
+        let base_commit = git_repo.find_commit(base_oid)?;
+
+        // --- PHASE 2: Branch OURS ---
+        // Create a dedicated session for OURS
+        let mut session_ours = LocalSession::new(h5i_repo.h5i_root.clone(), full_path.clone())?;
+        session_ours.apply_local_edit(0, "# Header\n")?;
+
+        index.add_path(std::path::Path::new(file_path))?;
+        index.write()?;
+        let our_oid = h5i_repo.commit("ours", &sig, &sig, None, false, None)?;
+
+        // Save ONLY the updates created during this session (after base_content was loaded)
+        let ours_delta = yrs::merge_updates_v1(&session_ours.delta_store.read_all_updates()?)
+            .map_err(|e| crate::error::H5iError::Crdt(e.to_string()))?;
+        h5i_repo.persist_delta_for_commit(our_oid, file_path, &ours_delta)?;
+
+        // --- PHASE 3: Branch THEIRS ---
+        // CLEANUP: Important! Clear the shared active delta log before starting the next branch
+        fs::remove_dir_all(h5i_repo.h5i_root.join("delta"))?;
+        fs::create_dir_all(h5i_repo.h5i_root.join("delta"))?;
+
+        // Detach HEAD to simulate branching from base
+        git_repo.set_head_detached(base_oid)?;
+        fs::write(&full_path, base_content)?; // Restore physical file to base content
+
+        let mut session_theirs = LocalSession::new(h5i_repo.h5i_root.clone(), full_path.clone())?;
+        session_theirs.apply_local_edit(base_content.len() as u32, "\nprint('end')")?;
+
+        index.add_path(std::path::Path::new(file_path))?;
+        index.write()?;
+        let tree = git_repo.find_tree(index.write_tree()?)?;
+        let their_oid =
+            git_repo.commit(Some("HEAD"), &sig, &sig, "theirs", &tree, &[&base_commit])?;
+
+        let theirs_delta = yrs::merge_updates_v1(&session_theirs.delta_store.read_all_updates()?)
+            .map_err(|e| crate::error::H5iError::Crdt(e.to_string()))?;
+        h5i_repo.persist_delta_for_commit(their_oid, file_path, &theirs_delta)?;
+
+        // --- PHASE 4: Semantic Merge ---
+        let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
+
+        // Verification
+        assert!(
+            merged_text.contains("# Header"),
+            "Should contain OURS change. Got: {}",
+            merged_text
+        );
+        assert!(
+            merged_text.contains("print('end')"),
+            "Should contain THEIRS change. Got: {}",
+            merged_text
+        );
+        assert!(
+            merged_text.contains("def main():"),
+            "Should preserve BASE content"
+        );
         Ok(())
     }
 }

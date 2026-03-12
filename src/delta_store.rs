@@ -61,11 +61,11 @@ impl DeltaStore {
     }
 
     /// Returns the path to a committed delta log associated with a specific OID.
-    /// This follows the structure: .h5i/deltas/<oid>/<file_hash>.bin
+    /// This follows the structure: .h5i/delta/<oid>/<file_hash>.bin
     pub fn committed_path(repo_root: &Path, oid: &str, file_path: &str) -> PathBuf {
         let hash = sha256_hash(file_path);
         repo_root
-            .join(".h5i/deltas")
+            .join(".h5i/delta")
             .join(oid)
             .join(format!("{}.bin", hash))
     }
