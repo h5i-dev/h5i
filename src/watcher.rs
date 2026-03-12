@@ -161,18 +161,7 @@ mod watcher_tests {
             std::thread::sleep(Duration::from_millis(100));
 
             // 外部エディタによる書き込みをシミュレート
-            let f = fs::OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .open(&file_path)?;
-            let mut writer = std::io::BufWriter::new(f);
-            std::io::Write::write_all(&mut writer, b"updated content")?;
-            writer.flush()?;
-            // ディスクへのフラッシュを確実に
-            writer.into_inner().unwrap().sync_all()?;
-
             fs::write(&file_path, "updated content")?;
-            //writer.into_inner().unwrap().sync_all()?;
 
             // 検証: メインスレッドでロックを取得できるようになる！
             let success = wait_for_content(
