@@ -91,9 +91,9 @@ fn main() -> anyhow::Result<()> {
             println!("🚀 Initializing h5i session for: {:?}", file);
             let mut rng: fastrand::Rng = fastrand::Rng::new();
             let client_id: u64 = rng.u64(0..u64::MAX);
-            let session = LocalSession::new(repo.h5i_root.clone(), file, client_id)?;
+            let mut session = LocalSession::new(repo.h5i_root.clone(), file, client_id)?;
             println!("👀 Watching for changes... (Press Ctrl+C to stop)");
-            start_h5i_watcher(session)?;
+            // start_h5i_watcher(&mut session)?;
         }
 
         Commands::Commit {
