@@ -162,7 +162,7 @@ impl LocalSession {
 
         // 1. リトライロジック付きでディスクから読み込み
         let mut content = None;
-        for attempt in 0..3 {
+        for attempt in 0..4 {
             match fs::read_to_string(&path) {
                 Ok(s) => {
                     content = Some(s);

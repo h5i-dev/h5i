@@ -58,7 +58,7 @@ mod watcher_tests {
                     return true;
                 }
             }
-            std::thread::sleep(Duration::from_millis(1000));
+            std::thread::sleep(Duration::from_millis(100));
         }
         false
     }
@@ -142,7 +142,7 @@ mod watcher_tests {
 
     #[test]
     fn test_watcher_ingests_external_edits() -> crate::error::Result<()> {
-        for _ in 0..5 {
+        for _ in 0..10 {
             let dir = tempdir().unwrap();
             let repo_root = dir.path().to_path_buf();
             let file_path = repo_root.join("code.py");
