@@ -89,7 +89,9 @@ fn main() -> anyhow::Result<()> {
         Commands::Start { file } => {
             let repo = H5iRepository::open(".")?;
             println!("🚀 Initializing h5i session for: {:?}", file);
-            let session = LocalSession::new(repo.h5i_root.clone(), file)?;
+            let mut rng: fastrand::Rng = fastrand::Rng::new();
+            let client_id: u64 = rng.u64(0..u64::MAX);
+            let session = LocalSession::new(repo.h5i_root.clone(), file, client_id)?;
             println!("👀 Watching for changes... (Press Ctrl+C to stop)");
             start_h5i_watcher(session)?;
         }

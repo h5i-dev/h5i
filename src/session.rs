@@ -54,34 +54,7 @@ impl LocalSession {
     ///
     /// Returns an error if the target file does not exist or if
     /// synchronization from disk fails.
-    pub fn new(repo_root: PathBuf, target_path: PathBuf) -> Result<Self, crate::error::H5iError> {
-        // 1. The ACTUAL source code must exist to start a session
-        if !target_path.exists() {
-            return Err(H5iError::InvalidPath(format!(
-                "Source file not found: {:?}",
-                target_path
-            )));
-        }
-
-        let doc = Doc::new();
-        let text_ref = doc.get_or_insert_text("code");
-        let delta_store = DeltaStore::new(repo_root, target_path.to_str().unwrap());
-
-        let mut session = Self {
-            doc,
-            text_ref,
-            delta_store,
-            target_fs_path: target_path.clone(),
-            update_count: 0,
-            last_read_offset: 0,
-        };
-
-        // At startup, apply all existing operation logs to reconstruct the latest state
-        session.sync_from_disk(&target_path)?;
-        Ok(session)
-    }
-
-    pub fn new_with_id(
+    pub fn new(
         repo_root: PathBuf,
         target_path: PathBuf,
         client_id: u64,
@@ -94,10 +67,7 @@ impl LocalSession {
             )));
         }
 
-        let doc = yrs::Doc::with_options(yrs::Options {
-            client_id: client_id,
-            ..Default::default()
-        });
+        let doc = yrs::Doc::with_options(yrs::Options::with_client_id(client_id));
         let text_ref = doc.get_or_insert_text("code");
         let delta_store = DeltaStore::new(repo_root, target_path.to_str().unwrap());
 
@@ -279,7 +249,7 @@ mod tests {
         fs::write(&file_path, "print('hello')")?;
 
         // Fix: Pass the existing code path and the repo root
-        let mut session = LocalSession::new(repo_root.clone(), file_path.clone())?;
+        let mut session = LocalSession::new(repo_root.clone(), file_path.clone(), 0)?;
 
         // Edit and Flush
         session.apply_local_edit(14, "\nprint('world')")?;
@@ -304,7 +274,7 @@ mod tests {
         // Create the source file beforehand
         fs::write(&file_path, "fn main() {}")?;
 
-        let session = LocalSession::new(repo_root, file_path)?;
+        let session = LocalSession::new(repo_root, file_path, 0)?;
 
         // Simulate an external agent update
         let remote_doc = Doc::new();
@@ -345,7 +315,7 @@ mod tests {
         let non_existent = dir.path().join("ghost.txt");
         let delta = dir.path().join("delta.bin");
 
-        let result = LocalSession::new(non_existent, delta);
+        let result = LocalSession::new(non_existent, delta, 0);
 
         // Verify that our H5iError::Io or InvalidPath is returned
         assert!(result.is_err());
@@ -360,7 +330,7 @@ mod tests {
         // Initial setup: File must exist
         fs::write(&file_path, "initial content")?;
 
-        let mut session = LocalSession::new(repo_root.clone(), file_path.clone())?;
+        let mut session = LocalSession::new(repo_root.clone(), file_path.clone(), 0)?;
 
         // 1. Perform 9 edits (compaction threshold is 10)
         for i in 0..9 {
@@ -403,7 +373,7 @@ mod tests {
         // Initial setup
         fs::write(&file_path, "baseline")?;
 
-        let mut session = LocalSession::new(repo_root.clone(), file_path.clone())?;
+        let mut session = LocalSession::new(repo_root.clone(), file_path.clone(), 0)?;
 
         // 1. Perform 50 edits to trigger the snapshot threshold
         for _ in 0..50 {
@@ -427,7 +397,7 @@ mod tests {
 
         // 4. Restoration: Re-initialize a session to ensure it can hydrate from the snapshot
         // Note: This requires sync_from_disk to be updated to look for .snapshot files
-        let new_session = LocalSession::new(repo_root, file_path)?;
+        let new_session = LocalSession::new(repo_root, file_path, 0)?;
         let final_text = new_session.get_current_text();
         assert!(final_text.contains("baseline"));
         assert!(final_text.contains("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxbaseline"));
