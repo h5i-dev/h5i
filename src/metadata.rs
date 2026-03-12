@@ -97,7 +97,7 @@ impl H5iCommitRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{TimeZone, Utc};
+    use chrono::Utc;
     use git2::{Oid, Repository, Signature};
     use tempfile::tempdir;
 
