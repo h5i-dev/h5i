@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use git2::Oid;
 use h5i_core::blame::BlameMode;
-use h5i_core::metadata::AiMetadata;
+use h5i_core::metadata::{AiMetadata, IntegrityLevel};
 use h5i_core::repository::H5iRepository;
 use h5i_core::session::LocalSession;
 use h5i_core::watcher::start_h5i_watcher;
@@ -52,6 +52,12 @@ enum Commands {
         /// Enable AST-based structural tracking for the commit
         #[arg(long)]
         ast: bool,
+
+        #[arg(long)]
+        audit: bool,
+
+        #[arg(long)]
+        force: bool,
     },
 
     /// Display the enriched 5D commit history
@@ -80,6 +86,16 @@ enum Commands {
         /// Relative path to the file to resolve
         file: String,
     },
+    /*
+    Audit {
+        /// Target OID or branch to audit
+        #[arg(default_value = "HEAD")]
+        target: String,
+
+        /// Severity level to report (warning, violation)
+        #[arg(short, long, default_value = "warning")]
+        level: String,
+    },*/
 }
 
 fn main() -> anyhow::Result<()> {
@@ -109,9 +125,36 @@ fn main() -> anyhow::Result<()> {
             agent,
             tests,
             ast,
+            audit,
+            force,
         } => {
             let repo = H5iRepository::open(".")?;
             let sig = repo.git().signature()?; // Fetch system-default Git signature
+
+            if audit {
+                let report = repo.verify_integrity(prompt.as_deref(), &message)?;
+                match report.level {
+                    IntegrityLevel::Violation => {
+                        println!("❌ INTEGRITY VIOLATION (Score: {:.2})", report.score);
+                        for f in report.findings {
+                            println!("  - {}", f);
+                        }
+                        if !force {
+                            println!("\nCommit aborted. Use --force to override.");
+                            return Ok(());
+                        }
+                    }
+                    IntegrityLevel::Warning => {
+                        println!("⚠️ INTEGRITY WARNING (Score: {:.2})", report.score);
+                        for f in report.findings {
+                            println!("  - {}", f);
+                        }
+                    }
+                    IntegrityLevel::Valid => {
+                        println!("✅ Integrity check passed.");
+                    }
+                }
+            }
 
             let ai_meta = if prompt.is_some() || model.is_some() || agent.is_some() {
                 Some(AiMetadata {
