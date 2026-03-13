@@ -542,58 +542,6 @@ impl H5iRepository {
 // ============================================================
 
 impl H5iRepository {
-    /// Persists an [`H5iCommitRecord`] as JSON in the sidecar metadata directory.
-    ///
-    /// The metadata is stored under `.h5i/metadata/` using the Git commit
-    /// hash as the filename (`<oid>.json`). Each file contains the extended
-    /// metadata associated with a specific Git commit, including optional
-    /// AI provenance, test metrics, and AST hashes.
-    ///
-    /// The serialization uses a pretty-printed JSON format to improve
-    /// readability and debugging during development.
-    ///
-    /// # Parameters
-    ///
-    /// - `record` – The [`H5iCommitRecord`] to be persisted.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    ///
-    /// - the metadata directory cannot be created
-    /// - the record cannot be serialized to JSON
-    /// - the metadata file cannot be written to disk
-    ///
-    /// # Storage layout
-    ///
-    /// ```text
-    /// .h5i/
-    ///   metadata/
-    ///     <commit_oid>.json
-    /// ```
-    pub fn persist_h5i_record(&self, record: H5iCommitRecord) -> Result<(), H5iError> {
-        // 1. Determine the destination directory (.h5i/metadata)
-        let metadata_dir = self.h5i_root.join("metadata");
-
-        // 2. Create the directory if it does not exist
-        if !metadata_dir.exists() {
-            fs::create_dir_all(&metadata_dir).map_err(|e| H5iError::Io(e))?;
-        }
-
-        // 3. Construct the file path (<git_oid>.json)
-        let file_path = metadata_dir.join(format!("{}.json", record.git_oid));
-
-        // 4. Serialize the record to JSON
-        // Pretty-print format is used for better readability and debugging
-        let json_data = serde_json::to_string_pretty(&record)?;
-
-        // 5. Write the file to disk
-        // Errors are wrapped with H5iError::Io to preserve context
-        fs::write(&file_path, json_data).map_err(|e| H5iError::Io(e))?;
-
-        Ok(())
-    }
-
     /// Loads the `h5i` metadata record associated with a specific commit OID.
     ///
     /// This method reads the corresponding JSON file stored in the
