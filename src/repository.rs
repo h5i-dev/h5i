@@ -15,6 +15,7 @@ use crate::error::H5iError;
 use crate::metadata::{
     AiMetadata, H5iCommitRecord, IntegrityLevel, IntegrityReport, TestMetrics, TokenUsage,
 };
+use crate::LocalSession;
 
 pub struct H5iRepository {
     git_repo: Repository,
@@ -212,6 +213,7 @@ impl H5iRepository {
         }
     }
 
+    /*
     pub fn commit_with_stats(
         &self,
         prompt: &str,
@@ -250,7 +252,7 @@ impl H5iRepository {
         self.save_ai_metadata(commit_oid, &ai_meta)?;
 
         Ok(commit_oid)
-    }
+    }*/
 }
 
 // ============================================================
@@ -633,6 +635,7 @@ impl H5iRepository {
         Ok(record)
     }
 
+    /*
     /// Saves commit provenance metadata associated with a Git commit.
     ///
     /// This method stores a [`CommitProvenance`] structure as a JSON file
@@ -681,7 +684,7 @@ impl H5iRepository {
         file.write_all(json_data.as_bytes())?;
 
         Ok(())
-    }
+    }*/
 }
 
 // ============================================================
