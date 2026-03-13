@@ -1382,6 +1382,7 @@ mod tests {
     use git2::{Oid, Repository, Signature};
     use std::fs;
     use tempfile::tempdir;
+    use yrs::ReadTxn;
     use yrs::{Doc, Text, Transact, Update};
 
     fn setup_test_repo(root: &std::path::Path) -> H5iRepository {
@@ -1572,29 +1573,51 @@ mod tests {
         let h5i_repo = setup_test_repo(dir.path());
         let git_repo = &h5i_repo.git_repo;
         let file_path = "main.py";
+        let sig = git_repo.signature()?;
 
+        // Helper to attach metadata to a commit via Git Notes
+        let attach_metadata =
+            |oid: Oid, update: Vec<u8>| -> Result<(), Box<dyn std::error::Error>> {
+                let mut crdt_states = std::collections::HashMap::new();
+                crdt_states.insert(file_path.to_string(), base64::encode(update));
+
+                let record = H5iCommitRecord {
+                    git_oid: oid.to_string(),
+                    parent_oid: None, // Simplified for test
+                    ai_metadata: None,
+                    test_metrics: None,
+                    ast_hashes: None,
+                    crdt_states: Some(crdt_states),
+                    timestamp: chrono::Utc::now(),
+                };
+
+                let json = serde_json::to_string(&record)?;
+                git_repo.note(&sig, &sig, None, oid, &json, true)?;
+                Ok(())
+            };
+
+        // --- 1. BASE ---
         let base_content = "def main():\n    pass";
         let base_oid = create_commit(git_repo, "base", file_path, base_content, &[]);
 
         let base_update = {
-            let doc = Doc::new();
+            let doc = yrs::Doc::new();
             let text = doc.get_or_insert_text("code");
             let mut txn = doc.transact_mut();
             text.push(&mut txn, base_content);
-            txn.encode_update_v1()
+            txn.encode_state_as_update_v1(&yrs::StateVector::default())
         };
-        h5i_repo.persist_delta_for_commit(base_oid, file_path, &base_update)?;
+        attach_metadata(base_oid, base_update.clone())?;
 
         // --- 2. OURS ---
-        let (our_oid, our_update) = {
-            let doc = Doc::new();
+        let (our_oid, _our_update) = {
+            let doc = yrs::Doc::new();
             let text = doc.get_or_insert_text("code");
-
             let mut txn = doc.transact_mut();
-            txn.apply_update(Update::decode_v1(&base_update)?)?;
+            txn.apply_update(yrs::Update::decode_v1(&base_update)?)?;
 
             text.insert(&mut txn, 0, "# OURS COMMENT\n");
-            let update = txn.encode_update_v1();
+            let full_state = txn.encode_state_as_update_v1(&yrs::StateVector::default());
 
             let base_commit = git_repo.find_commit(base_oid)?;
             let oid = create_commit(
@@ -1604,20 +1627,20 @@ mod tests {
                 &text.get_string(&txn),
                 &[&base_commit],
             );
-            (oid, update)
+            (oid, full_state)
         };
-        h5i_repo.persist_delta_for_commit(our_oid, file_path, &our_update)?;
+        attach_metadata(our_oid, _our_update)?;
 
         // --- 3. THEIRS ---
         git_repo.set_head_detached(base_oid)?;
-        let (their_oid, their_update) = {
-            let doc = Doc::new();
+        let (their_oid, _their_update) = {
+            let doc = yrs::Doc::new();
             let text = doc.get_or_insert_text("code");
             let mut txn = doc.transact_mut();
-            txn.apply_update(Update::decode_v1(&base_update)?)?;
+            txn.apply_update(yrs::Update::decode_v1(&base_update)?)?;
 
             text.push(&mut txn, "\nprint('done')");
-            let update = txn.encode_update_v1();
+            let full_state = txn.encode_state_as_update_v1(&yrs::StateVector::default());
 
             let base_commit = git_repo.find_commit(base_oid)?;
             let oid = create_commit(
@@ -1627,11 +1650,12 @@ mod tests {
                 &text.get_string(&txn),
                 &[&base_commit],
             );
-            (oid, update)
+            (oid, full_state)
         };
-        h5i_repo.persist_delta_for_commit(their_oid, file_path, &their_update)?;
+        attach_metadata(their_oid, _their_update)?;
 
         // --- 4. Merge ---
+        // The merge logic now pulls context from the Notes we attached above
         let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
 
         // --- 5. Verify ---
