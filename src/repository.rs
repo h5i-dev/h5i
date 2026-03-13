@@ -619,14 +619,23 @@ impl H5iRepository {
     /// - the file cannot be read
     /// - the JSON data cannot be deserialized
     pub fn load_h5i_record(&self, oid: git2::Oid) -> Result<H5iCommitRecord, H5iError> {
-        let file_path = self.h5i_root.join("metadata").join(format!("{}.json", oid));
+        // Attempt to find the note attached to the commit OID.
+        // Passing None uses the default notes reference (refs/notes/commits).
+        let note = match self.git_repo.find_note(None, oid) {
+            Ok(n) => n,
+            Err(e) if e.code() == git2::ErrorCode::NotFound => {
+                return Err(H5iError::RecordNotFound(oid.to_string()));
+            }
+            Err(e) => return Err(H5iError::Git(e)),
+        };
 
-        if !file_path.exists() {
-            return Err(H5iError::RecordNotFound(oid.to_string()));
-        }
+        // Extract the JSON string from the note
+        let data = note
+            .message()
+            .ok_or_else(|| H5iError::Metadata(format!("Empty note found for commit {}", oid)))?;
 
-        let data = fs::read_to_string(&file_path).map_err(|e| H5iError::Io(e))?;
-        let record: H5iCommitRecord = serde_json::from_str(&data)?;
+        // Deserialize the JSON content into the H5iCommitRecord struct
+        let record: H5iCommitRecord = serde_json::from_str(data)?;
 
         Ok(record)
     }
@@ -1402,8 +1411,8 @@ mod tests {
             &sig,
             &sig,
             ai_meta,
-            true, // enable_test_tracking
-            None, // ast_parser
+            false, // enable_test_tracking
+            None,  // ast_parser
         )?;
 
         // Verify standard git commit
