@@ -1,14 +1,15 @@
 use clap::{Parser, Subcommand};
 use console::style;
 use git2::Oid;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
 use h5i_core::blame::BlameMode;
 use h5i_core::metadata::{AiMetadata, IntegrityLevel};
 use h5i_core::repository::H5iRepository;
 use h5i_core::session::LocalSession;
 use h5i_core::ui::{ERROR, LOOKING, STEP, SUCCESS, WARN};
 use h5i_core::watcher::start_h5i_watcher;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 
 #[derive(Parser)]
 #[command(name = "h5i", about = "Advanced Git for the AI Era", version)]
