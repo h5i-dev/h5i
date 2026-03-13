@@ -1,9 +1,11 @@
+use console::style;
 use notify::{Config, EventKind, RecursiveMode, Watcher};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
 use crate::error::Result;
 use crate::session::LocalSession;
+use crate::ui::{ERROR, SUCCESS};
 
 pub fn start_h5i_watcher(session: Arc<Mutex<LocalSession>>) -> Result<()> {
     let (tx, rx) = channel();
@@ -22,16 +24,31 @@ pub fn start_h5i_watcher(session: Arc<Mutex<LocalSession>>) -> Result<()> {
     for res in rx {
         match res {
             Ok(event) => {
-                eprintln!("event: {:?}", event);
                 if let EventKind::Modify(_) = event.kind {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     let mut sess = session.lock().unwrap();
                     if let Err(e) = sess.ingest_diff_from_disk() {
-                        eprintln!("Sync error: {:?}", e);
+                        eprintln!(
+                            "{} {} {}",
+                            ERROR,
+                            style("Watcher Sync Error:").red().bold(),
+                            style(format!("({:?})", e)).dim()
+                        );
+                    } else {
+                        eprintln!(
+                            "{} {}",
+                            SUCCESS,
+                            style("File synced to CRDT").dim().italic()
+                        );
                     }
                 }
             }
-            Err(e) => println!("watch error: {:?}", e),
+            Err(e) => eprintln!(
+                "{} {} {}",
+                ERROR,
+                style("FileSystem Watch Error:").red().bold(),
+                style(e).dim()
+            ),
         }
     }
     Ok(())
