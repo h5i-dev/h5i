@@ -1,9 +1,11 @@
 use clap::{Parser, Subcommand};
+use console::style;
 use git2::Oid;
 use h5i_core::blame::BlameMode;
 use h5i_core::metadata::{AiMetadata, IntegrityLevel};
 use h5i_core::repository::H5iRepository;
 use h5i_core::session::LocalSession;
+use h5i_core::ui::{ERROR, LOOKING, STEP, SUCCESS, WARN};
 use h5i_core::watcher::start_h5i_watcher;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -86,16 +88,6 @@ enum Commands {
         /// Relative path to the file to resolve
         file: String,
     },
-    /*
-    Audit {
-        /// Target OID or branch to audit
-        #[arg(default_value = "HEAD")]
-        target: String,
-
-        /// Severity level to report (warning, violation)
-        #[arg(short, long, default_value = "warning")]
-        level: String,
-    },*/
 }
 
 fn main() -> anyhow::Result<()> {
@@ -104,17 +96,34 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Init => {
             let repo = H5iRepository::open(".")?;
-            println!("✅ h5i sidecar initialized at {:?}", repo.h5i_path());
+            println!(
+                "{} {} at {}",
+                SUCCESS,
+                style("h5i sidecar initialized").green().bold(),
+                style(repo.h5i_path().display()).dim()
+            );
         }
 
         Commands::Start { file } => {
             let repo = H5iRepository::open(".")?;
-            println!("🚀 Initializing h5i session for: {:?}", file);
+            println!(
+                "{} {} for: {}",
+                STEP,
+                style("Initializing session").cyan().bold(),
+                style(file.display()).yellow()
+            );
+
             let mut rng: fastrand::Rng = fastrand::Rng::new();
             let client_id: u64 = rng.u64(0..u64::MAX);
             let session = LocalSession::new(repo.h5i_root.clone(), file, client_id)?;
             let session_arc = Arc::new(Mutex::new(session));
-            println!("👀 Watching for changes... (Press Ctrl+C to stop)");
+
+            println!(
+                "{} {} (Press Ctrl+C to stop)",
+                LOOKING,
+                style("Watching for changes...").magenta().italic()
+            );
+
             start_h5i_watcher(session_arc)?;
         }
 
@@ -135,23 +144,37 @@ fn main() -> anyhow::Result<()> {
                 let report = repo.verify_integrity(prompt.as_deref(), &message)?;
                 match report.level {
                     IntegrityLevel::Violation => {
-                        println!("❌ INTEGRITY VIOLATION (Score: {:.2})", report.score);
+                        println!(
+                            "{} {} {}",
+                            ERROR,
+                            style("INTEGRITY VIOLATION").red().bold(),
+                            style(format!("(Score: {:.2})", report.score)).dim()
+                        );
                         for f in report.findings {
-                            println!("  - {}", f);
+                            println!("  {} {}", style("-").red(), f);
                         }
                         if !force {
-                            println!("\nCommit aborted. Use --force to override.");
+                            println!(
+                                "\n{} Commit aborted. Use {} to override.",
+                                style("!").red(),
+                                style("--force").bold()
+                            );
                             return Ok(());
                         }
                     }
                     IntegrityLevel::Warning => {
-                        println!("⚠️ INTEGRITY WARNING (Score: {:.2})", report.score);
+                        println!(
+                            "{} {} {}",
+                            WARN,
+                            style("INTEGRITY WARNING").yellow().bold(),
+                            style(format!("(Score: {:.2})", report.score)).dim()
+                        );
                         for f in report.findings {
-                            println!("  - {}", f);
+                            println!("  {} {}", style("-").yellow(), f);
                         }
                     }
                     IntegrityLevel::Valid => {
-                        println!("✅ Integrity check passed.");
+                        println!("{} {}", SUCCESS, style("Integrity check passed.").green());
                     }
                 }
             }
@@ -178,7 +201,12 @@ fn main() -> anyhow::Result<()> {
             };
 
             let oid = repo.commit(&message, &sig, &sig, ai_meta, tests, ast_parser)?;
-            println!("📦 5D Commit Created: {}", oid);
+            println!(
+                "{} {} {}",
+                SUCCESS,
+                style("h5i Commit Created:").green(),
+                style(oid).magenta().bold()
+            );
         }
 
         Commands::Log { limit } => {
@@ -196,10 +224,14 @@ fn main() -> anyhow::Result<()> {
 
             let results = repo.blame(&file, blame_mode)?;
             println!(
-                "{:<4} {:<8} {:<15} | {}",
-                "STAT", "COMMIT", "AUTHOR/AGENT", "CONTENT"
+                "{}",
+                style(format!(
+                    "{:<4} {:<8} {:<15} | {}",
+                    "STAT", "COMMIT", "AUTHOR/AGENT", "CONTENT"
+                ))
+                .bold()
+                .underlined()
             );
-            println!("{:-<60}", "");
 
             for r in results {
                 let test_indicator = match r.test_passed {
@@ -210,11 +242,11 @@ fn main() -> anyhow::Result<()> {
                 let semantic_indicator = if r.is_semantic_change { "✨" } else { "  " };
 
                 println!(
-                    "{} {} {:<8} {:<15} | {}",
+                    "{} {} {} {:<15} | {}",
                     test_indicator,
                     semantic_indicator,
-                    &r.commit_id[..8],
-                    r.agent_info,
+                    style(&r.commit_id[..8]).dim(),
+                    style(r.agent_info).blue(),
                     r.line_content
                 );
             }
@@ -225,13 +257,19 @@ fn main() -> anyhow::Result<()> {
             let our_oid = Oid::from_str(&ours)?;
             let their_oid = Oid::from_str(&theirs)?;
 
-            println!("🧬 Performing CRDT semantic merge for {}...", file);
+            println!(
+                "{} {} for {}...",
+                STEP,
+                style("Performing CRDT automatic merge").cyan().bold(),
+                style(&file).yellow()
+            );
             let merged_text = repo.merge_h5i_logic(our_oid, their_oid, &file)?;
 
-            println!("\n--- Merge Result ---\n{}", merged_text);
+            println!("\n{}\n{}", style("--- Merge Result ---").dim(), merged_text);
             println!(
-                "\n💡 Tip: Use `git add {}` to stage the resolved content.",
-                file
+                "\n{} Tip: Use {} to stage the resolved content.",
+                style("💡").yellow(),
+                style(format!("git add {}", file)).bold()
             );
         }
     }

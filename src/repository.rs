@@ -1601,10 +1601,9 @@ mod tests {
 mod integration_tests {
     use crate::delta_store::DeltaStore;
     use crate::repository::H5iRepository;
-    use crate::session;
     use crate::session::LocalSession;
     use git2::{Repository, Signature};
-    use std::{fs, path::Path};
+    use std::fs;
     use tempfile::tempdir;
     use yrs::updates::decoder::Decode;
     use yrs::ReadTxn;

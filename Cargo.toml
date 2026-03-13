@@ -21,6 +21,7 @@ notify = "8.2.0"
 clap = { version = "4.5.60", features = ["derive"] }
 fastrand = "2.3.0"
 tiktoken-rs = "0.9.1"
+console = "0.16.2"
 
 [dev-dependencies]
 tempfile = "3.8"

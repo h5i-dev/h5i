@@ -5,6 +5,7 @@ pub mod error;
 pub mod metadata;
 pub mod repository;
 pub mod session;
+pub mod ui;
 pub mod watcher;
 
 pub use repository::H5iRepository;
