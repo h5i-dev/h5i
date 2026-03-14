@@ -125,6 +125,13 @@ enum Commands {
 
     /// Print the Claude Code hook configuration to enable automatic prompt capture
     InstallHooks,
+
+    /// Launch the h5i web dashboard in your browser
+    Serve {
+        /// Port to listen on
+        #[arg(short, long, default_value_t = 7150)]
+        port: u16,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -529,6 +536,30 @@ jq -c '{
                 style("H5I_PROMPT").yellow() ,
                 "/ H5I_MODEL / H5I_AGENT_ID are read automatically at commit time."
             );
+        }
+
+        Commands::Serve { port } => {
+            let repo = H5iRepository::open(".")?;
+            let repo_path = repo
+                .git()
+                .workdir()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .to_path_buf();
+
+            println!(
+                "{} {} on port {}",
+                SUCCESS,
+                style("Starting h5i dashboard").green().bold(),
+                style(port).cyan()
+            );
+            println!(
+                "  Open {} in your browser",
+                style(format!("http://localhost:{}", port)).underlined().blue()
+            );
+            println!("  Press Ctrl+C to stop\n");
+
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(h5i_core::server::serve(repo_path, port))?;
         }
 
         Commands::Resolve { ours, theirs, file } => {
