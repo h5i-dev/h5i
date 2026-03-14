@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use h5i_core::blame::BlameMode;
+use h5i_core::claude::{keyword_search, AnthropicClient};
 use h5i_core::metadata::{AiMetadata, IntegrityLevel};
 use h5i_core::repository::H5iRepository;
 use h5i_core::session::LocalSession;
@@ -88,6 +89,24 @@ enum Commands {
         theirs: String,
         /// Relative path to the file to resolve
         file: String,
+    },
+
+    /// Revert the AI-generated commit whose intent best matches a description
+    Rollback {
+        /// Natural-language description of the change to undo (e.g. "OAuth login")
+        intent: String,
+
+        /// Number of recent commits to search
+        #[arg(short, long, default_value_t = 50)]
+        limit: usize,
+
+        /// Show the matched commit without actually reverting
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip the confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
     },
 
     /// Print the Claude Code hook configuration to enable automatic prompt capture
@@ -267,6 +286,130 @@ fn main() -> anyhow::Result<()> {
                     r.line_content
                 );
             }
+        }
+
+        Commands::Rollback {
+            intent,
+            limit,
+            dry_run,
+            yes,
+        } => {
+            let repo = H5iRepository::open(".")?;
+
+            println!(
+                "{} {} \"{}\" {} {} commits",
+                LOOKING,
+                style("Searching for intent:").cyan().bold(),
+                style(&intent).yellow(),
+                style("across last").dim(),
+                style(limit).dim(),
+            );
+
+            let commits = repo.list_ai_commits(limit)?;
+            if commits.is_empty() {
+                println!("{} No commits found in this repository.", WARN);
+                return Ok(());
+            }
+
+            // Semantic search via Claude, or fall back to keyword matching.
+            let matched_oid: Option<String> = if let Some(claude) = AnthropicClient::from_env() {
+                println!(
+                    "{} {} {}",
+                    STEP,
+                    style("Using Claude for semantic search").dim(),
+                    style(format!("({})", claude.model())).dim(),
+                );
+                claude.find_matching_commit(&commits, &intent)?
+            } else {
+                println!(
+                    "{} {} {}",
+                    WARN,
+                    style("ANTHROPIC_API_KEY not set — using keyword fallback.").yellow(),
+                    style("Set it for semantic search.").dim(),
+                );
+                keyword_search(&commits, &intent).map(|c| c.oid.clone())
+            };
+
+            let oid_str = match matched_oid {
+                Some(o) => o,
+                None => {
+                    println!(
+                        "{} No commit found matching: \"{}\"",
+                        WARN,
+                        style(&intent).yellow()
+                    );
+                    return Ok(());
+                }
+            };
+
+            let oid = Oid::from_str(&oid_str)?;
+            let commit = repo.git().find_commit(oid)?;
+            let record = repo.load_h5i_record(oid).ok();
+
+            println!("\n{}", style("Matched commit:").bold().underlined());
+            println!(
+                "  {} {}",
+                style("commit").yellow(),
+                style(&oid_str).magenta().bold()
+            );
+            println!(
+                "  {:<10} {}",
+                style("Message:").dim(),
+                commit.message().unwrap_or("").trim()
+            );
+            if let Some(ref r) = record {
+                if let Some(ref ai) = r.ai_metadata {
+                    if !ai.agent_id.is_empty() {
+                        println!(
+                            "  {:<10} {} {}",
+                            style("Agent:").dim(),
+                            style(&ai.agent_id).cyan(),
+                            style(format!("({})", ai.model_name)).dim(),
+                        );
+                    }
+                    if !ai.prompt.is_empty() {
+                        println!(
+                            "  {:<10} \"{}\"",
+                            style("Prompt:").dim(),
+                            style(&ai.prompt).italic()
+                        );
+                    }
+                }
+                println!(
+                    "  {:<10} {}",
+                    style("Date:").dim(),
+                    r.timestamp.format("%Y-%m-%d %H:%M UTC")
+                );
+            }
+
+            if dry_run {
+                println!(
+                    "\n{} {}",
+                    style("--dry-run").bold(),
+                    style("No changes made.").dim()
+                );
+                return Ok(());
+            }
+
+            if !yes {
+                print!("\n{} [y/N] ", style("Revert this commit?").bold());
+                use std::io::Write as _;
+                std::io::stdout().flush()?;
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    println!("{} Aborted.", style("!").dim());
+                    return Ok(());
+                }
+            }
+
+            let new_oid = repo.revert_commit(oid)?;
+            println!(
+                "{} {} {}",
+                SUCCESS,
+                style("Revert commit created:").green(),
+                style(new_oid).magenta().bold()
+            );
         }
 
         Commands::InstallHooks => {

@@ -13,9 +13,11 @@ use yrs::{GetString, Text, Transact};
 use crate::blame::{BlameMode, BlameResult};
 use crate::delta_store::{sha256_hash, DeltaStore};
 use crate::error::H5iError;
+use chrono::{TimeZone, Utc};
+
 use crate::metadata::{
-    AiMetadata, H5iCommitRecord, IntegrityLevel, IntegrityReport, PendingContext, TestMetrics,
-    TokenUsage,
+    AiMetadata, CommitSummary, H5iCommitRecord, IntegrityLevel, IntegrityReport, PendingContext,
+    TestMetrics, TokenUsage,
 };
 use crate::LocalSession;
 
@@ -1032,6 +1034,74 @@ impl H5iRepository {
             fs::remove_file(&path)?;
         }
         Ok(())
+    }
+
+    /// Returns a list of commits enriched with h5i AI metadata, suitable for
+    /// intent-based search. Commits without h5i records are included but will
+    /// have `None` for prompt/model/agent_id.
+    pub fn list_ai_commits(&self, limit: usize) -> Result<Vec<CommitSummary>, H5iError> {
+        let mut revwalk = self.git_repo.revwalk()?;
+        revwalk.push_head()?;
+
+        let mut results = Vec::new();
+        for oid in revwalk.take(limit) {
+            let oid = oid?;
+            let commit = self.git_repo.find_commit(oid)?;
+            let message = commit.message().unwrap_or("").to_string();
+
+            let record = self.load_h5i_record(oid).ok();
+
+            let (prompt, model, agent_id) = match record.as_ref().and_then(|r| r.ai_metadata.as_ref()) {
+                Some(ai) => (
+                    Some(ai.prompt.clone()).filter(|p| !p.is_empty()),
+                    Some(ai.model_name.clone()).filter(|m| !m.is_empty()),
+                    Some(ai.agent_id.clone()).filter(|a| !a.is_empty()),
+                ),
+                None => (None, None, None),
+            };
+
+            let timestamp = record
+                .map(|r| r.timestamp)
+                .unwrap_or_else(|| {
+                    Utc.timestamp_opt(commit.time().seconds(), 0)
+                        .single()
+                        .unwrap_or_else(Utc::now)
+                });
+
+            results.push(CommitSummary {
+                oid: oid.to_string(),
+                message,
+                prompt,
+                model,
+                agent_id,
+                timestamp,
+            });
+        }
+        Ok(results)
+    }
+
+    /// Creates a revert commit for the given OID using `git revert --no-edit`.
+    /// Returns the OID of the newly created revert commit.
+    pub fn revert_commit(&self, oid: Oid) -> Result<Oid, H5iError> {
+        let workdir = self
+            .git_repo
+            .workdir()
+            .ok_or_else(|| H5iError::InvalidPath("Cannot revert in a bare repository".into()))?;
+
+        let output = std::process::Command::new("git")
+            .args(["revert", "--no-edit", &oid.to_string()])
+            .current_dir(workdir)
+            .output()
+            .map_err(H5iError::Io)?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(H5iError::Git(git2::Error::from_str(&format!(
+                "git revert failed: {stderr}"
+            ))));
+        }
+
+        Ok(self.git_repo.head()?.peel_to_commit()?.id())
     }
 
     /// Resolves the current `HEAD` reference and returns the associated commit.

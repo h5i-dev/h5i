@@ -124,6 +124,17 @@ impl H5iCommitRecord {
     }
 }
 
+/// A compact view of a commit used for intent-based search and rollback.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitSummary {
+    pub oid: String,
+    pub message: String,
+    pub prompt: Option<String>,
+    pub model: Option<String>,
+    pub agent_id: Option<String>,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
 /// Context written by an AI agent hook before making changes.
 /// Stored in `.git/.h5i/pending_context.json` and consumed at commit time.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
