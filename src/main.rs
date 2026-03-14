@@ -89,6 +89,9 @@ enum Commands {
         /// Relative path to the file to resolve
         file: String,
     },
+
+    /// Print the Claude Code hook configuration to enable automatic prompt capture
+    InstallHooks,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -140,6 +143,18 @@ fn main() -> anyhow::Result<()> {
         } => {
             let repo = H5iRepository::open(".")?;
             let sig = repo.git().signature()?; // Fetch system-default Git signature
+
+            // Resolution order: CLI flag > environment variable > pending_context.json
+            let pending = repo.read_pending_context()?;
+            let prompt = prompt
+                .or_else(|| std::env::var("H5I_PROMPT").ok())
+                .or_else(|| pending.as_ref().and_then(|c| c.prompt.clone()));
+            let model = model
+                .or_else(|| std::env::var("H5I_MODEL").ok())
+                .or_else(|| pending.as_ref().and_then(|c| c.model.clone()));
+            let agent = agent
+                .or_else(|| std::env::var("H5I_AGENT_ID").ok())
+                .or_else(|| pending.as_ref().and_then(|c| c.agent_id.clone()));
 
             if audit {
                 let report = repo.verify_integrity(prompt.as_deref(), &message)?;
@@ -202,6 +217,7 @@ fn main() -> anyhow::Result<()> {
             };
 
             let oid = repo.commit(&message, &sig, &sig, ai_meta, tests, ast_parser)?;
+            repo.clear_pending_context()?;
             println!(
                 "{} {} {}",
                 SUCCESS,
@@ -251,6 +267,76 @@ fn main() -> anyhow::Result<()> {
                     r.line_content
                 );
             }
+        }
+
+        Commands::InstallHooks => {
+            let hook_script = r#"#!/usr/bin/env bash
+# h5i Claude Code hook — writes the user prompt to .git/.h5i/pending_context.json
+# so that `h5i commit` can pick it up automatically without --prompt.
+set -euo pipefail
+GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+H5I_DIR="$GIT_ROOT/.git/.h5i"
+[ -d "$H5I_DIR" ] || exit 0
+jq -c '{
+  prompt: .prompt,
+  model: (env.H5I_MODEL // "claude-sonnet-4-6"),
+  agent_id: (env.H5I_AGENT_ID // "claude-code"),
+  session_id: .session_id
+}' > "$H5I_DIR/pending_context.json"
+"#;
+
+            println!("{}", style("── Step 1: Save hook script ──").bold());
+            println!(
+                "Save the following script to {} and make it executable:\n",
+                style("~/.claude/hooks/h5i-capture-prompt.sh").yellow()
+            );
+            println!("{}", style(hook_script).dim());
+
+            println!("{}", style("── Step 2: Add to ~/.claude/settings.json ──").bold());
+            println!(
+                "Add (or merge) the {} block into your {}:\n",
+                style("hooks").yellow(),
+                style("~/.claude/settings.json").yellow()
+            );
+            println!(
+                "{}",
+                style(
+                    r#"{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/h5i-capture-prompt.sh"
+          }
+        ]
+      }
+    ]
+  }
+}"#
+                )
+                .dim()
+            );
+
+            println!(
+                "\n{} {} {} {}",
+                style("Tip:").bold(),
+                "Set",
+                style("H5I_MODEL").yellow(),
+                "and",
+            );
+            println!(
+                "    {} in your shell profile to override the defaults captured by the hook.",
+                style("H5I_AGENT_ID").yellow()
+            );
+            println!(
+                "\n{} {} {} {}",
+                style("Env vars").bold(),
+                "also work without hooks —",
+                style("H5I_PROMPT").yellow() ,
+                "/ H5I_MODEL / H5I_AGENT_ID are read automatically at commit time."
+            );
         }
 
         Commands::Resolve { ours, theirs, file } => {

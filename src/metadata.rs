@@ -124,6 +124,16 @@ impl H5iCommitRecord {
     }
 }
 
+/// Context written by an AI agent hook before making changes.
+/// Stored in `.git/.h5i/pending_context.json` and consumed at commit time.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct PendingContext {
+    pub prompt: Option<String>,
+    pub model: Option<String>,
+    pub agent_id: Option<String>,
+    pub session_id: Option<String>,
+}
+
 pub fn count_tokens(text: &str, model: &str) -> Result<usize, String> {
     let bpe = get_bpe_from_model(model)
         .map_err(|e| format!("Failed to get tokenizer for {}: {}", model, e))?;

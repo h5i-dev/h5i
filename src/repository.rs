@@ -14,7 +14,8 @@ use crate::blame::{BlameMode, BlameResult};
 use crate::delta_store::{sha256_hash, DeltaStore};
 use crate::error::H5iError;
 use crate::metadata::{
-    AiMetadata, H5iCommitRecord, IntegrityLevel, IntegrityReport, TestMetrics, TokenUsage,
+    AiMetadata, H5iCommitRecord, IntegrityLevel, IntegrityReport, PendingContext, TestMetrics,
+    TokenUsage,
 };
 use crate::LocalSession;
 
@@ -1008,6 +1009,29 @@ impl H5iRepository {
     /// - commit metadata
     pub fn h5i_path(&self) -> &Path {
         &self.h5i_root
+    }
+
+    /// Reads the pending AI context written by a Claude Code hook.
+    ///
+    /// Returns `None` if no pending context file exists.
+    pub fn read_pending_context(&self) -> Result<Option<PendingContext>, H5iError> {
+        let path = self.h5i_root.join("pending_context.json");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw = fs::read_to_string(&path)?;
+        let ctx: PendingContext = serde_json::from_str(&raw)
+            .map_err(|e| H5iError::Metadata(format!("Failed to parse pending_context.json: {e}")))?;
+        Ok(Some(ctx))
+    }
+
+    /// Deletes the pending context file after it has been consumed by a commit.
+    pub fn clear_pending_context(&self) -> Result<(), H5iError> {
+        let path = self.h5i_root.join("pending_context.json");
+        if path.exists() {
+            fs::remove_file(&path)?;
+        }
+        Ok(())
     }
 
     /// Resolves the current `HEAD` reference and returns the associated commit.
