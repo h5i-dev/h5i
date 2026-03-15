@@ -1,0 +1,3 @@
+[submodule "examples/dnn-from-scratch"]
+	path = examples/dnn-from-scratch
+	url = file:///home/koukyosyumei/Dev/dnn-from-scratch
