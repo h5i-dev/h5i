@@ -45,6 +45,8 @@ File-level Yjs documents allow multiple AI agents to edit concurrently with stro
 **Semantic Blame**
 Line-level and AST-level blame that surfaces the original AI prompt and test status alongside authorship — not just a commit hash.
 
+<img src="./assets/screenshot_h5i_server.png" alt="h5i server">
+
 ---
 
 ## 3. Installation
