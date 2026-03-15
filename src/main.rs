@@ -573,6 +573,13 @@ jq -c '{
 }' > "$H5I_DIR/pending_context.json"
 "#;
 
+            println!("{}", style("── Step 0: Installl `jq` ──").bold());
+            println!(
+                "If you don't have {} installed, run the following command:\n\n{}\n",
+                style("jq").yellow(),
+                style("apt install jq").dim()
+            );;            
+
             println!("{}", style("── Step 1: Save hook script ──").bold());
             println!(
                 "Save the following script to {} and make it executable:\n",
