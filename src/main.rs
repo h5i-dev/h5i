@@ -8,6 +8,7 @@ use h5i_core::blame::BlameMode;
 use h5i_core::claude::{keyword_search, AnthropicClient};
 use h5i_core::metadata::{AiMetadata, IntegrityLevel, Severity, TestSource};
 use h5i_core::repository::H5iRepository;
+use h5i_core::review::REVIEW_THRESHOLD;
 use h5i_core::session::LocalSession;
 use h5i_core::ui::{ERROR, LOOKING, STEP, SUCCESS, WARN};
 use h5i_core::watcher::start_h5i_watcher;
@@ -151,6 +152,21 @@ enum Commands {
         /// to generate a concise intent sentence for every commit
         #[arg(long, default_value = "prompt")]
         mode: String,
+    },
+
+    /// Identify commits that are most likely to benefit from human review
+    ReviewPoints {
+        /// Number of recent commits to scan
+        #[arg(short, long, default_value_t = 100)]
+        limit: usize,
+
+        /// Minimum score threshold (0.0–1.0) for a commit to be flagged
+        #[arg(long, default_value_t = REVIEW_THRESHOLD)]
+        min_score: f32,
+
+        /// Output raw JSON instead of the styled table
+        #[arg(long)]
+        json: bool,
     },
 
     /// Print the Claude Code hook configuration to enable automatic prompt capture
@@ -592,6 +608,81 @@ fn main() -> anyhow::Result<()> {
             }
 
             repo.print_intent_graph(limit, analyze)?;
+        }
+
+        Commands::ReviewPoints {
+            limit,
+            min_score,
+            json,
+        } => {
+            let repo = H5iRepository::open(".")?;
+            let points = repo.suggest_review_points(limit, min_score)?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&points)?);
+            } else {
+                if points.is_empty() {
+                    println!(
+                        "{} No commits exceeded the review threshold (min_score={:.2}) in the last {} commits.",
+                        SUCCESS,
+                        min_score,
+                        limit
+                    );
+                } else {
+                    println!(
+                        "{} — {} commit{} flagged (scanned {}, min_score={:.2})",
+                        style("Suggested Review Points").bold().underlined(),
+                        style(points.len()).yellow().bold(),
+                        if points.len() == 1 { "" } else { "s" },
+                        limit,
+                        min_score
+                    );
+                    println!("{}", style("─".repeat(62)).dim());
+
+                    for (i, rp) in points.iter().enumerate() {
+                        // Score bar (10 chars)
+                        let filled = (rp.score * 10.0).round() as usize;
+                        let bar: String = "█".repeat(filled) + &"░".repeat(10 - filled);
+                        let score_color = if rp.score >= 0.7 {
+                            style(format!("{:.2}", rp.score)).red().bold()
+                        } else if rp.score >= 0.45 {
+                            style(format!("{:.2}", rp.score)).yellow().bold()
+                        } else {
+                            style(format!("{:.2}", rp.score)).cyan().bold()
+                        };
+
+                        println!(
+                            "\n  {} {}  score {}  {}",
+                            style(format!("#{}", i + 1)).dim(),
+                            style(&rp.short_oid).magenta().bold(),
+                            score_color,
+                            style(&bar).dim()
+                        );
+                        println!(
+                            "     {} · {}",
+                            style(&rp.author).blue(),
+                            style(rp.timestamp.format("%Y-%m-%d %H:%M UTC")).dim()
+                        );
+                        println!("     {}", style(&rp.message).bold());
+
+                        for trigger in &rp.triggers {
+                            let bullet = match trigger.rule_id.as_str() {
+                                "TEST_REGRESSION" => style("⬦").red(),
+                                "INTEGRITY_VIOLATION" => style("⬦").red(),
+                                "LARGE_DIFF" | "WIDE_IMPACT" => style("⬦").yellow(),
+                                _ => style("⬦").cyan(),
+                            };
+                            println!(
+                                "       {} {:<18}  {}",
+                                bullet,
+                                style(&trigger.rule_id).bold(),
+                                style(&trigger.detail).dim()
+                            );
+                        }
+                    }
+                    println!("\n{}", style("─".repeat(62)).dim());
+                }
+            }
         }
 
         Commands::InstallHooks => {

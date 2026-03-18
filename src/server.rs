@@ -12,6 +12,7 @@ use tokio::net::TcpListener;
 
 use crate::metadata::{IntegrityReport, IntentGraph};
 use crate::repository::H5iRepository;
+use crate::review::{ReviewPoint, REVIEW_THRESHOLD};
 
 // ── Shared state ─────────────────────────────────────────────────────────────
 
@@ -75,6 +76,12 @@ pub struct CommitIntegrityQuery {
 pub struct IntentGraphQuery {
     pub limit: Option<usize>,
     pub mode: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ReviewQuery {
+    pub limit: Option<usize>,
+    pub min_score: Option<f32>,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -326,6 +333,27 @@ async fn api_intent_graph(
     )
 }
 
+async fn api_review_points(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ReviewQuery>,
+) -> Json<Vec<ReviewPoint>> {
+    let path = state.repo_path.clone();
+    let limit = params.limit.unwrap_or(100);
+    let min_score = params.min_score.unwrap_or(REVIEW_THRESHOLD);
+
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<ReviewPoint>> {
+        let repo = H5iRepository::open(&path)?;
+        Ok(repo.suggest_review_points(limit, min_score)?)
+    })
+    .await;
+
+    Json(
+        result
+            .unwrap_or_else(|_| Ok(vec![]))
+            .unwrap_or_default(),
+    )
+}
+
 // ── Server entry point ────────────────────────────────────────────────────────
 
 pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
@@ -338,6 +366,7 @@ pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
         .route("/api/integrity", get(api_integrity))
         .route("/api/integrity/commit", get(api_integrity_commit))
         .route("/api/intent-graph", get(api_intent_graph))
+        .route("/api/review-points", get(api_review_points))
         .with_state(state);
 
     let addr = format!("127.0.0.1:{}", port);
@@ -552,6 +581,37 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 .ig-legend-item{display:flex;align-items:center;gap:5px}
 .ig-legend-line{width:24px;height:2px;display:inline-block}
 
+/* Review Points tab */
+.rp-list{display:flex;flex-direction:column;gap:10px}
+.rp-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:13px 15px;animation:fadeIn .3s ease both}
+.rp-card.high{border-left:3px solid #f85149}
+.rp-card.medium{border-left:3px solid #d29922}
+.rp-card.low{border-left:3px solid #58a6ff}
+.rp-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap}
+.rp-rank{font-size:11px;color:#484f58;font-weight:600;min-width:22px}
+.rp-score-pill{padding:2px 9px;border-radius:10px;font-size:12px;font-weight:700;white-space:nowrap}
+.rp-score-high{background:#f8514922;color:#f85149}
+.rp-score-med{background:#d2992222;color:#d29922}
+.rp-score-low{background:#58a6ff22;color:#58a6ff}
+.rp-bar{font-family:monospace;font-size:11px;color:#484f58;letter-spacing:-1px}
+.rp-msg{font-size:13px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rp-meta{font-size:12px;color:#8b949e;margin-bottom:8px}
+.rp-triggers{display:flex;flex-direction:column;gap:3px}
+.rp-trigger{display:flex;align-items:baseline;gap:8px;font-size:12px}
+.rp-rule{font-family:monospace;font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;white-space:nowrap;flex-shrink:0}
+.rp-rule-red{background:#f8514922;color:#f85149}
+.rp-rule-yellow{background:#d2992222;color:#d29922}
+.rp-rule-blue{background:#58a6ff22;color:#58a6ff}
+.rp-rule-gray{background:#21262d;color:#8b949e}
+.rp-detail{color:#8b949e}
+.rp-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.rp-label{font-size:12px;color:#8b949e}
+.rp-select{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:5px 10px;font-size:12px;outline:none}
+.rp-btn{background:linear-gradient(90deg,#bc8cff,#58a6ff);border:none;border-radius:6px;color:#fff;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;transition:opacity .15s}
+.rp-btn:hover{opacity:.85}
+.rp-btn:disabled{opacity:.5;cursor:not-allowed}
+.rp-status{font-size:12px;color:#8b949e}
+
 /* Intent node detail modal */
 .ig-modal-overlay{display:none;position:fixed;inset:0;background:#00000088;z-index:200;align-items:center;justify-content:center}
 .ig-modal-overlay.open{display:flex}
@@ -640,6 +700,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
       <button class="tab" onclick="switchTab('summary')">📊 Summary</button>
       <button class="tab" onclick="switchTab('integrity')">🛡 Integrity</button>
       <button class="tab" onclick="switchTab('intentgraph')">🔗 Intent Graph</button>
+      <button class="tab" onclick="switchTab('review')">🔍 Review Points<span class="tab-badge" id="tab-review-count">—</span></button>
     </div>
 
     <!-- Timeline panel -->
@@ -720,6 +781,34 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
         <button class="run-btn" id="btn-run" onclick="runIntegrity()">🛡 Run Integrity Check</button>
       </div>
       <div class="int-result" id="int-result"></div>
+    </div>
+
+    <!-- Review Points panel -->
+    <div id="panel-review" style="display:none">
+      <div class="rp-controls">
+        <label class="rp-label">Scan last
+          <select class="rp-select" id="rp-limit">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+          </select>
+          commits
+        </label>
+        <label class="rp-label">Min score
+          <select class="rp-select" id="rp-min-score">
+            <option value="0.15">0.15 (sensitive)</option>
+            <option value="0.25" selected>0.25 (default)</option>
+            <option value="0.40">0.40 (strict)</option>
+            <option value="0.60">0.60 (critical only)</option>
+          </select>
+        </label>
+        <button class="rp-btn" id="rp-load-btn" onclick="loadReviewPoints()">↻ Analyse</button>
+        <span class="rp-status" id="rp-status"></span>
+      </div>
+      <div id="rp-list-wrap">
+        <div class="empty-state" style="padding:60px 20px">Click "Analyse" to scan commits for review priorities.</div>
+      </div>
     </div>
   </main>
 </div>
@@ -1193,13 +1282,93 @@ function renderSparkline() {
 
 // ── Tab switching ──────────────────────────────────────────────────────────
 function switchTab(tab) {
-  ['timeline','summary','integrity','intentgraph'].forEach(t => {
+  ['timeline','summary','integrity','intentgraph','review'].forEach(t => {
     const btn = document.querySelector(`.tab[onclick="switchTab('${t}')"]`);
     const panel = id('panel-' + t);
     const active = t === tab;
-    btn.classList.toggle('active', active);
+    if (btn) btn.classList.toggle('active', active);
     if (panel) panel.style.display = active ? '' : 'none';
   });
+}
+
+// ── Review Points ──────────────────────────────────────────────────────────
+const RULE_COLORS = {
+  TEST_REGRESSION:     'rp-rule-red',
+  INTEGRITY_VIOLATION: 'rp-rule-red',
+  INTEGRITY_WARNING:   'rp-rule-yellow',
+  LARGE_DIFF:          'rp-rule-yellow',
+  WIDE_IMPACT:         'rp-rule-yellow',
+  CROSS_CUTTING:       'rp-rule-yellow',
+  UNTESTED_CHANGE:     'rp-rule-blue',
+  AI_NO_PROMPT:        'rp-rule-gray',
+  BURST_AFTER_GAP:     'rp-rule-blue',
+  POLYGLOT_CHANGE:     'rp-rule-gray',
+  BINARY_FILE:         'rp-rule-blue',
+  MASS_DELETION:       'rp-rule-yellow',
+};
+
+async function loadReviewPoints() {
+  const limit    = id('rp-limit').value;
+  const minScore = id('rp-min-score').value;
+  const btn      = id('rp-load-btn');
+  const wrap     = id('rp-list-wrap');
+  const status   = id('rp-status');
+
+  btn.disabled = true;
+  status.textContent = '⏳ Scanning…';
+  wrap.innerHTML = '<div class="empty-state"><span class="spinner"></span> Analysing commits…</div>';
+
+  try {
+    const pts = await fetch(`/api/review-points?limit=${limit}&min_score=${minScore}`).then(r => r.json());
+    setText('tab-review-count', pts.length);
+
+    if (!pts || pts.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No commits exceeded the review threshold in the scanned range.</div>';
+      status.textContent = `0 flagged in ${limit} commits`;
+      return;
+    }
+
+    const items = pts.map((rp, i) => {
+      const score = rp.score;
+      const scoreCls = score >= 0.7 ? 'rp-score-high' : score >= 0.45 ? 'rp-score-med' : 'rp-score-low';
+      const cardCls  = score >= 0.7 ? 'high' : score >= 0.45 ? 'medium' : 'low';
+      const filled   = Math.round(score * 10);
+      const bar      = '█'.repeat(filled) + '░'.repeat(10 - filled);
+      const ts       = new Date(rp.timestamp);
+      const dateStr  = isNaN(ts) ? '' : ts.toLocaleDateString(undefined, {year:'numeric',month:'short',day:'numeric'});
+
+      const triggers = rp.triggers.map(t => {
+        const cls = RULE_COLORS[t.rule_id] || 'rp-rule-gray';
+        return `<div class="rp-trigger">
+          <span class="rp-rule ${cls}">${esc(t.rule_id)}</span>
+          <span class="rp-detail">${esc(t.detail)}</span>
+        </div>`;
+      }).join('');
+
+      return `<div class="rp-card ${cardCls}">
+        <div class="rp-head">
+          <span class="rp-rank">#${i+1}</span>
+          <code class="oid-chip oid-human" style="font-size:11px">${esc(rp.short_oid)}</code>
+          <span class="rp-score-pill ${scoreCls}">${score.toFixed(2)}</span>
+          <span class="rp-bar">${bar}</span>
+          <span class="rp-msg" title="${esc(rp.message)}">${esc(rp.message)}</span>
+        </div>
+        <div class="rp-meta">
+          <span class="author" style="color:#58a6ff">${esc(rp.author)}</span>
+          ${dateStr ? `· <span>${esc(dateStr)}</span>` : ''}
+        </div>
+        <div class="rp-triggers">${triggers}</div>
+      </div>`;
+    }).join('');
+
+    wrap.innerHTML = `<div class="rp-list">${items}</div>`;
+    status.textContent = `${pts.length} flagged in ${limit} commits`;
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty-state">Error: ${esc(e.message)}</div>`;
+    status.textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ── Intent Graph ──────────────────────────────────────────────────────────
