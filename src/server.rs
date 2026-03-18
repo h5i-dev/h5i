@@ -551,6 +551,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 .ig-legend{display:flex;gap:16px;font-size:11px;color:#8b949e;margin-top:8px;padding:0 4px}
 .ig-legend-item{display:flex;align-items:center;gap:5px}
 .ig-legend-line{width:24px;height:2px;display:inline-block}
+
+/* Intent node detail modal */
+.ig-modal-overlay{display:none;position:fixed;inset:0;background:#00000088;z-index:200;align-items:center;justify-content:center}
+.ig-modal-overlay.open{display:flex}
+.ig-modal{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px 22px;min-width:340px;max-width:520px;width:90%;position:relative;box-shadow:0 8px 32px #000a}
+.ig-modal-close{position:absolute;top:10px;right:12px;background:none;border:none;color:#8b949e;font-size:18px;cursor:pointer;line-height:1;padding:2px 6px;border-radius:4px}
+.ig-modal-close:hover{color:#e6edf3;background:#30363d}
+.ig-modal-oid{font-family:monospace;font-size:13px;font-weight:700;margin-bottom:2px}
+.ig-modal-msg{font-size:13px;color:#8b949e;margin-bottom:14px;line-height:1.45}
+.ig-modal-section{margin-bottom:12px}
+.ig-modal-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#484f58;margin-bottom:4px}
+.ig-modal-intent{font-size:14px;color:#e6edf3;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+.ig-modal-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ig-modal-badge{padding:2px 9px;border-radius:10px;font-size:11px;font-weight:500}
 </style>
 </head>
 <body>
@@ -645,6 +659,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
     <div id="panel-summary" style="display:none">
       <div class="summary-grid" id="sum-cards"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;flex-wrap:wrap" id="sum-charts"></div>
+    </div>
+
+    <!-- Intent node detail modal -->
+    <div class="ig-modal-overlay" id="ig-modal-overlay" onclick="if(event.target===this)closeNodeModal()">
+      <div class="ig-modal">
+        <button class="ig-modal-close" onclick="closeNodeModal()">✕</button>
+        <div class="ig-modal-oid" id="ig-modal-oid"></div>
+        <div class="ig-modal-msg" id="ig-modal-msg"></div>
+        <div class="ig-modal-section">
+          <div class="ig-modal-label">Intent</div>
+          <div class="ig-modal-intent" id="ig-modal-intent"></div>
+        </div>
+        <div class="ig-modal-meta" id="ig-modal-meta"></div>
+      </div>
     </div>
 
     <!-- Intent Graph panel -->
@@ -1381,12 +1409,60 @@ function renderIntentGraph(graph, container) {
       g.appendChild(t);
     });
 
+    // Click → open detail modal
+    g.style.cursor = 'pointer';
+    g.addEventListener('click', () => openNodeModal(n, graph));
+
     svg.appendChild(g);
   });
 
   container.innerHTML = '';
   container.appendChild(svg);
 }
+
+// ── Node detail modal ─────────────────────────────────────────────────────
+function openNodeModal(n, graph) {
+  const srcColor = n.intent_source === 'analyzed' ? '#3fb950' : n.intent_source === 'prompt' ? '#bc8cff' : '#484f58';
+  const srcLabel = n.intent_source === 'analyzed' ? 'Claude-generated' : n.intent_source === 'prompt' ? 'stored prompt' : 'commit message';
+
+  id('ig-modal-oid').textContent = n.short_oid + ' — ' + n.oid;
+  id('ig-modal-oid').style.color = n.is_ai ? '#bc8cff' : '#58a6ff';
+  id('ig-modal-msg').textContent = n.message;
+  id('ig-modal-intent').textContent = n.intent;
+
+  // Meta badges
+  const meta = id('ig-modal-meta');
+  meta.innerHTML = '';
+  const addBadge = (text, bg, color) => {
+    const s = document.createElement('span');
+    s.className = 'ig-modal-badge';
+    s.style.background = bg;
+    s.style.color = color;
+    s.textContent = text;
+    meta.appendChild(s);
+  };
+  addBadge('source: ' + srcLabel, srcColor + '22', srcColor);
+  if (n.author) addBadge('author: ' + n.author, '#21262d', '#8b949e');
+  if (n.agent)  addBadge('agent: ' + n.agent,   '#d2992222', '#d29922');
+  if (n.model)  addBadge('model: ' + n.model,   '#bc8cff22', '#bc8cff');
+
+  // Causal links involving this node
+  const causes = (graph.edges || []).filter(e => e.kind === 'causal' && e.to === n.oid);
+  const effects = (graph.edges || []).filter(e => e.kind === 'causal' && e.from === n.oid);
+  causes.forEach(e => addBadge('caused by: ' + e.from.slice(0,8), '#1f3a5f', '#58a6ff'));
+  effects.forEach(e => addBadge('causes: ' + e.to.slice(0,8), '#1f3a5f', '#58a6ff'));
+
+  const ts = new Date(n.timestamp);
+  if (!isNaN(ts)) addBadge(ts.toLocaleString(), '#21262d', '#484f58');
+
+  id('ig-modal-overlay').classList.add('open');
+}
+
+function closeNodeModal() {
+  id('ig-modal-overlay').classList.remove('open');
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeNodeModal(); });
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 loadAll();
