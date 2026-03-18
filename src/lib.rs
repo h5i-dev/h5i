@@ -5,6 +5,7 @@ pub mod delta_store;
 pub mod error;
 pub mod metadata;
 pub mod repository;
+pub mod review;
 pub mod rules;
 pub mod server;
 pub mod session;

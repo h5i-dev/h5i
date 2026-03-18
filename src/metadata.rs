@@ -277,6 +277,42 @@ pub struct CommitSummary {
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
+/// A single node in the intent graph, representing one commit.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct IntentNode {
+    pub oid: String,
+    pub short_oid: String,
+    /// Original commit message.
+    pub message: String,
+    /// Human-readable intent: stored prompt (mode=prompt) or LLM-generated (mode=analyze).
+    pub intent: String,
+    /// How the intent was derived: `"analyzed"`, `"prompt"`, or `"message"`.
+    pub intent_source: String,
+    pub author: String,
+    pub timestamp: String,
+    pub is_ai: bool,
+    pub agent: Option<String>,
+    pub model: Option<String>,
+}
+
+/// A directed relationship between two commits in the intent graph.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct IntentEdge {
+    /// Source commit OID.
+    pub from: String,
+    /// Target commit OID.
+    pub to: String,
+    /// `"parent"` for sequential history, `"causal"` for explicit `caused_by` links.
+    pub kind: String,
+}
+
+/// The full intent graph returned by `build_intent_graph`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct IntentGraph {
+    pub nodes: Vec<IntentNode>,
+    pub edges: Vec<IntentEdge>,
+}
+
 /// Context written by an AI agent hook before making changes.
 /// Stored in `.git/.h5i/pending_context.json` and consumed at commit time.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]

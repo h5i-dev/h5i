@@ -16,8 +16,8 @@ use crate::error::H5iError;
 use chrono::{TimeZone, Utc};
 
 use crate::metadata::{
-    AiMetadata, CommitSummary, H5iCommitRecord, IntegrityLevel, IntegrityReport, PendingContext,
-    TestMetrics, TestSource, TokenUsage,
+    AiMetadata, CommitSummary, H5iCommitRecord, IntegrityLevel, IntentEdge, IntentGraph,
+    IntentNode, IntegrityReport, PendingContext, TestMetrics, TestSource, TokenUsage,
 };
 use crate::LocalSession;
 
@@ -1314,6 +1314,237 @@ impl H5iRepository {
         Ok(results)
     }
 
+    /// Builds an [`IntentGraph`] for the most recent `limit` commits.
+    ///
+    /// Each node carries a human-readable *intent*:
+    /// - `analyze = false` — uses the stored AI prompt when available, falling back to the
+    ///   commit message.
+    /// - `analyze = true`  — calls Claude to generate a concise (≤12-word) intent sentence
+    ///   for every commit. Falls back to the prompt-mode logic when the API key is absent.
+    ///
+    /// Edges represent two kinds of relationship:
+    /// - `"parent"` — the standard Git parent/child link between adjacent commits.
+    /// - `"causal"` — an explicit `caused_by` declaration stored in the h5i record.
+    ///
+    /// Edges whose endpoints are outside the `limit` window are silently dropped.
+    pub fn build_intent_graph(
+        &self,
+        limit: usize,
+        analyze: bool,
+    ) -> Result<IntentGraph, H5iError> {
+        use crate::claude::AnthropicClient;
+        let client = if analyze {
+            AnthropicClient::from_env()
+        } else {
+            None
+        };
+
+        let mut revwalk = self.git_repo.revwalk()?;
+        revwalk.push_head()?;
+
+        let mut nodes: Vec<IntentNode> = Vec::new();
+        let mut edges: Vec<IntentEdge> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for raw_oid in revwalk.take(limit) {
+            let oid = raw_oid?;
+            let oid_str = oid.to_string();
+            let commit = self.git_repo.find_commit(oid)?;
+
+            let record = self
+                .load_h5i_record(oid)
+                .unwrap_or_else(|_| H5iCommitRecord::minimal_from_git(&self.git_repo, oid));
+
+            let message = commit.message().unwrap_or("").trim().to_string();
+            let author = commit.author().name().unwrap_or("Unknown").to_string();
+            let short_oid = oid_str[..8.min(oid_str.len())].to_string();
+            let timestamp = record.timestamp.to_rfc3339();
+
+            let is_ai = record.ai_metadata.is_some();
+            let agent = record
+                .ai_metadata
+                .as_ref()
+                .map(|a| a.agent_id.clone())
+                .filter(|s| !s.is_empty());
+            let model = record
+                .ai_metadata
+                .as_ref()
+                .map(|a| a.model_name.clone())
+                .filter(|s| !s.is_empty());
+            let stored_prompt: Option<String> = record
+                .ai_metadata
+                .as_ref()
+                .map(|a| a.prompt.clone())
+                .filter(|s| !s.is_empty());
+
+            // Determine intent label and track its source
+            let (intent, intent_source) = if analyze {
+                match client {
+                    Some(ref c) => {
+                        match c.generate_intent(&short_oid, &message, stored_prompt.as_deref()) {
+                            Ok(generated) => (generated, "analyzed".to_string()),
+                            Err(e) => {
+                                eprintln!(
+                                    "  [intent-graph] Claude call failed for {}: {e}",
+                                    &short_oid
+                                );
+                                let fallback = stored_prompt
+                                    .clone()
+                                    .unwrap_or_else(|| message.clone());
+                                let src = if stored_prompt.is_some() { "prompt" } else { "message" };
+                                (fallback, src.to_string())
+                            }
+                        }
+                    }
+                    None => {
+                        let fallback = stored_prompt.clone().unwrap_or_else(|| message.clone());
+                        let src = if stored_prompt.is_some() { "prompt" } else { "message" };
+                        (fallback, src.to_string())
+                    }
+                }
+            } else {
+                let fallback = stored_prompt.clone().unwrap_or_else(|| message.clone());
+                let src = if stored_prompt.is_some() { "prompt" } else { "message" };
+                (fallback, src.to_string())
+            };
+
+            // Causal edges (explicit h5i caused_by)
+            for cause_oid in &record.caused_by {
+                edges.push(IntentEdge {
+                    from: cause_oid.clone(),
+                    to: oid_str.clone(),
+                    kind: "causal".to_string(),
+                });
+            }
+
+            // Parent edge (sequential Git history)
+            if let Some(ref parent_oid) = record.parent_oid {
+                edges.push(IntentEdge {
+                    from: parent_oid.clone(),
+                    to: oid_str.clone(),
+                    kind: "parent".to_string(),
+                });
+            }
+
+            seen.insert(oid_str.clone());
+            nodes.push(IntentNode {
+                oid: oid_str,
+                short_oid,
+                message,
+                intent,
+                intent_source,
+                author,
+                timestamp,
+                is_ai,
+                agent,
+                model,
+            });
+        }
+
+        // Drop edges whose endpoints are outside the loaded window
+        edges.retain(|e| seen.contains(&e.from) && seen.contains(&e.to));
+
+        Ok(IntentGraph { nodes, edges })
+    }
+
+    /// Prints an ASCII intent graph to stdout.
+    pub fn print_intent_graph(&self, limit: usize, analyze: bool) -> anyhow::Result<()> {
+        let graph = self.build_intent_graph(limit, analyze)?;
+
+        // Map OID → set of causes (for annotation)
+        let mut causes_of: std::collections::HashMap<&str, Vec<&str>> =
+            std::collections::HashMap::new();
+        for e in &graph.edges {
+            if e.kind == "causal" {
+                causes_of
+                    .entry(e.to.as_str())
+                    .or_default()
+                    .push(e.from.as_str());
+            }
+        }
+
+        // Warn when analyze mode couldn't use Claude
+        if analyze {
+            let analyzed_count = graph.nodes.iter().filter(|n| n.intent_source == "analyzed").count();
+            if analyzed_count == 0 {
+                eprintln!(
+                    "  [intent-graph] ANTHROPIC_API_KEY not set or no commits processed — \
+                     intents are stored prompts / commit messages. \
+                     Set ANTHROPIC_API_KEY to enable Claude analysis."
+                );
+            } else {
+                let fallback_count = graph.nodes.len() - analyzed_count;
+                if fallback_count > 0 {
+                    eprintln!(
+                        "  [intent-graph] {}/{} intents generated by Claude ({} fell back to stored data).",
+                        analyzed_count,
+                        graph.nodes.len(),
+                        fallback_count
+                    );
+                }
+            }
+        }
+
+        let mode_label = if analyze { "analyze (Claude)" } else { "prompt" };
+        println!(
+            "{}",
+            style(format!(
+                "Intent Graph ─ {} commits, mode: {} ──────────────────────────",
+                graph.nodes.len(),
+                mode_label
+            ))
+            .bold()
+        );
+
+        for node in &graph.nodes {
+            let oid_s = if node.is_ai {
+                style(&node.short_oid).magenta().bold()
+            } else {
+                style(&node.short_oid).blue().bold()
+            };
+            let intent_s = match node.intent_source.as_str() {
+                "analyzed" => style(format!("\"{}\"", &node.intent)).green().italic(),
+                "prompt"   => style(format!("\"{}\"", &node.intent)).cyan().italic(),
+                _          => style(format!("\"{}\"", &node.intent)).dim().italic(),
+            };
+            let src_tag = match node.intent_source.as_str() {
+                "analyzed" => style("[Claude]").green().dim(),
+                "prompt"   => style("[prompt]").cyan().dim(),
+                _          => style("[msg]").dim(),
+            };
+            println!("\n  {} {} {}", oid_s, src_tag, intent_s);
+            println!("     {}", style(&node.message).dim());
+
+            if let Some(causes) = causes_of.get(node.oid.as_str()) {
+                let shorts: Vec<String> = causes
+                    .iter()
+                    .map(|c| c[..8.min(c.len())].to_string())
+                    .collect();
+                println!(
+                    "     {} {}",
+                    style("↤ caused by:").yellow(),
+                    style(shorts.join(", ")).yellow().bold()
+                );
+            }
+            if let Some(ref a) = node.agent {
+                println!("     {}", style(format!("agent: {a}")).dim());
+            }
+        }
+
+        println!("\n{}", style("─".repeat(60)).dim());
+        let causal_count = graph.edges.iter().filter(|e| e.kind == "causal").count();
+        let ai_count = graph.nodes.iter().filter(|n| n.is_ai).count();
+        let analyzed_count = graph.nodes.iter().filter(|n| n.intent_source == "analyzed").count();
+        print!("{} AI commits, {} causal link{}", ai_count, causal_count,
+            if causal_count == 1 { "" } else { "s" });
+        if analyze && analyzed_count > 0 {
+            print!(", {} Claude-generated intent{}", analyzed_count,
+                if analyzed_count == 1 { "" } else { "s" });
+        }
+        println!();
+        Ok(())
+    }
+
     /// Creates a revert commit for the given OID using `git revert --no-edit`.
     /// Returns the OID of the newly created revert commit.
     pub fn revert_commit(&self, oid: Oid) -> Result<Oid, H5iError> {
@@ -1764,6 +1995,319 @@ impl H5iRepository {
             self.git_repo
                 .diff_tree_to_index(Some(&head_tree), Some(&index), Some(&mut opts))?;
         Ok(diff)
+    }
+
+    // ── Suggested Review Points ───────────────────────────────────────────────
+
+    /// Scans recent commits and returns those that warrant human review, ranked
+    /// by review priority.
+    ///
+    /// Each commit is scored against a set of deterministic, language-agnostic
+    /// rules.  Only commits whose aggregate score is ≥ `min_score` are returned.
+    /// Pass `crate::review::REVIEW_THRESHOLD` as a sensible default.
+    ///
+    /// Rules applied (all are purely structural / metric-based, no AI required):
+    ///
+    /// | Rule ID           | Signal                                            |
+    /// |-------------------|---------------------------------------------------|
+    /// | LARGE_DIFF        | Many lines changed (>50 / >200 / >500)           |
+    /// | WIDE_IMPACT       | Many files changed (>5 / >10 / >20)              |
+    /// | CROSS_CUTTING     | Changes span many top-level directories (>3 / >5)|
+    /// | TEST_REGRESSION   | Test failures increased or coverage dropped       |
+    /// | UNTESTED_CHANGE   | Large diff with no test metrics recorded          |
+    /// | AI_NO_PROMPT      | AI commit with blank prompt (provenance gap)      |
+    /// | BURST_AFTER_GAP   | First commit after a quiet period (>3 / >7 days) |
+    /// | POLYGLOT_CHANGE   | More than 4 distinct file extensions changed      |
+    /// | BINARY_FILE       | Binary file(s) modified                           |
+    /// | MASS_DELETION     | >80 % of the diff is deletions (>100 lines)      |
+    pub fn suggest_review_points(
+        &self,
+        limit: usize,
+        min_score: f32,
+    ) -> Result<Vec<crate::review::ReviewPoint>, H5iError> {
+        use crate::review::{ReviewPoint, ReviewTrigger};
+        use std::collections::HashSet;
+
+        let mut revwalk = self.git_repo.revwalk()?;
+        revwalk.push_head()?;
+
+        let mut results: Vec<ReviewPoint> = Vec::new();
+
+        for oid_result in revwalk.take(limit) {
+            let oid = oid_result?;
+            let commit = self.git_repo.find_commit(oid)?;
+
+            let message = commit.message().unwrap_or("").trim().to_string();
+            let author = commit.author().name().unwrap_or("Unknown").to_string();
+            let record = self.load_h5i_record(oid).ok();
+
+            let timestamp = record.as_ref().map(|r| r.timestamp).unwrap_or_else(|| {
+                chrono::Utc
+                    .timestamp_opt(commit.time().seconds(), 0)
+                    .single()
+                    .unwrap_or_else(chrono::Utc::now)
+            });
+
+            let mut triggers: Vec<ReviewTrigger> = Vec::new();
+
+            // ── Diff stats ────────────────────────────────────────────────────
+            let commit_tree = commit.tree()?;
+            let parent_tree = if commit.parent_count() > 0 {
+                Some(commit.parent(0)?.tree()?)
+            } else {
+                None
+            };
+            let diff = self.git_repo.diff_tree_to_tree(
+                parent_tree.as_ref(),
+                Some(&commit_tree),
+                None,
+            )?;
+            let stats = diff.stats()?;
+            let files_changed = stats.files_changed();
+            let insertions = stats.insertions();
+            let deletions = stats.deletions();
+            let lines_changed = insertions + deletions;
+
+            // Collect file paths and binary file count from the diff
+            let mut file_paths: Vec<String> = Vec::new();
+            let mut binary_count: usize = 0;
+            for delta in diff.deltas() {
+                let path = delta
+                    .new_file()
+                    .path()
+                    .or_else(|| delta.old_file().path())
+                    .and_then(|p| p.to_str())
+                    .map(|s| s.to_string());
+                if let Some(p) = path {
+                    file_paths.push(p);
+                }
+                if delta.flags().contains(git2::DiffFlags::BINARY) {
+                    binary_count += 1;
+                }
+            }
+
+            // R1 — LARGE_DIFF
+            if lines_changed > 500 {
+                triggers.push(ReviewTrigger {
+                    rule_id: "LARGE_DIFF".into(),
+                    weight: 0.40,
+                    detail: format!("{lines_changed} lines changed (>500)"),
+                });
+            } else if lines_changed > 200 {
+                triggers.push(ReviewTrigger {
+                    rule_id: "LARGE_DIFF".into(),
+                    weight: 0.25,
+                    detail: format!("{lines_changed} lines changed (>200)"),
+                });
+            } else if lines_changed > 50 {
+                triggers.push(ReviewTrigger {
+                    rule_id: "LARGE_DIFF".into(),
+                    weight: 0.10,
+                    detail: format!("{lines_changed} lines changed (>50)"),
+                });
+            }
+
+            // R2 — WIDE_IMPACT
+            if files_changed > 20 {
+                triggers.push(ReviewTrigger {
+                    rule_id: "WIDE_IMPACT".into(),
+                    weight: 0.35,
+                    detail: format!("{files_changed} files changed (>20)"),
+                });
+            } else if files_changed > 10 {
+                triggers.push(ReviewTrigger {
+                    rule_id: "WIDE_IMPACT".into(),
+                    weight: 0.20,
+                    detail: format!("{files_changed} files changed (>10)"),
+                });
+            } else if files_changed > 5 {
+                triggers.push(ReviewTrigger {
+                    rule_id: "WIDE_IMPACT".into(),
+                    weight: 0.10,
+                    detail: format!("{files_changed} files changed (>5)"),
+                });
+            }
+
+            // R3 — CROSS_CUTTING: distinct top-level directory components
+            let distinct_dirs: HashSet<&str> = file_paths
+                .iter()
+                .filter_map(|p| p.split('/').next())
+                .collect();
+            let dir_count = distinct_dirs.len();
+            if dir_count > 5 {
+                triggers.push(ReviewTrigger {
+                    rule_id: "CROSS_CUTTING".into(),
+                    weight: 0.25,
+                    detail: format!("changes span {dir_count} top-level directories (>5)"),
+                });
+            } else if dir_count > 3 {
+                triggers.push(ReviewTrigger {
+                    rule_id: "CROSS_CUTTING".into(),
+                    weight: 0.15,
+                    detail: format!("changes span {dir_count} top-level directories (>3)"),
+                });
+            }
+
+            // R4 — TEST_REGRESSION: compare metrics to parent commit
+            if let Some(ref rec) = record {
+                if let Some(ref current_tm) = rec.test_metrics {
+                    let parent_tm = rec
+                        .parent_oid
+                        .as_ref()
+                        .and_then(|p| git2::Oid::from_str(p).ok())
+                        .and_then(|p| self.load_h5i_record(p).ok())
+                        .and_then(|r| r.test_metrics);
+
+                    if let Some(ref prev_tm) = parent_tm {
+                        let was_passing = prev_tm.is_passing();
+                        let is_passing = current_tm.is_passing();
+
+                        if was_passing && !is_passing {
+                            triggers.push(ReviewTrigger {
+                                rule_id: "TEST_REGRESSION".into(),
+                                weight: 0.50,
+                                detail: "tests were passing but now failing".into(),
+                            });
+                        } else if current_tm.failed > prev_tm.failed {
+                            let new_fails = current_tm.failed - prev_tm.failed;
+                            triggers.push(ReviewTrigger {
+                                rule_id: "TEST_REGRESSION".into(),
+                                weight: 0.40,
+                                detail: format!("{new_fails} new test failure(s) since parent"),
+                            });
+                        }
+
+                        if prev_tm.coverage > 0.0 && current_tm.coverage > 0.0 {
+                            let drop = prev_tm.coverage - current_tm.coverage;
+                            if drop > 10.0 {
+                                triggers.push(ReviewTrigger {
+                                    rule_id: "TEST_REGRESSION".into(),
+                                    weight: 0.35,
+                                    detail: format!("coverage dropped {drop:.1}% (>10%)"),
+                                });
+                            } else if drop > 5.0 {
+                                triggers.push(ReviewTrigger {
+                                    rule_id: "TEST_REGRESSION".into(),
+                                    weight: 0.20,
+                                    detail: format!("coverage dropped {drop:.1}% (>5%)"),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            // R5 — UNTESTED_CHANGE: significant diff without any test metrics
+            if lines_changed > 100 {
+                let has_tests = record
+                    .as_ref()
+                    .map(|r| r.test_metrics.is_some())
+                    .unwrap_or(false);
+                if !has_tests {
+                    triggers.push(ReviewTrigger {
+                        rule_id: "UNTESTED_CHANGE".into(),
+                        weight: 0.20,
+                        detail: format!("{lines_changed} lines changed with no test metrics recorded"),
+                    });
+                }
+            }
+
+            // R6 — AI_NO_PROMPT: AI commit without a recorded prompt
+            if let Some(ref rec) = record {
+                if let Some(ref ai) = rec.ai_metadata {
+                    if ai.prompt.trim().is_empty() {
+                        triggers.push(ReviewTrigger {
+                            rule_id: "AI_NO_PROMPT".into(),
+                            weight: 0.15,
+                            detail: "AI-generated commit with no prompt recorded (provenance gap)".into(),
+                        });
+                    }
+                }
+            }
+
+            // R7 — BURST_AFTER_GAP: large time gap between this commit and its parent
+            if commit.parent_count() > 0 {
+                if let Ok(parent_commit) = commit.parent(0) {
+                    let gap_secs = commit.time().seconds() - parent_commit.time().seconds();
+                    if gap_secs > 7 * 24 * 3600 {
+                        let days = gap_secs / (24 * 3600);
+                        triggers.push(ReviewTrigger {
+                            rule_id: "BURST_AFTER_GAP".into(),
+                            weight: 0.25,
+                            detail: format!("first commit after a {days}-day gap (>7 days)"),
+                        });
+                    } else if gap_secs > 3 * 24 * 3600 {
+                        let days = gap_secs / (24 * 3600);
+                        triggers.push(ReviewTrigger {
+                            rule_id: "BURST_AFTER_GAP".into(),
+                            weight: 0.15,
+                            detail: format!("first commit after a {days}-day gap (>3 days)"),
+                        });
+                    }
+                }
+            }
+
+            // R8 — POLYGLOT_CHANGE: many distinct file extensions
+            let extensions: HashSet<&str> = file_paths
+                .iter()
+                .filter_map(|p| std::path::Path::new(p).extension()?.to_str())
+                .collect();
+            if extensions.len() > 4 {
+                triggers.push(ReviewTrigger {
+                    rule_id: "POLYGLOT_CHANGE".into(),
+                    weight: 0.15,
+                    detail: format!(
+                        "{} distinct file type(s) changed (harder to review holistically)",
+                        extensions.len()
+                    ),
+                });
+            }
+
+            // R9 — BINARY_FILE: opaque binary changes
+            if binary_count > 0 {
+                triggers.push(ReviewTrigger {
+                    rule_id: "BINARY_FILE".into(),
+                    weight: 0.20,
+                    detail: format!("{binary_count} binary file(s) modified"),
+                });
+            }
+
+            // R10 — MASS_DELETION: bulk removal without matching insertions
+            if deletions > 100 && lines_changed > 0 {
+                let deletion_ratio = deletions as f32 / lines_changed as f32;
+                if deletion_ratio > 0.80 {
+                    triggers.push(ReviewTrigger {
+                        rule_id: "MASS_DELETION".into(),
+                        weight: 0.15,
+                        detail: format!(
+                            "{deletions} lines deleted ({:.0}% of total changes)",
+                            deletion_ratio * 100.0
+                        ),
+                    });
+                }
+            }
+
+            // ── Aggregate & filter ────────────────────────────────────────────
+            if triggers.is_empty() {
+                continue;
+            }
+            let score: f32 = triggers.iter().map(|t| t.weight).sum::<f32>().min(1.0);
+            if score >= min_score {
+                results.push(ReviewPoint {
+                    commit_oid: oid.to_string(),
+                    short_oid: oid.to_string()[..8].to_string(),
+                    message,
+                    author,
+                    timestamp,
+                    score,
+                    triggers,
+                });
+            }
+        }
+
+        // Sort highest priority first
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(results)
     }
 }
 

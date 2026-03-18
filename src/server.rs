@@ -10,8 +10,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
-use crate::metadata::IntegrityReport;
+use crate::metadata::{IntegrityReport, IntentGraph};
 use crate::repository::H5iRepository;
+use crate::review::{ReviewPoint, REVIEW_THRESHOLD};
 
 // ── Shared state ─────────────────────────────────────────────────────────────
 
@@ -69,6 +70,18 @@ pub struct IntegrityQuery {
 #[derive(Deserialize)]
 pub struct CommitIntegrityQuery {
     pub oid: String,
+}
+
+#[derive(Deserialize)]
+pub struct IntentGraphQuery {
+    pub limit: Option<usize>,
+    pub mode: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ReviewQuery {
+    pub limit: Option<usize>,
+    pub min_score: Option<f32>,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -299,6 +312,48 @@ async fn api_integrity_commit(
     Json(result.unwrap_or_else(|_| Ok(fallback_report())).unwrap_or_else(|_| fallback_report()))
 }
 
+async fn api_intent_graph(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<IntentGraphQuery>,
+) -> Json<IntentGraph> {
+    let path = state.repo_path.clone();
+    let limit = params.limit.unwrap_or(30);
+    let analyze = params.mode.as_deref().unwrap_or("prompt") == "analyze";
+
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<IntentGraph> {
+        let repo = H5iRepository::open(&path)?;
+        Ok(repo.build_intent_graph(limit, analyze)?)
+    })
+    .await;
+
+    Json(
+        result
+            .unwrap_or_else(|_| Ok(IntentGraph::default()))
+            .unwrap_or_default(),
+    )
+}
+
+async fn api_review_points(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ReviewQuery>,
+) -> Json<Vec<ReviewPoint>> {
+    let path = state.repo_path.clone();
+    let limit = params.limit.unwrap_or(100);
+    let min_score = params.min_score.unwrap_or(REVIEW_THRESHOLD);
+
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<ReviewPoint>> {
+        let repo = H5iRepository::open(&path)?;
+        Ok(repo.suggest_review_points(limit, min_score)?)
+    })
+    .await;
+
+    Json(
+        result
+            .unwrap_or_else(|_| Ok(vec![]))
+            .unwrap_or_default(),
+    )
+}
+
 // ── Server entry point ────────────────────────────────────────────────────────
 
 pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
@@ -310,6 +365,8 @@ pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
         .route("/api/commits", get(api_commits))
         .route("/api/integrity", get(api_integrity))
         .route("/api/integrity/commit", get(api_integrity_commit))
+        .route("/api/intent-graph", get(api_intent_graph))
+        .route("/api/review-points", get(api_review_points))
         .with_state(state);
 
     let addr = format!("127.0.0.1:{}", port);
@@ -506,6 +563,68 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle}
 @keyframes spin{to{transform:rotate(360deg)}}
 .section-hdr{font-size:13px;font-weight:600;margin-bottom:8px;color:#e6edf3}
+
+/* Intent Graph tab */
+.ig-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.ig-select{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:5px 10px;font-size:12px;outline:none}
+.ig-btn{background:linear-gradient(90deg,#bc8cff,#58a6ff);border:none;border-radius:6px;color:#fff;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;transition:opacity .15s}
+.ig-btn:hover{opacity:.85}
+.ig-btn:disabled{opacity:.5;cursor:not-allowed}
+.ig-canvas-wrap{background:#0d1117;border:1px solid #30363d;border-radius:8px;overflow:auto;min-height:300px}
+.ig-svg{display:block;min-width:100%}
+.ig-node rect{rx:6;stroke-width:1.5;cursor:pointer;transition:filter .15s}
+.ig-node rect:hover{filter:brightness(1.3)}
+.ig-node text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;pointer-events:none;dominant-baseline:middle}
+.ig-edge{stroke-width:1.5;fill:none;marker-end:url(#arrow-parent)}
+.ig-edge-causal{stroke-width:2;fill:none;marker-end:url(#arrow-causal)}
+.ig-legend{display:flex;gap:16px;font-size:11px;color:#8b949e;margin-top:8px;padding:0 4px}
+.ig-legend-item{display:flex;align-items:center;gap:5px}
+.ig-legend-line{width:24px;height:2px;display:inline-block}
+
+/* Review Points tab */
+.rp-list{display:flex;flex-direction:column;gap:10px}
+.rp-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:13px 15px;animation:fadeIn .3s ease both}
+.rp-card.high{border-left:3px solid #f85149}
+.rp-card.medium{border-left:3px solid #d29922}
+.rp-card.low{border-left:3px solid #58a6ff}
+.rp-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap}
+.rp-rank{font-size:11px;color:#484f58;font-weight:600;min-width:22px}
+.rp-score-pill{padding:2px 9px;border-radius:10px;font-size:12px;font-weight:700;white-space:nowrap}
+.rp-score-high{background:#f8514922;color:#f85149}
+.rp-score-med{background:#d2992222;color:#d29922}
+.rp-score-low{background:#58a6ff22;color:#58a6ff}
+.rp-bar{font-family:monospace;font-size:11px;color:#484f58;letter-spacing:-1px}
+.rp-msg{font-size:13px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rp-meta{font-size:12px;color:#8b949e;margin-bottom:8px}
+.rp-triggers{display:flex;flex-direction:column;gap:3px}
+.rp-trigger{display:flex;align-items:baseline;gap:8px;font-size:12px}
+.rp-rule{font-family:monospace;font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;white-space:nowrap;flex-shrink:0}
+.rp-rule-red{background:#f8514922;color:#f85149}
+.rp-rule-yellow{background:#d2992222;color:#d29922}
+.rp-rule-blue{background:#58a6ff22;color:#58a6ff}
+.rp-rule-gray{background:#21262d;color:#8b949e}
+.rp-detail{color:#8b949e}
+.rp-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.rp-label{font-size:12px;color:#8b949e}
+.rp-select{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:5px 10px;font-size:12px;outline:none}
+.rp-btn{background:linear-gradient(90deg,#bc8cff,#58a6ff);border:none;border-radius:6px;color:#fff;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;transition:opacity .15s}
+.rp-btn:hover{opacity:.85}
+.rp-btn:disabled{opacity:.5;cursor:not-allowed}
+.rp-status{font-size:12px;color:#8b949e}
+
+/* Intent node detail modal */
+.ig-modal-overlay{display:none;position:fixed;inset:0;background:#00000088;z-index:200;align-items:center;justify-content:center}
+.ig-modal-overlay.open{display:flex}
+.ig-modal{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px 22px;min-width:340px;max-width:520px;width:90%;position:relative;box-shadow:0 8px 32px #000a}
+.ig-modal-close{position:absolute;top:10px;right:12px;background:none;border:none;color:#8b949e;font-size:18px;cursor:pointer;line-height:1;padding:2px 6px;border-radius:4px}
+.ig-modal-close:hover{color:#e6edf3;background:#30363d}
+.ig-modal-oid{font-family:monospace;font-size:13px;font-weight:700;margin-bottom:2px}
+.ig-modal-msg{font-size:13px;color:#8b949e;margin-bottom:14px;line-height:1.45}
+.ig-modal-section{margin-bottom:12px}
+.ig-modal-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#484f58;margin-bottom:4px}
+.ig-modal-intent{font-size:14px;color:#e6edf3;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+.ig-modal-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ig-modal-badge{padding:2px 9px;border-radius:10px;font-size:11px;font-weight:500}
 </style>
 </head>
 <body>
@@ -580,6 +699,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
       <button class="tab active" onclick="switchTab('timeline')">⎇ Timeline<span class="tab-badge" id="tab-count">0</span></button>
       <button class="tab" onclick="switchTab('summary')">📊 Summary</button>
       <button class="tab" onclick="switchTab('integrity')">🛡 Integrity</button>
+      <button class="tab" onclick="switchTab('intentgraph')">🔗 Intent Graph</button>
+      <button class="tab" onclick="switchTab('review')">🔍 Review Points<span class="tab-badge" id="tab-review-count">—</span></button>
     </div>
 
     <!-- Timeline panel -->
@@ -601,6 +722,51 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;flex-wrap:wrap" id="sum-charts"></div>
     </div>
 
+    <!-- Intent node detail modal -->
+    <div class="ig-modal-overlay" id="ig-modal-overlay" onclick="if(event.target===this)closeNodeModal()">
+      <div class="ig-modal">
+        <button class="ig-modal-close" onclick="closeNodeModal()">✕</button>
+        <div class="ig-modal-oid" id="ig-modal-oid"></div>
+        <div class="ig-modal-msg" id="ig-modal-msg"></div>
+        <div class="ig-modal-section">
+          <div class="ig-modal-label">Intent</div>
+          <div class="ig-modal-intent" id="ig-modal-intent"></div>
+        </div>
+        <div class="ig-modal-meta" id="ig-modal-meta"></div>
+      </div>
+    </div>
+
+    <!-- Intent Graph panel -->
+    <div id="panel-intentgraph" style="display:none">
+      <div class="ig-controls">
+        <label style="font-size:12px;color:#8b949e">Commits:
+          <select class="ig-select" id="ig-limit">
+            <option value="15">15</option>
+            <option value="30" selected>30</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </label>
+        <label style="font-size:12px;color:#8b949e">Mode:
+          <select class="ig-select" id="ig-mode">
+            <option value="prompt">prompt (stored)</option>
+            <option value="analyze">analyze (Claude)</option>
+          </select>
+        </label>
+        <button class="ig-btn" id="ig-load-btn" onclick="loadIntentGraph()">↻ Load Graph</button>
+        <span id="ig-status" style="font-size:12px;color:#8b949e"></span>
+      </div>
+      <div class="ig-canvas-wrap" id="ig-canvas-wrap">
+        <div class="empty-state" style="padding:60px 20px">Click "Load Graph" to visualise commit intents.</div>
+      </div>
+      <div class="ig-legend">
+        <span class="ig-legend-item"><span class="ig-legend-line" style="background:#484f58"></span>parent chain</span>
+        <span class="ig-legend-item"><span class="ig-legend-line" style="background:#bc8cff"></span>causal link</span>
+        <span class="ig-legend-item"><span style="width:10px;height:10px;border-radius:2px;background:linear-gradient(135deg,#bc8cff,#58a6ff);display:inline-block"></span>AI commit</span>
+        <span class="ig-legend-item"><span style="width:10px;height:10px;border-radius:2px;background:#21262d;border:1px solid #484f58;display:inline-block"></span>Human commit</span>
+      </div>
+    </div>
+
     <!-- Integrity panel -->
     <div id="panel-integrity" style="display:none">
       <div class="int-form">
@@ -615,6 +781,34 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
         <button class="run-btn" id="btn-run" onclick="runIntegrity()">🛡 Run Integrity Check</button>
       </div>
       <div class="int-result" id="int-result"></div>
+    </div>
+
+    <!-- Review Points panel -->
+    <div id="panel-review" style="display:none">
+      <div class="rp-controls">
+        <label class="rp-label">Scan last
+          <select class="rp-select" id="rp-limit">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+          </select>
+          commits
+        </label>
+        <label class="rp-label">Min score
+          <select class="rp-select" id="rp-min-score">
+            <option value="0.15">0.15 (sensitive)</option>
+            <option value="0.25" selected>0.25 (default)</option>
+            <option value="0.40">0.40 (strict)</option>
+            <option value="0.60">0.60 (critical only)</option>
+          </select>
+        </label>
+        <button class="rp-btn" id="rp-load-btn" onclick="loadReviewPoints()">↻ Analyse</button>
+        <span class="rp-status" id="rp-status"></span>
+      </div>
+      <div id="rp-list-wrap">
+        <div class="empty-state" style="padding:60px 20px">Click "Analyse" to scan commits for review priorities.</div>
+      </div>
     </div>
   </main>
 </div>
@@ -1088,14 +1282,356 @@ function renderSparkline() {
 
 // ── Tab switching ──────────────────────────────────────────────────────────
 function switchTab(tab) {
-  ['timeline','summary','integrity'].forEach(t => {
+  ['timeline','summary','integrity','intentgraph','review'].forEach(t => {
     const btn = document.querySelector(`.tab[onclick="switchTab('${t}')"]`);
     const panel = id('panel-' + t);
     const active = t === tab;
-    btn.classList.toggle('active', active);
+    if (btn) btn.classList.toggle('active', active);
     if (panel) panel.style.display = active ? '' : 'none';
   });
 }
+
+// ── Review Points ──────────────────────────────────────────────────────────
+const RULE_COLORS = {
+  TEST_REGRESSION:     'rp-rule-red',
+  INTEGRITY_VIOLATION: 'rp-rule-red',
+  INTEGRITY_WARNING:   'rp-rule-yellow',
+  LARGE_DIFF:          'rp-rule-yellow',
+  WIDE_IMPACT:         'rp-rule-yellow',
+  CROSS_CUTTING:       'rp-rule-yellow',
+  UNTESTED_CHANGE:     'rp-rule-blue',
+  AI_NO_PROMPT:        'rp-rule-gray',
+  BURST_AFTER_GAP:     'rp-rule-blue',
+  POLYGLOT_CHANGE:     'rp-rule-gray',
+  BINARY_FILE:         'rp-rule-blue',
+  MASS_DELETION:       'rp-rule-yellow',
+};
+
+async function loadReviewPoints() {
+  const limit    = id('rp-limit').value;
+  const minScore = id('rp-min-score').value;
+  const btn      = id('rp-load-btn');
+  const wrap     = id('rp-list-wrap');
+  const status   = id('rp-status');
+
+  btn.disabled = true;
+  status.textContent = '⏳ Scanning…';
+  wrap.innerHTML = '<div class="empty-state"><span class="spinner"></span> Analysing commits…</div>';
+
+  try {
+    const pts = await fetch(`/api/review-points?limit=${limit}&min_score=${minScore}`).then(r => r.json());
+    setText('tab-review-count', pts.length);
+
+    if (!pts || pts.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No commits exceeded the review threshold in the scanned range.</div>';
+      status.textContent = `0 flagged in ${limit} commits`;
+      return;
+    }
+
+    const items = pts.map((rp, i) => {
+      const score = rp.score;
+      const scoreCls = score >= 0.7 ? 'rp-score-high' : score >= 0.45 ? 'rp-score-med' : 'rp-score-low';
+      const cardCls  = score >= 0.7 ? 'high' : score >= 0.45 ? 'medium' : 'low';
+      const filled   = Math.round(score * 10);
+      const bar      = '█'.repeat(filled) + '░'.repeat(10 - filled);
+      const ts       = new Date(rp.timestamp);
+      const dateStr  = isNaN(ts) ? '' : ts.toLocaleDateString(undefined, {year:'numeric',month:'short',day:'numeric'});
+
+      const triggers = rp.triggers.map(t => {
+        const cls = RULE_COLORS[t.rule_id] || 'rp-rule-gray';
+        return `<div class="rp-trigger">
+          <span class="rp-rule ${cls}">${esc(t.rule_id)}</span>
+          <span class="rp-detail">${esc(t.detail)}</span>
+        </div>`;
+      }).join('');
+
+      return `<div class="rp-card ${cardCls}">
+        <div class="rp-head">
+          <span class="rp-rank">#${i+1}</span>
+          <code class="oid-chip oid-human" style="font-size:11px">${esc(rp.short_oid)}</code>
+          <span class="rp-score-pill ${scoreCls}">${score.toFixed(2)}</span>
+          <span class="rp-bar">${bar}</span>
+          <span class="rp-msg" title="${esc(rp.message)}">${esc(rp.message)}</span>
+        </div>
+        <div class="rp-meta">
+          <span class="author" style="color:#58a6ff">${esc(rp.author)}</span>
+          ${dateStr ? `· <span>${esc(dateStr)}</span>` : ''}
+        </div>
+        <div class="rp-triggers">${triggers}</div>
+      </div>`;
+    }).join('');
+
+    wrap.innerHTML = `<div class="rp-list">${items}</div>`;
+    status.textContent = `${pts.length} flagged in ${limit} commits`;
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty-state">Error: ${esc(e.message)}</div>`;
+    status.textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Intent Graph ──────────────────────────────────────────────────────────
+const NODE_W = 220, NODE_H = 56, COL_GAP = 280, ROW_GAP = 86;
+
+async function loadIntentGraph() {
+  const limit = id('ig-limit').value;
+  const mode  = id('ig-mode').value;
+  const btn   = id('ig-load-btn');
+  const wrap  = id('ig-canvas-wrap');
+  const status = id('ig-status');
+
+  btn.disabled = true;
+  status.textContent = mode === 'analyze' ? '⏳ Calling Claude…' : '⏳ Loading…';
+  wrap.innerHTML = '<div class="empty-state"><span class="spinner"></span> Building graph…</div>';
+
+  try {
+    const g = await fetch(`/api/intent-graph?limit=${limit}&mode=${mode}`).then(r => r.json());
+    if (!g.nodes || g.nodes.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">No commits found.</div>';
+      status.textContent = '';
+      return;
+    }
+    renderIntentGraph(g, wrap);
+    const causal = (g.edges || []).filter(e => e.kind === 'causal').length;
+    status.textContent = `${g.nodes.length} nodes · ${causal} causal link${causal===1?'':'s'}`;
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty-state">Error: ${esc(e.message)}</div>`;
+    status.textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderIntentGraph(graph, container) {
+  const nodes = graph.nodes;    // newest first
+  const edges = graph.edges || [];
+
+  // ── Layout ──
+  // We use a simple layered layout:
+  // - Compute "depth" for each node via causal edges (BFS from roots).
+  // - Nodes with no causal parents are depth 0 (leftmost column).
+  // - Nodes within a column are stacked vertically.
+  const oidIdx = {};
+  nodes.forEach((n, i) => { oidIdx[n.oid] = i; });
+
+  const causalEdges = edges.filter(e => e.kind === 'causal');
+
+  // depth = column (left = oldest root, right = latest effect)
+  const depth = new Array(nodes.length).fill(0);
+  // BFS — edges go from → to, meaning from is parent, to is child
+  const adj = {};  // oid → array of child oids (causal children)
+  causalEdges.forEach(e => {
+    if (!adj[e.from]) adj[e.from] = [];
+    adj[e.from].push(e.to);
+  });
+
+  // For nodes with no causal parents, keep depth=0. Propagate forward.
+  const inDegree = {};
+  nodes.forEach(n => { inDegree[n.oid] = 0; });
+  causalEdges.forEach(e => { if (inDegree[e.to] !== undefined) inDegree[e.to]++; });
+
+  const queue = nodes.filter(n => inDegree[n.oid] === 0).map(n => n.oid);
+  while (queue.length) {
+    const cur = queue.shift();
+    const children = adj[cur] || [];
+    children.forEach(childOid => {
+      if (oidIdx[childOid] !== undefined) {
+        const curDepth = depth[oidIdx[cur]];
+        if (curDepth + 1 > depth[oidIdx[childOid]]) {
+          depth[oidIdx[childOid]] = curDepth + 1;
+        }
+        inDegree[childOid]--;
+        if (inDegree[childOid] === 0) queue.push(childOid);
+      }
+    });
+  }
+
+  // Assign row within each column
+  const colRows = {};
+  const pos = {};
+  nodes.forEach((n, i) => {
+    const col = depth[i];
+    if (colRows[col] === undefined) colRows[col] = 0;
+    pos[n.oid] = { x: col * COL_GAP + 20, y: colRows[col] * ROW_GAP + 20 };
+    colRows[col]++;
+  });
+
+  const maxX = Math.max(...Object.values(pos).map(p => p.x)) + NODE_W + 20;
+  const maxY = Math.max(...Object.values(pos).map(p => p.y)) + NODE_H + 20;
+  const svgW = Math.max(maxX, 600);
+  const svgH = Math.max(maxY, 300);
+
+  // ── SVG ──
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('width', svgW);
+  svg.setAttribute('height', svgH);
+  svg.setAttribute('class', 'ig-svg');
+  svg.setAttribute('viewBox', `0 0 ${svgW} ${svgH}`);
+
+  // Defs: arrow markers
+  const defs = document.createElementNS(svgNS, 'defs');
+  ['parent','causal'].forEach(kind => {
+    const marker = document.createElementNS(svgNS, 'marker');
+    marker.setAttribute('id', `arrow-${kind}`);
+    marker.setAttribute('markerWidth', '8');
+    marker.setAttribute('markerHeight', '8');
+    marker.setAttribute('refX', '6');
+    marker.setAttribute('refY', '3');
+    marker.setAttribute('orient', 'auto');
+    const poly = document.createElementNS(svgNS, 'polygon');
+    poly.setAttribute('points', '0 0, 6 3, 0 6');
+    poly.setAttribute('fill', kind === 'causal' ? '#bc8cff' : '#484f58');
+    marker.appendChild(poly);
+    defs.appendChild(marker);
+  });
+  svg.appendChild(defs);
+
+  // Draw edges
+  edges.forEach(e => {
+    const from = pos[e.from];
+    const to   = pos[e.to];
+    if (!from || !to) return;
+
+    const isParent = e.kind === 'parent';
+    const x1 = from.x + NODE_W, y1 = from.y + NODE_H / 2;
+    const x2 = to.x,            y2 = to.y + NODE_H / 2;
+
+    const path = document.createElementNS(svgNS, 'path');
+    const cx1 = x1 + (x2 - x1) * 0.5, cy1 = y1;
+    const cx2 = x1 + (x2 - x1) * 0.5, cy2 = y2;
+    path.setAttribute('d', `M${x1},${y1} C${cx1},${cy1} ${cx2},${cy2} ${x2},${y2}`);
+    path.setAttribute('class', isParent ? 'ig-edge' : 'ig-edge-causal');
+    path.setAttribute('stroke', isParent ? '#2d333b' : '#bc8cff88');
+    path.setAttribute('stroke-dasharray', isParent ? '4,3' : 'none');
+    path.setAttribute('marker-end', `url(#arrow-${e.kind})`);
+    svg.appendChild(path);
+  });
+
+  // Draw nodes — rect MUST be appended first so text renders on top
+  nodes.forEach(n => {
+    const p = pos[n.oid];
+    if (!p) return;
+    const g = document.createElementNS(svgNS, 'g');
+    g.setAttribute('class', 'ig-node');
+    g.setAttribute('transform', `translate(${p.x},${p.y})`);
+
+    // 1. Background rect (drawn first so text sits on top)
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('width', NODE_W);
+    rect.setAttribute('height', NODE_H);
+    rect.setAttribute('rx', 6);
+    rect.setAttribute('fill', n.is_ai ? '#1a1f2e' : '#161b22');
+    rect.setAttribute('stroke', n.is_ai ? '#bc8cff66' : '#30363d');
+    g.appendChild(rect);
+
+    // 2. Tooltip (SVG <title> — not painted, but first for accessibility)
+    const title = document.createElementNS(svgNS, 'title');
+    title.textContent = `${n.short_oid}: ${n.message}\nIntent (${n.intent_source}): ${n.intent}\nAuthor: ${n.author}`;
+    g.appendChild(title);
+
+    // 3. OID + source tag
+    const srcColor = n.intent_source === 'analyzed' ? '#3fb950' : n.intent_source === 'prompt' ? '#bc8cff' : '#484f58';
+    const oidText = document.createElementNS(svgNS, 'text');
+    oidText.setAttribute('x', 10);
+    oidText.setAttribute('y', 14);
+    oidText.setAttribute('font-size', 10);
+    oidText.setAttribute('font-family', 'monospace');
+    oidText.setAttribute('fill', n.is_ai ? '#bc8cff' : '#58a6ff');
+    oidText.textContent = n.short_oid;
+    g.appendChild(oidText);
+
+    // Source badge (right side of OID row)
+    const srcTag = document.createElementNS(svgNS, 'text');
+    srcTag.setAttribute('x', NODE_W - 8);
+    srcTag.setAttribute('y', 14);
+    srcTag.setAttribute('font-size', 9);
+    srcTag.setAttribute('text-anchor', 'end');
+    srcTag.setAttribute('fill', srcColor);
+    srcTag.textContent = n.intent_source === 'analyzed' ? '[Claude]' : n.intent_source === 'prompt' ? '[prompt]' : '[msg]';
+    g.appendChild(srcTag);
+
+    // 4. Intent text wrapped to 2 lines
+    const intentWords = (n.intent || '').split(' ');
+    const maxChars = Math.floor((NODE_W - 20) / 6.2);
+    let lines = [], cur = '';
+    intentWords.forEach(w => {
+      const test = cur ? cur + ' ' + w : w;
+      if (test.length > maxChars && cur) { lines.push(cur); cur = w; }
+      else { cur = test; }
+    });
+    if (cur) lines.push(cur);
+    lines = lines.slice(0, 2);
+    if (lines.length === 2) {
+      const allWords = intentWords.length;
+      const shownWords = lines.join(' ').split(' ').length;
+      if (shownWords < allWords) lines[1] = lines[1].replace(/\s*\S+$/, '…');
+    }
+    lines.forEach((line, li) => {
+      const t = document.createElementNS(svgNS, 'text');
+      t.setAttribute('x', 10);
+      t.setAttribute('y', 30 + li * 14);
+      t.setAttribute('font-size', 11);
+      t.setAttribute('fill', '#c9d1d9');
+      t.textContent = line;
+      g.appendChild(t);
+    });
+
+    // Click → open detail modal
+    g.style.cursor = 'pointer';
+    g.addEventListener('click', () => openNodeModal(n, graph));
+
+    svg.appendChild(g);
+  });
+
+  container.innerHTML = '';
+  container.appendChild(svg);
+}
+
+// ── Node detail modal ─────────────────────────────────────────────────────
+function openNodeModal(n, graph) {
+  const srcColor = n.intent_source === 'analyzed' ? '#3fb950' : n.intent_source === 'prompt' ? '#bc8cff' : '#484f58';
+  const srcLabel = n.intent_source === 'analyzed' ? 'Claude-generated' : n.intent_source === 'prompt' ? 'stored prompt' : 'commit message';
+
+  id('ig-modal-oid').textContent = n.short_oid + ' — ' + n.oid;
+  id('ig-modal-oid').style.color = n.is_ai ? '#bc8cff' : '#58a6ff';
+  id('ig-modal-msg').textContent = n.message;
+  id('ig-modal-intent').textContent = n.intent;
+
+  // Meta badges
+  const meta = id('ig-modal-meta');
+  meta.innerHTML = '';
+  const addBadge = (text, bg, color) => {
+    const s = document.createElement('span');
+    s.className = 'ig-modal-badge';
+    s.style.background = bg;
+    s.style.color = color;
+    s.textContent = text;
+    meta.appendChild(s);
+  };
+  addBadge('source: ' + srcLabel, srcColor + '22', srcColor);
+  if (n.author) addBadge('author: ' + n.author, '#21262d', '#8b949e');
+  if (n.agent)  addBadge('agent: ' + n.agent,   '#d2992222', '#d29922');
+  if (n.model)  addBadge('model: ' + n.model,   '#bc8cff22', '#bc8cff');
+
+  // Causal links involving this node
+  const causes = (graph.edges || []).filter(e => e.kind === 'causal' && e.to === n.oid);
+  const effects = (graph.edges || []).filter(e => e.kind === 'causal' && e.from === n.oid);
+  causes.forEach(e => addBadge('caused by: ' + e.from.slice(0,8), '#1f3a5f', '#58a6ff'));
+  effects.forEach(e => addBadge('causes: ' + e.to.slice(0,8), '#1f3a5f', '#58a6ff'));
+
+  const ts = new Date(n.timestamp);
+  if (!isNaN(ts)) addBadge(ts.toLocaleString(), '#21262d', '#484f58');
+
+  id('ig-modal-overlay').classList.add('open');
+}
+
+function closeNodeModal() {
+  id('ig-modal-overlay').classList.remove('open');
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeNodeModal(); });
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 loadAll();
