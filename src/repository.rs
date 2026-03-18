@@ -16,8 +16,8 @@ use crate::error::H5iError;
 use chrono::{TimeZone, Utc};
 
 use crate::metadata::{
-    AiMetadata, CommitSummary, H5iCommitRecord, IntegrityLevel, IntegrityReport, PendingContext,
-    TestMetrics, TestSource, TokenUsage,
+    AiMetadata, CommitSummary, H5iCommitRecord, IntegrityLevel, IntentEdge, IntentGraph,
+    IntentNode, IntegrityReport, PendingContext, TestMetrics, TestSource, TokenUsage,
 };
 use crate::LocalSession;
 
@@ -1312,6 +1312,237 @@ impl H5iRepository {
             });
         }
         Ok(results)
+    }
+
+    /// Builds an [`IntentGraph`] for the most recent `limit` commits.
+    ///
+    /// Each node carries a human-readable *intent*:
+    /// - `analyze = false` — uses the stored AI prompt when available, falling back to the
+    ///   commit message.
+    /// - `analyze = true`  — calls Claude to generate a concise (≤12-word) intent sentence
+    ///   for every commit. Falls back to the prompt-mode logic when the API key is absent.
+    ///
+    /// Edges represent two kinds of relationship:
+    /// - `"parent"` — the standard Git parent/child link between adjacent commits.
+    /// - `"causal"` — an explicit `caused_by` declaration stored in the h5i record.
+    ///
+    /// Edges whose endpoints are outside the `limit` window are silently dropped.
+    pub fn build_intent_graph(
+        &self,
+        limit: usize,
+        analyze: bool,
+    ) -> Result<IntentGraph, H5iError> {
+        use crate::claude::AnthropicClient;
+        let client = if analyze {
+            AnthropicClient::from_env()
+        } else {
+            None
+        };
+
+        let mut revwalk = self.git_repo.revwalk()?;
+        revwalk.push_head()?;
+
+        let mut nodes: Vec<IntentNode> = Vec::new();
+        let mut edges: Vec<IntentEdge> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for raw_oid in revwalk.take(limit) {
+            let oid = raw_oid?;
+            let oid_str = oid.to_string();
+            let commit = self.git_repo.find_commit(oid)?;
+
+            let record = self
+                .load_h5i_record(oid)
+                .unwrap_or_else(|_| H5iCommitRecord::minimal_from_git(&self.git_repo, oid));
+
+            let message = commit.message().unwrap_or("").trim().to_string();
+            let author = commit.author().name().unwrap_or("Unknown").to_string();
+            let short_oid = oid_str[..8.min(oid_str.len())].to_string();
+            let timestamp = record.timestamp.to_rfc3339();
+
+            let is_ai = record.ai_metadata.is_some();
+            let agent = record
+                .ai_metadata
+                .as_ref()
+                .map(|a| a.agent_id.clone())
+                .filter(|s| !s.is_empty());
+            let model = record
+                .ai_metadata
+                .as_ref()
+                .map(|a| a.model_name.clone())
+                .filter(|s| !s.is_empty());
+            let stored_prompt: Option<String> = record
+                .ai_metadata
+                .as_ref()
+                .map(|a| a.prompt.clone())
+                .filter(|s| !s.is_empty());
+
+            // Determine intent label and track its source
+            let (intent, intent_source) = if analyze {
+                match client {
+                    Some(ref c) => {
+                        match c.generate_intent(&short_oid, &message, stored_prompt.as_deref()) {
+                            Ok(generated) => (generated, "analyzed".to_string()),
+                            Err(e) => {
+                                eprintln!(
+                                    "  [intent-graph] Claude call failed for {}: {e}",
+                                    &short_oid
+                                );
+                                let fallback = stored_prompt
+                                    .clone()
+                                    .unwrap_or_else(|| message.clone());
+                                let src = if stored_prompt.is_some() { "prompt" } else { "message" };
+                                (fallback, src.to_string())
+                            }
+                        }
+                    }
+                    None => {
+                        let fallback = stored_prompt.clone().unwrap_or_else(|| message.clone());
+                        let src = if stored_prompt.is_some() { "prompt" } else { "message" };
+                        (fallback, src.to_string())
+                    }
+                }
+            } else {
+                let fallback = stored_prompt.clone().unwrap_or_else(|| message.clone());
+                let src = if stored_prompt.is_some() { "prompt" } else { "message" };
+                (fallback, src.to_string())
+            };
+
+            // Causal edges (explicit h5i caused_by)
+            for cause_oid in &record.caused_by {
+                edges.push(IntentEdge {
+                    from: cause_oid.clone(),
+                    to: oid_str.clone(),
+                    kind: "causal".to_string(),
+                });
+            }
+
+            // Parent edge (sequential Git history)
+            if let Some(ref parent_oid) = record.parent_oid {
+                edges.push(IntentEdge {
+                    from: parent_oid.clone(),
+                    to: oid_str.clone(),
+                    kind: "parent".to_string(),
+                });
+            }
+
+            seen.insert(oid_str.clone());
+            nodes.push(IntentNode {
+                oid: oid_str,
+                short_oid,
+                message,
+                intent,
+                intent_source,
+                author,
+                timestamp,
+                is_ai,
+                agent,
+                model,
+            });
+        }
+
+        // Drop edges whose endpoints are outside the loaded window
+        edges.retain(|e| seen.contains(&e.from) && seen.contains(&e.to));
+
+        Ok(IntentGraph { nodes, edges })
+    }
+
+    /// Prints an ASCII intent graph to stdout.
+    pub fn print_intent_graph(&self, limit: usize, analyze: bool) -> anyhow::Result<()> {
+        let graph = self.build_intent_graph(limit, analyze)?;
+
+        // Map OID → set of causes (for annotation)
+        let mut causes_of: std::collections::HashMap<&str, Vec<&str>> =
+            std::collections::HashMap::new();
+        for e in &graph.edges {
+            if e.kind == "causal" {
+                causes_of
+                    .entry(e.to.as_str())
+                    .or_default()
+                    .push(e.from.as_str());
+            }
+        }
+
+        // Warn when analyze mode couldn't use Claude
+        if analyze {
+            let analyzed_count = graph.nodes.iter().filter(|n| n.intent_source == "analyzed").count();
+            if analyzed_count == 0 {
+                eprintln!(
+                    "  [intent-graph] ANTHROPIC_API_KEY not set or no commits processed — \
+                     intents are stored prompts / commit messages. \
+                     Set ANTHROPIC_API_KEY to enable Claude analysis."
+                );
+            } else {
+                let fallback_count = graph.nodes.len() - analyzed_count;
+                if fallback_count > 0 {
+                    eprintln!(
+                        "  [intent-graph] {}/{} intents generated by Claude ({} fell back to stored data).",
+                        analyzed_count,
+                        graph.nodes.len(),
+                        fallback_count
+                    );
+                }
+            }
+        }
+
+        let mode_label = if analyze { "analyze (Claude)" } else { "prompt" };
+        println!(
+            "{}",
+            style(format!(
+                "Intent Graph ─ {} commits, mode: {} ──────────────────────────",
+                graph.nodes.len(),
+                mode_label
+            ))
+            .bold()
+        );
+
+        for node in &graph.nodes {
+            let oid_s = if node.is_ai {
+                style(&node.short_oid).magenta().bold()
+            } else {
+                style(&node.short_oid).blue().bold()
+            };
+            let intent_s = match node.intent_source.as_str() {
+                "analyzed" => style(format!("\"{}\"", &node.intent)).green().italic(),
+                "prompt"   => style(format!("\"{}\"", &node.intent)).cyan().italic(),
+                _          => style(format!("\"{}\"", &node.intent)).dim().italic(),
+            };
+            let src_tag = match node.intent_source.as_str() {
+                "analyzed" => style("[Claude]").green().dim(),
+                "prompt"   => style("[prompt]").cyan().dim(),
+                _          => style("[msg]").dim(),
+            };
+            println!("\n  {} {} {}", oid_s, src_tag, intent_s);
+            println!("     {}", style(&node.message).dim());
+
+            if let Some(causes) = causes_of.get(node.oid.as_str()) {
+                let shorts: Vec<String> = causes
+                    .iter()
+                    .map(|c| c[..8.min(c.len())].to_string())
+                    .collect();
+                println!(
+                    "     {} {}",
+                    style("↤ caused by:").yellow(),
+                    style(shorts.join(", ")).yellow().bold()
+                );
+            }
+            if let Some(ref a) = node.agent {
+                println!("     {}", style(format!("agent: {a}")).dim());
+            }
+        }
+
+        println!("\n{}", style("─".repeat(60)).dim());
+        let causal_count = graph.edges.iter().filter(|e| e.kind == "causal").count();
+        let ai_count = graph.nodes.iter().filter(|n| n.is_ai).count();
+        let analyzed_count = graph.nodes.iter().filter(|n| n.intent_source == "analyzed").count();
+        print!("{} AI commits, {} causal link{}", ai_count, causal_count,
+            if causal_count == 1 { "" } else { "s" });
+        if analyze && analyzed_count > 0 {
+            print!(", {} Claude-generated intent{}", analyzed_count,
+                if analyzed_count == 1 { "" } else { "s" });
+        }
+        println!();
+        Ok(())
     }
 
     /// Creates a revert commit for the given OID using `git revert --no-edit`.

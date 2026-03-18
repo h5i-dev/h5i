@@ -141,6 +141,18 @@ enum Commands {
         yes: bool,
     },
 
+    /// Visualise the chain of intents associated with recent commits
+    IntentGraph {
+        /// Number of recent commits to include
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+
+        /// Intent source: 'prompt' uses the stored AI prompt; 'analyze' calls Claude
+        /// to generate a concise intent sentence for every commit
+        #[arg(long, default_value = "prompt")]
+        mode: String,
+    },
+
     /// Print the Claude Code hook configuration to enable automatic prompt capture
     InstallHooks,
 
@@ -555,6 +567,31 @@ fn main() -> anyhow::Result<()> {
                 style("Revert commit created:").green(),
                 style(new_oid).magenta().bold()
             );
+        }
+
+        Commands::IntentGraph { limit, mode } => {
+            let repo = H5iRepository::open(".")?;
+            let analyze = mode.to_lowercase() == "analyze";
+
+            if analyze {
+                if std::env::var("ANTHROPIC_API_KEY").is_err() {
+                    println!(
+                        "{} {} — set {} to enable Claude analysis.",
+                        WARN,
+                        style("ANTHROPIC_API_KEY not set, falling back to stored prompts/messages").yellow(),
+                        style("ANTHROPIC_API_KEY").bold(),
+                    );
+                } else {
+                    println!(
+                        "{} {} for {} commits (one API call per commit)…",
+                        STEP,
+                        style("Calling Claude to generate intent labels").cyan().bold(),
+                        style(limit).cyan(),
+                    );
+                }
+            }
+
+            repo.print_intent_graph(limit, analyze)?;
         }
 
         Commands::InstallHooks => {

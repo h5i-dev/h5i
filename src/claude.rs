@@ -143,6 +143,69 @@ impl AnthropicClient {
             .find(|c| c.oid == text || c.oid.starts_with(text));
         Ok(matched.map(|c| c.oid.clone()))
     }
+
+    /// Asks Claude to produce a concise (≤12 word) intent sentence for a commit.
+    ///
+    /// Used by `intent-graph --mode analyze` to enrich commits that have no
+    /// stored AI prompt.
+    pub fn generate_intent(
+        &self,
+        short_oid: &str,
+        message: &str,
+        prompt: Option<&str>,
+    ) -> Result<String, H5iError> {
+        let system = "You are a git assistant summarising developer intent. \
+            Given a commit message and an optional AI prompt, respond with a \
+            single concise sentence (maximum 12 words) describing the intent \
+            of the change. Output ONLY the sentence, nothing else.";
+
+        let user_content = match prompt {
+            Some(p) if !p.is_empty() => {
+                format!("Commit: {short_oid}\nMessage: {message}\nPrompt: {p}")
+            }
+            _ => format!("Commit: {short_oid}\nMessage: {message}"),
+        };
+
+        let request = ApiRequest {
+            model: self.model.clone(),
+            max_tokens: 64,
+            system: system.to_string(),
+            messages: vec![ApiMessage {
+                role: "user".to_string(),
+                content: user_content,
+            }],
+        };
+
+        let response = self
+            .client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&request)
+            .send()
+            .map_err(|e| H5iError::Metadata(format!("Claude API request failed: {e}")))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(H5iError::Metadata(format!(
+                "Claude API error {status}: {body}"
+            )));
+        }
+
+        let api_resp: ApiResponse = response
+            .json()
+            .map_err(|e| H5iError::Metadata(format!("Failed to parse Claude API response: {e}")))?;
+
+        let text = api_resp
+            .content
+            .into_iter()
+            .find(|b| b.kind == "text")
+            .and_then(|b| b.text)
+            .unwrap_or_default();
+
+        Ok(text.trim().to_string())
+    }
 }
 
 // ── Keyword fallback ──────────────────────────────────────────────────────────
