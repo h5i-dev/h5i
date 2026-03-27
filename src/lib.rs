@@ -1,5 +1,8 @@
 pub mod ast;
 pub mod blame;
+pub mod ctx;
+/// Deprecated alias — use `ctx` instead.
+pub use ctx as gcc;
 pub mod claude;
 pub mod delta_store;
 pub mod error;
