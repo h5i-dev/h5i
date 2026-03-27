@@ -215,6 +215,27 @@ h5i log            # Alice's prompts, models, test results — all visible
 
 ---
 
+### 7. Browse everything in the web dashboard
+
+```bash
+h5i serve        # opens http://localhost:7150
+```
+
+<img src="./assets/screenshot_h5i_server.png" alt="h5i web dashboard — Timeline tab">
+
+The **Timeline** tab shows every commit with its full AI context inline. In the screenshot above:
+
+- **Top bar** — 8 commits, all AI-assisted, 100% test pass rate at a glance
+- **Commit card** — model (`claude-sonnet-4-6`), agent (`claude-code`), test badge (✔ 36, pytest, 1.32s), and the exact prompt in orange italics
+- **Expanded detail** — full test results table (passed / failed / skipped / duration / tool) and a one-click **Re-audit** button that runs all 12 integrity rules against that commit's diff
+- **Integrity score** — `Valid · 100%` when all rules pass; shows findings inline if any trigger
+- **Left sidebar** — live repo stats (total vs AI-authored commits, AI ratio) and a test-health sparkline across all loaded commits
+- **Filter pills** — `🤖 AI only`, `🧪 With tests`, `✖ Failing` to slice the history instantly
+
+The **Summary**, **Integrity**, **Intent Graph**, **Memory**, and **Sessions** tabs give deeper views into the same data. See [MANUAL.md](MANUAL.md#12-web-dashboard) for the full tab guide.
+
+---
+
 ## Full Documentation
 
 See [MANUAL.md](MANUAL.md) for:
