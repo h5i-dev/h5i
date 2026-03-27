@@ -180,6 +180,13 @@ enum Commands {
         port: u16,
     },
 
+    /// Push all h5i refs (notes + memory) to a remote in one shot
+    Sync {
+        /// Remote to push to
+        #[arg(short, long, default_value = "origin")]
+        remote: String,
+    },
+
     /// Version-control Claude's memory state alongside your code
     Memory {
         #[command(subcommand)]
@@ -242,6 +249,37 @@ fn main() -> anyhow::Result<()> {
                 SUCCESS,
                 style("h5i sidecar initialized").green().bold(),
                 style(repo.h5i_path().display()).dim()
+            );
+            println!();
+            println!("  {}", style("Quick-start:").bold());
+            println!(
+                "    {}  capture AI provenance on every commit",
+                style("h5i commit -m \"…\" --prompt \"…\" --agent claude-code").cyan()
+            );
+            println!(
+                "    {}  snapshot Claude's memory after a session",
+                style("h5i memory snapshot").cyan()
+            );
+            println!(
+                "    {}  push all h5i data to your remote",
+                style("h5i sync").cyan()
+            );
+            println!();
+            println!(
+                "  {} h5i stores metadata in {} and {}.",
+                style("Note:").dim(),
+                style("refs/notes/commits").yellow(),
+                style("refs/h5i/memory").yellow()
+            );
+            println!(
+                "  {} These refs are NOT included in a plain {}.",
+                style("     ").dim(),
+                style("git push").yellow()
+            );
+            println!(
+                "  {} Run {} (or see README §9) to share them with your team.",
+                style("     ").dim(),
+                style("h5i sync").bold()
             );
         }
 
@@ -835,6 +873,73 @@ jq -c '{
 
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(h5i_core::server::serve(repo_path, port))?;
+        }
+
+        Commands::Sync { remote } => {
+            let workdir = std::env::current_dir()?;
+
+            println!(
+                "{} {} to {}",
+                STEP,
+                style("Syncing all h5i refs").cyan().bold(),
+                style(&remote).yellow()
+            );
+
+            // Push git notes (AI provenance, test metrics, causal links)
+            let notes_refspec = "refs/notes/commits:refs/notes/commits";
+            print!(
+                "  {} {} … ",
+                style("→").dim(),
+                style("refs/notes/commits").yellow()
+            );
+            use std::io::Write as _;
+            std::io::stdout().flush()?;
+            let notes_status = std::process::Command::new("git")
+                .args(["push", &remote, notes_refspec])
+                .current_dir(&workdir)
+                .status()
+                .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+            if notes_status.success() {
+                println!("{}", style("ok").green());
+            } else {
+                println!("{}", style("failed").red());
+            }
+
+            // Push memory ref (Claude memory snapshots)
+            let mem_refspec = format!(
+                "+{}:{}",
+                memory::MEMORY_REF,
+                memory::MEMORY_REF
+            );
+            print!(
+                "  {} {} … ",
+                style("→").dim(),
+                style("refs/h5i/memory").yellow()
+            );
+            std::io::stdout().flush()?;
+            let mem_status = std::process::Command::new("git")
+                .args(["push", &remote, &mem_refspec])
+                .current_dir(&workdir)
+                .status()
+                .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+            if mem_status.success() {
+                println!("{}", style("ok").green());
+            } else {
+                println!("{} (no memory snapshots yet — run {})", style("skipped").dim(), style("h5i memory snapshot").bold());
+            }
+
+            if notes_status.success() {
+                println!(
+                    "\n{} To receive these refs on another machine:\n\
+                    \n    git fetch {} refs/notes/commits:refs/notes/commits\
+                    \n    git fetch {} refs/h5i/memory:refs/h5i/memory\
+                    \n\n  Or add fetch refspecs to .git/config (see README §9) so {} picks them up automatically.",
+                    style("Tip:").bold(),
+                    style(&remote).yellow(),
+                    style(&remote).yellow(),
+                    style("git pull").bold()
+                );
+            }
         }
 
         Commands::Memory { action } => {

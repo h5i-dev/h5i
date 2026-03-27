@@ -307,7 +307,88 @@ h5i resolve <ours-oid> <theirs-oid> src/auth.rs
 
 Each agent gets its own session; changes merge via CRDT automatically. `h5i resolve` reconstructs the conflict-free state from Git Notes — no interactive merge editor required.
 
-### 4.9. Web Dashboard
+### 4.9. AI Memory Management
+
+h5i versions Claude Code's persistent memory files alongside your code, so every commit can carry an exact record of what the AI "knew" when it made that change.
+
+#### How Claude Code memory works
+
+Claude Code stores per-project memory in:
+
+```
+~/.claude/projects/<repo-path>/memory/
+  MEMORY.md            ← index
+  user_role.md         ← user profile facts
+  feedback_tests.md    ← remembered instructions
+  project_auth.md      ← project-specific context
+  …
+```
+
+These files are **local-only and unversioned** by default. h5i fixes that.
+
+#### Snapshotting
+
+```bash
+# After a Claude session, snapshot current memory to .git/.h5i/memory/<HEAD-oid>/
+h5i memory snapshot
+
+# Or tie it to a specific commit OID
+h5i memory snapshot --commit a3f9c2b
+```
+
+#### Viewing history
+
+```bash
+h5i memory log
+```
+
+```
+COMMIT      TIMESTAMP               FILES
+a3f9c2b…  2026-03-27 09:14 UTC    4 files
+b2f3a1c…  2026-03-27 11:42 UTC    5 files
+```
+
+#### Diffing memory across commits
+
+```bash
+h5i memory diff                    # last snapshot → live memory
+h5i memory diff a3f9c2b b2f3a1c    # between two snapshots
+h5i memory diff a3f9c2b            # snapshot → live
+```
+
+```
+memory diff a3f9c2b..b2f3a1c
+────────────────────────────────────────────────────────────
+  added     project_auth.md
+    +  The auth middleware rewrite is driven by legal compliance
+    +  requirements around session token storage.
+  modified  feedback_tests.md
+     Don't mock the database in tests.
+    -Why: prior incident where mocks masked a broken migration.
+    +Why: prior incident where mocks masked a broken migration.
+    +How to apply: always use a real DB in integration tests.
+────────────────────────────────────────────────────────────
+  1 added, 0 removed, 1 modified
+```
+
+#### Restoring
+
+```bash
+h5i memory restore a3f9c2b    # interactive confirmation
+h5i memory restore a3f9c2b -y # skip prompt
+```
+
+#### Sharing memory with teammates
+
+Memory snapshots are backed by real git objects, so they travel with the repository (see §9 for the push/pull workflow):
+
+```bash
+h5i memory push           # serialize latest snapshot → refs/h5i/memory → git push origin
+h5i memory pull           # git fetch origin → extract snapshot locally
+h5i memory restore <oid>  # apply the received snapshot to your Claude session
+```
+
+### 4.10. Web Dashboard
 
 ```bash
 h5i serve            # http://localhost:7150
@@ -411,20 +492,99 @@ h5i stores all metadata as a Git sidecar — nothing lives outside your reposito
 ```
 .git/
 └── .h5i/
-    ├── ast/                  # SHA-256-keyed S-expression AST snapshots
-    ├── crdt/                 # Yjs CRDT document state
-    ├── delta/                # Append-only CRDT update logs (per file)
-    └── pending_context.json  # Transient: consumed at next commit
+    ├── ast/                        # SHA-256-keyed S-expression AST snapshots
+    ├── crdt/                       # Yjs CRDT document state
+    ├── delta/                      # Append-only CRDT update logs (per file)
+    ├── memory/                     # Claude memory snapshots (one dir per commit OID)
+    │   └── <commit-oid>/
+    │       ├── MEMORY.md
+    │       ├── feedback_tests.md
+    │       └── _meta.json          # snapshot timestamp + file count
+    └── pending_context.json        # Transient: consumed at next commit
 ```
 
-Extended commit metadata — AI provenance, test metrics, causal links, integrity reports — is stored in Git Notes (`refs/notes/commits`) as JSON. Notes travel with the repository on push/fetch and are visible via standard Git tooling:
+**Git Notes** (`refs/notes/commits`) store extended commit metadata — AI provenance, test metrics, causal links, integrity reports — as JSON blobs attached to each commit. They are readable with standard Git tooling:
 
 ```bash
 git notes show <commit-oid>
 ```
 
+**Memory ref** (`refs/h5i/memory`) stores Claude memory snapshots as a linear commit history of git tree objects. Each memory commit carries the linked code-commit OID in its message, enabling correlation between code state and AI knowledge state.
+
+> **Important:** Neither `refs/notes/commits` nor `refs/h5i/memory` is pushed or fetched by a plain `git push` / `git pull`. You must share them explicitly — see §9.
+
 ---
 
-## 9. License
+## 9. Sharing h5i Data with Your Team
+
+h5i stores its data in two git refs that are **not** included in a normal `git push`. You need to push them explicitly.
+
+| Ref | Contains | Push command |
+|-----|----------|--------------|
+| `refs/notes/commits` | AI provenance, test metrics, causal links, integrity reports | `git push origin refs/notes/commits` |
+| `refs/h5i/memory` | Claude memory snapshots | `git push origin refs/h5i/memory` |
+
+### One-shot sync
+
+The `h5i sync` command pushes both refs at once:
+
+```bash
+h5i sync                 # push to origin
+h5i sync --remote upstream
+```
+
+To pull both refs from a remote:
+
+```bash
+git fetch origin refs/notes/commits:refs/notes/commits
+git fetch origin refs/h5i/memory:refs/h5i/memory
+```
+
+Or use `h5i memory pull` for the memory ref alone (it handles the fetch refspec automatically).
+
+### Automating with CI/CD
+
+Add these lines to your CI push step so teammates always receive up-to-date h5i data when they pull:
+
+```yaml
+# GitHub Actions example
+- name: Push h5i metadata
+  run: |
+    git push origin refs/notes/commits
+    git push origin refs/h5i/memory
+```
+
+For `git fetch`, add corresponding fetch refspecs to `.git/config` so `git pull` picks them up automatically:
+
+```ini
+[remote "origin"]
+    url = git@github.com:you/repo.git
+    fetch = +refs/heads/*:refs/remotes/origin/*
+    fetch = +refs/notes/commits:refs/notes/commits
+    fetch = +refs/h5i/memory:refs/h5i/memory
+```
+
+With these refspecs in place, a plain `git fetch origin` (or `git pull`) will also update your local h5i notes and memory snapshots.
+
+### Full team workflow example
+
+```bash
+# — Alice —
+h5i commit -m "add rate limiting" --prompt "..." --agent claude-code
+h5i memory snapshot
+h5i sync                            # push code + notes + memory in one step
+                                    # (git push origin is separate for code)
+git push origin main
+
+# — Bob —
+git pull                            # fetches code + notes + memory (with refspecs configured)
+h5i log                             # sees Alice's AI provenance immediately
+h5i memory pull                     # or manual: git fetch origin refs/h5i/memory:refs/h5i/memory
+h5i memory restore <alice-commit>   # apply Alice's Claude memory to Bob's Claude session
+```
+
+---
+
+## 11. License
 
 Apache 2.0 — see [LICENSE](LICENSE).
