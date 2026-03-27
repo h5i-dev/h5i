@@ -14,6 +14,7 @@ use crate::memory;
 use crate::metadata::{IntegrityReport, IntentGraph};
 use crate::repository::H5iRepository;
 use crate::review::{ReviewPoint, REVIEW_THRESHOLD};
+use crate::session_log;
 
 // ── Shared state ─────────────────────────────────────────────────────────────
 
@@ -494,6 +495,82 @@ async fn api_memory_diff(
     Json(result.unwrap_or_else(|_| Ok(MemoryDiffResponse::default())).unwrap_or_default())
 }
 
+// ── Session log API ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SessionLogQuery {
+    pub commit: Option<String>,
+    pub file: Option<String>,
+}
+
+async fn api_session_log(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SessionLogQuery>,
+) -> Json<Option<session_log::SessionAnalysis>> {
+    let result = tokio::task::spawn_blocking(move || {
+        let repo = H5iRepository::open(&state.repo_path).ok()?;
+        let oid_str = match params.commit {
+            Some(ref s) => s.clone(),
+            None => repo.git().head().ok()?.peel_to_commit().ok()?.id().to_string(),
+        };
+        session_log::load_analysis(&repo.h5i_root, &oid_str).ok().flatten()
+    })
+    .await;
+    Json(result.unwrap_or(None))
+}
+
+async fn api_session_churn(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<session_log::FileChurn>> {
+    let result = tokio::task::spawn_blocking(move || {
+        let repo = H5iRepository::open(&state.repo_path).ok()?;
+        Some(session_log::aggregate_churn(&repo.h5i_root))
+    })
+    .await;
+    Json(result.unwrap_or(None).unwrap_or_default())
+}
+
+#[derive(Serialize)]
+struct SessionLogMeta {
+    commit_oid: String,
+    session_id: String,
+    analyzed_at: String,
+    message_count: usize,
+    tool_call_count: usize,
+    edited_count: usize,
+    consulted_count: usize,
+    uncertainty_count: usize,
+}
+
+async fn api_session_list(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<SessionLogMeta>> {
+    let result = tokio::task::spawn_blocking(move || {
+        let repo = H5iRepository::open(&state.repo_path).ok()?;
+        let oids = session_log::list_analyses(&repo.h5i_root);
+        let metas: Vec<SessionLogMeta> = oids
+            .iter()
+            .rev()
+            .filter_map(|oid| {
+                let a = session_log::load_analysis(&repo.h5i_root, oid).ok()??;
+                Some(SessionLogMeta {
+                    commit_oid: oid.clone(),
+                    session_id: a.session_id.clone(),
+                    analyzed_at: a.analyzed_at.format("%Y-%m-%d %H:%M UTC").to_string(),
+                    message_count: a.message_count,
+                    tool_call_count: a.tool_call_count,
+                    edited_count: a.footprint.edited.len(),
+                    consulted_count: a.footprint.consulted.len(),
+                    uncertainty_count: a.uncertainty.len(),
+                })
+            })
+            .collect();
+        Some(metas)
+    })
+    .await;
+    Json(result.unwrap_or(None).unwrap_or_default())
+}
+
 // ── Server entry point ────────────────────────────────────────────────────────
 
 pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
@@ -509,6 +586,9 @@ pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
         .route("/api/review-points", get(api_review_points))
         .route("/api/memory/snapshots", get(api_memory_snapshots))
         .route("/api/memory/diff", get(api_memory_diff))
+        .route("/api/session-log", get(api_session_log))
+        .route("/api/session-log/list", get(api_session_list))
+        .route("/api/session-log/churn", get(api_session_churn))
         .with_state(state);
 
     let addr = format!("127.0.0.1:{}", port);
@@ -830,6 +910,45 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 .mem-snap-count{font-size:11px;color:#484f58;margin-bottom:8px}
 .mem-insp-hdr{font-size:13px;font-weight:600;margin-bottom:12px;color:#e6edf3;display:flex;align-items:center;gap:10px}
 .mem-diff-hdr-row{font-size:13px;font-weight:600;margin-bottom:14px;color:#e6edf3;display:flex;align-items:center;gap:8px}
+/* ── Sessions tab ── */
+.sl-layout{display:grid;grid-template-columns:280px 1fr;gap:16px;height:calc(100vh - 160px)}
+.sl-list{overflow-y:auto;border-right:1px solid #21262d;padding-right:12px}
+.sl-card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s}
+.sl-card:hover,.sl-card.active{border-color:#58a6ff}
+.sl-card-oid{font-family:monospace;font-size:12px;color:#bc8cff;font-weight:700}
+.sl-card-meta{font-size:11px;color:#484f58;margin-top:4px}
+.sl-card-badges{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.sl-badge{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600}
+.sl-badge-edit{background:#1a3a1a;color:#3fb950}
+.sl-badge-read{background:#1a2a3a;color:#58a6ff}
+.sl-badge-warn{background:#3a2a10;color:#e3b341}
+.sl-detail{overflow-y:auto;padding:4px 0 4px 4px}
+.sl-section{margin-bottom:20px}
+.sl-section-title{font-size:12px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid #21262d}
+.sl-trigger{background:#161b22;border:1px solid #21262d;border-radius:6px;padding:10px 14px;font-style:italic;color:#58a6ff;font-size:13px;line-height:1.5}
+.sl-file-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px}
+.sl-file-name{color:#e6edf3;font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sl-file-count{color:#484f58;font-size:11px;min-width:28px;text-align:right}
+.sl-file-tools{color:#484f58;font-size:10px}
+.sl-edit-icon{color:#3fb950;width:14px;text-align:center}
+.sl-read-icon{color:#58a6ff;width:14px;text-align:center}
+.sl-dep-icon{color:#484f58;width:14px;text-align:center}
+.sl-decision{padding:5px 0;font-size:12px;color:#c9d1d9;line-height:1.5;border-bottom:1px solid #161b22}
+.sl-rejected{padding:5px 0;font-size:12px;color:#484f58;font-style:italic;line-height:1.5}
+.sl-rejected::before{content:"✗ ";color:#f85149}
+.sl-unc-row{margin-bottom:10px;padding:8px 10px;background:#161b22;border-radius:6px;border-left:3px solid #e3b341}
+.sl-unc-row.high{border-left-color:#f85149}
+.sl-unc-row.low{border-left-color:#3fb950}
+.sl-unc-phrase{font-size:11px;font-weight:700;color:#e3b341;margin-bottom:3px}
+.sl-unc-snippet{font-size:11px;color:#8b949e;font-style:italic;line-height:1.4}
+.sl-unc-meta{font-size:10px;color:#484f58;margin-top:3px}
+.sl-churn-bar{display:flex;align-items:center;gap:8px;padding:4px 0}
+.sl-churn-file{font-family:monospace;font-size:12px;color:#e6edf3;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sl-churn-track{width:80px;height:6px;background:#21262d;border-radius:3px;overflow:hidden}
+.sl-churn-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#3fb950,#f85149)}
+.sl-churn-pct{font-size:11px;color:#484f58;min-width:34px;text-align:right}
+.sl-replay-hash{font-family:monospace;font-size:11px;color:#484f58;background:#161b22;padding:6px 10px;border-radius:4px;word-break:break-all}
+.sl-empty{color:#484f58;font-size:13px;padding:20px 0}
 </style>
 </head>
 <body>
@@ -907,6 +1026,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
       <button class="tab" onclick="switchTab('intentgraph')">🔗 Intent Graph</button>
       <button class="tab" onclick="switchTab('review')">🔍 Review Points<span class="tab-badge" id="tab-review-count">—</span></button>
       <button class="tab" onclick="switchTab('memory');loadMemorySnapshots()">🧠 Memory<span class="tab-badge" id="tab-mem-count">—</span></button>
+      <button class="tab" onclick="switchTab('sessions');loadSessionList()">🔬 Sessions<span class="tab-badge" id="tab-sl-count">—</span></button>
     </div>
 
     <!-- Timeline panel -->
@@ -1008,6 +1128,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
             Select a snapshot to inspect its files,<br>
             or select two snapshots to compare them.
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sessions panel -->
+    <div id="panel-sessions" style="display:none">
+      <div class="sl-layout">
+        <div class="sl-list" id="sl-list">
+          <div class="empty-state"><span class="spinner"></span> Loading…</div>
+        </div>
+        <div class="sl-detail" id="sl-detail">
+          <div class="sl-empty">Select a session to inspect its footprint, causal chain, uncertainty signals, and churn.</div>
         </div>
       </div>
     </div>
@@ -1511,7 +1643,7 @@ function renderSparkline() {
 
 // ── Tab switching ──────────────────────────────────────────────────────────
 function switchTab(tab) {
-  ['timeline','summary','integrity','intentgraph','review','memory'].forEach(t => {
+  ['timeline','summary','integrity','intentgraph','review','memory','sessions'].forEach(t => {
     const btn = document.querySelector(`.tab[onclick="switchTab('${t}')"]`);
     const panel = id('panel-' + t);
     const active = t === tab;
@@ -2046,6 +2178,182 @@ function renderMemDiff(diff) {
   });
 
   id('mem-viewer').innerHTML = html;
+}
+
+// ── Sessions tab ──────────────────────────────────────────────────────────
+let slSessions = [];
+let slChurn = [];
+
+async function loadSessionList() {
+  if (slSessions.length) { renderSlList(); return; }
+  const [list, churn] = await Promise.all([
+    fetch('/api/session-log/list').then(r => r.json()),
+    fetch('/api/session-log/churn').then(r => r.json()),
+  ]);
+  slSessions = list || [];
+  slChurn = churn || [];
+  id('tab-sl-count').textContent = slSessions.length || '0';
+  renderSlList();
+}
+
+function renderSlList() {
+  const el = id('sl-list');
+  if (!slSessions.length) {
+    el.innerHTML = '<div class="sl-empty">No sessions analyzed yet.<br>Run <code>h5i analyze</code> after a Claude Code session.</div>';
+    return;
+  }
+  el.innerHTML = slSessions.map((s, i) => `
+    <div class="sl-card" id="sl-card-${i}" onclick="selectSession('${s.commit_oid}', ${i})">
+      <div class="sl-card-oid">${s.commit_oid.slice(0,8)}</div>
+      <div class="sl-card-meta">${s.analyzed_at} · ${s.message_count} msgs · ${s.tool_call_count} tools</div>
+      <div class="sl-card-badges">
+        <span class="sl-badge sl-badge-edit">✏ ${s.edited_count} edited</span>
+        <span class="sl-badge sl-badge-read">📖 ${s.consulted_count} read</span>
+        ${s.uncertainty_count > 0 ? `<span class="sl-badge sl-badge-warn">⚠ ${s.uncertainty_count} uncertain</span>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+async function selectSession(oid, idx) {
+  document.querySelectorAll('.sl-card').forEach(c => c.classList.remove('active'));
+  const card = id('sl-card-' + idx);
+  if (card) card.classList.add('active');
+  id('sl-detail').innerHTML = '<div class="sl-empty"><span class="spinner"></span> Loading…</div>';
+  const data = await fetch(`/api/session-log?commit=${oid}`).then(r => r.json());
+  if (!data) {
+    id('sl-detail').innerHTML = '<div class="sl-empty">No analysis data found.</div>';
+    return;
+  }
+  renderSlDetail(data);
+}
+
+function renderSlDetail(d) {
+  let html = '';
+
+  // Trigger
+  html += `<div class="sl-section">
+    <div class="sl-section-title">Trigger</div>
+    <div class="sl-trigger">"${esc(d.causal_chain.user_trigger.slice(0,300))}"</div>
+  </div>`;
+
+  // Footprint — two columns
+  const edited = d.footprint.edited || [];
+  const consulted = d.footprint.consulted || [];
+  const implicitDeps = d.footprint.implicit_deps || [];
+  html += `<div class="sl-section">
+    <div class="sl-section-title">Exploration Footprint</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div>
+        <div style="font-size:11px;color:#3fb950;font-weight:700;margin-bottom:6px">✏ EDITED (${edited.length})</div>
+        ${edited.map(f => {
+          const editCount = (d.causal_chain.edit_sequence || []).filter(s => s.file === f).length;
+          return `<div class="sl-file-row"><span class="sl-edit-icon">✏</span><span class="sl-file-name" title="${esc(f)}">${esc(shortPath(f, 30))}</span><span class="sl-file-count">×${editCount}</span></div>`;
+        }).join('') || '<div class="sl-empty" style="font-size:11px">none</div>'}
+      </div>
+      <div>
+        <div style="font-size:11px;color:#58a6ff;font-weight:700;margin-bottom:6px">📖 CONSULTED (${consulted.length})</div>
+        ${consulted.slice(0,15).map(f => `
+          <div class="sl-file-row">
+            <span class="sl-read-icon">📖</span>
+            <span class="sl-file-name" title="${esc(f.path)}">${esc(shortPath(f.path, 28))}</span>
+            <span class="sl-file-count">×${f.count}</span>
+            <span class="sl-file-tools">[${esc((f.tools||[]).join(','))}]</span>
+          </div>`).join('') || '<div class="sl-empty" style="font-size:11px">none</div>'}
+      </div>
+    </div>
+    ${implicitDeps.length ? `
+    <div style="margin-top:10px">
+      <div style="font-size:11px;color:#484f58;font-weight:700;margin-bottom:4px">→ IMPLICIT DEPS (read, never edited)</div>
+      ${implicitDeps.slice(0,8).map(f => `<div class="sl-file-row"><span class="sl-dep-icon">→</span><span class="sl-file-name" style="color:#484f58">${esc(shortPath(f,38))}</span></div>`).join('')}
+    </div>` : ''}
+  </div>`;
+
+  // Causal chain
+  const decisions = d.causal_chain.key_decisions || [];
+  const rejected = d.causal_chain.rejected_approaches || [];
+  if (decisions.length || rejected.length) {
+    html += `<div class="sl-section">
+      <div class="sl-section-title">Causal Chain</div>`;
+    if (decisions.length) {
+      html += `<div style="font-size:11px;color:#8b949e;margin-bottom:6px">KEY DECISIONS</div>`;
+      html += decisions.map((d, i) => `<div class="sl-decision"><span style="color:#484f58">${i+1}.</span> ${esc(d.slice(0,140))}</div>`).join('');
+    }
+    if (rejected.length) {
+      html += `<div style="font-size:11px;color:#8b949e;margin:10px 0 6px">CONSIDERED / REJECTED</div>`;
+      html += rejected.map(r => `<div class="sl-rejected">${esc(r.slice(0,130))}</div>`).join('');
+    }
+    html += '</div>';
+  }
+
+  // Uncertainty heatmap
+  const unc = d.uncertainty || [];
+  if (unc.length) {
+    html += `<div class="sl-section">
+      <div class="sl-section-title">Uncertainty Heatmap (${unc.length})</div>`;
+    html += unc.slice(0,12).map(a => {
+      const cls = a.confidence < 0.35 ? 'high' : (a.confidence > 0.55 ? 'low' : '');
+      const confColor = a.confidence < 0.35 ? '#f85149' : (a.confidence > 0.55 ? '#3fb950' : '#e3b341');
+      return `<div class="sl-unc-row ${cls}">
+        <div class="sl-unc-phrase">
+          <span style="color:${confColor}">${Math.round(a.confidence*100)}% conf</span>
+          &nbsp;·&nbsp; "${esc(a.phrase)}"
+          ${a.context_file ? `&nbsp;·&nbsp; <span style="color:#484f58;font-style:normal">${esc(shortPath(a.context_file,30))}</span>` : ''}
+        </div>
+        <div class="sl-unc-snippet">"${esc(a.snippet.slice(0,180))}"</div>
+        <div class="sl-unc-meta">turn ${a.turn}</div>
+      </div>`;
+    }).join('');
+    html += '</div>';
+  }
+
+  // File churn (session-local)
+  const churn = d.churn || [];
+  if (churn.length) {
+    html += `<div class="sl-section">
+      <div class="sl-section-title">File Churn (this session)</div>`;
+    html += churn.slice(0,10).map(c => `
+      <div class="sl-churn-bar">
+        <span class="sl-churn-file" title="${esc(c.file)}">${esc(shortPath(c.file,36))}</span>
+        <span style="font-size:11px;color:#3fb950">✏${c.edit_count}</span>
+        <span style="font-size:11px;color:#58a6ff;margin-left:4px">📖${c.read_count}</span>
+        <div class="sl-churn-track"><div class="sl-churn-fill" style="width:${Math.round(c.churn_score*100)}%"></div></div>
+        <span class="sl-churn-pct">${Math.round(c.churn_score*100)}%</span>
+      </div>`).join('');
+    html += '</div>';
+  }
+
+  // Bash commands sample
+  const cmds = (d.footprint.bash_commands || []).slice(0, 8);
+  if (cmds.length) {
+    html += `<div class="sl-section">
+      <div class="sl-section-title">Bash Commands (${cmds.length} shown)</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        ${cmds.map(c => `<code style="font-size:11px;color:#8b949e;background:#0d1117;padding:3px 8px;border-radius:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c)}">${esc(c.slice(0,100))}</code>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  // Replay hash
+  html += `<div class="sl-section">
+    <div class="sl-section-title">Replay Hash</div>
+    <div class="sl-replay-hash">${esc(d.replay_hash)}</div>
+    <div style="font-size:11px;color:#484f58;margin-top:6px">SHA-256 of the raw session JSONL — use to verify session replay reproducibility.</div>
+  </div>`;
+
+  id('sl-detail').innerHTML = html;
+}
+
+// Global churn tab (aggregated across all sessions)
+// Accessible via the churn sub-section inside any session or as standalone from session list header.
+
+function shortPath(p, max) {
+  if (!p || p.length <= max) return p || '';
+  return '…' + p.slice(-(max-1));
+}
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────

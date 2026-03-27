@@ -8,6 +8,7 @@ use h5i_core::blame::BlameMode;
 use h5i_core::claude::{keyword_search, AnthropicClient};
 use h5i_core::memory;
 use h5i_core::metadata::{AiMetadata, IntegrityLevel, Severity, TestSource};
+use h5i_core::session_log;
 use h5i_core::repository::H5iRepository;
 use h5i_core::review::REVIEW_THRESHOLD;
 use h5i_core::session::LocalSession;
@@ -191,6 +192,40 @@ enum Commands {
     Memory {
         #[command(subcommand)]
         action: MemoryCommands,
+    },
+
+    /// Parse a Claude Code session log and store enriched metadata (footprint, causal chain,
+    /// uncertainty heatmap, file churn) linked to a commit
+    Analyze {
+        /// Path to the Claude Code .jsonl session file (default: auto-detect latest session)
+        #[arg(long, value_name = "JSONL")]
+        session: Option<PathBuf>,
+        /// Commit OID to link this analysis to (default: HEAD)
+        #[arg(long)]
+        commit: Option<String>,
+    },
+
+    /// Show which files the AI consulted vs edited for a given commit
+    Footprint {
+        /// Commit OID whose session analysis to display (default: HEAD)
+        commit: Option<String>,
+    },
+
+    /// Show moments where the AI expressed uncertainty, optionally filtered by file
+    Uncertainty {
+        /// Commit OID whose session analysis to display (default: HEAD)
+        #[arg(long)]
+        commit: Option<String>,
+        /// Filter annotations to those recorded while editing this file path
+        #[arg(long)]
+        file: Option<String>,
+    },
+
+    /// Show file edit-churn across all analyzed sessions
+    Churn {
+        /// Number of files to show
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
     },
 }
 
@@ -798,7 +833,7 @@ jq -c '{
                 "If you don't have {} installed, run the following command:\n\n{}\n",
                 style("jq").yellow(),
                 style("apt install jq").dim()
-            );;            
+            );
 
             println!("{}", style("── Step 1: Save hook script ──").bold());
             println!(
@@ -1160,6 +1195,151 @@ jq -c '{
                         .bold()
                     );
                 }
+            }
+        }
+
+        Commands::Analyze { session, commit } => {
+            let repo = H5iRepository::open(".")?;
+            let workdir = repo
+                .git()
+                .workdir()
+                .ok_or_else(|| anyhow::anyhow!("Bare repository not supported"))?
+                .to_path_buf();
+
+            // Resolve commit OID
+            let oid_str = match commit {
+                Some(ref s) => s.clone(),
+                None => repo.git().head()?.peel_to_commit()?.id().to_string(),
+            };
+
+            // Resolve session JSONL path
+            let jsonl_path = match session {
+                Some(p) => p,
+                None => {
+                    match session_log::find_latest_session(&workdir) {
+                        Some(p) => {
+                            println!(
+                                "{} {}",
+                                STEP,
+                                style(format!("Auto-detected session: {}", p.display())).dim()
+                            );
+                            p
+                        }
+                        None => {
+                            println!(
+                                "{} No Claude Code session found in ~/.claude/projects/.",
+                                WARN
+                            );
+                            println!(
+                                "  {} Use {} to specify a session file.",
+                                style("ℹ").blue(),
+                                style("h5i analyze --session <path>").bold()
+                            );
+                            return Ok(());
+                        }
+                    }
+                }
+            };
+
+            println!(
+                "{} {} → commit {}",
+                STEP,
+                style("Analyzing session log").cyan().bold(),
+                style(&oid_str[..8.min(oid_str.len())]).magenta()
+            );
+
+            let analysis = session_log::analyze_session(&jsonl_path)?;
+            session_log::save_analysis(&repo.h5i_root, &oid_str, &analysis)?;
+
+            println!(
+                "{} {} messages · {} tool calls · {} edited · {} consulted",
+                SUCCESS,
+                style(analysis.message_count).cyan(),
+                style(analysis.tool_call_count).cyan(),
+                style(analysis.footprint.edited.len()).green(),
+                style(analysis.footprint.consulted.len()).yellow(),
+            );
+            println!(
+                "  {} {} uncertainty signal(s) · {} churn entr{}",
+                style("→").dim(),
+                style(analysis.uncertainty.len()).yellow(),
+                style(analysis.churn.len()).cyan(),
+                if analysis.churn.len() == 1 { "y" } else { "ies" },
+            );
+            println!(
+                "  {} Replay hash: {}",
+                style("→").dim(),
+                style(&analysis.replay_hash[..16]).dim()
+            );
+            println!(
+                "  {} Run {} or {} to inspect results.",
+                style("ℹ").blue(),
+                style(format!("h5i footprint {}", &oid_str[..8])).bold(),
+                style(format!("h5i uncertainty --commit {}", &oid_str[..8])).bold(),
+            );
+        }
+
+        Commands::Footprint { commit } => {
+            let repo = H5iRepository::open(".")?;
+
+            let oid_str = match commit {
+                Some(ref s) => s.clone(),
+                None => repo.git().head()?.peel_to_commit()?.id().to_string(),
+            };
+
+            match session_log::load_analysis(&repo.h5i_root, &oid_str)? {
+                None => {
+                    println!(
+                        "{} No session analysis for commit {}. Run {} first.",
+                        WARN,
+                        style(&oid_str[..8.min(oid_str.len())]).magenta(),
+                        style("h5i analyze").bold()
+                    );
+                }
+                Some(analysis) => {
+                    session_log::print_footprint(&analysis);
+                    println!();
+                    session_log::print_causal_chain(&analysis);
+                }
+            }
+        }
+
+        Commands::Uncertainty { commit, file } => {
+            let repo = H5iRepository::open(".")?;
+
+            let oid_str = match commit {
+                Some(ref s) => s.clone(),
+                None => repo.git().head()?.peel_to_commit()?.id().to_string(),
+            };
+
+            match session_log::load_analysis(&repo.h5i_root, &oid_str)? {
+                None => {
+                    println!(
+                        "{} No session analysis for commit {}. Run {} first.",
+                        WARN,
+                        style(&oid_str[..8.min(oid_str.len())]).magenta(),
+                        style("h5i analyze").bold()
+                    );
+                }
+                Some(analysis) => {
+                    session_log::print_uncertainty(&analysis, file.as_deref());
+                }
+            }
+        }
+
+        Commands::Churn { limit } => {
+            let repo = H5iRepository::open(".")?;
+            let mut churn = session_log::aggregate_churn(&repo.h5i_root);
+            churn.truncate(limit);
+
+            if churn.is_empty() {
+                println!(
+                    "{} No churn data yet. Run {} after sessions to build history.",
+                    WARN,
+                    style("h5i analyze").bold()
+                );
+            } else {
+                session_log::print_churn(&churn);
             }
         }
 
