@@ -215,6 +215,20 @@ enum MemoryCommands {
         #[arg(short, long)]
         yes: bool,
     },
+
+    /// Push the latest memory snapshot to a git remote via refs/h5i/memory
+    Push {
+        /// Remote to push to
+        #[arg(short, long, default_value = "origin")]
+        remote: String,
+    },
+
+    /// Fetch a teammate's memory snapshot from a git remote
+    Pull {
+        /// Remote to pull from
+        #[arg(short, long, default_value = "origin")]
+        remote: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -962,6 +976,58 @@ jq -c '{
                         style(count).cyan(),
                         if count == 1 { "" } else { "s" },
                         style(memory::claude_memory_dir(&workdir).display().to_string()).dim()
+                    );
+                }
+
+                MemoryCommands::Push { remote } => {
+                    println!(
+                        "{} {} to {}",
+                        STEP,
+                        style("Pushing memory snapshot").cyan().bold(),
+                        style(&remote).yellow()
+                    );
+
+                    let commit_oid = memory::push(repo.git(), &repo.h5i_root, &remote)?;
+                    println!(
+                        "{} Memory commit {} pushed to {} ({})",
+                        SUCCESS,
+                        style(&commit_oid[..8]).magenta().bold(),
+                        style(&remote).yellow(),
+                        style(memory::MEMORY_REF).dim()
+                    );
+                    println!(
+                        "  {} Teammates can run {} to receive it.",
+                        style("→").dim(),
+                        style("h5i memory pull").bold()
+                    );
+                }
+
+                MemoryCommands::Pull { remote } => {
+                    println!(
+                        "{} {} from {}",
+                        STEP,
+                        style("Pulling memory snapshot").cyan().bold(),
+                        style(&remote).yellow()
+                    );
+
+                    let result = memory::pull(repo.git(), &repo.h5i_root, &remote)?;
+                    println!(
+                        "{} Received {} file{} linked to code commit {}",
+                        SUCCESS,
+                        style(result.file_count).cyan(),
+                        if result.file_count == 1 { "" } else { "s" },
+                        style(&result.linked_code_oid[..8.min(result.linked_code_oid.len())])
+                            .magenta()
+                            .bold()
+                    );
+                    println!(
+                        "  {} Run {} to apply it to your Claude session.",
+                        style("→").dim(),
+                        style(format!(
+                            "h5i memory restore {}",
+                            &result.linked_code_oid[..8.min(result.linked_code_oid.len())]
+                        ))
+                        .bold()
                     );
                 }
             }

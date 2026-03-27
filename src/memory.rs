@@ -1,11 +1,15 @@
 use chrono::{DateTime, Utc};
 use console::style;
+use git2::{Repository, Signature};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::error::H5iError;
+
+pub const MEMORY_REF: &str = "refs/h5i/memory";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -402,6 +406,185 @@ fn compute_diff_with_context(from: &str, to: &str, context: usize) -> Vec<DiffLi
     }
 
     result
+}
+
+// ── Git-object push / pull ────────────────────────────────────────────────────
+
+/// Result of a successful `pull`.
+pub struct PullResult {
+    /// The code-commit OID this memory snapshot was linked to.
+    pub linked_code_oid: String,
+    /// Number of memory files extracted into the local snapshot.
+    pub file_count: usize,
+}
+
+/// Commit the latest local snapshot onto `refs/h5i/memory` and push to
+/// `remote` (e.g. `"origin"`).
+///
+/// The tree stored in each memory commit mirrors the snapshot directory:
+/// one blob per memory file, plus a `_meta.json` manifest.  The commit
+/// message encodes the linked code-commit OID so recipients can correlate
+/// memory state with code state.
+///
+/// Returns the OID of the newly created memory commit.
+pub fn push(
+    repo: &Repository,
+    h5i_root: &Path,
+    remote: &str,
+) -> Result<String, H5iError> {
+    let snapshots = list_snapshots(h5i_root)?;
+    let latest = snapshots.last().ok_or_else(|| {
+        H5iError::InvalidPath(
+            "No local snapshots found — run `h5i memory snapshot` first.".to_string(),
+        )
+    })?;
+
+    let snap_dir = snapshot_dir(h5i_root, &latest.commit_oid);
+    let commit_oid = create_memory_commit(repo, &snap_dir, &latest.commit_oid, &latest.timestamp)?;
+
+    // Use the system `git` binary for the actual network push so that the
+    // user's existing credential helpers and SSH agents are honoured.
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| H5iError::InvalidPath("Bare repository not supported".to_string()))?;
+
+    let refspec = format!("+{}:{}", MEMORY_REF, MEMORY_REF);
+    let status = Command::new("git")
+        .args(["push", remote, &refspec])
+        .current_dir(workdir)
+        .status()
+        .map_err(|e| H5iError::Internal(format!("Failed to invoke git push: {e}")))?;
+
+    if !status.success() {
+        return Err(H5iError::Internal(format!(
+            "`git push {remote} {refspec}` exited with status {status}"
+        )));
+    }
+
+    Ok(commit_oid.to_string())
+}
+
+/// Fetch `refs/h5i/memory` from `remote`, extract the tree into a local
+/// snapshot directory, and return metadata about what was received.
+///
+/// The snapshot is written to `.git/.h5i/memory/<linked-code-oid>/` but the
+/// live Claude memory directory is **not** touched — call `restore_snapshot`
+/// afterwards if you want to apply it.
+pub fn pull(
+    repo: &Repository,
+    h5i_root: &Path,
+    remote: &str,
+) -> Result<PullResult, H5iError> {
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| H5iError::InvalidPath("Bare repository not supported".to_string()))?;
+
+    // Fetch with force (+) so non-fast-forward updates from teammates work.
+    let refspec = format!("+{}:{}", MEMORY_REF, MEMORY_REF);
+    let status = Command::new("git")
+        .args(["fetch", remote, &refspec])
+        .current_dir(workdir)
+        .status()
+        .map_err(|e| H5iError::Internal(format!("Failed to invoke git fetch: {e}")))?;
+
+    if !status.success() {
+        return Err(H5iError::Internal(format!(
+            "`git fetch {remote} {refspec}` exited with status {status}"
+        )));
+    }
+
+    extract_memory_ref(repo, h5i_root)
+}
+
+// ── Git-object helpers ────────────────────────────────────────────────────────
+
+/// Build a git commit from the files in `snap_dir` and update `refs/h5i/memory`.
+fn create_memory_commit(
+    repo: &Repository,
+    snap_dir: &Path,
+    code_oid: &str,
+    timestamp: &DateTime<Utc>,
+) -> Result<git2::Oid, H5iError> {
+    // 1. Create one blob per file in the snapshot.
+    let mut builder = repo.treebuilder(None)?;
+    for entry in fs::read_dir(snap_dir)? {
+        let entry = entry?;
+        if !entry.path().is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let content = fs::read(entry.path())?;
+        let blob_oid = repo.blob(&content)?;
+        builder.insert(name_str.as_ref(), blob_oid, 0o100644)?;
+    }
+    let tree_oid = builder.write()?;
+    let tree = repo.find_tree(tree_oid)?;
+
+    // 2. Use the existing parent commit on refs/h5i/memory, if any.
+    let parent_commit = repo
+        .find_reference(MEMORY_REF)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok());
+    let parents: Vec<&git2::Commit> = parent_commit.iter().collect();
+
+    // 3. Use the repo's configured identity; fall back to a generic one.
+    let sig = repo
+        .signature()
+        .unwrap_or_else(|_| Signature::now("h5i", "h5i@local").unwrap());
+
+    let message = format!(
+        "h5i memory snapshot\n\nlinked-commit: {code_oid}\ntimestamp: {timestamp}",
+    );
+
+    let oid = repo.commit(Some(MEMORY_REF), &sig, &sig, &message, &tree, &parents)?;
+    Ok(oid)
+}
+
+/// Read the current `refs/h5i/memory` commit, extract its tree into a local
+/// snapshot directory, and return metadata about what was received.
+fn extract_memory_ref(repo: &Repository, h5i_root: &Path) -> Result<PullResult, H5iError> {
+    let reference = repo.find_reference(MEMORY_REF).map_err(|_| {
+        H5iError::InvalidPath(
+            "refs/h5i/memory not found locally — did the fetch succeed?".to_string(),
+        )
+    })?;
+    let commit = reference.peel_to_commit()?;
+    let message = commit.message().unwrap_or("");
+
+    // Parse the linked code-commit OID from the commit message.
+    let code_oid = message
+        .lines()
+        .find(|l| l.starts_with("linked-commit: "))
+        .map(|l| l["linked-commit: ".len()..].trim().to_string())
+        .ok_or_else(|| {
+            H5iError::Metadata(
+                "Memory commit has no `linked-commit` field in its message".to_string(),
+            )
+        })?;
+
+    // Extract each blob in the tree to the local snapshot directory.
+    let snap_dir = snapshot_dir(h5i_root, &code_oid);
+    fs::create_dir_all(&snap_dir)?;
+
+    let tree = commit.tree()?;
+    let mut count = 0;
+    for entry in tree.iter() {
+        if entry.kind() != Some(git2::ObjectType::Blob) {
+            continue;
+        }
+        let blob = repo.find_blob(entry.id())?;
+        let name = entry.name().unwrap_or("unknown");
+        fs::write(snap_dir.join(name), blob.content())?;
+        if name != "_meta.json" {
+            count += 1;
+        }
+    }
+
+    Ok(PullResult {
+        linked_code_oid: code_oid,
+        file_count: count,
+    })
 }
 
 /// Pure LCS diff — returns every line tagged as Context/Added/Removed.
