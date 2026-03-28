@@ -37,4 +37,21 @@ pub struct BlameResult {
     /// Indicates if a logical change occurred at the AST level
     pub is_semantic_change: bool,
     pub test_passed: Option<bool>,
+    /// The human prompt that triggered this commit (from h5i AI metadata).
+    /// `None` for human commits or commits without recorded provenance.
+    pub prompt: Option<String>,
+}
+
+/// One entry in the prompt ancestry chain for a specific file line.
+#[derive(Debug)]
+pub struct AncestryEntry {
+    pub commit_id: String,
+    pub author: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Human prompt recorded for this commit, if any.
+    pub prompt: Option<String>,
+    /// AI agent identifier, if this was an AI commit.
+    pub agent: Option<String>,
+    /// The line content as it existed in this commit.
+    pub line_content: String,
 }

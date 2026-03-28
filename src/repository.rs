@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use yrs::updates::decoder::Decode;
 use yrs::{GetString, Text, Transact};
 
-use crate::blame::{BlameMode, BlameResult};
+use crate::blame::{AncestryEntry, BlameMode, BlameResult};
 use crate::delta_store::{sha256_hash, DeltaStore};
 use crate::error::H5iError;
 use chrono::{TimeZone, Utc};
@@ -693,11 +693,11 @@ impl H5iRepository {
         for hunk in blame.iter() {
             let commit_id = hunk.final_commit_id();
             let record = self.load_h5i_record(commit_id).ok();
-            let agent_info = record
-                .as_ref()
-                .and_then(|r| r.ai_metadata.as_ref())
+            let ai = record.as_ref().and_then(|r| r.ai_metadata.as_ref());
+            let agent_info = ai
                 .map(|a| format!("AI:{}", a.agent_id))
                 .unwrap_or_else(|| "Human".to_string());
+            let prompt = ai.map(|a| a.prompt.clone()).filter(|p| !p.is_empty());
             let test_passed = record
                 .as_ref()
                 .and_then(|r| r.test_metrics.as_ref())
@@ -713,11 +713,227 @@ impl H5iRepository {
                         is_semantic_change: false,
                         line_number: line_idx + 1,
                         test_passed,
+                        prompt: prompt.clone(),
                     });
                 }
             }
         }
         Ok(results)
+    }
+
+    // ── Prompt Ancestry ───────────────────────────────────────────────────────
+
+    /// Returns the full prompt ancestry chain for a specific line in a file.
+    ///
+    /// Starting from HEAD, this method walks backwards through the commit history
+    /// following the line as it moves through edits.  At each commit that touched
+    /// the line it records the commit OID, author, timestamp, and — critically —
+    /// the human prompt that triggered the change (from h5i AI metadata).
+    ///
+    /// The result is in *reverse-chronological* order (most-recent first), i.e.
+    /// the direct cause of the current content is at index 0.
+    ///
+    /// # Arguments
+    /// * `path`        – repo-relative path to the file
+    /// * `line_number` – 1-indexed line number in the current HEAD version
+    pub fn blame_ancestry(
+        &self,
+        path: &Path,
+        line_number: usize,
+    ) -> Result<Vec<AncestryEntry>, H5iError> {
+        if line_number == 0 {
+            return Err(H5iError::InvalidPath(
+                "line_number must be ≥ 1".to_string(),
+            ));
+        }
+
+        let mut ancestry: Vec<AncestryEntry> = Vec::new();
+        // current_commit is where we evaluate blame; line_in_commit is the
+        // 1-indexed target line *in that commit's version of the file*.
+        let mut current_commit = self.git_repo.head()?.peel_to_commit()?;
+        let mut line_in_commit = line_number;
+        // Guard against infinite loops in pathological repos.
+        const MAX_DEPTH: usize = 500;
+
+        for _ in 0..MAX_DEPTH {
+            // ── 1. Blame the file at current_commit ──────────────────────────
+            let mut opts = git2::BlameOptions::new();
+            opts.newest_commit(current_commit.id());
+            let blame = match self.git_repo.blame_file(path, Some(&mut opts)) {
+                Ok(b) => b,
+                Err(_) => break, // file may not exist yet in this commit
+            };
+
+            let hunk = match blame.get_line(line_in_commit) {
+                Some(h) => h,
+                None => break,
+            };
+            let responsible_oid = hunk.final_commit_id();
+            let responsible = match self.git_repo.find_commit(responsible_oid) {
+                Ok(c) => c,
+                Err(_) => break,
+            };
+
+            // ── 2. Load h5i record for that commit ───────────────────────────
+            let record = self.load_h5i_record(responsible_oid).ok();
+            let ai = record.as_ref().and_then(|r| r.ai_metadata.as_ref());
+
+            // ── 3. Resolve line content in that commit ────────────────────────
+            let line_content = self
+                .get_file_line_at_commit(responsible_oid, path, line_in_commit)
+                .unwrap_or_default();
+
+            let ts = chrono::DateTime::from_timestamp(responsible.time().seconds(), 0)
+                .unwrap_or_default();
+
+            ancestry.push(AncestryEntry {
+                commit_id: responsible_oid.to_string(),
+                author: responsible
+                    .author()
+                    .name()
+                    .unwrap_or("unknown")
+                    .to_string(),
+                timestamp: ts,
+                prompt: ai.map(|a| a.prompt.clone()).filter(|p| !p.is_empty()),
+                agent: ai.map(|a| a.agent_id.clone()),
+                line_content,
+            });
+
+            // ── 4. Find the parent of the responsible commit ──────────────────
+            if responsible.parent_count() == 0 {
+                break; // reached root
+            }
+            let parent = match responsible.parent(0) {
+                Ok(p) => p,
+                Err(_) => break,
+            };
+
+            // ── 5. Map line_in_commit through the diff to the parent ──────────
+            let parent_tree = parent.tree().ok();
+            let commit_tree = match responsible.tree() {
+                Ok(t) => t,
+                Err(_) => break,
+            };
+            match self.map_line_to_parent(
+                parent_tree.as_ref(),
+                &commit_tree,
+                path,
+                line_in_commit,
+            ) {
+                Ok(Some(parent_line)) => {
+                    line_in_commit = parent_line;
+                    current_commit = parent;
+                }
+                _ => break, // line was introduced in this commit — ancestry complete
+            }
+        }
+
+        Ok(ancestry)
+    }
+
+    /// Given line `line_in_new` (1-indexed) in the diff from `parent_tree → commit_tree`
+    /// for `path`, return the corresponding line number in the parent (old) file.
+    ///
+    /// Returns `Ok(None)` when the line was *added* in this commit (no ancestor line).
+    fn map_line_to_parent(
+        &self,
+        parent_tree: Option<&git2::Tree>,
+        commit_tree: &git2::Tree,
+        path: &Path,
+        line_in_new: usize,
+    ) -> Result<Option<usize>, H5iError> {
+        let mut diff_opts = git2::DiffOptions::new();
+        if let Some(s) = path.to_str() {
+            diff_opts.pathspec(s);
+        }
+        let diff = self
+            .git_repo
+            .diff_tree_to_tree(parent_tree, Some(commit_tree), Some(&mut diff_opts))?;
+
+        // No deltas for this file → the file was unchanged; line maps 1-to-1.
+        if diff.deltas().count() == 0 {
+            return Ok(Some(line_in_new));
+        }
+
+        // Walk the first (and only) patch for our file.
+        let patch = git2::Patch::from_diff(&diff, 0)?;
+        let patch = match patch {
+            Some(p) => p,
+            None => return Ok(Some(line_in_new)),
+        };
+
+        // Cumulative offset applied to lines that fall *before* each hunk.
+        let mut cumulative_offset: i64 = 0;
+
+        for hunk_idx in 0..patch.num_hunks() {
+            let (hunk, _) = patch.hunk(hunk_idx)?;
+
+            let new_start = hunk.new_start() as usize; // 1-indexed
+            let new_count = hunk.new_lines() as usize;
+            let old_start = hunk.old_start() as usize;
+            let old_count = hunk.old_lines() as usize;
+
+            if line_in_new < new_start {
+                // The target line is before this hunk; apply offset from earlier hunks.
+                let mapped = line_in_new as i64 + cumulative_offset;
+                return Ok(if mapped > 0 { Some(mapped as usize) } else { None });
+            }
+
+            if line_in_new < new_start + new_count {
+                // The target line is *inside* this hunk.  Walk line-by-line to find
+                // the exact correspondence.
+                let mut new_cursor = new_start;
+                let mut old_cursor = old_start;
+                for line_idx in 0..patch.num_lines_in_hunk(hunk_idx)? {
+                    let dl = patch.line_in_hunk(hunk_idx, line_idx)?;
+                    match dl.origin() {
+                        '+' => {
+                            // Added line — exists only in new.
+                            if new_cursor == line_in_new {
+                                return Ok(None); // introduced here
+                            }
+                            new_cursor += 1;
+                        }
+                        '-' => {
+                            // Removed line — exists only in old.
+                            old_cursor += 1;
+                        }
+                        _ => {
+                            // Context line — present in both.
+                            if new_cursor == line_in_new {
+                                return Ok(Some(old_cursor));
+                            }
+                            new_cursor += 1;
+                            old_cursor += 1;
+                        }
+                    }
+                }
+                // Shouldn't be reached if hunk metadata is correct.
+                return Ok(None);
+            }
+
+            // Line is after this hunk; accumulate offset.
+            cumulative_offset += old_count as i64 - new_count as i64;
+        }
+
+        // Line is after all hunks.
+        let mapped = line_in_new as i64 + cumulative_offset;
+        Ok(if mapped > 0 { Some(mapped as usize) } else { None })
+    }
+
+    /// Return the content of a single line (1-indexed) in `path` at `commit_oid`.
+    fn get_file_line_at_commit(
+        &self,
+        commit_oid: git2::Oid,
+        path: &Path,
+        line_number: usize,
+    ) -> Option<String> {
+        let commit = self.git_repo.find_commit(commit_oid).ok()?;
+        let tree = commit.tree().ok()?;
+        let entry = tree.get_path(path).ok()?;
+        let blob = self.git_repo.find_blob(entry.id()).ok()?;
+        let content = std::str::from_utf8(blob.content()).ok()?;
+        content.lines().nth(line_number.saturating_sub(1)).map(|s| s.to_string())
     }
 
     /// Performs semantic blame based on AST hash changes (structural dimension).

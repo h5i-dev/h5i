@@ -16,6 +16,16 @@ use h5i_core::session::LocalSession;
 use h5i_core::ui::{ERROR, LOOKING, STEP, SUCCESS, WARN};
 use h5i_core::watcher::start_h5i_watcher;
 
+/// Truncate a string to at most `max_chars` characters, appending `…` if cut.
+fn truncate(s: &str, max_chars: usize) -> String {
+    let mut chars = s.chars();
+    let mut result: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        result.push('…');
+    }
+    result
+}
+
 #[derive(Parser)]
 #[command(name = "h5i", about = "Advanced Git for the AI Era", version)]
 struct Cli {
@@ -95,6 +105,13 @@ enum Commands {
         /// Number of recent commits to display
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
+
+        /// Show the full prompt ancestry chain for a specific line.
+        /// Format: <file>:<line>  e.g.  src/model.py:42
+        /// Prints every commit that ever touched that line, annotated with the
+        /// human prompt that caused each change.
+        #[arg(long, value_name = "FILE:LINE")]
+        ancestry: Option<String>,
     },
 
     /// Analyze file ownership with optional structural (AST) logic
@@ -105,6 +122,12 @@ enum Commands {
         /// Mode of blame: 'line' (standard) or 'ast' (semantic)
         #[arg(short, long, default_value = "line")]
         mode: String,
+
+        /// Annotate each commit boundary with the human prompt that triggered it.
+        /// The prompt is printed once per unique commit, immediately after the
+        /// last line belonging to that commit.
+        #[arg(long)]
+        show_prompt: bool,
     },
 
     /// Resolve branch conflicts using CRDT-based semantic merging
@@ -872,12 +895,82 @@ fn main() -> anyhow::Result<()> {
             );
         }
 
-        Commands::Log { limit } => {
+        Commands::Log { limit, ancestry } => {
             let repo = H5iRepository::open(".")?;
-            repo.print_log(limit)?;
+
+            if let Some(spec) = ancestry {
+                // ── Prompt ancestry mode ──────────────────────────────────────
+                // Parse "file:line" spec.
+                let (file_part, line_part) = spec
+                    .rsplit_once(':')
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "--ancestry expects FILE:LINE format, e.g. src/model.py:42"
+                    ))?;
+                let line_number: usize = line_part.parse().map_err(|_| {
+                    anyhow::anyhow!("--ancestry: '{}' is not a valid line number", line_part)
+                })?;
+                let path = std::path::Path::new(file_part);
+
+                println!(
+                    "\n{} {}\n",
+                    style("──").dim(),
+                    style(format!("Prompt ancestry for {}:{}", file_part, line_number))
+                        .cyan()
+                        .bold(),
+                );
+
+                let chain = repo.blame_ancestry(path, line_number)?;
+
+                if chain.is_empty() {
+                    println!("  (no ancestry found — file may be untracked or line out of range)");
+                } else {
+                    let total = chain.len();
+                    for (i, entry) in chain.iter().enumerate() {
+                        let depth = total - i;
+                        let short_oid = &entry.commit_id[..8];
+                        let ts = entry.timestamp.format("%Y-%m-%d %H:%M UTC");
+                        let agent_label = match &entry.agent {
+                            Some(a) => format!("AI:{a}"),
+                            None => "Human".to_string(),
+                        };
+
+                        println!(
+                            "  [{}] {}  {} · {}",
+                            style(format!("{depth} of {total}")).dim(),
+                            style(short_oid).magenta(),
+                            style(&entry.author).cyan(),
+                            style(ts).dim(),
+                        );
+
+                        // The line content at this point in history
+                        println!(
+                            "       {}  {}",
+                            style("line:").dim(),
+                            style(&entry.line_content).italic(),
+                        );
+
+                        match &entry.prompt {
+                            Some(p) => println!(
+                                "       {}  {}",
+                                style("prompt:").dim(),
+                                style(format!("\"{}\"", truncate(p, 80))).yellow().italic(),
+                            ),
+                            None => println!(
+                                "       {}  {} ({})",
+                                style("prompt:").dim(),
+                                style("(none recorded)").dim(),
+                                style(agent_label).dim(),
+                            ),
+                        }
+                        println!();
+                    }
+                }
+            } else {
+                repo.print_log(limit)?;
+            }
         }
 
-        Commands::Blame { file, mode } => {
+        Commands::Blame { file, mode, show_prompt } => {
             let repo = H5iRepository::open(".")?;
             let blame_mode = if mode.to_lowercase() == "ast" {
                 BlameMode::Ast
@@ -896,7 +989,11 @@ fn main() -> anyhow::Result<()> {
                 .underlined()
             );
 
-            for r in results {
+            // Track the previous commit id so we can print the prompt once per
+            // commit boundary rather than once per line.
+            let mut prev_commit: Option<String> = None;
+
+            for r in &results {
                 let test_indicator = match r.test_passed {
                     Some(true) => "✅",
                     Some(false) => "❌",
@@ -904,12 +1001,30 @@ fn main() -> anyhow::Result<()> {
                 };
                 let semantic_indicator = if r.is_semantic_change { "✨" } else { "  " };
 
+                // Print prompt annotation when the commit changes (show_prompt mode).
+                if show_prompt {
+                    let commit_changed = prev_commit.as_deref() != Some(&r.commit_id);
+                    if commit_changed {
+                        if let Some(ref prompt) = r.prompt {
+                            // Blank separator + indented prompt label
+                            println!(
+                                "           {:<15}   {}",
+                                "",
+                                style(format!("prompt: \"{}\"", truncate(prompt, 72)))
+                                    .italic()
+                                    .yellow()
+                            );
+                        }
+                        prev_commit = Some(r.commit_id.clone());
+                    }
+                }
+
                 println!(
                     "{} {} {} {:<15} | {}",
                     test_indicator,
                     semantic_indicator,
                     style(&r.commit_id[..8]).dim(),
-                    style(r.agent_info).blue(),
+                    style(&r.agent_info).blue(),
                     r.line_content
                 );
             }
