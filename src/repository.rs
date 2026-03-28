@@ -2116,7 +2116,9 @@ impl H5iRepository {
             let deletions = stats.deletions();
             let lines_changed = insertions + deletions;
 
-            // Collect file paths and binary file count from the diff
+            // Collect file paths and binary file count from the diff.
+            // Auto-generated / build-artifact paths are excluded from all counts so
+            // they don't inflate risk scores with noise.
             let mut file_paths: Vec<String> = Vec::new();
             let mut binary_count: usize = 0;
             for delta in diff.deltas() {
@@ -2126,8 +2128,12 @@ impl H5iRepository {
                     .or_else(|| delta.old_file().path())
                     .and_then(|p| p.to_str())
                     .map(|s| s.to_string());
-                if let Some(p) = path {
-                    file_paths.push(p);
+                // Skip auto-generated / build-artifact files entirely.
+                if path.as_deref().map(is_artifact_path).unwrap_or(false) {
+                    continue;
+                }
+                if let Some(ref p) = path {
+                    file_paths.push(p.clone());
                 }
                 if delta.flags().contains(git2::DiffFlags::BINARY) {
                     binary_count += 1;
@@ -2357,6 +2363,82 @@ impl H5iRepository {
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         Ok(results)
     }
+}
+
+// ── Artifact path filter ──────────────────────────────────────────────────────
+
+/// Returns `true` when `path` is a well-known build artifact or auto-generated
+/// file that should be excluded from review risk scoring.
+///
+/// Covers the most common ecosystems:
+/// - Python: `__pycache__/`, `*.pyc`, `*.pyo`, `.pytest_cache/`, `*.egg-info/`
+/// - JavaScript/TypeScript: `node_modules/`, `dist/`, `*.min.js`, `.next/`
+/// - Java/Kotlin: `*.class`, `*.jar`, `build/`, `target/`
+/// - Rust: `target/`
+/// - Go: vendor artefacts
+/// - General: `.DS_Store`, `Thumbs.db`, `*.lock` lock-file binaries
+fn is_artifact_path(path: &str) -> bool {
+    // Check path components (any segment matching these is an artifact dir)
+    const ARTIFACT_DIRS: &[&str] = &[
+        "__pycache__",
+        ".pytest_cache",
+        "node_modules",
+        ".next",
+        ".nuxt",
+        "dist",
+        ".eggs",
+        ".tox",
+        ".mypy_cache",
+        ".ruff_cache",
+    ];
+
+    // Suffix-based checks
+    const ARTIFACT_EXTENSIONS: &[&str] = &[
+        ".pyc",
+        ".pyo",
+        ".class",
+        ".jar",
+        ".war",
+        ".ear",
+        ".min.js",
+        ".min.css",
+        ".map",       // JS source maps
+    ];
+
+    // Exact filename matches
+    const ARTIFACT_FILENAMES: &[&str] = &[
+        ".DS_Store",
+        "Thumbs.db",
+        "desktop.ini",
+    ];
+
+    // Check directory segments
+    for segment in path.split('/') {
+        if ARTIFACT_DIRS.contains(&segment) {
+            return true;
+        }
+        // *.egg-info directories
+        if segment.ends_with(".egg-info") || segment.ends_with(".dist-info") {
+            return true;
+        }
+    }
+
+    // Check extension
+    let lower = path.to_ascii_lowercase();
+    for ext in ARTIFACT_EXTENSIONS {
+        if lower.ends_with(ext) {
+            return true;
+        }
+    }
+
+    // Check filename
+    if let Some(filename) = path.split('/').last() {
+        if ARTIFACT_FILENAMES.contains(&filename) {
+            return true;
+        }
+    }
+
+    false
 }
 
 // ── Parser script discovery ───────────────────────────────────────────────────
