@@ -8,7 +8,7 @@ use h5i_core::blame::BlameMode;
 use h5i_core::claude::{keyword_search, AnthropicClient};
 use h5i_core::ctx;
 use h5i_core::memory;
-use h5i_core::metadata::{AiMetadata, IntegrityLevel, Severity, TestSource};
+use h5i_core::metadata::{AiMetadata, Decision, IntegrityLevel, Severity, TestSource};
 use h5i_core::session_log;
 use h5i_core::repository::H5iRepository;
 use h5i_core::review::REVIEW_THRESHOLD;
@@ -98,6 +98,13 @@ enum Commands {
         /// Can be specified multiple times: --caused-by abc123 --caused-by def456
         #[arg(long, value_name = "OID", action = clap::ArgAction::Append)]
         caused_by: Option<Vec<String>>,
+
+        /// Path to a JSON file containing structured design decisions for this commit.
+        /// Schema: array of { "location", "choice", "alternatives"?, "reason" }
+        /// Example: [{"location":"src/model.py:42","choice":"use Adam optimizer",
+        ///            "alternatives":["SGD","RMSProp"],"reason":"faster convergence on this dataset"}]
+        #[arg(long, value_name = "FILE")]
+        decisions: Option<std::path::PathBuf>,
     },
 
     /// Display the enriched 5D commit history
@@ -289,6 +296,17 @@ enum NotesCommands {
         /// Filter to annotations recorded while editing this file
         #[arg(long)]
         file: Option<String>,
+    },
+
+    /// Show per-file attention coverage: which files were read before being edited.
+    /// Files with a low read-before-edit ratio are likely blind edits — higher risk.
+    Coverage {
+        /// Commit OID whose session analysis to display (default: HEAD)
+        #[arg(long)]
+        commit: Option<String>,
+        /// Only show files with read_before_edit_ratio below this threshold (0.0–1.0)
+        #[arg(long, default_value_t = 1.01)]
+        max_ratio: f32,
     },
 }
 
@@ -743,6 +761,7 @@ fn main() -> anyhow::Result<()> {
             audit,
             force,
             caused_by,
+            decisions: decisions_file,
         } => {
             let repo = H5iRepository::open(".")?;
             let sig = repo.git().signature()?; // Fetch system-default Git signature
@@ -885,7 +904,18 @@ fn main() -> anyhow::Result<()> {
             };
 
             let caused_by = caused_by.unwrap_or_default();
-            let oid = repo.commit(&message, &sig, &sig, ai_meta, test_source, ast_parser, caused_by)?;
+
+            // Load structured design decisions from JSON file if provided.
+            let decisions: Vec<Decision> = if let Some(ref path) = decisions_file {
+                let raw = std::fs::read_to_string(path)
+                    .map_err(|e| anyhow::anyhow!("--decisions: cannot read {}: {}", path.display(), e))?;
+                serde_json::from_str(&raw)
+                    .map_err(|e| anyhow::anyhow!("--decisions: invalid JSON in {}: {}", path.display(), e))?
+            } else {
+                vec![]
+            };
+
+            let oid = repo.commit(&message, &sig, &sig, ai_meta, test_source, ast_parser, caused_by, decisions)?;
             repo.clear_pending_context()?;
             println!(
                 "{} {} {}",
@@ -1427,6 +1457,76 @@ fn main() -> anyhow::Result<()> {
                     ),
                     Some(analysis) => {
                         session_log::print_omissions(&analysis, file.as_deref());
+                    }
+                }
+            }
+
+            NotesCommands::Coverage { commit, max_ratio } => {
+                let repo = H5iRepository::open(".")?;
+                let oid_str = match commit {
+                    Some(ref s) => s.clone(),
+                    None => repo.git().head()?.peel_to_commit()?.id().to_string(),
+                };
+                match session_log::load_analysis(&repo.h5i_root, &oid_str)? {
+                    None => println!(
+                        "{} No session analysis for {}. Run {} first.",
+                        WARN,
+                        style(&oid_str[..8.min(oid_str.len())]).magenta(),
+                        style("h5i notes analyze").bold()
+                    ),
+                    Some(analysis) => {
+                        let short = &oid_str[..8.min(oid_str.len())];
+                        println!(
+                            "\n{} {}\n",
+                            style("──").dim(),
+                            style(format!("Attention Coverage — {}", short)).cyan().bold()
+                        );
+                        let cov: Vec<_> = analysis
+                            .coverage
+                            .iter()
+                            .filter(|c| c.read_before_edit_ratio <= max_ratio)
+                            .collect();
+                        if cov.is_empty() {
+                            println!(
+                                "  {} All edited files were read before modification.",
+                                style("✔").green()
+                            );
+                        } else {
+                            println!(
+                                "  {:<42}  {:>8}  {:>12}  {}",
+                                style("File").bold(),
+                                style("Edits").bold(),
+                                style("Coverage").bold(),
+                                style("Blind edits").bold(),
+                            );
+                            println!("  {}", style("─".repeat(74)).dim());
+                            for fc in &cov {
+                                let pct = (fc.read_before_edit_ratio * 100.0) as u32;
+                                let blind = fc.blind_edit_count;
+                                let ratio_style = if blind == 0 {
+                                    style(format!("{:>10}%", pct)).green()
+                                } else if fc.read_before_edit_ratio >= 0.5 {
+                                    style(format!("{:>10}%", pct)).yellow()
+                                } else {
+                                    style(format!("{:>10}%", pct)).red().bold()
+                                };
+                                let blind_style = if blind == 0 {
+                                    style(format!("{:>11}", 0)).dim()
+                                } else {
+                                    style(format!("{:>11}", blind)).red().bold()
+                                };
+                                println!(
+                                    "  {:<42}  {:>8}  {}  {}",
+                                    style(truncate(&fc.file, 42)).cyan(),
+                                    fc.edit_turns.len(),
+                                    ratio_style,
+                                    blind_style,
+                                );
+                            }
+                            println!("\n  {} file(s) with blind edits (no prior Read).",
+                                style(cov.iter().filter(|c| c.blind_edit_count > 0).count()).bold());
+                        }
+                        println!();
                     }
                 }
             }

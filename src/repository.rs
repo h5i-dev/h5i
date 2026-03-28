@@ -11,6 +11,7 @@ use yrs::updates::decoder::Decode;
 use yrs::{GetString, Text, Transact};
 
 use crate::blame::{AncestryEntry, BlameMode, BlameResult};
+use crate::metadata::Decision;
 use crate::delta_store::{sha256_hash, DeltaStore};
 use crate::error::H5iError;
 use chrono::{TimeZone, Utc};
@@ -157,6 +158,7 @@ impl H5iRepository {
         test_source: TestSource,
         ast_parser: Option<&dyn Fn(&Path) -> Option<String>>, // Optional externally injected parser
         caused_by: Vec<String>,
+        decisions: Vec<Decision>,
     ) -> Result<Oid, H5iError> {
         let mut index = self.git_repo.index()?;
 
@@ -243,6 +245,7 @@ impl H5iRepository {
             },
             timestamp: chrono::Utc::now(),
             caused_by: resolved_caused_by,
+            decisions,
         };
         let metadata_json = serde_json::to_string(&record)?;
         self.git_repo
@@ -310,7 +313,7 @@ impl H5iRepository {
 
         // 3. 通常の Git コミットを実行
         // コミットメッセージにはプロンプトの要約などを使う運用が一般的です
-        let commit_oid = self.commit(prompt, sig, sig, None, TestSource::None, None)?;
+        let commit_oid = self.commit(prompt, sig, sig, None, TestSource::None, None, vec![])?;
 
         // 4. メタデータを .h5i/metadata/{oid}.json に保存
         self.save_ai_metadata(commit_oid, &ai_meta)?;
@@ -551,6 +554,30 @@ impl H5iRepository {
                             style(short).magenta(),
                             style(format!("\"{}\"", cause_msg)).dim().italic()
                         );
+                    }
+                }
+
+                if !r.decisions.is_empty() {
+                    println!("{:<10}", style("Decisions:").dim());
+                    for d in &r.decisions {
+                        println!(
+                            "  {} {}  {}  {}",
+                            style("◆").cyan(),
+                            style(&d.location).dim(),
+                            style(&d.choice).bold(),
+                            if !d.alternatives.is_empty() {
+                                style(format!(
+                                    "(considered: {})",
+                                    d.alternatives.join(", ")
+                                ))
+                                .dim()
+                            } else {
+                                style(String::new()).dim()
+                            }
+                        );
+                        if !d.reason.is_empty() {
+                            println!("             {}", style(&d.reason).italic());
+                        }
                     }
                 }
             }
@@ -2284,6 +2311,7 @@ impl H5iRepository {
     /// | POLYGLOT_CHANGE   | More than 4 distinct file extensions changed      |
     /// | BINARY_FILE       | Binary file(s) modified                           |
     /// | MASS_DELETION     | >80 % of the diff is deletions (>100 lines)      |
+    /// | BLIND_EDIT        | File(s) edited with no prior Read in the session  |
     pub fn suggest_review_points(
         &self,
         limit: usize,
@@ -2557,6 +2585,34 @@ impl H5iRepository {
                 }
             }
 
+            // R11 — BLIND_EDIT: files edited without a prior Read in the session
+            if let Ok(Some(analysis)) =
+                crate::session_log::load_analysis(&self.h5i_root, &oid.to_string())
+            {
+                let blind_files: Vec<&str> = analysis
+                    .coverage
+                    .iter()
+                    .filter(|c| c.blind_edit_count > 0)
+                    .map(|c| c.file.as_str())
+                    .collect();
+                if !blind_files.is_empty() {
+                    let count = blind_files.len();
+                    let examples = blind_files[..3.min(count)].join(", ");
+                    let suffix = if count > 3 {
+                        format!(" (and {} more)", count - 3)
+                    } else {
+                        String::new()
+                    };
+                    triggers.push(ReviewTrigger {
+                        rule_id: "BLIND_EDIT".into(),
+                        weight: (0.10 * count as f32).min(0.30),
+                        detail: format!(
+                            "{count} file(s) edited without a prior Read: {examples}{suffix}"
+                        ),
+                    });
+                }
+            }
+
             // ── Aggregate & filter ────────────────────────────────────────────
             if triggers.is_empty() {
                 continue;
@@ -2775,6 +2831,7 @@ mod tests {
             TestSource::None,
             None, // ast_parser
             vec![],
+            vec![],
         )?;
 
         // Verify standard git commit
@@ -2918,6 +2975,7 @@ mod tests {
                     crdt_states: Some(crdt_states),
                     timestamp: chrono::Utc::now(),
                     caused_by: vec![],
+                    decisions: vec![],
                 };
 
                 let json = serde_json::to_string(&record)?;
@@ -3052,6 +3110,7 @@ mod integration_tests {
             TestSource::None,
             None, // ast
             vec![],
+            vec![],
         )?;
 
         // 5. BRIDGE: Transition Active Delta -> Committed Delta
@@ -3099,6 +3158,7 @@ mod integration_tests {
                 crdt_states: Some(crdt_states),
                 timestamp: chrono::Utc::now(),
                 caused_by: vec![],
+                decisions: vec![],
             };
 
             let metadata_json = serde_json::to_string(&record).unwrap();
@@ -3115,7 +3175,7 @@ mod integration_tests {
 
         let mut index = git_repo.index()?;
         index.add_path(std::path::Path::new(file_path))?;
-        let base_oid = h5i_repo.commit("base", &sig, &sig, None, TestSource::None, None, vec![])?;
+        let base_oid = h5i_repo.commit("base", &sig, &sig, None, TestSource::None, None, vec![], vec![])?;
         let base_commit = git_repo.find_commit(base_oid)?;
 
         // Attach mathematical state to the BASE commit note
@@ -3124,7 +3184,7 @@ mod integration_tests {
         // --- PHASE 2: Branch OURS ---
         session_ours.apply_local_edit(0, "# Header\n")?;
 
-        let our_oid = h5i_repo.commit("ours", &sig, &sig, None, TestSource::None, None, vec![])?;
+        let our_oid = h5i_repo.commit("ours", &sig, &sig, None, TestSource::None, None, vec![], vec![])?;
         // Attach mathematical state to the OURS commit note
         attach_h5i_note(our_oid, &session_ours.doc)?;
 

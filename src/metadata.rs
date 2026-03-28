@@ -5,6 +5,25 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tiktoken_rs::get_bpe_from_model;
 
+/// A structured record of one design decision made during an AI coding session.
+///
+/// Stored alongside the commit so future agents and reviewers can understand
+/// *why* the code looks the way it does — including the alternatives that were
+/// considered and rejected.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Decision {
+    /// Where in the code this decision applies.
+    /// Free-form: "src/model.py:fit()", "tree.py:87", "architecture".
+    pub location: String,
+    /// What was actually implemented / chosen.
+    pub choice: String,
+    /// Alternatives that were considered but rejected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternatives: Vec<String>,
+    /// The reasoning behind the choice.
+    pub reason: String,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct H5iCommitRecord {
     pub git_oid: String,
@@ -20,6 +39,9 @@ pub struct H5iCommitRecord {
     /// e.g. this commit fixes a bug introduced by `caused_by[0]`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub caused_by: Vec<String>,
+    /// Structured design decisions recorded at commit time via `--decisions`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decisions: Vec<Decision>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -262,6 +284,7 @@ impl H5iCommitRecord {
             crdt_states: None,
             timestamp,
             caused_by: vec![],
+            decisions: vec![],
         }
     }
 }

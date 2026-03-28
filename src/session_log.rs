@@ -266,6 +266,29 @@ pub struct FileChurn {
     pub churn_score: f32,
 }
 
+/// A line range that was covered by a Read (or Grep/Glob) tool call.
+/// Both bounds are 1-indexed and inclusive. `end` of 0 means "whole file / unknown".
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ReadRange {
+    pub start: usize,
+    pub end: usize, // 0 → whole file
+    pub turn: usize,
+}
+
+/// Per-file attention coverage computed from the session JSONL.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileCoverage {
+    pub file: String,
+    /// Line ranges (1-indexed) covered by Read calls. Empty means file-level only.
+    pub read_ranges: Vec<ReadRange>,
+    /// Tool-call turns where this file was edited.
+    pub edit_turns: Vec<usize>,
+    /// Number of edits that had no preceding Read in the session (blind edits).
+    pub blind_edit_count: usize,
+    /// Fraction of edits that were preceded by at least one Read (0.0–1.0).
+    pub read_before_edit_ratio: f32,
+}
+
 /// Full analysis of one Claude Code conversation session.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SessionAnalysis {
@@ -276,6 +299,9 @@ pub struct SessionAnalysis {
     pub uncertainty: Vec<UncertaintyAnnotation>,
     pub omissions: Vec<OmissionAnnotation>,
     pub churn: Vec<FileChurn>,
+    /// Per-file attention coverage: which files were read vs. written blind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub coverage: Vec<FileCoverage>,
     /// SHA-256 of the raw JSONL content for replay verification.
     pub replay_hash: String,
     pub analyzed_at: DateTime<Utc>,
@@ -443,6 +469,12 @@ pub fn analyze_session(
     let mut message_count = 0usize;
     let mut turn = 0usize;
 
+    // Attention coverage tracking
+    // file → list of ReadRange events (with turn numbers)
+    let mut read_events: HashMap<String, Vec<ReadRange>> = HashMap::new();
+    // file → list of edit turn numbers
+    let mut edit_turns_map: HashMap<String, Vec<usize>> = HashMap::new();
+
     for line in &lines {
         let msg_type = line.get("type").and_then(|v| v.as_str()).unwrap_or("");
         match msg_type {
@@ -523,11 +555,25 @@ pub fn analyze_session(
                                         {
                                             let n = normalize_path(p);
                                             let entry =
-                                                files_read.entry(n).or_insert((0, vec![]));
+                                                files_read.entry(n.clone()).or_insert((0, vec![]));
                                             entry.0 += 1;
                                             if !entry.1.contains(&"Read".to_string()) {
                                                 entry.1.push("Read".to_string());
                                             }
+                                            // Coverage: record line range from offset/limit
+                                            let offset = input
+                                                .and_then(|i| i.get("offset"))
+                                                .and_then(|v| v.as_u64())
+                                                .map(|v| v as usize)
+                                                .unwrap_or(1);
+                                            let limit = input
+                                                .and_then(|i| i.get("limit"))
+                                                .and_then(|v| v.as_u64())
+                                                .map(|v| v as usize)
+                                                .unwrap_or(0); // 0 = whole file
+                                            let start = offset.max(1);
+                                            let end = if limit > 0 { start + limit - 1 } else { 0 };
+                                            read_events.entry(n).or_default().push(ReadRange { start, end, turn });
                                         }
                                     }
                                     "Glob" => {
@@ -567,10 +613,11 @@ pub fn analyze_session(
                                             current_editing_file = n.clone();
                                             files_written.insert(n.clone());
                                             edit_sequence.push(EditStep {
-                                                file: n,
+                                                file: n.clone(),
                                                 operation: "Edit".to_string(),
                                                 turn,
                                             });
+                                            edit_turns_map.entry(n).or_default().push(turn);
                                         }
                                     }
                                     "Write" => {
@@ -582,10 +629,11 @@ pub fn analyze_session(
                                             current_editing_file = n.clone();
                                             files_written.insert(n.clone());
                                             edit_sequence.push(EditStep {
-                                                file: n,
+                                                file: n.clone(),
                                                 operation: "Write".to_string(),
                                                 turn,
                                             });
+                                            edit_turns_map.entry(n).or_default().push(turn);
                                         }
                                     }
                                     "Bash" => {
@@ -773,6 +821,44 @@ pub fn analyze_session(
     churn.sort_by(|a, b| b.edit_count.cmp(&a.edit_count).then(b.read_count.cmp(&a.read_count)));
     churn.retain(|c| c.edit_count > 0 || c.read_count > 1);
 
+    // ── Compute attention coverage ────────────────────────────────────────────
+    // For every file that was edited, determine whether each edit was preceded
+    // by at least one Read call earlier in the same session.
+    let mut coverage: Vec<FileCoverage> = Vec::new();
+    // Only report edited files (Write-only files without any Read are flagged).
+    for (file, edit_turns) in &edit_turns_map {
+        let reads = read_events.get(file);
+        let mut blind = 0usize;
+        for &edit_turn in edit_turns {
+            let has_prior_read = reads
+                .map(|rs| rs.iter().any(|r| r.turn < edit_turn))
+                .unwrap_or(false);
+            if !has_prior_read {
+                blind += 1;
+            }
+        }
+        let total_edits = edit_turns.len();
+        let covered = total_edits - blind;
+        let ratio = if total_edits > 0 {
+            covered as f32 / total_edits as f32
+        } else {
+            1.0
+        };
+        coverage.push(FileCoverage {
+            file: file.clone(),
+            read_ranges: reads.cloned().unwrap_or_default(),
+            edit_turns: edit_turns.clone(),
+            blind_edit_count: blind,
+            read_before_edit_ratio: ratio,
+        });
+    }
+    // Sort: files with most blind edits first (most risky at the top).
+    coverage.sort_by(|a, b| {
+        b.blind_edit_count
+            .cmp(&a.blind_edit_count)
+            .then(a.file.cmp(&b.file))
+    });
+
     Ok(SessionAnalysis {
         session_id,
         footprint: ExplorationFootprint {
@@ -791,6 +877,7 @@ pub fn analyze_session(
         uncertainty,
         omissions,
         churn,
+        coverage,
         replay_hash,
         analyzed_at: Utc::now(),
         message_count,
