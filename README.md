@@ -22,11 +22,14 @@ cd your-project && h5i init
 | Feature | Command | What it does |
 |---------|---------|--------------|
 | **AI-tagged commits** | `h5i commit --prompt "…" --model claude-sonnet-4-6 --audit` | Stores the exact prompt, model, agent ID, and test results alongside every commit |
-| **AI-aware blame** | `h5i blame <file>` | Shows per-line authorship with agent name, model, and test status |
-| **Enriched log** | `h5i log` | Displays the full AI provenance inline — prompt, model, agent, test badge |
+| **Design decisions** | `h5i commit --decisions decisions.json` | Records the choice made, alternatives considered, and reasoning — the "why" that never fits in a commit message |
+| **AI-aware blame** | `h5i blame <file> [--show-prompt]` | Shows per-line authorship with agent name, model, and test status; `--show-prompt` annotates each commit boundary with its human prompt |
+| **Prompt ancestry** | `h5i log --ancestry <file>:<line>` | Traces every commit that touched a line back to its introduction, with the prompt for each change |
+| **Enriched log** | `h5i log` | Displays the full AI provenance inline — prompt, model, agent, test badge, design decisions |
 | **Intent rollback** | `h5i rollback "the OAuth changes"` | Reverts a commit by matching your description against stored prompts — no hash needed |
 | **Integrity audit** | `h5i commit --audit` | Runs 12 deterministic rules before committing: credential leaks, CI/CD tampering, scope creep, `eval()` patterns, and more |
 | **Session footprint** | `h5i notes analyze && h5i notes footprint` | Maps which files the AI read vs. edited in a Claude Code session |
+| **Attention coverage** | `h5i notes coverage` | Shows per-file read-before-edit ratio; blind edits (no prior Read) surface as `BLIND_EDIT` in review scoring |
 | **Uncertainty heatmap** | `h5i notes uncertainty` | Surfaces every moment the AI hedged, with the exact quote and confidence score |
 | **Omission report** | `h5i notes omissions` | Detects deferrals, placeholders, and unfulfilled promises left behind by the AI |
 | **File churn** | `h5i notes churn` | Quantifies the edit-to-read ratio per file so high-churn code gets extra review |

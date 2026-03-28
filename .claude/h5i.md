@@ -20,6 +20,7 @@ h5i commit -m "add retry logic to HTTP client" \
 Additional flags to add when relevant:
 - `--tests`  — when tests were added or modified (captures test metrics)
 - `--audit`  — on security-sensitive, authentication, or high-risk changes
+- `--decisions <FILE>` — when you made non-obvious design tradeoffs (see Design Decisions below)
 
 **Example output:**
 ```
@@ -32,8 +33,10 @@ Additional flags to add when relevant:
 ### Understanding History
 
 ```
-h5i log --limit 10    # recent commits with AI metadata (model, agent, token count)
-h5i blame src/main.rs # line-level blame annotated with AI provenance per commit
+h5i log --limit 10                        # recent commits with AI metadata
+h5i log --ancestry src/main.rs:42        # full prompt history for a specific line
+h5i blame src/main.rs                    # line-level blame with AI provenance
+h5i blame src/main.rs --show-prompt      # annotate each commit boundary with its prompt
 ```
 
 **Example `h5i log` output:**
@@ -77,6 +80,9 @@ h5i notes graph --limit 20
 
 # 7. Identify commits that most need human review
 h5i notes review --limit 50
+
+# 8. Show per-file attention coverage (blind edits = edits with no prior Read)
+h5i notes coverage
 ```
 
 **Example `h5i notes show` output:**
@@ -118,6 +124,48 @@ Suggested Review Points — 2 commits flagged (scanned 50, min_score=0.40)
      refactor parser
      moderate complexity
 ```
+
+---
+
+### Design Decisions
+
+When you make a non-obvious design choice — picking one approach over alternatives — record it with `--decisions`:
+
+```bash
+cat > /tmp/decisions.json << 'EOF'
+[
+  {
+    "location": "src/http_client.rs:88",
+    "choice": "exponential backoff with jitter",
+    "alternatives": ["fixed delay", "linear backoff"],
+    "reason": "reduces thundering herd under high load"
+  }
+]
+EOF
+
+h5i commit -m "add retry logic" \
+  --model claude-sonnet-4-6 \
+  --agent claude-code \
+  --prompt "add exponential backoff to the HTTP client" \
+  --decisions /tmp/decisions.json
+```
+
+Decisions appear in `h5i log` under a `Decisions:` block, showing location, choice, alternatives, and reasoning. This captures *why* an approach was chosen — context that never fits in a commit message.
+
+**Decision schema:** array of `{ "location", "choice", "alternatives"?, "reason" }`.
+
+---
+
+### Attention Coverage
+
+After `h5i notes analyze`, check which files were edited without being read first:
+
+```bash
+h5i notes coverage          # all edited files, by blind-edit count
+h5i notes coverage --max-ratio 0.5   # only files below 50% coverage
+```
+
+A **blind edit** is a Write or Edit call that had no preceding Read for the same file in that session. High blind-edit counts appear as `BLIND_EDIT` signals in `h5i notes review` and mean the AI modified a file from memory rather than reading its current state.
 
 ---
 

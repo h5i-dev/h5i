@@ -22,6 +22,9 @@ Complete reference for all h5i commands, configuration, and internals.
 14. [Sharing h5i Data with Your Team](#14-sharing-h5i-data-with-your-team)
 15. [Storage Layout](#15-storage-layout)
 16. [Session Handoff (h5i resume)](#16-session-handoff-h5i-resume)
+17. [Design Decisions (--decisions)](#17-design-decisions---decisions)
+18. [Attention Coverage (h5i notes coverage)](#18-attention-coverage-h5i-notes-coverage)
+19. [Prompt Ancestry and Blame Annotations](#19-prompt-ancestry-and-blame-annotations)
 
 ---
 
@@ -68,6 +71,7 @@ h5i commit -m "implement rate limiting" \
 | `--model` | `H5I_MODEL` | Model name (e.g. `claude-sonnet-4-6`) |
 | `--agent` | `H5I_AGENT_ID` | Agent identifier (e.g. `claude-code`) |
 | `--caused-by` | — | OID of a commit that causally triggered this one (repeatable) |
+| `--decisions` | — | Path to a JSON file of structured design decisions (see §17) |
 | `--test-results` | `H5I_TEST_RESULTS` | Path to a JSON test results file |
 | `--test-cmd` | — | Shell command whose stdout produces test results JSON |
 | `--tests` | — | Scan staged files for inline `h5_i_test_start`/`h5_i_test_end` markers |
@@ -224,6 +228,8 @@ h5i blame src/auth.rs --mode ast   # AST-level semantic blame
 - Test status: `✅` (passing), `✖` (failing), blank (no data)
 - AI indicator: `✨` (AI-authored line)
 
+For deeper provenance, see §19 for `--show-prompt` and `--ancestry`.
+
 ---
 
 ## 7. Intent-Based Rollback
@@ -307,14 +313,15 @@ Claude Code stores a detailed JSONL log of every conversation in `~/.claude/proj
 
 | Command | Description |
 |---------|-------------|
-| `h5i notes analyze [--session <path>] [--commit <oid>]` | Parse a session log and link it to a commit |
+| `h5i notes analyze [--session <path>] [--commit <oid>] [--since <oid>]` | Parse a session log and link it to a commit |
 | `h5i notes show [--commit <oid>]` | Show stored analysis |
 | `h5i notes footprint [<oid>]` | Exploration footprint: files read vs edited |
 | `h5i notes uncertainty [--commit <oid>] [--file <path>]` | Uncertainty heatmap |
 | `h5i notes omissions [--commit <oid>] [--file <path>]` | Omission report: deferrals, placeholders, unfulfilled promises |
+| `h5i notes coverage [--commit <oid>] [--max-ratio F]` | Attention coverage: blind edits (see §18) |
 | `h5i notes churn [--limit N]` | Per-file edit churn scores |
 | `h5i notes graph [--limit N] [--mode <mode>]` | Intent graph |
-| `h5i notes review [--limit N] [--min-score F] [--json]` | Review summary |
+| `h5i notes review [--limit N] [--min-score F] [--json]` | Review summary (includes `BLIND_EDIT` signal) |
 
 ### Exploration footprint
 
@@ -729,6 +736,168 @@ h5i memory snapshot -m "end of session"   # checkpoint memory
 # Start of every new session
 h5i resume                                 # get the full briefing
 ```
+
+---
+
+## 17. Design Decisions (`--decisions`)
+
+Record the "why" behind your design choices alongside a commit — not just what changed, but what alternatives were considered and why the chosen approach was preferred.
+
+```bash
+# Write a decisions file
+cat > decisions.json << 'EOF'
+[
+  {
+    "location": "src/http_client.rs:88",
+    "choice": "exponential backoff with jitter",
+    "alternatives": ["fixed delay", "linear backoff"],
+    "reason": "reduces thundering herd under high load; mirrors AWS SDK recommendation"
+  },
+  {
+    "location": "src/auth.rs:42",
+    "choice": "JWT with short TTL (15 min)",
+    "alternatives": ["opaque session tokens", "long-lived JWTs"],
+    "reason": "stateless validation at the gateway; short TTL limits blast radius of stolen tokens"
+  }
+]
+EOF
+
+h5i commit -m "add resilient HTTP client" \
+  --prompt "add retry + backoff to the HTTP client" \
+  --model claude-sonnet-4-6 \
+  --agent claude-code \
+  --decisions decisions.json
+```
+
+Decisions are stored in `refs/h5i/notes` alongside AI metadata and displayed in `h5i log`:
+
+```
+commit a3f9c2b...
+Author:    Alice <alice@example.com>
+Agent:     claude-code (claude-sonnet-4-6)
+Prompt:    "add retry + backoff to the HTTP client"
+Decisions:
+  ◆ src/http_client.rs:88  exponential backoff with jitter  (considered: fixed delay, linear backoff)
+             reduces thundering herd under high load; mirrors AWS SDK recommendation
+  ◆ src/auth.rs:42  JWT with short TTL (15 min)  (considered: opaque session tokens, long-lived JWTs)
+             stateless validation at the gateway; short TTL limits blast radius of stolen tokens
+```
+
+### Decision schema
+
+```json
+{
+  "location":     "src/file.rs:42",        // required — file path (line optional)
+  "choice":       "the approach taken",    // required
+  "alternatives": ["option A", "option B"],// optional
+  "reason":       "why this was chosen"    // required
+}
+```
+
+### When to use it
+
+`--decisions` is most valuable for changes where:
+- Multiple viable approaches existed and the reasoning is non-obvious
+- Performance, security, or API compatibility tradeoffs were made
+- An approach was rejected because of a past incident or constraint
+
+Decisions are richer than commit messages because they capture *what was not done* — the alternatives — and survive blame and log queries without needing to read the full diff.
+
+---
+
+## 18. Attention Coverage (`h5i notes coverage`)
+
+Attention coverage tracks whether the AI read a file before editing it. An edit with no preceding Read in the same session is a **blind edit** — a change made without direct evidence that the AI understood the current state of the file.
+
+```bash
+h5i notes analyze        # analyze the latest session first
+h5i notes coverage       # show per-file coverage for HEAD
+h5i notes coverage --commit a3f9c2b
+h5i notes coverage --max-ratio 0.5   # only show files below 50% coverage
+```
+
+Example output:
+
+```
+── Attention Coverage — a3f9c2b
+
+  File                                           Edits      Coverage  Blind edits
+  ──────────────────────────────────────────────────────────────────────────────
+  src/auth.rs                                        4         75%            1
+  src/session.rs                                     2          0%            2
+  src/main.rs                                        1        100%            0
+
+  2 file(s) with blind edits (no prior Read).
+```
+
+- **Coverage** — fraction of edits that were preceded by at least one Read call in the same session.
+- **Blind edit** — an edit with no prior Read; the AI modified the file without first reading its current state.
+- Files are sorted by blind edit count (most risky first).
+
+### BLIND_EDIT review signal
+
+When coverage data is available, `h5i notes review` automatically adds a `BLIND_EDIT` rule to the scoring:
+
+| Rule | Weight | Trigger |
+|------|--------|---------|
+| `BLIND_EDIT` | 0.10 per file (max 0.30) | One or more files edited without a preceding Read in the session analysis |
+
+This means a commit where the AI blindly edited three source files could contribute up to 0.30 to its review score, independent of diff size. High blind-edit counts are a strong signal that the AI was filling in code from memory rather than reading the current implementation — warranting closer human review.
+
+---
+
+## 19. Prompt Ancestry and Blame Annotations
+
+Two commands surface the human intent behind individual lines of code.
+
+### `h5i blame --show-prompt`
+
+Annotates each commit boundary in blame output with the human prompt that triggered it:
+
+```bash
+h5i blame src/auth.rs --show-prompt
+```
+
+Example output:
+
+```
+STAT COMMIT   AUTHOR/AGENT    | CONTENT
+── commit a3f9c2b ── prompt: "add per-IP rate limiting to the auth endpoint" ──
+✅✨  a3f9c2b  AI:claude-code  | pub fn check_rate_limit(ip: IpAddr) -> bool {
+✅✨  a3f9c2b  AI:claude-code  |     RATE_LIMITER.check(ip)
+── commit 9e21b04 ── (no prompt recorded) ──
+   9e21b04  Alice           | pub fn authenticate(token: &str) -> Result<User> {
+```
+
+The prompt is printed once per unique commit at the boundary where the commit changes — not once per line — to keep the output readable.
+
+### `h5i log --ancestry <file>:<line>`
+
+Traces every commit that ever touched a specific line, from the current version back to its introduction, annotated with the prompt for each change:
+
+```bash
+h5i log --ancestry src/auth.rs:42
+```
+
+Example output:
+
+```
+── Prompt ancestry for src/auth.rs:42
+
+  [1 of 3]  a3f9c2b  Alice · 2026-03-27 14:02 UTC
+       line:    check_rate_limit(&ip, &config.rate_limit)
+       prompt:  "add per-IP rate limiting to the auth endpoint"
+
+  [2 of 3]  9e21b04  Bob · 2026-03-26 11:45 UTC
+       line:    check_rate_limit(&ip)
+       prompt:  (none recorded)
+
+  [3 of 3]  4c8d2a1  Alice · 2026-03-20 09:10 UTC
+       line:    true  // placeholder
+       prompt:  "stub out the rate limiter"
+```
+
+The chain terminates when the line is traced back to the commit that first introduced it. Ancestry works by iterating `git2` blame and following the line through parent diffs, so it correctly handles renames and reformatting as long as the line content is recognisable across commits.
 
 ---
 
