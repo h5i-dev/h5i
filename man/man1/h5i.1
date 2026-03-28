@@ -1,0 +1,805 @@
+.TH H5I 1 "2026-03-28" "h5i 0.1.0" "h5i Manual"
+.
+.SH NAME
+h5i \- Advanced Git sidecar for the AI era
+.
+.SH SYNOPSIS
+.B h5i
+.I COMMAND
+.RI [ OPTIONS ]
+.RI [ ARGUMENTS ]
+.
+.SH DESCRIPTION
+.B h5i
+(\"high-five\") extends Git with five semantic dimensions:
+.PP
+.RS 4
+.IP \(bu 2
+.B Temporal
+\(em standard Git history
+.IP \(bu 2
+.B Structural
+\(em AST-level snapshots and diffs
+.IP \(bu 2
+.B Intentional
+\(em AI provenance (model, agent, prompt, token count)
+.IP \(bu 2
+.B Empirical
+\(em test metrics attached to every commit
+.IP \(bu 2
+.B Associative
+\(em CRDT-based collaborative editing
+.RE
+.PP
+All metadata is stored as a Git sidecar under
+.I .git/.h5i/
+and two custom refs
+.RI ( refs/h5i/notes
+and
+.IR refs/h5i/memory ).
+These refs are
+.B not
+pushed by a plain
+.BR "git push" ;
+use
+.B h5i push
+to share them.
+.
+.SH COMMANDS
+.
+.\" ─── init ───────────────────────────────────────────────────────────────────
+.SS h5i init
+Initialize the h5i sidecar in the current Git repository.
+Creates
+.I .git/.h5i/
+with subdirectories
+.BR ast/ ,
+.BR crdt/ ,
+.BR delta/ ,
+.BR memory/ ,
+and
+.BR session_log/ .
+.
+.\" ─── commit ─────────────────────────────────────────────────────────────────
+.SS h5i commit \-m \fIMESSAGE\fR [\fIOPTIONS\fR]
+Commit staged changes with optional AI provenance, test metrics,
+AST snapshot, and integrity audit.
+.PP
+.B Options
+.RS 4
+.TP
+.BI \-m,\ \-\-message\  MESSAGE
+Git commit message (required).
+.TP
+.BI \-\-prompt\  TEXT
+The user prompt that triggered this commit.
+Falls back to env
+.B H5I_PROMPT
+or
+.I .git/.h5i/pending_context.json
+(written by the Claude Code hook).
+.TP
+.BI \-\-model\  NAME
+AI model name, e.g.\&
+.IR claude\-sonnet\-4\-6 .
+Falls back to env
+.BR H5I_MODEL .
+.TP
+.BI \-\-agent\  ID
+Agent identifier, e.g.\&
+.IR claude\-code .
+Falls back to env
+.BR H5I_AGENT_ID .
+.TP
+.BI \-\-caused\-by\  OID
+Commit OID that causally triggered this one.
+Repeatable:
+.BR "\-\-caused\-by abc123 \-\-caused\-by def456" .
+Abbreviated OIDs are resolved at commit time.
+.TP
+.BI \-\-test\-results\  FILE
+Path to a JSON test results file produced by any adapter.
+Takes precedence over
+.B \-\-tests
+and env
+.BR H5I_TEST_RESULTS .
+Schema: see
+.B TEST RESULTS SCHEMA
+below.
+.TP
+.BI \-\-test\-cmd\  CMD
+Shell command whose stdout is parsed as h5i test JSON.
+Used when no
+.B \-\-test\-results
+file is provided.
+.TP
+.B \-\-tests
+Scan staged source files for inline
+.B // h5_i_test_start
+/
+.B // h5_i_test_end
+markers.
+.TP
+.B \-\-ast
+Capture an AST snapshot of staged files for semantic blame.
+.TP
+.B \-\-audit
+Run all twelve integrity rules before committing.
+Violations block the commit;
+.B \-\-force
+overrides warnings only.
+.TP
+.B \-\-force
+Commit despite integrity
+.I warnings
+(violations still block).
+.RE
+.PP
+.B Flag resolution order:
+CLI flag \(rA environment variable \(rA pending context file.
+.
+.\" ─── log ────────────────────────────────────────────────────────────────────
+.SS h5i log [\fIOPTIONS\fR]
+Display the enriched 5D commit history annotated with AI metadata,
+test results, and causal links.
+.PP
+.B Options
+.RS 4
+.TP
+.BI \-l,\ \-\-limit\  N
+Number of recent commits to display (default:
+.BR 10 ).
+.RE
+.
+.\" ─── blame ──────────────────────────────────────────────────────────────────
+.SS h5i blame \fIFILE\fR [\fIOPTIONS\fR]
+Show per-line (or per-node) authorship annotated with AI metadata
+and test status.
+Each line shows two status columns:
+test status
+.RB ( \(OK\ passing ,\ \(mu\ failing ,\ blank\ =\ no\ data )
+and AI indicator
+.RB ( \(** )
+for AI-authored lines.
+.PP
+.B Options
+.RS 4
+.TP
+.BI \-m,\ \-\-mode\  MODE
+.BR line \ (default)\ or\  ast .
+AST mode associates authorship with AST nodes rather than source lines.
+.RE
+.
+.\" ─── diff ───────────────────────────────────────────────────────────────────
+.SS h5i diff \fIFILE\fR [\fIOPTIONS\fR]
+Show the AST-level structural diff for a file.
+Supported languages include Python.
+.PP
+.B Options
+.RS 4
+.TP
+.BI \-\-from\  OID
+Compare from this commit (default: HEAD).
+.TP
+.BI \-\-to\  OID
+Compare to this commit (default: working-tree file).
+.RE
+.
+.\" ─── resolve ────────────────────────────────────────────────────────────────
+.SS h5i resolve \fIOURS\fR \fITHEIRS\fR \fIFILE\fR
+Resolve a branch conflict using CRDT-based semantic merging.
+Reconstructs the conflict-free state from Git Notes; no interactive
+merge editor required.
+.PP
+.B Arguments
+.RS 4
+.TP
+.I OURS
+OID of the local branch.
+.TP
+.I THEIRS
+OID of the incoming branch.
+.TP
+.I FILE
+Relative path to the file to resolve.
+.RE
+.
+.\" ─── rollback ───────────────────────────────────────────────────────────────
+.SS h5i rollback \fIINTENT\fR [\fIOPTIONS\fR]
+Revert the commit whose stored prompt or message best matches the
+natural-language
+.I INTENT
+description.
+Uses semantic search via Claude when
+.B ANTHROPIC_API_KEY
+is set; falls back to keyword matching otherwise.
+.PP
+Before reverting, h5i checks whether any later commits declared the
+matched commit as a
+.B \-\-caused\-by
+dependency and warns accordingly.
+.PP
+.B Options
+.RS 4
+.TP
+.BI \-l,\ \-\-limit\  N
+Number of recent commits to search (default:
+.BR 50 ).
+.TP
+.B \-\-dry\-run
+Show the matched commit without reverting.
+.TP
+.B \-y,\ \-\-yes
+Skip the confirmation prompt (useful in CI).
+.RE
+.
+.\" ─── session ────────────────────────────────────────────────────────────────
+.SS h5i session \-\-file \fIFILE\fR
+Start a real-time recording session for
+.IR FILE .
+Detects changes via the
+.B notify
+crate and syncs them into a per-file Yrs CRDT document stored in
+.IR .git/.h5i/crdt/ .
+Press
+.B Ctrl+C
+to stop.
+.
+.\" ─── serve ──────────────────────────────────────────────────────────────────
+.SS h5i serve [\fIOPTIONS\fR]
+Launch the embedded web dashboard.
+.PP
+.B Options
+.RS 4
+.TP
+.BI \-p,\ \-\-port\  PORT
+Port to listen on (default:
+.BR 7150 ).
+.RE
+.PP
+Dashboard tabs:
+.RS 4
+.IP \(bu 2
+.B Timeline
+\(em full commit history with test-status borders, AI prompt panels,
+and per-commit Audit buttons
+.IP \(bu 2
+.B Summary
+\(em aggregate stats, agent leaderboard, filter pills
+.IP \(bu 2
+.B Integrity
+\(em audit any commit message + prompt against all twelve rules without committing
+.IP \(bu 2
+.B Intent Graph
+\(em directed graph of causal commit chains
+.IP \(bu 2
+.B Memory
+\(em browse and diff Claude memory snapshots
+.IP \(bu 2
+.B Sessions
+\(em exploration footprint, uncertainty heatmap, and churn for each commit
+.RE
+.
+.\" ─── push ───────────────────────────────────────────────────────────────────
+.SS h5i push [\fIOPTIONS\fR]
+Push all h5i refs
+.RI ( refs/h5i/notes
+and
+.IR refs/h5i/memory )
+to a remote in one shot.
+.PP
+.B Options
+.RS 4
+.TP
+.BI \-r,\ \-\-remote\  REMOTE
+Remote to push to (default:
+.BR origin ).
+.RE
+.
+.\" ─── hooks ──────────────────────────────────────────────────────────────────
+.SS h5i hooks
+Print the Claude Code hook configuration required for automatic prompt
+capture.
+Outputs the shell script to save as
+.I ~/.claude/hooks/h5i\-capture\-prompt.sh
+and the
+.I ~/.claude/settings.json
+snippet to register it.
+After setup, every Claude Code conversation automatically writes the
+prompt to
+.I .git/.h5i/pending_context.json
+where it is consumed and cleared by the next
+.BR "h5i commit" .
+.
+.\" ─── resume ─────────────────────────────────────────────────────────────────
+.SS h5i resume [\fIBRANCH\fR]
+Generate a structured session-handoff briefing assembled entirely from
+local h5i data (no AI API call required).
+Shows: branch / HEAD commit, project goal and milestone progress
+(from
+.IR .h5i\-ctx/ ),
+last session statistics, high-risk files (weighted by uncertainty +
+churn), causal exposure, memory changes since the last snapshot, and
+a suggested opening prompt.
+.PP
+.B Risk score formula
+.RS 4
+.PP
+.B risk\ =\ 0.4\ \(mu\ (1\ \-\ avg_confidence)\ +\ 0.3\ \(mu\ churn_score\ +\ 0.3\ \(mu\ (signal_count\ /\ max_signal_count)
+.PP
+Files are ranked descending and the top five are shown.
+.RE
+.
+.\" ─── memory ─────────────────────────────────────────────────────────────────
+.SS h5i memory \fIACTION\fR
+Version-control Claude Code's persistent memory files alongside your code.
+Claude Code stores per-project memory in
+.IR "~/.claude/projects/<repo\-path>/memory/" .
+h5i snapshots these files into
+.I .git/.h5i/memory/<commit\-oid>/
+and exposes them through the
+.I refs/h5i/memory
+ref.
+.PP
+.B Actions
+.RS 4
+.TP
+.B snapshot
+Snapshot current memory into the sidecar.
+.RS 4
+.TP
+.BI \-\-commit\  OID
+Associate with this commit OID (default: HEAD).
+.TP
+.BI \-\-path\  DIR
+Override the source directory (default:
+.IR "~/.claude/projects/<repo>/memory/" ).
+.RE
+.TP
+.B log
+List all memory snapshots.
+.TP
+.B diff [\fIFROM\fR [\fITO\fR]]
+Show how memory changed between two snapshots.
+Omit
+.I TO
+to compare against live memory.
+Omit both to compare the two most recent snapshots.
+.TP
+.B restore \fICOMMIT\fR [\fB\-y\fR]
+Restore Claude's memory to the state captured at
+.IR COMMIT .
+Prompts for confirmation unless
+.B \-y
+is given.
+.TP
+.B push [\fB\-r\fR \fIREMOTE\fR]
+Push snapshots to a remote via
+.IR refs/h5i/memory .
+.TP
+.B pull [\fB\-r\fR \fIREMOTE\fR]
+Pull snapshots from a remote.
+.RE
+.
+.\" ─── notes ──────────────────────────────────────────────────────────────────
+.SS h5i notes \fIACTION\fR
+Parse Claude Code session logs and attach enriched metadata
+(exploration footprint, uncertainty heatmap, omission report, file churn,
+intent graph) to commits.
+Analyses are stored in
+.IR .git/.h5i/session_log/<commit\-oid>/analysis.json .
+.PP
+.B Actions
+.RS 4
+.TP
+.B analyze [\-\-session \fIJSONL\fR] [\-\-commit \fIOID\fR]
+Parse a session log and link it to a commit (default: HEAD).
+Auto-detects the latest Claude Code session log when
+.B \-\-session
+is omitted.
+.TP
+.B show [\fICOMMIT\fR]
+Show stored session analysis for
+.I COMMIT
+(default: HEAD).
+Displays files consulted vs edited and the causal chain summary.
+.TP
+.B footprint [\fIOID\fR]
+Exploration footprint: every file the AI read before making a change,
+revealing implicit dependencies that Git's diff does not capture.
+.TP
+.B uncertainty [\-\-commit \fIOID\fR] [\-\-file \fIPATH\fR]
+Uncertainty heatmap.
+Records moments where Claude expressed uncertainty: "not sure", "let me check", "this might break", etc.
+Confidence thresholds:
+.BR red\ (<35%) ,\  yellow\ (35\(en55%) ,\  green\ (>55%) .
+.TP
+.B omissions [\-\-commit \fIOID\fR] [\-\-file \fIPATH\fR]
+Omission report.
+Detects three categories of incomplete work left behind in Claude's
+thinking blocks:
+.RS 4
+.TP
+.B Deferral\ (red)
+Claude acknowledged something and explicitly deferred it: "for now", "out of scope", "separate PR", "leave this for later".
+.TP
+.B Placeholder\ (yellow)
+Claude inserted an admittedly incomplete implementation: "stub", "hardcoded for now", "simplified version", "workaround".
+.TP
+.B Unfulfilled promise\ (cyan)
+Claude stated "I'll also update X" or "I should add Y" but the named file never appeared in the edit sequence.
+.RE
+.TP
+.B churn [\-l \fIN\fR]
+Per-file edit-churn scores across all analyzed sessions.
+Churn = edits / (edits + reads).
+Shows top
+.I N
+files (default: 20).
+.TP
+.B graph [\-l \fIN\fR] [\-\-mode \fIMODE\fR]
+Visualize the chain of intents across recent commits.
+.B \-\-mode prompt
+(default) uses stored prompts;
+.B \-\-mode analyze
+calls Claude for richer intent extraction.
+.TP
+.B review [\-l \fIN\fR] [\-\-min\-score \fIF\fR] [\-\-json]
+Identify commits most likely to need human review.
+Scores are computed from uncertainty, churn, and signal density.
+.B \-\-json
+emits raw JSON instead of the styled table.
+.RE
+.
+.\" ─── context ────────────────────────────────────────────────────────────────
+.SS h5i context \fIACTION\fR
+Git-style branching and committing applied to agent
+.I reasoning
+rather than code.
+Maintains a
+.I .h5i\-ctx/
+workspace based on arXiv:2508.00031.
+.PP
+.B Workspace layout
+.RS 4
+.nf
+.I .h5i\-ctx/
+    main.md                  \(em global roadmap: goal, milestones, notes
+    branches/<branch>/
+        commit.md            \(em milestone summaries (append-only)
+        trace.md             \(em OTA execution trace
+        metadata.yaml        \(em file structure, dependencies, env config
+.fi
+.RE
+.PP
+.B Actions
+.RS 4
+.TP
+.B init \-\-goal \fITEXT\fR
+Create the workspace with an initial project goal.
+.TP
+.B commit \fISUMMARY\fR [\-\-detail \fITEXT\fR]
+Save a milestone checkpoint (one-line summary + optional detail).
+.TP
+.B branch \fINAME\fR [\-\-purpose \fITEXT\fR]
+Create and switch to a new reasoning branch.
+.TP
+.B checkout \fINAME\fR
+Switch to an existing reasoning branch.
+.TP
+.B merge \fIBRANCH\fR
+Merge a completed branch's log and summaries into the current branch.
+.TP
+.B trace \-\-kind \fIKIND\fR \fICONTENT\fR
+Append an OTA (Observe\(enThink\(enAct) trace entry.
+Valid
+.I KIND
+values:
+.BR OBSERVE ,\  THINK ,\  ACT ,\  NOTE
+(case-insensitive).
+.TP
+.B show [\fIOPTIONS\fR]
+Retrieve the current project state.
+.RS 4
+.TP
+.BI \-\-branch\  NAME
+Show a specific branch without switching.
+.TP
+.BI \-\-commit\  HASH
+Show a specific commit entry by hash prefix.
+.TP
+.B \-\-trace
+Include recent OTA trace lines.
+.TP
+.BI \-\-metadata\  SEGMENT
+Pull a named section from
+.IR metadata.yaml .
+.TP
+.BI \-\-window\  N
+Number of recent commits to include (default: 3).
+.TP
+.BI \-\-trace\-offset\  N
+Scroll back N lines from the end of the trace.
+.RE
+.TP
+.B status
+Quick overview: current branch, commit count, trace line count.
+.TP
+.B prompt
+Print a Claude system prompt that explains how to use h5i context
+commands inside an agent session.
+.RE
+.
+.SH INTEGRITY RULES
+The
+.B \-\-audit
+flag runs twelve deterministic, pure string/stat checks against the diff.
+No AI and no network access are required.
+.PP
+.TP
+.BR CREDENTIAL_LEAK \ (Violation)
+Added line contains a credential keyword + assignment + quoted value, or a PEM header.
+.TP
+.BR CODE_EXECUTION \ (Violation)
+Added non-comment line contains
+.BR eval() ,\  exec() ,\  os.system() ,
+or
+.BR subprocess.* .
+.TP
+.BR CI_CD_MODIFIED \ (Violation)
+.IR .github/workflows/ ,
+Jenkinsfile, etc. modified without CI/CD intent in the prompt.
+.TP
+.BR SENSITIVE_FILE_MODIFIED \ (Warning)
+.IR .env ,\  .pem ,\  .key ,\  id_rsa ,\  credentials
+appear in the diff.
+.TP
+.BR LOCKFILE_MODIFIED \ (Warning)
+.IR Cargo.lock ,\  package\-lock.json ,\  go.sum
+changed without dependency intent stated.
+.TP
+.BR UNDECLARED_DELETION \ (Warning)
+More than 60% of changes are deletions with no deletion/refactor intent.
+.TP
+.BR SCOPE_EXPANSION \ (Warning)
+Prompt names a specific file but other source files were also modified.
+.TP
+.BR LARGE_DIFF \ (Warning)
+More than 500 total lines changed.
+.TP
+.BR REFACTOR_ANOMALY \ (Warning)
+.RI \[dq] refactor \[dq]
+intent but insertions are 3x or more the deletions.
+.TP
+.BR PERMISSION_CHANGE \ (Warning)
+.BR chmod\ 777 ,\  sudo ,\  setuid ,\  chown\ root
+in added lines.
+.TP
+.BR BINARY_FILE_CHANGED \ (Info)
+A binary file appears in the diff.
+.TP
+.BR CONFIG_FILE_MODIFIED \ (Info)
+.IR .yaml ,\  .toml ,\  .json ,\  .ini ,
+etc. modified.
+.
+.SH TEST RESULTS SCHEMA
+Pass a JSON file to
+.B \-\-test\-results
+matching this schema (all fields optional):
+.PP
+.nf
+{
+  "tool":          "jest",
+  "passed":        42,
+  "failed":        1,
+  "skipped":       3,
+  "total":         46,
+  "duration_secs": 4.7,
+  "coverage":      0.87,
+  "exit_code":     1,
+  "summary":       "42 passed, 1 failed in 4.70s"
+}
+.fi
+.PP
+.B exit_code
+takes precedence over counts when determining pass/fail.
+.B total
+is computed from counts if omitted.
+Two bundled adapters are provided:
+.TP
+.I script/h5i\-pytest\-adapter.py
+Runs pytest, uses
+.B pytest\-json\-report
+when available, falls back to output parsing.
+.TP
+.I script/h5i\-cargo\-test\-adapter.sh
+Runs
+.BR "cargo test" ,
+accumulates counts across lib, integration, and doc-test sections.
+.
+.SH ENVIRONMENT
+.TP
+.B H5I_PROMPT
+Default prompt for
+.BR "h5i commit" .
+.TP
+.B H5I_MODEL
+Default model name for
+.BR "h5i commit" .
+.TP
+.B H5I_AGENT_ID
+Default agent ID for
+.BR "h5i commit" .
+.TP
+.B H5I_TEST_RESULTS
+Default path to a test results JSON file.
+.TP
+.B ANTHROPIC_API_KEY
+When set, enables semantic search in
+.B h5i rollback
+and Claude-assisted intent extraction in
+.BR "h5i notes graph \-\-mode analyze" .
+.
+.SH FILES
+.TP
+.I .git/.h5i/
+Sidecar root; all persistent metadata.
+.TP
+.I .git/.h5i/ast/
+SHA-256-keyed S-expression AST snapshots.
+.TP
+.I .git/.h5i/crdt/
+Yjs CRDT document state.
+.TP
+.I .git/.h5i/delta/
+Append-only CRDT update logs, one file per source path (keyed by sha256(path)).
+Format: [length: u32][update bytes].
+.TP
+.I .git/.h5i/memory/<commit-oid>/
+Claude memory snapshots.
+Each directory contains memory files plus
+.I _meta.json
+(snapshot timestamp and file count).
+.TP
+.I .git/.h5i/session_log/<commit-oid>/analysis.json
+Structured session log analysis produced by
+.BR "h5i notes analyze" .
+.TP
+.I .git/.h5i/pending_context.json
+Transient file written by the Claude Code hook; consumed and deleted
+at the next
+.BR "h5i commit" .
+.TP
+.I .h5i-ctx/
+Context workspace (created by
+.BR "h5i context init" ).
+.TP
+.I refs/h5i/notes
+Git ref storing AI provenance, test metrics, causal links, and integrity
+reports as JSON blobs attached to each commit.
+Inspect with:
+.B git notes \-\-ref refs/h5i/notes show <oid>
+.TP
+.I refs/h5i/memory
+Git ref storing Claude memory snapshots as a linear commit history of
+git tree objects.
+.TP
+.I ~/.claude/projects/<repo>/memory/
+Claude Code's default per-project memory directory (source for snapshots).
+.TP
+.I ~/.claude/hooks/h5i-capture-prompt.sh
+Hook script printed by
+.BR "h5i hooks" .
+.
+.SH STORAGE
+Neither
+.I refs/h5i/notes
+nor
+.I refs/h5i/memory
+is included in a plain
+.BR "git push" " / " "git pull" .
+Share them with:
+.PP
+.RS 4
+.nf
+h5i push                             # push both refs to origin
+git push origin refs/h5i/notes
+git push origin refs/h5i/memory
+.fi
+.RE
+.PP
+Add fetch refspecs to
+.I .git/config
+so
+.B git pull
+picks them up automatically:
+.PP
+.RS 4
+.nf
+[remote "origin"]
+    fetch = +refs/h5i/notes:refs/h5i/notes
+    fetch = +refs/h5i/memory:refs/h5i/memory
+.fi
+.RE
+.
+.SH EXAMPLES
+.SS Basic AI commit
+.nf
+h5i init
+git add src/auth.rs
+h5i commit \-m "add rate limiting" \\
+    \-\-prompt "add per-IP rate limiting to the auth endpoint" \\
+    \-\-model claude\-sonnet\-4\-6 \\
+    \-\-agent claude\-code \\
+    \-\-audit \-\-tests
+.fi
+.SS Causal chain
+.nf
+h5i commit \-m "fix off-by-one in validate_token" \\
+    \-\-caused\-by a3f9c2b \\
+    \-\-prompt "fix the bug introduced by the rate limiter"
+.fi
+.SS Intent-based rollback
+.nf
+h5i rollback "the OAuth login changes" \-\-dry\-run
+h5i rollback "rate limiting" \-\-yes
+.fi
+.SS Session analysis workflow
+.nf
+# End of session
+h5i notes analyze
+h5i memory snapshot
+h5i push
+
+# Start of next session
+h5i resume
+h5i notes show
+h5i notes uncertainty \-\-file src/auth.rs
+h5i notes omissions
+.fi
+.SS Context workspace
+.nf
+h5i context init \-\-goal "build OAuth2 login system"
+h5i context trace \-\-kind OBSERVE "HttpClient::send has no retry logic"
+h5i context trace \-\-kind THINK   "exponential backoff with jitter is safest"
+h5i context trace \-\-kind ACT     "added retry loop in send() with 5-attempt cap"
+h5i context commit "implemented retry loop" \\
+    \-\-detail "capped at 5 attempts; uses tokio::time::sleep"
+h5i context branch experiment/sync\-retry \-\-purpose "try sync fallback"
+# ...explore...
+h5i context checkout main
+h5i context status
+.fi
+.SS Team workflow
+.nf
+# Alice
+h5i commit \-m "add rate limiting" \-\-prompt "..." \-\-agent claude\-code
+h5i memory snapshot
+h5i push
+git push origin main
+
+# Bob
+git pull
+h5i log
+h5i memory pull
+h5i memory restore <alice\-commit>
+.fi
+.
+.SH SEE ALSO
+.BR git (1),
+.BR git\-notes (1),
+.BR git\-blame (1)
+.PP
+Full manual:
+.I MANUAL.md
+in the repository root.
+.br
+Demo repository:
+.I examples/dnn\-from\-scratch/
+.br
+Context workspace paper: arXiv:2508.00031
+.
+.SH AUTHORS
+Developed by Koukyosyumei and contributors.
+.br
+Source: <https://github.com/Koukyosyumei/h5i>
