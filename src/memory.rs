@@ -427,6 +427,262 @@ fn compute_diff_with_context(from: &str, to: &str, context: usize) -> Vec<DiffLi
     result
 }
 
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    // ── lcs_diff / compute_diff_with_context ──────────────────────────────────
+
+    #[test]
+    fn lcs_diff_identical_is_all_context() {
+        let lines = vec!["a", "b", "c"];
+        let result = lcs_diff(&lines, &lines);
+        assert_eq!(result.len(), 3);
+        assert!(result.iter().all(|l| matches!(l, DiffLine::Context(_))));
+    }
+
+    #[test]
+    fn lcs_diff_add_one_line() {
+        let a = vec!["a", "c"];
+        let b = vec!["a", "b", "c"];
+        let result = lcs_diff(&a, &b);
+        let added: Vec<_> = result.iter().filter(|l| matches!(l, DiffLine::Added(_))).collect();
+        assert_eq!(added.len(), 1);
+        if let DiffLine::Added(s) = &added[0] {
+            assert_eq!(s, "b");
+        }
+    }
+
+    #[test]
+    fn lcs_diff_remove_one_line() {
+        let a = vec!["a", "b", "c"];
+        let b = vec!["a", "c"];
+        let result = lcs_diff(&a, &b);
+        let removed: Vec<_> = result.iter().filter(|l| matches!(l, DiffLine::Removed(_))).collect();
+        assert_eq!(removed.len(), 1);
+        if let DiffLine::Removed(s) = &removed[0] {
+            assert_eq!(s, "b");
+        }
+    }
+
+    #[test]
+    fn lcs_diff_empty_inputs() {
+        let empty: &[&str] = &[];
+        assert!(lcs_diff(empty, empty).is_empty());
+    }
+
+    #[test]
+    fn lcs_diff_completely_different() {
+        let a = vec!["x"];
+        let b = vec!["y"];
+        let result = lcs_diff(&a, &b);
+        assert!(result.iter().any(|l| matches!(l, DiffLine::Removed(_))));
+        assert!(result.iter().any(|l| matches!(l, DiffLine::Added(_))));
+    }
+
+    #[test]
+    fn compute_diff_identical_returns_empty() {
+        let text = "line1\nline2\nline3";
+        let result = compute_diff_with_context(text, text, 3);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn compute_diff_shows_context_around_change() {
+        let from = "a\nb\nc\nd\ne";
+        let to   = "a\nb\nX\nd\ne";
+        let result = compute_diff_with_context(from, to, 1);
+        assert!(result.iter().any(|l| matches!(l, DiffLine::Removed(s) if s == "c")));
+        assert!(result.iter().any(|l| matches!(l, DiffLine::Added(s) if s == "X")));
+    }
+
+    // ── claude_memory_dir ─────────────────────────────────────────────────────
+
+    #[test]
+    fn claude_memory_dir_encodes_path_separators() {
+        let dir = tempdir().unwrap();
+        let result = claude_memory_dir(dir.path());
+        let encoded_part = result
+            .components()
+            .rev()
+            .nth(1) // parent of "memory"
+            .unwrap()
+            .as_os_str()
+            .to_string_lossy()
+            .to_string();
+        assert!(!encoded_part.contains('/'));
+        assert!(encoded_part.starts_with('-'));
+    }
+
+    #[test]
+    fn claude_memory_dir_ends_with_memory() {
+        let dir = tempdir().unwrap();
+        let result = claude_memory_dir(dir.path());
+        assert_eq!(result.file_name().unwrap(), "memory");
+    }
+
+    // ── take_snapshot ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn take_snapshot_missing_source_creates_empty_snapshot() {
+        let h5i = tempdir().unwrap();
+        let workdir = tempdir().unwrap();
+        let nonexistent = workdir.path().join("does_not_exist");
+
+        let count = take_snapshot(h5i.path(), workdir.path(), "abc123", Some(&nonexistent)).unwrap();
+        assert_eq!(count, 0);
+        let meta_path = h5i.path().join("memory").join("abc123").join("_meta.json");
+        assert!(meta_path.exists());
+    }
+
+    #[test]
+    fn take_snapshot_copies_files() {
+        let src = tempdir().unwrap();
+        let h5i = tempdir().unwrap();
+        let workdir = tempdir().unwrap();
+
+        fs::write(src.path().join("MEMORY.md"), "# Memory\nsome content").unwrap();
+        fs::write(src.path().join("feedback.md"), "feedback").unwrap();
+
+        let count = take_snapshot(h5i.path(), workdir.path(), "deadbeef", Some(src.path())).unwrap();
+        assert_eq!(count, 2);
+        assert!(h5i.path().join("memory").join("deadbeef").join("MEMORY.md").exists());
+    }
+
+    // ── list_snapshots ────────────────────────────────────────────────────────
+
+    #[test]
+    fn list_snapshots_empty_when_no_memory_dir() {
+        let h5i = tempdir().unwrap();
+        let snaps = list_snapshots(h5i.path()).unwrap();
+        assert!(snaps.is_empty());
+    }
+
+    #[test]
+    fn list_snapshots_returns_sorted_by_timestamp() {
+        let src = tempdir().unwrap();
+        let h5i = tempdir().unwrap();
+        let workdir = tempdir().unwrap();
+
+        take_snapshot(h5i.path(), workdir.path(), "commit1", Some(src.path())).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        take_snapshot(h5i.path(), workdir.path(), "commit2", Some(src.path())).unwrap();
+
+        let snaps = list_snapshots(h5i.path()).unwrap();
+        assert_eq!(snaps.len(), 2);
+        assert!(snaps[0].timestamp <= snaps[1].timestamp);
+    }
+
+    // ── diff_snapshots ────────────────────────────────────────────────────────
+
+    #[test]
+    fn diff_snapshots_detects_added_file() {
+        let h5i = tempdir().unwrap();
+        let workdir = tempdir().unwrap();
+
+        let src_a = tempdir().unwrap();
+        fs::write(src_a.path().join("existing.md"), "old").unwrap();
+        take_snapshot(h5i.path(), workdir.path(), "snap_a", Some(src_a.path())).unwrap();
+
+        let src_b = tempdir().unwrap();
+        fs::write(src_b.path().join("existing.md"), "old").unwrap();
+        fs::write(src_b.path().join("new_file.md"), "new").unwrap();
+        take_snapshot(h5i.path(), workdir.path(), "snap_b", Some(src_b.path())).unwrap();
+
+        let diff = diff_snapshots(h5i.path(), workdir.path(), "snap_a", Some("snap_b")).unwrap();
+        assert_eq!(diff.added_files.len(), 1);
+        assert_eq!(diff.added_files[0].0, "new_file.md");
+        assert!(diff.removed_files.is_empty());
+    }
+
+    #[test]
+    fn diff_snapshots_detects_removed_file() {
+        let h5i = tempdir().unwrap();
+        let workdir = tempdir().unwrap();
+
+        let src_a = tempdir().unwrap();
+        fs::write(src_a.path().join("a.md"), "content").unwrap();
+        fs::write(src_a.path().join("b.md"), "content").unwrap();
+        take_snapshot(h5i.path(), workdir.path(), "snap_a", Some(src_a.path())).unwrap();
+
+        let src_b = tempdir().unwrap();
+        fs::write(src_b.path().join("a.md"), "content").unwrap();
+        take_snapshot(h5i.path(), workdir.path(), "snap_b", Some(src_b.path())).unwrap();
+
+        let diff = diff_snapshots(h5i.path(), workdir.path(), "snap_a", Some("snap_b")).unwrap();
+        assert_eq!(diff.removed_files.len(), 1);
+        assert_eq!(diff.removed_files[0].0, "b.md");
+    }
+
+    #[test]
+    fn diff_snapshots_detects_modified_file() {
+        let h5i = tempdir().unwrap();
+        let workdir = tempdir().unwrap();
+
+        let src_a = tempdir().unwrap();
+        fs::write(src_a.path().join("notes.md"), "line1\nline2\nline3").unwrap();
+        take_snapshot(h5i.path(), workdir.path(), "snap_a", Some(src_a.path())).unwrap();
+
+        let src_b = tempdir().unwrap();
+        fs::write(src_b.path().join("notes.md"), "line1\nchanged\nline3").unwrap();
+        take_snapshot(h5i.path(), workdir.path(), "snap_b", Some(src_b.path())).unwrap();
+
+        let diff = diff_snapshots(h5i.path(), workdir.path(), "snap_a", Some("snap_b")).unwrap();
+        assert_eq!(diff.modified_files.len(), 1);
+        assert_eq!(diff.modified_files[0].name, "notes.md");
+    }
+
+    #[test]
+    fn diff_snapshots_error_on_missing_snapshot() {
+        let h5i = tempdir().unwrap();
+        let workdir = tempdir().unwrap();
+        assert!(diff_snapshots(h5i.path(), workdir.path(), "nonexistent", Some("also_missing")).is_err());
+    }
+
+    #[test]
+    fn diff_snapshots_no_changes_when_identical() {
+        let h5i = tempdir().unwrap();
+        let workdir = tempdir().unwrap();
+
+        let src = tempdir().unwrap();
+        fs::write(src.path().join("a.md"), "content").unwrap();
+        take_snapshot(h5i.path(), workdir.path(), "snap_a", Some(src.path())).unwrap();
+        take_snapshot(h5i.path(), workdir.path(), "snap_b", Some(src.path())).unwrap();
+
+        let diff = diff_snapshots(h5i.path(), workdir.path(), "snap_a", Some("snap_b")).unwrap();
+        assert!(diff.added_files.is_empty());
+        assert!(diff.removed_files.is_empty());
+        assert!(diff.modified_files.is_empty());
+    }
+
+    // ── restore_snapshot ──────────────────────────────────────────────────────
+
+    #[test]
+    fn restore_snapshot_error_for_missing_oid() {
+        let h5i = tempdir().unwrap();
+        let workdir = tempdir().unwrap();
+        assert!(restore_snapshot(h5i.path(), workdir.path(), "does_not_exist").is_err());
+    }
+
+    #[test]
+    fn restore_snapshot_returns_correct_count() {
+        let src = tempdir().unwrap();
+        let h5i = tempdir().unwrap();
+        let workdir = tempdir().unwrap();
+
+        fs::write(src.path().join("MEMORY.md"), "# Memory").unwrap();
+        fs::write(src.path().join("feedback.md"), "data").unwrap();
+        take_snapshot(h5i.path(), workdir.path(), "snap1", Some(src.path())).unwrap();
+
+        let count = restore_snapshot(h5i.path(), workdir.path(), "snap1").unwrap();
+        assert_eq!(count, 2); // MEMORY.md + feedback.md (not _meta.json)
+    }
+}
+
 // ── Git-object push / pull ────────────────────────────────────────────────────
 
 /// Result of a successful `pull`.

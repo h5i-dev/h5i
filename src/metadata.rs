@@ -418,6 +418,99 @@ mod tests {
         );
     }
 
+    // ── TestMetrics::is_passing ───────────────────────────────────────────────
+
+    #[test]
+    fn test_is_passing_exit_code_zero() {
+        let m = TestMetrics { exit_code: Some(0), ..Default::default() };
+        assert!(m.is_passing());
+    }
+
+    #[test]
+    fn test_is_passing_exit_code_nonzero() {
+        let m = TestMetrics { exit_code: Some(1), ..Default::default() };
+        assert!(!m.is_passing());
+    }
+
+    #[test]
+    fn test_is_passing_no_exit_code_no_failures() {
+        let m = TestMetrics { total: 10, failed: 0, ..Default::default() };
+        assert!(m.is_passing());
+    }
+
+    #[test]
+    fn test_is_passing_no_exit_code_with_failures() {
+        let m = TestMetrics { total: 10, failed: 2, ..Default::default() };
+        assert!(!m.is_passing());
+    }
+
+    #[test]
+    fn test_is_passing_legacy_coverage_fallback() {
+        // total == 0, no exit_code → falls back to coverage heuristic
+        let m = TestMetrics { coverage: 85.0, ..Default::default() };
+        assert!(m.is_passing());
+    }
+
+    #[test]
+    fn test_is_passing_legacy_zero_coverage_fails() {
+        let m = TestMetrics { coverage: 0.0, ..Default::default() };
+        assert!(!m.is_passing());
+    }
+
+    // ── TestResultInput::into_metrics ─────────────────────────────────────────
+
+    #[test]
+    fn test_into_metrics_computes_total_from_components() {
+        let input = TestResultInput {
+            passed: Some(8),
+            failed: Some(2),
+            skipped: Some(1),
+            ..Default::default()
+        };
+        let m = input.into_metrics(String::new());
+        assert_eq!(m.total, 11); // 8 + 2 + 1
+        assert_eq!(m.passed, 8);
+        assert_eq!(m.failed, 2);
+        assert_eq!(m.skipped, 1);
+    }
+
+    #[test]
+    fn test_into_metrics_explicit_total_wins() {
+        let input = TestResultInput {
+            passed: Some(5),
+            failed: Some(0),
+            total: Some(100), // explicitly provided
+            ..Default::default()
+        };
+        let m = input.into_metrics(String::new());
+        assert_eq!(m.total, 100); // explicit value preserved
+    }
+
+    #[test]
+    fn test_into_metrics_defaults_all_zeroes() {
+        let m = TestResultInput::default().into_metrics("abc".to_string());
+        assert_eq!(m.passed, 0);
+        assert_eq!(m.failed, 0);
+        assert_eq!(m.skipped, 0);
+        assert_eq!(m.total, 0);
+        assert_eq!(m.duration_secs, 0.0);
+        assert_eq!(m.test_suite_hash, "abc");
+    }
+
+    #[test]
+    fn test_into_metrics_propagates_tool_and_summary() {
+        let input = TestResultInput {
+            tool: Some("pytest".to_string()),
+            summary: Some("10 passed in 1.2s".to_string()),
+            exit_code: Some(0),
+            ..Default::default()
+        };
+        let m = input.into_metrics(String::new());
+        assert_eq!(m.tool.as_deref(), Some("pytest"));
+        assert_eq!(m.summary.as_deref(), Some("10 passed in 1.2s"));
+        assert_eq!(m.exit_code, Some(0));
+    }
+
     #[test]
     fn test_timestamp_conversion_precision() {
         let (_dir, repo) = setup_git_repo();

@@ -594,3 +594,207 @@ fn word_wrap(text: &str, width: usize) -> Vec<String> {
     }
     lines
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session_log::{
+        CausalChain, ExplorationFootprint, FileChurn, SessionAnalysis, UncertaintyAnnotation,
+    };
+    use chrono::Utc;
+
+    // ── strip_milestone_marker ────────────────────────────────────────────────
+
+    #[test]
+    fn strip_milestone_marker_removes_checkbox_done() {
+        assert_eq!(strip_milestone_marker("- [x] Set up CI"), "Set up CI");
+        assert_eq!(strip_milestone_marker("- [X] Set up CI"), "Set up CI");
+    }
+
+    #[test]
+    fn strip_milestone_marker_removes_checkbox_todo() {
+        assert_eq!(strip_milestone_marker("- [ ] Add rate limiting"), "Add rate limiting");
+    }
+
+    #[test]
+    fn strip_milestone_marker_removes_bullet_only() {
+        assert_eq!(strip_milestone_marker("- Plain item"), "Plain item");
+        assert_eq!(strip_milestone_marker("* Plain item"), "Plain item");
+    }
+
+    #[test]
+    fn strip_milestone_marker_plain_text_unchanged() {
+        assert_eq!(strip_milestone_marker("No marker here"), "No marker here");
+    }
+
+    // ── word_wrap ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn word_wrap_short_text_is_single_line() {
+        let lines = word_wrap("Hello world", 40);
+        assert_eq!(lines, vec!["Hello world"]);
+    }
+
+    #[test]
+    fn word_wrap_wraps_at_boundary() {
+        let text = "one two three four five";
+        let lines = word_wrap(text, 12);
+        // "one two" = 7, "three four" = 10, "five" = 4
+        assert!(lines.len() > 1);
+        for l in &lines {
+            assert!(l.len() <= 12, "line too long: {:?}", l);
+        }
+    }
+
+    #[test]
+    fn word_wrap_empty_string_returns_empty() {
+        assert!(word_wrap("", 20).is_empty());
+    }
+
+    #[test]
+    fn word_wrap_single_long_word_is_not_split() {
+        let lines = word_wrap("superlongwordthatexceedswidth", 10);
+        assert_eq!(lines, vec!["superlongwordthatexceedswidth"]);
+    }
+
+    // ── shorten_path ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn shorten_path_short_path_unchanged() {
+        assert_eq!(shorten_path("src/auth.rs", 20), "src/auth.rs");
+    }
+
+    #[test]
+    fn shorten_path_long_path_truncated() {
+        let p = "src/very/deep/nested/module/auth.rs";
+        let result = shorten_path(p, 20);
+        // …  is 3 bytes but 1 char; check visual width via char count
+        assert!(result.chars().count() <= 20);
+        assert!(result.starts_with('…'));
+        assert!(result.ends_with("auth.rs"));
+    }
+
+    #[test]
+    fn shorten_path_exact_max_unchanged() {
+        let p = "x".repeat(20);
+        assert_eq!(shorten_path(&p, 20), p);
+    }
+
+    // ── build_suggested_prompt ────────────────────────────────────────────────
+
+    #[test]
+    fn build_suggested_prompt_fallback_when_empty() {
+        let p = build_suggested_prompt("", &[], &[], &[]);
+        assert_eq!(p, "Resume where we left off.");
+    }
+
+    #[test]
+    fn build_suggested_prompt_includes_goal() {
+        let p = build_suggested_prompt("Build an OAuth2 login system", &[], &[], &[]);
+        assert!(p.contains("Build an OAuth2 login system"));
+    }
+
+    #[test]
+    fn build_suggested_prompt_includes_next_milestone() {
+        let p = build_suggested_prompt(
+            "Build auth",
+            &["Initial setup".to_string()],
+            &["Add rate limiting".to_string()],
+            &[],
+        );
+        assert!(p.contains("Add rate limiting"));
+    }
+
+    #[test]
+    fn build_suggested_prompt_multiple_done_milestones() {
+        let done = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let p = build_suggested_prompt("Goal", &done, &[], &[]);
+        // Should mention "A and 2 more milestones"
+        assert!(p.contains('A'));
+        assert!(p.contains('2'));
+    }
+
+    #[test]
+    fn build_suggested_prompt_mentions_risky_file() {
+        let risky = vec![RiskyFile {
+            path: "src/auth.rs".to_string(),
+            uncertainty_count: 3,
+            avg_confidence: 0.2,
+            churn_score: 0.8,
+            risk_score: 0.7,
+            top_phrase: Some("not sure".to_string()),
+        }];
+        let p = build_suggested_prompt("", &[], &[], &risky);
+        assert!(p.contains("auth.rs"));
+        assert!(p.contains("not sure"));
+    }
+
+    // ── compute_risky_files ───────────────────────────────────────────────────
+
+    fn make_analysis(annotations: Vec<UncertaintyAnnotation>, churn: Vec<FileChurn>) -> SessionAnalysis {
+        SessionAnalysis {
+            session_id: "test-session".to_string(),
+            footprint: ExplorationFootprint::default(),
+            causal_chain: CausalChain::default(),
+            uncertainty: annotations,
+            churn,
+            replay_hash: String::new(),
+            analyzed_at: Utc::now(),
+            message_count: 10,
+            tool_call_count: 5,
+        }
+    }
+
+    fn ann(file: &str, confidence: f32, phrase: &str) -> UncertaintyAnnotation {
+        UncertaintyAnnotation {
+            context_file: file.to_string(),
+            snippet: String::new(),
+            phrase: phrase.to_string(),
+            confidence,
+            turn: 0,
+        }
+    }
+
+    #[test]
+    fn compute_risky_files_ranks_by_risk_score() {
+        let analysis = make_analysis(
+            vec![
+                ann("src/auth.rs", 0.1, "not sure"),  // very uncertain
+                ann("src/auth.rs", 0.2, "not sure"),
+                ann("src/utils.rs", 0.9, "perhaps"),  // mostly confident
+            ],
+            vec![
+                FileChurn { file: "src/auth.rs".to_string(), edit_count: 8, read_count: 2, churn_score: 0.8 },
+            ],
+        );
+        let risky = compute_risky_files(&analysis);
+        assert!(!risky.is_empty());
+        assert_eq!(risky[0].path, "src/auth.rs");
+    }
+
+    #[test]
+    fn compute_risky_files_skips_empty_file() {
+        let analysis = make_analysis(
+            vec![ann("", 0.1, "not sure")],
+            vec![],
+        );
+        // Empty context_file should be ignored
+        assert!(compute_risky_files(&analysis).is_empty());
+    }
+
+    #[test]
+    fn compute_risky_files_top_phrase_is_most_frequent() {
+        let analysis = make_analysis(
+            vec![
+                ann("src/a.rs", 0.3, "not sure"),
+                ann("src/a.rs", 0.3, "not sure"),
+                ann("src/a.rs", 0.3, "let me check"),
+            ],
+            vec![],
+        );
+        let risky = compute_risky_files(&analysis);
+        assert_eq!(risky[0].top_phrase.as_deref(), Some("not sure"));
+    }
+}

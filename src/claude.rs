@@ -230,3 +230,74 @@ pub fn keyword_search<'a>(commits: &'a [CommitSummary], intent: &str) -> Option<
 
     commits.iter().filter(|c| score(c) > 0).max_by_key(|c| score(c))
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn make_commit(oid: &str, message: &str, prompt: Option<&str>) -> CommitSummary {
+        CommitSummary {
+            oid: oid.to_string(),
+            message: message.to_string(),
+            prompt: prompt.map(|s| s.to_string()),
+            model: None,
+            agent_id: None,
+            timestamp: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn keyword_search_returns_best_match() {
+        let commits = vec![
+            make_commit("aaa", "add logging module", None),
+            make_commit("bbb", "implement oauth login", Some("add GitHub login")),
+            make_commit("ccc", "fix typo in README", None),
+        ];
+        let result = keyword_search(&commits, "oauth login");
+        assert_eq!(result.map(|c| c.oid.as_str()), Some("bbb"));
+    }
+
+    #[test]
+    fn keyword_search_returns_none_when_no_terms_match() {
+        let commits = vec![
+            make_commit("aaa", "add cache layer", None),
+            make_commit("bbb", "refactor auth", None),
+        ];
+        assert!(keyword_search(&commits, "websocket streaming").is_none());
+    }
+
+    #[test]
+    fn keyword_search_empty_commit_list() {
+        assert!(keyword_search(&[], "anything").is_none());
+    }
+
+    #[test]
+    fn keyword_search_is_case_insensitive() {
+        let commits = vec![make_commit("aaa", "Add Rate Limiting", None)];
+        let result = keyword_search(&commits, "rate limiting");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn keyword_search_searches_prompt_field() {
+        let commits = vec![
+            make_commit("aaa", "refactor session module", Some("implement Redis session store")),
+            make_commit("bbb", "update tests", None),
+        ];
+        let result = keyword_search(&commits, "redis");
+        assert_eq!(result.map(|c| c.oid.as_str()), Some("aaa"));
+    }
+
+    #[test]
+    fn keyword_search_higher_score_wins() {
+        let commits = vec![
+            make_commit("aaa", "fix auth token", None),           // 2 terms match
+            make_commit("bbb", "fix auth token validation bug", None), // 3 terms match
+        ];
+        let result = keyword_search(&commits, "fix auth token");
+        assert_eq!(result.map(|c| c.oid.as_str()), Some("bbb"));
+    }
+}

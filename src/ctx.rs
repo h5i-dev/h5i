@@ -862,3 +862,252 @@ fn serde_yaml_serialize(meta: &GccMetadata) -> String {
 
     out
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    // ── init / is_initialized ─────────────────────────────────────────────────
+
+    #[test]
+    fn init_creates_workspace_files() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "Build something great").unwrap();
+
+        assert!(dir.path().join(CTX_DIR).exists());
+        assert!(dir.path().join(CTX_DIR).join("main.md").exists());
+        assert!(dir.path().join(CTX_DIR).join("branches").join("main").exists());
+    }
+
+    #[test]
+    fn is_initialized_false_before_init() {
+        let dir = tempdir().unwrap();
+        assert!(!is_initialized(dir.path()));
+    }
+
+    #[test]
+    fn is_initialized_true_after_init() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "Test goal").unwrap();
+        assert!(is_initialized(dir.path()));
+    }
+
+    #[test]
+    fn init_embeds_goal_in_main_md() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "Build an OAuth2 login system").unwrap();
+        let content = std::fs::read_to_string(dir.path().join(CTX_DIR).join("main.md")).unwrap();
+        assert!(content.contains("Build an OAuth2 login system"));
+    }
+
+    #[test]
+    fn init_idempotent_does_not_overwrite_main_md() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "Original goal").unwrap();
+        // Write custom content
+        let main = dir.path().join(CTX_DIR).join("main.md");
+        std::fs::write(&main, "Custom content").unwrap();
+        // Re-init should not overwrite because main_path.exists() guard
+        init(dir.path(), "New goal").unwrap();
+        let content = std::fs::read_to_string(&main).unwrap();
+        assert_eq!(content, "Custom content");
+    }
+
+    // ── current_branch / set_current_branch ──────────────────────────────────
+
+    #[test]
+    fn current_branch_defaults_to_main() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        assert_eq!(current_branch(dir.path()), "main");
+    }
+
+    #[test]
+    fn gcc_branch_switches_active_branch() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "experiment", "try new approach").unwrap();
+        assert_eq!(current_branch(dir.path()), "experiment");
+    }
+
+    // ── gcc_checkout ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn gcc_checkout_switches_to_existing_branch() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "feature", "feature work").unwrap();
+        gcc_checkout(dir.path(), "main").unwrap();
+        assert_eq!(current_branch(dir.path()), "main");
+    }
+
+    #[test]
+    fn gcc_checkout_fails_on_nonexistent_branch() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        assert!(gcc_checkout(dir.path(), "does_not_exist").is_err());
+    }
+
+    // ── list_branches ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn list_branches_after_init_has_main() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        let branches = list_branches(dir.path());
+        assert!(branches.contains(&"main".to_string()));
+    }
+
+    #[test]
+    fn list_branches_includes_new_branches() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "feat-oauth", "oauth work").unwrap();
+        let branches = list_branches(dir.path());
+        assert!(branches.contains(&"feat-oauth".to_string()));
+    }
+
+    // ── append_log ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn append_log_adds_entry_to_trace() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "OBSERVE", "Redis latency is 2ms").unwrap();
+        let trace = std::fs::read_to_string(
+            dir.path().join(CTX_DIR).join("branches").join("main").join("trace.md"),
+        ).unwrap();
+        assert!(trace.contains("OBSERVE: Redis latency is 2ms"));
+    }
+
+    #[test]
+    fn append_log_uppercases_kind() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "think", "reasoning step").unwrap();
+        let trace = std::fs::read_to_string(
+            dir.path().join(CTX_DIR).join("branches").join("main").join("trace.md"),
+        ).unwrap();
+        assert!(trace.contains("THINK:"));
+    }
+
+    // ── gcc_commit ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn gcc_commit_appends_entry_to_commit_md() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        gcc_commit(dir.path(), "Milestone 1 done", "Implemented the login form").unwrap();
+        let commit_md = std::fs::read_to_string(
+            dir.path().join(CTX_DIR).join("branches").join("main").join("commit.md"),
+        ).unwrap();
+        assert!(commit_md.contains("Implemented the login form"));
+    }
+
+    #[test]
+    fn gcc_commit_updates_main_md_notes() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        gcc_commit(dir.path(), "Completed auth setup", "Added JWT tokens").unwrap();
+        let main_md = std::fs::read_to_string(dir.path().join(CTX_DIR).join("main.md")).unwrap();
+        assert!(main_md.contains("Completed auth setup"));
+    }
+
+    // ── gcc_context ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn gcc_context_reads_goal_from_main_md() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "Build an OAuth2 login system").unwrap();
+        let ctx = gcc_context(dir.path(), &ContextOpts::default()).unwrap();
+        assert_eq!(ctx.project_goal, "Build an OAuth2 login system");
+    }
+
+    #[test]
+    fn gcc_context_reads_milestones() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        // Manually add a milestone
+        let main = dir.path().join(CTX_DIR).join("main.md");
+        let mut content = std::fs::read_to_string(&main).unwrap();
+        content = content.replace("- [ ] Initial setup", "- [x] Initial setup\n- [ ] Add rate limiting");
+        std::fs::write(&main, content).unwrap();
+
+        let ctx = gcc_context(dir.path(), &ContextOpts::default()).unwrap();
+        assert!(ctx.milestones.iter().any(|m| m.contains("Add rate limiting")));
+    }
+
+    #[test]
+    fn gcc_context_includes_current_branch() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        let ctx = gcc_context(dir.path(), &ContextOpts::default()).unwrap();
+        assert_eq!(ctx.current_branch, "main");
+    }
+
+    #[test]
+    fn gcc_context_returns_recent_commits() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        gcc_commit(dir.path(), "milestone", "did the work").unwrap();
+        let ctx = gcc_context(dir.path(), &ContextOpts { window: 3, ..Default::default() }).unwrap();
+        assert!(!ctx.recent_commits.is_empty());
+        assert!(ctx.recent_commits[0].contains("did the work"));
+    }
+
+    // ── gcc_merge ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn gcc_merge_combines_branches() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "experiment", "try algo").unwrap();
+        gcc_commit(dir.path(), "Experiment done", "Found faster algorithm").unwrap();
+        gcc_checkout(dir.path(), "main").unwrap();
+        let summary = gcc_merge(dir.path(), "experiment").unwrap();
+        assert!(summary.contains("experiment"));
+    }
+
+    #[test]
+    fn gcc_merge_fails_for_nonexistent_branch() {
+        let dir = tempdir().unwrap();
+        init(dir.path(), "goal").unwrap();
+        assert!(gcc_merge(dir.path(), "ghost_branch").is_err());
+    }
+
+    // ── internal helpers ──────────────────────────────────────────────────────
+
+    #[test]
+    fn extract_section_returns_correct_content() {
+        let text = "## Goal\nBuild something\n\n## Milestones\n- item\n";
+        assert_eq!(extract_section(text, "Goal"), "Build something");
+    }
+
+    #[test]
+    fn extract_section_returns_empty_when_missing() {
+        assert_eq!(extract_section("no sections here", "Goal"), "");
+    }
+
+    #[test]
+    fn extract_list_items_parses_bullet_list() {
+        let text = "- [ ] First\n- [x] Done\n- Third\n";
+        let items = extract_list_items(text);
+        assert_eq!(items.len(), 3);
+        assert!(items[0].contains("First"));
+    }
+
+    #[test]
+    fn extract_recent_commits_returns_latest_first_when_multiple() {
+        let commit_text = "## Commit aaa111 — 2026-01-01\n\
+            ### This Commit's Contribution\nFirst contribution\n---\n\
+            ## Commit bbb222 — 2026-01-02\n\
+            ### This Commit's Contribution\nSecond contribution\n---\n";
+        let recent = extract_recent_commits(commit_text, 2);
+        // Both entries returned, ordered oldest first (reversed back after rev)
+        assert_eq!(recent.len(), 2);
+        assert!(recent.last().unwrap().contains("Second contribution"));
+    }
+}
