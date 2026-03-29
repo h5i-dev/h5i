@@ -1024,38 +1024,45 @@ Reconstruct the conflict-free merged state of a file from two CRDT session OIDs 
 
 ## Appendix: Storage Layout
 
-```
-.git/
-└── .h5i/
-    ├── ast/                    # SHA-256-keyed S-expression AST snapshots
-    ├── crdt/                   # Yjs CRDT document state (per file)
-    ├── delta/                  # Append-only CRDT update logs (per file)
-    ├── memory/                 # Claude memory snapshots
-    │   └── <commit-oid>/
-    │       ├── MEMORY.md
-    │       └── _meta.json      # snapshot timestamp + file count
-    ├── session_log/            # Claude Code session analyses
-    │   └── <commit-oid>/
-    │       └── analysis.json
-    └── pending_context.json    # Transient: written by hook, consumed by next commit
+### Filesystem (`.git/.h5i/`)
 
-.h5i-ctx/                       # Context workspace (h5i context)
-├── main.md
-└── branches/<branch>/
-    ├── commit.md
-    ├── trace.md
-    └── metadata.yaml
+```
+.git/.h5i/
+├── memory/                          # Claude memory snapshots
+│   └── <commit-oid>/
+│       ├── <uuid>.jsonl             # Claude Code session log files
+│       └── _meta.json               # snapshot timestamp + file count
+├── session_log/                     # Claude Code session analyses
+│   └── <commit-oid>/
+│       └── analysis.json
+├── delta/                           # CRDT update logs (created on demand)
+│   ├── <sha256(file_path)>.bin      # active append-only log
+│   ├── <sha256(file_path)>.snapshot # CRDT snapshot
+│   └── <commit-oid>/
+│       └── <sha256(file_path)>.bin  # committed delta archive
+└── pending_context.json             # Transient: written by hook, consumed by next commit
 ```
 
-**`refs/h5i/notes`** — extended commit metadata (AI provenance, test metrics, causal links, integrity reports, design decisions) stored as JSON blobs attached to each commit OID. Inspect any entry directly:
+Three additional directories (`ast/`, `crdt/`, `metadata/`) are created on `h5i init` but are not actively used for storage — data is stored in Git refs instead.
+
+### Git Refs
+
+| Ref | Type | Contains |
+|-----|------|----------|
+| `refs/h5i/notes` | Git notes | Commit metadata: AI provenance, test metrics, causal links, integrity reports, design decisions |
+| `refs/h5i/memory` | Linear commit history | Claude memory snapshots as git tree objects; each commit carries the linked code-commit OID |
+| `refs/h5i/context` | Git tree | Context workspace: `main.md`, `.current_branch`, `branches/<name>/{commit.md,trace.md,metadata.yaml}` |
+| `refs/h5i/ast` | Git objects | AST hash snapshots for semantic blame |
+
+The context workspace commands display paths under `.h5i-ctx/` in their output, but the data is stored in `refs/h5i/context`.
+
+Inspect any notes entry directly:
 
 ```bash
 git notes --ref refs/h5i/notes show <commit-oid>
 ```
 
-**`refs/h5i/memory`** — Claude memory snapshots stored as a linear history of git tree objects. Each memory commit carries the linked code-commit OID in its message.
-
-Neither ref is pushed or fetched by a plain `git push` / `git pull`. Use `h5i push` / `h5i pull` to share them.
+None of the `refs/h5i/*` refs are pushed or fetched by a plain `git push` / `git pull`. Use `h5i push` / `h5i pull` to share them.
 
 ---
 
