@@ -1,30 +1,23 @@
 # h5i Manual
 
-Complete reference for all h5i commands, configuration, and internals.
+Complete reference for all h5i commands and configuration.
 
 ---
 
 ## Table of Contents
 
 1. [Installation](#1-installation)
-2. [Committing with AI Provenance](#2-committing-with-ai-provenance)
-3. [Attaching Test Results](#3-attaching-test-results)
-4. [Causal Commit Chains](#4-causal-commit-chains)
-5. [Integrity Engine](#5-integrity-engine)
-6. [Enriched Log and Blame](#6-enriched-log-and-blame)
-7. [Intent-Based Rollback](#7-intent-based-rollback)
-8. [CRDT Collaborative Sessions](#8-crdt-collaborative-sessions)
+2. [Claude Code Setup (hooks)](#2-claude-code-setup-hooks)
+3. [Committing with AI Provenance](#3-committing-with-ai-provenance)
+4. [Session Analysis (h5i notes)](#4-session-analysis-h5i-notes)
+5. [Context Workspace (h5i context)](#5-context-workspace-h5i-context)
+6. [Session Handoff (h5i resume)](#6-session-handoff-h5i-resume)
+7. [Enriched Log and Blame](#7-enriched-log-and-blame)
+8. [Integrity Engine](#8-integrity-engine)
 9. [Memory Management](#9-memory-management)
-10. [Session Log Analysis (h5i notes)](#10-session-log-analysis-h5i-notes)
-11. [Context Workspace (h5i context)](#11-context-workspace-h5i-context)
-12. [Web Dashboard](#12-web-dashboard)
-13. [Claude Code Hooks](#13-claude-code-hooks)
-14. [Sharing h5i Data with Your Team](#14-sharing-h5i-data-with-your-team)
-15. [Storage Layout](#15-storage-layout)
-16. [Session Handoff (h5i resume)](#16-session-handoff-h5i-resume)
-17. [Design Decisions (--decisions)](#17-design-decisions---decisions)
-18. [Attention Coverage (h5i notes coverage)](#18-attention-coverage-h5i-notes-coverage)
-19. [Prompt Ancestry and Blame Annotations](#19-prompt-ancestry-and-blame-annotations)
+10. [Sharing with Your Team](#10-sharing-with-your-team)
+11. [Web Dashboard](#11-web-dashboard)
+12. [Storage Layout](#12-storage-layout)
 
 ---
 
@@ -39,9 +32,8 @@ cargo install --git https://github.com/Koukyosyumei/h5i h5i-core
 From a local clone:
 
 ```bash
-git clone https://github.com/koukyosyumei/h5i
-cd h5i
-cargo install --path .
+git clone https://github.com/Koukyosyumei/h5i
+cd h5i && cargo install --path .
 ```
 
 Initialize h5i in any Git repository:
@@ -54,235 +46,450 @@ h5i init
 
 ---
 
-## 2. Committing with AI Provenance
+## 2. Claude Code Setup (hooks)
+
+The fastest way to use h5i with Claude Code is to install the prompt-capture hook. After setup, every `h5i commit` automatically records the prompt from your Claude Code conversation — no `--prompt` flag required.
 
 ```bash
-h5i commit -m "implement rate limiting" \
-  --prompt "add per-IP rate limiting to the auth endpoint" \
-  --model claude-sonnet-4-6 \
-  --agent claude-code
+h5i hooks
 ```
 
-**Flag resolution order:** CLI flag → environment variable → pending context file (written by the Claude Code hook).
+This prints:
+1. A shell script to save at `~/.claude/hooks/h5i-capture-prompt.sh`
+2. The exact `~/.claude/settings.json` snippet to register it
+
+Follow the printed instructions. Once installed, the flow is: conversation → `.git/.h5i/pending_context.json` → consumed and cleared by the next `h5i commit`.
+
+**Environment variable fallback** (no hooks, or non-Claude agents):
+
+```bash
+export H5I_PROMPT="implement rate limiting on the auth endpoint"
+export H5I_MODEL="claude-sonnet-4-6"
+export H5I_AGENT_ID="claude-code"
+h5i commit -m "add rate limiting"
+```
+
+---
+
+## 3. Committing with AI Provenance
+
+With hooks installed, a basic commit is just:
+
+```bash
+h5i commit -m "implement rate limiting"
+```
+
+h5i picks up the prompt, model, and agent from the hook-written context file automatically.
+
+### All commit flags
 
 | Flag | Env var | Description |
 |------|---------|-------------|
-| `--prompt` | `H5I_PROMPT` | The user prompt that triggered this commit |
-| `--model` | `H5I_MODEL` | Model name (e.g. `claude-sonnet-4-6`) |
-| `--agent` | `H5I_AGENT_ID` | Agent identifier (e.g. `claude-code`) |
-| `--caused-by` | — | OID of a commit that causally triggered this one (repeatable) |
-| `--decisions` | — | Path to a JSON file of structured design decisions (see §17) |
-| `--test-results` | `H5I_TEST_RESULTS` | Path to a JSON test results file |
-| `--test-cmd` | — | Shell command whose stdout produces test results JSON |
+| `--prompt` | `H5I_PROMPT` | The user prompt (auto-captured with hooks) |
+| `--model` | `H5I_MODEL` | Model name, e.g. `claude-sonnet-4-6` |
+| `--agent` | `H5I_AGENT_ID` | Agent identifier, e.g. `claude-code` |
+| `--decisions <FILE>` | — | Path to a JSON file of design decisions (see below) |
+| `--caused-by <OID>` | — | Commit that causally triggered this one (repeatable) |
+| `--test-results <FILE>` | `H5I_TEST_RESULTS` | Path to a JSON test results file |
+| `--test-cmd <CMD>` | — | Shell command whose stdout produces test results JSON |
 | `--tests` | — | Scan staged files for inline `h5_i_test_start`/`h5_i_test_end` markers |
 | `--ast` | — | Capture AST snapshot for semantic blame |
-| `--audit` | — | Run integrity rules before committing |
-| `--force` | — | Commit despite integrity warnings (violations still block) |
+| `--audit` | — | Run integrity rules before committing (see §8) |
+| `--force` | — | Commit despite warnings (violations still block) |
 
-With `h5i hooks` installed, `--prompt` is captured automatically from your Claude Code conversation. See §13.
+Flag resolution order: CLI flag → environment variable → pending context file (hook).
 
----
+### Design decisions (`--decisions`)
 
-## 3. Attaching Test Results
-
-h5i supports three ways to record test metrics alongside a commit.
-
-**Option A — pre-computed results file** (recommended for CI):
+Record the "why" alongside a commit — which alternatives were considered and why the chosen approach was preferred:
 
 ```bash
-python script/h5i-pytest-adapter.py > /tmp/results.json
-h5i commit -m "add login tests" --test-results /tmp/results.json
+cat > decisions.json << 'EOF'
+[
+  {
+    "location": "src/session.rs:44",
+    "choice": "Redis over in-process HashMap",
+    "alternatives": ["in-process HashMap", "Memcached"],
+    "reason": "40 MB overhead is acceptable; survives restarts; required for horizontal scaling"
+  }
+]
+EOF
 
-# Via environment variable
-export H5I_TEST_RESULTS=/tmp/results.json
-h5i commit -m "add login tests"
+h5i commit -m "switch session store to Redis" --decisions decisions.json
 ```
 
-**Option B — inline test command**:
+Decisions appear in `h5i log`:
+
+```
+Decisions:
+  ◆ src/session.rs:44  Redis over in-process HashMap
+    alternatives: in-process HashMap, Memcached
+    40 MB overhead is acceptable; survives restarts; required for horizontal scaling
+```
+
+Decision schema: array of `{ "location", "choice", "alternatives"?, "reason" }`. `location` and `choice` are required.
+
+### Causal chains (`--caused-by`)
+
+Declare which earlier commit triggered the current one:
 
 ```bash
-h5i commit -m "add login tests" \
-  --test-cmd "python script/h5i-pytest-adapter.py"
+h5i commit -m "fix off-by-one in validate_token" --caused-by a3f9c2b
 ```
 
-**Option C — inline markers** (language-agnostic fallback):
-
-```bash
-h5i commit -m "add login tests" --tests
-# Scans staged files for // h5_i_test_start … // h5_i_test_end blocks
-```
-
-### Bundled adapters
-
-`script/h5i-pytest-adapter.py` — runs pytest, uses `pytest-json-report` when available, falls back to output parsing:
-
-```bash
-pip install pytest pytest-json-report
-python script/h5i-pytest-adapter.py
-```
-
-`script/h5i-cargo-test-adapter.sh` — runs `cargo test`, accumulates counts across lib/integration/doc-test sections:
-
-```bash
-bash script/h5i-cargo-test-adapter.sh
-```
-
-### Writing your own adapter
-
-Produce a JSON file matching this schema and pass it via `--test-results`:
-
-```json
-{
-  "tool":          "jest",
-  "passed":        42,
-  "failed":        1,
-  "skipped":       3,
-  "total":         46,
-  "duration_secs": 4.7,
-  "coverage":      0.87,
-  "exit_code":     1,
-  "summary":       "42 passed, 1 failed, 3 skipped in 4.70s"
-}
-```
-
-All fields are optional. `exit_code` takes precedence over counts when determining pass/fail; `total` is computed from counts if omitted.
-
----
-
-## 4. Causal Commit Chains
-
-Declare which earlier commits causally triggered the current one:
-
-```bash
-h5i commit -m "fix off-by-one in validate_token" \
-  --caused-by a3f9c2b \
-  --prompt "fix the bug introduced by the rate limiter"
-
-# Multiple causes
-h5i commit -m "unify auth flow" \
-  --caused-by a3f9c2b \
-  --caused-by d4e5f6a
-```
-
-Abbreviated OIDs are resolved at commit time; invalid OIDs are rejected.
-
-The causal link surfaces in `h5i log`:
-
-```
-commit b2f3a1c...
-Author:    Alice <alice@example.com>
-Agent:     claude-code (claude-sonnet-4-6)
-Caused by: a3f9c2b "implement rate limiting"
-Prompt:    "fix the off-by-one in validate_token"
-Tests:     ✔ 42 passed, 0 failed, 1.23s [pytest]
-```
-
-**Rollback cascade warning** — when rolling back a commit, h5i scans recent history for any commits that declared it as a cause:
+When rolling back a commit, h5i warns if later commits declared it as a cause:
 
 ```
 ⚠ Warning: 2 later commits causally depend on this one:
   → b2f3a1c "fix bug introduced by rate limiter"
-  → c3d4e5f "add test coverage for rate limiter"
 Continue anyway? [y/N]
 ```
 
-Use `--yes` to skip the prompt in CI.
+### Test adapters
+
+**Option A — pre-computed file:**
+```bash
+python script/h5i-pytest-adapter.py > /tmp/results.json
+h5i commit -m "add login tests" --test-results /tmp/results.json
+```
+
+**Option B — inline command:**
+```bash
+h5i commit -m "add login tests" --test-cmd "python script/h5i-pytest-adapter.py"
+```
+
+Bundled adapters: `script/h5i-pytest-adapter.py` (pytest), `script/h5i-cargo-test-adapter.sh` (cargo test).
+
+Custom adapter schema — produce a JSON file and pass it via `--test-results`:
+
+```json
+{
+  "tool": "jest", "passed": 42, "failed": 1, "skipped": 3,
+  "total": 46, "duration_secs": 4.7, "exit_code": 1
+}
+```
+
+All fields are optional. `exit_code` takes precedence over counts; `total` is computed from counts if omitted.
 
 ---
 
-## 5. Integrity Engine
+## 4. Session Analysis (h5i notes)
 
-The `--audit` flag (and the dashboard's per-commit audit button) runs twelve deterministic rules against the diff. Rules are pure string/stat checks — no AI, no network.
-
-| Rule | Severity | Trigger |
-|------|----------|---------|
-| `CREDENTIAL_LEAK` | **Violation** | Added line contains credential keyword + assignment + quoted value, or PEM header |
-| `CODE_EXECUTION` | **Violation** | Added non-comment line contains `eval()`, `exec()`, `os.system()`, `subprocess.*`, etc. |
-| `CI_CD_MODIFIED` | **Violation** | `.github/workflows/`, `Jenkinsfile`, etc. modified without CI/CD intent in prompt |
-| `SENSITIVE_FILE_MODIFIED` | Warning | `.env`, `.pem`, `.key`, `id_rsa`, `credentials` in diff |
-| `LOCKFILE_MODIFIED` | Warning | `Cargo.lock`, `package-lock.json`, `go.sum` changed without dependency intent |
-| `UNDECLARED_DELETION` | Warning | >60% of changes are deletions with no deletion/refactor intent stated |
-| `SCOPE_EXPANSION` | Warning | Prompt names a specific file but other source files were also modified |
-| `LARGE_DIFF` | Warning | >500 total lines changed |
-| `REFACTOR_ANOMALY` | Warning | "refactor" intent but insertions are 3× or more the deletions |
-| `PERMISSION_CHANGE` | Warning | `chmod 777`, `sudo`, `setuid`, `chown root` in added lines |
-| `BINARY_FILE_CHANGED` | Info | Binary file appears in diff |
-| `CONFIG_FILE_MODIFIED` | Info | `.yaml`, `.toml`, `.json`, `.ini` etc. modified |
-
-**Why rule-based?** AI-generated code should be audited by deterministic rules that humans can read and reason about. A fuzzy ML classifier would itself be a trust problem.
-
-To add a rule: add a `pub const` to `rule_id` in `src/rules.rs`, write one pure `fn check_*(ctx: &DiffContext) -> Vec<RuleFinding>` function, and register it in `run_all_rules`. No other changes needed.
-
----
-
-## 6. Enriched Log and Blame
+Claude Code stores a detailed JSONL log of every conversation in `~/.claude/projects/<repo>/`. `h5i notes` parses these logs and stores structured metadata linked to commits.
 
 ```bash
-h5i log --limit 5
+h5i notes analyze        # index the latest session (run after each session)
+```
+
+### Subcommands
+
+| Command | What it shows |
+|---------|--------------|
+| `h5i notes footprint` | Files the AI read vs. edited; implicit dependencies |
+| `h5i notes uncertainty [--file <path>]` | Every moment Claude hedged, with confidence score and context |
+| `h5i notes omissions [--file <path>]` | Deferrals, placeholders, and unfulfilled promises |
+| `h5i notes coverage [--max-ratio F]` | Per-file blind-edit count (edits with no prior Read) |
+| `h5i notes churn [--limit N]` | Edit-to-read ratio per file — proxy for rework |
+| `h5i notes graph [--limit N]` | Directed intent graph across commits |
+| `h5i notes review [--limit N] [--min-score F]` | Ranked list of commits needing human review |
+| `h5i notes show` | Raw stored analysis for HEAD |
+
+All subcommands accept `--commit <oid>` to target a specific commit.
+
+### Exploration footprint
+
+```
+── Exploration Footprint ──────────────────────────────────────
+  Session 90130372  ·  503 messages  ·  181 tool calls
+
+  Files Consulted:
+    📖 src/main.rs ×13  [Read]
+    📖 src/server.rs ×17  [Read,Grep]
+
+  Files Edited:
+    ✏ src/main.rs  ×18 edit(s)
+    ✏ src/server.rs  ×17 edit(s)
+
+  Implicit Dependencies (read but not edited):
+    → src/metadata.rs
+    → Cargo.toml
+```
+
+*Implicit dependencies* — read but not edited — are the most actionable output: files the AI had to understand to make the change, which Git's diff never captures.
+
+### Uncertainty heatmap
+
+Phrases like "not sure", "let me check", "this might break" are recorded with the surrounding context and the file being edited at that moment.
+
+```
+── Uncertainty Heatmap ─────────────────────────────────────────────────
+  7 signals  ·  3 files
+
+  src/auth.rs    ████████████░░░░  ●●●  4 signals  avg 28%
+  src/main.rs    ██████░░░░░░░░░░  ●●   2 signals  avg 40%
+  src/server.rs  ██░░░░░░░░░░░░░░  ●    1 signal   avg 52%
+
+  ██ t:32   not sure    src/auth.rs  [25%]
+       "…token validation might break if the token contains special chars…"
+```
+
+Confidence: **red** (<35%) = very uncertain, **yellow** (35–55%) = moderate, **green** (>55%) = incidental mention.
+
+### Omission report
+
+Detects three categories of incomplete work extracted from Claude's thinking:
+
+| Kind | Badge | What it catches |
+|------|-------|-----------------|
+| **Deferral** | `⏭` | Acknowledged and explicitly skipped: `"for now"`, `"out of scope"`, `"separate PR"` |
+| **Placeholder** | `⬜` | Admittedly incomplete: `"stub"`, `"hardcoded for now"`, `"simplified version"` |
+| **Unfulfilled promise** | `💬` | Claude said `"I'll also update X"` but that file never appeared in the edit sequence |
+
+```
+── Omission Report ─────────────────────────────────────────────
+  5 signals  ·  2 deferrals  ·  2 placeholders  ·  1 unfulfilled promise
+
+  ⏭ DEFERRAL    src/auth.rs · "for now"
+       "…I'll hardcode the token TTL for now — a proper config value can be added later…"
+
+  ⬜ PLACEHOLDER  src/session.rs · "hardcoded for now"
+       "…session timeout is hardcoded for now at 3600s, should come from config…"
+
+  💬 UNFULFILLED  src/auth.rs · "i'll also update"
+     → promised file: src/auth/tests.rs  (never edited)
+```
+
+Run `h5i notes omissions` right after `h5i notes uncertainty` — uncertainty tells you where Claude was unsure; omissions tell you what it left incomplete. Together they form a targeted review checklist.
+
+### Attention coverage
+
+An edit with no preceding Read in the same session is a **blind edit** — a change made without direct evidence that Claude understood the current state of the file.
+
+```
+── Attention Coverage — a3f9c2b
+
+  File                    Edits   Coverage   Blind edits
+  src/auth.rs                 4       75%             1
+  src/session.rs              2        0%             2   ← review these
+  src/main.rs                 1      100%             0
+```
+
+`h5i notes review` adds a `BLIND_EDIT` signal (weight 0.10 per file, max 0.30) to the commit's review score when coverage data is available.
+
+---
+
+## 5. Context Workspace (h5i context)
+
+The context workspace (based on [arXiv:2508.00031](https://arxiv.org/abs/2508.00031)) gives Claude a version-controlled notepad at `.h5i-ctx/` that survives session resets. Its command structure mirrors Git.
+
+### Recommended workflow
+
+```bash
+# Session start — restore state
+h5i context show --trace
+
+# During session — log reasoning
+h5i context trace --kind OBSERVE "Redis p99 latency is 2 ms"
+h5i context trace --kind THINK   "40 MB overhead is acceptable"
+h5i context trace --kind ACT     "Switching session store to Redis"
+
+# Before exploring a risky alternative
+h5i context branch experiment/sync-session --purpose "try synchronous session store"
+
+# After confirming or discarding the experiment
+h5i context checkout main
+h5i context merge experiment/sync-session   # or just stay on main
+
+# After a meaningful milestone
+h5i context commit "Implemented token refresh flow" \
+  --detail "Handles 401s transparently; refresh stored in HttpOnly cookie."
+
+# End of session
+h5i context status
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `h5i context init --goal <text>` | Create workspace with initial goal |
+| `h5i context show [--trace] [--window N]` | Show goal, milestones, recent commits, trace |
+| `h5i context trace --kind <KIND> <content>` | Append an OTA trace entry (`OBSERVE`, `THINK`, `ACT`, `NOTE`) |
+| `h5i context commit <summary> [--detail <text>]` | Save a milestone checkpoint |
+| `h5i context branch <name> [--purpose <text>]` | Create and switch to a new branch |
+| `h5i context checkout <name>` | Switch to an existing branch |
+| `h5i context merge <branch>` | Merge a branch's log into current |
+| `h5i context status` | Quick overview: branch, commit count, trace lines |
+| `h5i context prompt` | Print a system prompt that tells Claude how to use these commands |
+
+### `h5i context show` flags
+
+| Flag | Description |
+|------|-------------|
+| `--branch <name>` | Show context for a branch without switching |
+| `--commit <hash>` | Pull a specific milestone entry by hash prefix |
+| `--trace` | Include recent OTA trace lines |
+| `--window <N>` | Number of recent milestone commits to include (default: 3) |
+| `--trace-offset <N>` | Scroll back N lines from the end of the trace |
+| `--metadata <segment>` | Pull a named section from `metadata.yaml` |
+
+### Workspace layout
+
+```
+.h5i-ctx/
+├── main.md               ← global roadmap: goal, milestones, progress notes
+└── branches/
+    └── <branch>/
+        ├── commit.md     ← milestone summaries (append-only)
+        ├── trace.md      ← OTA execution trace
+        └── metadata.yaml ← file structure, dependencies, env config
+```
+
+---
+
+## 6. Session Handoff (h5i resume)
+
+`h5i resume` assembles a structured briefing from locally stored h5i data so Claude can pick up exactly where the last session left off. No API call required.
+
+```bash
+h5i resume              # briefing for the current branch
+h5i resume feat/oauth   # briefing for a specific branch
+```
+
+```
+── Session Handoff ─────────────────────────────────────────────────
+  Branch: feat/oauth  ·  Last active: 2026-03-27 14:22 UTC
+  Agent: claude-code  ·  Model: claude-sonnet-4-6
+  HEAD: a3f9c2b  implement token refresh flow
+
+  Goal: Build an OAuth2 login system
+  Progress:
+    ✔ Initial setup
+    ✔ GitHub provider integration
+    ○ Token refresh flow  ← resume here
+    ○ Logout + session cleanup
+
+  Last Session: 503 messages  ·  181 tool calls  ·  4 files edited
+
+  ⚠  High-Risk Files  (review before continuing)
+    ██████████  src/auth.rs       4 signals  churn 80%  "not sure"
+    ██████░░░░  src/session.rs    2 signals  churn 60%  "let me check"
+
+  Memory Changes Since Last Snapshot
+    + 2 files added  ~  1 file modified
+
+  Suggested Opening Prompt
+  ─────────────────────────────────────────────────────────────────
+  Continue building "Build an OAuth2 login system". Completed: Initial
+  setup, GitHub provider. Next: Token refresh flow. Review src/auth.rs
+  before editing — 4 uncertainty signals recorded in the last session.
+  ─────────────────────────────────────────────────────────────────
+```
+
+The briefing is richer when the full h5i workflow is in place:
+
+| Feature | How to enable |
+|---------|---------------|
+| Goal + milestones | `h5i context init --goal "..."` |
+| Session stats + risk files | `h5i notes analyze` after each session |
+| Memory changes | `h5i memory snapshot` after each session |
+| Agent + model in header | hooks or `H5I_MODEL` / `H5I_AGENT_ID` env vars |
+
+### Recommended end-of-session checklist
+
+```bash
+h5i notes analyze                        # index the session
+h5i memory snapshot -m "end of session"  # checkpoint memory
+h5i resume                               # preview the next session's briefing
+```
+
+---
+
+## 7. Enriched Log and Blame
+
+```bash
+h5i log [--limit N]
+h5i log --ancestry src/auth.rs:42        # full prompt history for a specific line
+
 h5i blame src/auth.rs
-h5i blame src/auth.rs --mode ast   # AST-level semantic blame
+h5i blame src/auth.rs --show-prompt      # annotate commit boundaries with their prompt
+h5i blame src/auth.rs --mode ast         # AST-level semantic blame
 ```
 
 `h5i blame` shows two status columns before each line:
+- Test status: `✅` passing, `✖` failing, blank = no data
+- AI indicator: `✨` AI-authored
 
-- Test status: `✅` (passing), `✖` (failing), blank (no data)
-- AI indicator: `✨` (AI-authored line)
+**`--show-prompt`** annotates each commit boundary with the prompt that triggered it:
 
-For deeper provenance, see §19 for `--show-prompt` and `--ancestry`.
+```
+── commit a3f9c2b ── prompt: "add per-IP rate limiting to the auth endpoint" ──
+✅✨  a3f9c2b  claude-code  | pub fn check_rate_limit(ip: IpAddr) -> bool {
+── commit 9e21b04 ── (no prompt recorded) ──
+     9e21b04  Alice        | pub fn authenticate(token: &str) -> Result<User> {
+```
 
----
+**`h5i log --ancestry src/auth.rs:42`** traces every commit that touched a line, annotated with its prompt:
 
-## 7. Intent-Based Rollback
+```
+── Prompt ancestry for src/auth.rs:42
+
+  [1 of 3]  a3f9c2b  Alice · 2026-03-27 14:02 UTC
+       line:    check_rate_limit(&ip, &config.rate_limit)
+       prompt:  "add per-IP rate limiting to the auth endpoint"
+
+  [2 of 3]  9e21b04  Bob · 2026-03-26 11:45 UTC
+       line:    check_rate_limit(&ip)
+       prompt:  (none recorded)
+```
+
+**Intent-based rollback** — revert by describing the change, not by hash:
 
 ```bash
 h5i rollback "the OAuth login changes"
-h5i rollback "rate limiting" --dry-run   # preview without reverting
+h5i rollback "rate limiting" --dry-run   # preview
 h5i rollback "the broken migration" --yes  # skip confirmation in CI
 ```
 
-h5i matches the description against stored prompts and commit messages using Claude for semantic search, or keyword matching if `ANTHROPIC_API_KEY` is not set.
-
 ---
 
-## 8. CRDT Collaborative Sessions
+## 8. Integrity Engine
 
-```bash
-h5i session --file src/auth.rs
-# → Watching for changes... (Press Ctrl+C to stop)
+The `--audit` flag (and the dashboard's per-commit audit button) runs twelve deterministic rules against the diff. No AI, no network — pure string and stat checks.
 
-h5i resolve <ours-oid> <theirs-oid> src/auth.rs
-```
+| Rule | Severity | Trigger |
+|------|----------|---------|
+| `CREDENTIAL_LEAK` | **Violation** | Credential keyword + assignment + quoted value, or PEM header |
+| `CODE_EXECUTION` | **Violation** | `eval()`, `exec()`, `os.system()`, `subprocess.*` in non-comment lines |
+| `CI_CD_MODIFIED` | **Violation** | `.github/workflows/`, `Jenkinsfile`, etc. modified without CI/CD intent in prompt |
+| `SENSITIVE_FILE_MODIFIED` | Warning | `.env`, `.pem`, `.key`, `id_rsa`, `credentials` in diff |
+| `LOCKFILE_MODIFIED` | Warning | `Cargo.lock`, `package-lock.json`, `go.sum` changed without dependency intent |
+| `UNDECLARED_DELETION` | Warning | >60% deletions with no deletion/refactor intent stated |
+| `SCOPE_EXPANSION` | Warning | Prompt names a specific file but other source files were also modified |
+| `LARGE_DIFF` | Warning | >500 total lines changed |
+| `REFACTOR_ANOMALY` | Warning | "refactor" intent but insertions ≥ 3× deletions |
+| `PERMISSION_CHANGE` | Warning | `chmod 777`, `sudo`, `setuid`, `chown root` in added lines |
+| `BINARY_FILE_CHANGED` | Info | Binary file in diff |
+| `CONFIG_FILE_MODIFIED` | Info | `.yaml`, `.toml`, `.json`, `.ini` modified |
 
-Each agent gets its own session; changes merge via Yjs CRDT automatically. `h5i resolve` reconstructs the conflict-free state from Git Notes — no interactive merge editor required.
+Use `--force` to commit despite warnings; violations always block.
+
+To add a rule: add a `pub const` to `rule_id` in `src/rules.rs`, write one pure `fn check_*(ctx: &DiffContext) -> Vec<RuleFinding>`, and register it in `run_all_rules`.
 
 ---
 
 ## 9. Memory Management
 
-h5i versions Claude Code's persistent memory files alongside your code, so every commit can carry an exact record of what the AI "knew" when it made that change.
-
-Claude Code stores per-project memory in `~/.claude/projects/<repo-path>/memory/`. These files are local-only and unversioned by default. h5i fixes that.
+h5i versions Claude Code's persistent memory files alongside your code. Claude stores per-project memory in `~/.claude/projects/<repo-path>/memory/`. These files are local-only by default; h5i snapshots and versions them.
 
 ```bash
-# Snapshot current memory state
-h5i memory snapshot
-h5i memory snapshot --commit a3f9c2b   # tie to a specific commit
-
-# View history
-h5i memory log
-
-# Diff memory across commits
-h5i memory diff                    # last snapshot → live memory
-h5i memory diff a3f9c2b b2f3a1c    # between two snapshots
-h5i memory diff a3f9c2b            # snapshot → live
-
-# Restore
-h5i memory restore a3f9c2b    # interactive confirmation
-h5i memory restore a3f9c2b -y # skip prompt
-
-# Share with team
-h5i memory push
-h5i memory pull
+h5i memory snapshot                     # snapshot current memory state
+h5i memory snapshot --commit a3f9c2b    # tie to a specific commit
+h5i memory log                          # view snapshot history
+h5i memory diff                         # last snapshot → live memory
+h5i memory diff a3f9c2b b2f3a1c         # between two snapshots
+h5i memory restore a3f9c2b             # restore memory to a snapshot
+h5i memory push / h5i memory pull       # share with team
 ```
 
 Example diff output:
@@ -294,234 +501,23 @@ memory diff a3f9c2b..b2f3a1c
     +  The auth middleware rewrite is driven by legal compliance
     +  requirements around session token storage.
   modified  feedback_tests.md
-    -Why: prior incident where mocks masked a broken migration.
-    +Why: prior incident where mocks masked a broken migration.
     +How to apply: always use a real DB in integration tests.
 ────────────────────────────────────────────────────────────
   1 added, 0 removed, 1 modified
 ```
 
-Memory snapshots are backed by real git objects stored under `refs/h5i/memory`. See §14 for the team sharing workflow.
+Memory snapshots are backed by real git objects under `refs/h5i/memory`.
 
 ---
 
-## 10. Session Log Analysis (h5i notes)
+## 10. Sharing with Your Team
 
-Claude Code stores a detailed JSONL log of every conversation in `~/.claude/projects/<repo>/`. h5i parses these logs and extracts structured metadata stored in `.git/.h5i/session_log/<commit-oid>/analysis.json`.
-
-### Subcommands
-
-| Command | Description |
-|---------|-------------|
-| `h5i notes analyze [--session <path>] [--commit <oid>] [--since <oid>]` | Parse a session log and link it to a commit |
-| `h5i notes show [--commit <oid>]` | Show stored analysis |
-| `h5i notes footprint [<oid>]` | Exploration footprint: files read vs edited |
-| `h5i notes uncertainty [--commit <oid>] [--file <path>]` | Uncertainty heatmap |
-| `h5i notes omissions [--commit <oid>] [--file <path>]` | Omission report: deferrals, placeholders, unfulfilled promises |
-| `h5i notes coverage [--commit <oid>] [--max-ratio F]` | Attention coverage: blind edits (see §18) |
-| `h5i notes churn [--limit N]` | Per-file edit churn scores |
-| `h5i notes graph [--limit N] [--mode <mode>]` | Intent graph |
-| `h5i notes review [--limit N] [--min-score F] [--json]` | Review summary (includes `BLIND_EDIT` signal) |
-
-### Exploration footprint
-
-Every file the AI *read* before making a change is recorded, revealing the implicit dependencies that Git's diff never captures. *Implicit dependencies* (read but not edited) are the most actionable output: these are files the agent had to understand to make the change.
-
-### Uncertainty heatmap
-
-When Claude expresses uncertainty — phrases like "not sure", "let me check", "this might break" — h5i records the surrounding context and the file being edited at that moment. Confidence scores: **red** (<35%) = very uncertain, **yellow** (35–55%) = moderate, **green** (>55%) = incidental mention.
-
-### Omission report
-
-`h5i notes omissions` detects three categories of incomplete work that Claude left behind, extracted from its thinking blocks:
-
-| Kind | Badge | What it catches |
-|------|-------|-----------------|
-| **Deferral** | `⏭` red | Claude acknowledged something needed doing but explicitly chose to skip or defer it (`"for now"`, `"out of scope"`, `"separate PR"`, `"leave this for later"`, …) |
-| **Placeholder** | `⬜` yellow | Claude inserted an admittedly incomplete implementation (`"stub"`, `"placeholder"`, `"hardcoded for now"`, `"simplified version"`, `"workaround"`, …) |
-| **Unfulfilled promise** | `💬` cyan | Claude stated in thinking `"I'll also update X"` or `"I should also add Y"` but the corresponding file never appeared in the edit sequence |
-
-```bash
-h5i notes omissions                          # all omissions for HEAD
-h5i notes omissions --commit a3f8c12         # for a past commit
-h5i notes omissions --file src/auth.rs       # filter to one file
-```
-
-Example output:
-
-```
-── Omission Report ─────────────────────────────────────────────
-  5 signals  ·  session a3f8c12d  ·  2 deferrals  ·  2 placeholders  ·  1 unfulfilled promise
-
-  File Summary
-  ────────────────────────────────────────────────────────────────────────────
-  file                                          deferral  placeholder  unfulfilled
-  ────────────────────────────────────────────────────────────────────────────
-  src/auth.rs                                          2            1           1
-  src/session.rs                                       -            1           -
-
-  Signals
-  ────────────────────────────────────────────────────────────────────────────
-
-  ⏭ DEFERRAL      src/auth.rs · t:18 · "for now"
-       "…I'll hardcode the token TTL for now — a proper config value can be added later…"
-
-  ⏭ DEFERRAL      src/auth.rs · t:29 · "out of scope"
-       "…proper error propagation is out of scope for this change, skipping for now…"
-
-  ⬜ PLACEHOLDER   src/auth.rs · t:52 · "stub"
-       "…this refresh handler is a stub; the actual token rotation logic isn't wired up yet…"
-
-  ⬜ PLACEHOLDER   src/session.rs · t:55 · "hardcoded for now"
-       "…session timeout is hardcoded for now at 3600s, should come from config…"
-
-  💬 UNFULFILLED   src/auth.rs · t:61 · "i'll also update"
-     → promised file: src/auth/tests.rs
-       "…i'll also update src/auth/tests.rs to cover the new TTL behaviour…"
-
-  ■ red=deferral  ■ yellow=placeholder  ■ cyan=unfulfilled promise
-```
-
-**Unfulfilled promise cross-check:** when a promise phrase names a file path (e.g. `"i'll also update src/auth/tests.rs"`), h5i checks whether that file actually appears in the session's edit sequence. If it does not, the omission is flagged. When no file path can be extracted the promise phrase is flagged unconditionally for manual review.
-
-**Recommended use:** run `h5i notes omissions` immediately after `h5i notes uncertainty`. Uncertainty tells you where Claude was unsure; omissions tell you what Claude left incomplete. Together they form a targeted review checklist — without reading the full diff.
-
-### File churn
-
-Churn measures how many edits a file received relative to how many times it was read — a proxy for rework and fragility beyond line-count metrics. High churn means trial-and-error rather than confident, planned changes.
-
-### Replay hash
-
-Each analysis stores a SHA-256 hash of the raw JSONL content. Given the same model, the same JSONL, and the same starting state, the commit should be reproducible. Teams can store session files in a separate artifact store and reference them by commit OID.
-
----
-
-## 11. Context Workspace (h5i context)
-
-Long-running AI agent sessions suffer from context-window overflow. The `h5i context` workspace (based on arXiv:2508.00031) maintains a version-controlled memory workspace at `.h5i-ctx/` with commands that mirror Git's own model.
-
-### Workspace layout
-
-```
-.h5i-ctx/
-├── main.md               ← global roadmap: project goal, milestones, progress notes
-└── branches/
-    └── <branch>/
-        ├── commit.md     ← milestone summaries (append-only, rolling)
-        ├── trace.md      ← OTA (Observation–Thought–Action) execution trace
-        └── metadata.yaml ← file structure, dependencies, env config
-```
-
-### Subcommands
-
-| Command | Description |
-|---------|-------------|
-| `h5i context init --goal <text>` | Create workspace with initial goal |
-| `h5i context commit <summary> --detail <text>` | Save a milestone checkpoint |
-| `h5i context branch <name> --purpose <text>` | Create and switch to a new branch |
-| `h5i context checkout <name>` | Switch to an existing branch |
-| `h5i context merge <branch>` | Merge a branch's log and summaries into current |
-| `h5i context show [--branch B] [--commit H] [--trace] [--metadata S] [--window N] [--trace-offset N]` | Retrieve working context |
-| `h5i context trace --kind <KIND> <content>` | Append an OTA trace entry |
-| `h5i context status` | Quick overview: branch, commit count, trace lines |
-| `h5i context prompt` | Print a Claude system prompt that explains how to use these commands |
-
-### `h5i context show` flags
-
-| Flag | Description |
-|------|-------------|
-| `--branch <name>` | Show context for a specific branch without switching |
-| `--commit <hash>` | Pull a specific commit entry by hash prefix |
-| `--trace` | Include recent OTA trace lines |
-| `--metadata <segment>` | Pull a named section from `metadata.yaml` |
-| `--window <N>` | Number of recent commits to include (default: 3) |
-| `--trace-offset <N>` | Scroll back N lines from the end of the trace (sliding window) |
-
-### Trace entry kinds
-
-Valid `--kind` values: `OBSERVE`, `THINK`, `ACT`, `NOTE` (case-insensitive).
-
-### Suggested agent workflow
-
-```
-# Session start
-h5i context show --trace       # restore working state
-
-# During session
-h5i context trace --kind OBSERVE "..."
-h5i context trace --kind THINK   "..."
-h5i context trace --kind ACT     "..."
-
-# Before exploring a risky alternative
-h5i context branch experiment/alt-approach --purpose "..."
-
-# After a meaningful milestone
-h5i context commit "Short summary" --detail "Full explanation"
-
-# Session end (after merging any branches)
-h5i context status
-```
-
----
-
-## 12. Web Dashboard
-
-```bash
-h5i serve            # http://localhost:7150
-h5i serve --port 8080
-```
-
-**Timeline** — full commit history with colored test-status borders, AI prompt detail panels, and a per-card `🛡 Audit` button that runs all twelve integrity rules inline.
-
-**Summary** — aggregate stats, agent leaderboard, and filter pills (`🤖 AI only`, `🧪 With tests`, `✖ Failing`).
-
-**Integrity** — manually audit any commit message + prompt against the rule engine without committing.
-
-**Intent Graph** — directed graph of commit causal chains.
-
-**Memory** — browse and diff Claude memory snapshots linked to each commit.
-
-**Sessions** — per-commit session log data: exploration footprint, causal chain, uncertainty heatmap, and churn bars.
-
-<img src="./assets/screenshot_h5i_server.png" alt="h5i server">
-
----
-
-## 13. Claude Code Hooks
-
-h5i can capture your prompt automatically every time you submit a message to Claude Code:
-
-```bash
-h5i hooks
-```
-
-This prints:
-1. A shell script to save at `~/.claude/hooks/h5i-capture-prompt.sh`
-2. The exact `~/.claude/settings.json` snippet to register the hook
-
-After setup, the prompt flows: conversation → `.git/.h5i/pending_context.json` → consumed and cleared by the next `h5i commit`. No flags, no copy-paste.
-
-**Environment variable fallback** (works without hooks, or with any AI agent):
-
-```bash
-export H5I_PROMPT="implement rate limiting on the auth endpoint"
-export H5I_MODEL="claude-sonnet-4-6"
-export H5I_AGENT_ID="claude-code"
-h5i commit -m "add rate limiting"
-```
-
----
-
-## 14. Sharing h5i Data with Your Team
-
-h5i stores its data in two git refs that are **not** included in a normal `git push`:
+h5i stores its data in two git refs that are **not** pushed by `git push`:
 
 | Ref | Contains |
 |-----|----------|
-| `refs/h5i/notes` | AI provenance, test metrics, causal links, integrity reports |
+| `refs/h5i/notes` | AI provenance, test metrics, causal links, integrity reports, design decisions |
 | `refs/h5i/memory` | Claude memory snapshots |
-
-### Push and pull
 
 ```bash
 h5i push                   # push both refs to origin
@@ -530,21 +526,6 @@ h5i push --remote upstream
 # Pull manually
 git fetch origin refs/h5i/notes:refs/h5i/notes
 git fetch origin refs/h5i/memory:refs/h5i/memory
-
-# Or use the memory subcommand
-h5i memory pull
-```
-
-### Automating with CI/CD
-
-Add to your CI push step:
-
-```yaml
-# GitHub Actions
-- name: Push h5i metadata
-  run: |
-    git push origin refs/h5i/notes
-    git push origin refs/h5i/memory
 ```
 
 Add fetch refspecs to `.git/config` so `git pull` picks them up automatically:
@@ -557,27 +538,51 @@ Add fetch refspecs to `.git/config` so `git pull` picks them up automatically:
     fetch = +refs/h5i/memory:refs/h5i/memory
 ```
 
-### Full team workflow
+CI push step:
+
+```yaml
+- name: Push h5i metadata
+  run: |
+    git push origin refs/h5i/notes
+    git push origin refs/h5i/memory
+```
+
+Team workflow:
 
 ```bash
-# — Alice —
-h5i commit -m "add rate limiting" --prompt "..." --agent claude-code
-h5i memory snapshot
-h5i push
-git push origin main
+# Alice
+h5i commit -m "add rate limiting"
+h5i memory snapshot && h5i push && git push origin main
 
-# — Bob —
-git pull                            # fetches code + notes + memory (with refspecs configured)
-h5i log                             # sees Alice's AI provenance
-h5i memory pull
-h5i memory restore <alice-commit>   # apply Alice's Claude memory to Bob's Claude session
+# Bob
+git pull                              # fetches code + notes + memory
+h5i log                               # sees Alice's AI provenance
+h5i memory restore <alice-commit>     # apply Alice's Claude memory locally
 ```
 
 ---
 
-## 15. Storage Layout
+## 11. Web Dashboard
 
-h5i stores all metadata as a Git sidecar — nothing lives outside your repository.
+```bash
+h5i serve            # http://localhost:7150
+h5i serve --port 8080
+```
+
+<img src="./assets/screenshot_h5i_server.png" alt="h5i web dashboard">
+
+| Tab | What it shows |
+|-----|---------------|
+| **Timeline** | Full commit history: model, agent, prompt, test badge, one-click Re-audit |
+| **Summary** | Aggregate stats, agent leaderboard, filter pills (AI only / with tests / failing) |
+| **Integrity** | Manually audit any commit message + prompt without committing |
+| **Intent Graph** | Directed graph of causal commit chains |
+| **Memory** | Browse and diff Claude memory snapshots per commit |
+| **Sessions** | Per-commit: footprint, uncertainty heatmap, omissions, churn |
+
+---
+
+## 12. Storage Layout
 
 ```
 .git/
@@ -585,330 +590,40 @@ h5i stores all metadata as a Git sidecar — nothing lives outside your reposito
     ├── ast/                        # SHA-256-keyed S-expression AST snapshots
     ├── crdt/                       # Yjs CRDT document state
     ├── delta/                      # Append-only CRDT update logs (per file)
-    ├── memory/                     # Claude memory snapshots (one dir per commit OID)
+    ├── memory/                     # Claude memory snapshots
     │   └── <commit-oid>/
     │       ├── MEMORY.md
-    │       ├── feedback_tests.md
-    │       └── _meta.json          # snapshot timestamp + file count
-    ├── session_log/                # AI session log analyses (one dir per commit OID)
+    │       └── _meta.json
+    ├── session_log/                # Session log analyses
     │   └── <commit-oid>/
     │       └── analysis.json
     └── pending_context.json        # Transient: consumed at next commit
 
-.h5i-ctx/                           # Context workspace (h5i context)
+.h5i-ctx/                           # Context workspace
 ├── main.md
-└── branches/
-    └── <branch>/
-        ├── commit.md
-        ├── trace.md
-        └── metadata.yaml
+└── branches/<branch>/
+    ├── commit.md
+    ├── trace.md
+    └── metadata.yaml
 ```
 
-**`refs/h5i/notes`** stores extended commit metadata — AI provenance, test metrics, causal links, integrity reports — as JSON blobs attached to each commit. Inspect any entry with:
+**`refs/h5i/notes`** stores extended commit metadata as JSON blobs attached to each commit. Inspect any entry with:
 
 ```bash
 git notes --ref refs/h5i/notes show <commit-oid>
 ```
 
-**`refs/h5i/memory`** stores Claude memory snapshots as a linear commit history of git tree objects. Each memory commit carries the linked code-commit OID in its message.
+**`refs/h5i/memory`** stores Claude memory snapshots as a linear commit history of git tree objects.
 
-> Neither `refs/h5i/notes` nor `refs/h5i/memory` is pushed or fetched by a plain `git push` / `git pull`. You must share them explicitly — see §14.
-
-### Module overview
-
-| Module | Description |
-|--------|-------------|
-| `repository.rs` | Core hub — `H5iRepository` wraps `git2::Repository`, orchestrates all five dimensions |
-| `session.rs` | `LocalSession` — per-file Yrs CRDT documents for collaborative editing |
-| `delta_store.rs` | Append-only binary log for CRDT updates, keyed by `sha256(file_path)` |
-| `metadata.rs` | Data types: `H5iCommitRecord`, `AiMetadata`, `TestMetrics`, `IntegrityReport` |
-| `ast.rs` | `SemanticAst` (S-expressions), `AstDiff`, similarity scoring, SHA-256 structure hashing |
-| `blame.rs` | Line and AST blame modes with AI metadata and test results |
-| `ctx.rs` | Context workspace implementing arXiv:2508.00031 |
-| `memory.rs` | Claude memory snapshot/diff/log/restore/push/pull |
-| `session_log.rs` | Claude Code JSONL log parsing → footprint, causal chain, uncertainty, omissions, churn |
-| `resume.rs` | Session handoff briefing assembled from all locally stored h5i data |
-| `watcher.rs` | File system watcher (notify crate) → syncs to CRDT session |
-| `rules.rs` | Twelve deterministic integrity rules |
-| `server.rs` | Embedded web dashboard (HTML/JS served from Rust) |
-| `error.rs` | Error categories mirroring the five dimensions |
+Neither ref is pushed or fetched by a plain `git push` / `git pull` — share them explicitly with `h5i push` (see §10).
 
 ---
 
-## 16. Session Handoff (h5i resume)
+## Demo
 
-`h5i resume` generates a structured briefing from locally stored h5i data so that an AI agent — or a human — can pick up exactly where the last session left off. No AI API call is required; every field is assembled from your repository.
-
-```bash
-h5i resume              # briefing for the current branch
-h5i resume feat/oauth   # briefing for a specific branch
-```
-
-### What the briefing shows
-
-| Section | Source |
-|---------|--------|
-| **Branch / HEAD commit** | `git2` + h5i commit record (agent, model) |
-| **Goal & milestone progress** | Context workspace (`.h5i-ctx/main.md`) |
-| **Last session statistics** | Session log analysis (`.git/.h5i/session_log/<oid>/analysis.json`) |
-| **High-risk files** | Weighted risk score across uncertainty signals + churn |
-| **Causal exposure** | Causal chain stored in Git Notes |
-| **Memory changes** | Diff between memory snapshots (`h5i memory diff`) |
-| **Suggested opening prompt** | Template-generated from goal + pending milestones + risky files |
-
-### Risk score formula
-
-Each file is ranked by a composite score:
-
-```
-risk = 0.4 × (1 − avg_confidence) + 0.3 × churn_score + 0.3 × (signal_count / max_signal_count)
-```
-
-- `avg_confidence` — mean confidence of uncertainty annotations for that file (lower = riskier)
-- `churn_score` — edit / (edit + read) ratio from the last session
-- `signal_count / max_signal_count` — relative frequency of uncertainty signals
-
-Files are sorted by `risk_score` descending and the top 5 are shown.
-
-### Example output
-
-```
-── Session Handoff ─────────────────────────────────────────────────
-  Branch: feat/oauth  ·  Last active: 2026-03-27 14:22 UTC
-  Agent: claude-code  ·  Model: claude-sonnet-4-6
-  HEAD: a3f9c2b  implement token refresh flow
-
-  Goal
-    Build an OAuth2 login system
-
-  Progress
-    ✔ Initial setup
-    ✔ GitHub provider integration
-    ○ Token refresh flow  ← resume here
-    ○ Logout + session cleanup
-
-  Last Session
-    90130372  ·  503 messages  ·  181 tool calls  ·  4 files edited
-
-  ⚠  High-Risk Files  (review before continuing)
-    ██████████  src/auth.rs                         4 signals  churn 80%  "not sure"
-    ██████░░░░  src/session.rs                      2 signals  churn 60%  "let me check"
-
-  ⚠ 3 later commits causally depend on HEAD — review before pushing.
-
-  Memory Changes Since Last Snapshot
-    + 2 files added
-    ~ 1 file modified
-    ℹ Run h5i memory diff to see the full diff.
-
-  Recent Context Commits
-    ◈ Implemented token refresh flow
-
-  Suggested Opening Prompt
-  ────────────────────────────────────────────────────────────────────
-  Continue building "Build an OAuth2 login system". Completed so far:
-  Initial setup, GitHub provider integration. Next milestone: Token
-  refresh flow. Review src/auth.rs before editing — 4 uncertainty
-  signals were recorded there in the last session.
-  ────────────────────────────────────────────────────────────────────
-```
-
-### Prerequisites
-
-The briefing is richer when other h5i features have been used:
-
-| Feature needed | How to enable |
-|----------------|---------------|
-| Goal + milestones | `h5i context init --goal "..."` |
-| Last session stats + risky files | `h5i notes analyze` after each session |
-| Memory changes | `h5i memory snapshot` after each session |
-| Agent / model in header | `h5i commit --agent ... --model ...` (or hook) |
-
-If none of these are set up, `h5i resume` still shows branch, HEAD commit, and the suggested prompt — prompting you to initialize the missing features.
-
-### Recommended workflow
+`examples/dnn-from-scratch` is a neural network built entirely with Claude Code and versioned with h5i:
 
 ```bash
-# End of every session
-h5i notes analyze                          # store session analysis
-h5i memory snapshot -m "end of session"   # checkpoint memory
-
-# Start of every new session
-h5i resume                                 # get the full briefing
-```
-
----
-
-## 17. Design Decisions (`--decisions`)
-
-Record the "why" behind your design choices alongside a commit — not just what changed, but what alternatives were considered and why the chosen approach was preferred.
-
-```bash
-# Write a decisions file
-cat > decisions.json << 'EOF'
-[
-  {
-    "location": "src/http_client.rs:88",
-    "choice": "exponential backoff with jitter",
-    "alternatives": ["fixed delay", "linear backoff"],
-    "reason": "reduces thundering herd under high load; mirrors AWS SDK recommendation"
-  },
-  {
-    "location": "src/auth.rs:42",
-    "choice": "JWT with short TTL (15 min)",
-    "alternatives": ["opaque session tokens", "long-lived JWTs"],
-    "reason": "stateless validation at the gateway; short TTL limits blast radius of stolen tokens"
-  }
-]
-EOF
-
-h5i commit -m "add resilient HTTP client" \
-  --prompt "add retry + backoff to the HTTP client" \
-  --model claude-sonnet-4-6 \
-  --agent claude-code \
-  --decisions decisions.json
-```
-
-Decisions are stored in `refs/h5i/notes` alongside AI metadata and displayed in `h5i log`:
-
-```
-commit a3f9c2b...
-Author:    Alice <alice@example.com>
-Agent:     claude-code (claude-sonnet-4-6)
-Prompt:    "add retry + backoff to the HTTP client"
-Decisions:
-  ◆ src/http_client.rs:88  exponential backoff with jitter  (considered: fixed delay, linear backoff)
-             reduces thundering herd under high load; mirrors AWS SDK recommendation
-  ◆ src/auth.rs:42  JWT with short TTL (15 min)  (considered: opaque session tokens, long-lived JWTs)
-             stateless validation at the gateway; short TTL limits blast radius of stolen tokens
-```
-
-### Decision schema
-
-```json
-{
-  "location":     "src/file.rs:42",        // required — file path (line optional)
-  "choice":       "the approach taken",    // required
-  "alternatives": ["option A", "option B"],// optional
-  "reason":       "why this was chosen"    // required
-}
-```
-
-### When to use it
-
-`--decisions` is most valuable for changes where:
-- Multiple viable approaches existed and the reasoning is non-obvious
-- Performance, security, or API compatibility tradeoffs were made
-- An approach was rejected because of a past incident or constraint
-
-Decisions are richer than commit messages because they capture *what was not done* — the alternatives — and survive blame and log queries without needing to read the full diff.
-
----
-
-## 18. Attention Coverage (`h5i notes coverage`)
-
-Attention coverage tracks whether the AI read a file before editing it. An edit with no preceding Read in the same session is a **blind edit** — a change made without direct evidence that the AI understood the current state of the file.
-
-```bash
-h5i notes analyze        # analyze the latest session first
-h5i notes coverage       # show per-file coverage for HEAD
-h5i notes coverage --commit a3f9c2b
-h5i notes coverage --max-ratio 0.5   # only show files below 50% coverage
-```
-
-Example output:
-
-```
-── Attention Coverage — a3f9c2b
-
-  File                                           Edits      Coverage  Blind edits
-  ──────────────────────────────────────────────────────────────────────────────
-  src/auth.rs                                        4         75%            1
-  src/session.rs                                     2          0%            2
-  src/main.rs                                        1        100%            0
-
-  2 file(s) with blind edits (no prior Read).
-```
-
-- **Coverage** — fraction of edits that were preceded by at least one Read call in the same session.
-- **Blind edit** — an edit with no prior Read; the AI modified the file without first reading its current state.
-- Files are sorted by blind edit count (most risky first).
-
-### BLIND_EDIT review signal
-
-When coverage data is available, `h5i notes review` automatically adds a `BLIND_EDIT` rule to the scoring:
-
-| Rule | Weight | Trigger |
-|------|--------|---------|
-| `BLIND_EDIT` | 0.10 per file (max 0.30) | One or more files edited without a preceding Read in the session analysis |
-
-This means a commit where the AI blindly edited three source files could contribute up to 0.30 to its review score, independent of diff size. High blind-edit counts are a strong signal that the AI was filling in code from memory rather than reading the current implementation — warranting closer human review.
-
----
-
-## 19. Prompt Ancestry and Blame Annotations
-
-Two commands surface the human intent behind individual lines of code.
-
-### `h5i blame --show-prompt`
-
-Annotates each commit boundary in blame output with the human prompt that triggered it:
-
-```bash
-h5i blame src/auth.rs --show-prompt
-```
-
-Example output:
-
-```
-STAT COMMIT   AUTHOR/AGENT    | CONTENT
-── commit a3f9c2b ── prompt: "add per-IP rate limiting to the auth endpoint" ──
-✅✨  a3f9c2b  AI:claude-code  | pub fn check_rate_limit(ip: IpAddr) -> bool {
-✅✨  a3f9c2b  AI:claude-code  |     RATE_LIMITER.check(ip)
-── commit 9e21b04 ── (no prompt recorded) ──
-   9e21b04  Alice           | pub fn authenticate(token: &str) -> Result<User> {
-```
-
-The prompt is printed once per unique commit at the boundary where the commit changes — not once per line — to keep the output readable.
-
-### `h5i log --ancestry <file>:<line>`
-
-Traces every commit that ever touched a specific line, from the current version back to its introduction, annotated with the prompt for each change:
-
-```bash
-h5i log --ancestry src/auth.rs:42
-```
-
-Example output:
-
-```
-── Prompt ancestry for src/auth.rs:42
-
-  [1 of 3]  a3f9c2b  Alice · 2026-03-27 14:02 UTC
-       line:    check_rate_limit(&ip, &config.rate_limit)
-       prompt:  "add per-IP rate limiting to the auth endpoint"
-
-  [2 of 3]  9e21b04  Bob · 2026-03-26 11:45 UTC
-       line:    check_rate_limit(&ip)
-       prompt:  (none recorded)
-
-  [3 of 3]  4c8d2a1  Alice · 2026-03-20 09:10 UTC
-       line:    true  // placeholder
-       prompt:  "stub out the rate limiter"
-```
-
-The chain terminates when the line is traced back to the commit that first introduced it. Ancestry works by iterating `git2` blame and following the line through parent diffs, so it correctly handles renames and reformatting as long as the line content is recognisable across commits.
-
----
-
-## Demo Repository
-
-`examples/dnn-from-scratch` (also at [github.com/Koukyosyumei/dnn-from-scratch](https://github.com/Koukyosyumei/dnn-from-scratch)) is a fully-connected neural network built entirely with Claude Code and version-controlled with h5i.
-
-```bash
-# Show h5i log, blame, and run the XOR demo
-bash examples/dnn-from-scratch/demo.sh --inspect
-
-# Replay the full build from scratch
-bash examples/dnn-from-scratch/demo.sh
+bash examples/dnn-from-scratch/demo.sh --inspect   # inspect h5i log, blame, run XOR demo
+bash examples/dnn-from-scratch/demo.sh             # replay the full build from scratch
 ```
