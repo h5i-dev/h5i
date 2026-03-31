@@ -1844,6 +1844,7 @@ impl H5iRepository {
             .map_err(H5iError::Io)?;
 
         if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(H5iError::Git(git2::Error::from_str(&format!(
                 "git filter-branch failed: {stderr}"
             ))));
