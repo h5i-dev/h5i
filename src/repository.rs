@@ -1849,15 +1849,28 @@ impl H5iRepository {
         eprintln!("filter-branch stderr: {stderr}");
         eprintln!("filter-branch exit: {}", output.status);
 
-
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(H5iError::Git(git2::Error::from_str(&format!(
                 "git filter-branch failed: {stderr}"
             ))));
         }
 
-        Ok(oid)
+        // Force git2 to reload the repository state after filter-branch rewrites history
+        let workdir_path = workdir.to_path_buf();
+        drop(output);
+        let fresh_repo = git2::Repository::open(&workdir_path)?;
+
+        let mut revwalk = fresh_repo.revwalk()?;
+        revwalk.push_head()?;
+        for id in revwalk {
+            let id = id?;
+            let commit = fresh_repo.find_commit(id)?;
+            if commit.message().unwrap_or("").trim() == new_message {
+                return Ok(id);
+            }
+        }
+
+        Err(H5iError::Git(git2::Error::from_str("Could not find rewritten commit")))
     }
 
 
