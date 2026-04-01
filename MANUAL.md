@@ -42,6 +42,11 @@ Command reference for all h5i subcommands and flags.
   - [h5i memory pull](#h5i-memory-pull)
 - [h5i resume](#h5i-resume)
 - [h5i vibe](#h5i-vibe)
+- [h5i policy](#h5i-policy)
+  - [h5i policy init](#h5i-policy-init)
+  - [h5i policy check](#h5i-policy-check)
+  - [h5i policy show](#h5i-policy-show)
+- [h5i compliance](#h5i-compliance)
 - [h5i serve](#h5i-serve)
 - [h5i mcp](#h5i-mcp)
 - [h5i push](#h5i-push)
@@ -1007,6 +1012,185 @@ The blind-edit and uncertainty data come from session analyses stored by [`h5i n
   "blind_edit_file_count": 7
 }
 ```
+
+---
+
+## h5i policy
+
+```
+h5i policy <subcommand>
+```
+
+Manage governance rules for AI-assisted commits. Rules live in `.h5i/policy.toml` — committed alongside your code so the policy is version-controlled and shared with the team.
+
+Policy rules are evaluated automatically on every `h5i commit`. A rule violation blocks the commit unless `--force` is passed.
+
+---
+
+### h5i policy init
+
+```
+h5i policy init
+```
+
+Create `.h5i/policy.toml` with a commented-out starter configuration. Edit the file to enable the rules you need.
+
+**Policy file location:** `<workdir>/.h5i/policy.toml` (not inside `.git/`; it should be committed to the repository).
+
+**Example `.h5i/policy.toml`**
+
+```toml
+[commit]
+# Block commits with no AI provenance (no --model / --agent / --prompt).
+require_ai_provenance = true
+
+# Reject commit messages shorter than 10 characters.
+min_message_len = 10
+
+# When true, commits touching flagged paths must also pass --audit.
+require_audit_on_flagged_paths = true
+
+# Human-readable label shown in output.
+label = "company-standard-v1"
+
+# Per-path rules: keys are glob patterns relative to the repository root.
+# Supports *, **, and ? wildcards.
+[paths."src/auth/**"]
+require_ai_provenance = true  # all auth changes must record AI involvement
+require_audit = true          # all auth changes must pass --audit
+
+# These two are compliance-only (not enforced at commit time):
+max_ai_ratio = 0.8            # flag if >80% of commits in this path are AI
+max_blind_edit_ratio = 0.3    # flag if >30% of edits were blind (no prior Read)
+```
+
+---
+
+### h5i policy check
+
+```
+h5i policy check
+```
+
+Run a dry-run policy check against the currently staged files without committing. Useful in pre-commit hooks or CI.
+
+```bash
+# In a pre-commit hook:
+h5i policy check || exit 1
+```
+
+---
+
+### h5i policy show
+
+```
+h5i policy show
+```
+
+Display the parsed policy configuration in a human-readable format.
+
+```
+── h5i policy  (.h5i/policy.toml) ──────────────────────────
+  label:                      company-standard-v1
+  require_ai_provenance:      true
+  min_message_len:            10
+  require_audit_on_flagged_paths: true
+
+  paths:
+    src/auth/**
+      require_ai_provenance = true
+      require_audit = true
+      max_ai_ratio = 0.80
+      max_blind_edit_ratio = 0.30
+```
+
+---
+
+## h5i compliance
+
+```
+h5i compliance [OPTIONS]
+```
+
+Generate a compliance audit report over a date range. Walks the commit history, re-evaluates policy rules on each commit, and aggregates session data (blind edits, uncertainty) into a structured report.
+
+**Options**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--since <YYYY-MM-DD>` | — | Start of date range (inclusive) |
+| `--until <YYYY-MM-DD>` | — | End of date range (inclusive) |
+| `--format <fmt>` | `text` | Output format: `text`, `json`, or `html` |
+| `--output <FILE>` | stdout | Write report to a file instead of printing |
+| `-l, --limit <N>` | `500` | Maximum number of commits to scan |
+
+**Text output**
+
+```
+── h5i compliance report  (2025-01-01 – 2025-03-31) ──────────
+
+  ✔ 142 commits scanned  ·  89 AI (63%)  ·  53 human
+  3 policy violations  ·  98% pass rate
+
+  path rules:
+    src/auth/**         ai=72% ✔  blind=18% ✔
+    src/payment/**      ai=91% ✖  blind=35% ✖
+
+  violations:
+    a3f8c12  [commit.require_ai_provenance]  …no AI provenance recorded.
+    9e21b04  [paths.src/auth/**.require_ai_provenance]  …auth changes require AI provenance.
+    1d3c5f0  [commit.min_message_len]  Commit message is 3 chars; policy requires at least 10.
+
+  commits:
+    a3f8c12  Alice  AI ⚠ policy  add retry logic
+    9e21b04  Bob   ⚠ policy  2 blind  fix token validation
+    1d3c5f0  Alice           upd
+    …
+```
+
+**HTML report**
+
+The `--format html` output is a self-contained dark-theme HTML file with:
+- Summary cards (total commits, AI %, violations, pass rate)
+- Policy violation list with commit link, rule, and detail
+- Commit table with AI / policy / blind-edit badges
+
+```bash
+h5i compliance --since 2025-01-01 --format html --output report.html
+open report.html
+```
+
+**JSON output**
+
+```json
+{
+  "since": "2025-01-01",
+  "until": null,
+  "total_commits": 142,
+  "ai_commits": 89,
+  "human_commits": 53,
+  "policy_violations": 3,
+  "path_stats": [
+    { "path": "src/auth/**", "ai_ratio": 0.72, "blind_edit_ratio": 0.18,
+      "violates_ai_ratio": false, "violates_blind_edit_ratio": false }
+  ],
+  "violations": [...],
+  "commits": [...]
+}
+```
+
+**What is checked**
+
+At commit time, only rules from `[commit]` and `[paths]` sections are enforced. The compliance report additionally checks `max_ai_ratio` and `max_blind_edit_ratio` per path — rules designed for historical trend analysis rather than blocking individual commits.
+
+| Rule | Enforced at commit | Enforced in compliance |
+|------|--------------------|------------------------|
+| `commit.require_ai_provenance` | ✔ | ✔ |
+| `commit.min_message_len` | ✔ | ✔ |
+| `paths.*.require_ai_provenance` | ✔ | ✔ |
+| `paths.*.require_audit` | ✔ (needs `require_audit_on_flagged_paths`) | ✔ |
+| `paths.*.max_ai_ratio` | — | ✔ |
+| `paths.*.max_blind_edit_ratio` | — | ✔ |
 
 ---
 
