@@ -8,7 +8,7 @@ use h5i_core::blame::BlameMode;
 use h5i_core::claude::{keyword_search, AnthropicClient};
 use h5i_core::ctx;
 use h5i_core::memory;
-use h5i_core::metadata::{AiMetadata, Decision, IntegrityLevel, Severity, TestSource};
+use h5i_core::metadata::{AiMetadata, Decision, DecisionEntry, IntegrityLevel, Severity, StalenessStatus, TestSource};
 use h5i_core::session_log;
 use h5i_core::repository::H5iRepository;
 use h5i_core::review::REVIEW_THRESHOLD;
@@ -214,6 +214,12 @@ enum Commands {
     Context {
         #[command(subcommand)]
         action: ContextCommands,
+    },
+
+    /// Query recorded design decisions and detect stale reasoning
+    Decisions {
+        #[command(subcommand)]
+        action: DecisionsCommands,
     },
 
     /// Generate a structured handoff briefing to resume an AI session
@@ -508,6 +514,21 @@ enum PolicyCommands {
 
     /// Display the current policy configuration
     Show,
+}
+
+#[derive(Subcommand)]
+enum DecisionsCommands {
+    /// List recorded design decisions across commit history.
+    /// Use --stale to show only decisions where the referenced code has drifted.
+    List {
+        /// Only show decisions where the referenced code has changed significantly
+        #[arg(long)]
+        stale: bool,
+
+        /// Number of commits to scan
+        #[arg(short, long, default_value_t = 50)]
+        limit: usize,
+    },
 }
 
 const H5I_CLAUDE_INSTRUCTIONS: &str = r#"## h5i Integration
@@ -1078,6 +1099,28 @@ fn main() -> anyhow::Result<()> {
             } else {
                 vec![]
             };
+
+            // Warn about stale decisions whose location overlaps the staged diff.
+            let stale_warnings = repo.stale_decisions_overlapping_index().unwrap_or_default();
+            for entry in &stale_warnings {
+                let short_oid = &entry.commit_oid[..8.min(entry.commit_oid.len())];
+                println!(
+                    "{} Commit touches {} near a stale decision from {}: \"{}\"",
+                    WARN,
+                    style(&entry.decision.location).yellow(),
+                    style(short_oid).magenta().bold(),
+                    entry.decision.choice
+                );
+                println!(
+                    "  {}  {}",
+                    style("reason was:").dim(),
+                    entry.decision.reason
+                );
+                println!(
+                    "  {}",
+                    style("Has this reasoning changed? Run `h5i decisions --stale` for details.").dim()
+                );
+            }
 
             let oid = repo.commit(&message, &sig, &sig, ai_meta, test_source, ast_parser, caused_by, decisions)?;
             repo.clear_pending_context()?;
@@ -2479,6 +2522,101 @@ jq -c '{
                 );
             } else {
                 println!("{}", content);
+            }
+        }
+
+        Commands::Decisions { action } => {
+            let repo = H5iRepository::open(".")?;
+            match action {
+                DecisionsCommands::List { stale, limit } => {
+                    let entries = repo.decisions_list(limit, stale)?;
+
+                    let visible: Vec<&DecisionEntry> = if stale {
+                        entries
+                            .iter()
+                            .filter(|e| matches!(e.staleness, Some(StalenessStatus::Stale { .. })))
+                            .collect()
+                    } else {
+                        entries.iter().collect()
+                    };
+
+                    if visible.is_empty() {
+                        println!(
+                            "{} No decisions{}.",
+                            WARN,
+                            if stale {
+                                " found (or none are stale)"
+                            } else {
+                                " recorded in the last commit history"
+                            }
+                        );
+                        return Ok(());
+                    }
+
+                    println!(
+                        "\n{}\n{}",
+                        style(if stale {
+                            "Stale Decisions"
+                        } else {
+                            "Recorded Decisions"
+                        })
+                        .bold()
+                        .underlined(),
+                        style("─".repeat(62)).dim()
+                    );
+
+                    for entry in visible {
+                        let badge = match &entry.staleness {
+                            None => String::new(),
+                            Some(StalenessStatus::Fresh) => {
+                                style("  fresh").green().to_string()
+                            }
+                            Some(StalenessStatus::Stale { similarity }) => style(format!(
+                                "  stale ({:.0}%)",
+                                similarity * 100.0
+                            ))
+                            .red()
+                            .bold()
+                            .to_string(),
+                            Some(StalenessStatus::Modified { similarity }) => style(format!(
+                                "  modified ({:.0}%)",
+                                similarity * 100.0
+                            ))
+                            .yellow()
+                            .to_string(),
+                            Some(StalenessStatus::Unresolvable { reason }) => {
+                                style(format!("  ? {}", reason)).dim().to_string()
+                            }
+                        };
+
+                        let short_oid = &entry.commit_oid[..8.min(entry.commit_oid.len())];
+                        println!(
+                            "\n  {} {}  {}{}",
+                            style(short_oid).magenta().bold(),
+                            style(entry.timestamp.format("%Y-%m-%d")).dim(),
+                            style(&entry.decision.location).yellow(),
+                            badge
+                        );
+                        println!(
+                            "  {} {}",
+                            style("choice:").bold(),
+                            entry.decision.choice
+                        );
+                        println!(
+                            "  {} {}",
+                            style("reason:").dim(),
+                            entry.decision.reason
+                        );
+                        if !entry.decision.alternatives.is_empty() {
+                            println!(
+                                "  {} {}",
+                                style("alternatives:").dim(),
+                                entry.decision.alternatives.join(", ")
+                            );
+                        }
+                    }
+                    println!("\n{}", style("─".repeat(62)).dim());
+                }
             }
         }
 

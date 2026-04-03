@@ -11,7 +11,7 @@ use yrs::updates::decoder::Decode;
 use yrs::{GetString, Text, Transact};
 
 use crate::blame::{AncestryEntry, BlameMode, BlameResult};
-use crate::metadata::Decision;
+use crate::metadata::{Decision, DecisionEntry, StalenessStatus};
 use crate::delta_store::{sha256_hash, DeltaStore};
 use crate::error::H5iError;
 use chrono::{TimeZone, Utc};
@@ -2755,6 +2755,240 @@ fn find_parser_script(
     None
 }
 
+// ============ Decisions ============
+
+/// Similarity below this threshold → Stale; at or above → Modified.
+const STALE_SIMILARITY_THRESHOLD: f32 = 0.5;
+
+/// Lines of context to extract around the target line for a fast content comparison.
+const CONTEXT_LINES: usize = 5;
+
+enum ParsedLocation {
+    /// e.g. "src/foo.rs:44"
+    FileLine { path: PathBuf, line: usize },
+    /// e.g. "src/foo.rs"
+    FileOnly { path: PathBuf },
+    /// e.g. "architecture", "see RFC-7"
+    NonPath,
+}
+
+fn parse_decision_location(location: &str) -> ParsedLocation {
+    if let Some(colon_pos) = location.rfind(':') {
+        let path_part = &location[..colon_pos];
+        let line_part = &location[colon_pos + 1..];
+        if let Ok(line_no) = line_part.parse::<usize>() {
+            if path_part.contains('/') || path_part.contains('.') {
+                return ParsedLocation::FileLine {
+                    path: std::path::PathBuf::from(path_part),
+                    line: line_no,
+                };
+            }
+        }
+    }
+    if location.contains('/') || location.contains('.') {
+        return ParsedLocation::FileOnly {
+            path: std::path::PathBuf::from(location),
+        };
+    }
+    ParsedLocation::NonPath
+}
+
+/// Extracts up to `2*ctx+1` lines centred on the 1-based `line_no`.
+fn extract_context(content: &str, line_no: usize, ctx: usize) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.is_empty() || line_no == 0 {
+        return String::new();
+    }
+    let idx = line_no.saturating_sub(1);
+    let start = idx.saturating_sub(ctx);
+    let end = (idx + ctx + 1).min(lines.len());
+    lines[start..end].join("\n")
+}
+
+fn similarity_to_status(similarity: f32) -> StalenessStatus {
+    if similarity < STALE_SIMILARITY_THRESHOLD {
+        StalenessStatus::Stale { similarity }
+    } else {
+        StalenessStatus::Modified { similarity }
+    }
+}
+
+/// Returns all `Decision` records found across h5i commit history.
+///
+/// When `check_stale` is `true`, each entry's `staleness` field is populated
+/// by comparing the decision's location against the current HEAD.
+/// `limit` controls how many commits to scan (mirrors `h5i_log`).
+impl H5iRepository {
+    pub fn decisions_list(
+        &self,
+        limit: usize,
+        check_stale: bool,
+    ) -> Result<Vec<DecisionEntry>, H5iError> {
+        let records = self.h5i_log(limit)?;
+        let mut entries = Vec::new();
+
+        for record in records {
+            if record.decisions.is_empty() {
+                continue;
+            }
+            let oid = git2::Oid::from_str(&record.git_oid).map_err(|e| {
+                H5iError::Internal(format!("invalid oid '{}': {e}", record.git_oid))
+            })?;
+
+            for decision in &record.decisions {
+                let staleness = if check_stale {
+                    Some(self.check_staleness(&decision.location, oid))
+                } else {
+                    None
+                };
+                entries.push(DecisionEntry {
+                    decision: decision.clone(),
+                    commit_oid: record.git_oid.clone(),
+                    timestamp: record.timestamp,
+                    staleness,
+                });
+            }
+        }
+
+        Ok(entries)
+    }
+
+    /// Returns decisions from recent history that are both stale *and* whose
+    /// recorded location overlaps with the currently staged diff.
+    ///
+    /// Called just before `commit` so that inline warnings can be printed when
+    /// a commit touches code near a decision whose reasoning may no longer hold.
+    /// Only `StalenessStatus::Stale` entries are returned; `Modified` and `Fresh`
+    /// are dropped to keep the signal-to-noise ratio low.
+    pub fn stale_decisions_overlapping_index(&self) -> Result<Vec<DecisionEntry>, H5iError> {
+        // ── 1. Build file → hunk line-ranges map from staged diff ──────────
+        let mut index = self.git_repo.index()?;
+        index.read(false)?;
+        let parent_tree = self.get_head_commit().ok().and_then(|c| c.tree().ok());
+        let diff = self.git_repo
+            .diff_tree_to_index(parent_tree.as_ref(), Some(&index), None)?;
+
+        // path → [(hunk_start, hunk_end)] in 1-based line numbers, inclusive
+        let mut changed_ranges: HashMap<PathBuf, Vec<(u32, u32)>> = HashMap::new();
+        for (delta_idx, _) in diff.deltas().enumerate() {
+            let patch = match git2::Patch::from_diff(&diff, delta_idx) {
+                Ok(Some(p)) => p,
+                _ => continue,
+            };
+            let path = match patch.delta().new_file().path() {
+                Some(p) => p.to_path_buf(),
+                None => continue,
+            };
+            let ranges = changed_ranges.entry(path).or_default();
+            for hunk_idx in 0..patch.num_hunks() {
+                if let Ok((hunk, _)) = patch.hunk(hunk_idx) {
+                    let start = hunk.new_start();
+                    let end = start + hunk.new_lines().saturating_sub(1);
+                    ranges.push((start, end));
+                }
+            }
+        }
+
+        if changed_ranges.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // ── 2. Load decisions from last 50 commits (no staleness check yet) ─
+        let all_decisions = self.decisions_list(50, false)?;
+
+        // ── 3. Check each decision for overlap + staleness ──────────────────
+        let proximity = CONTEXT_LINES as u32;
+        let mut stale = Vec::new();
+        for entry in all_decisions {
+            let overlaps = match parse_decision_location(&entry.decision.location) {
+                ParsedLocation::NonPath => false,
+                ParsedLocation::FileOnly { ref path } => changed_ranges.contains_key(path),
+                ParsedLocation::FileLine { ref path, line } => {
+                    match changed_ranges.get(path) {
+                        Some(ranges) => {
+                            let line = line as u32;
+                            ranges.iter().any(|(start, end)| {
+                                line + proximity >= *start && line <= end + proximity
+                            })
+                        }
+                        None => false,
+                    }
+                }
+            };
+            if !overlaps {
+                continue;
+            }
+            let oid = match git2::Oid::from_str(&entry.commit_oid) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let staleness = self.check_staleness(&entry.decision.location, oid);
+            if matches!(staleness, StalenessStatus::Stale { .. }) {
+                stale.push(DecisionEntry {
+                    staleness: Some(staleness),
+                    ..entry
+                });
+            }
+        }
+
+        Ok(stale)
+    }
+
+    fn check_staleness(&self, location: &str, recorded_at_oid: git2::Oid) -> StalenessStatus {
+        let head_oid = match self.git_repo.head()
+            .and_then(|h| h.peel_to_commit())
+            .map(|c| c.id())
+        {
+            Ok(id) => id,
+            Err(_) => return StalenessStatus::Unresolvable {
+                reason: "cannot resolve HEAD".into(),
+            },
+        };
+
+        match parse_decision_location(location) {
+            ParsedLocation::NonPath => StalenessStatus::Unresolvable {
+                reason: format!("'{}' is not a file path", location),
+            },
+
+            ParsedLocation::FileLine { path, line } => {
+                let old = self.get_content_at_oid(recorded_at_oid, &path);
+                let new = self.get_content_at_oid(head_oid, &path);
+                match (old, new) {
+                    // File missing at one or both commits → stale
+                    (Err(_), _) | (_, Err(_)) => StalenessStatus::Stale { similarity: 0.0 },
+                    (Ok(old_c), Ok(new_c)) => {
+                        let old_ctx = extract_context(&old_c, line, CONTEXT_LINES);
+                        let new_ctx = extract_context(&new_c, line, CONTEXT_LINES);
+                        if old_ctx == new_ctx {
+                            return StalenessStatus::Fresh;
+                        }
+                        // Context changed — escalate to AST diff for a structural score.
+                        match self.diff_ast(&path, Some(recorded_at_oid), Some(head_oid)) {
+                            Ok(diff) => similarity_to_status(diff.similarity),
+                            Err(_) => StalenessStatus::Modified { similarity: 0.0 },
+                        }
+                    }
+                }
+            }
+
+            ParsedLocation::FileOnly { path } => {
+                match self.diff_ast(&path, Some(recorded_at_oid), Some(head_oid)) {
+                    Ok(diff) => similarity_to_status(diff.similarity),
+                    Err(_) => {
+                        // No AST parser for this file type — fall back to whole-file content.
+                        let old = self.get_content_at_oid(recorded_at_oid, &path);
+                        let new = self.get_content_at_oid(head_oid, &path);
+                        match (old, new) {
+                            (Ok(a), Ok(b)) if a == b => StalenessStatus::Fresh,
+                            _ => StalenessStatus::Stale { similarity: 0.0 },
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3052,6 +3286,268 @@ mod tests {
 
         Ok(())
     }
+
+    // --- Decisions: unit tests for free functions ---
+
+    #[test]
+    fn test_parse_decision_location_file_line() {
+        let loc = parse_decision_location("src/foo.rs:44");
+        match loc {
+            ParsedLocation::FileLine { path, line } => {
+                assert_eq!(path, std::path::PathBuf::from("src/foo.rs"));
+                assert_eq!(line, 44);
+            }
+            _ => panic!("expected FileLine"),
+        }
+    }
+
+    #[test]
+    fn test_parse_decision_location_file_only() {
+        let loc = parse_decision_location("src/foo.rs");
+        match loc {
+            ParsedLocation::FileOnly { path } => {
+                assert_eq!(path, std::path::PathBuf::from("src/foo.rs"));
+            }
+            _ => panic!("expected FileOnly"),
+        }
+    }
+
+    #[test]
+    fn test_parse_decision_location_non_path() {
+        for s in &["architecture", "see RFC-7", "use Redis"] {
+            match parse_decision_location(s) {
+                ParsedLocation::NonPath => {}
+                _ => panic!("expected NonPath for '{}'", s),
+            }
+        }
+    }
+
+    #[test]
+    fn test_extract_context_clamps_at_start() {
+        let content = "a\nb\nc";
+        // line 1, ctx=5 → all 3 lines (saturating_sub boundary)
+        assert_eq!(extract_context(content, 1, 5), "a\nb\nc");
+    }
+
+    #[test]
+    fn test_extract_context_clamps_at_end() {
+        let content = "a\nb\nc";
+        // line 3, ctx=5 → all 3 lines (min boundary)
+        assert_eq!(extract_context(content, 3, 5), "a\nb\nc");
+    }
+
+    #[test]
+    fn test_extract_context_zero_line_returns_empty() {
+        assert_eq!(extract_context("a\nb", 0, 2), "");
+    }
+
+    #[test]
+    fn test_similarity_to_status_at_threshold_is_modified() {
+        // Exactly at threshold (0.5) should be Modified, not Stale
+        match similarity_to_status(STALE_SIMILARITY_THRESHOLD) {
+            StalenessStatus::Modified { .. } => {}
+            _ => panic!("expected Modified at threshold"),
+        }
+    }
+
+    // --- Decisions: integration tests ---
+
+    fn make_decision(location: &str) -> Decision {
+        Decision {
+            location: location.to_string(),
+            choice: "choice".to_string(),
+            alternatives: vec![],
+            reason: "reason".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_decisions_list_returns_recorded_decisions() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let sig = Signature::now("test", "test@test.com").unwrap();
+
+        fs::write(dir.path().join("f.txt"), "hello").unwrap();
+        let mut index = h5i_repo.git().index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+
+        let decisions = vec![make_decision("f.txt:1")];
+        let oid = h5i_repo
+            .commit("with decisions", &sig, &sig, None, TestSource::None, None, vec![], decisions)
+            .unwrap();
+
+        let entries = h5i_repo.decisions_list(10, false).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].decision.location, "f.txt:1");
+        assert_eq!(entries[0].commit_oid, oid.to_string());
+        assert!(entries[0].staleness.is_none());
+    }
+
+    #[test]
+    fn test_check_staleness_fresh_when_file_unchanged() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let sig = Signature::now("test", "test@test.com").unwrap();
+
+        fs::write(dir.path().join("f.txt"), "line1\nline2\nline3").unwrap();
+        let mut index = h5i_repo.git().index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+        let decisions = vec![make_decision("f.txt:2")];
+        let oid1 = h5i_repo
+            .commit("c1", &sig, &sig, None, TestSource::None, None, vec![], decisions)
+            .unwrap();
+
+        // Commit 2: different file, f.txt unchanged
+        fs::write(dir.path().join("other.txt"), "something else").unwrap();
+        let mut index = h5i_repo.git().index().unwrap();
+        index.add_path(Path::new("other.txt")).unwrap();
+        index.write().unwrap();
+        h5i_repo
+            .commit("c2", &sig, &sig, None, TestSource::None, None, vec![], vec![])
+            .unwrap();
+
+        match h5i_repo.check_staleness("f.txt:2", oid1) {
+            StalenessStatus::Fresh => {}
+            other => panic!("expected Fresh, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_check_staleness_stale_when_file_deleted() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let sig = Signature::now("test", "test@test.com").unwrap();
+
+        fs::write(dir.path().join("f.txt"), "important logic").unwrap();
+        let mut index = h5i_repo.git().index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+        let decisions = vec![make_decision("f.txt:1")];
+        let oid1 = h5i_repo
+            .commit("c1", &sig, &sig, None, TestSource::None, None, vec![], decisions)
+            .unwrap();
+
+        // Commit 2: delete the file
+        fs::remove_file(dir.path().join("f.txt")).unwrap();
+        fs::write(dir.path().join("other.txt"), "x").unwrap();
+        let mut index = h5i_repo.git().index().unwrap();
+        index.remove_path(Path::new("f.txt")).unwrap();
+        index.add_path(Path::new("other.txt")).unwrap();
+        index.write().unwrap();
+        h5i_repo
+            .commit("c2", &sig, &sig, None, TestSource::None, None, vec![], vec![])
+            .unwrap();
+
+        match h5i_repo.check_staleness("f.txt:1", oid1) {
+            StalenessStatus::Stale { similarity } => assert_eq!(similarity, 0.0),
+            other => panic!("expected Stale, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_check_staleness_non_path_is_unresolvable() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let sig = Signature::now("test", "test@test.com").unwrap();
+
+        fs::write(dir.path().join("f.txt"), "x").unwrap();
+        let mut index = h5i_repo.git().index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+        let oid = h5i_repo
+            .commit("c1", &sig, &sig, None, TestSource::None, None, vec![], vec![])
+            .unwrap();
+
+        match h5i_repo.check_staleness("architecture", oid) {
+            StalenessStatus::Unresolvable { .. } => {}
+            other => panic!("expected Unresolvable, got {:?}", other),
+        }
+    }
+
+    // Helper: create a file with `n` numbered lines.
+    fn write_numbered_lines(path: &std::path::Path, n: usize) {
+        let content: String = (1..=n).map(|i| format!("line{}\n", i)).collect();
+        fs::write(path, content).unwrap();
+    }
+
+    // Helper: delete a file and commit, making any FileLine decision recorded against it Stale.
+    fn commit_delete_file(h5i_repo: &H5iRepository, dir: &std::path::Path, sig: &Signature, filename: &str) {
+        let file_path = dir.join(filename);
+        fs::remove_file(&file_path).unwrap();
+        // Need at least one entry in the index — write a sentinel file.
+        let sentinel = dir.join("_sentinel.txt");
+        fs::write(&sentinel, "x").unwrap();
+        let mut index = h5i_repo.git().index().unwrap();
+        index.remove_path(Path::new(filename)).unwrap();
+        index.add_path(Path::new("_sentinel.txt")).unwrap();
+        index.write().unwrap();
+        h5i_repo
+            .commit("delete", sig, sig, None, TestSource::None, None, vec![], vec![])
+            .unwrap();
+    }
+
+    /// A staged hunk that covers the decision line (within CONTEXT_LINES proximity) must fire.
+    #[test]
+    fn test_stale_decisions_overlapping_index_fires_when_line_touched() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let sig = Signature::now("test", "test@test.com").unwrap();
+
+        // c1: 20-line file, decision at line 10.
+        write_numbered_lines(&dir.path().join("f.txt"), 20);
+        let mut index = h5i_repo.git().index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+        h5i_repo
+            .commit("c1", &sig, &sig, None, TestSource::None, None, vec![], vec![make_decision("f.txt:10")])
+            .unwrap();
+
+        // c2: delete the file → decision becomes Stale (similarity 0.0).
+        commit_delete_file(&h5i_repo, dir.path(), &sig, "f.txt");
+
+        // Stage: re-add f.txt with 20 lines. The hunk spans lines 1–20, which
+        // overlaps with line 10 ± CONTEXT_LINES (5).
+        write_numbered_lines(&dir.path().join("f.txt"), 20);
+        let mut index = h5i_repo.git().index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+
+        let stale = h5i_repo.stale_decisions_overlapping_index().unwrap();
+        assert_eq!(stale.len(), 1, "expected one stale decision to fire");
+        assert_eq!(stale[0].decision.location, "f.txt:10");
+    }
+
+    /// A staged hunk that is far from the decision line (beyond CONTEXT_LINES) must not fire.
+    #[test]
+    fn test_stale_decisions_overlapping_index_silent_when_far() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let sig = Signature::now("test", "test@test.com").unwrap();
+
+        // c1: 20-line file, decision at line 10.
+        write_numbered_lines(&dir.path().join("f.txt"), 20);
+        let mut index = h5i_repo.git().index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+        h5i_repo
+            .commit("c1", &sig, &sig, None, TestSource::None, None, vec![], vec![make_decision("f.txt:10")])
+            .unwrap();
+
+        // c2: delete the file → decision becomes Stale (similarity 0.0).
+        commit_delete_file(&h5i_repo, dir.path(), &sig, "f.txt");
+
+        // Stage: re-add f.txt with only 2 lines. The hunk spans lines 1–2.
+        // Overlap condition: line(10) <= end(2) + proximity(5) = 7 → false → no fire.
+        write_numbered_lines(&dir.path().join("f.txt"), 2);
+        let mut index = h5i_repo.git().index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+
+        let stale = h5i_repo.stale_decisions_overlapping_index().unwrap();
+        assert!(stale.is_empty(), "expected no warnings when hunk is far from decision line");
+    }
 }
 
 #[cfg(test)]
@@ -3249,3 +3745,4 @@ mod integration_tests {
         Ok(())
     }
 }
+
