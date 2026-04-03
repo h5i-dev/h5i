@@ -439,6 +439,16 @@ enum ContextCommands {
 
     /// Print a system prompt for injecting h5i context commands into a Claude agent session
     Prompt,
+
+    /// Scan the reasoning trace for prompt-injection patterns and report a risk score
+    Scan {
+        /// Branch to scan (default: current branch)
+        #[arg(long)]
+        branch: Option<String>,
+        /// Output raw JSON instead of the pretty report
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -503,6 +513,46 @@ enum PolicyCommands {
 const H5I_CLAUDE_INSTRUCTIONS: &str = r#"## h5i Integration
 
 This repository uses **h5i** (a Git sidecar for AI-era version control). Prefer h5i commands over raw git equivalents. h5i stores metadata in `refs/h5i/notes` and `refs/h5i/memory`; these refs are NOT included in a plain `git push` — use `h5i push` to share them.
+
+---
+
+## Rules — MUST follow
+
+Apply these automatically, without being asked.
+
+### Context workspace
+
+**At the start of every non-trivial task**, run:
+```bash
+h5i context status
+# If no workspace exists yet, initialize one:
+h5i context init --goal "<one-line summary of what you are about to do>"
+```
+
+**While working**, emit a trace entry after each logical step:
+```bash
+# After reading / grepping files to understand the codebase:
+h5i context trace --kind OBSERVE "<what you found>"
+
+# After deciding on an approach or making a design choice:
+h5i context trace --kind THINK "<the decision and why>"
+
+# After editing or writing a file:
+h5i context trace --kind ACT "<what you changed and where>"
+```
+
+**After completing a logical milestone** (analysis done, feature implemented, bug fixed):
+```bash
+h5i context commit "<milestone summary>" \
+  --detail "<what was done and what is left>"
+```
+
+### Notes
+
+After every `h5i commit`, immediately run:
+```bash
+h5i notes analyze   # links the just-completed Claude Code session to HEAD
+```
 
 ---
 
@@ -1703,6 +1753,32 @@ jq -c '{
                 .dim()
             );
 
+            println!("{}", style("── Step 3: Register the MCP server ──").bold());
+            println!(
+                "Add the {} block to {} so Claude Code can call h5i tools natively:\n",
+                style("mcpServers").yellow(),
+                style("~/.claude/settings.json").yellow()
+            );
+            println!(
+                "{}",
+                style(
+                    r#"{
+  "mcpServers": {
+    "h5i": {
+      "command": "h5i",
+      "args": ["mcp"]
+    }
+  }
+}"#
+                )
+                .dim()
+            );
+            println!(
+                "\nOnce registered, Claude Code gains native access to h5i tools\n\
+                 (h5i_log, h5i_blame, h5i_context_trace, h5i_notes_show, etc.)\n\
+                 without needing shell commands.\n"
+            );
+
             println!(
                 "\n{} {} {} {}",
                 style("Tip:").bold(),
@@ -2177,6 +2253,22 @@ jq -c '{
 
                 ContextCommands::Prompt => {
                     print!("{}", ctx::system_prompt(workdir));
+                }
+
+                ContextCommands::Scan { branch, json } => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    let branch_ref = branch.as_deref();
+                    let trace = ctx::read_trace(workdir, branch_ref)?;
+                    let branch_label = branch_ref
+                        .unwrap_or_else(|| ctx::current_branch(workdir).leak());
+                    let result = h5i_core::injection::scan(&trace);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&result)?);
+                    } else {
+                        h5i_core::injection::print_scan_result(&result, branch_label);
+                    }
                 }
             }
         }

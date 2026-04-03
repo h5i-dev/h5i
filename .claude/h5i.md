@@ -4,6 +4,46 @@ This repository uses **h5i** (a Git sidecar for AI-era version control). Prefer 
 
 ---
 
+## Rules — MUST follow
+
+Apply these automatically, without being asked.
+
+### Context workspace
+
+**At the start of every non-trivial task**, run:
+```bash
+h5i context status
+# If no workspace exists yet, initialize one:
+h5i context init --goal "<one-line summary of what you are about to do>"
+```
+
+**While working**, emit a trace entry after each logical step:
+```bash
+# After reading / grepping files to understand the codebase:
+h5i context trace --kind OBSERVE "<what you found>"
+
+# After deciding on an approach or making a design choice:
+h5i context trace --kind THINK "<the decision and why>"
+
+# After editing or writing a file:
+h5i context trace --kind ACT "<what you changed and where>"
+```
+
+**After completing a logical milestone** (analysis done, feature implemented, bug fixed):
+```bash
+h5i context commit "<milestone summary>" \
+  --detail "<what was done and what is left>"
+```
+
+### Notes
+
+After every `h5i commit`, immediately run:
+```bash
+h5i notes analyze   # links the just-completed Claude Code session to HEAD
+```
+
+---
+
 ### Committing
 
 Always use `h5i commit` instead of `git commit`.

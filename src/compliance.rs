@@ -9,6 +9,7 @@ use chrono::{TimeZone, Utc};
 use serde::Serialize;
 
 use crate::error::{H5iError, Result};
+use crate::injection;
 use crate::metadata::H5iCommitRecord;
 use crate::policy::{check_commit, CommitCheckInput, PolicyConfig, PolicyViolation};
 use crate::repository::H5iRepository;
@@ -24,6 +25,8 @@ pub struct ComplianceReport {
     pub ai_commits: usize,
     pub human_commits: usize,
     pub policy_violations: usize,
+    /// Total number of prompt-injection signals found across all sessions.
+    pub injection_hits: usize,
     pub commits: Vec<CommitStat>,
     pub violations: Vec<ViolationRecord>,
     /// Per-path stats for `max_ai_ratio` / `max_blind_edit_ratio` checks.
@@ -63,6 +66,10 @@ pub struct CommitStat {
     pub violations: Vec<ViolationRecord>,
     pub blind_edits: usize,
     pub uncertainty_count: usize,
+    /// Number of prompt-injection signals detected in this commit's session data.
+    pub injection_hits: usize,
+    /// Injection risk score [0.0, 1.0] (None if no session data was available).
+    pub injection_risk: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -110,6 +117,7 @@ pub fn compute_compliance_report(
     let mut ai_commits = 0usize;
     let mut human_commits = 0usize;
     let mut policy_violations = 0usize;
+    let mut total_injection_hits = 0usize;
     let mut commit_stats: Vec<CommitStat> = Vec::new();
     let mut all_violations: Vec<ViolationRecord> = Vec::new();
 
@@ -184,9 +192,11 @@ pub fn compute_compliance_report(
             }
         }
 
-        // Session data: blind edits + uncertainty.
+        // Session data: blind edits + uncertainty + injection scan.
         let mut blind_edits = 0usize;
         let mut uncertainty_count = 0usize;
+        let mut commit_injection_hits = 0usize;
+        let mut commit_injection_risk: Option<f64> = None;
         if let Ok(Some(session_data)) = session_log::load_analysis(&repo.h5i_root, &oid_str) {
             for fc in &session_data.coverage {
                 blind_edits += fc.blind_edit_count;
@@ -197,6 +207,27 @@ pub fn compute_compliance_report(
                 }
             }
             uncertainty_count = session_data.uncertainty.len();
+
+            // Scan thinking-block excerpts and key decisions for injection patterns.
+            let snippets: Vec<&str> = session_data
+                .uncertainty
+                .iter()
+                .map(|u| u.snippet.as_str())
+                .chain(
+                    session_data
+                        .causal_chain
+                        .key_decisions
+                        .iter()
+                        .map(|d| d.as_str()),
+                )
+                .chain(std::iter::once(
+                    session_data.causal_chain.user_trigger.as_str(),
+                ))
+                .collect();
+            let scan = injection::scan_many(&snippets);
+            commit_injection_hits = scan.hits.len();
+            commit_injection_risk = Some(scan.risk_score);
+            total_injection_hits += commit_injection_hits;
         }
 
         // Policy check.
@@ -235,6 +266,8 @@ pub fn compute_compliance_report(
             violations: commit_violations,
             blind_edits,
             uncertainty_count,
+            injection_hits: commit_injection_hits,
+            injection_risk: commit_injection_risk,
         });
     }
 
@@ -289,6 +322,7 @@ pub fn compute_compliance_report(
         ai_commits,
         human_commits,
         policy_violations,
+        injection_hits: total_injection_hits,
         commits: commit_stats,
         violations: all_violations,
         path_stats,
@@ -335,6 +369,12 @@ pub fn print_compliance_text(report: &ComplianceReport) {
         style(report.policy_violations).red().bold(),
         pass_pct
     );
+    if report.injection_hits > 0 {
+        println!(
+            "  {} prompt-injection signal(s) detected across sessions",
+            style(report.injection_hits).red().bold()
+        );
+    }
 
     // Per-path stats.
     if !report.path_stats.is_empty() {
@@ -395,13 +435,28 @@ pub fn print_compliance_text(report: &ComplianceReport) {
         } else {
             String::new()
         };
+        let injection_tag = if c.injection_hits > 0 {
+            format!(
+                " {}",
+                style(format!(
+                    "⚠ inject({}){}", c.injection_hits,
+                    c.injection_risk
+                        .map(|r| format!(" {:.2}", r))
+                        .unwrap_or_default()
+                ))
+                .red()
+            )
+        } else {
+            String::new()
+        };
         println!(
-            "    {} {}{}{}{}  {}",
+            "    {} {}{}{}{}{}  {}",
             style(&c.short_oid).magenta(),
             style(&c.author).dim(),
             ai_tag,
             violation_tag,
             style(blind_tag).dim(),
+            injection_tag,
             style(&c.message).italic()
         );
     }
@@ -445,12 +500,21 @@ pub fn to_html(report: &ComplianceReport) -> String {
             } else {
                 String::new()
             };
+            let inject_badge = if c.injection_hits > 0 {
+                format!(
+                    r#"<span class="tag inject">⚠ inject {} ({:.2})</span>"#,
+                    c.injection_hits,
+                    c.injection_risk.unwrap_or(0.0)
+                )
+            } else {
+                String::new()
+            };
             format!(
                 r#"<tr>
   <td class="mono">{}</td>
   <td>{}</td>
   <td>{}</td>
-  <td>{}{}{}</td>
+  <td>{}{}{}{}</td>
   <td class="msg">{}</td>
 </tr>"#,
                 c.short_oid,
@@ -459,6 +523,7 @@ pub fn to_html(report: &ComplianceReport) -> String {
                 ai_badge,
                 viol_badge,
                 blind_badge,
+                inject_badge,
                 html_escape(&c.message)
             )
         })
@@ -489,6 +554,7 @@ pub fn to_html(report: &ComplianceReport) -> String {
   .tag.ai {{ background: #0d2e4a; color: #58a6ff; }}
   .tag.viol {{ background: #4a1a1a; color: #f85149; }}
   .tag.blind {{ background: #3a2a0a; color: #d29922; }}
+  .tag.inject {{ background: #3a1020; color: #ff6e6e; }}
   .violations {{ margin-top: 1.5rem; }}
   .violations h2 {{ color: #f85149; font-size: 1rem; }}
   .vrow {{ background: #1c1010; border-left: 3px solid #f85149; padding: 0.5rem 1rem; margin: 0.3rem 0; border-radius: 0 4px 4px 0; font-size: 0.85rem; }}
@@ -501,6 +567,7 @@ pub fn to_html(report: &ComplianceReport) -> String {
   <div class="stat"><div class="value">{total}</div><div class="label">commits scanned</div></div>
   <div class="stat"><div class="value">{ai_pct:.0}%</div><div class="label">AI-generated</div></div>
   <div class="stat"><div class="value">{violations}</div><div class="label">policy violations</div></div>
+  <div class="stat"><div class="value">{injection_hits}</div><div class="label">injection signals</div></div>
   <div class="stat"><div class="value">{pass_rate:.0}%</div><div class="label">pass rate</div></div>
 </div>
 {violation_section}
@@ -515,6 +582,7 @@ pub fn to_html(report: &ComplianceReport) -> String {
         total = report.total_commits,
         ai_pct = report.ai_pct(),
         violations = report.policy_violations,
+        injection_hits = report.injection_hits,
         pass_rate = report.pass_rate(),
         violation_section = if report.violations.is_empty() {
             String::new()

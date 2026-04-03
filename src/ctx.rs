@@ -530,6 +530,17 @@ pub fn list_branches(workdir: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Return the raw text of `trace.md` for the given branch (default: current).
+/// Returns an empty string if the workspace or trace does not yet exist.
+pub fn read_trace(workdir: &Path, branch: Option<&str>) -> Result<String, H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    let branch_name = branch
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| current_branch(workdir));
+    let trace_path = format!("branches/{branch_name}/trace.md");
+    Ok(ctx_read_file(&repo, &trace_path).unwrap_or_default())
+}
+
 // ── Terminal display ──────────────────────────────────────────────────────────
 
 pub fn print_context(ctx: &GccContext) {
