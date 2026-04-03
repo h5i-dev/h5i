@@ -44,6 +44,29 @@ pub struct H5iCommitRecord {
     pub decisions: Vec<Decision>,
 }
 
+/// Result of comparing a `Decision`'s location against the current HEAD.
+#[derive(Debug, Clone)]
+pub enum StalenessStatus {
+    /// The referenced code is unchanged.
+    Fresh,
+    /// AST similarity fell below the staleness threshold.
+    Stale { similarity: f32 },
+    /// Code changed but similarity is above threshold — warrants review.
+    Modified { similarity: f32 },
+    /// Location could not be resolved to a file (e.g. "architecture", deleted file).
+    Unresolvable { reason: String },
+}
+
+/// A `Decision` together with the commit it was recorded in,
+/// and an optional staleness evaluation.
+#[derive(Debug, Clone)]
+pub struct DecisionEntry {
+    pub decision: Decision,
+    pub commit_oid: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub staleness: Option<StalenessStatus>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TokenUsage {
     pub prompt_tokens: usize,
