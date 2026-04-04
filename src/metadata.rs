@@ -290,7 +290,6 @@ impl H5iCommitRecord {
             causes: vec![],
             decisions: vec![],
         }
-
     }
 }
 
