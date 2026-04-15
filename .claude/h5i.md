@@ -261,6 +261,44 @@ h5i context status
 
 Use `h5i context prompt` to get a ready-made system prompt you can prepend to an agent session to inject full context awareness.
 
+### Context versioning
+
+Every `h5i commit` automatically snapshots the context workspace state and links it to the git commit SHA. This makes context a first-class versioned artifact alongside code.
+
+```bash
+# Restore context to the state it was in at a given git commit
+h5i context restore <sha>
+
+# See how the context workspace changed between two code commits
+h5i context diff <sha1> <sha2>
+
+# Before editing a file, retrieve context entries that mention it
+h5i context relevant src/repository.rs
+
+# Compact old context history (run git gc afterwards to free space)
+h5i context pack
+```
+
+**`h5i context diff` shows:**
+- New reasoning milestones added between the two commits
+- New OTA trace steps
+- Whether the project goal changed
+
+**`h5i context relevant` shows:**
+- Milestone contributions that mention the file
+- Trace entries (OBSERVE/THINK/ACT) that mention the file, with surrounding context
+- Cross-branch mentions from other reasoning branches
+
+**Example workflow:**
+```bash
+# After a new git commit, the snapshot is automatic — nothing extra to do.
+# To continue from where a previous session left off:
+h5i context restore a3f8c12
+
+# Before touching a complex file:
+h5i context relevant src/repository.rs
+```
+
 ---
 
 ### Memory Snapshots

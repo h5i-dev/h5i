@@ -34,6 +34,10 @@ Command reference for all h5i subcommands and flags.
   - [h5i context status](#h5i-context-status)
   - [h5i context prompt](#h5i-context-prompt)
   - [h5i context scan](#h5i-context-scan)
+  - [h5i context restore](#h5i-context-restore)
+  - [h5i context diff](#h5i-context-diff)
+  - [h5i context relevant](#h5i-context-relevant)
+  - [h5i context pack](#h5i-context-pack)
 - [h5i memory](#h5i-memory)
   - [h5i memory snapshot](#h5i-memory-snapshot)
   - [h5i memory log](#h5i-memory-log)
@@ -876,6 +880,147 @@ h5i context scan
 # If the score is above 0.2, review the flagged lines manually before continuing.
 # The scan does NOT block any action — it is advisory only.
 ```
+
+---
+
+### h5i context restore
+
+```
+h5i context restore <sha>
+```
+
+Restore the context workspace to the state it was in when a specific git commit was made. Every `h5i commit` automatically snapshots the current context state; this command replays that snapshot.
+
+Restoration is **non-destructive**: a new commit is appended to `refs/h5i/context` whose tree mirrors the snapshot, so the full history is preserved. You can always see where you restored from.
+
+**Arguments**
+
+| Argument | Description |
+|----------|-------------|
+| `<sha>` | Git commit SHA (prefix accepted, e.g. `a3f8c12`) |
+
+```bash
+h5i context restore a3f8c12
+
+# ✔  Context restored: branch: main  ·  goal: add retry logic to HTTP client
+#   → Run `h5i context show --trace` to verify the restored state.
+```
+
+**When to use**
+
+- Continuing a task after a gap of several days — restore the context from the last working commit rather than re-deriving everything from scratch.
+- Debugging a regression — restore context to the commit before the regression was introduced to recover the reasoning state.
+- Handing off to a colleague — they can restore the exact context you had when you last worked on a feature.
+
+---
+
+### h5i context diff
+
+```
+h5i context diff <from> <to>
+```
+
+Show how the context workspace changed between two git commits. Requires both commits to have context snapshots (created automatically by `h5i commit`).
+
+**Arguments**
+
+| Argument | Description |
+|----------|-------------|
+| `<from>` | Earlier git commit SHA (prefix accepted) |
+| `<to>` | Later git commit SHA (prefix accepted) |
+
+**Output**
+
+- **Goal change** — whether the project goal was updated between the two commits
+- **New milestones** — context commits (reasoning checkpoints) added after `<from>`
+- **New OTA trace steps** — OBSERVE/THINK/ACT/NOTE entries added after `<from>` (up to 30)
+
+```
+── Context diff  a3f8c12..9e21b04 ───────────────────────────────────────────
+
+  New milestones: (2)
+    + Analyzed retry entry points in src/http.rs
+    + Implemented exponential backoff with jitter
+
+  New OTA trace steps: (5)
+    [10:14:22] OBSERVE: HttpClient::send has no retry logic
+    [10:15:03] THINK: exponential backoff with jitter is safest
+    [10:15:44] ACT: added retry loop in send() with 5-attempt cap
+    [10:16:10] OBSERVE: tests pass — 47/47 green
+    [10:16:30] NOTE: TODO: add integration test for timeout path
+```
+
+```bash
+h5i context diff a3f8c12 9e21b04
+```
+
+---
+
+### h5i context relevant
+
+```
+h5i context relevant <file>
+```
+
+Retrieve all context workspace entries that mention a specific file. Run this **before editing a file** to recover accumulated reasoning about it — past decisions, uncertainties, and OTA steps — without re-reading the full trace.
+
+**Arguments**
+
+| Argument | Description |
+|----------|-------------|
+| `<file>` | File path to look up (e.g. `src/repository.rs`) |
+
+**Output sections**
+
+| Section | Source |
+|---------|--------|
+| **Milestones** | Context commits whose contribution text mentions the file |
+| **Trace mentions** | OTA trace lines that mention the file, with one line of surrounding context |
+| **Cross-branch** | Trace lines and milestones from other reasoning branches that mention the file |
+
+```
+── Context relevant to src/repository.rs ─────────────────────────────────────
+
+  Milestones: (1)
+    ◈ rewrote H5iRepository::commit to support decisions field
+
+  Trace mentions: (3)
+    [10:04:17] THINK: repository.rs commit path needs a decisions param
+    [10:04:55] ACT: added decisions: Vec<Decision> to repository.rs:commit()
+    [10:05:10] OBSERVE: all tests green after repository.rs edit
+
+  Cross-branch: (1)
+    [experiment/alt-api] [10:22:00] THINK: repository.rs API is too wide — consider splitting
+```
+
+```bash
+h5i context relevant src/repository.rs
+```
+
+---
+
+### h5i context pack
+
+```
+h5i context pack
+```
+
+Compact old context history by identifying how many `refs/h5i/context` commits predate the earliest linked code-commit snapshot and reporting the count. Appends a marker to `main.md` recording the pack event.
+
+Run `git gc` after packing to reclaim object storage.
+
+```bash
+h5i context pack
+# ✔  Packed 23 old context commits into base.
+#   → Run `git gc` to reclaim disk space.
+
+# If nothing needs compacting:
+# ℹ  Nothing to pack — context history is already compact.
+```
+
+**When to use**
+
+On long-lived projects the context ref grows one commit per OTA trace entry. After several weeks the chain can contain thousands of commits, most of which are no longer reachable from any snapshot. `h5i context pack` identifies that pre-snapshot tail and logs a compaction event; `git gc` then prunes the unreferenced objects.
 
 ---
 

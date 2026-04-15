@@ -386,6 +386,95 @@ pub fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {}
             }
+        },
+        // ── context versioning ─────────────────────────────────────────────────
+        {
+            "name": "h5i_context_restore",
+            "description": "Restore the context workspace to the state captured when a \
+                specific git commit was made. Every `h5i commit` snapshots context \
+                automatically; this tool replays that snapshot non-destructively by \
+                appending a new commit to refs/h5i/context, so the full history is \
+                preserved. Use this at session start to continue exactly where a \
+                previous session left off instead of re-deriving context from scratch.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sha": {
+                        "type": "string",
+                        "description": "Git commit SHA to restore context from. \
+                            Prefix form accepted (e.g. 'a3f8c12')."
+                    }
+                },
+                "required": ["sha"]
+            }
+        },
+        {
+            "name": "h5i_context_diff",
+            "description": "Show how the context workspace evolved between two git commits. \
+                Returns new reasoning milestones, new OTA trace steps, and any change to \
+                the project goal. Both commits must have context snapshots (created \
+                automatically by `h5i commit`). Use this to understand what the AI \
+                learned or decided between two points in history.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "from": {
+                        "type": "string",
+                        "description": "Earlier git commit SHA (prefix accepted)."
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "Later git commit SHA (prefix accepted)."
+                    }
+                },
+                "required": ["from", "to"]
+            }
+        },
+        {
+            "name": "h5i_context_relevant",
+            "description": "Return all context workspace entries that mention a specific \
+                file: milestone contributions, OTA trace lines (with one line of surrounding \
+                context), and cross-branch mentions from other reasoning branches. \
+                Call this BEFORE editing a file to recover accumulated reasoning — past \
+                decisions, uncertainties, and actions — without re-reading the full trace.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "file": {
+                        "type": "string",
+                        "description": "File path to look up (e.g. 'src/repository.rs'). \
+                            Matched against both the full path and the filename."
+                    }
+                },
+                "required": ["file"]
+            }
+        },
+        {
+            "name": "h5i_context_scan",
+            "description": "Scan the current branch's OTA trace for prompt-injection \
+                patterns and return a 0.0–1.0 risk score. Use after sessions that \
+                processed external data (files, web pages, tool output) to detect \
+                whether any injected instructions contaminated the reasoning trace.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "branch": {
+                        "type": "string",
+                        "description": "Branch to scan (default: current active branch)."
+                    }
+                }
+            }
+        },
+        {
+            "name": "h5i_context_pack",
+            "description": "Compact old context history by squashing refs/h5i/context \
+                commits that predate the earliest linked code-commit snapshot. \
+                Appends a marker to main.md. Run `git gc` afterwards to reclaim \
+                disk space. Returns the number of commits squashed.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
         }
     ])
 }
@@ -400,8 +489,16 @@ pub fn resource_definitions() -> Value {
             "name": "Current Reasoning Context",
             "description": "The live h5i context workspace state: project goal, \
                 milestones, current branch, recent checkpoint summaries, and OTA trace. \
-                Replaces `h5i context prompt` — inject this resource at session start \
-                for full context continuity.",
+                Inject this resource at session start for full context continuity — \
+                it replaces the need to call h5i_context_show manually.",
+            "mimeType": "application/json"
+        },
+        {
+            "uri": "h5i://context/snapshots",
+            "name": "Context Snapshots",
+            "description": "List of git commits that have a linked context snapshot, \
+                with their branch, goal summary, and timestamp. Use this to discover \
+                which commits can be passed to h5i_context_restore or h5i_context_diff.",
             "mimeType": "application/json"
         },
         {
@@ -651,6 +748,94 @@ fn tool_context_status(_params: &Value, workdir: &Path) -> Result<Value> {
     })))
 }
 
+fn tool_context_restore(params: &Value, workdir: &Path) -> Result<Value> {
+    if !ctx::is_initialized(workdir) {
+        return Ok(text_content(
+            "Context workspace not initialized. Call h5i_context_init first.",
+        ));
+    }
+    let sha = params
+        .get("sha")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing required param: sha"))?;
+    let summary = ctx::restore(workdir, sha)?;
+    Ok(text_content(format!("Context restored: {summary}")))
+}
+
+fn tool_context_diff(params: &Value, workdir: &Path) -> Result<Value> {
+    if !ctx::is_initialized(workdir) {
+        return Ok(text_content(
+            "Context workspace not initialized. Call h5i_context_init first.",
+        ));
+    }
+    let from = params
+        .get("from")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing required param: from"))?;
+    let to = params
+        .get("to")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing required param: to"))?;
+    let diff = ctx::context_diff(workdir, from, to)?;
+    Ok(json_content(json!({
+        "from": diff.sha1,
+        "to": diff.sha2,
+        "goal_changed": diff.goal_changed,
+        "from_goal": diff.from_goal,
+        "to_goal": diff.to_goal,
+        "added_milestones": diff.added_commits,
+        "added_trace_lines": diff.added_trace_lines
+    })))
+}
+
+fn tool_context_relevant(params: &Value, workdir: &Path) -> Result<Value> {
+    if !ctx::is_initialized(workdir) {
+        return Ok(text_content(
+            "Context workspace not initialized. Call h5i_context_init first.",
+        ));
+    }
+    let file = params
+        .get("file")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing required param: file"))?;
+    let result = ctx::relevant(workdir, file)?;
+    Ok(json_content(json!({
+        "file": file,
+        "milestone_mentions": result.commit_mentions,
+        "trace_mentions": result.trace_mentions,
+        "cross_branch_mentions": result.cross_branch_mentions
+    })))
+}
+
+fn tool_context_scan(params: &Value, workdir: &Path) -> Result<Value> {
+    if !ctx::is_initialized(workdir) {
+        return Ok(text_content(
+            "Context workspace not initialized. Call h5i_context_init first.",
+        ));
+    }
+    let branch = params.get("branch").and_then(Value::as_str);
+    let trace = ctx::read_trace(workdir, branch)?;
+    let result = crate::injection::scan(&trace);
+    Ok(json_content(serde_json::to_value(&result)?))
+}
+
+fn tool_context_pack(_params: &Value, workdir: &Path) -> Result<Value> {
+    if !ctx::is_initialized(workdir) {
+        return Ok(text_content(
+            "Context workspace not initialized. Call h5i_context_init first.",
+        ));
+    }
+    let squashed = ctx::pack(workdir)?;
+    Ok(json_content(json!({
+        "squashed_commits": squashed,
+        "message": if squashed == 0 {
+            "Nothing to pack — context history is already compact.".to_string()
+        } else {
+            format!("Packed {squashed} old context commits. Run `git gc` to reclaim disk space.")
+        }
+    })))
+}
+
 // ── Tool call dispatch ────────────────────────────────────────────────────────
 
 /// Dispatch a `tools/call` invocation to the appropriate handler.
@@ -674,6 +859,11 @@ pub fn call_tool(name: &str, params: &Value, workdir: &Path) -> Result<Value> {
         "h5i_context_merge" => tool_context_merge(params, workdir),
         "h5i_context_show" => tool_context_show(params, workdir),
         "h5i_context_status" => tool_context_status(params, workdir),
+        "h5i_context_restore" => tool_context_restore(params, workdir),
+        "h5i_context_diff" => tool_context_diff(params, workdir),
+        "h5i_context_relevant" => tool_context_relevant(params, workdir),
+        "h5i_context_scan" => tool_context_scan(params, workdir),
+        "h5i_context_pack" => tool_context_pack(params, workdir),
         other => anyhow::bail!("Unknown tool: {}", other),
     }
 }
@@ -710,6 +900,16 @@ pub fn read_resource(uri: &str, workdir: &Path) -> Result<Value> {
                 }]
             }))
         }
+        "h5i://context/snapshots" => {
+            let snapshots = resource_context_snapshots(workdir);
+            Ok(json!({
+                "contents": [{
+                    "uri": uri,
+                    "mimeType": "application/json",
+                    "text": serde_json::to_string(&snapshots)?
+                }]
+            }))
+        }
         "h5i://log/recent" => {
             let repo = H5iRepository::open(workdir)?;
             let records = repo.get_log(10)?;
@@ -723,6 +923,103 @@ pub fn read_resource(uri: &str, workdir: &Path) -> Result<Value> {
         }
         other => anyhow::bail!("Unknown resource URI: {}", other),
     }
+}
+
+/// Build a JSON array of available context snapshots by walking the
+/// `snapshots/` subtree in `refs/h5i/context`.  Returns an empty array if
+/// the workspace is uninitialised or no snapshots exist yet.
+fn resource_context_snapshots(workdir: &Path) -> serde_json::Value {
+    use git2::{ObjectType, Repository};
+
+    let repo = match Repository::discover(workdir) {
+        Ok(r) => r,
+        Err(_) => return json!([]),
+    };
+    let tip = match repo
+        .find_reference(ctx::CTX_REF)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+    {
+        Some(c) => c,
+        None => return json!([]),
+    };
+    let tree = match tip.tree() {
+        Ok(t) => t,
+        Err(_) => return json!([]),
+    };
+    let snap_entry = match tree
+        .get_name("snapshots")
+        .filter(|e| e.kind() == Some(ObjectType::Tree))
+    {
+        Some(e) => e,
+        None => return json!([]),
+    };
+    let snap_tree = match repo.find_tree(snap_entry.id()) {
+        Ok(t) => t,
+        Err(_) => return json!([]),
+    };
+
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+    for entry in snap_tree.iter() {
+        if entry.kind() != Some(ObjectType::Blob) {
+            continue;
+        }
+        let blob = match repo.find_blob(entry.id()) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let text = match std::str::from_utf8(blob.content()) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        // Parse the key fields from the snapshot markdown.
+        let mut linked_commit = String::new();
+        let mut timestamp = String::new();
+        let mut branch = String::new();
+        let mut goal = String::new();
+        for line in text.lines() {
+            if line.starts_with("**Linked commit:**") {
+                linked_commit = line
+                    .split("**Linked commit:**")
+                    .nth(1)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+            } else if line.starts_with("**Timestamp:**") {
+                timestamp = line
+                    .split("**Timestamp:**")
+                    .nth(1)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+            } else if line.starts_with("**Branch:**") {
+                branch = line
+                    .split("**Branch:**")
+                    .nth(1)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+            } else if line.starts_with("**Goal:**") {
+                goal = line
+                    .split("**Goal:**")
+                    .nth(1)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+            }
+        }
+        if !linked_commit.is_empty() {
+            entries.push(json!({
+                "sha": linked_commit,
+                "timestamp": timestamp,
+                "branch": branch,
+                "goal": goal
+            }));
+        }
+    }
+
+    json!(entries)
 }
 
 // ── Resource subscriptions ────────────────────────────────────────────────────
@@ -1155,6 +1452,11 @@ mod tests {
             "h5i_context_merge",
             "h5i_context_show",
             "h5i_context_status",
+            "h5i_context_restore",
+            "h5i_context_diff",
+            "h5i_context_relevant",
+            "h5i_context_scan",
+            "h5i_context_pack",
         ];
         for name in &expected {
             assert!(names.contains(name), "missing tool: {}", name);

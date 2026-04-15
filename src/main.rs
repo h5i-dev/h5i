@@ -449,6 +449,29 @@ enum ContextCommands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Restore the context workspace to the state captured at a given git commit
+    Restore {
+        /// Git commit SHA whose context snapshot to restore (prefix OK)
+        sha: String,
+    },
+
+    /// Show how the context workspace evolved between two git commits
+    Diff {
+        /// Earlier git commit SHA (prefix OK)
+        from: String,
+        /// Later git commit SHA (prefix OK)
+        to: String,
+    },
+
+    /// Show context workspace entries relevant to a specific file
+    Relevant {
+        /// File path to look up (e.g. src/repository.rs)
+        file: String,
+    },
+
+    /// Compact old context history by squashing pre-snapshot commits
+    Pack,
 }
 
 #[derive(Subcommand)]
@@ -728,6 +751,24 @@ h5i context status
 ```
 
 Use `h5i context prompt` to get a ready-made system prompt you can prepend to an agent session to inject full context awareness.
+
+### Context versioning
+
+Every `h5i commit` automatically snapshots the context workspace state and links it to the git commit SHA. Use these commands to navigate that history:
+
+```bash
+# Before editing a file — load all context entries that mention it
+h5i context relevant src/repository.rs
+
+# Restore context to the state it was in at a given git commit
+h5i context restore <sha>
+
+# See how the context workspace changed between two code commits
+h5i context diff <sha1> <sha2>
+
+# Compact old context history (run git gc afterwards to free space)
+h5i context pack
+```
 
 ---
 
@@ -1087,6 +1128,27 @@ fn main() -> anyhow::Result<()> {
                 style("h5i Commit Created:").green(),
                 style(oid).magenta().bold()
             );
+
+            // Auto-snapshot the context workspace state linked to this git commit.
+            let workdir = repo
+                .git()
+                .workdir()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            if ctx::is_initialized(&workdir) {
+                if let Err(e) = ctx::snapshot_for_commit(&workdir, &oid.to_string()) {
+                    eprintln!(
+                        "{} context snapshot failed: {e}",
+                        style("warn:").yellow()
+                    );
+                } else {
+                    println!(
+                        "  {} context snapshot linked to {}",
+                        style("◈").cyan().dim(),
+                        style(&oid.to_string()[..8]).dim()
+                    );
+                }
+            }
         }
 
         Commands::Log { limit, ancestry } => {
@@ -2268,6 +2330,65 @@ jq -c '{
                         println!("{}", serde_json::to_string_pretty(&result)?);
                     } else {
                         h5i_core::injection::print_scan_result(&result, branch_label);
+                    }
+                }
+
+                ContextCommands::Restore { sha } => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    let summary = ctx::restore(workdir, &sha)?;
+                    println!(
+                        "{} {} {}",
+                        SUCCESS,
+                        style("Context restored:").green().bold(),
+                        style(&summary).dim()
+                    );
+                    println!(
+                        "  {} Run {} to verify the restored state.",
+                        style("→").dim(),
+                        style("h5i context show --trace").cyan()
+                    );
+                }
+
+                ContextCommands::Diff { from, to } => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    let diff = ctx::context_diff(workdir, &from, &to)?;
+                    ctx::print_context_diff(&diff);
+                }
+
+                ContextCommands::Relevant { file } => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    let ctx_result = ctx::relevant(workdir, &file)?;
+                    ctx::print_relevant(&ctx_result, &file);
+                }
+
+                ContextCommands::Pack => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    let squashed = ctx::pack(workdir)?;
+                    if squashed == 0 {
+                        println!(
+                            "{} Nothing to pack — context history is already compact.",
+                            style("ℹ").blue()
+                        );
+                    } else {
+                        println!(
+                            "{} Packed {} old context commit{} into base.",
+                            SUCCESS,
+                            style(squashed).cyan().bold(),
+                            if squashed == 1 { "" } else { "s" }
+                        );
+                        println!(
+                            "  {} Run {} to reclaim disk space.",
+                            style("→").dim(),
+                            style("git gc").cyan()
+                        );
                     }
                 }
             }
