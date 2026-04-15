@@ -32,3 +32,4 @@ _[Checkpoint: 69e00157 — context tab JS complete]_
 [23:08:36] OBSERVE: read README.md
 [23:08:36] OBSERVE: read CLAUDE.md
 [23:09:11] OBSERVE: read ../cli/cmd/entire/cli/agent/claudecode/hooks.go
+[23:09:11] OBSERVE: read ../cli/cmd/entire/cli/lifecycle.go
