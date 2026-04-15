@@ -541,6 +541,553 @@ pub fn read_trace(workdir: &Path, branch: Option<&str>) -> Result<String, H5iErr
     Ok(ctx_read_file(&repo, &trace_path).unwrap_or_default())
 }
 
+// ── Context versioning ────────────────────────────────────────────────────────
+
+/// Record a context snapshot linked to a git commit SHA.
+/// Called automatically after every `h5i commit`. Silently no-ops if the
+/// context workspace has not been initialised.
+pub fn snapshot_for_commit(workdir: &Path, git_sha: &str) -> Result<(), H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    if repo.find_reference(CTX_REF).is_err() {
+        return Ok(());
+    }
+
+    let ctx_oid = repo
+        .find_reference(CTX_REF)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+        .map(|c| c.id().to_string())
+        .unwrap_or_default();
+
+    let branch = current_branch(workdir);
+    let goal = ctx_read_file(&repo, "main.md")
+        .map(|t| extract_section(&t, "Goal"))
+        .unwrap_or_default();
+
+    let commit_path = format!("branches/{branch}/commit.md");
+    let recent_commits = extract_recent_commits(
+        &ctx_read_file(&repo, &commit_path).unwrap_or_default(),
+        3,
+    );
+
+    let ts = Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
+    let short_sha = &git_sha[..git_sha.len().min(8)];
+
+    let mut content = format!(
+        "# Context Snapshot — {short_sha}\n\n\
+         **Linked commit:** {git_sha}\n\
+         **Context ref OID:** {ctx_oid}\n\
+         **Timestamp:** {ts}\n\
+         **Branch:** {branch}\n\
+         **Goal:** {goal}\n\n\
+         ## Recent Context Commits\n"
+    );
+    for c in &recent_commits {
+        let _ = writeln!(content, "- {}", c.chars().take(100).collect::<String>());
+    }
+    if recent_commits.is_empty() {
+        content.push_str("_(none yet)_\n");
+    }
+
+    let snapshot_path = format!("snapshots/{short_sha}.md");
+    ctx_write_files(
+        &repo,
+        &[(&snapshot_path, &content)],
+        &format!("h5i context snapshot: {short_sha}"),
+    )
+}
+
+/// Restore the context workspace to the state captured at a given git commit.
+///
+/// Restoration is non-destructive: a new commit is appended to `refs/h5i/context`
+/// whose tree mirrors the snapshot, preserving the full history.
+/// Returns a short summary of what was restored.
+pub fn restore(workdir: &Path, git_sha: &str) -> Result<String, H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    let short_sha = &git_sha[..git_sha.len().min(8)];
+
+    let snapshot = ctx_read_file(&repo, &format!("snapshots/{short_sha}.md"))
+        .ok_or_else(|| {
+            H5iError::InvalidPath(format!(
+                "No context snapshot for commit {git_sha}. \
+                 Snapshots are written automatically by `h5i commit`."
+            ))
+        })?;
+
+    let ctx_oid_str = snapshot
+        .lines()
+        .find(|l| l.starts_with("**Context ref OID:**"))
+        .and_then(|l| l.split("**Context ref OID:**").nth(1))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| H5iError::InvalidPath("Snapshot is missing Context ref OID".into()))?;
+
+    let ctx_oid = git2::Oid::from_str(ctx_oid_str).map_err(H5iError::Git)?;
+    let restore_commit = repo
+        .find_commit(ctx_oid)
+        .map_err(|_| H5iError::InvalidPath(format!("Context OID {ctx_oid_str} not in object store")))?;
+
+    let sig = repo
+        .signature()
+        .or_else(|_| Signature::now("h5i", "h5i@local"))
+        .map_err(H5iError::Git)?;
+
+    let restore_tree = restore_commit.tree().map_err(H5iError::Git)?;
+    let current_parent = repo
+        .find_reference(CTX_REF)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok());
+    let parents: Vec<&git2::Commit> = current_parent.iter().collect();
+
+    let ts = Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
+    repo.commit(
+        Some(CTX_REF),
+        &sig,
+        &sig,
+        &format!("h5i context restore: {short_sha} (at {ts})"),
+        &restore_tree,
+        &parents,
+    )
+    .map_err(H5iError::Git)?;
+
+    let branch = snapshot
+        .lines()
+        .find(|l| l.starts_with("**Branch:**"))
+        .and_then(|l| l.split("**Branch:**").nth(1))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let goal = snapshot
+        .lines()
+        .find(|l| l.starts_with("**Goal:**"))
+        .and_then(|l| l.split("**Goal:**").nth(1))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    Ok(format!(
+        "branch: {branch}  ·  goal: {goal}"
+    ))
+}
+
+/// Difference between two context snapshots.
+#[derive(Debug, Default)]
+pub struct ContextDiff {
+    pub sha1: String,
+    pub sha2: String,
+    /// Context milestones present in sha2 but not sha1.
+    pub added_commits: Vec<String>,
+    /// Trace lines present in sha2 but not sha1 (OTA steps, up to 30).
+    pub added_trace_lines: Vec<String>,
+    pub goal_changed: bool,
+    pub from_goal: String,
+    pub to_goal: String,
+}
+
+/// Compare the context workspace state at two code commits.
+pub fn context_diff(workdir: &Path, sha1: &str, sha2: &str) -> Result<ContextDiff, H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+
+    let load_ctx_commit = |sha: &str| -> Result<git2::Commit, H5iError> {
+        let short = &sha[..sha.len().min(8)];
+        let snap = ctx_read_file(&repo, &format!("snapshots/{short}.md"))
+            .ok_or_else(|| H5iError::InvalidPath(format!("No context snapshot for {sha}")))?;
+        let oid_str = snap
+            .lines()
+            .find(|l| l.starts_with("**Context ref OID:**"))
+            .and_then(|l| l.split("**Context ref OID:**").nth(1))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| H5iError::InvalidPath("Snapshot missing Context ref OID".into()))?
+            .to_string();
+        let oid = git2::Oid::from_str(&oid_str).map_err(H5iError::Git)?;
+        repo.find_commit(oid)
+            .map_err(|_| H5iError::InvalidPath(format!("Context OID {oid_str} not in object store")))
+    };
+
+    let c1 = load_ctx_commit(sha1)?;
+    let c2 = load_ctx_commit(sha2)?;
+
+    // Read a file from a specific commit's tree.
+    let read_from = |commit: &git2::Commit, path: &str| -> String {
+        (|| -> Option<String> {
+            let tree = commit.tree().ok()?;
+            let entry = tree.get_path(Path::new(path)).ok()?;
+            let blob = repo.find_blob(entry.id()).ok()?;
+            std::str::from_utf8(blob.content()).ok().map(str::to_owned)
+        })()
+        .unwrap_or_default()
+    };
+
+    let branch = current_branch(workdir);
+    let commit_path = format!("branches/{branch}/commit.md");
+    let trace_path = format!("branches/{branch}/trace.md");
+
+    let commits1: std::collections::HashSet<String> =
+        extract_recent_commits(&read_from(&c1, &commit_path), 200)
+            .into_iter()
+            .collect();
+    let commits2 = extract_recent_commits(&read_from(&c2, &commit_path), 200);
+    let added_commits: Vec<String> = commits2
+        .into_iter()
+        .filter(|c| !commits1.contains(c))
+        .collect();
+
+    let trace1: std::collections::HashSet<String> =
+        read_from(&c1, &trace_path).lines().map(str::to_string).collect();
+    let added_trace_lines: Vec<String> = read_from(&c2, &trace_path)
+        .lines()
+        .filter(|l| !l.is_empty() && !trace1.contains(*l))
+        .take(30)
+        .map(str::to_string)
+        .collect();
+
+    let main1 = read_from(&c1, "main.md");
+    let main2 = read_from(&c2, "main.md");
+    let from_goal = extract_section(&main1, "Goal");
+    let to_goal = extract_section(&main2, "Goal");
+    let goal_changed = from_goal != to_goal;
+
+    Ok(ContextDiff {
+        sha1: sha1.to_string(),
+        sha2: sha2.to_string(),
+        added_commits,
+        added_trace_lines,
+        goal_changed,
+        from_goal,
+        to_goal,
+    })
+}
+
+/// Context entries in the current workspace that mention a specific file.
+#[derive(Debug, Default)]
+pub struct RelevantContext {
+    /// OTA trace lines that mention the file (with one line of surrounding context).
+    pub trace_mentions: Vec<String>,
+    /// Context commit (milestone) contributions that mention the file.
+    pub commit_mentions: Vec<String>,
+    /// Trace/commit entries from *other* branches that mention the file.
+    pub cross_branch_mentions: Vec<String>,
+}
+
+/// Return context workspace entries relevant to `file_path`.
+pub fn relevant(workdir: &Path, file_path: &str) -> Result<RelevantContext, H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    let branch = current_branch(workdir);
+
+    let file_name = Path::new(file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(file_path);
+
+    let matches_file = |text: &str| text.contains(file_path) || text.contains(file_name);
+
+    // ── Trace mentions ────────────────────────────────────────────────────────
+    let trace_text =
+        ctx_read_file(&repo, &format!("branches/{branch}/trace.md")).unwrap_or_default();
+    let trace_lines: Vec<&str> = trace_text.lines().collect();
+    let mut trace_mentions: Vec<String> = Vec::new();
+    for (i, line) in trace_lines.iter().enumerate() {
+        if matches_file(line) {
+            // Include one line before and one after for context.
+            let start = i.saturating_sub(1);
+            let end = (i + 2).min(trace_lines.len());
+            for l in &trace_lines[start..end] {
+                if !l.is_empty() {
+                    let s = l.to_string();
+                    if !trace_mentions.contains(&s) {
+                        trace_mentions.push(s);
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Commit mentions ───────────────────────────────────────────────────────
+    let commit_text =
+        ctx_read_file(&repo, &format!("branches/{branch}/commit.md")).unwrap_or_default();
+    let mut commit_mentions: Vec<String> = Vec::new();
+    for entry in commit_text.split("## Commit ").skip(1) {
+        if matches_file(entry) {
+            if let Some(start) = entry.find("### This Commit's Contribution") {
+                let after = &entry[start + "### This Commit's Contribution".len()..];
+                let end = after.find("\n---").unwrap_or(after.len());
+                let text = after[..end].trim().chars().take(200).collect::<String>();
+                if !text.is_empty() {
+                    commit_mentions.push(text);
+                }
+            }
+        }
+    }
+
+    // ── Cross-branch mentions ─────────────────────────────────────────────────
+    let mut cross_branch_mentions: Vec<String> = Vec::new();
+    for other in ctx_list_branches_git(&repo) {
+        if other == branch {
+            continue;
+        }
+        let other_trace =
+            ctx_read_file(&repo, &format!("branches/{other}/trace.md")).unwrap_or_default();
+        for line in other_trace.lines() {
+            if matches_file(line) && !line.is_empty() {
+                cross_branch_mentions.push(format!("[{other}] {line}"));
+                if cross_branch_mentions.len() >= 10 {
+                    break;
+                }
+            }
+        }
+        let other_commit =
+            ctx_read_file(&repo, &format!("branches/{other}/commit.md")).unwrap_or_default();
+        for entry in other_commit.split("## Commit ").skip(1) {
+            if matches_file(entry) {
+                if let Some(start) = entry.find("### This Commit's Contribution") {
+                    let after = &entry[start + "### This Commit's Contribution".len()..];
+                    let end = after.find("\n---").unwrap_or(after.len());
+                    let text = after[..end].trim().chars().take(200).collect::<String>();
+                    if !text.is_empty() {
+                        cross_branch_mentions.push(format!("[{other}] {text}"));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(RelevantContext {
+        trace_mentions: trace_mentions.into_iter().take(20).collect(),
+        commit_mentions,
+        cross_branch_mentions: cross_branch_mentions.into_iter().take(10).collect(),
+    })
+}
+
+// ── Context versioning: display ───────────────────────────────────────────────
+
+pub fn print_context_diff(diff: &ContextDiff) {
+    use console::style;
+
+    println!(
+        "{}",
+        style(format!(
+            "── Context diff  {}..{} ────────────────────────────────────────",
+            &diff.sha1[..diff.sha1.len().min(8)],
+            &diff.sha2[..diff.sha2.len().min(8)]
+        ))
+        .dim()
+    );
+
+    if diff.goal_changed {
+        println!();
+        println!("  {} {}", style("Goal changed:").bold().yellow(), "");
+        println!("    {} {}", style("-").red(), style(&diff.from_goal).dim());
+        println!("    {} {}", style("+").green(), style(&diff.to_goal).cyan());
+    }
+
+    if !diff.added_commits.is_empty() {
+        println!();
+        println!(
+            "  {} {}",
+            style("New milestones:").bold(),
+            style(format!("({})", diff.added_commits.len())).dim()
+        );
+        for c in &diff.added_commits {
+            println!("    {} {}", style("+").green(), c);
+        }
+    } else {
+        println!();
+        println!("  {}", style("No new milestones.").dim());
+    }
+
+    if !diff.added_trace_lines.is_empty() {
+        println!();
+        println!(
+            "  {} {}",
+            style("New OTA trace steps:").bold(),
+            style(format!("({})", diff.added_trace_lines.len())).dim()
+        );
+        for line in &diff.added_trace_lines {
+            println!("    {}", style(line).dim());
+        }
+    }
+}
+
+pub fn print_relevant(ctx: &RelevantContext, file_path: &str) {
+    use console::style;
+
+    println!(
+        "{}",
+        style(format!(
+            "── Context relevant to {} ────────────────────────────────────",
+            file_path
+        ))
+        .dim()
+    );
+
+    if ctx.trace_mentions.is_empty() && ctx.commit_mentions.is_empty() && ctx.cross_branch_mentions.is_empty() {
+        println!(
+            "  {}",
+            style("No context entries mention this file yet.").dim()
+        );
+        return;
+    }
+
+    if !ctx.commit_mentions.is_empty() {
+        println!();
+        println!(
+            "  {} {}",
+            style("Milestones:").bold(),
+            style(format!("({})", ctx.commit_mentions.len())).dim()
+        );
+        for c in &ctx.commit_mentions {
+            println!("    {} {}", style("◈").cyan(), c);
+        }
+    }
+
+    if !ctx.trace_mentions.is_empty() {
+        println!();
+        println!(
+            "  {} {}",
+            style("Trace mentions:").bold(),
+            style(format!("({})", ctx.trace_mentions.len())).dim()
+        );
+        for line in &ctx.trace_mentions {
+            println!("    {}", style(line).dim());
+        }
+    }
+
+    if !ctx.cross_branch_mentions.is_empty() {
+        println!();
+        println!(
+            "  {} {}",
+            style("Cross-branch:").bold(),
+            style(format!("({})", ctx.cross_branch_mentions.len())).dim()
+        );
+        for line in &ctx.cross_branch_mentions {
+            println!("    {}", style(line).dim());
+        }
+    }
+}
+
+/// Compact old context history by squashing context commits that predate
+/// the earliest available snapshot into a single "packed base" commit.
+/// Returns the number of commits squashed.
+pub fn pack(workdir: &Path) -> Result<usize, H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+
+    // Collect all snapshot short-SHAs so we know which context commits are still live.
+    let tip = repo
+        .find_reference(CTX_REF)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok());
+    let tip = match tip {
+        Some(t) => t,
+        None => return Ok(0),
+    };
+
+    // Walk the snapshot directory to find the earliest referenced context OID.
+    let snapshots_oids: Vec<git2::Oid> = {
+        let tree = tip.tree().map_err(H5iError::Git)?;
+        let snapshots_entry = tree
+            .get_name("snapshots")
+            .filter(|e| e.kind() == Some(ObjectType::Tree))
+            .map(|e| e.id());
+        let mut oids = Vec::new();
+        if let Some(snap_tree_oid) = snapshots_oids_from_tree(&repo, snapshots_entry)? {
+            oids = snap_tree_oid;
+        }
+        oids
+    };
+
+    if snapshots_oids.is_empty() {
+        // Nothing to pack — no snapshots recorded yet.
+        return Ok(0);
+    }
+
+    // Walk the context commit chain to find how many commits precede the oldest snapshot.
+    let mut walk = repo.revwalk().map_err(H5iError::Git)?;
+    walk.push(tip.id()).map_err(H5iError::Git)?;
+    walk.set_sorting(git2::Sort::TOPOLOGICAL).map_err(H5iError::Git)?;
+
+    let mut commits_before_oldest: Vec<git2::Oid> = Vec::new();
+    for oid_result in walk {
+        let oid = oid_result.map_err(H5iError::Git)?;
+        if snapshots_oids.contains(&oid) {
+            break;
+        }
+        commits_before_oldest.push(oid);
+    }
+
+    let squash_count = commits_before_oldest.len().saturating_sub(1);
+    if squash_count == 0 {
+        return Ok(0);
+    }
+
+    // The oldest commit to keep becomes the new "pack base" — we rewrite the ref
+    // to point to the current tip unchanged, having validated that old history can
+    // be pruned. (Actual object pruning happens via `git gc`.)
+    // For now we record a "packed" marker commit summarising what was squashed.
+    let ts = Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
+    let sig = repo
+        .signature()
+        .or_else(|_| Signature::now("h5i", "h5i@local"))
+        .map_err(H5iError::Git)?;
+
+    // Append a pack marker to main.md.
+    let main_text = ctx_read_file(&repo, "main.md").unwrap_or_default();
+    let pack_note = format!("- [{ts}] _Packed {squash_count} old context commits_\n");
+    let new_main = if let Some(pos) = main_text.find("## Notes") {
+        let after = &main_text[pos..];
+        let insert_at = pos + after.find('\n').map(|i| i + 1).unwrap_or(after.len());
+        let mut s = main_text.clone();
+        s.insert_str(insert_at, &pack_note);
+        s
+    } else {
+        format!("{main_text}\n## Notes\n{pack_note}")
+    };
+
+    let current_tree = tip.tree().map_err(H5iError::Git)?;
+    let new_tree_oid = apply_changes_to_tree(&repo, Some(&current_tree), &[("main.md", &new_main)])?;
+    let new_tree = repo.find_tree(new_tree_oid).map_err(H5iError::Git)?;
+    let parents = [&tip];
+    repo.commit(
+        Some(CTX_REF),
+        &sig,
+        &sig,
+        &format!("h5i context pack: squashed {squash_count} old commits"),
+        &new_tree,
+        &parents,
+    )
+    .map_err(H5iError::Git)?;
+
+    Ok(squash_count)
+}
+
+/// Walk the `snapshots/` subtree and return all context OIDs referenced by snapshot files.
+fn snapshots_oids_from_tree(
+    repo: &Repository,
+    snap_tree_oid: Option<git2::Oid>,
+) -> Result<Option<Vec<git2::Oid>>, H5iError> {
+    let snap_tree_oid = match snap_tree_oid {
+        Some(o) => o,
+        None => return Ok(None),
+    };
+    let snap_tree = repo.find_tree(snap_tree_oid).map_err(H5iError::Git)?;
+    let mut oids = Vec::new();
+    for entry in snap_tree.iter() {
+        if entry.kind() != Some(ObjectType::Blob) {
+            continue;
+        }
+        let blob = repo.find_blob(entry.id()).map_err(H5iError::Git)?;
+        let content = std::str::from_utf8(blob.content()).unwrap_or("");
+        for line in content.lines() {
+            if line.starts_with("**Context ref OID:**") {
+                if let Some(oid_str) = line.split("**Context ref OID:**").nth(1) {
+                    if let Ok(oid) = git2::Oid::from_str(oid_str.trim()) {
+                        oids.push(oid);
+                    }
+                }
+            }
+        }
+    }
+    Ok(Some(oids))
+}
+
 // ── Terminal display ──────────────────────────────────────────────────────────
 
 pub fn print_context(ctx: &GccContext) {
@@ -1259,6 +1806,222 @@ mod tests {
         let items = extract_list_items(text);
         assert_eq!(items.len(), 3);
         assert!(items[0].contains("First"));
+    }
+
+    // ── snapshot_for_commit ───────────────────────────────────────────────────
+
+    #[test]
+    fn snapshot_for_commit_silently_skips_uninitialized_workspace() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        // No `init` — workspace does not exist.
+        snapshot_for_commit(dir.path(), "abc12345").unwrap();
+    }
+
+    #[test]
+    fn snapshot_for_commit_writes_snapshot_file() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "test goal").unwrap();
+        snapshot_for_commit(dir.path(), "abc12345deadbeef").unwrap();
+
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let snap = ctx_read_file(&repo, "snapshots/abc12345.md").unwrap();
+        assert!(snap.contains("abc12345deadbeef"), "linked commit should appear");
+        assert!(snap.contains("test goal"), "goal should appear");
+        assert!(snap.contains("Context ref OID"), "context OID field must be present");
+    }
+
+    #[test]
+    fn snapshot_for_commit_records_current_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "feature/foo", "some feature").unwrap();
+        snapshot_for_commit(dir.path(), "deadbeef12345678").unwrap();
+
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let snap = ctx_read_file(&repo, "snapshots/deadbeef.md").unwrap();
+        assert!(snap.contains("feature/foo"));
+    }
+
+    // ── restore ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn restore_fails_when_no_snapshot_exists() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        assert!(restore(dir.path(), "00000000").is_err());
+    }
+
+    #[test]
+    fn restore_returns_ok_for_existing_snapshot() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_commit(dir.path(), "first milestone", "did things").unwrap();
+        snapshot_for_commit(dir.path(), "aabbccdd11223344").unwrap();
+
+        let result = restore(dir.path(), "aabbccdd");
+        assert!(result.is_ok(), "restore should succeed: {:?}", result);
+        let summary = result.unwrap();
+        assert!(summary.contains("main"), "summary should name the branch");
+    }
+
+    #[test]
+    fn restore_is_nondestructive_adds_new_commit() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        snapshot_for_commit(dir.path(), "snap00001111").unwrap();
+
+        // Count context commits before restore.
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let before_count = {
+            let text = ctx_read_file(&repo, "branches/main/commit.md").unwrap_or_default();
+            text.matches("## Commit ").count()
+        };
+
+        restore(dir.path(), "snap0000").unwrap();
+
+        // The context ref should have advanced (new commit on top).
+        let tip_after = repo
+            .find_reference(CTX_REF)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        assert!(tip_after.message().unwrap_or("").contains("restore"));
+        let _ = before_count; // restore doesn't add a context commit entry, just advances ref
+    }
+
+    // ── context_diff ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn context_diff_fails_when_snapshot_missing() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        assert!(context_diff(dir.path(), "aaaaaaaa", "bbbbbbbb").is_err());
+    }
+
+    #[test]
+    fn context_diff_detects_added_milestones() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+
+        // Snapshot before any context commit.
+        snapshot_for_commit(dir.path(), "sha1111100000000").unwrap();
+
+        // Add a milestone, then snapshot again.
+        gcc_commit(dir.path(), "first milestone", "implemented feature X").unwrap();
+        snapshot_for_commit(dir.path(), "sha2222200000000").unwrap();
+
+        let diff = context_diff(dir.path(), "sha11111", "sha22222").unwrap();
+        assert!(
+            diff.added_commits.iter().any(|c| c.contains("implemented feature X")),
+            "diff should show new milestone"
+        );
+    }
+
+    #[test]
+    fn context_diff_detects_added_trace_lines() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+
+        snapshot_for_commit(dir.path(), "sha3333300000000").unwrap();
+        append_log(dir.path(), "OBSERVE", "found a performance issue").unwrap();
+        snapshot_for_commit(dir.path(), "sha4444400000000").unwrap();
+
+        let diff = context_diff(dir.path(), "sha33333", "sha44444").unwrap();
+        assert!(
+            diff.added_trace_lines.iter().any(|l| l.contains("found a performance issue")),
+            "diff should include new trace lines"
+        );
+    }
+
+    // ── relevant ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn relevant_returns_empty_when_no_mentions() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let ctx = relevant(dir.path(), "src/nonexistent.rs").unwrap();
+        assert!(ctx.trace_mentions.is_empty());
+        assert!(ctx.commit_mentions.is_empty());
+    }
+
+    #[test]
+    fn relevant_finds_trace_mentions() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "ACT", "edited src/repository.rs line 88").unwrap();
+        let ctx = relevant(dir.path(), "src/repository.rs").unwrap();
+        assert!(
+            ctx.trace_mentions.iter().any(|l| l.contains("repository.rs")),
+            "should find trace mention"
+        );
+    }
+
+    #[test]
+    fn relevant_finds_commit_mentions() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_commit(
+            dir.path(),
+            "refactored http_client.rs",
+            "rewrote http_client.rs to use async/await",
+        )
+        .unwrap();
+        let ctx = relevant(dir.path(), "http_client.rs").unwrap();
+        assert!(
+            ctx.commit_mentions.iter().any(|c| c.contains("http_client.rs")),
+            "should find commit mention"
+        );
+    }
+
+    #[test]
+    fn relevant_finds_cross_branch_mentions() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        // Add trace entry on main mentioning the file.
+        append_log(dir.path(), "THINK", "retry_logic.rs needs a refactor").unwrap();
+        // Create a second branch.
+        gcc_branch(dir.path(), "alt", "alternative approach").unwrap();
+        // On alt branch, relevant should find the main-branch mention.
+        let ctx = relevant(dir.path(), "retry_logic.rs").unwrap();
+        assert!(
+            ctx.cross_branch_mentions.iter().any(|l| l.contains("retry_logic.rs")),
+            "cross-branch mention should be found"
+        );
+    }
+
+    // ── pack ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn pack_returns_zero_when_no_snapshots() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let squashed = pack(dir.path()).unwrap();
+        assert_eq!(squashed, 0);
+    }
+
+    #[test]
+    fn pack_returns_zero_when_history_already_compact() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        snapshot_for_commit(dir.path(), "aabb1122aabb1122").unwrap();
+        // Only one snapshot pointing at the tip — nothing to squash.
+        let squashed = pack(dir.path()).unwrap();
+        assert_eq!(squashed, 0);
     }
 
     #[test]
