@@ -2297,9 +2297,9 @@ jq -c '{
                 }
 
                 ContextCommands::Trace { kind, content } => {
-                    if !ctx::is_initialized(workdir) {
-                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
-                    }
+                    // Auto-bootstrap: trace can fire before `h5i context init` is called
+                    // (e.g. from PostToolUse hooks). append_log creates refs/h5i/context on
+                    // first write, so no explicit init is needed here.
                     ctx::append_log(workdir, &kind, &content)?;
                     println!(
                         "{} [{}] {}",
