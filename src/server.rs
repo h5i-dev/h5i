@@ -10,6 +10,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
+use crate::ctx;
 use crate::memory;
 use crate::metadata::{IntegrityReport, IntentGraph};
 use crate::repository::H5iRepository;
@@ -571,6 +572,279 @@ async fn api_session_list(
     Json(result.unwrap_or(None).unwrap_or_default())
 }
 
+// ── Context API handlers ──────────────────────────────────────────────────────
+
+#[derive(Serialize, Default)]
+struct ContextStatusResponse {
+    initialized: bool,
+    current_branch: String,
+    goal: String,
+    branch_count: usize,
+    branches: Vec<String>,
+    commit_count: usize,
+    trace_lines: usize,
+    snapshot_count: usize,
+}
+
+async fn api_context_status(State(state): State<Arc<AppState>>) -> Json<ContextStatusResponse> {
+    let result = tokio::task::spawn_blocking(move || {
+        let workdir = &state.repo_path;
+        if !ctx::is_initialized(workdir) {
+            return ContextStatusResponse::default();
+        }
+        let branch = ctx::current_branch(workdir);
+        let branches = ctx::list_branches(workdir);
+        let branch_count = branches.len();
+
+        let repo = git2::Repository::discover(workdir).ok();
+        let (goal, commit_count, trace_lines) = repo
+            .as_ref()
+            .map(|r| {
+                let goal = read_ctx_file(r, "main.md")
+                    .map(|t| extract_ctx_section(&t, "Goal"))
+                    .unwrap_or_default();
+                let commit_text =
+                    read_ctx_file(r, &format!("branches/{branch}/commit.md")).unwrap_or_default();
+                let trace_text =
+                    read_ctx_file(r, &format!("branches/{branch}/trace.md")).unwrap_or_default();
+                let commit_count = commit_text.matches("## Commit ").count();
+                let trace_lines = trace_text.lines().filter(|l| !l.is_empty()).count();
+                (goal, commit_count, trace_lines)
+            })
+            .unwrap_or_default();
+
+        let snapshot_count = repo
+            .as_ref()
+            .map(|r| count_ctx_snapshots(r))
+            .unwrap_or(0);
+
+        ContextStatusResponse {
+            initialized: true,
+            current_branch: branch,
+            goal,
+            branch_count,
+            branches,
+            commit_count,
+            trace_lines,
+            snapshot_count,
+        }
+    })
+    .await;
+    Json(result.unwrap_or_default())
+}
+
+#[derive(Serialize, Default, Clone)]
+struct ContextSnapshotItem {
+    sha: String,
+    sha_short: String,
+    timestamp: String,
+    branch: String,
+    goal: String,
+    recent_milestones: Vec<String>,
+}
+
+async fn api_context_snapshots(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<ContextSnapshotItem>> {
+    let result = tokio::task::spawn_blocking(move || {
+        let workdir = &state.repo_path;
+        let repo = git2::Repository::discover(workdir).ok()?;
+        let tip = repo
+            .find_reference(ctx::CTX_REF)
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok())?;
+        let tree = tip.tree().ok()?;
+        let snap_entry = tree
+            .get_name("snapshots")
+            .filter(|e| e.kind() == Some(git2::ObjectType::Tree))?;
+        let snap_tree = repo.find_tree(snap_entry.id()).ok()?;
+
+        let mut items: Vec<ContextSnapshotItem> = Vec::new();
+        for entry in snap_tree.iter() {
+            if entry.kind() != Some(git2::ObjectType::Blob) {
+                continue;
+            }
+            let blob = repo.find_blob(entry.id()).ok()?;
+            let text = std::str::from_utf8(blob.content()).ok()?;
+            let mut item = ContextSnapshotItem::default();
+            let mut milestones: Vec<String> = Vec::new();
+            let mut in_milestones = false;
+            for line in text.lines() {
+                if line.starts_with("**Linked commit:**") {
+                    item.sha = line.split("**Linked commit:**").nth(1).unwrap_or("").trim().to_string();
+                    item.sha_short = item.sha.chars().take(8).collect();
+                } else if line.starts_with("**Timestamp:**") {
+                    item.timestamp = line.split("**Timestamp:**").nth(1).unwrap_or("").trim().to_string();
+                } else if line.starts_with("**Branch:**") {
+                    item.branch = line.split("**Branch:**").nth(1).unwrap_or("").trim().to_string();
+                } else if line.starts_with("**Goal:**") {
+                    item.goal = line.split("**Goal:**").nth(1).unwrap_or("").trim().to_string();
+                } else if line.starts_with("## Recent Context Commits") {
+                    in_milestones = true;
+                } else if in_milestones && line.starts_with("- ") {
+                    milestones.push(line[2..].trim().to_string());
+                }
+            }
+            item.recent_milestones = milestones;
+            if !item.sha.is_empty() {
+                items.push(item);
+            }
+        }
+        // Most recent first (sort by timestamp descending — timestamps are ISO-like strings).
+        items.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Some(items)
+    })
+    .await;
+    Json(result.unwrap_or(None).unwrap_or_default())
+}
+
+#[derive(serde::Deserialize, Default)]
+struct ContextShowQuery {
+    branch: Option<String>,
+    window: Option<usize>,
+    trace: Option<bool>,
+}
+
+async fn api_context_show(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ContextShowQuery>,
+) -> Json<Option<ctx::GccContext>> {
+    let result = tokio::task::spawn_blocking(move || {
+        let workdir = &state.repo_path;
+        if !ctx::is_initialized(workdir) {
+            return None;
+        }
+        let opts = ctx::ContextOpts {
+            branch: params.branch,
+            commit_hash: None,
+            show_log: params.trace.unwrap_or(false),
+            log_offset: 0,
+            metadata_segment: None,
+            window: params.window.unwrap_or(10),
+        };
+        ctx::gcc_context(workdir, &opts).ok()
+    })
+    .await;
+    Json(result.unwrap_or(None))
+}
+
+#[derive(serde::Deserialize)]
+struct ContextDiffQuery {
+    from: String,
+    to: String,
+}
+
+#[derive(Serialize, Default)]
+struct ContextDiffResponse {
+    from: String,
+    to: String,
+    goal_changed: bool,
+    from_goal: String,
+    to_goal: String,
+    added_milestones: Vec<String>,
+    added_trace_lines: Vec<String>,
+}
+
+async fn api_context_diff(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ContextDiffQuery>,
+) -> Json<ContextDiffResponse> {
+    let result = tokio::task::spawn_blocking(move || {
+        let workdir = &state.repo_path;
+        let diff = ctx::context_diff(workdir, &params.from, &params.to).ok()?;
+        Some(ContextDiffResponse {
+            from: diff.sha1,
+            to: diff.sha2,
+            goal_changed: diff.goal_changed,
+            from_goal: diff.from_goal,
+            to_goal: diff.to_goal,
+            added_milestones: diff.added_commits,
+            added_trace_lines: diff.added_trace_lines,
+        })
+    })
+    .await;
+    Json(result.unwrap_or(None).unwrap_or_default())
+}
+
+#[derive(serde::Deserialize)]
+struct ContextRelevantQuery {
+    file: String,
+}
+
+#[derive(Serialize, Default)]
+struct ContextRelevantResponse {
+    file: String,
+    milestone_mentions: Vec<String>,
+    trace_mentions: Vec<String>,
+    cross_branch_mentions: Vec<String>,
+}
+
+async fn api_context_relevant(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ContextRelevantQuery>,
+) -> Json<ContextRelevantResponse> {
+    let result = tokio::task::spawn_blocking(move || {
+        let workdir = &state.repo_path;
+        if !ctx::is_initialized(workdir) {
+            return Some(ContextRelevantResponse { file: params.file, ..Default::default() });
+        }
+        let r = ctx::relevant(workdir, &params.file).ok()?;
+        Some(ContextRelevantResponse {
+            file: params.file,
+            milestone_mentions: r.commit_mentions,
+            trace_mentions: r.trace_mentions,
+            cross_branch_mentions: r.cross_branch_mentions,
+        })
+    })
+    .await;
+    Json(result.unwrap_or(None).unwrap_or_default())
+}
+
+// ── Context API helpers ───────────────────────────────────────────────────────
+
+fn read_ctx_file(repo: &git2::Repository, vpath: &str) -> Option<String> {
+    let reference = repo.find_reference(ctx::CTX_REF).ok()?;
+    let commit = reference.peel_to_commit().ok()?;
+    let tree = commit.tree().ok()?;
+    let entry = tree.get_path(std::path::Path::new(vpath)).ok()?;
+    let blob = repo.find_blob(entry.id()).ok()?;
+    std::str::from_utf8(blob.content()).ok().map(str::to_owned)
+}
+
+fn extract_ctx_section(text: &str, section: &str) -> String {
+    let header = format!("## {section}");
+    if let Some(start) = text.find(&header) {
+        let after = &text[start + header.len()..];
+        let end = after.find("\n## ").unwrap_or(after.len());
+        return after[..end].trim().to_string();
+    }
+    String::new()
+}
+
+fn count_ctx_snapshots(repo: &git2::Repository) -> usize {
+    let tree = repo
+        .find_reference(ctx::CTX_REF)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+        .and_then(|c| c.tree().ok());
+    let tree = match tree {
+        Some(t) => t,
+        None => return 0,
+    };
+    let snap_entry = match tree
+        .get_name("snapshots")
+        .filter(|e| e.kind() == Some(git2::ObjectType::Tree))
+    {
+        Some(e) => e,
+        None => return 0,
+    };
+    let snap_tree = match repo.find_tree(snap_entry.id()) {
+        Ok(t) => t,
+        Err(_) => return 0,
+    };
+    snap_tree.iter().filter(|e| e.kind() == Some(git2::ObjectType::Blob)).count()
+}
+
 // ── Server entry point ────────────────────────────────────────────────────────
 
 pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
@@ -589,6 +863,11 @@ pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
         .route("/api/session-log", get(api_session_log))
         .route("/api/session-log/list", get(api_session_list))
         .route("/api/session-log/churn", get(api_session_churn))
+        .route("/api/context/status", get(api_context_status))
+        .route("/api/context/snapshots", get(api_context_snapshots))
+        .route("/api/context/show", get(api_context_show))
+        .route("/api/context/diff", get(api_context_diff))
+        .route("/api/context/relevant", get(api_context_relevant))
         .with_state(state);
 
     let addr = format!("127.0.0.1:{}", port);
@@ -949,6 +1228,80 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 .sl-churn-pct{font-size:11px;color:#484f58;min-width:34px;text-align:right}
 .sl-replay-hash{font-family:monospace;font-size:11px;color:#484f58;background:#161b22;padding:6px 10px;border-radius:4px;word-break:break-all}
 .sl-empty{color:#484f58;font-size:13px;padding:20px 0}
+
+/* ── Context tab ── */
+.ctx-not-init{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:32px;text-align:center;color:#484f58;font-size:13px;line-height:1.8}
+.ctx-not-init code{background:#21262d;padding:2px 8px;border-radius:4px;font-size:12px;color:#8b949e}
+.ctx-status-bar{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:20px;align-items:center}
+.ctx-goal{font-size:13px;color:#bc8cff;font-style:italic;flex:1;min-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctx-meta{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:#8b949e}
+.ctx-meta b{color:#e6edf3}
+.ctx-layout{display:grid;grid-template-columns:280px 1fr;gap:14px;align-items:start}
+.ctx-snap-list{display:flex;flex-direction:column;gap:6px;max-height:420px;overflow-y:auto}
+.ctx-snap-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 12px;cursor:pointer;transition:all .15s;position:relative}
+.ctx-snap-card:hover{border-color:#484f58;background:#1c2128}
+.ctx-snap-card.sel-from{border-color:#58a6ff;box-shadow:0 0 0 1px #58a6ff33}
+.ctx-snap-card.sel-to{border-color:#bc8cff;box-shadow:0 0 0 1px #bc8cff33}
+.ctx-snap-sha{font-family:monospace;font-size:11px;font-weight:700;background:#bc8cff22;color:#bc8cff;padding:1px 6px;border-radius:4px}
+.ctx-snap-ts{font-size:10px;color:#484f58;margin-left:6px}
+.ctx-snap-branch{font-size:11px;color:#8b949e;margin-top:3px}
+.ctx-snap-goal{font-size:11px;color:#8b949e;font-style:italic;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctx-sel-badge{position:absolute;top:7px;right:8px;font-size:9px;font-weight:700;padding:1px 7px;border-radius:8px}
+.ctx-sel-from-badge{background:#1f3a5f;color:#58a6ff}
+.ctx-sel-to-badge{background:#2d1f4f;color:#bc8cff}
+.ctx-viewer{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;min-height:300px}
+.ctx-viewer-empty{color:#484f58;text-align:center;padding:50px 20px;font-size:13px;line-height:1.8}
+.ctx-viewer-hdr{font-size:13px;font-weight:600;color:#e6edf3;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ctx-controls{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
+.ctx-btn{background:linear-gradient(90deg,#bc8cff,#58a6ff);border:none;border-radius:6px;color:#fff;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;transition:opacity .15s}
+.ctx-btn:hover{opacity:.85}
+.ctx-btn:disabled{opacity:.4;cursor:not-allowed}
+.ctx-btn-ghost{background:#21262d;border:1px solid #30363d;border-radius:6px;color:#8b949e;padding:5px 12px;font-size:12px;cursor:pointer;transition:all .15s}
+.ctx-btn-ghost:hover{color:#e6edf3;border-color:#8b949e}
+.ctx-hint{font-size:11px;color:#484f58}
+.ctx-milestone{padding:5px 0;font-size:12px;color:#c9d1d9;border-bottom:1px solid #21262d;display:flex;align-items:baseline;gap:8px}
+.ctx-milestone::before{content:"◈";color:#bc8cff;flex-shrink:0}
+.ctx-trace-box{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:10px;font-size:11px;font-family:monospace;max-height:260px;overflow-y:auto;line-height:1.6;white-space:pre-wrap;color:#8b949e;margin-top:8px}
+.ctx-trace-line-observe{color:#58a6ff}
+.ctx-trace-line-think{color:#bc8cff}
+.ctx-trace-line-act{color:#3fb950}
+.ctx-trace-line-note{color:#e3b341}
+.ctx-diff-added{color:#3fb950;padding:3px 0;font-size:12px;display:flex;gap:6px}
+.ctx-diff-added::before{content:"+";font-weight:700;flex-shrink:0}
+.ctx-diff-section{margin-bottom:14px}
+.ctx-diff-section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#484f58;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #21262d}
+.ctx-goal-change{background:#2d1f4f;border:1px solid #bc8cff44;border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px}
+.ctx-goal-from{color:#8b949e;margin-bottom:4px}
+.ctx-goal-to{color:#bc8cff}
+.ctx-trace-stat{display:flex;gap:14px;margin-top:6px;font-size:11px;color:#484f58;flex-wrap:wrap}
+.ctx-trace-stat b{color:#8b949e}
+.ctx-relevant-section{margin-top:16px;border-top:1px solid #30363d;padding-top:14px}
+.ctx-relevant-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#484f58;margin-bottom:10px}
+.ctx-relevant-search{display:flex;gap:8px;margin-bottom:12px}
+.ctx-relevant-input{flex:1;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:6px 12px;font-size:12px;font-family:monospace;outline:none;transition:border .15s}
+.ctx-relevant-input:focus{border-color:#58a6ff}
+.ctx-mention-tag{display:inline-flex;align-items:center;font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;margin-right:6px;flex-shrink:0}
+.ctx-tag-milestone{background:#2d1f4f;color:#bc8cff}
+.ctx-tag-trace{background:#1f3a5f;color:#58a6ff}
+.ctx-tag-branch{background:#1a3a2a;color:#3fb950}
+.ctx-mention-text{font-size:12px;color:#c9d1d9;line-height:1.5}
+.ctx-mention-row{padding:5px 0;border-bottom:1px solid #21262d;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+.ctx-snap-count{font-size:11px;color:#484f58;margin-bottom:8px}
+.ctx-trace-full-section{margin-top:16px;border-top:1px solid #30363d;padding-top:14px}
+.ctx-branch-badge{display:inline-block;background:#1a3a2a;color:#3fb950;border-radius:10px;font-size:10px;font-weight:700;padding:1px 8px;vertical-align:middle}
+.ctx-stat{font-size:11px;color:#484f58;background:#21262d;border-radius:8px;padding:2px 10px}
+.ctx-status-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;width:100%}
+.ctx-snap-head{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+.ctx-detail-goal{font-size:13px;color:#bc8cff;font-style:italic;margin:8px 0 4px;padding:8px;background:#2d1f4f44;border-radius:6px}
+.ctx-milestone-entry{padding:4px 0;font-size:12px;color:#c9d1d9;border-bottom:1px solid #21262d;display:flex;align-items:baseline;gap:8px}
+.ctx-milestone-entry::before{content:"◈";color:#bc8cff;flex-shrink:0}
+.ctx-trace-entry{padding:3px 0;font-size:11px;font-family:monospace;border-bottom:1px solid #21262d11;line-height:1.5}
+.ctx-trace-observe{color:#58a6ff}
+.ctx-trace-think{color:#bc8cff}
+.ctx-trace-act{color:#3fb950}
+.ctx-trace-note{color:#e3b341}
+.ctx-trace-kind{font-weight:700;font-size:10px;opacity:.75;margin-right:6px}
+.ctx-diff-goal-change{background:#2d1f4f;border:1px solid #bc8cff44;border-radius:6px;padding:10px;margin:8px 0;font-size:12px;line-height:1.7}
 </style>
 </head>
 <body>
@@ -1027,6 +1380,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
       <button class="tab" onclick="switchTab('review')">🔍 Review Points<span class="tab-badge" id="tab-review-count">—</span></button>
       <button class="tab" onclick="switchTab('memory');loadMemorySnapshots()">🧠 Memory<span class="tab-badge" id="tab-mem-count">—</span></button>
       <button class="tab" onclick="switchTab('sessions');loadSessionList()">🔬 Sessions<span class="tab-badge" id="tab-sl-count">—</span></button>
+      <button class="tab" onclick="switchTab('context');loadContextTab()">💡 Context<span class="tab-badge" id="tab-ctx-count">—</span></button>
     </div>
 
     <!-- Timeline panel -->
@@ -1171,6 +1525,61 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
         <div class="empty-state" style="padding:60px 20px">Click "Analyse" to scan commits for review priorities.</div>
       </div>
     </div>
+
+    <!-- Context tab -->
+    <div id="panel-context" style="display:none">
+      <!-- Workspace status bar -->
+      <div id="ctx-status-bar"></div>
+
+      <div id="ctx-not-init" class="ctx-not-init" style="display:none">
+        Context workspace not initialized.<br>
+        Run <code>h5i context init --goal "…"</code> to create it.
+      </div>
+
+      <div id="ctx-main" style="display:none">
+        <!-- Snapshot list + viewer -->
+        <div class="ctx-layout">
+          <div>
+            <div class="ctx-snap-count" id="ctx-snap-count">— snapshots</div>
+            <div class="ctx-snap-list" id="ctx-snap-list">
+              <div class="ctx-viewer-empty">Loading…</div>
+            </div>
+          </div>
+          <div>
+            <div class="ctx-controls">
+              <button class="ctx-btn" id="ctx-diff-btn" onclick="runCtxDiff()" disabled>⊕ Diff selected</button>
+              <button class="ctx-btn-ghost" onclick="clearCtxSelection()">Clear</button>
+              <span class="ctx-hint" id="ctx-sel-hint">Click a snapshot to inspect · Ctrl+click to select two for diff</span>
+            </div>
+            <div class="ctx-viewer" id="ctx-viewer">
+              <div class="ctx-viewer-empty">Select a snapshot from the list to inspect its context state.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live workspace OTA trace -->
+        <div class="ctx-trace-full-section">
+          <div class="ctx-relevant-title">Live OTA Trace — current branch</div>
+          <div id="ctx-trace-wrap">
+            <div class="ctx-trace-box" id="ctx-trace-box" style="min-height:160px">Loading…</div>
+            <div class="ctx-trace-stat" id="ctx-trace-stat"></div>
+          </div>
+        </div>
+
+        <!-- Relevant-file search -->
+        <div class="ctx-relevant-section">
+          <div class="ctx-relevant-title">Context relevant to a file</div>
+          <div class="ctx-relevant-search">
+            <input class="ctx-relevant-input" id="ctx-rel-input" type="text"
+              placeholder="src/repository.rs"
+              onkeydown="if(event.key==='Enter')runCtxRelevant()">
+            <button class="ctx-btn" onclick="runCtxRelevant()">Search</button>
+          </div>
+          <div id="ctx-rel-results"></div>
+        </div>
+      </div>
+    </div>
+
   </main>
 </div>
 
@@ -1643,8 +2052,9 @@ function renderSparkline() {
 
 // ── Tab switching ──────────────────────────────────────────────────────────
 function switchTab(tab) {
-  ['timeline','summary','integrity','intentgraph','review','memory','sessions'].forEach(t => {
-    const btn = document.querySelector(`.tab[onclick="switchTab('${t}')"]`);
+  ['timeline','summary','integrity','intentgraph','review','memory','sessions','context'].forEach(t => {
+    const btn = document.querySelector(`.tab[onclick="switchTab('${t}')"]`) ||
+                document.querySelector(`.tab[onclick="switchTab('${t}');loadContextTab()"]`);
     const panel = id('panel-' + t);
     const active = t === tab;
     if (btn) btn.classList.toggle('active', active);
@@ -2351,6 +2761,220 @@ function shortPath(p, max) {
   return '…' + p.slice(-(max-1));
 }
 
+// ── Context tab ───────────────────────────────────────────────────────────
+let ctxSnapshots = [];
+let ctxSelFrom = null;
+let ctxSelTo = null;
+
+async function loadContextTab() {
+  try {
+    const [status, snaps] = await Promise.all([
+      fetch('/api/context/status').then(r => r.json()),
+      fetch('/api/context/snapshots').then(r => r.json()),
+    ]);
+
+    // Status bar
+    const sb = id('ctx-status-bar');
+    if (status.initialized) {
+      const goal = status.goal ? `<span class="ctx-goal">${esc(status.goal)}</span>` : '';
+      const branchName = status.current_branch || status.branch || '';
+      const branch = branchName ? `<span class="ctx-branch-badge">${esc(branchName)}</span>` : '';
+      const mc = status.commit_count ?? status.milestone_count;
+      const milestones = mc != null
+        ? `<span class="ctx-stat">${mc} milestone${mc === 1 ? '' : 's'}</span>`
+        : '';
+      sb.innerHTML = `<div class="ctx-status-row">${branch}${goal}${milestones}</div>`;
+    } else {
+      sb.innerHTML = '';
+    }
+
+    // Show/hide panels
+    const notInit = id('ctx-not-init');
+    const main = id('ctx-main');
+    if (!status.initialized) {
+      notInit.style.display = '';
+      main.style.display = 'none';
+      setText('tab-ctx-count', '—');
+      return;
+    }
+    notInit.style.display = 'none';
+    main.style.display = '';
+
+    // Snapshots
+    ctxSnapshots = Array.isArray(snaps) ? snaps : [];
+    setText('tab-ctx-count', ctxSnapshots.length);
+    setText('ctx-snap-count', ctxSnapshots.length + ' snapshot' + (ctxSnapshots.length === 1 ? '' : 's'));
+    renderCtxSnapshots();
+
+    // Live trace
+    loadCtxTrace();
+  } catch(e) {
+    console.error('loadContextTab', e);
+    id('ctx-snap-list').innerHTML = '<div class="empty-state">Failed to load context data.</div>';
+  }
+}
+
+async function loadCtxTrace() {
+  try {
+    const data = await fetch('/api/context/show?trace=true').then(r => r.json());
+    const lines = (data && (data.recent_log_lines || data.trace_lines)) || [];
+    const traceEl = id('ctx-trace-box');
+    if (!traceEl) return;
+    if (!lines.length) {
+      traceEl.innerHTML = '<div class="empty-state" style="padding:10px 0">No trace entries yet.</div>';
+      return;
+    }
+    const kindClass = k => k === 'OBSERVE' ? 'ctx-trace-observe'
+                        : k === 'THINK'   ? 'ctx-trace-think'
+                        : k === 'ACT'     ? 'ctx-trace-act'
+                        : 'ctx-trace-note';
+    traceEl.innerHTML = lines.slice(-50).map(l => {
+      const m = l.match(/^\[(OBSERVE|THINK|ACT|NOTE)\]\s*(.*)/s);
+      if (m) return `<div class="ctx-trace-entry ${kindClass(m[1])}"><span class="ctx-trace-kind">${esc(m[1])}</span> ${esc(m[2])}</div>`;
+      return `<div class="ctx-trace-entry ctx-trace-note">${esc(l)}</div>`;
+    }).join('');
+  } catch(e) { /* trace section is optional */ }
+}
+
+function renderCtxSnapshots() {
+  const el = id('ctx-snap-list');
+  if (!ctxSnapshots.length) {
+    el.innerHTML = `<div class="empty-state" style="padding:30px 0;text-align:center">
+      No context snapshots yet.<br><code style="font-size:11px;color:#8b949e">h5i commit</code> creates one automatically.
+    </div>`;
+    return;
+  }
+  el.innerHTML = ctxSnapshots.map((s, i) => {
+    let cls = 'ctx-snap-card';
+    let badge = '';
+    if (i === ctxSelFrom) { cls += ' sel-from'; badge = '<span class="mem-sel-badge mem-sel-from-badge">FROM</span>'; }
+    else if (i === ctxSelTo) { cls += ' sel-to'; badge = '<span class="mem-sel-badge mem-sel-to-badge">TO</span>'; }
+    const ts = new Date(s.timestamp);
+    const tsStr = isNaN(ts) ? (s.timestamp || '') : ts.toLocaleString();
+    const sha = s.sha_short || (s.sha ? s.sha.slice(0,8) : s.git_sha ? s.git_sha.slice(0,8) : '?');
+    const branch = s.branch || 'main';
+    return `<div class="${cls}" onclick="selectCtxSnap(${i})">${badge}
+      <div class="ctx-snap-head">
+        <span class="mem-oid">${esc(sha)}</span>
+        <span class="ctx-branch-badge" style="margin-left:6px">${esc(branch)}</span>
+        <span class="mem-ts">${esc(tsStr)}</span>
+      </div>
+      ${s.goal ? `<div class="ctx-snap-goal">${esc(s.goal.slice(0,80))}${s.goal.length > 80 ? '…' : ''}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function selectCtxSnap(i) {
+  if (ctxSelFrom === null) {
+    ctxSelFrom = i;
+  } else if (ctxSelTo === null && i !== ctxSelFrom) {
+    ctxSelTo = i;
+  } else {
+    ctxSelFrom = i; ctxSelTo = null;
+  }
+  renderCtxSnapshots();
+  updateCtxControls();
+  if (ctxSelTo === null && ctxSelFrom !== null) showCtxViewer(ctxSnapshots[ctxSelFrom]);
+}
+
+function clearCtxSelection() {
+  ctxSelFrom = null; ctxSelTo = null;
+  renderCtxSnapshots(); updateCtxControls();
+  id('ctx-viewer').innerHTML = '<div class="ctx-viewer-empty">Select a snapshot to inspect it,<br>or select two snapshots to compare them.</div>';
+}
+
+function updateCtxControls() {
+  id('ctx-diff-btn').disabled = !(ctxSelFrom !== null && ctxSelTo !== null);
+  const hint = ctxSelFrom === null
+    ? 'Click a snapshot to inspect · click two to diff'
+    : ctxSelTo === null
+    ? 'Click another snapshot to compare, or click again to reset'
+    : 'Click ⊕ Diff to compare the two selected snapshots';
+  setText('ctx-sel-hint', hint);
+}
+
+function showCtxViewer(s) {
+  const sha = s.sha_short || (s.sha ? s.sha.slice(0,8) : s.git_sha ? s.git_sha.slice(0,8) : '?');
+  const ts = new Date(s.timestamp);
+  const tsStr = isNaN(ts) ? (s.timestamp || '') : ts.toLocaleString();
+  const milestones = s.recent_milestones || [];
+  let html = `<div class="mem-snap-detail-header">
+    <span class="mem-oid">${esc(sha)}</span>
+    <span class="mem-ts" style="margin-left:8px">${esc(tsStr)}</span>
+    ${s.branch ? `<span class="ctx-branch-badge" style="margin-left:8px">${esc(s.branch)}</span>` : ''}
+  </div>`;
+  if (s.goal) html += `<div class="ctx-detail-goal">${esc(s.goal)}</div>`;
+  if (milestones.length) {
+    html += `<div class="mem-snap-section-title" style="margin-top:12px">Recent Milestones</div>`;
+    html += milestones.map(m => `<div class="ctx-milestone-entry">${esc(m)}</div>`).join('');
+  } else {
+    html += `<div class="empty-state" style="padding:16px 0">No milestones recorded.</div>`;
+  }
+  id('ctx-viewer').innerHTML = html;
+}
+
+async function runCtxDiff() {
+  if (ctxSelFrom === null || ctxSelTo === null) return;
+  const s1 = ctxSnapshots[ctxSelFrom];
+  const s2 = ctxSnapshots[ctxSelTo];
+  const sha1 = s1.sha || s1.git_sha;
+  const sha2 = s2.sha || s2.git_sha;
+  if (!sha1 || !sha2) return;
+  const viewer = id('ctx-viewer');
+  viewer.innerHTML = '<div class="empty-state"><span class="spinner"></span> Computing diff…</div>';
+  try {
+    const d = await fetch(`/api/context/diff?from=${encodeURIComponent(sha1)}&to=${encodeURIComponent(sha2)}`).then(r => r.json());
+    let html = `<div class="mem-snap-detail-header">
+      <span style="color:#58a6ff">Context diff</span>
+      <span class="mem-oid" style="margin-left:8px">${esc(d.from.slice(0,8))}</span>
+      <span style="color:#484f58;margin:0 4px">→</span>
+      <span class="mem-oid">${esc(d.to.slice(0,8))}</span>
+    </div>`;
+    if (d.goal_changed) {
+      html += `<div class="ctx-diff-goal-change">
+        <div style="color:#f85149">− ${esc(d.from_goal)}</div>
+        <div style="color:#3fb950">+ ${esc(d.to_goal)}</div>
+      </div>`;
+    }
+    if (d.added_milestones && d.added_milestones.length) {
+      html += `<div class="mem-snap-section-title" style="margin-top:12px">New Milestones</div>`;
+      html += d.added_milestones.map(m => `<div class="ctx-milestone-entry" style="color:#3fb950">+ ${esc(m)}</div>`).join('');
+    }
+    if (d.added_trace_lines && d.added_trace_lines.length) {
+      html += `<div class="mem-snap-section-title" style="margin-top:12px">New Trace Lines</div>`;
+      html += d.added_trace_lines.map(l => `<div class="ctx-trace-entry ctx-trace-note" style="margin:2px 0">+ ${esc(l)}</div>`).join('');
+    }
+    if (!d.goal_changed && !(d.added_milestones||[]).length && !(d.added_trace_lines||[]).length) {
+      html += '<div class="empty-state" style="padding:16px 0">No differences found.</div>';
+    }
+    viewer.innerHTML = html;
+  } catch(e) {
+    viewer.innerHTML = `<div class="empty-state">Diff failed: ${esc(String(e))}</div>`;
+  }
+}
+
+async function runCtxRelevant() {
+  const filePath = id('ctx-rel-input').value.trim();
+  if (!filePath) return;
+  const resultsEl = id('ctx-rel-results');
+  resultsEl.innerHTML = '<div class="empty-state"><span class="spinner"></span> Searching…</div>';
+  try {
+    const d = await fetch(`/api/context/relevant?file=${encodeURIComponent(filePath)}`).then(r => r.json());
+    let html = '';
+    const section = (title, items, cls) => {
+      if (!items || !items.length) return '';
+      return `<div class="mem-snap-section-title" style="margin-top:12px">${esc(title)}</div>` +
+        items.map(s => `<div class="ctx-trace-entry ${cls}">${esc(s)}</div>`).join('');
+    };
+    html += section('Milestone Mentions', d.commit_mentions, 'ctx-trace-act');
+    html += section('Trace Mentions', d.trace_mentions, 'ctx-trace-observe');
+    html += section('Cross-Branch Mentions', d.cross_branch_mentions, 'ctx-trace-think');
+    resultsEl.innerHTML = html || '<div class="empty-state" style="padding:12px 0">No context mentions found for this file.</div>';
+  } catch(e) {
+    resultsEl.innerHTML = `<div class="empty-state">Search failed: ${esc(String(e))}</div>`;
+  }
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────
 loadAll();
 </script>
@@ -2626,6 +3250,11 @@ mod frontend_tests {
             "/api/session-log",
             "/api/session-log/list",
             "/api/session-log/churn",
+            "/api/context/status",
+            "/api/context/snapshots",
+            "/api/context/show",
+            "/api/context/diff",
+            "/api/context/relevant",
         ]
         .into_iter()
         .collect();
