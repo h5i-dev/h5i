@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ./script/h5i-ctx-hook.py"
+          }
+        ]
+      }
+    ]
+  }
+}
