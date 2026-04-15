@@ -528,6 +528,54 @@ Quick overview: current branch, commit count, trace line count.
 .B prompt
 Print a Claude system prompt that explains how to use h5i context
 commands inside an agent session.
+.TP
+.B scan [\-\-branch \fINAME\fR] [\-\-json]
+Scan the trace for prompt-injection patterns and report a 0.0\(en1.0 risk score.
+.TP
+.B restore \fISHA\fR
+Restore the context workspace to the state captured when git commit
+.I SHA
+was made.
+Every
+.B h5i commit
+writes a snapshot automatically; this command replays it by appending a
+new commit to
+.IR refs/h5i/context ,
+so the full history is preserved.
+SHA prefixes are accepted (e.g.\&
+.BR a3f8c12 ).
+.TP
+.B diff \fIFROM\fR \fITO\fR
+Show how the context workspace evolved between two git commits.
+Reports new milestones, new OTA trace steps, and any change to the
+project goal.
+Both
+.I FROM
+and
+.I TO
+must have context snapshots (created automatically by
+.BR "h5i commit" ).
+.TP
+.B relevant \fIFILE\fR
+Retrieve all context entries that mention
+.IR FILE .
+Searches the current branch's trace and milestone log, plus all other
+reasoning branches, and prints matching entries grouped by section.
+Run this
+.B before
+editing a file to recover accumulated reasoning about it without
+re-reading the full trace.
+.TP
+.B pack
+Compact old context history by squashing
+.IR refs/h5i/context
+commits that predate the earliest linked code-commit snapshot.
+Appends a marker to
+.I main.md
+recording the event.
+Run
+.B git gc
+afterwards to reclaim disk space.
 .RE
 .
 .\" ─── vibe ───────────────────────────────────────────────────────────────────
@@ -992,6 +1040,23 @@ h5i context branch experiment/sync\-retry \-\-purpose "try sync fallback"
 # ...explore...
 h5i context checkout main
 h5i context status
+.fi
+.SS Context versioning
+.nf
+# Snapshot is created automatically on every h5i commit \(em nothing extra needed.
+
+# Before editing a file, load all context entries that mention it:
+h5i context relevant src/http_client.rs
+
+# See how reasoning evolved between two code commits:
+h5i context diff a3f8c12 9e21b04
+
+# Continue from where a previous session left off:
+h5i context restore a3f8c12
+
+# Compact old context history and reclaim space:
+h5i context pack
+git gc
 .fi
 .SS Team workflow
 .nf
