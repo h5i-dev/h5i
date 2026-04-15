@@ -1,0 +1,1 @@
+{"git_oid":"f0fb854c89e72d987020394a7fb2080a62453e33","parent_oid":"68d86bf2620526b74afeb1af615690a078e61e70","ai_metadata":{"model_name":"claude-sonnet-4-6","prompt":"add restore/diff/relevant/pack to MANUAL.md and h5i.1 man page","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"crdt_states":null,"timestamp":"2026-04-15T20:59:25.340107008Z"}
