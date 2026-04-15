@@ -30,3 +30,4 @@ _[Checkpoint: 69e00157 — context tab JS complete]_
 [23:08:21] OBSERVE: read ../cli/cmd/entire/cli/agent/session.go
 [23:08:28] OBSERVE: read ../cli/cmd/entire/cli/strategy/manual_commit_condensation.go
 [23:08:36] OBSERVE: read README.md
+[23:08:36] OBSERVE: read CLAUDE.md
