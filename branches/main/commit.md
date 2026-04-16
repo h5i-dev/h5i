@@ -30,3 +30,16 @@ All JS functions for Context tab added: loadContextTab, loadCtxTrace, renderCtxS
 
 ---
 
+## Commit 69e02934 — 2026-04-16 00:11 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+All JS functions for Context tab added: loadContextTab, loadCtxTrace, renderCtxSnapshots, selectCtxSnap, clearCtxSelection, updateCtxControls, showCtxViewer, runCtxDiff, runCtxRelevant. Fixed API field name mismatches, added missing CSS classes, updated route test. 273/273 tests pass.
+
+### This Commit's Contribution
+src/redact.rs: 12-rule regex + entropy scanner, wired into save_session/create_checkpoint/save_analysis. src/trail.rs: branch-level Trail struct with init/show/update/link-pr/list; h5i checkpoint auto-links into trail. All 304 tests pass.
+
+---
+
