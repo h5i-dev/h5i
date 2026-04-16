@@ -115,3 +115,4 @@ _[Checkpoint: 69e02934 — implemented redaction and trail]_
 [00:17:36] THINK: can you also update MANUAL.md and man?
 [00:19:48] NOTE: session 67e5e52c started — model: claude-sonnet-4-6
 [00:20:05] ACT: edited MANUAL.md
+[00:20:36] ACT: edited MANUAL.md
