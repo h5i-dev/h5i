@@ -81,3 +81,4 @@ _[Checkpoint: 69e00157 — context tab JS complete]_
 [23:32:12] NOTE: turn complete — tokens in: 15  out: 2,341
 [23:51:10] THINK: How can we make this tool truely useful tool futher? You can refer to the similar project in ../cli, which is the sourcecode of entireio/cli/
 [23:52:57] NOTE: turn complete — tokens in: 14  out: 2,062
+[00:01:05] THINK: ok, implement (2) redaction and (3) trail
