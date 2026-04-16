@@ -84,3 +84,4 @@ _[Checkpoint: 69e00157 — context tab JS complete]_
 [00:01:05] THINK: ok, implement (2) redaction and (3) trail
 [00:01:18] THINK: implementing redaction (entropy+regex secret detection on session/checkpoint/notes data) and h5i trail (branch-level work intent: goal, status, PRs, checkpoint history) — starting with src/redact.rs then src/trail.rs
 [00:03:08] ACT: wrote src/redact.rs
+[00:03:38] ACT: edited src/redact.rs
