@@ -120,3 +120,4 @@ _[Checkpoint: 69e02934 — implemented redaction and trail]_
 [00:20:56] ACT: edited MANUAL.md
 [00:21:46] ACT: edited man/man1/h5i.1
 [00:21:53] ACT: edited man/man1/h5i.1
+[00:22:13] ACT: updated MANUAL.md: added h5i status/checkpoint/rewind/trail sections + Storage Layout dirs + Secret Redaction appendix; updated man/man1/h5i.1: added .SS sections for all four commands + FILES entries for sessions/, trails/, refs/h5i/checkpoints/
