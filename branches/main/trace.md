@@ -118,3 +118,4 @@ _[Checkpoint: 69e02934 — implemented redaction and trail]_
 [00:20:36] ACT: edited MANUAL.md
 [00:20:48] ACT: edited MANUAL.md
 [00:20:56] ACT: edited MANUAL.md
+[00:21:46] ACT: edited man/man1/h5i.1
