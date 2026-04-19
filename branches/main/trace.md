@@ -212,3 +212,4 @@ _[Checkpoint: 69e4c9d0 — feat(context): all 5 CMV/Claude-design features imple
 [12:52:43] ACT: wrote ../../../../tmp/render_dag.py
 [12:52:49] OBSERVE: read assets/screenshot_h5i_dag.png
 [12:55:27] OBSERVE: read assets/screenshot_h5i_dag_scrot.png
+[12:58:34] OBSERVE: read ../../../../tmp/render_dag.py
