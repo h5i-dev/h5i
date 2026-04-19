@@ -33,7 +33,7 @@ FONT_PATHS = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
 ]
-FONT_SIZE = 32
+FONT_SIZE = 56
 font = None
 for fp in FONT_PATHS:
     try:
@@ -51,9 +51,8 @@ bb = dd.textbbox((0, 0), "M", font=font)
 CW = bb[2] - bb[0]
 CH = bb[3] - bb[1] + 5
 
-PAD_X  = 70
-PAD_Y  = 48
-HEADER = 68
+PAD_X  = 100
+PAD_Y  = 72
 
 # ── Assign a colour to each character position on a line ──────────────────────
 def colorize(line: str) -> list[tuple[str, str]]:
@@ -143,25 +142,13 @@ _measure_img  = Image.new("RGB", (1, 1))
 _measure_draw = ImageDraw.Draw(_measure_img)
 max_line_px = max((line_px_width(_measure_draw, l, font) for l in lines), default=CW * 60)
 W = PAD_X * 2 + max_line_px + PAD_X * 2   # symmetric padding
-H = HEADER + PAD_Y + len(lines) * CH + PAD_Y + 20
+H = PAD_Y + len(lines) * CH + PAD_Y
 
 img  = Image.new("RGB", (W, H), BG)
 draw = ImageDraw.Draw(img)
 
-# ── Title bar ─────────────────────────────────────────────────────────────────
-draw.rectangle([0, 0, W, HEADER], fill="#313244")
-for xoff, col in [(32, "#f38ba8"), (66, "#f9e2af"), (100, "#a6e3a1")]:
-    r = 13
-    draw.ellipse([xoff - r, HEADER // 2 - r, xoff + r, HEADER // 2 + r], fill=col)
-title = "h5i context dag"
-try:
-    tf = ImageFont.truetype(FONT_PATHS[0], 26)
-except Exception:
-    tf = font
-draw.text((W // 2, HEADER // 2), title, fill="#cdd6f4", font=tf, anchor="mm")
-
 # ── Render each line ──────────────────────────────────────────────────────────
-y = HEADER + PAD_Y
+y = PAD_Y
 for raw_line in lines:
     segments = colorize(raw_line)
     x = PAD_X
@@ -173,13 +160,6 @@ for raw_line in lines:
         x = bb[2]
     y += CH
 
-# ── Footer ────────────────────────────────────────────────────────────────────
-footer = "github.com/Koukyosyumei/h5i   ·   cargo install h5i-core"
-try:
-    ff = ImageFont.truetype(FONT_PATHS[0], 22)
-except Exception:
-    ff = font
-draw.text((W // 2, H - 14), footer, fill=DIM, font=ff, anchor="mm")
 
 out = "/home/koukyosyumei/Dev/h5i/assets/screenshot_h5i_dag.png"
 img.save(out, "PNG", optimize=True)
