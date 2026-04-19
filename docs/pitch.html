@@ -75,14 +75,14 @@
   /* ── Navigation ───────────────────────────────────────────── */
   .nav-arrow {
     position: fixed; top: 50%; transform: translateY(-50%);
-    width: 40px; height: 40px; border-radius: 50%;
-    border: 1px solid var(--border);
-    background: rgba(5,5,5,0.8); backdrop-filter: blur(8px);
-    color: var(--text-faint); font-size: 18px; cursor: pointer;
+    width: 52px; height: 52px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(5,5,5,0.92); backdrop-filter: blur(8px);
+    color: rgba(255,255,255,0.7); font-size: 24px; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     transition: all 0.2s; z-index: 100;
   }
-  .nav-arrow:hover { border-color: var(--red); color: var(--red); box-shadow: 0 0 12px var(--red-glow); }
+  .nav-arrow:hover { border-color: var(--red); color: var(--red); box-shadow: 0 0 16px var(--red-glow); }
   .nav-arrow.prev { left: 18px; }
   .nav-arrow.next { right: 18px; }
 
@@ -91,16 +91,16 @@
     display: flex; gap: 8px; z-index: 100;
   }
   .dot-btn {
-    width: 5px; height: 5px; border-radius: 50%;
-    background: var(--border); cursor: pointer;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: rgba(255,255,255,0.25); cursor: pointer;
     transition: background 0.2s, transform 0.2s;
   }
-  .dot-btn.active { background: var(--red); transform: scale(1.6); }
+  .dot-btn.active { background: var(--red); transform: scale(1.5); }
 
   .slide-num {
     position: fixed; top: 22px; right: 28px;
-    font-family: var(--mono); font-size: 11px;
-    color: var(--text-faint); z-index: 100;
+    font-family: var(--mono); font-size: 0.85rem;
+    color: rgba(255,255,255,0.6); z-index: 100;
     letter-spacing: 0.1em;
   }
 
@@ -378,12 +378,49 @@
   ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
   ::-webkit-scrollbar-thumb { background: rgba(210,28,28,0.35); border-radius: 3px; }
+
+  /* ── Export button ────────────────────────────────────────── */
+  .export-btn {
+    position: fixed; bottom: 24px; right: 28px; z-index: 200;
+    display: flex; align-items: center; gap: 0.45rem;
+    font-family: var(--mono); font-size: 0.8rem; letter-spacing: 0.08em;
+    color: rgba(255,255,255,0.7); border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(5,5,5,0.92); backdrop-filter: blur(8px);
+    padding: 0.5rem 1.1rem; border-radius: 6px; cursor: pointer;
+    transition: color 0.2s, border-color 0.2s, box-shadow 0.2s;
+  }
+  .export-btn:hover { color: #fff; border-color: rgba(255,255,255,0.45); box-shadow: 0 0 12px rgba(255,255,255,0.06); }
+
+  /* ── Print / PDF export ───────────────────────────────────── */
+  @media print {
+    @page { size: 1280px 720px; margin: 0; }
+
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+    body { overflow: visible; height: auto; background: var(--bg); }
+    .bg-grid, .nav-arrow, .dots, .slide-num, .export-btn { display: none !important; }
+
+    .deck { position: static; height: auto; }
+
+    .slide {
+      position: relative !important;
+      opacity: 1 !important;
+      transform: none !important;
+      pointer-events: all !important;
+      display: flex !important;
+      width: 1280px; height: 720px;
+      page-break-after: always;
+      break-after: page;
+      overflow: hidden;
+    }
+  }
 </style>
 </head>
 <body>
 
 <div class="bg-grid"></div>
 
+<button class="export-btn" onclick="window.print()">⬇ Export PDF</button>
 <button class="nav-arrow prev" onclick="changeSlide(-1)">‹</button>
 <button class="nav-arrow next" onclick="changeSlide(1)">›</button>
 <div class="slide-num"><span id="cur">1</span> / <span id="tot"></span></div>
