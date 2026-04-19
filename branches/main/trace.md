@@ -573,3 +573,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [19:41:25] ACT: pitch.html: slide 3 → 4 main features (commit/notes/context/compliance); slide 5 terminal → CSS DAG with branching; new slide 6 for compliance+policy
 [19:49:40] ACT: edited docs/pitch.html
 [19:49:44] ACT: edited docs/pitch.html
+[19:52:32] OBSERVE: read docs/pitch.html
