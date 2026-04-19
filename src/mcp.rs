@@ -8,6 +8,8 @@
 //!
 //! | Tool | h5i equivalent |
 //! |------|----------------|
+//! | `h5i_commit` | `h5i commit` |
+//! | `h5i_rewind` | `h5i rewind` |
 //! | `h5i_log` | `h5i log` |
 //! | `h5i_blame` | `h5i blame` |
 //! | `h5i_notes_show` | `h5i notes show` |
@@ -273,6 +275,35 @@ pub fn tool_definitions() -> Value {
                     }
                 },
                 "required": ["message"]
+            }
+        },
+        // ── rewind ────────────────────────────────────────────────────────────
+        {
+            "name": "h5i_rewind",
+            "description": "Restore the working tree to the exact file state of any past commit \
+                without moving HEAD. Use this to recover from a bad agent run: files are \
+                overwritten to match the target commit, HEAD stays put, and `git diff HEAD` \
+                shows the full picture before you decide whether to commit. \
+                Current dirty state is saved to refs/h5i/shadow/<timestamp> first so \
+                recovery is always possible. Accepts full or short SHAs and rev expressions \
+                like HEAD~3.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sha": {
+                        "type": "string",
+                        "description": "Git commit SHA or rev expression to restore (e.g. 'abc1234', 'HEAD~2')."
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "If true, return the list of files that would change without touching the working tree."
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "If true, skip saving dirty state to a shadow ref before rewinding."
+                    }
+                },
+                "required": ["sha"]
             }
         },
         // ── notes/analyze ─────────────────────────────────────────────────────
@@ -751,6 +782,31 @@ fn tool_commit(params: &Value, workdir: &Path) -> Result<Value> {
     })))
 }
 
+fn tool_rewind(params: &Value, workdir: &Path) -> Result<Value> {
+    let sha = params
+        .get("sha")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing required param: sha"))?;
+    let dry_run = params.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+    let force   = params.get("force").and_then(Value::as_bool).unwrap_or(false);
+
+    let repo = H5iRepository::open(workdir)?;
+    let (shadow_ref, changed) = repo.rewind(sha, force, dry_run)?;
+
+    let files: Vec<serde_json::Value> = changed
+        .iter()
+        .map(|(p, k)| serde_json::json!({ "path": p, "change": k }))
+        .collect();
+
+    Ok(json_content(serde_json::json!({
+        "dry_run": dry_run,
+        "target_sha": sha,
+        "shadow_ref": shadow_ref,
+        "files_changed": files.len(),
+        "files": files,
+    })))
+}
+
 fn tool_notes_analyze(_params: &Value, workdir: &Path) -> Result<Value> {
     let repo = H5iRepository::open(workdir)?;
     let head_oid = repo.git().head()?.peel_to_commit()?.id().to_string();
@@ -975,6 +1031,7 @@ fn tool_context_pack(_params: &Value, workdir: &Path) -> Result<Value> {
 pub fn call_tool(name: &str, params: &Value, workdir: &Path) -> Result<Value> {
     match name {
         "h5i_commit" => tool_commit(params, workdir),
+        "h5i_rewind" => tool_rewind(params, workdir),
         "h5i_notes_analyze" => tool_notes_analyze(params, workdir),
         "h5i_log" => tool_log(params, workdir),
         "h5i_blame" => tool_blame(params, workdir),
@@ -1571,6 +1628,7 @@ mod tests {
 
         let expected = [
             "h5i_commit",
+            "h5i_rewind",
             "h5i_notes_analyze",
             "h5i_log",
             "h5i_blame",

@@ -1822,6 +1822,163 @@ impl H5iRepository {
         Ok(self.git_repo.head()?.peel_to_commit()?.id())
     }
 
+    /// Restore the working tree to the exact file state of a past commit.
+    ///
+    /// HEAD is not moved — after the call, `git status` shows the full diff
+    /// between HEAD and the restored state so the user can review before committing.
+    ///
+    /// # Safety
+    ///
+    /// Before touching any files, the current dirty state (staged + unstaged) is
+    /// saved to `refs/h5i/shadow/<yyyymmdd-hhmmss>` as a WIP commit so it can
+    /// always be recovered via `git checkout refs/h5i/shadow/<ts> -- .`.
+    ///
+    /// Pass `force = true` to skip the shadow-ref backup (use when the working
+    /// tree is already clean or the shadow ref is not needed).
+    ///
+    /// # Returns
+    ///
+    /// `(shadow_ref, changed_files)` where `changed_files` is a list of
+    /// `(relative_path, "added" | "modified" | "deleted")` entries describing
+    /// the working-tree changes that were made (or would be made in dry-run mode).
+    pub fn rewind(
+        &self,
+        sha: &str,
+        force: bool,
+        dry_run: bool,
+    ) -> Result<(Option<String>, Vec<(String, &'static str)>), H5iError> {
+        let repo = &self.git_repo;
+
+        let workdir = repo
+            .workdir()
+            .ok_or_else(|| H5iError::InvalidPath("Cannot rewind in a bare repository".into()))?
+            .to_path_buf();
+
+        // ── Resolve the target SHA (accepts short SHAs and rev expressions) ──
+        let obj = repo
+            .revparse_single(sha)
+            .map_err(H5iError::Git)?;
+        let target_commit = obj
+            .peel_to_commit()
+            .map_err(|_| H5iError::InvalidPath(format!("{sha} does not resolve to a commit")))?;
+        let target_tree = target_commit.tree().map_err(H5iError::Git)?;
+
+        // ── Diff HEAD tree → target tree to know what will change ─────────────
+        let head_tree = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_tree().ok());
+
+        let diff = repo
+            .diff_tree_to_tree(
+                head_tree.as_ref(),
+                Some(&target_tree),
+                None,
+            )
+            .map_err(H5iError::Git)?;
+
+        let mut changed: Vec<(String, &'static str)> = Vec::new();
+        diff.foreach(
+            &mut |delta, _| {
+                let kind = match delta.status() {
+                    git2::Delta::Added   => "added",
+                    git2::Delta::Deleted => "deleted",
+                    _                    => "modified",
+                };
+                let path = delta
+                    .new_file()
+                    .path()
+                    .or_else(|| delta.old_file().path())
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                changed.push((path, kind));
+                true
+            },
+            None, None, None,
+        )
+        .map_err(H5iError::Git)?;
+
+        if dry_run {
+            return Ok((None, changed));
+        }
+
+        // ── Save current dirty state to a shadow ref (unless --force) ─────────
+        let shadow_ref = if !force {
+            let is_dirty = {
+                let mut opts = git2::StatusOptions::new();
+                opts.include_untracked(false);
+                repo.statuses(Some(&mut opts))
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false)
+            };
+
+            if is_dirty {
+                // Write the current index to a tree and create a shadow commit.
+                let mut index = repo.index().map_err(H5iError::Git)?;
+                index.update_all(["*"].iter(), None).map_err(H5iError::Git)?;
+                let shadow_tree_oid = index.write_tree().map_err(H5iError::Git)?;
+                let shadow_tree = repo.find_tree(shadow_tree_oid).map_err(H5iError::Git)?;
+
+                let sig = repo.signature().map_err(H5iError::Git)?;
+                let head_commit = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+                let parents: Vec<git2::Commit<'_>> = head_commit.iter().cloned().collect();
+                let parent_refs: Vec<&git2::Commit<'_>> = parents.iter().collect();
+
+                let msg = format!(
+                    "h5i shadow: pre-rewind state before restoring to {}",
+                    &target_commit.id().to_string()[..8]
+                );
+                let shadow_commit_oid = repo
+                    .commit(None, &sig, &sig, &msg, &shadow_tree, &parent_refs)
+                    .map_err(H5iError::Git)?;
+
+                let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+                let ref_name = format!("refs/h5i/shadow/{ts}");
+                repo.reference(
+                    &ref_name,
+                    shadow_commit_oid,
+                    false,
+                    "h5i rewind shadow backup",
+                )
+                .map_err(H5iError::Git)?;
+
+                // Reset index back to HEAD so the checkout_tree call starts clean.
+                if let Ok(head_commit) = repo.head().and_then(|h| h.peel_to_commit()) {
+                    let mut co = git2::build::CheckoutBuilder::new();
+                    co.force();
+                    repo.reset(head_commit.as_object(), git2::ResetType::Mixed, Some(&mut co))
+                        .map_err(H5iError::Git)?;
+                }
+
+                Some(ref_name)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // ── Restore files from the target tree into the working tree ──────────
+        let mut co = git2::build::CheckoutBuilder::new();
+        co.force();
+        co.update_index(true);
+        repo.checkout_tree(target_tree.as_object(), Some(&mut co))
+            .map_err(H5iError::Git)?;
+
+        // Delete files that exist in HEAD but not in the target tree.
+        // checkout_tree does not remove files absent from the target.
+        for (path, kind) in &changed {
+            if *kind == "deleted" {
+                let abs = workdir.join(path);
+                if abs.exists() {
+                    let _ = fs::remove_file(&abs);
+                }
+            }
+        }
+
+        Ok((shadow_ref, changed))
+    }
+
     /// Resolves the current `HEAD` reference and returns the associated commit.
     ///
     /// This method resolves symbolic references and ensures that the
@@ -3051,6 +3208,81 @@ mod tests {
         assert!(merged_text.contains("def main():"));
 
         Ok(())
+    }
+
+    // ── rewind ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_rewind_dry_run_lists_changes() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let h5i = H5iRepository::open(dir.path()).unwrap();
+
+        let commit_a = create_commit(&repo, "commit A", "foo.txt", "hello", &[]);
+        let a_obj = repo.find_commit(commit_a).unwrap();
+        create_commit(&repo, "commit B", "bar.txt", "bar", &[&a_obj]);
+
+        let short_a = &commit_a.to_string()[..8];
+        let (shadow, changed) = h5i.rewind(short_a, true, true).unwrap();
+        assert!(shadow.is_none(), "dry-run must not create a shadow ref");
+        let paths: Vec<&str> = changed.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(paths.contains(&"bar.txt"), "bar.txt should appear as deleted");
+    }
+
+    #[test]
+    fn test_rewind_restores_files_and_deletes_extras() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let h5i = H5iRepository::open(dir.path()).unwrap();
+
+        let commit_a = create_commit(&repo, "commit A", "foo.txt", "version_one", &[]);
+        let a_obj = repo.find_commit(commit_a).unwrap();
+        create_commit(&repo, "commit B", "extra.txt", "extra", &[&a_obj]);
+
+        let short_a = &commit_a.to_string()[..8];
+        h5i.rewind(short_a, true, false).unwrap();
+
+        assert!(!dir.path().join("extra.txt").exists(), "extra.txt should be deleted after rewind");
+        let content = fs::read_to_string(dir.path().join("foo.txt")).unwrap();
+        assert_eq!(content, "version_one");
+    }
+
+    #[test]
+    fn test_rewind_creates_shadow_ref_when_dirty() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let h5i = H5iRepository::open(dir.path()).unwrap();
+
+        let sig = Signature::now("test", "test@example.com").unwrap();
+        fs::write(dir.path().join("a.txt"), "original").unwrap();
+        let mut idx = repo.index().unwrap();
+        idx.add_path(std::path::Path::new("a.txt")).unwrap();
+        let tree_id = idx.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let commit_a = repo.commit(Some("HEAD"), &sig, &sig, "A", &tree, &[]).unwrap();
+
+        // Second commit (HEAD).
+        let a_obj = repo.find_commit(commit_a).unwrap();
+        fs::write(dir.path().join("b.txt"), "b_content").unwrap();
+        let mut idx = repo.index().unwrap();
+        idx.add_path(std::path::Path::new("b.txt")).unwrap();
+        idx.add_path(std::path::Path::new("a.txt")).unwrap();
+        let tree_id = idx.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "B", &tree, &[&a_obj]).unwrap();
+
+        // Dirty the staging area so shadow logic fires.
+        fs::write(dir.path().join("a.txt"), "dirty_change").unwrap();
+        let mut idx = repo.index().unwrap();
+        idx.add_path(std::path::Path::new("a.txt")).unwrap();
+        idx.write().unwrap();
+
+        let short_a = &commit_a.to_string()[..8];
+        let (shadow_ref, _) = h5i.rewind(short_a, false, false).unwrap();
+        assert!(shadow_ref.is_some(), "shadow ref should be created for dirty working tree");
+        let ref_name = shadow_ref.unwrap();
+        assert!(ref_name.starts_with("refs/h5i/shadow/"));
+        assert!(repo.find_reference(&ref_name).is_ok(), "shadow ref must exist in git");
     }
 }
 

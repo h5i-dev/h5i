@@ -184,6 +184,27 @@ enum Commands {
         yes: bool,
     },
 
+    /// Restore the working tree to the exact state of any past commit.
+    ///
+    /// Unlike `rollback` (which creates a revert commit), `rewind` directly
+    /// overwrites files in your working tree — HEAD stays where it is, so
+    /// `git status` shows the full diff and you can review before committing.
+    ///
+    /// Current dirty state is saved to `refs/h5i/shadow/<timestamp>` before
+    /// any files are touched, so recovery is always possible.
+    Rewind {
+        /// Git commit SHA to restore (full or short). Also accepts HEAD, HEAD~1, etc.
+        sha: String,
+
+        /// Show what would change without touching the working tree.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip saving the current dirty state to a shadow ref before rewinding.
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Launch the h5i web dashboard in your browser
     Serve {
         /// Port to listen on
@@ -1594,6 +1615,99 @@ fn main() -> anyhow::Result<()> {
                 style("Revert commit created:").green(),
                 style(new_oid).magenta().bold()
             );
+        }
+
+        Commands::Rewind { sha, dry_run, force } => {
+            let repo = H5iRepository::open(".")?;
+
+            // Resolve the SHA to show a friendly preview before touching anything.
+            let target_obj = repo.git().revparse_single(&sha)
+                .map_err(|_| anyhow::anyhow!("'{}' does not resolve to a git object", sha))?;
+            let target_commit = target_obj.peel_to_commit()
+                .map_err(|_| anyhow::anyhow!("'{}' is not a commit", sha))?;
+            let short_sha = &target_commit.id().to_string()[..8];
+            let msg = target_commit.message().unwrap_or("").lines().next().unwrap_or("").trim();
+
+            println!(
+                "{} {} {} {}",
+                LOOKING,
+                style("Rewinding to:").bold(),
+                style(short_sha).magenta(),
+                style(format!("\"{}\"", msg)).italic().dim(),
+            );
+
+            let (shadow_ref, changed) = repo.rewind(&sha, force, dry_run)?;
+
+            if dry_run {
+                println!(
+                    "\n  {} {} file{} would change:\n",
+                    style("◈").dim(),
+                    style(changed.len()).cyan().bold(),
+                    if changed.len() == 1 { "" } else { "s" }
+                );
+                for (path, kind) in &changed {
+                    let symbol = match *kind {
+                        "added"    => style("+").green(),
+                        "deleted"  => style("-").red(),
+                        _          => style("~").yellow(),
+                    };
+                    println!("    {} {}", symbol, style(path).dim());
+                }
+                println!(
+                    "\n{} {}",
+                    style("--dry-run").bold(),
+                    style("No changes made.").dim()
+                );
+                return Ok(());
+            }
+
+            if let Some(ref r) = shadow_ref {
+                println!(
+                    "  {} Dirty state saved → {}",
+                    style("◈").dim(),
+                    style(r).cyan(),
+                );
+                println!(
+                    "    {} {}",
+                    style("Recover with:").dim(),
+                    style(format!("git checkout {} -- .", r)).cyan(),
+                );
+            }
+
+            let added   = changed.iter().filter(|(_, k)| *k == "added").count();
+            let deleted = changed.iter().filter(|(_, k)| *k == "deleted").count();
+            let modded  = changed.len() - added - deleted;
+
+            println!(
+                "\n{} {} file{} restored  {} added  {} modified  {} deleted",
+                SUCCESS,
+                style(changed.len()).green().bold(),
+                if changed.len() == 1 { "" } else { "s" },
+                style(added).green(),
+                style(modded).yellow(),
+                style(deleted).red(),
+            );
+            println!(
+                "  {} HEAD stays at {} — review with {} before committing.",
+                style("◈").dim(),
+                style(repo.git().head()?.peel_to_commit()
+                    .map(|c| c.id().to_string()[..8].to_string())
+                    .unwrap_or_default()).magenta(),
+                style("git diff HEAD").cyan(),
+            );
+
+            // Record the rewind in the context workspace if one exists.
+            let workdir = repo.git().workdir().map(|p| p.to_path_buf());
+            if let Some(ref wd) = workdir {
+                if ctx::is_initialized(wd) {
+                    let _ = ctx::append_log(
+                        wd,
+                        "ACT",
+                        &format!("h5i rewind: restored working tree to {short_sha} \"{msg}\""),
+                        false,
+                    );
+                }
+            }
         }
 
         Commands::Notes { action } => match action {
