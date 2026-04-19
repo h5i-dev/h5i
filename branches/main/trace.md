@@ -286,3 +286,4 @@ _[Checkpoint: 69e4c9d0 — feat(context): all 5 CMV/Claude-design features imple
 _[Checkpoint: 69e4e7cb — fixed 5 UX problems from real session observation]_
 ---
 
+[14:35:53] OBSERVE: read src/main.rs
