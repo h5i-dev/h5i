@@ -557,3 +557,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [19:24:03] OBSERVE: read docs/pitch.html
 [19:24:20] ACT: edited docs/pitch.html
 [19:24:36] ACT: edited docs/pitch.html
+[19:24:40] ACT: slide 1: 4 legacy tools in row 1, h5i hero card centered in row 2; removed AI era; brightened year/desc from text-faint to rgba(255,255,255,0.45)
