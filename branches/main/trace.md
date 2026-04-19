@@ -424,3 +424,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [16:05:06] OBSERVE: read CLAUDE.md
 [16:05:17] OBSERVE: read metadata.go
 [16:05:17] OBSERVE: read session_state.go
+[16:08:25] OBSERVE: read hooks.go
