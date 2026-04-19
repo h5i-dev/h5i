@@ -185,3 +185,4 @@ _[Checkpoint: 69e4c71b — all 5 context management features implemented]_
 _[Checkpoint: 69e4c9d0 — feat(context): all 5 CMV/Claude-design features implemented, tested, documented, and committed]_
 ---
 
+[12:36:59] OBSERVE: read src/main.rs
