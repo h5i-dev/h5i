@@ -554,3 +554,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [19:21:39] ACT: edited docs/pitch.html
 [19:21:55] ACT: edited docs/pitch.html
 [19:21:58] ACT: slide 1: rewrote timeline to 2×3 rows, nodes 34→54px, tl-name 0.95→1.25rem, tl-desc 0.78→1rem
+[19:24:03] OBSERVE: read docs/pitch.html
