@@ -245,6 +245,48 @@ pub fn tool_definitions() -> Value {
                 "properties": {}
             }
         },
+        // ── commit ────────────────────────────────────────────────────────────
+        {
+            "name": "h5i_commit",
+            "description": "Create a git commit that records AI provenance (model, agent, prompt). \
+                IMPORTANT: files must be staged with `git add` before calling this — \
+                it will return an error with instructions if nothing is staged. \
+                Always prefer this over raw `git commit` so provenance is captured.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "Commit message."
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "AI model name (e.g. 'claude-sonnet-4-6')."
+                    },
+                    "agent": {
+                        "type": "string",
+                        "description": "Agent identifier (e.g. 'claude-code')."
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "The user prompt that triggered this change."
+                    }
+                },
+                "required": ["message"]
+            }
+        },
+        // ── notes/analyze ─────────────────────────────────────────────────────
+        {
+            "name": "h5i_notes_analyze",
+            "description": "Parse the current Claude Code session log and store enriched \
+                metadata (exploration footprint, causal chain, uncertainty moments, \
+                file churn) linked to HEAD. Call this once at the end of every session, \
+                after the final h5i_commit.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
         // ── context ───────────────────────────────────────────────────────────
         {
             "name": "h5i_context_init",
@@ -264,10 +306,14 @@ pub fn tool_definitions() -> Value {
         },
         {
             "name": "h5i_context_trace",
-            "description": "Append an OTA (Observe/Think/Act/Note) step to the current \
-                reasoning trace. Use this to record observations about the codebase, \
-                design decisions, and actions taken. Auto-initializes the workspace \
-                if it does not yet exist.",
+            "description": "Append one OTA (Observe/Think/Act/Note) step to the reasoning trace. \
+                Emit one entry per distinct insight — not one per phase: \
+                one OBSERVE per file read (say what matters, not just 'read the file'); \
+                one THINK per decision, always naming what you rejected and why; \
+                one ACT per file written or edited; \
+                NOTE is REQUIRED whenever you leave something incomplete, find a risk, \
+                or choose an approach with a known limitation. \
+                Auto-initializes the workspace if it does not yet exist.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -520,10 +566,12 @@ fn text_content(text: impl Into<String>) -> Value {
     })
 }
 
-/// Wrap a serialisable value as an MCP text content block (JSON-encoded).
+/// Wrap a serialisable value as an MCP content block with structured JSON.
+/// Returns both a human-readable text representation and the raw JSON so
+/// callers can parse it without double-decoding a string.
 fn json_content(v: Value) -> Value {
     json!({
-        "content": [{ "type": "text", "text": v.to_string() }]
+        "content": [{ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default() }]
     })
 }
 
@@ -636,6 +684,81 @@ fn tool_notes_churn(_params: &Value, workdir: &Path) -> Result<Value> {
     Ok(json_content(serde_json::to_value(churn)?))
 }
 
+fn tool_commit(params: &Value, workdir: &Path) -> Result<Value> {
+    use crate::metadata::{AiMetadata, TestSource};
+
+    let message = params
+        .get("message")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing required param: message"))?;
+    let model = params.get("model").and_then(Value::as_str);
+    let agent = params.get("agent").and_then(Value::as_str);
+    let prompt = params.get("prompt").and_then(Value::as_str);
+
+    let repo = H5iRepository::open(workdir)?;
+    let sig = repo.git().signature()?;
+
+    // Refuse if nothing staged.
+    let idx = repo.git().index()?;
+    let head_empty = repo.git().head().is_err();
+    let staged = if head_empty {
+        idx.len() > 0
+    } else {
+        let head_tree = repo.git().head()?.peel_to_tree()?;
+        let diff = repo.git().diff_tree_to_index(Some(&head_tree), Some(&idx), None)?;
+        diff.deltas().len() > 0
+    };
+    if !staged {
+        return Ok(json_content(json!({
+            "success": false,
+            "error": "Nothing staged. Stage files with `git add <file>` first, then call h5i_commit again."
+        })));
+    }
+
+    let ai_meta = if model.is_some() || agent.is_some() || prompt.is_some() {
+        Some(AiMetadata {
+            model_name: model.unwrap_or("unknown").to_string(),
+            agent_id: agent.unwrap_or("unknown").to_string(),
+            prompt: prompt.unwrap_or("").to_string(),
+            usage: None,
+        })
+    } else {
+        None
+    };
+
+    let oid = repo.commit(
+        message, &sig, &sig, ai_meta, TestSource::None, None, vec![], vec![],
+    )?;
+
+    // Snapshot context if initialized.
+    let _ = ctx::snapshot_for_commit(workdir, &oid.to_string());
+
+    Ok(json_content(json!({
+        "success": true,
+        "sha": &oid.to_string()[..8],
+        "message": message
+    })))
+}
+
+fn tool_notes_analyze(_params: &Value, workdir: &Path) -> Result<Value> {
+    let repo = H5iRepository::open(workdir)?;
+    let head_oid = repo.git().head()?.peel_to_commit()?.id().to_string();
+
+    let session_path = session_log::find_latest_session(workdir)
+        .ok_or_else(|| anyhow::anyhow!("No Claude session log found for this project"))?;
+
+    let analysis = session_log::analyze_session(&session_path, None)?;
+    let msg_count = analysis.message_count;
+    session_log::save_analysis(repo.h5i_path(), &head_oid, &analysis)?;
+
+    Ok(json_content(json!({
+        "success": true,
+        "commit": &head_oid[..8],
+        "messages_analyzed": msg_count,
+        "session_log": session_path.display().to_string()
+    })))
+}
+
 fn tool_context_init(params: &Value, workdir: &Path) -> Result<Value> {
     let goal = params.get("goal").and_then(Value::as_str).unwrap_or("");
     ctx::init(workdir, goal)?;
@@ -708,9 +831,7 @@ fn tool_context_merge(params: &Value, workdir: &Path) -> Result<Value> {
 
 fn tool_context_show(params: &Value, workdir: &Path) -> Result<Value> {
     if !ctx::is_initialized(workdir) {
-        return Ok(text_content(
-            "Context workspace not initialized. Call h5i_context_init first.",
-        ));
+        return Ok(json_content(json!({"initialized": false, "message": "Context workspace not initialized. Call h5i_context_init first."})));
     }
     let opts = ContextOpts {
         branch: params
@@ -735,7 +856,7 @@ fn tool_context_show(params: &Value, workdir: &Path) -> Result<Value> {
 
 fn tool_context_status(_params: &Value, workdir: &Path) -> Result<Value> {
     if !ctx::is_initialized(workdir) {
-        return Ok(text_content("Context workspace not initialized."));
+        return Ok(json_content(json!({"initialized": false})));
     }
     let current = ctx::current_branch(workdir);
     let branches = ctx::list_branches(workdir);
@@ -750,9 +871,7 @@ fn tool_context_status(_params: &Value, workdir: &Path) -> Result<Value> {
 
 fn tool_context_restore(params: &Value, workdir: &Path) -> Result<Value> {
     if !ctx::is_initialized(workdir) {
-        return Ok(text_content(
-            "Context workspace not initialized. Call h5i_context_init first.",
-        ));
+        ctx::init(workdir, "")?;
     }
     let sha = params
         .get("sha")
@@ -764,9 +883,7 @@ fn tool_context_restore(params: &Value, workdir: &Path) -> Result<Value> {
 
 fn tool_context_diff(params: &Value, workdir: &Path) -> Result<Value> {
     if !ctx::is_initialized(workdir) {
-        return Ok(text_content(
-            "Context workspace not initialized. Call h5i_context_init first.",
-        ));
+        return Ok(json_content(json!({"initialized": false})));
     }
     let from = params
         .get("from")
@@ -790,9 +907,7 @@ fn tool_context_diff(params: &Value, workdir: &Path) -> Result<Value> {
 
 fn tool_context_relevant(params: &Value, workdir: &Path) -> Result<Value> {
     if !ctx::is_initialized(workdir) {
-        return Ok(text_content(
-            "Context workspace not initialized. Call h5i_context_init first.",
-        ));
+        return Ok(json_content(json!({"initialized": false, "file": params.get("file"), "milestone_mentions": [], "trace_mentions": [], "cross_branch_mentions": []})));
     }
     let file = params
         .get("file")
@@ -809,9 +924,7 @@ fn tool_context_relevant(params: &Value, workdir: &Path) -> Result<Value> {
 
 fn tool_context_scan(params: &Value, workdir: &Path) -> Result<Value> {
     if !ctx::is_initialized(workdir) {
-        return Ok(text_content(
-            "Context workspace not initialized. Call h5i_context_init first.",
-        ));
+        return Ok(json_content(json!({"initialized": false, "score": 0.0})));
     }
     let branch = params.get("branch").and_then(Value::as_str);
     let trace = ctx::read_trace(workdir, branch)?;
@@ -821,9 +934,7 @@ fn tool_context_scan(params: &Value, workdir: &Path) -> Result<Value> {
 
 fn tool_context_pack(_params: &Value, workdir: &Path) -> Result<Value> {
     if !ctx::is_initialized(workdir) {
-        return Ok(text_content(
-            "Context workspace not initialized. Call h5i_context_init first.",
-        ));
+        return Ok(json_content(json!({"squashed_commits": 0, "message": "Nothing to pack — workspace not initialized."})));
     }
     let squashed = ctx::pack(workdir)?;
     Ok(json_content(json!({
@@ -844,6 +955,8 @@ fn tool_context_pack(_params: &Value, workdir: &Path) -> Result<Value> {
 /// wrapped in an `isError: true` MCP content response by the caller.
 pub fn call_tool(name: &str, params: &Value, workdir: &Path) -> Result<Value> {
     match name {
+        "h5i_commit" => tool_commit(params, workdir),
+        "h5i_notes_analyze" => tool_notes_analyze(params, workdir),
         "h5i_log" => tool_log(params, workdir),
         "h5i_blame" => tool_blame(params, workdir),
         "h5i_notes_show" => tool_notes_show(params, workdir),
@@ -1437,6 +1550,8 @@ mod tests {
             .collect();
 
         let expected = [
+            "h5i_commit",
+            "h5i_notes_analyze",
             "h5i_log",
             "h5i_blame",
             "h5i_notes_show",
@@ -1727,7 +1842,8 @@ mod tests {
         let r = tool_context_show(&json!({}), &path);
         assert!(r.is_ok());
         let text = r.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        assert!(text.contains("not initialized"));
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["initialized"], false);
     }
 
     #[test]
@@ -1751,7 +1867,8 @@ mod tests {
         let r = tool_context_status(&json!({}), &path);
         assert!(r.is_ok());
         let text = r.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
-        assert!(text.contains("not initialized"));
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["initialized"], false);
     }
 
     #[test]

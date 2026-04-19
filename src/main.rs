@@ -193,8 +193,11 @@ enum Commands {
         remote: String,
     },
 
-    /// Print the Claude Code hook configuration to enable automatic prompt capture
-    Hooks,
+    /// Manage Claude Code hooks for automatic prompt capture and context tracing.
+    /// Run `h5i hook setup` to print install instructions.
+    /// Run `h5i hook run` (or just `h5i hook`) as the PostToolUse handler in .claude/settings.json.
+    #[command(subcommand)]
+    Hook(HookCommands),
 
     /// Version-control Claude's memory state alongside your code
     Memory {
@@ -506,6 +509,10 @@ enum ContextCommands {
         tail: usize,
     },
 
+    /// Show all open TODO / FIXME / BLOCKED items extracted from the trace.
+    /// These are NOTE and THINK entries that contain actionable keywords.
+    Todo,
+
     /// Render the per-branch trace DAG as a coloured graph in the terminal.
     /// Each node shows its kind (OBSERVE/THINK/ACT/NOTE/MERGE), 8-hex ID,
     /// timestamp, and content. Merge nodes display both parent IDs.
@@ -564,6 +571,16 @@ enum MemoryCommands {
 }
 
 #[derive(Subcommand)]
+enum HookCommands {
+    /// Print install instructions for Claude Code hooks (prompt capture + context tracing)
+    Setup,
+
+    /// Run as the PostToolUse handler: reads JSON from stdin, emits h5i context traces.
+    /// Register in .claude/settings.json as: { "command": "h5i hook run" }
+    Run,
+}
+
+#[derive(Subcommand)]
 enum PolicyCommands {
     /// Create `.h5i/policy.toml` with starter rules
     Init,
@@ -577,7 +594,13 @@ enum PolicyCommands {
 
 const H5I_CLAUDE_INSTRUCTIONS: &str = r#"## h5i Integration
 
-This repository uses **h5i** (a Git sidecar for AI-era version control). Prefer h5i commands over raw git equivalents. h5i stores metadata in `refs/h5i/notes` and `refs/h5i/memory`; these refs are NOT included in a plain `git push` — use `h5i push` to share them.
+This repository uses **h5i** (a Git sidecar for AI-era version control).
+
+**Prefer MCP tools over Bash commands wherever possible.**
+h5i exposes native MCP tools (`h5i_context_trace`, `h5i_commit`, `h5i_notes_analyze`, etc.)
+that are faster and safer than shelling out. Use `Bash: h5i …` only when no MCP tool covers the operation.
+
+h5i stores metadata in `refs/h5i/notes` and `refs/h5i/memory`; these refs are NOT included in a plain `git push` — use `h5i push` to share them.
 
 ---
 
@@ -594,16 +617,28 @@ h5i context status
 h5i context init --goal "<one-line summary of what you are about to do>"
 ```
 
-**While working**, emit a trace entry after each logical step:
+**While working**, emit a trace entry for each distinct insight or action.
+One OBSERVE per file read. One THINK per design decision. One ACT per file edited.
+A typical single-file task has 5–8 entries; a multi-file task has more.
+
 ```bash
-# After reading / grepping files to understand the codebase:
-h5i context trace --kind OBSERVE "<what you found>"
+# One per file read — say what matters about it, not just that you read it:
+h5i context trace --kind OBSERVE "<specific finding, constraint, or surprising detail>"
 
-# After deciding on an approach or making a design choice:
-h5i context trace --kind THINK "<the decision and why>"
+# One per design decision — always include what you rejected and why:
+h5i context trace --kind THINK "<chosen approach> over <rejected alternative> because <reason>"
+# Bad:  "will add a mutex"   ← just a plan, no reasoning
+# Good: "inline mutex over OpenZeppelin — no external dep needed for a single guard"
 
-# After editing or writing a file:
-h5i context trace --kind ACT "<what you changed and where>"
+# One per file written or edited:
+h5i context trace --kind ACT "edited <file>: <what changed>"
+# If the implementation surprised you or diverged from THINK, note that here.
+
+# REQUIRED when any of these are true — do not skip:
+#   • you didn't handle an edge case you noticed
+#   • the approach has a known limitation
+#   • something is left for a follow-up
+h5i context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 ```
 
 **After completing a logical milestone** (analysis done, feature implemented, bug fixed):
@@ -623,25 +658,35 @@ h5i notes analyze   # links the just-completed Claude Code session to HEAD
 
 ### Committing
 
-Always use `h5i commit` instead of `git commit`.
+**Always stage files before committing** — `h5i_commit` (MCP) and `h5i commit` (CLI) only commit what is staged and will error if nothing is staged.
 
-When **you** (Claude) made or assisted with the change, always record AI provenance:
-
+```bash
+git add <file1> <file2> …   # stage exactly the files you changed — never git add .
 ```
-h5i commit -m "add retry logic to HTTP client" \
-  --model claude-sonnet-4-6 \
-  --agent claude-code \
-  --prompt "add exponential backoff to the HTTP client"
+
+Then commit via MCP tool (preferred):
+```
+h5i_commit(message="…", model="claude-sonnet-4-6", agent="claude-code", prompt="…")
+```
+
+Or via Bash if MCP is unavailable:
+```bash
+h5i commit -m "…" --model claude-sonnet-4-6 --agent claude-code --prompt "…"
 ```
 
 Additional flags to add when relevant:
 - `--tests`  — when tests were added or modified (captures test metrics)
 - `--audit`  — on security-sensitive, authentication, or high-risk changes
 
-**Example output:**
-```
-✔  Committed a3f8c12  add retry logic to HTTP client
-   model: claude-sonnet-4-6 · agent: claude-code · 312 tokens
+**Example:**
+```bash
+git add src/http_client.rs
+h5i commit -m "add retry logic to HTTP client" \
+  --model claude-sonnet-4-6 \
+  --agent claude-code \
+  --prompt "add exponential backoff to the HTTP client"
+# ✔  Committed a3f8c12  add retry logic to HTTP client
+#    model: claude-sonnet-4-6 · agent: claude-code · 312 tokens
 ```
 
 ---
@@ -959,6 +1004,28 @@ fn main() -> anyhow::Result<()> {
         } => {
             let repo = H5iRepository::open(".")?;
             let sig = repo.git().signature()?; // Fetch system-default Git signature
+
+            // Refuse to commit if nothing is staged — guide the caller to git add first.
+            {
+                let idx = repo.git().index()?;
+                let head_empty = repo.git().head().is_err(); // true on first commit
+                let staged = if head_empty {
+                    idx.len() > 0
+                } else {
+                    let head_tree = repo.git().head()?.peel_to_tree()?;
+                    let diff = repo.git().diff_tree_to_index(Some(&head_tree), Some(&idx), None)?;
+                    diff.deltas().len() > 0
+                };
+                if !staged {
+                    eprintln!(
+                        "{} Nothing staged. Stage the files you want to commit first:\n\n  {}\n\nThen re-run {}.",
+                        ERROR,
+                        style("git add <file> …").cyan(),
+                        style("h5i commit").cyan(),
+                    );
+                    std::process::exit(1);
+                }
+            }
 
             // Resolution order: CLI flag > environment variable > pending_context.json
             let pending = repo.read_pending_context()?;
@@ -1800,7 +1867,7 @@ fn main() -> anyhow::Result<()> {
             }
         },
 
-        Commands::Hooks => {
+        Commands::Hook(HookCommands::Setup) => {
             let hook_script = r#"#!/usr/bin/env bash
 # h5i Claude Code hook — writes the user prompt to .git/.h5i/pending_context.json
 # so that `h5i commit` can pick it up automatically without --prompt.
@@ -1901,6 +1968,58 @@ jq -c '{
                 style("H5I_PROMPT").yellow() ,
                 "/ H5I_MODEL / H5I_AGENT_ID are read automatically at commit time."
             );
+        }
+
+        Commands::Hook(HookCommands::Run) => {
+            use std::io::Read as _;
+            // Read JSON from stdin (Claude Code sends PostToolUse payload here).
+            let mut raw = String::new();
+            std::io::stdin().read_to_string(&mut raw).unwrap_or(0);
+            if raw.trim().is_empty() {
+                return Ok(());
+            }
+            let Ok(data) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                return Ok(());
+            };
+            let tool = data.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+            let inp = data.get("tool_input").cloned().unwrap_or_default();
+            let file_path = inp.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+
+            if file_path.is_empty() || !matches!(tool, "Edit" | "Write" | "Read") {
+                return Ok(());
+            }
+
+            let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+            // Only emit traces when inside a git repo that has h5i context initialized.
+            let has_ctx = match git2::Repository::discover(&workdir) {
+                Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
+                Err(_) => false,
+            };
+            if !has_ctx {
+                return Ok(());
+            }
+
+            // Relativize the path against the workdir for readability.
+            let display_path = std::path::Path::new(file_path)
+                .strip_prefix(&workdir)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| {
+                    std::path::Path::new(file_path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| file_path.to_owned())
+                });
+
+            let (kind, msg) = match tool {
+                "Edit" => ("ACT",     format!("edited {display_path}")),
+                "Write" => ("ACT",    format!("wrote {display_path}")),
+                "Read" => ("OBSERVE", format!("read {display_path}")),
+                _ => return Ok(()),
+            };
+
+            // Emit the trace; ignore errors so we never block Claude Code.
+            let _ = ctx::append_log(&workdir, kind, &msg, false);
         }
 
         Commands::Serve { port } => {
@@ -2500,6 +2619,13 @@ jq -c '{
                         anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
                     }
                     ctx::print_cached_prefix(workdir, tail)?;
+                }
+
+                ContextCommands::Todo => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    ctx::print_todos(workdir)?;
                 }
 
                 ContextCommands::Dag { branch } => {

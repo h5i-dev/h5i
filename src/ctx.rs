@@ -104,6 +104,10 @@ pub struct GccContext {
     pub stable_line_count: usize,
     /// Number of trace lines in the dynamic (volatile) suffix.
     pub dynamic_line_count: usize,
+    /// Open TODO/FIXME items extracted from NOTE and THINK trace entries.
+    pub todo_items: Vec<String>,
+    /// Last 8 trace entries shown by default in `show` without --trace.
+    pub mini_trace: Vec<String>,
 }
 
 // ── DAG types (Feature 1) ─────────────────────────────────────────────────────
@@ -408,7 +412,7 @@ pub fn gcc_commit(workdir: &Path, summary: &str, contribution: &str) -> Result<(
     let new_trace = format!("{existing_trace}{log_marker}");
 
     let existing_main = ctx_read_file(&repo, "main.md").unwrap_or_default();
-    let new_main = append_main_note(&existing_main, &branch, summary);
+    let new_main = auto_update_milestones(&append_main_note(&existing_main, &branch, summary), summary);
 
     // Clear ephemeral scratch traces on each milestone commit.
     let eph_path = ephemeral_path(&branch);
@@ -585,15 +589,57 @@ pub fn gcc_context(workdir: &Path, opts: &ContextOpts) -> Result<GccContext, H5i
         None
     };
 
-    // Compute stable-prefix / dynamic-suffix boundary (Feature 4).
-    // Stable = everything except the last 40 trace lines.
-    // Dynamic = last 40 trace lines (these change every step and should not be cached).
+    // ── Stable-prefix / dynamic-suffix boundary (Feature 4) ──────────────────
+    let trace_path = format!("branches/{branch_name}/trace.md");
+    let trace_text = ctx_read_file(&repo, &trace_path).unwrap_or_default();
     let (stable_line_count, dynamic_line_count) = {
-        let trace_path = format!("branches/{branch_name}/trace.md");
-        let log_text = ctx_read_file(&repo, &trace_path).unwrap_or_default();
-        let total = log_text.lines().count();
+        let total = trace_text.lines().count();
         let dynamic = 40_usize.min(total);
         (total - dynamic, dynamic)
+    };
+
+    // ── TODO items: NOTE/THINK entries that start with or contain "TODO" ──────
+    let todo_items: Vec<String> = {
+        let todo_re = ["TODO", "FIXME", "BLOCKED", "REMAINING", "NEXT:"];
+        trace_text
+            .lines()
+            .filter_map(|line| {
+                let upper = line.to_uppercase();
+                let is_todo = todo_re.iter().any(|kw| upper.contains(kw));
+                if is_todo && (line.contains("] NOTE:") || line.contains("] THINK:")) {
+                    // Strip the timestamp prefix: "[HH:MM:SS] KIND: content"
+                    let content = line
+                        .splitn(3, ": ")
+                        .nth(1)
+                        .map(|s| format!("{}: {}", s, line.splitn(3, ": ").nth(2).unwrap_or("")))
+                        .unwrap_or_else(|| line.to_string());
+                    let trimmed = content.trim().trim_start_matches("NOTE: ").trim_start_matches("THINK: ");
+                    Some(trimmed.chars().take(100).collect())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+
+    // ── Mini-trace: last 8 non-empty, non-header OTA lines ───────────────────
+    let mini_trace: Vec<String> = {
+        let ota_lines: Vec<&str> = trace_text
+            .lines()
+            .filter(|l| {
+                !l.trim().is_empty()
+                    && !l.starts_with('#')
+                    && !l.starts_with("---")
+                    && !l.starts_with("_[Checkpoint")
+            })
+            .collect();
+        ota_lines
+            .iter()
+            .rev()
+            .take(8)
+            .rev()
+            .map(|l| l.to_string())
+            .collect()
     };
 
     Ok(GccContext {
@@ -606,6 +652,8 @@ pub fn gcc_context(workdir: &Path, opts: &ContextOpts) -> Result<GccContext, H5i
         metadata_snippet,
         stable_line_count,
         dynamic_line_count,
+        todo_items,
+        mini_trace,
     })
 }
 
@@ -938,25 +986,39 @@ pub fn relevant(workdir: &Path, file_path: &str) -> Result<RelevantContext, H5iE
         .and_then(|n| n.to_str())
         .unwrap_or(file_path);
 
-    let matches_file = |text: &str| text.contains(file_path) || text.contains(file_name);
+    // Match only lines that literally contain the full file path or the bare
+    // filename — no ±1 context expansion, which was pulling in unrelated entries.
+    let matches_file = |text: &str| {
+        // Prefer exact path match; fall back to filename only if unambiguous
+        // (filename must appear as a whole token, not as a substring of another path).
+        if text.contains(file_path) {
+            return true;
+        }
+        // file_name match: guard against false positives like "auth.rs" matching
+        // "noauth.rs" by requiring a word boundary on the left.
+        if file_name.len() > 3 {
+            let mut start = 0;
+            while let Some(pos) = text[start..].find(file_name) {
+                let abs = start + pos;
+                let left_ok = abs == 0 || !text.as_bytes()[abs - 1].is_ascii_alphanumeric();
+                if left_ok {
+                    return true;
+                }
+                start = abs + 1;
+            }
+        }
+        false
+    };
 
     // ── Trace mentions ────────────────────────────────────────────────────────
     let trace_text =
         ctx_read_file(&repo, &format!("branches/{branch}/trace.md")).unwrap_or_default();
-    let trace_lines: Vec<&str> = trace_text.lines().collect();
     let mut trace_mentions: Vec<String> = Vec::new();
-    for (i, line) in trace_lines.iter().enumerate() {
-        if matches_file(line) {
-            // Include one line before and one after for context.
-            let start = i.saturating_sub(1);
-            let end = (i + 2).min(trace_lines.len());
-            for l in &trace_lines[start..end] {
-                if !l.is_empty() {
-                    let s = l.to_string();
-                    if !trace_mentions.contains(&s) {
-                        trace_mentions.push(s);
-                    }
-                }
+    for line in trace_text.lines() {
+        if matches_file(line) && !line.is_empty() {
+            let s = line.to_string();
+            if !trace_mentions.contains(&s) {
+                trace_mentions.push(s);
             }
         }
     }
@@ -1586,9 +1648,36 @@ pub fn print_context(ctx: &GccContext) {
         }
     }
 
+    // Always show last 8 trace entries (mini-trace) so `show` is useful without --trace.
+    if !ctx.mini_trace.is_empty() {
+        println!();
+        println!("  {}", style("Recent Trace:").bold());
+        for line in &ctx.mini_trace {
+            let styled = if line.contains("] ACT:") {
+                style(line.as_str()).green().dim()
+            } else if line.contains("] THINK:") {
+                style(line.as_str()).yellow().dim()
+            } else if line.contains("] NOTE:") {
+                style(line.as_str()).white().dim()
+            } else {
+                style(line.as_str()).dim()
+            };
+            println!("    {}", styled);
+        }
+    }
+
+    // Open TODOs extracted from NOTE/THINK entries.
+    if !ctx.todo_items.is_empty() {
+        println!();
+        println!("  {}", style("Open TODOs:").bold().yellow());
+        for item in &ctx.todo_items {
+            println!("    {} {}", style("□").yellow(), style(item).dim());
+        }
+    }
+
     if !ctx.recent_log_lines.is_empty() {
         println!();
-        println!("  {}", style("Recent OTA Log:").bold());
+        println!("  {}", style("Full OTA Log (recent):").bold());
         for line in ctx.recent_log_lines.iter().take(10) {
             println!("    {}", style(line).dim());
         }
@@ -1679,6 +1768,57 @@ pub fn print_status(workdir: &Path) -> Result<(), H5iError> {
         );
     }
 
+    Ok(())
+}
+
+/// Extract and print all open TODO/FIXME/BLOCKED items from the current branch trace.
+pub fn print_todos(workdir: &Path) -> Result<(), H5iError> {
+    use console::style;
+
+    let repo = ctx_git_repo(workdir)?;
+    let branch = current_branch(workdir);
+    let trace_text =
+        ctx_read_file(&repo, &format!("branches/{branch}/trace.md")).unwrap_or_default();
+
+    let keywords = ["TODO", "FIXME", "BLOCKED", "REMAINING", "NEXT:"];
+    let items: Vec<&str> = trace_text
+        .lines()
+        .filter(|l| {
+            // Only surface items from NOTE and THINK entries, not every OBSERVE.
+            let is_note_or_think = l.contains("] NOTE:") || l.contains("] THINK:");
+            let u = l.to_uppercase();
+            is_note_or_think && keywords.iter().any(|kw| u.contains(kw))
+        })
+        .collect();
+
+    println!(
+        "{}",
+        style(format!("── Open TODOs ──────────────────────────────── {branch} ──")).dim()
+    );
+
+    if items.is_empty() {
+        println!("  {}", style("No TODO/FIXME/BLOCKED items found in trace.").dim());
+        return Ok(());
+    }
+
+    for item in &items {
+        // Strip timestamp prefix for cleaner display.
+        let content = item
+            .splitn(2, "] ")
+            .nth(1)
+            .unwrap_or(item)
+            .trim_start_matches("NOTE: ")
+            .trim_start_matches("THINK: ");
+        println!("  {} {}", style("□").yellow(), style(content).dim());
+    }
+
+    println!();
+    println!(
+        "  {} {} item{} found",
+        style("◈").dim(),
+        style(items.len()).yellow().bold(),
+        if items.len() == 1 { "" } else { "s" }
+    );
     Ok(())
 }
 
@@ -1996,28 +2136,38 @@ Show active branch, commit count, and log size.
 ## Workflow Pattern
 
 ```
-# Session start (mandatory)
-h5i context show --trace
+# ── Session start (mandatory) ──────────────────────────────────────
+h5i context show --trace          # restore goal, milestones, recent trace
+h5i context todo                  # surface any open TODOs from prior sessions
 
-# During execution (continuous)
-h5i context trace --kind OBSERVE "test suite output: 3 failures in auth module"
-h5i context trace --kind THINK   "failures are in token validation; likely a regex issue"
-h5i context trace --kind ACT     "editing src/auth/token.rs validate() function"
+# ── Before touching a file ─────────────────────────────────────────
+h5i context relevant src/auth.rs  # check if prior reasoning about this file exists
 
-# Reaching a milestone
-h5i context commit "Fixed token validation regex" \
-  --detail "Replaced greedy quantifier with possessive; all 47 auth tests now pass."
+# ── During execution (continuous) ──────────────────────────────────
+h5i context trace --kind OBSERVE "test suite: 3 failures in auth module"
+h5i context trace --kind THINK   "failures in token validation — likely regex issue"
+h5i context trace --kind ACT     "fixed greedy quantifier in src/auth/token.rs:validate()"
 
-# Session end
-h5i context status
+# ── After each meaningful chunk of work ────────────────────────────
+h5i context commit "Fixed token validation" \
+  --detail "Replaced greedy quantifier; all 47 auth tests now pass."
+
+# ── Session end (mandatory) ─────────────────────────────────────────
+h5i commit -m "fix token validation regex" \
+  --model <model> --agent claude-code \
+  --prompt "<the user's original request>"    # records AI provenance in git
+h5i notes analyze                             # links this session to HEAD commit
 ```
 
 ## Guidelines
-1. Log every OTA step — fine-grained traces are the primary recovery mechanism.
-2. Commit at every meaningful milestone, not just at the end.
-3. Branch before any risky or divergent exploration.
-4. Always run `h5i context show` at the start of a new session.
-5. Update main.md milestones via `h5i context write main.md <content>` when goals complete.
+1. **`h5i context show` first, every session** — never start work without restoring context.
+2. **`h5i context relevant <file>` before editing** — check prior reasoning about the file.
+3. **Trace every OTA step** — fine-grained traces are the primary recovery mechanism.
+4. **`h5i context commit` at every milestone** — not just at the end; captures reasoning.
+5. **`h5i commit` at the end** — records AI provenance in git history alongside code.
+6. **`h5i notes analyze` to close out** — links the session footprint to the git commit.
+7. Branch before any risky or divergent exploration (`h5i context branch`).
+8. Use `h5i context scope <name>` to delegate to a subagent without polluting main thread.
 "#
     )
 }
@@ -2073,6 +2223,28 @@ fn ensure_branch_git(repo: &Repository, name: &str, purpose: &str) -> Result<(),
 }
 
 /// Append a one-line progress note to `main.md` under `## Notes`.
+/// Mark "[ ] Initial setup" done and append a new `[x] summary` milestone.
+fn auto_update_milestones(main_md: &str, summary: &str) -> String {
+    // Tick off the placeholder "Initial setup" milestone on the first real commit.
+    let ticked = main_md.replace("- [ ] Initial setup\n", "- [x] Initial setup\n");
+    // Insert the new completed milestone into the Milestones section.
+    let new_entry = format!("- [x] {summary}\n");
+    if let Some(pos) = ticked.find("## Milestones") {
+        let after_header = &ticked[pos..];
+        // Find the end of this section (next "##" heading or end of string).
+        let section_len = after_header[1..]  // skip the '#' of the heading itself
+            .find("\n## ")
+            .map(|i| i + 1)
+            .unwrap_or(after_header.len());
+        let insert_at = pos + section_len;
+        let mut result = ticked.clone();
+        result.insert_str(insert_at, &new_entry);
+        result
+    } else {
+        format!("{ticked}\n## Milestones\n{new_entry}")
+    }
+}
+
 fn append_main_note(content: &str, branch: &str, summary: &str) -> String {
     let ts = Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
     let note = format!("- [{ts}] `{branch}`: {summary}\n");
