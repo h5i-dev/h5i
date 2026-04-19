@@ -13,6 +13,7 @@ Command reference for all h5i subcommands and flags.
 - [h5i log](#h5i-log)
 - [h5i blame](#h5i-blame)
 - [h5i rollback](#h5i-rollback)
+- [h5i rewind](#h5i-rewind)
 - [h5i notes](#h5i-notes)
   - [h5i notes analyze](#h5i-notes-analyze)
   - [h5i notes show](#h5i-notes-show)
@@ -33,6 +34,8 @@ Command reference for all h5i subcommands and flags.
   - [h5i context merge](#h5i-context-merge)
   - [h5i context scope](#h5i-context-scope)
   - [h5i context status](#h5i-context-status)
+  - [h5i context todo](#h5i-context-todo)
+  - [h5i context knowledge](#h5i-context-knowledge)
   - [h5i context prompt](#h5i-context-prompt)
   - [h5i context scan](#h5i-context-scan)
   - [h5i context restore](#h5i-context-restore)
@@ -100,21 +103,33 @@ h5i init
 
 ---
 
-## h5i hooks
+## h5i hook
 
 ```
-h5i hooks
+h5i hook setup   # print install instructions
+h5i hook run     # PostToolUse handler (reads JSON from stdin)
 ```
 
-Print setup instructions for the Claude Code prompt-capture hook and MCP server.
+`h5i hook setup` prints the two configuration steps needed to activate automatic prompt capture and context tracing.
 
-Running this command outputs three steps:
+`h5i hook setup` outputs two steps:
 
-1. **Step 1 — hook script**: Save to `~/.claude/hooks/h5i-capture-prompt.sh` and make it executable. After setup, every user message submitted to Claude Code is written to `.git/.h5i/pending_context.json`. The next `h5i commit` consumes and clears this file, recording the prompt automatically — no `--prompt` flag needed.
+1. **Step 1 — PostToolUse hook**: Add the following to `.claude/settings.json` so that `h5i hook run` fires after every tool call. It reads the tool event JSON from stdin, emits an `h5i context trace` entry, and (on `Read` events) injects prior reasoning about the file into Claude's context window.
 
-2. **Step 2 — settings.json hook registration**: Add the `hooks` block to `~/.claude/settings.json` to activate the prompt-capture hook.
+   ```json
+   {
+     "hooks": {
+       "PostToolUse": [
+         {
+           "matcher": "Edit|Write|Read",
+           "hooks": [{ "type": "command", "command": "h5i hook run" }]
+         }
+       ]
+     }
+   }
+   ```
 
-3. **Step 3 — MCP server registration**: Add the `mcpServers` block to `~/.claude/settings.json`:
+2. **Step 2 — MCP server registration**: Add the `mcpServers` block to `~/.claude/settings.json`:
 
    ```json
    {
@@ -157,6 +172,7 @@ Flag resolution order: CLI flag → environment variable → pending context fil
 | `--ast` | — | Capture an AST snapshot for semantic blame |
 | `--audit` | — | Run integrity rules before committing (see [Appendix: Integrity Rules](#appendix-integrity-rules)) |
 | `--force` | — | Commit despite integrity warnings. Violations always block regardless of this flag. |
+| `--add <path>` | — | Stage this path before committing (equivalent to `git add <path>`). Repeatable. Eliminates the separate `git add` step when used in scripts or MCP tool calls. |
 
 **Example — basic commit with hooks**
 
@@ -369,6 +385,74 @@ Matched commit:
 
 Revert this commit? [y/N]
 ```
+
+---
+
+## h5i rewind
+
+```
+h5i rewind <sha> [options]
+```
+
+Restore the working tree to the exact file state of any past commit **without moving HEAD**. Unlike `rollback` (which creates a new revert commit), `rewind` directly overwrites files in place so you can inspect the result with `git diff HEAD` before deciding what to do next.
+
+**Safety**: before touching any file, the current dirty state is committed to `refs/h5i/shadow/<yyyymmdd-hhmmss>` — a lightweight WIP commit that is never on any branch. Recovery is always possible:
+
+```bash
+git checkout refs/h5i/shadow/<timestamp> -- .
+```
+
+**Options**
+
+| Option | Description |
+|--------|-------------|
+| `<sha>` | Git commit SHA to restore. Accepts full or short SHAs and rev expressions (`HEAD~3`, branch names, tags). Required. |
+| `--dry-run` | Print the list of files that would change without touching the working tree. |
+| `--force` | Skip saving the dirty state to a shadow ref. Safe when the working tree is already clean. |
+
+**Example — preview before committing**
+
+```bash
+h5i rewind abc1234 --dry-run
+```
+
+```
+◈  3 files would change:
+
+    ~ src/http_client.rs
+    + src/retry.rs
+    - src/legacy_retry.rs
+
+--dry-run  No changes made.
+```
+
+**Example — recover from a bad agent run**
+
+```bash
+# Rewind to the commit before the agent introduced the regression.
+h5i rewind HEAD~2
+# → dirty state saved → refs/h5i/shadow/20260420-143012
+# → 5 files restored  1 added  3 modified  1 deleted
+# → HEAD stays at abc1234 — review with git diff HEAD before committing.
+
+# If the result looks good, commit normally.
+git add -A
+h5i commit -m "rewind: restore state before broken refactor" \
+  --agent claude-code --model claude-sonnet-4-6
+
+# If you want to undo the rewind instead, recover the pre-rewind state.
+git checkout refs/h5i/shadow/20260420-143012 -- .
+```
+
+**What changes after a rewind**
+
+| Files in target commit | Files in HEAD only | Untracked files |
+|------------------------|-------------------|-----------------|
+| Restored to target content | Deleted from working tree | Left untouched |
+
+HEAD is not moved — all restored content shows up as staged (index updated by `checkout_tree`) and `git status` reports the full diff.
+
+**MCP tool**: `h5i_rewind` — takes `sha` (required), `dry_run`, and `force` boolean params. Returns `{ files_changed, files, shadow_ref }`.
 
 ---
 
@@ -843,6 +927,7 @@ Print an overview of the current workspace state:
 - Other reasoning branches (if any)
 - **Scoped subagents** — `scope/*` branches listed separately so active delegations are visible at a glance
 - **Trace cache split** — how many trace lines fall in the stable prefix (prompt-cache friendly) vs. the dynamic suffix (changes every step)
+- **Commits flagged for review** — if `h5i notes analyze` has been run, the top 3 commits scoring above 0.40 on the review heuristic are surfaced inline, so you don't need a separate `h5i notes review` call to spot what needs human attention
 
 ```
 ── Context Status ──────────────────────────────────────────────
@@ -850,7 +935,56 @@ Print an overview of the current workspace state:
   Other branches: experiment/sync-session
   Scoped subagents: scope/investigate-auth
   Trace: stable 47 lines  ·  dynamic 40 lines  (prompt-cache boundary)
+
+  Commits flagged for review:
+    ⚑ a3f8c12 score 0.74  "add retry logic to HTTP client"
+      · high uncertainty (5 signals)
+    ⚑ 9e21b04 score 0.52  "refactor auth middleware"
+      · BLIND_EDIT in src/auth.rs
 ```
+
+---
+
+### h5i context todo
+
+```
+h5i context todo
+```
+
+Extract all open TODO / FIXME / BLOCKED items from the current branch's trace. Only NOTE and THINK entries containing these keywords are surfaced, so noise from OBSERVE lines is filtered out.
+
+```
+── Open TODOs ─────────────────────────────────── main ──
+  □ add integration test for the timeout path
+  □ FIXME: token refresh is hardcoded to 3600s — should come from config
+  □ BLOCKED: waiting on legal sign-off before shipping the audit log
+
+  ◈ 3 items found
+```
+
+---
+
+### h5i context knowledge
+
+```
+h5i context knowledge
+```
+
+Distill all THINK entries from **every** context branch into a project-wide knowledge base. Entries are deduplicated by content and labelled with the branch they came from. The current branch's entries are highlighted in cyan; entries from other branches appear dimmed.
+
+Use this at the start of a session to re-absorb the project's accumulated design rationale without re-reading the full trace on every branch.
+
+```
+── Project Knowledge (distilled THINK entries) ─────────────
+  ◈ [main]              exponential backoff with jitter is safest under high load
+  ◈ [main]              Redis chosen over in-process HashMap — survives restarts
+  ◈ [experiment/sync]   synchronous fallback would block the async runtime
+  ◈ [main]              auth middleware rewrite driven by legal compliance, not tech debt
+
+  ◈ 4 design decisions across all branches
+```
+
+**MCP tool**: `h5i_context_knowledge` — returns `{ "thoughts": [{ "branch", "thought" }, ...] }`.
 
 ---
 
@@ -1640,6 +1774,9 @@ After restarting Claude Code, all h5i tools become available natively inside any
 
 | Tool | Equivalent CLI | Description |
 |------|----------------|-------------|
+| `h5i_commit` | `h5i commit` | Create a git commit with AI provenance. Files must be staged first (`git add`). |
+| `h5i_rewind` | `h5i rewind` | Restore working tree to any past commit. Saves dirty state to a shadow ref before touching anything. |
+| `h5i_notes_analyze` | `h5i notes analyze` | Parse the current session log and link analysis to HEAD. Call once at session end. |
 | `h5i_log` | `h5i log` | Recent commits with AI provenance metadata |
 | `h5i_blame` | `h5i blame` | Per-line or AST-node authorship with model/prompt annotation |
 | `h5i_notes_show` | `h5i notes show` | Full session analysis for a commit |
@@ -1654,12 +1791,25 @@ After restarting Claude Code, all h5i tools become available natively inside any
 | `h5i_context_checkout` | `h5i context checkout` | Switch active reasoning branch |
 | `h5i_context_merge` | `h5i context merge` | Merge a reasoning branch back into current |
 | `h5i_context_show` | `h5i context show` | Full workspace state as JSON |
-| `h5i_context_status` | `h5i context status` | Compact workspace summary |
+| `h5i_context_status` | `h5i context status` | Compact workspace summary (includes proactive review flags) |
+| `h5i_context_knowledge` | `h5i context knowledge` | All THINK entries across every branch as structured JSON |
+| `h5i_context_restore` | `h5i context restore` | Restore context workspace to a past git commit's snapshot |
+| `h5i_context_diff` | `h5i context diff` | Show how context workspace changed between two git commits |
+| `h5i_context_relevant` | `h5i context relevant` | All context entries mentioning a specific file |
+| `h5i_context_scan` | `h5i context scan` | Prompt-injection risk scan of the trace |
+| `h5i_context_pack` | `h5i context pack` | Three-pass lossless compaction of the OTA trace |
 
 **Tool parameters**
 
 | Tool | Parameter | Type | Required | Default | Description |
 |------|-----------|------|----------|---------|-------------|
+| `h5i_commit` | `message` | string | **yes** | — | Commit message |
+| `h5i_commit` | `prompt` | string | no | — | The prompt that triggered this commit |
+| `h5i_commit` | `model` | string | no | — | Model name, e.g. `claude-sonnet-4-6` |
+| `h5i_commit` | `agent_id` | string | no | — | Agent identifier, e.g. `claude-code` |
+| `h5i_rewind` | `sha` | string | **yes** | — | Commit SHA or rev expression to restore |
+| `h5i_rewind` | `dry_run` | boolean | no | false | Preview changes without touching files |
+| `h5i_rewind` | `force` | boolean | no | false | Skip shadow-ref backup |
 | `h5i_log` | `limit` | integer | no | 20 | Max commits to return |
 | `h5i_blame` | `file` | string | **yes** | — | Relative path to blame |
 | `h5i_blame` | `mode` | `"line"` \| `"ast"` | no | `"line"` | Blame granularity |
@@ -1864,6 +2014,7 @@ Three additional directories (`ast/`, `crdt/`, `metadata/`) are created on `h5i 
 | `refs/h5i/memory` | Linear commit history | Claude memory snapshots as git tree objects; each commit carries the linked code-commit OID |
 | `refs/h5i/context` | Git tree | Context workspace: `main.md`, `.current_branch`, `branches/<name>/{commit.md,trace.md,dag.json,ephemeral.md,metadata.yaml}` |
 | `refs/h5i/ast` | Git objects | AST hash snapshots for semantic blame |
+| `refs/h5i/shadow/<yyyymmdd-hhmmss>` | WIP commit | Pre-rewind working-tree snapshot created by `h5i rewind` before overwriting files. Never on any branch; recover with `git checkout refs/h5i/shadow/<ts> -- .` |
 
 The context workspace commands display paths under `.h5i-ctx/` in their output, but the data is stored in `refs/h5i/context`.
 

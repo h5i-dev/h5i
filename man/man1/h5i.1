@@ -133,6 +133,19 @@ overrides warnings only.
 Commit despite integrity
 .I warnings
 (violations still block).
+.TP
+.BI \-\-add\  PATH
+Stage
+.I PATH
+before committing (equivalent to running
+.B git add
+.I PATH
+beforehand).
+Repeatable:
+.BR "\-\-add src/foo.rs \-\-add src/bar.rs" .
+Eliminates the separate
+.B git add
+step when calling from scripts or MCP tools.
 .RE
 .PP
 .B Flag resolution order:
@@ -202,6 +215,49 @@ OID of the incoming branch.
 .TP
 .I FILE
 Relative path to the file to resolve.
+.RE
+.
+.\" ─── rewind ────────────────────────────────────────────────────────────────
+.SS h5i rewind \fISHA\fR [\fIOPTIONS\fR]
+Restore the working tree to the exact file state of
+.I SHA
+without moving HEAD.
+Files in the target commit are restored to their stored content; files that
+exist in HEAD but are absent from the target commit are deleted from disk.
+After the rewind,
+.B git diff HEAD
+shows the full picture \(em review it before deciding to commit.
+.PP
+.B Safety:
+before touching any file, the current dirty state (staged + unstaged) is
+committed to
+.BI refs/h5i/shadow/ <yyyymmdd\-hhmmss>
+so recovery is always possible:
+.PP
+.RS 4
+.nf
+git checkout refs/h5i/shadow/<timestamp> \-\- .
+.fi
+.RE
+.PP
+.B Options
+.RS 4
+.TP
+.B \-\-dry\-run
+Print the list of files that would change without touching the working tree.
+.TP
+.B \-\-force
+Skip saving dirty state to a shadow ref.
+Safe when the working tree is already clean.
+.RE
+.PP
+.B Examples
+.RS 4
+.nf
+h5i rewind HEAD~2 \-\-dry\-run          # preview only
+h5i rewind abc1234                    # restore + save shadow ref if dirty
+h5i rewind abc1234 \-\-force           # restore without backup
+.fi
 .RE
 .
 .\" ─── rollback ───────────────────────────────────────────────────────────────
@@ -296,20 +352,40 @@ Remote to push to (default:
 .BR origin ).
 .RE
 .
-.\" ─── hooks ──────────────────────────────────────────────────────────────────
-.SS h5i hooks
-Print the Claude Code hook configuration required for automatic prompt
-capture.
-Outputs the shell script to save as
-.I ~/.claude/hooks/h5i\-capture\-prompt.sh
-and the
-.I ~/.claude/settings.json
-snippet to register it.
-After setup, every Claude Code conversation automatically writes the
-prompt to
-.I .git/.h5i/pending_context.json
-where it is consumed and cleared by the next
-.BR "h5i commit" .
+.\" ─── hook ───────────────────────────────────────────────────────────────────
+.SS h5i hook \fISUBCOMMAND\fR
+.TP
+.B setup
+Print the
+.I .claude/settings.json
+snippet needed to register the PostToolUse hook and MCP server.
+.TP
+.B run
+PostToolUse handler.
+Reads the tool-event JSON from stdin, emits an
+.B h5i context trace
+entry for the appropriate kind (OBSERVE on Read, ACT on Edit/Write),
+and \(em on
+.B Read
+events \(em injects prior reasoning about the file into Claude's context
+window so Claude sees accumulated THINK entries before modifying it.
+.PP
+Register by adding to
+.I .claude/settings.json
+in your project root:
+.PP
+.RS 4
+.nf
+{
+  "hooks": {
+    "PostToolUse": [{
+      "matcher": "Edit|Write|Read",
+      "hooks": [{ "type": "command", "command": "h5i hook run" }]
+    }]
+  }
+}
+.fi
+.RE
 .
 .\" ─── resume ─────────────────────────────────────────────────────────────────
 .SS h5i resume [\fIBRANCH\fR]
@@ -638,6 +714,20 @@ Run
 .B git gc
 afterwards to reclaim disk space.
 .TP
+.B todo
+Extract all open TODO / FIXME / BLOCKED items from the current branch's
+trace.
+Only NOTE and THINK entries are searched (OBSERVE lines are ignored).
+.TP
+.B knowledge
+Distill all THINK entries from every reasoning branch into a deduplicated
+project knowledge base.
+Useful at session start to re-absorb accumulated design rationale without
+re-reading every branch trace in full.
+The MCP equivalent is
+.BR h5i_context_knowledge ,
+which returns structured JSON.
+.TP
 .B ephemeral [\-\-branch \fINAME\fR]
 Display the current ephemeral scratch traces for a branch (default: current
 branch).
@@ -725,12 +815,15 @@ or
 .RS 4
 .TP
 .B tools
-Fifteen tools covering
-.BR h5i_log ,\  h5i_blame ,\  h5i_notes_* ,
+Twenty-four tools covering
+.BR h5i_commit ,\  h5i_rewind ,\  h5i_notes_analyze ,\  h5i_log ,\  h5i_blame ,\  h5i_notes_* ,
 and
 .B h5i_context_*
-(see
-.IR MANUAL.md ).
+(including
+.BR h5i_context_knowledge ).
+See
+.I MANUAL.md
+for the full parameter reference.
 .TP
 .B resources
 Two resources:
@@ -1027,6 +1120,14 @@ reports as JSON blobs attached to each commit.
 Inspect with:
 .B git notes \-\-ref refs/h5i/notes show <oid>
 .TP
+.I refs/h5i/shadow/<yyyymmdd\-hhmmss>
+Lightweight WIP commit created by
+.B h5i rewind
+to preserve the pre-rewind working-tree state.
+Never on any branch.
+Recover with:
+.B git checkout refs/h5i/shadow/<ts> \-\- .
+.TP
 .I refs/h5i/memory
 Git ref storing Claude memory snapshots as a linear commit history of
 git tree objects.
@@ -1090,6 +1191,20 @@ h5i commit \-m "fix off-by-one in validate_token" \\
 .nf
 h5i rollback "the OAuth login changes" \-\-dry\-run
 h5i rollback "rate limiting" \-\-yes
+.fi
+.SS Rewind working tree to any past commit
+.nf
+# Preview what would change
+h5i rewind HEAD~3 \-\-dry\-run
+
+# Restore (dirty state is saved to refs/h5i/shadow/<ts>)
+h5i rewind abc1234
+git diff HEAD                                # review the result
+git add \-A
+h5i commit \-m "rewind: restore pre-regression state" \-\-agent claude\-code
+
+# Undo the rewind if you change your mind
+git checkout refs/h5i/shadow/20260420\-143012 \-\- .
 .fi
 .SS Session analysis workflow
 .nf
