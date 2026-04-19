@@ -125,3 +125,4 @@ _[Checkpoint: 69e02934 — implemented redaction and trail]_
 [12:04:06] OBSERVE: read src/ctx.rs
 [12:04:16] OBSERVE: read src/main.rs
 [12:05:10] OBSERVE: read src/main.rs
+[12:05:33] OBSERVE: read ctx.rs (1543 lines): linear trace.md, no DAG, naive pack squash, no ephemeral, no stable-prefix
