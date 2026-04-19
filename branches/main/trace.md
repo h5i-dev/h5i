@@ -419,3 +419,4 @@ _[Checkpoint: 69e4e7cb — fixed 5 UX problems from real session observation]_
 _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested]_
 ---
 
+[16:05:03] OBSERVE: read README.md
