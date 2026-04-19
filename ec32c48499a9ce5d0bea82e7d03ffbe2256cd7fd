@@ -1,0 +1,1 @@
+{"git_oid":"ec32c48499a9ce5d0bea82e7d03ffbe2256cd7fd","parent_oid":"713bb2020858e0e206b003e7391eff2f740474f5","ai_metadata":{"model_name":"claude-sonnet-4-6","prompt":"update MANUAL.md and man/man1/h5i.1 to document all recent changes","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"crdt_states":null,"timestamp":"2026-04-19T16:31:38.558365332Z"}
