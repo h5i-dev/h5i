@@ -128,3 +128,4 @@ _[Checkpoint: 69e02934 — implemented redaction and trail]_
 [12:05:33] OBSERVE: read ctx.rs (1543 lines): linear trace.md, no DAG, naive pack squash, no ephemeral, no stable-prefix
 [12:05:37] THINK: plan: (1) add TraceDag+TraceNode to dag.json per branch; (2) append_log gets ephemeral param; (3) pack_lossless 3-pass replaces pack; (4) GccContext gets stable_line_count; (5) gcc_scope creates scope/ prefixed branches with metadata tag
 [12:07:30] ACT: edited src/ctx.rs
+[12:07:44] ACT: edited src/ctx.rs
