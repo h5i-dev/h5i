@@ -133,3 +133,4 @@ _[Checkpoint: 69e02934 — implemented redaction and trail]_
 [12:08:16] ACT: edited src/ctx.rs
 [12:08:24] ACT: edited src/ctx.rs
 [12:08:30] OBSERVE: read src/main.rs
+[12:08:30] OBSERVE: read src/mcp.rs
