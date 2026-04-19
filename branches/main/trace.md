@@ -123,3 +123,4 @@ _[Checkpoint: 69e02934 — implemented redaction and trail]_
 [00:22:13] ACT: updated MANUAL.md: added h5i status/checkpoint/rewind/trail sections + Storage Layout dirs + Secret Redaction appendix; updated man/man1/h5i.1: added .SS sections for all four commands + FILES entries for sessions/, trails/, refs/h5i/checkpoints/
 [00:22:21] NOTE: turn complete — tokens in: 10  out: 3,346
 [12:04:06] OBSERVE: read src/ctx.rs
+[12:04:16] OBSERVE: read src/main.rs
