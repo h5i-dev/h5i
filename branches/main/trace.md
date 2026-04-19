@@ -173,3 +173,4 @@ _[Checkpoint: 69e4c71b — all 5 context management features implemented]_
 [12:17:27] ACT: edited MANUAL.md
 [12:17:48] ACT: edited MANUAL.md
 [12:18:00] ACT: edited MANUAL.md
+[12:18:11] ACT: edited MANUAL.md
