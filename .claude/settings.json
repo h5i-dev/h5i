@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ./script/h5i-ctx-hook.py"
+            "command": "h5i hook run"
           }
         ]
       }
