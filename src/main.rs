@@ -506,6 +506,10 @@ enum ContextCommands {
         tail: usize,
     },
 
+    /// Show all open TODO / FIXME / BLOCKED items extracted from the trace.
+    /// These are NOTE and THINK entries that contain actionable keywords.
+    Todo,
+
     /// Render the per-branch trace DAG as a coloured graph in the terminal.
     /// Each node shows its kind (OBSERVE/THINK/ACT/NOTE/MERGE), 8-hex ID,
     /// timestamp, and content. Merge nodes display both parent IDs.
@@ -2500,6 +2504,13 @@ jq -c '{
                         anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
                     }
                     ctx::print_cached_prefix(workdir, tail)?;
+                }
+
+                ContextCommands::Todo => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    ctx::print_todos(workdir)?;
                 }
 
                 ContextCommands::Dag { branch } => {

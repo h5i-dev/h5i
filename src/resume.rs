@@ -128,7 +128,8 @@ pub fn generate_briefing(
 
     // ── 3. Context workspace ──────────────────────────────────────────────────
     let ctx_initialized = ctx::is_initialized(workdir);
-    let (ctx_branch, goal, completed_milestones, pending_milestones, recent_ctx_commits) =
+    let (ctx_branch, goal, completed_milestones, pending_milestones, recent_ctx_commits,
+         last_acts, open_todos) =
         if ctx_initialized {
             let opts = ContextOpts {
                 branch: branch.map(|s| s.to_string()),
@@ -141,18 +142,44 @@ pub fn generate_briefing(
                         .milestones
                         .iter()
                         .partition(|m| m.contains("[x]") || m.contains("[X]"));
+                    // Extract last 3 ACT entries from mini_trace for the suggested prompt.
+                    let acts: Vec<String> = {
+                        let all: Vec<&String> = gcc
+                            .mini_trace
+                            .iter()
+                            .filter(|l| l.contains("] ACT:"))
+                            .collect();
+                        let start = all.len().saturating_sub(3);
+                        all[start..]
+                            .iter()
+                            .map(|l| {
+                                l.splitn(2, "] ACT: ")
+                                    .nth(1)
+                                    .unwrap_or(l.as_str())
+                                    .chars()
+                                    .take(80)
+                                    .collect::<String>()
+                            })
+                            .collect()
+                    };
                     (
                         gcc.current_branch,
                         gcc.project_goal,
                         done.iter().map(|m| strip_milestone_marker(m)).collect(),
                         todo.iter().map(|m| strip_milestone_marker(m)).collect(),
                         gcc.recent_commits,
+                        acts,
+                        gcc.todo_items,
                     )
                 }
-                Err(_) => default_ctx_fields(&git_branch),
+                Err(_) => {
+                    let (b, g, c, p, r) = default_ctx_fields(&git_branch);
+                    (b, g, c, p, r, vec![], vec![])
+                }
             }
         } else {
-            default_ctx_fields(&git_branch)
+            let (b, g, c, p, r) = default_ctx_fields(&git_branch);
+            (b, g, c, p, r, vec![], vec![])
         };
 
     // ── 4. Session analysis ───────────────────────────────────────────────────
@@ -185,6 +212,8 @@ pub fn generate_briefing(
         &completed_milestones,
         &pending_milestones,
         &risky_files,
+        &last_acts,
+        &open_todos,
     );
 
     Ok(ResumeBriefing {
@@ -524,6 +553,8 @@ fn build_suggested_prompt(
     done: &[String],
     pending: &[String],
     risky: &[RiskyFile],
+    last_acts: &[String],
+    open_todos: &[String],
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
 
@@ -542,8 +573,29 @@ fn build_suggested_prompt(
         )),
     }
 
+    // Include last ACT entries so the AI knows exactly where it left off.
+    if !last_acts.is_empty() {
+        let acts = last_acts
+            .iter()
+            .map(|a| format!("• {a}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        parts.push(format!("Last actions: {acts}."));
+    }
+
     if let Some(next) = pending.first() {
         parts.push(format!("Next milestone: {}.", next));
+    }
+
+    // Surface open TODOs so the AI picks them up immediately.
+    if let Some(todo) = open_todos.first() {
+        let preview: String = todo.chars().take(70).collect();
+        let more = if open_todos.len() > 1 {
+            format!(" ({} more open items)", open_todos.len() - 1)
+        } else {
+            String::new()
+        };
+        parts.push(format!("Open TODO: {preview}{more}."));
     }
 
     if let Some(top) = risky.first() {
@@ -686,13 +738,13 @@ mod tests {
 
     #[test]
     fn build_suggested_prompt_fallback_when_empty() {
-        let p = build_suggested_prompt("", &[], &[], &[]);
+        let p = build_suggested_prompt("", &[], &[], &[], &[], &[]);
         assert_eq!(p, "Resume where we left off.");
     }
 
     #[test]
     fn build_suggested_prompt_includes_goal() {
-        let p = build_suggested_prompt("Build an OAuth2 login system", &[], &[], &[]);
+        let p = build_suggested_prompt("Build an OAuth2 login system", &[], &[], &[], &[], &[]);
         assert!(p.contains("Build an OAuth2 login system"));
     }
 
@@ -703,6 +755,8 @@ mod tests {
             &["Initial setup".to_string()],
             &["Add rate limiting".to_string()],
             &[],
+            &[],
+            &[],
         );
         assert!(p.contains("Add rate limiting"));
     }
@@ -710,8 +764,7 @@ mod tests {
     #[test]
     fn build_suggested_prompt_multiple_done_milestones() {
         let done = vec!["A".to_string(), "B".to_string(), "C".to_string()];
-        let p = build_suggested_prompt("Goal", &done, &[], &[]);
-        // Should mention "A and 2 more milestones"
+        let p = build_suggested_prompt("Goal", &done, &[], &[], &[], &[]);
         assert!(p.contains('A'));
         assert!(p.contains('2'));
     }
@@ -726,7 +779,7 @@ mod tests {
             risk_score: 0.7,
             top_phrase: Some("not sure".to_string()),
         }];
-        let p = build_suggested_prompt("", &[], &[], &risky);
+        let p = build_suggested_prompt("", &[], &[], &risky, &[], &[]);
         assert!(p.contains("auth.rs"));
         assert!(p.contains("not sure"));
     }
