@@ -795,6 +795,7 @@ mod tests {
             omissions: vec![],
             churn,
             coverage: vec![],
+            key_thoughts: vec![],
             replay_hash: String::new(),
             analyzed_at: Utc::now(),
             message_count: 10,

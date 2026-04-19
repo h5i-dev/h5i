@@ -1822,6 +1822,101 @@ pub fn print_todos(workdir: &Path) -> Result<(), H5iError> {
     Ok(())
 }
 
+/// Return all THINK entries from every context branch as structured data.
+/// Each item: `{ "branch": "...", "thought": "..." }`.
+pub fn distill_knowledge(workdir: &Path) -> Result<Vec<serde_json::Value>, H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    let branches = ctx_list_branches_git(&repo);
+    let mut all_thoughts: Vec<serde_json::Value> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for branch_name in &branches {
+        let trace =
+            ctx_read_file(&repo, &format!("branches/{branch_name}/trace.md"))
+                .unwrap_or_default();
+        for line in trace.lines() {
+            if line.contains("] THINK:") {
+                let content = line
+                    .splitn(2, "] THINK:")
+                    .nth(1)
+                    .unwrap_or(line)
+                    .trim()
+                    .to_string();
+                if content.len() > 20 && seen.insert(content.chars().take(60).collect()) {
+                    all_thoughts.push(serde_json::json!({
+                        "branch": branch_name,
+                        "thought": content
+                    }));
+                }
+            }
+        }
+    }
+    Ok(all_thoughts)
+}
+
+/// Distill all THINK entries from every context branch into a project knowledge base.
+///
+/// Deduplicated and sorted, this gives a quick read of every design decision ever
+/// recorded across all reasoning branches for this project.
+pub fn print_knowledge(workdir: &Path) -> Result<(), H5iError> {
+    use console::style;
+
+    let repo = ctx_git_repo(workdir)?;
+
+    // Collect all branch names from refs/h5i/context/branches/
+    let mut all_thoughts: Vec<(String, String)> = Vec::new(); // (branch, line)
+
+    let branches = ctx_list_branches_git(&repo);
+    for branch_name in &branches {
+        let trace =
+            ctx_read_file(&repo, &format!("branches/{branch_name}/trace.md"))
+                .unwrap_or_default();
+        for line in trace.lines() {
+            if line.contains("] THINK:") {
+                let content = line
+                    .splitn(2, "] THINK:")
+                    .nth(1)
+                    .unwrap_or(line)
+                    .trim()
+                    .to_string();
+                if content.len() > 20 {
+                    all_thoughts.push((branch_name.clone(), content));
+                }
+            }
+        }
+    }
+
+    // Deduplicate by content prefix (first 60 chars).
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    all_thoughts.retain(|(_, c)| seen.insert(c.chars().take(60).collect()));
+
+    println!("{}", style("── Project Knowledge (distilled THINK entries) ─────────────").dim());
+
+    if all_thoughts.is_empty() {
+        println!("  {}", style("No THINK entries recorded yet. Use `h5i context trace --kind THINK` to record decisions.").dim());
+        return Ok(());
+    }
+
+    let branch = current_branch(workdir);
+    for (br, content) in &all_thoughts {
+        let branch_label = if br == &branch {
+            style(format!("[{br}]")).cyan().to_string()
+        } else {
+            style(format!("[{br}]")).dim().to_string()
+        };
+        let display: String = content.chars().take(120).collect();
+        println!("  {} {} {}", style("◈").yellow(), branch_label, style(&display).italic());
+    }
+
+    println!();
+    println!(
+        "  {} {} design decision{} across all branches",
+        style("◈").dim(),
+        style(all_thoughts.len()).yellow().bold(),
+        if all_thoughts.len() == 1 { "" } else { "s" }
+    );
+    Ok(())
+}
+
 // ── Terminal helpers ──────────────────────────────────────────────────────────
 
 /// Wrap `text` at word boundaries so each line is ≤ `max_cols` chars.

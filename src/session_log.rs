@@ -256,6 +256,18 @@ pub struct OmissionAnnotation {
     pub turn: usize,
 }
 
+/// A single thinking block (or substantive text block) extracted from a session,
+/// with the file that Claude was working on at that moment and the turn number.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ThoughtEntry {
+    /// Truncated thought content (first 300 chars).
+    pub thought: String,
+    /// File Claude was editing/reading when this thought appeared, if known.
+    pub nearby_file: Option<String>,
+    /// Message-turn index within the session.
+    pub turn: usize,
+}
+
 /// How often a file was read vs edited — a proxy for complexity / fragility.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileChurn {
@@ -302,6 +314,9 @@ pub struct SessionAnalysis {
     /// Per-file attention coverage: which files were read vs. written blind.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub coverage: Vec<FileCoverage>,
+    /// Raw thinking/text blocks with file context — for deeper introspection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_thoughts: Vec<ThoughtEntry>,
     /// SHA-256 of the raw JSONL content for replay verification.
     pub replay_hash: String,
     pub analyzed_at: DateTime<Utc>,
@@ -851,6 +866,25 @@ pub fn analyze_session(
     churn.sort_by(|a, b| b.edit_count.cmp(&a.edit_count).then(b.read_count.cmp(&a.read_count)));
     churn.retain(|c| c.edit_count > 0 || c.read_count > 1);
 
+    // ── Key thoughts — raw thinking/text blocks with file context ────────────
+    let key_thoughts: Vec<ThoughtEntry> = {
+        let mut entries: Vec<ThoughtEntry> = thinking_entries
+            .iter()
+            .filter(|(text, _, _)| text.len() > 80)
+            .map(|(text, t, file)| ThoughtEntry {
+                thought: text.chars().take(300).collect(),
+                nearby_file: if file.is_empty() { None } else { Some(file.clone()) },
+                turn: *t,
+            })
+            .collect();
+        entries.dedup_by(|a, b| {
+            a.thought.chars().take(60).collect::<String>()
+                == b.thought.chars().take(60).collect::<String>()
+        });
+        entries.truncate(20);
+        entries
+    };
+
     // ── Compute attention coverage ────────────────────────────────────────────
     // For every file that was edited, determine whether each edit was preceded
     // by at least one Read call earlier in the same session.
@@ -908,6 +942,7 @@ pub fn analyze_session(
         omissions,
         churn,
         coverage,
+        key_thoughts,
         replay_hash,
         analyzed_at: Utc::now(),
         message_count,
@@ -1105,6 +1140,24 @@ pub fn print_causal_chain(analysis: &SessionAnalysis) {
                 style(&step.operation).cyan(),
                 style(step.turn).dim(),
             );
+        }
+    }
+
+    if !analysis.key_thoughts.is_empty() {
+        println!();
+        println!("  {}", style("Thinking Trace:").bold());
+        for entry in analysis.key_thoughts.iter().take(8) {
+            let preview: String = entry.thought.chars().take(120).collect();
+            if let Some(ref f) = entry.nearby_file {
+                println!(
+                    "    {} {} {}",
+                    style(format!("t:{}", entry.turn)).dim(),
+                    style(rel_path(f)).yellow(),
+                    style(&preview).italic(),
+                );
+            } else {
+                println!("    {} {}", style(format!("t:{}", entry.turn)).dim(), style(&preview).italic());
+            }
         }
     }
 }
