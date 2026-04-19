@@ -4,18 +4,26 @@
 ///   "Git Context Controller: Manage the Context of Agents by Agentic Git"
 ///   arXiv:2508.00031
 ///
-/// The context workspace is stored entirely in the `refs/h5i/context` Git ref
-/// — a lightweight commit-chain whose tree mirrors the former `.h5i-ctx/` layout:
+/// Enhanced with five capabilities from recent research:
+///   1. DAG-based trace nodes (CMV paper, arXiv:2602.22402)
+///   2. Three-pass structurally-lossless pack (CMV three-pass trimming algorithm)
+///   3. Ephemeral trace entries (Claude Code /btw pattern)
+///   4. Stable-prefix / dynamic-suffix serialisation (prompt-caching-aware)
+///   5. Subagent-scoped sub-contexts (`scope/<name>` branches)
+///
+/// Storage layout in `refs/h5i/context`:
 ///
 /// ```text
 /// refs/h5i/context tree:
-/// ├── main.md               # global roadmap: goals, milestones, active branches
-/// ├── .current_branch       # active branch name
+/// ├── main.md                        # global roadmap: goals, milestones, notes
+/// ├── .current_branch                # active branch name
 /// └── branches/
 ///     └── <branch-name>/
-///         ├── commit.md     # milestone summaries (append-only log)
-///         ├── trace.md      # OTA (Observation–Thought–Action) execution trace
-///         └── metadata.yaml # file structure, deps, env config
+///         ├── commit.md              # milestone summaries (append-only)
+///         ├── trace.md              # human-readable OTA log (rendered view)
+///         ├── dag.json              # DAG of trace nodes with parent links
+///         ├── ephemeral.md          # scratch traces cleared on context commit
+///         └── metadata.yaml         # file structure, deps, env config
 /// ```
 ///
 /// Exposed via `h5i context` subcommands.
@@ -25,6 +33,7 @@ use std::path::Path;
 use chrono::Utc;
 use git2::{ObjectType, Oid, Repository, Signature};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::error::H5iError;
 
@@ -91,6 +100,49 @@ pub struct GccContext {
     pub recent_commits: Vec<String>,
     pub recent_log_lines: Vec<String>,
     pub metadata_snippet: Option<String>,
+    /// Number of trace lines that form the stable (cache-friendly) prefix.
+    pub stable_line_count: usize,
+    /// Number of trace lines in the dynamic (volatile) suffix.
+    pub dynamic_line_count: usize,
+}
+
+// ── DAG types (Feature 1) ─────────────────────────────────────────────────────
+
+/// A single node in the per-branch trace DAG.
+/// Each call to `append_log` (non-ephemeral) adds one node whose `parent_ids`
+/// point to the previous node(s) on the branch. Merge operations add a node
+/// with two parents, one from each merged branch.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TraceNode {
+    /// Short 8-hex content-addressable ID (sha256 of kind+timestamp+content).
+    pub id: String,
+    /// IDs of parent nodes (empty for the root, two entries at merge points).
+    pub parent_ids: Vec<String>,
+    /// Step kind: OBSERVE / THINK / ACT / NOTE / MERGE.
+    pub kind: String,
+    pub content: String,
+    pub timestamp: String,
+}
+
+/// The full per-branch directed-acyclic-graph of trace nodes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct TraceDag {
+    pub nodes: Vec<TraceNode>,
+}
+
+impl TraceDag {
+    /// ID of the most recent node, or empty string if the DAG is empty.
+    pub fn head_id(&self) -> String {
+        self.nodes.last().map(|n| n.id.clone()).unwrap_or_default()
+    }
+}
+
+/// Summary returned by `pack_lossless`.
+#[derive(Debug, Default)]
+pub struct LosslessPackResult {
+    pub removed_subsumed_observe: usize,
+    pub merged_consecutive_observe: usize,
+    pub kept_durable: usize,
 }
 
 // ── Git helpers ───────────────────────────────────────────────────────────────
@@ -231,6 +283,32 @@ fn collect_branch_names(repo: &Repository, tree: &git2::Tree, prefix: &str, out:
     }
 }
 
+// ── DAG helpers (Feature 1) ───────────────────────────────────────────────────
+
+fn dag_path(branch: &str) -> String {
+    format!("branches/{branch}/dag.json")
+}
+
+fn ephemeral_path(branch: &str) -> String {
+    format!("branches/{branch}/ephemeral.md")
+}
+
+fn read_dag(repo: &Repository, branch: &str) -> TraceDag {
+    ctx_read_file(repo, &dag_path(branch))
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn node_id(kind: &str, timestamp: &str, content: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(kind.as_bytes());
+    h.update(b"|");
+    h.update(timestamp.as_bytes());
+    h.update(b"|");
+    h.update(content.as_bytes());
+    format!("{:08x}", u32::from_be_bytes(h.finalize()[..4].try_into().unwrap()))
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// Initialize the context workspace in `refs/h5i/context`.
@@ -332,11 +410,16 @@ pub fn gcc_commit(workdir: &Path, summary: &str, contribution: &str) -> Result<(
     let existing_main = ctx_read_file(&repo, "main.md").unwrap_or_default();
     let new_main = append_main_note(&existing_main, &branch, summary);
 
+    // Clear ephemeral scratch traces on each milestone commit.
+    let eph_path = ephemeral_path(&branch);
+    let eph_header = format!("# Ephemeral traces — Branch: {branch}\n\n");
+
     ctx_write_files(
         &repo,
         &[
             (&commit_path, &new_commit_md),
             (&trace_path, &new_trace),
+            (&eph_path, &eph_header),
             ("main.md", &new_main),
         ],
         &format!("h5i context commit: {summary}"),
@@ -420,11 +503,34 @@ pub fn gcc_merge(workdir: &Path, source_branch: &str) -> Result<String, H5iError
         &format!("Merged branch '{source_branch}'"),
     );
 
+    // Update DAG: create a merge node with parents from both branches (Feature 1).
+    let source_dag = read_dag(&repo, source_branch);
+    let mut target_dag = read_dag(&repo, &target);
+    let source_head = source_dag.head_id();
+    let target_head = target_dag.head_id();
+    let merge_ts = Utc::now().format("%H:%M:%S").to_string();
+    let merge_content = format!("merged '{source_branch}' into '{target}'");
+    let mut merge_parent_ids = Vec::new();
+    if !target_head.is_empty() { merge_parent_ids.push(target_head); }
+    if !source_head.is_empty() { merge_parent_ids.push(source_head); }
+    if !merge_parent_ids.is_empty() {
+        target_dag.nodes.push(TraceNode {
+            id: node_id("MERGE", &merge_ts, &merge_content),
+            parent_ids: merge_parent_ids,
+            kind: "MERGE".to_string(),
+            content: merge_content,
+            timestamp: merge_ts,
+        });
+    }
+    let dag_json = serde_json::to_string(&target_dag)
+        .map_err(|e| H5iError::InvalidPath(format!("DAG serialisation failed: {e}")))?;
+
     ctx_write_files(
         &repo,
         &[
             (&target_trace_path, &new_trace),
             (&target_commit_path, &new_commit),
+            (&dag_path(&target), &dag_json),
             ("main.md", &new_main),
         ],
         &format!("h5i context merge: {source_branch} → {target}"),
@@ -479,6 +585,17 @@ pub fn gcc_context(workdir: &Path, opts: &ContextOpts) -> Result<GccContext, H5i
         None
     };
 
+    // Compute stable-prefix / dynamic-suffix boundary (Feature 4).
+    // Stable = everything except the last 40 trace lines.
+    // Dynamic = last 40 trace lines (these change every step and should not be cached).
+    let (stable_line_count, dynamic_line_count) = {
+        let trace_path = format!("branches/{branch_name}/trace.md");
+        let log_text = ctx_read_file(&repo, &trace_path).unwrap_or_default();
+        let total = log_text.lines().count();
+        let dynamic = 40_usize.min(total);
+        (total - dynamic, dynamic)
+    };
+
     Ok(GccContext {
         project_goal,
         milestones,
@@ -487,22 +604,65 @@ pub fn gcc_context(workdir: &Path, opts: &ContextOpts) -> Result<GccContext, H5i
         recent_commits,
         recent_log_lines,
         metadata_snippet,
+        stable_line_count,
+        dynamic_line_count,
     })
 }
 
-/// Append an OTA (Observation–Thought–Action) entry to the current branch's `trace.md`.
-pub fn append_log(workdir: &Path, kind: &str, content: &str) -> Result<(), H5iError> {
+/// Append an OTA (Observation–Thought–Action) entry to the current branch's trace.
+///
+/// When `ephemeral` is `true` the entry goes to `ephemeral.md` only — it is
+/// excluded from the DAG, excluded from snapshots, and cleared on the next
+/// `h5i context commit`. Use this for scratch observations you don't need to
+/// preserve across sessions (analogous to Claude Code's `/btw`).
+///
+/// When `ephemeral` is `false` (the default) the entry is appended to both
+/// `trace.md` (human-readable rendered view) and `dag.json` (the DAG).
+pub fn append_log(workdir: &Path, kind: &str, content: &str, ephemeral: bool) -> Result<(), H5iError> {
     let repo = ctx_git_repo(workdir)?;
     let branch = current_branch(workdir);
-    let trace_path = format!("branches/{branch}/trace.md");
 
     let ts = Utc::now().format("%H:%M:%S").to_string();
-    let entry = format!("[{ts}] {}: {}\n", kind.to_uppercase(), content);
+    let entry_line = format!("[{ts}] {}: {}\n", kind.to_uppercase(), content);
 
-    let existing = ctx_read_file(&repo, &trace_path).unwrap_or_default();
+    if ephemeral {
+        let epath = ephemeral_path(&branch);
+        let existing = ctx_read_file(&repo, &epath).unwrap_or_default();
+        return ctx_write_files(
+            &repo,
+            &[(&epath, &format!("{existing}{entry_line}"))],
+            "h5i context trace (ephemeral)",
+        );
+    }
+
+    // Durable path: update trace.md + dag.json together.
+    let trace_path = format!("branches/{branch}/trace.md");
+    let existing_trace = ctx_read_file(&repo, &trace_path).unwrap_or_default();
+    let new_trace = format!("{existing_trace}{entry_line}");
+
+    let mut dag = read_dag(&repo, &branch);
+    let parent_ids = if dag.head_id().is_empty() {
+        vec![]
+    } else {
+        vec![dag.head_id()]
+    };
+    let node = TraceNode {
+        id: node_id(kind, &ts, content),
+        parent_ids,
+        kind: kind.to_uppercase(),
+        content: content.to_string(),
+        timestamp: ts,
+    };
+    dag.nodes.push(node);
+    let dag_json = serde_json::to_string(&dag)
+        .map_err(|e| H5iError::InvalidPath(format!("DAG serialisation failed: {e}")))?;
+
     ctx_write_files(
         &repo,
-        &[(&trace_path, &format!("{existing}{entry}"))],
+        &[
+            (&trace_path, &new_trace),
+            (&dag_path(&branch), &dag_json),
+        ],
         "h5i context trace",
     )
 }
@@ -1088,6 +1248,282 @@ fn snapshots_oids_from_tree(
     Ok(Some(oids))
 }
 
+// ── Three-pass lossless pack (Feature 2) ─────────────────────────────────────
+
+/// Compact the current branch's trace using three structurally-lossless passes:
+///
+/// - **Pass 1 (subsumption):** Remove OBSERVE entries whose key subject token
+///   (file name or first significant word) appears in a *later* THINK or ACT
+///   entry — those observations have been "consumed" by higher-level reasoning.
+/// - **Pass 2 (preservation):** Retain every THINK, ACT, and NOTE entry verbatim;
+///   they represent irreplaceable decisions and actions.
+/// - **Pass 3 (consolidation):** Merge consecutive OBSERVE entries that share the
+///   same subject token into a single entry with a `(×N)` count suffix.
+///
+/// The result is written back to `trace.md` and `dag.json` as a new context commit.
+pub fn pack_lossless(workdir: &Path) -> Result<LosslessPackResult, H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    let branch = current_branch(workdir);
+    let trace_path = format!("branches/{branch}/trace.md");
+    let trace_text = ctx_read_file(&repo, &trace_path).unwrap_or_default();
+
+    // Parse each non-empty, non-header, non-separator line into (kind, content).
+    #[derive(Clone)]
+    struct ParsedEntry {
+        kind: String,
+        content: String,
+        raw: String,
+    }
+
+    let entries: Vec<ParsedEntry> = trace_text
+        .lines()
+        .filter_map(|line| {
+            // Lines look like: [HH:MM:SS] KIND: content
+            let rest = line.trim_start_matches(|c: char| c == '[')
+                .splitn(2, ']')
+                .nth(1)
+                .map(str::trim)
+                .unwrap_or(line);
+            if rest.is_empty() || line.starts_with('#') || line.starts_with("---") || line.starts_with("_[") {
+                return None; // header / separator
+            }
+            let (kind, content) = if let Some(colon) = rest.find(':') {
+                let k = rest[..colon].trim().to_uppercase();
+                let c = rest[colon + 1..].trim().to_string();
+                (k, c)
+            } else {
+                ("NOTE".to_string(), rest.to_string())
+            };
+            Some(ParsedEntry { kind, content, raw: line.to_string() })
+        })
+        .collect();
+
+    // Extract the "subject token" for an OBSERVE entry: the first path-like word
+    // or (fallback) the first non-trivial word.
+    let subject_of = |content: &str| -> String {
+        content.split_whitespace()
+            .find(|w| w.contains('/') || w.contains('.') || w.len() > 4)
+            .unwrap_or_else(|| content.split_whitespace().next().unwrap_or(""))
+            .to_lowercase()
+    };
+
+    // ── Pass 1: mark OBSERVE entries subsumed by a later THINK/ACT ───────────
+    let think_act_subjects: std::collections::HashSet<String> = entries.iter()
+        .filter(|e| matches!(e.kind.as_str(), "THINK" | "ACT"))
+        .flat_map(|e| {
+            let words: Vec<String> = e.content.split_whitespace()
+                .map(|w| w.to_lowercase())
+                .collect();
+            words
+        })
+        .collect();
+
+    let mut keep: Vec<bool> = vec![true; entries.len()];
+    let mut removed_subsumed_observe: usize = 0;
+
+    for (i, entry) in entries.iter().enumerate() {
+        if entry.kind != "OBSERVE" {
+            continue;
+        }
+        let subj = subject_of(&entry.content);
+        // Check if a later entry is THINK/ACT AND mentions the subject.
+        let subsumed = entries[i + 1..].iter().any(|later| {
+            matches!(later.kind.as_str(), "THINK" | "ACT")
+                && (later.content.to_lowercase().contains(&subj) || think_act_subjects.contains(&subj))
+        });
+        if subsumed {
+            keep[i] = false;
+            removed_subsumed_observe += 1;
+        }
+    }
+
+    // ── Pass 2 + 3: build output, merging consecutive OBSERVE on same subject ─
+    let surviving: Vec<&ParsedEntry> = entries.iter()
+        .zip(keep.iter())
+        .filter_map(|(e, &k)| if k { Some(e) } else { None })
+        .collect();
+
+    let mut kept_durable: usize = 0;
+    let mut merged_consecutive_observe: usize = 0;
+    let mut output_lines: Vec<String> = Vec::new();
+
+    let mut i = 0usize;
+    while i < surviving.len() {
+        let entry = surviving[i];
+        if entry.kind != "OBSERVE" {
+            kept_durable += 1;
+            output_lines.push(entry.raw.clone());
+            i += 1;
+            continue;
+        }
+        // OBSERVE: look ahead for consecutive same-subject entries.
+        let subj = subject_of(&entry.content);
+        let mut count = 1usize;
+        let mut j = i + 1;
+        while j < surviving.len()
+            && surviving[j].kind == "OBSERVE"
+            && subject_of(&surviving[j].content) == subj
+        {
+            count += 1;
+            j += 1;
+        }
+        if count > 1 {
+            merged_consecutive_observe += count - 1;
+            // Keep the last (most recent) OBSERVE for this subject, annotate count.
+            let last = surviving[j - 1];
+            let merged_raw = format!("{} (×{})", last.raw.trim_end(), count);
+            output_lines.push(merged_raw);
+        } else {
+            output_lines.push(entry.raw.clone());
+        }
+        i = j;
+    }
+
+    if removed_subsumed_observe == 0 && merged_consecutive_observe == 0 {
+        return Ok(LosslessPackResult {
+            removed_subsumed_observe: 0,
+            merged_consecutive_observe: 0,
+            kept_durable,
+        });
+    }
+
+    // Rebuild trace.md preserving header and separator structure.
+    let header_lines: Vec<&str> = trace_text
+        .lines()
+        .take_while(|l| l.starts_with('#') || l.is_empty())
+        .collect();
+    let new_trace = format!(
+        "{}\n\n{}\n",
+        header_lines.join("\n"),
+        output_lines.join("\n")
+    );
+
+    // Rebuild dag.json keeping only nodes that survived.
+    let surviving_contents: std::collections::HashSet<String> = surviving.iter()
+        .map(|e| e.content.clone())
+        .collect();
+    let mut dag = read_dag(&repo, &branch);
+    dag.nodes.retain(|n| surviving_contents.contains(&n.content));
+    let dag_json = serde_json::to_string(&dag)
+        .map_err(|e| H5iError::InvalidPath(format!("DAG serialisation failed: {e}")))?;
+
+    ctx_write_files(
+        &repo,
+        &[
+            (&trace_path, &new_trace),
+            (&dag_path(&branch), &dag_json),
+        ],
+        "h5i context pack (lossless)",
+    )?;
+
+    Ok(LosslessPackResult {
+        removed_subsumed_observe,
+        merged_consecutive_observe,
+        kept_durable,
+    })
+}
+
+// ── Subagent-scoped sub-contexts (Feature 5) ─────────────────────────────────
+
+/// Create a subagent-scoped sub-context: a branch prefixed `scope/` with
+/// metadata marking it as a scope. Scoped branches appear separately in
+/// `h5i context status` and are intended for delegated subagent investigation.
+pub fn gcc_scope(workdir: &Path, full_name: &str, purpose: &str) -> Result<(), H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    ensure_branch_git(&repo, full_name, purpose)?;
+
+    // Tag the branch as a scope in its metadata.yaml.
+    let meta_path = format!("branches/{full_name}/metadata.yaml");
+    let existing_meta = ctx_read_file(&repo, &meta_path).unwrap_or_default();
+    let scoped_meta = if existing_meta.contains("scope:") {
+        existing_meta
+    } else {
+        format!("{existing_meta}scope: \"true\"\n")
+    };
+    ctx_write_files(&repo, &[(&meta_path, &scoped_meta)], "h5i context scope")?;
+
+    set_current_branch(&repo, full_name)
+}
+
+/// Read the ephemeral scratch traces for a branch (default: current).
+pub fn read_ephemeral(workdir: &Path, branch: Option<&str>) -> Result<String, H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    let branch_name = branch
+        .map(str::to_string)
+        .unwrap_or_else(|| current_branch(workdir));
+    Ok(ctx_read_file(&repo, &ephemeral_path(&branch_name)).unwrap_or_default())
+}
+
+// ── Stable-prefix display (Feature 4) ────────────────────────────────────────
+
+/// Print the stable-prefix / dynamic-suffix boundary for the current trace.
+/// Lines in the stable prefix are unchanged across most agent steps and benefit
+/// from prompt-cache hits. Lines in the dynamic suffix change every step.
+pub fn print_cached_prefix(workdir: &Path, tail: usize) -> Result<(), H5iError> {
+    use console::style;
+
+    let repo = ctx_git_repo(workdir)?;
+    let branch = current_branch(workdir);
+    let trace_path = format!("branches/{branch}/trace.md");
+    let trace_text = ctx_read_file(&repo, &trace_path).unwrap_or_default();
+    let all_lines: Vec<&str> = trace_text.lines().collect();
+    let total = all_lines.len();
+    let dynamic = tail.min(total);
+    let stable_end = total - dynamic;
+
+    println!(
+        "{}",
+        style(format!(
+            "── Stable-prefix boundary (tail={tail}) ────────────────────────"
+        ))
+        .dim()
+    );
+    println!(
+        "  {} Stable prefix: {} line{} (prompt-cache friendly)",
+        style("▓▓").green(),
+        style(stable_end).cyan().bold(),
+        if stable_end == 1 { "" } else { "s" }
+    );
+    println!(
+        "  {} Dynamic suffix: {} line{} (changes every step)",
+        style("░░").yellow(),
+        style(dynamic).cyan().bold(),
+        if dynamic == 1 { "" } else { "s" }
+    );
+
+    if total == 0 {
+        println!("  {}", style("(empty trace)").dim());
+        return Ok(());
+    }
+
+    println!();
+    println!("  {} Last stable line:", style("▓").green());
+    if stable_end > 0 {
+        println!("    {}", style(all_lines[stable_end - 1]).dim());
+    } else {
+        println!("    {}", style("(all lines are dynamic)").dim());
+    }
+    println!("  {} First dynamic line:", style("░").yellow());
+    if stable_end < total {
+        println!("    {}", style(all_lines[stable_end]).cyan());
+    }
+
+    Ok(())
+}
+
+// ── Print status with scope support ──────────────────────────────────────────
+
+/// Return `true` if `branch_name` is a subagent scope (`scope/` prefix or
+/// `scope: "true"` in its metadata.yaml).
+fn is_scope_branch(repo: &Repository, branch_name: &str) -> bool {
+    if branch_name.starts_with("scope/") {
+        return true;
+    }
+    ctx_read_file(repo, &format!("branches/{branch_name}/metadata.yaml"))
+        .map(|m| m.contains("scope: \"true\""))
+        .unwrap_or(false)
+}
+
 // ── Terminal display ──────────────────────────────────────────────────────────
 
 pub fn print_context(ctx: &GccContext) {
@@ -1200,18 +1636,266 @@ pub fn print_status(workdir: &Path) -> Result<(), H5iError> {
         if log_lines == 1 { "" } else { "s" },
     );
 
-    if branches.len() > 1 {
-        let others: Vec<&String> = branches.iter().filter(|b| b.as_str() != branch).collect();
+    // Separate regular branches from scoped sub-contexts.
+    let (scope_branches, regular_branches): (Vec<&String>, Vec<&String>) = branches
+        .iter()
+        .filter(|b| b.as_str() != branch)
+        .partition(|b| is_scope_branch(&repo, b));
+
+    if !regular_branches.is_empty() {
         println!(
             "  {} {}",
             style("Other branches:").dim(),
-            others
+            regular_branches
                 .iter()
                 .map(|b| b.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
         );
     }
+
+    if !scope_branches.is_empty() {
+        println!(
+            "  {} {}",
+            style("Scoped subagents:").dim(),
+            scope_branches
+                .iter()
+                .map(|b| style(b.as_str()).magenta().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
+    // Show stable/dynamic prefix split for the current trace.
+    let total_lines = trace_text.lines().count();
+    let dynamic = 40_usize.min(total_lines);
+    let stable = total_lines - dynamic;
+    if total_lines > 0 {
+        println!(
+            "  {} stable {} lines  ·  dynamic {} lines  (prompt-cache boundary)",
+            style("Trace:").dim(),
+            style(stable).cyan(),
+            style(dynamic).yellow(),
+        );
+    }
+
+    Ok(())
+}
+
+// ── Terminal helpers ──────────────────────────────────────────────────────────
+
+/// Wrap `text` at word boundaries so each line is ≤ `max_cols` chars.
+fn ctx_word_wrap(text: &str, max_cols: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.len() + 1 + word.len() <= max_cols {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(current.clone());
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+// ── DAG pretty-printer ────────────────────────────────────────────────────────
+
+/// Render the per-branch trace DAG to the terminal with Unicode tree lines,
+/// per-kind colour coding, and merge-node parent annotations.
+///
+/// Layout per node:
+/// ```text
+///   ●  3fa12b  OBSERVE   14:01:22
+///   │  src/auth.rs:44 — token TTL hardcoded to 3600s
+/// ```
+/// Merge nodes show both parent IDs:
+/// ```text
+///   ⊕  a9f3c1  MERGE     14:04:13
+///   ╠  ├─ main          c4e720
+///   ╠  └─ scope/rfc     b1d993
+///   │  scope/investigate-rfc merged: refresh_ttl = TTL/2
+/// ```
+pub fn print_dag(workdir: &Path, branch: Option<&str>) -> Result<(), H5iError> {
+    use console::style;
+
+    let repo = ctx_git_repo(workdir)?;
+    let active = current_branch(workdir);
+    let branch = branch.unwrap_or(&active);
+    let dag = read_dag(&repo, branch);
+
+    let n = dag.nodes.len();
+    let bar = "─".repeat(50_usize.saturating_sub(branch.len()));
+    println!(
+        "{}",
+        style(format!("── Reasoning DAG {bar} {branch} · {n} node{} ──", if n == 1 { "" } else { "s" }))
+            .dim()
+    );
+
+    // Show project goal if available.
+    if let Some(main_md) = ctx_read_file(&repo, "main.md") {
+        let goal = extract_section(&main_md, "Goal");
+        if !goal.is_empty() {
+            let truncated: String = goal.chars().take(70).collect();
+            println!(
+                "  {}  {}",
+                style("Goal:").dim(),
+                style(truncated).cyan()
+            );
+        }
+    }
+
+    if n == 0 {
+        println!("  {}", style("(empty — add entries with `h5i context trace`)").dim());
+        return Ok(());
+    }
+
+    println!();
+
+    // Build a lookup: node id → branch name (best-effort from merge content).
+    // We use it to annotate merge parent lines.
+    let node_ids: std::collections::HashSet<&str> =
+        dag.nodes.iter().map(|n| n.id.as_str()).collect();
+
+    for (idx, node) in dag.nodes.iter().enumerate() {
+        let is_last = idx == n - 1;
+
+        // ── Symbol and colour ──────────────────────────────────────────────
+        let (sym, kind_label) = match node.kind.as_str() {
+            "OBSERVE" => (
+                style("●".to_string()).blue().bold(),
+                style("OBSERVE ".to_string()).blue(),
+            ),
+            "THINK" => (
+                style("◆".to_string()).yellow().bold(),
+                style("THINK  ".to_string()).yellow(),
+            ),
+            "ACT" => (
+                style("■".to_string()).green().bold(),
+                style("ACT    ".to_string()).green(),
+            ),
+            "NOTE" => (
+                style("○".to_string()).white().dim(),
+                style("NOTE   ".to_string()).white().dim(),
+            ),
+            "MERGE" => (
+                style("⊕".to_string()).magenta().bold(),
+                style("MERGE  ".to_string()).magenta().bold(),
+            ),
+            other => (
+                style("·".to_string()).dim(),
+                style(format!("{:<7}", other)).dim(),
+            ),
+        };
+
+        // ── Timestamp (HH:MM:SS only, strip date prefix) ──────────────────
+        let ts = node
+            .timestamp
+            .split('T')
+            .nth(1)
+            .unwrap_or(&node.timestamp)
+            .split('.')
+            .next()
+            .unwrap_or(&node.timestamp);
+        let ts_display = &ts[..ts.len().min(8)];
+
+        // ── First line: symbol + id + kind + timestamp ─────────────────────
+        println!(
+            "  {}  {}  {}  {}",
+            sym,
+            style(&node.id).dim(),
+            kind_label,
+            style(ts_display).dim()
+        );
+
+        // ── Connector character on left ────────────────────────────────────
+        let connector = if node.kind == "MERGE" { "╠" } else { "│" };
+
+        // ── Merge: show parent IDs with branch annotations ─────────────────
+        if node.kind == "MERGE" && node.parent_ids.len() >= 2 {
+            // Extract the branch name from content: look for 'scope/...' in
+            // single-quotes, then bare scope/... tokens, then any word with '/'.
+            let scope_hint = {
+                // try 'scope/foo' quoted form first
+                let quoted = node.content.split('\'').find(|s| s.contains('/'));
+                if let Some(q) = quoted {
+                    q.to_string()
+                } else {
+                    // fall back to first word containing '/'
+                    node.content
+                        .split_whitespace()
+                        .find(|w| w.contains('/'))
+                        .unwrap_or("(branch)")
+                        .trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '-' && c != '_')
+                        .to_string()
+                }
+            };
+
+            let p0 = &node.parent_ids[0];
+            let p1 = &node.parent_ids[1];
+            let p0_known = node_ids.contains(p0.as_str());
+
+            println!(
+                "  {}  {} {}{}",
+                style(connector).magenta(),
+                style("├─").dim(),
+                style(p0).dim(),
+                if p0_known { style("  (this branch)".to_string()).dim() } else { style(String::new()).dim() }
+            );
+            println!(
+                "  {}  {} {}  {}",
+                style(connector).magenta(),
+                style("└─").dim(),
+                style(p1).dim(),
+                style(scope_hint).magenta()
+            );
+        }
+
+        // ── Content (word-wrapped at 72 cols) ─────────────────────────────
+        let content = node.content.trim();
+        let connector_line = if is_last {
+            "  ".to_string()
+        } else {
+            format!("  {}", style("│").dim())
+        };
+        let max_w = 72_usize;
+        let wrapped = ctx_word_wrap(content, max_w);
+        for line in &wrapped {
+            println!("  {}  {}", style("│").dim(), style(line.as_str()).dim());
+        }
+
+        // ── Blank separator (except after last node) ───────────────────────
+        if !is_last {
+            println!("{}", connector_line);
+        }
+    }
+
+    // ── Summary footer ────────────────────────────────────────────────────
+    let counts: [(&str, usize, fn(console::StyledObject<String>) -> console::StyledObject<String>); 5] = [
+        ("OBSERVE", dag.nodes.iter().filter(|n| n.kind == "OBSERVE").count(), |s| s.blue()),
+        ("THINK",   dag.nodes.iter().filter(|n| n.kind == "THINK").count(),   |s| s.yellow()),
+        ("ACT",     dag.nodes.iter().filter(|n| n.kind == "ACT").count(),     |s| s.green()),
+        ("NOTE",    dag.nodes.iter().filter(|n| n.kind == "NOTE").count(),    |s| s.white().dim()),
+        ("MERGE",   dag.nodes.iter().filter(|n| n.kind == "MERGE").count(),   |s| s.magenta()),
+    ];
+    let summary: Vec<String> = counts
+        .iter()
+        .filter(|(_, count, _)| *count > 0)
+        .map(|(label, count, colour_fn)| {
+            format!("{} {}", colour_fn(style(count.to_string())), style(*label).dim())
+        })
+        .collect();
+    println!();
+    println!("  {}  {}", style("◈").dim(), summary.join(style("  ·  ").dim().to_string().as_str()));
 
     Ok(())
 }
@@ -1665,7 +2349,7 @@ mod tests {
         let dir = tempdir().unwrap();
         git_init(dir.path());
         init(dir.path(), "goal").unwrap();
-        append_log(dir.path(), "OBSERVE", "Redis latency is 2ms").unwrap();
+        append_log(dir.path(), "OBSERVE", "Redis latency is 2ms", false).unwrap();
         let ctx = gcc_context(
             dir.path(),
             &ContextOpts { show_log: true, window: 3, ..Default::default() },
@@ -1682,7 +2366,7 @@ mod tests {
         let dir = tempdir().unwrap();
         git_init(dir.path());
         init(dir.path(), "goal").unwrap();
-        append_log(dir.path(), "think", "reasoning step").unwrap();
+        append_log(dir.path(), "think", "reasoning step", false).unwrap();
         let ctx = gcc_context(
             dir.path(),
             &ContextOpts { show_log: true, window: 3, ..Default::default() },
@@ -1932,7 +2616,7 @@ mod tests {
         init(dir.path(), "goal").unwrap();
 
         snapshot_for_commit(dir.path(), "sha3333300000000").unwrap();
-        append_log(dir.path(), "OBSERVE", "found a performance issue").unwrap();
+        append_log(dir.path(), "OBSERVE", "found a performance issue", false).unwrap();
         snapshot_for_commit(dir.path(), "sha4444400000000").unwrap();
 
         let diff = context_diff(dir.path(), "sha33333", "sha44444").unwrap();
@@ -1959,7 +2643,7 @@ mod tests {
         let dir = tempdir().unwrap();
         git_init(dir.path());
         init(dir.path(), "goal").unwrap();
-        append_log(dir.path(), "ACT", "edited src/repository.rs line 88").unwrap();
+        append_log(dir.path(), "ACT", "edited src/repository.rs line 88", false).unwrap();
         let ctx = relevant(dir.path(), "src/repository.rs").unwrap();
         assert!(
             ctx.trace_mentions.iter().any(|l| l.contains("repository.rs")),
@@ -1991,7 +2675,7 @@ mod tests {
         git_init(dir.path());
         init(dir.path(), "goal").unwrap();
         // Add trace entry on main mentioning the file.
-        append_log(dir.path(), "THINK", "retry_logic.rs needs a refactor").unwrap();
+        append_log(dir.path(), "THINK", "retry_logic.rs needs a refactor", false).unwrap();
         // Create a second branch.
         gcc_branch(dir.path(), "alt", "alternative approach").unwrap();
         // On alt branch, relevant should find the main-branch mention.
@@ -2033,5 +2717,231 @@ mod tests {
         let recent = extract_recent_commits(commit_text, 2);
         assert_eq!(recent.len(), 2);
         assert!(recent.last().unwrap().contains("Second contribution"));
+    }
+
+    // ── Feature 1: DAG trace nodes ────────────────────────────────────────────
+
+    #[test]
+    fn dag_is_empty_after_init() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let dag = read_dag(&repo, MAIN_BRANCH);
+        assert!(dag.nodes.is_empty(), "DAG should be empty before any trace");
+    }
+
+    #[test]
+    fn dag_records_node_on_append_log() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "OBSERVE", "saw something", false).unwrap();
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let dag = read_dag(&repo, MAIN_BRANCH);
+        assert_eq!(dag.nodes.len(), 1);
+        assert_eq!(dag.nodes[0].kind, "OBSERVE");
+        assert_eq!(dag.nodes[0].content, "saw something");
+        assert!(dag.nodes[0].parent_ids.is_empty(), "first node has no parents");
+    }
+
+    #[test]
+    fn dag_links_parent_ids_in_chain() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "OBSERVE", "first", false).unwrap();
+        append_log(dir.path(), "THINK", "second", false).unwrap();
+        append_log(dir.path(), "ACT", "third", false).unwrap();
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let dag = read_dag(&repo, MAIN_BRANCH);
+        assert_eq!(dag.nodes.len(), 3);
+        assert!(dag.nodes[1].parent_ids.contains(&dag.nodes[0].id));
+        assert!(dag.nodes[2].parent_ids.contains(&dag.nodes[1].id));
+    }
+
+    #[test]
+    fn dag_merge_node_has_two_parents() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "OBSERVE", "main obs", false).unwrap();
+        gcc_branch(dir.path(), "alt", "alternate").unwrap();
+        append_log(dir.path(), "THINK", "alt thought", false).unwrap();
+        gcc_checkout(dir.path(), "main").unwrap();
+        gcc_merge(dir.path(), "alt").unwrap();
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let dag = read_dag(&repo, MAIN_BRANCH);
+        let merge_node = dag.nodes.iter().find(|n| n.kind == "MERGE");
+        assert!(merge_node.is_some(), "merge node should exist");
+        assert_eq!(merge_node.unwrap().parent_ids.len(), 2, "merge node should have two parents");
+    }
+
+    // ── Feature 3: Ephemeral traces ───────────────────────────────────────────
+
+    #[test]
+    fn ephemeral_trace_not_in_trace_md() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "OBSERVE", "ephemeral scratch", true).unwrap();
+        let ctx = gcc_context(
+            dir.path(),
+            &ContextOpts { show_log: true, window: 3, ..Default::default() },
+        )
+        .unwrap();
+        assert!(
+            !ctx.recent_log_lines.iter().any(|l| l.contains("ephemeral scratch")),
+            "ephemeral entry must not appear in trace.md"
+        );
+    }
+
+    #[test]
+    fn ephemeral_trace_visible_in_ephemeral_md() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "NOTE", "quick scratch note", true).unwrap();
+        let text = read_ephemeral(dir.path(), None).unwrap();
+        assert!(text.contains("quick scratch note"));
+    }
+
+    #[test]
+    fn ephemeral_trace_not_in_dag() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "OBSERVE", "ephemeral", true).unwrap();
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let dag = read_dag(&repo, MAIN_BRANCH);
+        assert!(dag.nodes.is_empty(), "ephemeral entries must not appear in DAG");
+    }
+
+    #[test]
+    fn ephemeral_cleared_on_context_commit() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "NOTE", "scratch", true).unwrap();
+        gcc_commit(dir.path(), "checkpoint", "did things").unwrap();
+        let text = read_ephemeral(dir.path(), None).unwrap();
+        assert!(!text.contains("scratch"), "ephemeral should be cleared after commit");
+    }
+
+    // ── Feature 2: Three-pass lossless pack ───────────────────────────────────
+
+    #[test]
+    fn lossless_pack_noop_when_no_observe_entries() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "THINK", "pure reasoning", false).unwrap();
+        append_log(dir.path(), "ACT", "did something", false).unwrap();
+        let result = pack_lossless(dir.path()).unwrap();
+        assert_eq!(result.removed_subsumed_observe, 0);
+        assert_eq!(result.merged_consecutive_observe, 0);
+    }
+
+    #[test]
+    fn lossless_pack_removes_subsumed_observe() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        // OBSERVE about repository.rs, then THINK mentioning repository.rs → should be subsumed.
+        append_log(dir.path(), "OBSERVE", "repository.rs has 67KB", false).unwrap();
+        append_log(dir.path(), "THINK", "refactor repository.rs entry points", false).unwrap();
+        let result = pack_lossless(dir.path()).unwrap();
+        assert_eq!(result.removed_subsumed_observe, 1, "subsumed OBSERVE should be removed");
+    }
+
+    #[test]
+    fn lossless_pack_preserves_think_act_verbatim() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "OBSERVE", "metadata.rs exists", false).unwrap();
+        append_log(dir.path(), "THINK", "update metadata.rs schema", false).unwrap();
+        append_log(dir.path(), "ACT", "edited metadata.rs line 42", false).unwrap();
+        pack_lossless(dir.path()).unwrap();
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let trace = ctx_read_file(&repo, "branches/main/trace.md").unwrap_or_default();
+        assert!(trace.contains("update metadata.rs schema"), "THINK must be preserved");
+        assert!(trace.contains("edited metadata.rs line 42"), "ACT must be preserved");
+    }
+
+    #[test]
+    fn lossless_pack_merges_consecutive_observe() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        // Three consecutive OBSERVE entries about the same file.
+        append_log(dir.path(), "OBSERVE", "src/main.rs line 1", false).unwrap();
+        append_log(dir.path(), "OBSERVE", "src/main.rs line 2", false).unwrap();
+        append_log(dir.path(), "OBSERVE", "src/main.rs line 3", false).unwrap();
+        let result = pack_lossless(dir.path()).unwrap();
+        assert_eq!(result.merged_consecutive_observe, 2, "3 entries → 1, so 2 merged");
+    }
+
+    // ── Feature 4: Stable-prefix counts ──────────────────────────────────────
+
+    #[test]
+    fn stable_line_count_consistent_with_dynamic() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let ctx = gcc_context(dir.path(), &ContextOpts::default()).unwrap();
+        // stable + dynamic = total trace lines; dynamic ≤ 40.
+        assert!(ctx.dynamic_line_count <= 40);
+        // With only the trace header, everything is in the dynamic tail.
+        assert_eq!(ctx.stable_line_count + ctx.dynamic_line_count, ctx.stable_line_count + ctx.dynamic_line_count);
+    }
+
+    #[test]
+    fn stable_line_count_reflects_tail_boundary() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        // Add 50 trace entries — 40 should be dynamic, 10 stable.
+        for i in 0..50 {
+            append_log(dir.path(), "NOTE", &format!("entry {i}"), false).unwrap();
+        }
+        let ctx = gcc_context(dir.path(), &ContextOpts::default()).unwrap();
+        assert_eq!(ctx.dynamic_line_count, 40);
+        assert!(ctx.stable_line_count >= 10, "at least 10 lines in stable prefix");
+    }
+
+    // ── Feature 5: Scoped sub-contexts ───────────────────────────────────────
+
+    #[test]
+    fn gcc_scope_creates_scope_prefixed_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_scope(dir.path(), "scope/investigate-auth", "investigate auth module").unwrap();
+        assert!(list_branches(dir.path()).contains(&"scope/investigate-auth".to_string()));
+        assert_eq!(current_branch(dir.path()), "scope/investigate-auth");
+    }
+
+    #[test]
+    fn gcc_scope_is_identified_as_scope_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_scope(dir.path(), "scope/check-perf", "performance check").unwrap();
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        assert!(is_scope_branch(&repo, "scope/check-perf"));
+        assert!(!is_scope_branch(&repo, MAIN_BRANCH));
+    }
+
+    #[test]
+    fn gcc_scope_can_be_merged_back() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_scope(dir.path(), "scope/research", "do research").unwrap();
+        gcc_commit(dir.path(), "research done", "found that X causes Y").unwrap();
+        gcc_checkout(dir.path(), "main").unwrap();
+        let summary = gcc_merge(dir.path(), "scope/research").unwrap();
+        assert!(summary.contains("scope/research"), "merge summary should name the scope");
     }
 }

@@ -655,7 +655,7 @@ fn tool_context_trace(params: &Value, workdir: &Path) -> Result<Value> {
     if !ctx::is_initialized(workdir) {
         ctx::init(workdir, "")?;
     }
-    ctx::append_log(workdir, kind, content)?;
+    ctx::append_log(workdir, kind, content, false)?;
     Ok(text_content(format!("[{}] {}", kind, content)))
 }
 

@@ -456,18 +456,29 @@ emits raw JSON instead of the styled table.
 Git-style branching and committing applied to agent
 .I reasoning
 rather than code.
-Maintains a
-.I .h5i\-ctx/
-workspace based on arXiv:2508.00031.
+Stores a version-controlled workspace in
+.I refs/h5i/context
+based on arXiv:2508.00031, enhanced with five capabilities from recent
+research (CMV arXiv:2602.22402, Claude Code design-space arXiv:2604.14228):
+(1) DAG trace nodes with explicit parent links,
+(2) ephemeral scratch traces cleared on each milestone commit,
+(3) three-pass structurally-lossless
+.BR pack ,
+(4) stable-prefix / dynamic-suffix split for prompt-cache efficiency,
+(5) subagent-scoped sub-contexts via
+.BR scope .
 .PP
 .B Workspace layout
 .RS 4
 .nf
-.I .h5i\-ctx/
+refs/h5i/context tree:
     main.md                  \(em global roadmap: goal, milestones, notes
+    .current_branch          \(em active branch name
     branches/<branch>/
         commit.md            \(em milestone summaries (append-only)
-        trace.md             \(em OTA execution trace
+        trace.md             \(em human-readable OTA execution trace
+        dag.json             \(em DAG of trace nodes with parent links
+        ephemeral.md         \(em scratch traces (cleared on context commit)
         metadata.yaml        \(em file structure, dependencies, env config
 .fi
 .RE
@@ -480,6 +491,7 @@ Create the workspace with an initial project goal.
 .TP
 .B commit \fISUMMARY\fR [\-\-detail \fITEXT\fR]
 Save a milestone checkpoint (one-line summary + optional detail).
+Also clears the ephemeral scratch buffer for the current branch.
 .TP
 .B branch \fINAME\fR [\-\-purpose \fITEXT\fR]
 Create and switch to a new reasoning branch.
@@ -489,14 +501,50 @@ Switch to an existing reasoning branch.
 .TP
 .B merge \fIBRANCH\fR
 Merge a completed branch's log and summaries into the current branch.
+Appends a two-parent DAG merge node to
+.I dag.json
+so both branch histories remain causally connected.
 .TP
-.B trace \-\-kind \fIKIND\fR \fICONTENT\fR
+.B scope \fINAME\fR [\-\-purpose \fITEXT\fR]
+Create a subagent-scoped sub-context.
+The branch is stored as
+.BI scope/ NAME
+(the prefix is added automatically) and tagged in its
+.I metadata.yaml
+so it appears separately under
+.B Scoped subagents
+in
+.BR status .
+Merge back with
+.BI "h5i context merge scope/" NAME
+when the subagent finishes.
+.TP
+.B trace [\-\-ephemeral] \-\-kind \fIKIND\fR \fICONTENT\fR
 Append an OTA (Observe\(enThink\(enAct) trace entry.
 Valid
 .I KIND
 values:
 .BR OBSERVE ,\  THINK ,\  ACT ,\  NOTE
 (case-insensitive).
+.RS 4
+.TP
+Without
+.B \-\-ephemeral
+the entry is written to
+.I trace.md
+and to
+.I dag.json
+as a new DAG node with the previous node as parent.
+.TP
+With
+.B \-\-ephemeral
+the entry goes to
+.I ephemeral.md
+only \(em excluded from the DAG, excluded from snapshots, and cleared on
+the next
+.BR "h5i context commit" .
+Use this for scratch observations you only need for the current step.
+.RE
 .TP
 .B show [\fIOPTIONS\fR]
 Retrieve the current project state.
@@ -523,7 +571,13 @@ Scroll back N lines from the end of the trace.
 .RE
 .TP
 .B status
-Quick overview: current branch, commit count, trace line count.
+Overview of the current workspace: active branch, milestone commit count,
+trace line count, other reasoning branches,
+.B scoped subagents
+.RI ( scope/*
+branches listed separately), and the
+.B stable-prefix / dynamic-suffix
+boundary showing how many trace lines are prompt-cache friendly vs. volatile.
 .TP
 .B prompt
 Print a Claude system prompt that explains how to use h5i context
@@ -567,15 +621,37 @@ editing a file to recover accumulated reasoning about it without
 re-reading the full trace.
 .TP
 .B pack
-Compact old context history by squashing
-.IR refs/h5i/context
-commits that predate the earliest linked code-commit snapshot.
-Appends a marker to
-.I main.md
-recording the event.
+Compact the current branch's OTA trace using a
+.B three-pass structurally-lossless algorithm:
+(1)\~remove OBSERVE entries whose subject token appears in a later THINK or
+ACT entry (subsumed observations),
+(2)\~preserve every THINK, ACT, and NOTE entry verbatim,
+(3)\~merge consecutive OBSERVE entries that share the same subject token
+into one entry with a
+.BI \(mu N
+count annotation.
+Updates both
+.I trace.md
+and
+.IR dag.json .
 Run
 .B git gc
 afterwards to reclaim disk space.
+.TP
+.B ephemeral [\-\-branch \fINAME\fR]
+Display the current ephemeral scratch traces for a branch (default: current
+branch).
+Ephemeral entries are written with
+.B h5i context trace \-\-ephemeral
+and are automatically cleared on the next
+.BR "h5i context commit" .
+.TP
+.B cached\-prefix [\-\-tail \fIN\fR]
+Show the stable-prefix / dynamic-suffix boundary in the current trace
+(default tail: 40 lines).
+Lines in the stable prefix are unchanged across most agent steps and
+benefit from prompt-cache hits; lines in the dynamic suffix change every
+step.
 .RE
 .
 .\" ─── vibe ───────────────────────────────────────────────────────────────────

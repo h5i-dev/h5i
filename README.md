@@ -130,7 +130,7 @@ h5i notes review         # ranked list of commits that most need human review
 
 ### 3. `h5i context` — give Claude a memory that survives session resets
 
-Long-running tasks lose context when a session ends. The `h5i context` workspace is a version-controlled notepad that Claude reads at the start of each new session to restore its state.
+Long-running tasks lose context when a session ends. The `h5i context` workspace is a version-controlled notepad that Claude reads at the start of each new session to restore its state. Every trace entry is stored both as a human-readable log and as a node in a **directed-acyclic-graph** (DAG) with explicit parent links — so parallel agent branches stay causally connected when merged.
 
 ```bash
 # Claude runs this once at project start
@@ -141,7 +141,10 @@ h5i context trace --kind OBSERVE "Redis p99 latency is 2 ms"
 h5i context trace --kind THINK   "40 MB overhead is acceptable"
 h5i context trace --kind ACT     "Switching session store to Redis"
 
-# After each meaningful milestone
+# Scratch observations that shouldn't survive the session
+h5i context trace --kind OBSERVE "checking line 42" --ephemeral
+
+# After each meaningful milestone (clears ephemeral scratch, checkpoints DAG)
 h5i context commit "Implemented token refresh flow" \
   --detail "Handles 401s transparently; refresh token stored in HttpOnly cookie."
 
@@ -160,6 +163,31 @@ h5i context show --trace
 
   Recent Trace:
     [ACT] Switching session store to Redis in src/session.rs
+```
+
+**Delegate to a subagent without polluting the main thread:**
+
+```bash
+h5i context scope investigate-auth --purpose "check token validation edge cases"
+# subagent works here, adds its own traces …
+h5i context checkout main
+h5i context merge scope/investigate-auth   # merge node recorded in DAG
+```
+
+**Keep the trace cache-efficient** — check the stable-prefix boundary before a long session:
+
+```bash
+h5i context cached-prefix   # shows how many lines are prompt-cache friendly vs. volatile
+```
+
+**Compact the trace with three-pass lossless trimming** (removes subsumed OBSERVEs, merges consecutive OBSERVEs about the same file, preserves all THINK/ACT verbatim):
+
+```bash
+h5i context pack
+# ✔  Three-pass lossless pack complete:
+#    − 12 subsumed OBSERVE entries removed
+#    ⇒  4 consecutive OBSERVE entries merged
+#    ✔  31 THINK/ACT/NOTE entries preserved verbatim
 ```
 
 Use `h5i context branch` and `h5i context merge` to explore risky alternatives without losing the main thread — exactly like `git branch`. Run `h5i context prompt` to get a ready-made system prompt that tells Claude how to use these commands.
