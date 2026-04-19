@@ -277,3 +277,4 @@ _[Checkpoint: 69e4c9d0 — feat(context): all 5 CMV/Claude-design features imple
 [14:29:41] ACT: edited src/resume.rs
 [14:29:49] OBSERVE: read src/ctx.rs
 [14:30:03] ACT: edited src/ctx.rs
+[14:33:30] OBSERVE: Ran claude --print with MCP tools on blank project; captured 16 tool calls; identified 5 UX problems: Key Decisions full of narration, absolute paths in notes output, ACT truncated at 80 chars, no h5i commit/relevant/notes-analyze in system prompt, ToolSearch deferred overhead undocumented
