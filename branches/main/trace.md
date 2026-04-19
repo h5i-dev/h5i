@@ -461,3 +461,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [16:20:15] OBSERVE: read src/repository.rs
 [16:20:26] OBSERVE: read src/repository.rs
 [16:20:46] ACT: edited src/repository.rs
+[16:23:48] ACT: implemented h5i rewind: shadow-ref backup, checkout_tree restore, deletion of files absent from target, dry-run, MCP tool h5i_rewind, 3 unit tests
