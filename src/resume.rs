@@ -157,7 +157,7 @@ pub fn generate_briefing(
                                     .nth(1)
                                     .unwrap_or(l.as_str())
                                     .chars()
-                                    .take(80)
+                                    .take(120)
                                     .collect::<String>()
                             })
                             .collect()

@@ -2136,28 +2136,38 @@ Show active branch, commit count, and log size.
 ## Workflow Pattern
 
 ```
-# Session start (mandatory)
-h5i context show --trace
+# ── Session start (mandatory) ──────────────────────────────────────
+h5i context show --trace          # restore goal, milestones, recent trace
+h5i context todo                  # surface any open TODOs from prior sessions
 
-# During execution (continuous)
-h5i context trace --kind OBSERVE "test suite output: 3 failures in auth module"
-h5i context trace --kind THINK   "failures are in token validation; likely a regex issue"
-h5i context trace --kind ACT     "editing src/auth/token.rs validate() function"
+# ── Before touching a file ─────────────────────────────────────────
+h5i context relevant src/auth.rs  # check if prior reasoning about this file exists
 
-# Reaching a milestone
-h5i context commit "Fixed token validation regex" \
-  --detail "Replaced greedy quantifier with possessive; all 47 auth tests now pass."
+# ── During execution (continuous) ──────────────────────────────────
+h5i context trace --kind OBSERVE "test suite: 3 failures in auth module"
+h5i context trace --kind THINK   "failures in token validation — likely regex issue"
+h5i context trace --kind ACT     "fixed greedy quantifier in src/auth/token.rs:validate()"
 
-# Session end
-h5i context status
+# ── After each meaningful chunk of work ────────────────────────────
+h5i context commit "Fixed token validation" \
+  --detail "Replaced greedy quantifier; all 47 auth tests now pass."
+
+# ── Session end (mandatory) ─────────────────────────────────────────
+h5i commit -m "fix token validation regex" \
+  --model <model> --agent claude-code \
+  --prompt "<the user's original request>"    # records AI provenance in git
+h5i notes analyze                             # links this session to HEAD commit
 ```
 
 ## Guidelines
-1. Log every OTA step — fine-grained traces are the primary recovery mechanism.
-2. Commit at every meaningful milestone, not just at the end.
-3. Branch before any risky or divergent exploration.
-4. Always run `h5i context show` at the start of a new session.
-5. Update main.md milestones via `h5i context write main.md <content>` when goals complete.
+1. **`h5i context show` first, every session** — never start work without restoring context.
+2. **`h5i context relevant <file>` before editing** — check prior reasoning about the file.
+3. **Trace every OTA step** — fine-grained traces are the primary recovery mechanism.
+4. **`h5i context commit` at every milestone** — not just at the end; captures reasoning.
+5. **`h5i commit` at the end** — records AI provenance in git history alongside code.
+6. **`h5i notes analyze` to close out** — links the session footprint to the git commit.
+7. Branch before any risky or divergent exploration (`h5i context branch`).
+8. Use `h5i context scope <name>` to delegate to a subagent without polluting main thread.
 "#
     )
 }

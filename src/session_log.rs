@@ -667,14 +667,44 @@ pub fn analyze_session(
     for (text, t, ctx_file) in &thinking_entries {
         let lower = text.to_lowercase();
 
-        // Key decisions: sentences with first-person planning language
+        // Key decisions: sentences that describe actual design/architecture choices.
+        // Exclude pure procedural narration ("Let me start by...", "I'll first read...").
+        const PROCEDURAL_FOLLOW: &[&str] = &[
+            "start by", "begin by", "first ", "now ", "proceed", "check ", "look at",
+            "read ", "verify", "see ", "take a look", "go ahead", "try to",
+        ];
         for sentence in split_sentences(text) {
             let sl = sentence.to_lowercase();
-            let is_decision = ["i'll ", "i will ", "let me ", "i should ", "the best approach",
-                "i need to ", "i'm going to "]
+            let has_planning_marker = ["i'll ", "i will ", "i should ", "the best approach",
+                "i'm going to ", "we should ", "we'll "]
                 .iter()
                 .any(|p| sl.contains(p));
-            if is_decision && (40..=300).contains(&sentence.len()) {
+            let is_procedural = ["let me ", "i need to "]
+                .iter()
+                .any(|p| {
+                    if let Some(pos) = sl.find(p) {
+                        let after = &sl[pos + p.len()..];
+                        PROCEDURAL_FOLLOW.iter().any(|f| after.starts_with(f))
+                    } else {
+                        false
+                    }
+                });
+            // Require the sentence to mention something technical (contains '(', '::', '.rs',
+            // a crate or concept) — filters out pure "I'll do X" narration.
+            let has_technical_content = sentence.contains("::") || sentence.contains(".rs")
+                || sentence.contains(".go") || sentence.contains(".ts")
+                || sentence.contains('(') || sentence.contains("crate")
+                || sentence.contains("struct") || sentence.contains("trait")
+                || sentence.contains("function") || sentence.contains("middleware")
+                || sentence.contains("API") || sentence.contains("env var")
+                || sentence.contains("config") || sentence.contains("secret")
+                || sentence.contains("token") || sentence.contains("hash")
+                || sentence.contains("key") || sentence.contains("algorithm");
+            if (has_planning_marker || sl.contains("let me ") || sl.contains("i need to "))
+                && !is_procedural
+                && has_technical_content
+                && (40..=300).contains(&sentence.len())
+            {
                 key_decisions.push(sentence.trim().to_string());
             }
         }
@@ -977,6 +1007,23 @@ pub fn aggregate_churn(h5i_root: &Path) -> Vec<FileChurn> {
 
 // ── Terminal display helpers ──────────────────────────────────────────────────
 
+/// Strip the current working directory prefix from an absolute path so output
+/// stays readable (e.g. `/home/user/proj/src/main.rs` → `src/main.rs`).
+fn rel_path(p: &str) -> &str {
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(cwd_str) = cwd.to_str() {
+            let with_sep = format!("{cwd_str}/");
+            if let Some(rest) = p.strip_prefix(with_sep.as_str()) {
+                return rest;
+            }
+            if let Some(rest) = p.strip_prefix(cwd_str) {
+                return rest.trim_start_matches('/');
+            }
+        }
+    }
+    p
+}
+
 pub fn print_footprint(analysis: &SessionAnalysis) {
     use console::style;
     println!("{}", style("── Exploration Footprint ──────────────────────────────────").dim());
@@ -997,7 +1044,7 @@ pub fn print_footprint(analysis: &SessionAnalysis) {
         println!(
             "    {} {} ×{}  {}",
             style("📖").dim(),
-            style(&f.path).yellow(),
+            style(rel_path(&f.path)).yellow(),
             style(f.count).dim(),
             style(format!("[{tools}]")).dim(),
         );
@@ -1010,14 +1057,14 @@ pub fn print_footprint(analysis: &SessionAnalysis) {
     }
     for f in &analysis.footprint.edited {
         let count = analysis.causal_chain.edit_sequence.iter().filter(|s| &s.file == f).count();
-        println!("    {} {}  ×{} edit(s)", style("✏").green(), style(f).yellow(), count);
+        println!("    {} {}  ×{} edit(s)", style("✏").green(), style(rel_path(f)).yellow(), count);
     }
 
     if !analysis.footprint.implicit_deps.is_empty() {
         println!();
         println!("{}", style("  Implicit Dependencies (read but not edited):").bold());
         for f in &analysis.footprint.implicit_deps {
-            println!("    {} {}", style("→").dim(), style(f).dim());
+            println!("    {} {}", style("→").dim(), style(rel_path(f)).dim());
         }
     }
 }
@@ -1054,7 +1101,7 @@ pub fn print_causal_chain(analysis: &SessionAnalysis) {
             println!(
                 "    {} {}  {} t:{}",
                 style(format!("{:>2}.", i + 1)).dim(),
-                style(&step.file).yellow(),
+                style(rel_path(&step.file)).yellow(),
                 style(&step.operation).cyan(),
                 style(step.turn).dim(),
             );
