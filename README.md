@@ -15,6 +15,10 @@ cargo install --git https://github.com/Koukyosyumei/h5i h5i-core
 cd your-project && h5i init
 ```
 
+<p align="center">
+      <img src="./assets/screenshot_h5i_dag.png" alt="Context DAG" width="90%">
+</p>
+
 ---
 
 ## Three things h5i does
