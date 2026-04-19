@@ -403,3 +403,4 @@ _[Checkpoint: 69e4e7cb — fixed 5 UX problems from real session observation]_
 [15:37:09] ACT: edited src/main.rs
 [15:37:16] OBSERVE: read src/review.rs
 [15:37:31] ACT: edited src/main.rs
+[15:38:09] OBSERVE: read src/mcp.rs
