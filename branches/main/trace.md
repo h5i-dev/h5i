@@ -178,3 +178,4 @@ _[Checkpoint: 69e4c71b — all 5 context management features implemented]_
 [12:18:48] ACT: edited MANUAL.md
 [12:18:52] ACT: edited MANUAL.md
 [12:19:47] ACT: edited man/man1/h5i.1
+[12:25:52] ACT: committed all 5 context-management features + docs update: DAG traces, ephemeral scratch, stable-prefix, scope branches, lossless pack (commit 5e39694b)
