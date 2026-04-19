@@ -2469,6 +2469,68 @@ impl H5iRepository {
     /// | BINARY_FILE       | Binary file(s) modified                           |
     /// | MASS_DELETION     | >80 % of the diff is deletions (>100 lines)      |
     /// | BLIND_EDIT        | File(s) edited with no prior Read in the session  |
+    /// Return files most frequently co-changed with `target_file` in git history.
+    ///
+    /// Walks the last `history_limit` commits. For each commit that touches
+    /// `target_file`, counts how often every *other* file in that commit also
+    /// appears. Returns a ranked list of `(file, co_change_count)` pairs.
+    pub fn cochanged_files(
+        &self,
+        target_file: &str,
+        history_limit: usize,
+        result_limit: usize,
+    ) -> Result<Vec<(String, usize)>, H5iError> {
+        use std::collections::HashMap;
+
+        let mut revwalk = self.git_repo.revwalk()?;
+        revwalk.push_head()?;
+
+        let mut counts: HashMap<String, usize> = HashMap::new();
+
+        for oid_result in revwalk.take(history_limit) {
+            let oid = oid_result?;
+            let commit = self.git_repo.find_commit(oid)?;
+            let commit_tree = commit.tree()?;
+            let parent_tree = if commit.parent_count() > 0 {
+                Some(commit.parent(0)?.tree()?)
+            } else {
+                None
+            };
+            let diff = self.git_repo.diff_tree_to_tree(
+                parent_tree.as_ref(),
+                Some(&commit_tree),
+                None,
+            )?;
+
+            // Collect all files touched in this commit
+            let mut touched: Vec<String> = Vec::new();
+            for delta in diff.deltas() {
+                if let Some(p) = delta.new_file().path().or_else(|| delta.old_file().path()) {
+                    if let Some(s) = p.to_str() {
+                        touched.push(s.to_string());
+                    }
+                }
+            }
+
+            // If this commit touches target_file, credit all sibling files
+            let target_touched = touched.iter().any(|f| {
+                f == target_file || f.ends_with(target_file) || target_file.ends_with(f.as_str())
+            });
+            if target_touched {
+                for f in &touched {
+                    if f != target_file {
+                        *counts.entry(f.clone()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+
+        let mut ranked: Vec<(String, usize)> = counts.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1));
+        ranked.truncate(result_limit);
+        Ok(ranked)
+    }
+
     pub fn suggest_review_points(
         &self,
         limit: usize,

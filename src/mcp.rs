@@ -563,6 +563,37 @@ pub fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {}
             }
+        },
+        // ── context search ─────────────────────────────────────────────────────
+        {
+            "name": "h5i_context_search",
+            "description": "Search context traces and session footprints for files relevant \
+                to a natural-language query. Combines BM25-style scoring over \
+                OBSERVE/THINK/ACT trace entries with git co-change analysis. \
+                Use this INSTEAD of exploratory Grep/Read chains to find which files \
+                are relevant to a task — it returns ranked candidates with evidence \
+                snippets and co-change partners, dramatically reducing token consumption \
+                during codebase exploration.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural-language search query (e.g. 'auth token expiry' \
+                            or 'retry logic timeout')."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of file results to return. Default: 10."
+                    },
+                    "history": {
+                        "type": "integer",
+                        "description": "Number of git commits to walk for co-change analysis. \
+                            Default: 200."
+                    }
+                },
+                "required": ["query"]
+            }
         }
     ])
 }
@@ -1007,6 +1038,43 @@ fn tool_context_scan(params: &Value, workdir: &Path) -> Result<Value> {
     Ok(json_content(serde_json::to_value(&result)?))
 }
 
+fn tool_context_search(params: &Value, workdir: &Path) -> Result<Value> {
+    if !ctx::is_initialized(workdir) {
+        return Ok(json_content(json!({"initialized": false, "results": []})));
+    }
+    let query = params
+        .get("query")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing required param: query"))?;
+    let limit = params.get("limit").and_then(Value::as_u64).unwrap_or(10) as usize;
+    let history = params.get("history").and_then(Value::as_u64).unwrap_or(200) as usize;
+
+    let mut results = ctx::search(workdir, query, limit)?;
+
+    // Enrich top results with co-change data from git
+    if let Ok(repo) = crate::repository::H5iRepository::open(workdir) {
+        for r in results.iter_mut().take(5) {
+            if let Ok(cochanged) = repo.cochanged_files(&r.file, history, 5) {
+                r.cochanged_with = cochanged.into_iter().map(|(f, _)| f).collect();
+            }
+        }
+    }
+
+    let out: Vec<Value> = results
+        .iter()
+        .map(|r| {
+            json!({
+                "file": r.file,
+                "score": r.score,
+                "signal": r.signal,
+                "snippets": r.snippets,
+                "cochanged_with": r.cochanged_with,
+            })
+        })
+        .collect();
+    Ok(json_content(json!({ "query": query, "results": out })))
+}
+
 fn tool_context_pack(_params: &Value, workdir: &Path) -> Result<Value> {
     if !ctx::is_initialized(workdir) {
         return Ok(json_content(json!({"squashed_commits": 0, "message": "Nothing to pack — workspace not initialized."})));
@@ -1054,6 +1122,7 @@ pub fn call_tool(name: &str, params: &Value, workdir: &Path) -> Result<Value> {
         "h5i_context_relevant" => tool_context_relevant(params, workdir),
         "h5i_context_scan" => tool_context_scan(params, workdir),
         "h5i_context_pack" => tool_context_pack(params, workdir),
+        "h5i_context_search" => tool_context_search(params, workdir),
         other => anyhow::bail!("Unknown tool: {}", other),
     }
 }
@@ -1651,6 +1720,7 @@ mod tests {
             "h5i_context_relevant",
             "h5i_context_scan",
             "h5i_context_pack",
+            "h5i_context_search",
         ];
         for name in &expected {
             assert!(names.contains(name), "missing tool: {}", name);

@@ -1917,6 +1917,242 @@ pub fn print_knowledge(workdir: &Path) -> Result<(), H5iError> {
     Ok(())
 }
 
+// ── Context search ────────────────────────────────────────────────────────────
+
+/// One result from `search()` — a file ranked by relevance to the query.
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    /// Relative file path (e.g. `src/auth/middleware.rs`).
+    pub file: String,
+    /// Combined relevance score (0.0–1.0, higher = more relevant).
+    pub score: f64,
+    /// The most relevant trace/commit snippets mentioning this file.
+    pub snippets: Vec<String>,
+    /// Primary signal source: "trace", "session", "cochange", or combined.
+    pub signal: String,
+    /// Files frequently co-changed with this file (from git history).
+    pub cochanged_with: Vec<String>,
+}
+
+/// Tokenise a string into lowercase words, stripping punctuation.
+fn tokenise(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|t| t.len() > 1)
+        .map(|t| t.to_lowercase())
+        .collect()
+}
+
+/// Score one document (a single trace line or snippet) against query terms.
+/// Returns a value in [0.0, 1.0]: fraction of query terms found in the doc.
+fn term_overlap(query_terms: &[String], document: &str) -> f64 {
+    if query_terms.is_empty() {
+        return 0.0;
+    }
+    let doc_lower = document.to_lowercase();
+    let matched = query_terms.iter().filter(|t| doc_lower.contains(t.as_str())).count();
+    matched as f64 / query_terms.len() as f64
+}
+
+/// Extract file-like tokens from a trace line (paths containing `/` or `.`).
+/// Returns short paths such as `src/auth.rs` or bare filenames like `session.rs`.
+fn extract_file_mentions(line: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    for token in line.split_whitespace() {
+        // Strip leading punctuation / brackets
+        let t = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-');
+        // Must look like a path: contains '/' or ends with a known extension after a '.'
+        let looks_like_path = t.contains('/') || {
+            if let Some(dot_pos) = t.rfind('.') {
+                let ext = &t[dot_pos + 1..];
+                matches!(ext, "rs" | "py" | "ts" | "tsx" | "js" | "jsx" | "go" | "java"
+                    | "c" | "cpp" | "h" | "hpp" | "rb" | "swift" | "kt" | "md" | "json"
+                    | "toml" | "yaml" | "yml" | "sh" | "bash" | "sql" | "html" | "css")
+            } else {
+                false
+            }
+        };
+        if looks_like_path && t.len() > 3 && !t.starts_with("http") {
+            files.push(t.to_string());
+        }
+    }
+    files
+}
+
+/// Search the context workspace and session footprints for files relevant to `query`.
+///
+/// Scoring model (additive, then normalised to [0, 1]):
+/// - **Trace signal** (weight 1.0 per line): each trace line mentioning a file is
+///   scored by `term_overlap(query_terms, line)`. THINK lines get a 1.5× bonus.
+/// - **Session footprint signal** (weight 0.5): files from past session analyses
+///   (consulted + edited) are scored by query term overlap with the causal chain trigger
+///   and key decisions of that session.
+///
+/// The `cochanged_with` field is populated by the caller from git history (see
+/// `H5iRepository::cochanged_files`) and is not computed here.
+pub fn search(workdir: &Path, query: &str, limit: usize) -> Result<Vec<SearchResult>, H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    let query_terms = tokenise(query);
+
+    // file → (score_sum, snippets, signals_seen)
+    let mut scores: std::collections::HashMap<String, (f64, Vec<String>, std::collections::HashSet<String>)> =
+        std::collections::HashMap::new();
+
+    // ── Signal 1: trace entries (all branches) ────────────────────────────────
+    let branches = ctx_list_branches_git(&repo);
+    for branch_name in &branches {
+        for source in &["trace.md", "commit.md"] {
+            let text = ctx_read_file(&repo, &format!("branches/{branch_name}/{source}"))
+                .unwrap_or_default();
+            for line in text.lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let overlap = term_overlap(&query_terms, line);
+                if overlap < 0.01 {
+                    continue;
+                }
+                let is_think = line.contains("] THINK:");
+                let weight = if is_think { 1.5 } else { 1.0 };
+                let score_contrib = overlap * weight;
+
+                // Credit every file mentioned in this line
+                let mentioned = extract_file_mentions(line);
+                if mentioned.is_empty() {
+                    // Line has no file — still a useful snippet; credit a pseudo-key
+                    // so the snippet surfaces via knowledge search below
+                    continue;
+                }
+                let snippet: String = line.chars().take(120).collect();
+                for file in &mentioned {
+                    let entry = scores.entry(file.clone()).or_default();
+                    entry.0 += score_contrib;
+                    if entry.1.len() < 4 && !entry.1.contains(&snippet) {
+                        entry.1.push(snippet.clone());
+                    }
+                    entry.2.insert("trace".to_string());
+                }
+            }
+        }
+    }
+
+    // ── Signal 2: session footprint analyses ──────────────────────────────────
+    // Walk .git/.h5i/session_log/<oid>/analysis.json files
+    let h5i_root = {
+        let git_dir = repo.path(); // points to .git/ (or .git itself if bare)
+        git_dir.join(".h5i")
+    };
+    let session_oids = crate::session_log::list_analyses(&h5i_root);
+    for oid in &session_oids {
+        if let Ok(Some(analysis)) = crate::session_log::load_analysis(&h5i_root, oid) {
+            // Score the session by query overlap with trigger + decisions
+            let session_text = format!(
+                "{} {}",
+                analysis.causal_chain.user_trigger,
+                analysis.causal_chain.key_decisions.join(" ")
+            );
+            let session_overlap = term_overlap(&query_terms, &session_text);
+            if session_overlap < 0.05 {
+                continue;
+            }
+            let base_score = session_overlap * 0.5;
+            // Credit all consulted and edited files
+            for cf in &analysis.footprint.consulted {
+                let entry = scores.entry(cf.path.clone()).or_default();
+                entry.0 += base_score;
+                entry.2.insert("session".to_string());
+            }
+            for f in &analysis.footprint.edited {
+                let entry = scores.entry(f.clone()).or_default();
+                entry.0 += base_score * 1.2; // edited files get slight bonus
+                entry.2.insert("session".to_string());
+            }
+        }
+    }
+
+    if scores.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Normalise scores to [0, 1]
+    let max_score = scores.values().map(|(s, _, _)| *s).fold(0.0_f64, f64::max);
+    let mut results: Vec<SearchResult> = scores
+        .into_iter()
+        .filter(|(_, (s, _, _))| *s > 0.0)
+        .map(|(file, (raw_score, snippets, signals))| {
+            let normalised = if max_score > 0.0 { raw_score / max_score } else { 0.0 };
+            let signal = {
+                let mut sv: Vec<&str> = signals.iter().map(|s| s.as_str()).collect();
+                sv.sort();
+                sv.join("+")
+            };
+            SearchResult {
+                file,
+                score: normalised,
+                snippets,
+                signal,
+                cochanged_with: vec![],
+            }
+        })
+        .collect();
+
+    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.truncate(limit);
+    Ok(results)
+}
+
+/// Pretty-print search results to the terminal.
+pub fn print_search_results(results: &[SearchResult], query: &str) {
+    use console::style;
+
+    println!(
+        "{}",
+        style(format!("── Context Search: {:?} ─────────────────────────────────────", query)).dim()
+    );
+
+    if results.is_empty() {
+        println!(
+            "  {}",
+            style("No results. Run more sessions and `h5i notes analyze` to build the index.").dim()
+        );
+        return;
+    }
+
+    for (i, r) in results.iter().enumerate() {
+        let bar_len = (r.score * 10.0).round() as usize;
+        let bar = format!("{}{}", "█".repeat(bar_len), "░".repeat(10 - bar_len.min(10)));
+        println!(
+            "  {}  {}  score {:.2}  {}",
+            style(format!("#{}", i + 1)).bold(),
+            style(&r.file).cyan().bold(),
+            r.score,
+            style(&bar).yellow()
+        );
+        println!(
+            "       signal: {}{}",
+            style(&r.signal).dim(),
+            if r.cochanged_with.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "  ·  co-changed with: {}",
+                    r.cochanged_with.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+                )
+            }
+        );
+        for snippet in r.snippets.iter().take(2) {
+            let display: String = snippet.chars().take(100).collect();
+            println!("       {}", style(format!("↳ {display}")).italic().dim());
+        }
+        println!();
+    }
+
+    println!(
+        "  {} result{} · run `h5i context relevant <file>` for full context on any file",
+        style(results.len()).yellow().bold(),
+        if results.len() == 1 { "" } else { "s" }
+    );
+}
+
 // ── Terminal helpers ──────────────────────────────────────────────────────────
 
 /// Wrap `text` at word boundaries so each line is ≤ `max_cols` chars.

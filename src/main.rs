@@ -551,6 +551,23 @@ enum ContextCommands {
         #[arg(long)]
         branch: Option<String>,
     },
+
+    /// Search context traces and session footprints for files relevant to a query.
+    /// Combines BM25-style scoring over OBSERVE/THINK/ACT entries with git
+    /// co-change analysis — no AST or embeddings required.
+    Search {
+        /// Natural-language query (e.g. "auth token expiry" or "retry logic")
+        query: String,
+        /// Maximum number of results to return
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        /// Enrich top results with git co-change partners (walks last N commits)
+        #[arg(long, default_value_t = 200)]
+        history: usize,
+        /// Output raw JSON instead of the pretty report
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2825,6 +2842,37 @@ jq -c '{
                         anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
                     }
                     ctx::print_dag(workdir, branch.as_deref())?;
+                }
+
+                ContextCommands::Search { query, limit, history, json } => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    let mut results = ctx::search(workdir, &query, limit)?;
+
+                    // Enrich top results with git co-change data
+                    if let Ok(repo) = H5iRepository::open(workdir) {
+                        for r in results.iter_mut().take(5) {
+                            if let Ok(cochanged) = repo.cochanged_files(&r.file, history, 5) {
+                                r.cochanged_with = cochanged.into_iter().map(|(f, _)| f).collect();
+                            }
+                        }
+                    }
+
+                    if json {
+                        let out: Vec<serde_json::Value> = results.iter().map(|r| {
+                            serde_json::json!({
+                                "file": r.file,
+                                "score": r.score,
+                                "signal": r.signal,
+                                "snippets": r.snippets,
+                                "cochanged_with": r.cochanged_with,
+                            })
+                        }).collect();
+                        println!("{}", serde_json::to_string_pretty(&out)?);
+                    } else {
+                        ctx::print_search_results(&results, &query);
+                    }
                 }
             }
         }
