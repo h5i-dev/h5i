@@ -324,6 +324,44 @@
   /* ── Code inline ──────────────────────────────────────────── */
   code { font-family: var(--mono); color: var(--red); font-size: 0.82em; }
 
+  /* ── Context DAG ─────────────────────────────────────────── */
+  .ctx-dag-wrap {
+    display: flex; align-items: center; justify-content: center;
+    background: #0a0a0a; border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 20px 24px;
+  }
+  .ctx-dag { display: flex; flex-direction: column; align-items: flex-start; gap: 0; width: 100%; }
+  .dag-row  { display: flex; align-items: center; }
+  .dag-node {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 0.82rem;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 12px; white-space: nowrap;
+    color: var(--text-dim);
+  }
+  .dag-node.dag-init   { border-color: rgba(255,255,255,0.2); color: var(--text); }
+  .dag-node.dag-commit { border-color: var(--border-red); background: rgba(210,28,28,0.06); color: var(--text); }
+  .dag-node.dag-think-alt { opacity: 0.55; }
+  .dag-tag {
+    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em;
+    padding: 1px 5px; border-radius: 3px; font-family: var(--mono);
+  }
+  .dag-tag.cyan   { color: var(--cyan);   background: rgba(0,200,255,0.08);   border: 1px solid rgba(0,200,255,0.2); }
+  .dag-tag.yellow { color: var(--yellow); background: rgba(245,197,66,0.08);  border: 1px solid rgba(245,197,66,0.2); }
+  .dag-tag.green  { color: var(--green);  background: rgba(34,221,136,0.08);  border: 1px solid rgba(34,221,136,0.2); }
+  .dag-dot       { font-size: 0.85rem; color: rgba(255,255,255,0.5); }
+  .dag-dot.red   { color: var(--red); }
+  .dag-vline {
+    width: 2px; height: 14px; margin-left: 20px;
+    background: rgba(255,255,255,0.15);
+  }
+  .dag-fork { display: flex; align-items: flex-start; gap: 0; }
+  .dag-fork-main { display: flex; flex-direction: column; align-items: flex-start; }
+  .dag-fork-branch { display: flex; align-items: flex-start; margin-top: 10px; margin-left: 0; }
+  .dag-hline { width: 28px; height: 2px; background: rgba(255,255,255,0.15); margin-top: 14px; flex-shrink: 0; }
+  .dag-branch-label { font-family: var(--mono); font-size: 0.68rem; color: var(--text-faint); margin-bottom: 5px; letter-spacing: 0.06em; }
+  .dag-abandoned { font-family: var(--mono); font-size: 0.72rem; color: var(--red); opacity: 0.6; margin-top: 5px; }
+
   /* ── Button ───────────────────────────────────────────────── */
   .btn {
     display: inline-flex; align-items: center; gap: 0.5rem;
@@ -453,19 +491,19 @@
         <p class="feat-desc">Prompt, model, agent ID, and test results linked to every commit.</p>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd">h5i notes analyze</span>
+        <span class="feat-cmd">h5i notes</span>
         <h3 style="margin-top:6px;">Session analysis</h3>
         <p class="feat-desc">Files read vs. edited, uncertainty heatmap, blind-edit detection.</p>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd">h5i context trace</span>
+        <span class="feat-cmd">h5i context</span>
         <h3 style="margin-top:6px;">Reasoning workspace</h3>
-        <p class="feat-desc">OBSERVE / THINK / ACT log that persists across session resets.</p>
+        <p class="feat-desc">Version-controlled OBSERVE / THINK / ACT trace that survives session resets.</p>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd">h5i context search</span>
-        <h3 style="margin-top:6px;">Context search</h3>
-        <p class="feat-desc">Finds relevant files from traces and git history — no exploratory reads.</p>
+        <span class="feat-cmd">h5i compliance</span>
+        <h3 style="margin-top:6px;">Compliance &amp; policy</h3>
+        <p class="feat-desc">Enforce AI commit rules and generate audit reports across date ranges.</p>
       </div>
     </div>
   </div>
@@ -531,16 +569,96 @@
 
     <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
       <div style="display:flex;flex-direction:column;gap:14px;">
-        <p style="font-size:1.15rem;">Version-controlled OBSERVE / THINK / ACT trace stored in <code>refs/h5i/context</code>. Snapshots on every commit. Restored in one command.</p>
+        <p style="font-size:1.15rem;">Version-controlled OBSERVE / THINK / ACT trace stored in <code>refs/h5i/context</code>. Snapshots on every commit. Branches like git.</p>
         <div class="feat-card">
-          <span class="feat-cmd">h5i resume</span>
-          <h3 style="margin-top:4px;">Session handoff</h3>
-          <p class="feat-desc">Goal, milestones, high-risk files, suggested opening prompt — from local data, no API call.</p>
+          <span class="feat-cmd">h5i context trace</span>
+          <h3 style="margin-top:4px;">Trace entries</h3>
+          <p class="feat-desc">Log each reasoning step as OBSERVE, THINK, or ACT — persists across session resets.</p>
         </div>
         <div class="feat-card">
           <span class="feat-cmd">h5i context search "…"</span>
           <h3 style="margin-top:4px;">Targeted retrieval</h3>
-          <p class="feat-desc">Finds relevant files via trace scoring + git co-change. Replaces O(files explored) reads with O(results).</p>
+          <p class="feat-desc">BM25 over traces + git co-change. Replaces exploratory Read chains with ranked candidates.</p>
+        </div>
+      </div>
+
+      <!-- Context DAG -->
+      <div class="ctx-dag-wrap">
+        <div class="ctx-dag">
+          <!-- init -->
+          <div class="dag-row">
+            <div class="dag-node dag-init"><span class="dag-dot">●</span> init · feat/auth</div>
+          </div>
+          <div class="dag-vline"></div>
+          <!-- observe -->
+          <div class="dag-row">
+            <div class="dag-node dag-obs"><span class="dag-tag cyan">OBSERVE</span> auth.rs ×4</div>
+          </div>
+          <div class="dag-vline"></div>
+          <!-- think + branch -->
+          <div class="dag-fork">
+            <div class="dag-fork-main">
+              <div class="dag-node dag-think"><span class="dag-tag yellow">THINK</span> use Arc injection</div>
+            </div>
+            <div class="dag-fork-branch">
+              <div class="dag-hline"></div>
+              <div style="display:flex;flex-direction:column;align-items:flex-start;gap:5px;">
+                <div class="dag-branch-label">branch: experiment/mutex</div>
+                <div class="dag-node dag-think-alt"><span class="dag-tag yellow">THINK</span> try Mutex</div>
+                <div class="dag-abandoned">✗ abandoned</div>
+              </div>
+            </div>
+          </div>
+          <div class="dag-vline"></div>
+          <!-- act -->
+          <div class="dag-row">
+            <div class="dag-node dag-act"><span class="dag-tag green">ACT</span> inject Arc into middleware</div>
+          </div>
+          <div class="dag-vline"></div>
+          <!-- commit -->
+          <div class="dag-row">
+            <div class="dag-node dag-commit"><span class="dag-dot red">✓</span> commit · "analyzed auth"</div>
+          </div>
+          <div class="dag-vline"></div>
+          <!-- observe 2 -->
+          <div class="dag-row">
+            <div class="dag-node dag-obs"><span class="dag-tag cyan">OBSERVE</span> tests/ ×2</div>
+          </div>
+          <div class="dag-vline"></div>
+          <!-- commit 2 -->
+          <div class="dag-row">
+            <div class="dag-node dag-commit"><span class="dag-dot red">✓</span> commit · "updated tests"</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SLIDE 6 — Compliance & Policy
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:24px;">
+  <div style="width:100%;max-width:1020px;">
+    <div class="section-tag">Feature · h5i compliance</div>
+    <h2>Enforce rules.<br>Generate audit reports.</h2>
+
+    <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div class="feat-card">
+          <span class="feat-cmd">h5i policy init</span>
+          <h3 style="margin-top:4px;">Policy rules</h3>
+          <p class="feat-desc">Define TOML rules — require audit flag, minimum prompt length, model allowlist, test coverage threshold.</p>
+        </div>
+        <div class="feat-card">
+          <span class="feat-cmd">h5i policy check</span>
+          <h3 style="margin-top:4px;">Pre-commit enforcement</h3>
+          <p class="feat-desc">Checks staged files against policy before every commit. Blocks on errors, warns on violations.</p>
+        </div>
+        <div class="feat-card">
+          <span class="feat-cmd">h5i compliance --since …</span>
+          <h3 style="margin-top:4px;">Audit report</h3>
+          <p class="feat-desc">AI contribution ratio, audit coverage, policy violations, and top-risk files over any date range.</p>
         </div>
       </div>
       <div class="terminal">
@@ -548,30 +666,29 @@
           <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
           <span class="terminal-path">~/my-project</span>
         </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i resume</span>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i policy check</span>
 
-<span class="t-bold">── Session Handoff ──────────────────────────</span>
-  <span class="t-out">Branch: feat/auth · Last: 2026-04-19</span>
+  <span class="t-pass">✔</span> <span class="t-out">model declared (claude-sonnet-4-6)</span>
+  <span class="t-pass">✔</span> <span class="t-out">audit flag present</span>
+  <span class="t-red">✗</span> <span class="t-red">test metrics missing          [error]</span>
+  <span class="t-warn">⚠</span> <span class="t-warn">prompt length &lt; 20 chars      [warn]</span>
 
-  <span class="t-pass">✔</span> <span class="t-out">analyzed auth middleware</span>
-  <span class="t-pass">✔</span> <span class="t-out">implemented Arc injection</span>
-  <span class="t-warn">○  update integration tests  ← next</span>
+  <span class="t-red">1 error · 1 warning — commit blocked</span>
 
-  <span class="t-warn">⚠</span> <span class="t-red">src/billing/token.rs</span>
-    <span class="t-out">blind edit · 3 uncertainty moments</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i compliance --since 2026-04-01</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i context search "token expiry"</span>
-
-  <span class="t-pass">#1</span> <span class="t-ai">src/billing/token.rs</span>  <span class="t-out">score 0.94</span>
-     <span class="t-out">↳ [THINK] use server time, not client clock</span>
-  <span class="t-out">#2</span> <span class="t-ai">src/auth/session.rs</span>   <span class="t-out">score 0.71</span></pre></div>
+<span class="t-bold">── Compliance Report ──────────────────────</span>
+  <span class="t-out">AI-generated:    </span><span class="t-pass">74%</span><span class="t-out"> of commits (30 days)</span>
+  <span class="t-out">Audit coverage:  </span><span class="t-pass">91%</span>
+  <span class="t-out">Policy errors:   </span><span class="t-red">3</span>  <span class="t-out">warnings: </span><span class="t-warn">8</span>
+  <span class="t-out">Top risk file:   </span><span class="t-ai">src/billing/token.rs</span></pre></div>
       </div>
     </div>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 6 — More features
+     SLIDE 7 — More features
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:960px;">
