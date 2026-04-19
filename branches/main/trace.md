@@ -433,3 +433,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [16:14:11] THINK: rewind design: (1) stash dirty state before overwriting — use shadow ref refs/h5i/shadow/<timestamp> storing a WIP commit so recovery is always possible; (2) checkout_tree from target to restore working tree files; (3) handle deletions — diff HEAD tree vs target tree and remove files only in HEAD; (4) keep HEAD unmoved so git status shows full diff; (5) dry-run shows file list without touching anything
 [16:14:15] OBSERVE: read src/repository.rs
 [16:14:21] OBSERVE: read src/repository.rs
+[16:14:43] OBSERVE: read src/main.rs
