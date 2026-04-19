@@ -594,7 +594,13 @@ enum PolicyCommands {
 
 const H5I_CLAUDE_INSTRUCTIONS: &str = r#"## h5i Integration
 
-This repository uses **h5i** (a Git sidecar for AI-era version control). Prefer h5i commands over raw git equivalents. h5i stores metadata in `refs/h5i/notes` and `refs/h5i/memory`; these refs are NOT included in a plain `git push` — use `h5i push` to share them.
+This repository uses **h5i** (a Git sidecar for AI-era version control).
+
+**Prefer MCP tools over Bash commands wherever possible.**
+h5i exposes native MCP tools (`h5i_context_trace`, `h5i_commit`, `h5i_notes_analyze`, etc.)
+that are faster and safer than shelling out. Use `Bash: h5i …` only when no MCP tool covers the operation.
+
+h5i stores metadata in `refs/h5i/notes` and `refs/h5i/memory`; these refs are NOT included in a plain `git push` — use `h5i push` to share them.
 
 ---
 
@@ -652,17 +658,21 @@ h5i notes analyze   # links the just-completed Claude Code session to HEAD
 
 ### Committing
 
-**Always stage files before committing.** `h5i commit` only commits what is already staged — it will error if nothing is staged.
+**Always stage files before committing** — `h5i_commit` (MCP) and `h5i commit` (CLI) only commit what is staged and will error if nothing is staged.
 
 ```bash
-git add <file1> <file2> …   # stage exactly the files you changed
-h5i commit -m "…" \
-  --model claude-sonnet-4-6 \
-  --agent claude-code \
-  --prompt "…"
+git add <file1> <file2> …   # stage exactly the files you changed — never git add .
 ```
 
-Never use `git add .` or `git add -A` — add only the files you actually changed so the commit is precise.
+Then commit via MCP tool (preferred):
+```
+h5i_commit(message="…", model="claude-sonnet-4-6", agent="claude-code", prompt="…")
+```
+
+Or via Bash if MCP is unavailable:
+```bash
+h5i commit -m "…" --model claude-sonnet-4-6 --agent claude-code --prompt "…"
+```
 
 Additional flags to add when relevant:
 - `--tests`  — when tests were added or modified (captures test metrics)
