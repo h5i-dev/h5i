@@ -186,3 +186,4 @@ _[Checkpoint: 69e4c9d0 — feat(context): all 5 CMV/Claude-design features imple
 ---
 
 [12:36:59] OBSERVE: read src/main.rs
+[12:37:03] OBSERVE: read src/ctx.rs
