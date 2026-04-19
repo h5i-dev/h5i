@@ -69,3 +69,16 @@ DAG nodes with sha256 IDs in dag.json; ephemeral.md cleared on milestone; stable
 
 ---
 
+## Commit 69e4e7cb — 2026-04-19 14:33 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+DAG nodes with sha256 IDs in dag.json; ephemeral.md cleared on milestone; stable-prefix boundary at last-40 lines; scope/<name> branches; three-pass lossless pack. README, MANUAL, man page updated. 57 tests pass.
+
+### This Commit's Contribution
+Key Decisions now requires technical content; rel_path strips CWD from notes output; ACT char limit 120; system prompt includes relevant+commit+notes-analyze; all 290 tests pass
+
+---
+

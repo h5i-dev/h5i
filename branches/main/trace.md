@@ -280,3 +280,9 @@ _[Checkpoint: 69e4c9d0 — feat(context): all 5 CMV/Claude-design features imple
 [14:33:30] OBSERVE: Ran claude --print with MCP tools on blank project; captured 16 tool calls; identified 5 UX problems: Key Decisions full of narration, absolute paths in notes output, ACT truncated at 80 chars, no h5i commit/relevant/notes-analyze in system prompt, ToolSearch deferred overhead undocumented
 [14:33:34] THINK: Fixed 5 problems: (1) Key Decisions filter requires technical_content && !procedural_narration, (2) rel_path strips CWD in print_footprint/print_causal_chain, (3) ACT char limit 80→120 in resume, (4) system prompt updated with relevant+commit+notes-analyze workflow, (5) all 290 tests pass
 [14:33:37] ACT: Edited src/session_log.rs (Key Decisions filter + rel_path), src/resume.rs (ACT char limit), src/ctx.rs (system prompt); cargo test --lib: 290 passed
+
+
+---
+_[Checkpoint: 69e4e7cb — fixed 5 UX problems from real session observation]_
+---
+
