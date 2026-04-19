@@ -160,3 +160,9 @@ _[Checkpoint: 69e02934 — implemented redaction and trail]_
 [12:13:11] ACT: edited src/ctx.rs
 [12:13:33] ACT: edited src/ctx.rs
 [12:14:13] ACT: implemented 5 features in ctx.rs + main.rs: DAG trace nodes, 3-pass lossless pack, ephemeral traces, stable-prefix counts, scope sub-contexts; 57 tests all pass
+
+
+---
+_[Checkpoint: 69e4c71b — all 5 context management features implemented]_
+---
+
