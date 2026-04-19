@@ -8,6 +8,9 @@
   </a>
 </p>
 
+![example workflow](https://github.com/h5i-dev/h5i/actions/workflows/test.yaml/badge.svg)
+![Apache-2.0](https://img.shields.io/github/license/h5i-dev/h5i?color=blue)
+
 `h5i` (pronounced *high-five*) is a Git sidecar that answers the questions Git can't: *Who prompted this change? What did the AI skip or defer? What was it thinking, and can we safely resume where it left off?*
 
 ```bash
