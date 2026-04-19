@@ -166,3 +166,4 @@ _[Checkpoint: 69e02934 — implemented redaction and trail]_
 _[Checkpoint: 69e4c71b — all 5 context management features implemented]_
 ---
 
+[12:16:24] OBSERVE: read README.md
