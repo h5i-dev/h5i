@@ -432,6 +432,10 @@ enum ContextCommands {
         kind: String,
         /// Trace entry content
         content: String,
+        /// Mark this entry as ephemeral (scratch-only, cleared on next context commit,
+        /// not persisted to the DAG or snapshots — like Claude Code's /btw)
+        #[arg(long)]
+        ephemeral: bool,
     },
 
     /// Show the current reasoning workspace state (branch, commit count, trace size)
@@ -470,8 +474,46 @@ enum ContextCommands {
         file: String,
     },
 
-    /// Compact old context history by squashing pre-snapshot commits
+    /// Compact old context history using three-pass structurally-lossless trimming.
+    /// Pass 1: remove OBSERVE entries subsumed by a later THINK/ACT on the same topic.
+    /// Pass 2: keep all THINK, ACT, NOTE entries verbatim.
+    /// Pass 3: merge consecutive OBSERVE entries mentioning the same file.
     Pack,
+
+    /// Create a subagent-scoped sub-context for isolated delegation.
+    /// Scoped branches are prefixed `scope/` and shown separately in `status`.
+    /// Merge them back with `h5i context merge scope/<name>` when the subagent finishes.
+    Scope {
+        /// Sub-context name (will be stored as `scope/<name>`)
+        name: String,
+        /// Why this scope exists / what the subagent is investigating
+        #[arg(long, default_value = "")]
+        purpose: String,
+    },
+
+    /// Show the ephemeral scratch traces for the current branch (cleared on context commit)
+    Ephemeral {
+        /// Branch to inspect (default: current)
+        #[arg(long)]
+        branch: Option<String>,
+    },
+
+    /// Show the stable-prefix / dynamic-suffix boundary for the current trace
+    /// (useful for understanding prompt-caching efficiency)
+    CachedPrefix {
+        /// Number of dynamic (volatile) tail lines to exclude from stable prefix
+        #[arg(long, default_value_t = 40)]
+        tail: usize,
+    },
+
+    /// Render the per-branch trace DAG as a coloured graph in the terminal.
+    /// Each node shows its kind (OBSERVE/THINK/ACT/NOTE/MERGE), 8-hex ID,
+    /// timestamp, and content. Merge nodes display both parent IDs.
+    Dag {
+        /// Branch whose DAG to display (default: current branch)
+        #[arg(long)]
+        branch: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2296,14 +2338,19 @@ jq -c '{
                     ctx::print_context(&snapshot);
                 }
 
-                ContextCommands::Trace { kind, content } => {
+                ContextCommands::Trace { kind, content, ephemeral } => {
                     // Auto-bootstrap: trace can fire before `h5i context init` is called
                     // (e.g. from PostToolUse hooks). append_log creates refs/h5i/context on
                     // first write, so no explicit init is needed here.
-                    ctx::append_log(workdir, &kind, &content)?;
+                    ctx::append_log(workdir, &kind, &content, ephemeral)?;
+                    let marker = if ephemeral {
+                        style("◇").dim()
+                    } else {
+                        style("◈").cyan()
+                    };
                     println!(
                         "{} [{}] {}",
-                        style("◈").cyan(),
+                        marker,
                         style(kind.to_uppercase()).bold(),
                         style(&content).dim()
                     );
@@ -2371,18 +2418,35 @@ jq -c '{
                     if !ctx::is_initialized(workdir) {
                         anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
                     }
-                    let squashed = ctx::pack(workdir)?;
-                    if squashed == 0 {
+                    let result = ctx::pack_lossless(workdir)?;
+                    if result.kept_durable == 0
+                        && result.removed_subsumed_observe == 0
+                        && result.merged_consecutive_observe == 0
+                    {
                         println!(
                             "{} Nothing to pack — context history is already compact.",
                             style("ℹ").blue()
                         );
                     } else {
+                        println!("{} Three-pass lossless pack complete:", SUCCESS);
+                        if result.removed_subsumed_observe > 0 {
+                            println!(
+                                "  {} {} subsumed OBSERVE entries removed",
+                                style("−").red(),
+                                style(result.removed_subsumed_observe).cyan().bold()
+                            );
+                        }
+                        if result.merged_consecutive_observe > 0 {
+                            println!(
+                                "  {} {} consecutive OBSERVE entries merged",
+                                style("⇒").yellow(),
+                                style(result.merged_consecutive_observe).cyan().bold()
+                            );
+                        }
                         println!(
-                            "{} Packed {} old context commit{} into base.",
-                            SUCCESS,
-                            style(squashed).cyan().bold(),
-                            if squashed == 1 { "" } else { "s" }
+                            "  {} {} THINK/ACT/NOTE entries preserved verbatim",
+                            style("✔").green(),
+                            style(result.kept_durable).cyan().bold()
                         );
                         println!(
                             "  {} Run {} to reclaim disk space.",
@@ -2390,6 +2454,59 @@ jq -c '{
                             style("git gc").cyan()
                         );
                     }
+                }
+
+                ContextCommands::Scope { name, purpose } => {
+                    let full_name = if name.starts_with("scope/") {
+                        name.clone()
+                    } else {
+                        format!("scope/{name}")
+                    };
+                    let purpose_text = if purpose.is_empty() {
+                        format!("Subagent scope: {name}")
+                    } else {
+                        purpose.clone()
+                    };
+                    ctx::gcc_scope(workdir, &full_name, &purpose_text)?;
+                    println!(
+                        "{} Scope {} created and activated.",
+                        SUCCESS,
+                        style(&full_name).magenta().bold()
+                    );
+                    println!(
+                        "  {} Merge findings back with {}",
+                        style("→").dim(),
+                        style(format!("h5i context merge {full_name}")).cyan()
+                    );
+                }
+
+                ContextCommands::Ephemeral { branch } => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    let text = ctx::read_ephemeral(workdir, branch.as_deref())?;
+                    if text.lines().filter(|l| !l.starts_with('#') && !l.is_empty()).count() == 0 {
+                        println!("{} No ephemeral traces (cleared on last context commit).", style("ℹ").blue());
+                    } else {
+                        println!("{}", style("── Ephemeral Traces (scratch, not persisted) ──────────────").dim());
+                        for line in text.lines().filter(|l| !l.starts_with('#')) {
+                            println!("  {}", style(line).dim());
+                        }
+                    }
+                }
+
+                ContextCommands::CachedPrefix { tail } => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    ctx::print_cached_prefix(workdir, tail)?;
+                }
+
+                ContextCommands::Dag { branch } => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    ctx::print_dag(workdir, branch.as_deref())?;
                 }
             }
         }

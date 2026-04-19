@@ -31,6 +31,7 @@ Command reference for all h5i subcommands and flags.
   - [h5i context branch](#h5i-context-branch)
   - [h5i context checkout](#h5i-context-checkout)
   - [h5i context merge](#h5i-context-merge)
+  - [h5i context scope](#h5i-context-scope)
   - [h5i context status](#h5i-context-status)
   - [h5i context prompt](#h5i-context-prompt)
   - [h5i context scan](#h5i-context-scan)
@@ -38,6 +39,8 @@ Command reference for all h5i subcommands and flags.
   - [h5i context diff](#h5i-context-diff)
   - [h5i context relevant](#h5i-context-relevant)
   - [h5i context pack](#h5i-context-pack)
+  - [h5i context ephemeral](#h5i-context-ephemeral)
+  - [h5i context cached-prefix](#h5i-context-cached-prefix)
 - [h5i memory](#h5i-memory)
   - [h5i memory snapshot](#h5i-memory-snapshot)
   - [h5i memory log](#h5i-memory-log)
@@ -605,29 +608,40 @@ Suggested Review Points — 2 commits flagged
 
 ## h5i context
 
-A version-controlled reasoning workspace at `.h5i-ctx/` that survives session resets. Command structure mirrors Git. Based on [arXiv:2508.00031](https://arxiv.org/abs/2508.00031).
+A version-controlled reasoning workspace stored in `refs/h5i/context` that survives session resets. Command structure mirrors Git. Based on [arXiv:2508.00031](https://arxiv.org/abs/2508.00031), enhanced with five capabilities derived from recent research (CMV paper arXiv:2602.22402, Claude Code design-space analysis arXiv:2604.14228):
 
-**Workspace layout**
+1. **DAG trace nodes** — every `trace` entry is a node in a directed acyclic graph with explicit `parent_ids`; merge operations create two-parent nodes so parallel branches stay causally connected.
+2. **Ephemeral traces** (`--ephemeral`) — scratch observations excluded from the DAG, excluded from snapshots, and cleared on the next `context commit`; analogous to Claude Code's `/btw`.
+3. **Three-pass lossless `pack`** — removes subsumed OBSERVEs, merges consecutive OBSERVEs about the same file, and preserves all THINK/ACT/NOTE entries verbatim.
+4. **Stable-prefix / dynamic-suffix split** — `context status` and `context cached-prefix` show the prompt-caching boundary in the trace.
+5. **Subagent-scoped sub-contexts** (`context scope`) — lightweight `scope/<name>` branches for delegated subagent investigation, shown separately in `status`.
+
+**Workspace layout** (stored entirely inside `refs/h5i/context`)
 
 ```
-.h5i-ctx/
-├── main.md               ← global roadmap: goal, milestones, progress notes
+refs/h5i/context tree:
+├── main.md                        ← global roadmap: goal, milestones, notes
+├── .current_branch                ← active branch name
 └── branches/
     └── <branch>/
-        ├── commit.md     ← milestone summaries (append-only)
-        ├── trace.md      ← OTA (Observe–Think–Act) execution trace
-        └── metadata.yaml ← file structure, dependencies, env config
+        ├── commit.md              ← milestone summaries (append-only)
+        ├── trace.md              ← human-readable OTA execution trace
+        ├── dag.json              ← DAG of trace nodes with parent links
+        ├── ephemeral.md          ← scratch traces (cleared on context commit)
+        └── metadata.yaml         ← file structure, dependencies, env config
 ```
 
 **Recommended per-session workflow**
 
 ```bash
-h5i context show --trace                        # session start: restore state
-h5i context trace --kind OBSERVE "..."          # during: log observations
-h5i context trace --kind THINK   "..."          # during: log reasoning
-h5i context trace --kind ACT     "..."          # during: log actions
-h5i context commit "Summary" --detail "..."     # after milestone: checkpoint
-h5i context status                              # session end: overview
+h5i context show --trace                                   # session start: restore state
+h5i context trace --kind OBSERVE "..."                     # during: durable observation
+h5i context trace --kind OBSERVE "quick scratch" --ephemeral  # during: throwaway note
+h5i context trace --kind THINK   "..."                     # during: log reasoning
+h5i context trace --kind ACT     "..."                     # during: log actions
+h5i context commit "Summary" --detail "..."                # after milestone: checkpoint + clear ephemeral
+h5i context cached-prefix                                  # check prompt-cache efficiency
+h5i context status                                         # session end: overview
 ```
 
 ---
@@ -691,22 +705,30 @@ Print working context: goal, milestone progress, recent commits, and optionally 
 ### h5i context trace
 
 ```
-h5i context trace --kind <KIND> <content>
+h5i context trace --kind <KIND> [--ephemeral] <content>
 ```
 
 Append a single OTA (Observe–Think–Act) entry to the trace log.
+
+By default the entry is **durable**: it is written to `trace.md` (human-readable) and to `dag.json` (the DAG), and it survives snapshots and session resets.
+
+With `--ephemeral` the entry goes to `ephemeral.md` only — it is excluded from the DAG, excluded from snapshots, and **automatically cleared on the next `h5i context commit`**. Use this for scratch observations you only need for the current step (analogous to Claude Code's `/btw`).
 
 **Options**
 
 | Option | Description |
 |--------|-------------|
 | `--kind <KIND>` | Entry type: `OBSERVE`, `THINK`, `ACT`, or `NOTE` (case-insensitive, required) |
+| `--ephemeral` | Write to scratch buffer only; cleared on next `context commit`, never in DAG or snapshots |
 
 ```bash
 h5i context trace --kind OBSERVE "Redis p99 latency is 2 ms under load"
 h5i context trace --kind THINK   "40 MB overhead is acceptable given the scale"
 h5i context trace --kind ACT     "Switched session store to Redis in src/session.rs"
 h5i context trace --kind NOTE    "TODO: add integration test for the timeout path"
+
+# Scratch observation — never persists past the next context commit
+h5i context trace --kind OBSERVE "checking line 42 quickly" --ephemeral
 ```
 
 ---
@@ -774,10 +796,37 @@ h5i context checkout main
 h5i context merge <branch>
 ```
 
-Merge a branch's commit log and trace into the current branch, then delete the merged branch.
+Merge a branch's commit log and trace into the current branch. A **DAG merge node** is appended to the target branch's `dag.json` with two parent IDs — one from the target branch head and one from the source branch head — so the full causal history of both branches is preserved.
 
 ```bash
 h5i context merge experiment/sync-session
+h5i context merge scope/investigate-auth    # merge a subagent scope back in
+```
+
+---
+
+### h5i context scope
+
+```
+h5i context scope <name> [--purpose <text>]
+```
+
+Create a **subagent-scoped sub-context**: a lightweight branch prefixed `scope/` whose metadata marks it as a delegation scope. Scoped branches are shown separately under **Scoped subagents** in `h5i context status`, making it easy to track active delegations at a glance.
+
+Use this when spawning a subagent to investigate something in isolation. When the subagent finishes, merge its findings back with `h5i context merge scope/<name>`, which records a two-parent DAG merge node.
+
+**Options**
+
+| Option | Description |
+|--------|-------------|
+| `<name>` | Scope name. Stored as `scope/<name>` (the `scope/` prefix is added automatically if omitted). |
+| `--purpose <text>` | One-line description of what the subagent is investigating |
+
+```bash
+h5i context scope investigate-auth --purpose "check token validation edge cases"
+# subagent works here …
+h5i context checkout main
+h5i context merge scope/investigate-auth
 ```
 
 ---
@@ -788,7 +837,20 @@ h5i context merge experiment/sync-session
 h5i context status
 ```
 
-Print a one-line overview: current branch, number of milestone commits, trace line count, and goal.
+Print an overview of the current workspace state:
+
+- Active branch and its milestone commit + trace-line counts
+- Other reasoning branches (if any)
+- **Scoped subagents** — `scope/*` branches listed separately so active delegations are visible at a glance
+- **Trace cache split** — how many trace lines fall in the stable prefix (prompt-cache friendly) vs. the dynamic suffix (changes every step)
+
+```
+── Context Status ──────────────────────────────────────────────
+  Active branch: main  |  3 branches  |  5 commits  |  87 log lines
+  Other branches: experiment/sync-session
+  Scoped subagents: scope/investigate-auth
+  Trace: stable 47 lines  ·  dynamic 40 lines  (prompt-cache boundary)
+```
 
 ---
 
@@ -1005,13 +1067,22 @@ h5i context relevant src/repository.rs
 h5i context pack
 ```
 
-Compact old context history by identifying how many `refs/h5i/context` commits predate the earliest linked code-commit snapshot and reporting the count. Appends a marker to `main.md` recording the pack event.
+Compact the current branch's OTA trace using a **three-pass structurally-lossless algorithm** derived from the Contextual Memory Virtualisation paper (arXiv:2602.22402):
 
-Run `git gc` after packing to reclaim object storage.
+| Pass | What it does |
+|------|-------------|
+| **Pass 1 — subsumption** | Remove OBSERVE entries whose subject token (file name or first significant word) already appears in a later THINK or ACT entry — those observations have been "consumed" by higher-level reasoning and are redundant. |
+| **Pass 2 — preservation** | Retain every THINK, ACT, and NOTE entry verbatim; these represent irreplaceable decisions and actions. |
+| **Pass 3 — consolidation** | Merge consecutive OBSERVE entries that share the same subject token into a single entry annotated with a `(×N)` count. |
+
+The compacted trace is written back to both `trace.md` and `dag.json`. Run `git gc` afterwards to reclaim object storage.
 
 ```bash
 h5i context pack
-# ✔  Packed 23 old context commits into base.
+# ✔  Three-pass lossless pack complete:
+#    − 12 subsumed OBSERVE entries removed
+#    ⇒  4 consecutive OBSERVE entries merged
+#    ✔  31 THINK/ACT/NOTE entries preserved verbatim
 #   → Run `git gc` to reclaim disk space.
 
 # If nothing needs compacting:
@@ -1020,7 +1091,64 @@ h5i context pack
 
 **When to use**
 
-On long-lived projects the context ref grows one commit per OTA trace entry. After several weeks the chain can contain thousands of commits, most of which are no longer reachable from any snapshot. `h5i context pack` identifies that pre-snapshot tail and logs a compaction event; `git gc` then prunes the unreferenced objects.
+On long-running tasks the trace grows one line per OTA step. After many iterations the OBSERVE entries — tool outputs, file reads, test results — tend to dwarf the THINK/ACT reasoning that actually matters. `h5i context pack` strips the noise while guaranteeing that no decision or action is ever lost.
+
+---
+
+### h5i context ephemeral
+
+```
+h5i context ephemeral [--branch <name>]
+```
+
+Display the current ephemeral scratch traces for a branch. Ephemeral entries are written with `h5i context trace --ephemeral` and are automatically cleared on the next `h5i context commit`.
+
+**Options**
+
+| Option | Description |
+|--------|-------------|
+| `--branch <name>` | Branch to inspect (default: current branch) |
+
+```bash
+h5i context ephemeral
+# ── Ephemeral Traces (scratch, not persisted) ──────────────
+#   [14:03:12] OBSERVE: checking line 42 quickly
+#   [14:04:01] NOTE: might be worth re-reading this later
+```
+
+---
+
+### h5i context cached-prefix
+
+```
+h5i context cached-prefix [--tail <n>]
+```
+
+Show the **stable-prefix / dynamic-suffix boundary** in the current branch's trace. Lines in the stable prefix are unchanged across most agent steps and benefit from prompt-cache hits. Lines in the dynamic suffix change every step.
+
+The boundary is defined as: everything except the last `--tail` lines (default: 40) is stable.
+
+**Options**
+
+| Option | Description |
+|--------|-------------|
+| `--tail <n>` | Number of volatile tail lines to treat as dynamic (default: 40) |
+
+```bash
+h5i context cached-prefix
+# ── Stable-prefix boundary (tail=40) ────────────────────────
+#   ▓▓ Stable prefix: 47 lines (prompt-cache friendly)
+#   ░░ Dynamic suffix: 40 lines (changes every step)
+#
+#   ▓ Last stable line:
+#     [10:15:44] ACT: added retry loop in send() with 5-attempt cap
+#   ░ First dynamic line:
+#     [10:16:10] OBSERVE: tests pass — 47/47 green
+```
+
+**Why this matters**
+
+Anthropic's prompt caching has a 5-minute TTL. If the stable prefix (goal, milestones, older trace entries) is serialised before the volatile suffix, repeated agent steps pay only for the dynamic suffix while the stable portion is served from cache. This maps to the cost-recovery finding in the CMV paper (arXiv:2602.22402): cost neutrality within ~10 conversational turns.
 
 ---
 
@@ -1734,7 +1862,7 @@ Three additional directories (`ast/`, `crdt/`, `metadata/`) are created on `h5i 
 |-----|------|----------|
 | `refs/h5i/notes` | Git notes | Commit metadata: AI provenance, test metrics, causal links, integrity reports, design decisions |
 | `refs/h5i/memory` | Linear commit history | Claude memory snapshots as git tree objects; each commit carries the linked code-commit OID |
-| `refs/h5i/context` | Git tree | Context workspace: `main.md`, `.current_branch`, `branches/<name>/{commit.md,trace.md,metadata.yaml}` |
+| `refs/h5i/context` | Git tree | Context workspace: `main.md`, `.current_branch`, `branches/<name>/{commit.md,trace.md,dag.json,ephemeral.md,metadata.yaml}` |
 | `refs/h5i/ast` | Git objects | AST hash snapshots for semantic blame |
 
 The context workspace commands display paths under `.h5i-ctx/` in their output, but the data is stored in `refs/h5i/context`.
