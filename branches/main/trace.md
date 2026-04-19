@@ -208,3 +208,4 @@ _[Checkpoint: 69e4c9d0 — feat(context): all 5 CMV/Claude-design features imple
 [12:44:43] OBSERVE: read src/ctx.rs
 [12:44:52] ACT: edited src/ctx.rs
 [12:45:02] ACT: edited src/ctx.rs
+[12:47:13] ACT: wrote ../../../../tmp/run-dag-demo.sh
