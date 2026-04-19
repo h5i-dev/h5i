@@ -412,3 +412,4 @@ _[Checkpoint: 69e4e7cb — fixed 5 UX problems from real session observation]_
 [15:38:36] ACT: edited src/mcp.rs
 [15:38:46] OBSERVE: read src/mcp.rs
 [15:38:52] ACT: edited src/mcp.rs
+[15:40:56] ACT: Implemented all 5 features: auto-inject relevant context on Read, ThoughtEntry extraction, --add flag for commit, knowledge command, proactive review in status
