@@ -485,3 +485,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [16:33:56] ACT: wrote tutorials/01-never-let-your-ai-forget.md
 [16:36:46] ACT: wrote tutorials/02-did-claude-know-what-it-was-doing.md
 [16:37:46] ACT: wrote tutorials/03-version-control-for-ai-reasoning.md
+[16:38:46] ACT: wrote tutorials/04-advanced-context-design-decisions.md
