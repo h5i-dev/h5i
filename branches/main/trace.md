@@ -549,3 +549,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [19:19:23] ACT: edited docs/pitch.html
 [19:19:29] ACT: edited docs/pitch.html
 [19:19:32] ACT: edited docs/pitch.html
+[19:19:37] ACT: increased all font sizes in pitch.html: h2 clamp(2.2→3.4rem), h3 1.05→1.3rem, p/li 1→1.15rem, feat-desc 0.9→1.05rem, terminal 0.88→1rem, vs-cell 0.92→1.05rem, tl-name 0.95→1.1rem
