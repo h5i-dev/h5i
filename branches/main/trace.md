@@ -428,3 +428,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [16:08:28] OBSERVE: read claude-hooks-integration.md
 [16:08:28] OBSERVE: read sessions-and-checkpoints.md
 [16:08:33] OBSERVE: read explain.go
+[16:08:38] OBSERVE: read agent-guide.md
