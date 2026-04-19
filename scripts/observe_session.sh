@@ -137,16 +137,20 @@ with open(sys.argv[1]) as f:
 def bash_has(p): return any("Bash" in n and p in i for n,i in calls)
 def any_has(p):  return any(p in n+i for n,i in calls)
 
+def count_kind(k): return sum(1 for n,i in calls if "Bash" in n and f"--kind {k}" in i)
+
 checks = [
-    ("h5i context init",           bash_has("context init")),
-    ("Read before edit",           any_has("Read")),
-    ("context trace OBSERVE",      bash_has("OBSERVE")),
-    ("context trace THINK",        bash_has("THINK")),
-    ("context trace ACT",          bash_has("ACT")),
-    ("h5i context commit",         bash_has("context commit")),
-    ("git add before h5i commit",  bash_has("git add")),
-    ("h5i commit --model --agent", bash_has("h5i commit") and bash_has("--model")),
-    ("h5i notes analyze",          bash_has("notes analyze")),
+    ("h5i context init",              bash_has("context init")),
+    ("Read before edit",              any_has("Read")),
+    ("≥1 OBSERVE trace",             count_kind("OBSERVE") >= 1),
+    ("≥1 THINK with rejection",      any("THINK" in i and ("over " in i or "reject" in i or "instead" in i or "rather than" in i or "chose" in i) for n,i in calls if "Bash" in n)),
+    ("≥1 ACT trace",                 count_kind("ACT") >= 1),
+    ("ACT count ≥ files edited",     count_kind("ACT") >= sum(1 for n,_ in calls if n in ("Edit","Write"))),
+    ("NOTE fired (risk/todo/limit)", bash_has("NOTE")),
+    ("h5i context commit",           bash_has("context commit")),
+    ("git add before h5i commit",    bash_has("git add")),
+    ("h5i commit --model --agent",   bash_has("h5i commit") and bash_has("--model")),
+    ("h5i notes analyze",            bash_has("notes analyze")),
 ]
 passed = sum(1 for _,ok in checks if ok)
 for label, ok in checks:

@@ -611,16 +611,28 @@ h5i context status
 h5i context init --goal "<one-line summary of what you are about to do>"
 ```
 
-**While working**, emit a trace entry after each logical step:
+**While working**, emit a trace entry for each distinct insight or action.
+One OBSERVE per file read. One THINK per design decision. One ACT per file edited.
+A typical single-file task has 5–8 entries; a multi-file task has more.
+
 ```bash
-# After reading / grepping files to understand the codebase:
-h5i context trace --kind OBSERVE "<what you found>"
+# One per file read — say what matters about it, not just that you read it:
+h5i context trace --kind OBSERVE "<specific finding, constraint, or surprising detail>"
 
-# After deciding on an approach or making a design choice:
-h5i context trace --kind THINK "<the decision and why>"
+# One per design decision — always include what you rejected and why:
+h5i context trace --kind THINK "<chosen approach> over <rejected alternative> because <reason>"
+# Bad:  "will add a mutex"   ← just a plan, no reasoning
+# Good: "inline mutex over OpenZeppelin — no external dep needed for a single guard"
 
-# After editing or writing a file:
-h5i context trace --kind ACT "<what you changed and where>"
+# One per file written or edited:
+h5i context trace --kind ACT "edited <file>: <what changed>"
+# If the implementation surprised you or diverged from THINK, note that here.
+
+# REQUIRED when any of these are true — do not skip:
+#   • you didn't handle an edge case you noticed
+#   • the approach has a known limitation
+#   • something is left for a follow-up
+h5i context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 ```
 
 **After completing a logical milestone** (analysis done, feature implemented, bug fixed):
