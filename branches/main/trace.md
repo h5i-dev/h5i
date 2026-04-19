@@ -319,3 +319,4 @@ _[Checkpoint: 69e4e7cb — fixed 5 UX problems from real session observation]_
 [15:01:37] ACT: edited src/main.rs
 [15:01:47] ACT: edited scripts/observe_session.sh
 [15:05:18] ACT: edited scripts/observe_multi.sh
+[15:09:11] OBSERVE: read src/mcp.rs
