@@ -433,6 +433,17 @@ pub fn tool_definitions() -> Value {
                 "properties": {}
             }
         },
+        {
+            "name": "h5i_context_knowledge",
+            "description": "Distill all THINK entries from every context branch into a \
+                project knowledge base. Returns a deduplicated list of design decisions \
+                recorded across all reasoning branches. Use this at session start to \
+                quickly re-absorb the project's accumulated design rationale.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
         // ── context versioning ─────────────────────────────────────────────────
         {
             "name": "h5i_context_restore",
@@ -869,6 +880,14 @@ fn tool_context_status(_params: &Value, workdir: &Path) -> Result<Value> {
     })))
 }
 
+fn tool_context_knowledge(_params: &Value, workdir: &Path) -> Result<Value> {
+    if !ctx::is_initialized(workdir) {
+        return Ok(json_content(json!({"initialized": false, "thoughts": []})));
+    }
+    let thoughts = ctx::distill_knowledge(workdir)?;
+    Ok(json_content(json!({ "thoughts": thoughts })))
+}
+
 fn tool_context_restore(params: &Value, workdir: &Path) -> Result<Value> {
     if !ctx::is_initialized(workdir) {
         ctx::init(workdir, "")?;
@@ -972,6 +991,7 @@ pub fn call_tool(name: &str, params: &Value, workdir: &Path) -> Result<Value> {
         "h5i_context_merge" => tool_context_merge(params, workdir),
         "h5i_context_show" => tool_context_show(params, workdir),
         "h5i_context_status" => tool_context_status(params, workdir),
+        "h5i_context_knowledge" => tool_context_knowledge(params, workdir),
         "h5i_context_restore" => tool_context_restore(params, workdir),
         "h5i_context_diff" => tool_context_diff(params, workdir),
         "h5i_context_relevant" => tool_context_relevant(params, workdir),
@@ -1567,6 +1587,7 @@ mod tests {
             "h5i_context_merge",
             "h5i_context_show",
             "h5i_context_status",
+            "h5i_context_knowledge",
             "h5i_context_restore",
             "h5i_context_diff",
             "h5i_context_relevant",

@@ -105,6 +105,11 @@ enum Commands {
         ///            "alternatives":["SGD","RMSProp"],"reason":"faster convergence on this dataset"}]
         #[arg(long, value_name = "FILE")]
         decisions: Option<std::path::PathBuf>,
+
+        /// Stage these paths before committing (equivalent to `git add <path>` beforehand).
+        /// Can be specified multiple times: --add src/foo.rs --add src/bar.rs
+        #[arg(long, value_name = "PATH", action = clap::ArgAction::Append)]
+        add: Option<Vec<std::path::PathBuf>>,
     },
 
     /// Display the enriched 5D commit history
@@ -512,6 +517,10 @@ enum ContextCommands {
     /// Show all open TODO / FIXME / BLOCKED items extracted from the trace.
     /// These are NOTE and THINK entries that contain actionable keywords.
     Todo,
+
+    /// Distill all THINK entries across every context branch into a project knowledge base.
+    /// Useful for reviewing every design decision ever recorded in this workspace.
+    Knowledge,
 
     /// Render the per-branch trace DAG as a coloured graph in the terminal.
     /// Each node shows its kind (OBSERVE/THINK/ACT/NOTE/MERGE), 8-hex ID,
@@ -1001,9 +1010,21 @@ fn main() -> anyhow::Result<()> {
             force,
             caused_by,
             decisions: decisions_file,
+            add: add_paths,
         } => {
             let repo = H5iRepository::open(".")?;
             let sig = repo.git().signature()?; // Fetch system-default Git signature
+
+            // Stage any paths passed via --add before the nothing-staged guard.
+            if let Some(ref paths) = add_paths {
+                if !paths.is_empty() {
+                    let mut idx = repo.git().index()?;
+                    for p in paths {
+                        idx.add_path(p.as_path())?;
+                    }
+                    idx.write()?;
+                }
+            }
 
             // Refuse to commit if nothing is staged — guide the caller to git add first.
             {
@@ -2020,6 +2041,28 @@ jq -c '{
 
             // Emit the trace; ignore errors so we never block Claude Code.
             let _ = ctx::append_log(&workdir, kind, &msg, false);
+
+            // Feature 1: on Read, inject prior reasoning about this file into
+            // Claude's context window (Claude Code surfaces hook stdout to the model).
+            if tool == "Read" {
+                if let Ok(rel) = ctx::relevant(&workdir, file_path) {
+                    let has = !rel.commit_mentions.is_empty() || !rel.trace_mentions.is_empty();
+                    if has {
+                        println!("[h5i] Prior reasoning about {}:", display_path);
+                        for m in &rel.commit_mentions {
+                            println!("  [milestone] {m}");
+                        }
+                        for t in rel.trace_mentions.iter().take(5) {
+                            println!("  {t}");
+                        }
+                        if !rel.cross_branch_mentions.is_empty() {
+                            for c in rel.cross_branch_mentions.iter().take(2) {
+                                println!("  [branch] {c}");
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Commands::Serve { port } => {
@@ -2477,6 +2520,34 @@ jq -c '{
 
                 ContextCommands::Status => {
                     ctx::print_status(workdir)?;
+                    // Feature 5: append proactive review surface if git repo + notes exist.
+                    if let Ok(repo) = H5iRepository::open(workdir) {
+                        if let Ok(pts) = repo.suggest_review_points(3, 0.4) {
+                            if !pts.is_empty() {
+                                println!();
+                                println!(
+                                    "  {}",
+                                    style("Commits flagged for review:").yellow().bold()
+                                );
+                                for pt in &pts {
+                                    println!(
+                                        "    {} {} score {:.2}  {}",
+                                        style("⚑").red(),
+                                        style(&pt.short_oid).dim(),
+                                        pt.score,
+                                        style(&pt.message).italic(),
+                                    );
+                                    for trig in pt.triggers.iter().take(2) {
+                                        println!(
+                                            "      {} {}",
+                                            style("·").dim(),
+                                            style(&trig.detail).dim()
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 ContextCommands::Prompt => {
@@ -2626,6 +2697,13 @@ jq -c '{
                         anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
                     }
                     ctx::print_todos(workdir)?;
+                }
+
+                ContextCommands::Knowledge => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    ctx::print_knowledge(workdir)?;
                 }
 
                 ContextCommands::Dag { branch } => {
