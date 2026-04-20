@@ -644,3 +644,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [22:30:01] OBSERVE: read src/ctx.rs
 [22:30:07] ACT: edited src/ctx.rs
 [22:31:49] ACT: implemented --depth 1/2/3 on context show (ctx.rs + main.rs), SessionStart+Stop hooks (main.rs), updated hook setup output, created .claude/skills/h5i-workflow/SKILL.md
+[22:33:36] OBSERVE: re-comparing h5i (post-improvements) vs claude-mem for context/memory management rating
