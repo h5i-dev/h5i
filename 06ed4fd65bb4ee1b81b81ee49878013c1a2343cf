@@ -1,0 +1,1 @@
+{"git_oid":"06ed4fd65bb4ee1b81b81ee49878013c1a2343cf","parent_oid":"7216039b37b97c4998db43c3529d7b2ed07ed2a3","ai_metadata":{"model_name":"claude-sonnet-4-6","prompt":"update README to sell the context versioning aspect more prominently","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"crdt_states":null,"timestamp":"2026-04-20T22:40:09.676510071Z"}
