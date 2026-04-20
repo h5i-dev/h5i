@@ -685,3 +685,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [23:23:12] ACT: edited src/ctx.rs
 [23:46:38] OBSERVE: tests/ has one integration test file (test_metrics_integration.rs) using Rust library API; no CLI subprocess tests exist yet. .github/workflows/ has only test.yaml. Need to add tests/cli_integration.rs and .github/workflows/release.yaml
 [23:46:42] THINK: Use env!("CARGO_BIN_EXE_h5i") to locate the compiled binary in integration tests — no need to shell out to cargo build. Use cross for linux-aarch64 in release pipeline; native runners for linux-x86_64, both macOS targets (macos-latest is arm64), and windows-x86_64.
+[23:47:54] ACT: wrote tests/cli_integration.rs
