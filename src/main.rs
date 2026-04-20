@@ -433,6 +433,11 @@ enum ContextCommands {
 
     /// Retrieve the current project state at multiple levels of detail
     /// (like `git show` — global roadmap, recent commits, optional trace)
+    ///
+    /// Three depths inspired by progressive-disclosure retrieval:
+    ///   --depth 1  compact index (~800 tokens): goal, branch, milestone IDs, counts
+    ///   --depth 2  timeline (default, ~2-5K tokens): adds recent commits + mini-trace
+    ///   --depth 3  full trace: adds the complete OTA log
     Show {
         /// Show context for this branch (default: current branch)
         #[arg(long)]
@@ -440,7 +445,7 @@ enum ContextCommands {
         /// Return the complete record for a specific commit hash
         #[arg(long)]
         commit: Option<String>,
-        /// Include recent OTA execution trace from trace.md
+        /// Include recent OTA execution trace from trace.md (equivalent to --depth 3)
         #[arg(long)]
         trace: bool,
         /// Retrieve a specific metadata segment from metadata.yaml (e.g. "file_structure")
@@ -452,6 +457,9 @@ enum ContextCommands {
         /// Scroll back N lines in the trace (sliding-window offset k)
         #[arg(long, default_value_t = 0)]
         trace_offset: usize,
+        /// Progressive disclosure depth: 1=compact index, 2=timeline (default), 3=full trace
+        #[arg(long, default_value_t = 2)]
+        depth: u8,
     },
 
     /// Append an OTA (Observation–Thought–Action) step to the current branch trace
@@ -619,12 +627,23 @@ enum MemoryCommands {
 
 #[derive(Subcommand)]
 enum HookCommands {
-    /// Print install instructions for Claude Code hooks (prompt capture + context tracing)
+    /// Print install instructions for all Claude Code hooks
     Setup,
 
     /// Run as the PostToolUse handler: reads JSON from stdin, emits h5i context traces.
     /// Register in .claude/settings.json as: { "command": "h5i hook run" }
     Run,
+
+    /// Run as the SessionStart handler: injects prior context into Claude's context window.
+    /// Prints the current context summary + relevant prior reasoning to stdout,
+    /// which Claude Code surfaces to the model at the start of each session.
+    /// Register in .claude/settings.json under "SessionStart" hooks.
+    SessionStart,
+
+    /// Run as the Stop handler: auto-checkpoints the context workspace before the session ends.
+    /// Summarises recent OBSERVE/THINK/ACT entries and calls `h5i context commit`.
+    /// Register in .claude/settings.json under "Stop" hooks.
+    Stop,
 }
 
 #[derive(Subcommand)]
@@ -2069,11 +2088,54 @@ jq -c '{
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "h5i hook session-start"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "h5i hook run"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "h5i hook stop"
+          }
+        ]
+      }
     ]
   }
 }"#
                 )
                 .dim()
+            );
+            println!();
+            println!(
+                "  {} — injects prior context into every new session automatically",
+                style("SessionStart").yellow()
+            );
+            println!(
+                "  {} — auto-traces every file Read/Edit/Write during the session",
+                style("PostToolUse").yellow()
+            );
+            println!(
+                "  {} — auto-checkpoints the context workspace when Claude stops",
+                style("Stop").yellow()
             );
 
             println!("{}", style("── Step 3: Register the MCP server ──").bold());
@@ -2193,6 +2255,125 @@ jq -c '{
                         }
                     }
                 }
+            }
+        }
+
+        Commands::Hook(HookCommands::SessionStart) => {
+            // Inject prior context into Claude's context window at session start.
+            // Claude Code surfaces this hook's stdout to the model, providing
+            // automatic orientation without a manual `h5i context restore`.
+            let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let has_ctx = match git2::Repository::discover(&workdir) {
+                Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
+                Err(_) => false,
+            };
+            if !has_ctx {
+                return Ok(());
+            }
+
+            // Single call with show_log=true so we get both mini_trace and recent_log_lines.
+            let opts = ctx::ContextOpts {
+                branch: None,
+                commit_hash: None,
+                show_log: true,
+                log_offset: 0,
+                metadata_segment: None,
+                window: 3,
+                depth: 1,
+            };
+            let Ok(snap) = ctx::gcc_context(&workdir, &opts) else {
+                return Ok(());
+            };
+
+            println!("[h5i] Context workspace active — prior reasoning follows.");
+            println!();
+
+            // Depth-1 index: compact orientation.
+            ctx::print_context_depth(&snap, 1);
+
+            // Last 5 THINK/ACT entries: most actionable prior reasoning.
+            let thinks_acts: Vec<&String> = snap
+                .recent_log_lines
+                .iter()
+                .filter(|l| l.contains("] THINK:") || l.contains("] ACT:"))
+                .rev()
+                .take(5)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            if !thinks_acts.is_empty() {
+                println!();
+                println!("[h5i] Last decisions & actions:");
+                for line in thinks_acts {
+                    println!("  {line}");
+                }
+            }
+
+            if !snap.todo_items.is_empty() {
+                println!();
+                println!("[h5i] Open TODOs:");
+                for t in snap.todo_items.iter().take(5) {
+                    println!("  □ {t}");
+                }
+            }
+            println!();
+            println!("[h5i] Use `h5i context show` for full details.");
+        }
+
+        Commands::Hook(HookCommands::Stop) => {
+            // Auto-checkpoint the context workspace when Claude Code stops.
+            // Reads recent trace entries and commits a milestone summary so
+            // the next session can resume without a manual `h5i context commit`.
+            let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let has_ctx = match git2::Repository::discover(&workdir) {
+                Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
+                Err(_) => false,
+            };
+            if !has_ctx {
+                return Ok(());
+            }
+
+            // Collect the most recent ACT entries to build an auto-summary.
+            let opts = ctx::ContextOpts {
+                branch: None,
+                commit_hash: None,
+                show_log: true,
+                log_offset: 0,
+                metadata_segment: None,
+                window: 1,
+                depth: 3,
+            };
+            let summary = if let Ok(snap) = ctx::gcc_context(&workdir, &opts) {
+                let acts: Vec<String> = snap
+                    .recent_log_lines
+                    .iter()
+                    .filter(|l| l.contains("] ACT:"))
+                    .rev()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                if acts.is_empty() {
+                    "session ended (auto-checkpoint)".to_string()
+                } else {
+                    // Strip the timestamp prefix and summarise.
+                    let bodies: Vec<String> = acts
+                        .iter()
+                        .filter_map(|l| l.split("] ACT:").nth(1))
+                        .map(|s| s.trim().to_string())
+                        .collect();
+                    format!("auto-checkpoint: {}", bodies.join("; "))
+                }
+            } else {
+                "session ended (auto-checkpoint)".to_string()
+            };
+
+            match ctx::gcc_commit(&workdir, &summary, "") {
+                Ok(_) => eprintln!("[h5i] Context checkpoint: {summary}"),
+                Err(e) => eprintln!("[h5i] Context checkpoint failed: {e}"),
             }
         }
 
@@ -2615,20 +2796,24 @@ jq -c '{
                     metadata,
                     window,
                     trace_offset,
+                    depth,
                 } => {
                     if !ctx::is_initialized(workdir) {
                         anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
                     }
+                    // --trace is shorthand for --depth 3
+                    let effective_depth = if trace { 3 } else { depth };
                     let opts = ctx::ContextOpts {
                         branch,
                         commit_hash: commit,
-                        show_log: trace,
+                        show_log: effective_depth >= 3,
                         log_offset: trace_offset,
                         metadata_segment: metadata,
                         window,
+                        depth: effective_depth,
                     };
                     let snapshot = ctx::gcc_context(workdir, &opts)?;
-                    ctx::print_context(&snapshot);
+                    ctx::print_context_depth(&snapshot, effective_depth);
                 }
 
                 ContextCommands::Trace { kind, content, ephemeral } => {

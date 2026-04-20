@@ -947,6 +947,10 @@ fn tool_context_show(params: &Value, workdir: &Path) -> Result<Value> {
             .get("window")
             .and_then(Value::as_u64)
             .unwrap_or(3) as usize,
+        depth: params
+            .get("depth")
+            .and_then(Value::as_u64)
+            .unwrap_or(2) as u8,
     };
     let context = ctx::gcc_context(workdir, &opts)?;
     Ok(json_content(serde_json::to_value(&context)?))
@@ -1149,6 +1153,7 @@ pub fn read_resource(uri: &str, workdir: &Path) -> Result<Value> {
                 log_offset: 0,
                 metadata_segment: None,
                 window: 5,
+                depth: 2,
             };
             let context = ctx::gcc_context(workdir, &opts)?;
             Ok(json!({
