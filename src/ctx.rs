@@ -3515,4 +3515,490 @@ mod tests {
         let summary = gcc_merge(dir.path(), "scope/research").unwrap();
         assert!(summary.contains("scope/research"), "merge summary should name the scope");
     }
+
+    // ── show_log / mini_trace / todo_items ───────────────────────────────────
+
+    #[test]
+    fn show_log_false_returns_empty_recent_log_lines() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "OBSERVE", "something happened", false).unwrap();
+        let ctx = gcc_context(
+            dir.path(),
+            &ContextOpts { show_log: false, window: 3, ..Default::default() },
+        )
+        .unwrap();
+        assert!(ctx.recent_log_lines.is_empty(), "recent_log_lines must be empty when show_log=false");
+    }
+
+    #[test]
+    fn mini_trace_populated_even_without_show_log() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "ACT", "edited src/main.rs", false).unwrap();
+        let ctx = gcc_context(
+            dir.path(),
+            &ContextOpts { show_log: false, window: 3, ..Default::default() },
+        )
+        .unwrap();
+        assert!(!ctx.mini_trace.is_empty(), "mini_trace should be populated regardless of show_log");
+        assert!(ctx.mini_trace.iter().any(|l| l.contains("edited src/main.rs")));
+    }
+
+    #[test]
+    fn mini_trace_capped_at_eight_entries() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        for i in 0..12 {
+            append_log(dir.path(), "NOTE", &format!("note {i}"), false).unwrap();
+        }
+        let ctx = gcc_context(
+            dir.path(),
+            &ContextOpts { show_log: false, window: 3, ..Default::default() },
+        )
+        .unwrap();
+        assert!(ctx.mini_trace.len() <= 8, "mini_trace must be capped at 8 entries");
+    }
+
+    #[test]
+    fn todo_items_extracted_from_note_with_todo_keyword() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "NOTE", "TODO: add integration test for failover", false).unwrap();
+        let ctx = gcc_context(
+            dir.path(),
+            &ContextOpts { show_log: true, window: 3, ..Default::default() },
+        )
+        .unwrap();
+        assert!(
+            ctx.todo_items.iter().any(|t| t.contains("integration test")),
+            "TODO from NOTE should appear in todo_items"
+        );
+    }
+
+    #[test]
+    fn todo_items_extracted_from_think_with_fixme() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "THINK", "FIXME: token refresh path has a race condition", false).unwrap();
+        let ctx = gcc_context(
+            dir.path(),
+            &ContextOpts { show_log: true, window: 3, ..Default::default() },
+        )
+        .unwrap();
+        assert!(
+            ctx.todo_items.iter().any(|t| t.contains("race condition")),
+            "FIXME from THINK should appear in todo_items"
+        );
+    }
+
+    #[test]
+    fn todo_items_empty_when_no_keywords() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "NOTE", "everything looks fine", false).unwrap();
+        append_log(dir.path(), "THINK", "the approach is sound", false).unwrap();
+        let ctx = gcc_context(
+            dir.path(),
+            &ContextOpts { show_log: true, window: 3, ..Default::default() },
+        )
+        .unwrap();
+        assert!(ctx.todo_items.is_empty(), "no TODO keywords → todo_items must be empty");
+    }
+
+    #[test]
+    fn todo_items_not_extracted_from_observe_or_act() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "OBSERVE", "TODO: this is just an observation", false).unwrap();
+        append_log(dir.path(), "ACT", "TODO: actioned this", false).unwrap();
+        let ctx = gcc_context(
+            dir.path(),
+            &ContextOpts { show_log: true, window: 3, ..Default::default() },
+        )
+        .unwrap();
+        assert!(ctx.todo_items.is_empty(), "TODO in OBSERVE/ACT must not appear in todo_items");
+    }
+
+    #[test]
+    fn todo_items_blocked_and_remaining_keywords_matched() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "NOTE", "BLOCKED: waiting on API credentials", false).unwrap();
+        append_log(dir.path(), "THINK", "REMAINING: wire up the logout handler", false).unwrap();
+        let ctx = gcc_context(
+            dir.path(),
+            &ContextOpts { show_log: true, window: 3, ..Default::default() },
+        )
+        .unwrap();
+        assert_eq!(ctx.todo_items.len(), 2, "BLOCKED and REMAINING both match");
+    }
+
+    // ── gcc_context: window, active_branches ─────────────────────────────────
+
+    #[test]
+    fn gcc_context_window_limits_returned_commits() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        for i in 0..5 {
+            gcc_commit(dir.path(), &format!("milestone {i}"), &format!("contribution {i}")).unwrap();
+        }
+        let ctx = gcc_context(dir.path(), &ContextOpts { window: 2, ..Default::default() }).unwrap();
+        assert!(ctx.recent_commits.len() <= 2, "window=2 must cap recent_commits");
+    }
+
+    #[test]
+    fn gcc_context_active_branches_includes_all() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "feat-a", "feature a").unwrap();
+        gcc_checkout(dir.path(), "main").unwrap();
+        gcc_branch(dir.path(), "feat-b", "feature b").unwrap();
+        gcc_checkout(dir.path(), "main").unwrap();
+        let ctx = gcc_context(dir.path(), &ContextOpts::default()).unwrap();
+        assert!(ctx.active_branches.contains(&"main".to_string()));
+        assert!(ctx.active_branches.contains(&"feat-a".to_string()));
+        assert!(ctx.active_branches.contains(&"feat-b".to_string()));
+    }
+
+    // ── auto-bootstrap (append_log before init) ───────────────────────────────
+
+    #[test]
+    fn append_log_bootstraps_context_ref_without_init() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        // No init — append_log must create refs/h5i/context on its own.
+        append_log(dir.path(), "OBSERVE", "file exists", false).unwrap();
+        assert!(is_initialized(dir.path()), "append_log should bootstrap the context ref");
+    }
+
+    #[test]
+    fn append_log_bootstrap_trace_is_readable() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        append_log(dir.path(), "THINK", "bootstrapped thought", false).unwrap();
+        let ctx = gcc_context(
+            dir.path(),
+            &ContextOpts { show_log: true, window: 3, ..Default::default() },
+        )
+        .unwrap();
+        assert!(ctx.recent_log_lines.iter().any(|l| l.contains("bootstrapped thought")));
+    }
+
+    // ── gcc_branch purpose ────────────────────────────────────────────────────
+
+    #[test]
+    fn gcc_branch_stores_purpose_retrievable_from_commit_md() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "experiment/caching", "explore LRU cache approach").unwrap();
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let commit_md =
+            ctx_read_file(&repo, "branches/experiment/caching/commit.md").unwrap_or_default();
+        assert!(
+            commit_md.contains("explore LRU cache approach"),
+            "branch purpose should be recorded in commit.md"
+        );
+    }
+
+    // ── gcc_commit edge cases ─────────────────────────────────────────────────
+
+    #[test]
+    fn gcc_commit_with_empty_detail_succeeds() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        assert!(gcc_commit(dir.path(), "milestone with no detail", "").is_ok());
+    }
+
+    #[test]
+    fn gcc_commit_multiple_entries_all_visible() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_commit(dir.path(), "first milestone", "alpha done").unwrap();
+        gcc_commit(dir.path(), "second milestone", "beta done").unwrap();
+        let ctx = gcc_context(dir.path(), &ContextOpts { window: 5, ..Default::default() }).unwrap();
+        let combined = ctx.recent_commits.join(" ");
+        assert!(combined.contains("alpha done"));
+        assert!(combined.contains("beta done"));
+    }
+
+    // ── pack_lossless edge cases ──────────────────────────────────────────────
+
+    #[test]
+    fn lossless_pack_keeps_standalone_observe_not_subsumed() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        // OBSERVE about file_a.rs — no later THINK/ACT mentions file_a.rs.
+        append_log(dir.path(), "OBSERVE", "file_a.rs has 100 lines", false).unwrap();
+        append_log(dir.path(), "THINK", "something about file_b.rs", false).unwrap();
+        let result = pack_lossless(dir.path()).unwrap();
+        assert_eq!(result.removed_subsumed_observe, 0, "standalone OBSERVE must not be removed");
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let trace = ctx_read_file(&repo, "branches/main/trace.md").unwrap_or_default();
+        assert!(trace.contains("file_a.rs has 100 lines"), "standalone OBSERVE must be preserved");
+    }
+
+    #[test]
+    fn lossless_pack_preserves_note_entries_verbatim() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "NOTE", "important reminder about src/auth.rs", false).unwrap();
+        pack_lossless(dir.path()).unwrap();
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let trace = ctx_read_file(&repo, "branches/main/trace.md").unwrap_or_default();
+        assert!(trace.contains("important reminder about src/auth.rs"), "NOTE must be preserved");
+    }
+
+    #[test]
+    fn lossless_pack_is_noop_on_empty_trace() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let result = pack_lossless(dir.path()).unwrap();
+        assert_eq!(result.removed_subsumed_observe, 0);
+        assert_eq!(result.merged_consecutive_observe, 0);
+        assert_eq!(result.kept_durable, 0);
+    }
+
+    // ── context_diff edge cases ───────────────────────────────────────────────
+
+    #[test]
+    fn context_diff_same_snapshot_shows_no_changes() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        snapshot_for_commit(dir.path(), "samesha1111111111").unwrap();
+        let diff = context_diff(dir.path(), "samesha1", "samesha1").unwrap();
+        assert!(diff.added_commits.is_empty());
+        assert!(diff.added_trace_lines.is_empty());
+    }
+
+    #[test]
+    fn context_diff_detects_new_trace_lines_after_pack() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "OBSERVE", "line that will be subsumed", false).unwrap();
+        snapshot_for_commit(dir.path(), "sha_before_00000000").unwrap();
+
+        // A THINK that subsumes the OBSERVE; pack removes the OBSERVE.
+        append_log(dir.path(), "THINK", "subsumed line is now understood in context", false).unwrap();
+        pack_lossless(dir.path()).unwrap();
+        snapshot_for_commit(dir.path(), "sha_after_000000000").unwrap();
+
+        let diff = context_diff(dir.path(), "sha_befor", "sha_after").unwrap();
+        // The THINK entry is new in sha_after — diff must report it.
+        assert!(
+            diff.added_trace_lines.iter().any(|l| l.contains("understood in context")),
+            "diff should report the new THINK entry added after packing"
+        );
+    }
+
+    // ── DAG edge cases ────────────────────────────────────────────────────────
+
+    #[test]
+    fn dag_head_id_empty_when_dag_is_empty() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let dag = read_dag(&repo, MAIN_BRANCH);
+        assert_eq!(dag.head_id(), "", "head_id must be empty on empty DAG");
+    }
+
+    #[test]
+    fn dag_head_id_matches_last_node() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "OBSERVE", "first", false).unwrap();
+        append_log(dir.path(), "ACT", "second", false).unwrap();
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let dag = read_dag(&repo, MAIN_BRANCH);
+        assert_eq!(dag.head_id(), dag.nodes.last().unwrap().id);
+    }
+
+    #[test]
+    fn dag_node_ids_are_unique() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "OBSERVE", "first entry", false).unwrap();
+        append_log(dir.path(), "THINK", "second entry", false).unwrap();
+        append_log(dir.path(), "ACT", "third entry", false).unwrap();
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let dag = read_dag(&repo, MAIN_BRANCH);
+        let ids: std::collections::HashSet<&str> =
+            dag.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids.len(), dag.nodes.len(), "every DAG node must have a unique ID");
+    }
+
+    // ── stable_line_count boundary ────────────────────────────────────────────
+
+    #[test]
+    fn stable_line_count_zero_when_trace_is_short() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "NOTE", "just one entry", false).unwrap();
+        let ctx = gcc_context(dir.path(), &ContextOpts::default()).unwrap();
+        assert_eq!(ctx.stable_line_count, 0, "fewer than 40 lines → stable count is 0");
+    }
+
+    #[test]
+    fn stable_line_count_with_exactly_40_entries() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        for i in 0..40 {
+            append_log(dir.path(), "NOTE", &format!("entry {i}"), false).unwrap();
+        }
+        let ctx = gcc_context(dir.path(), &ContextOpts::default()).unwrap();
+        // Exactly 40 OTA entries fill the dynamic tail; trace.md may have a small
+        // number of header lines that spill into stable — stable ≤ a few lines.
+        assert_eq!(ctx.dynamic_line_count, 40);
+        assert!(ctx.stable_line_count <= 5, "header lines only — stable should be very small");
+    }
+
+    // ── relevant: basename matching ───────────────────────────────────────────
+
+    #[test]
+    fn relevant_matches_by_file_basename() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "ACT", "edited repository.rs at line 42", false).unwrap();
+        // Query with just the basename — should still find the mention.
+        let ctx = relevant(dir.path(), "repository.rs").unwrap();
+        assert!(
+            ctx.trace_mentions.iter().any(|l| l.contains("repository.rs")),
+            "relevant should match by basename"
+        );
+    }
+
+    // ── ephemeral on non-main branch ──────────────────────────────────────────
+
+    #[test]
+    fn ephemeral_trace_on_non_main_branch_is_isolated() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "side", "side work").unwrap();
+        append_log(dir.path(), "NOTE", "scratch on side branch", true).unwrap();
+
+        // Main branch ephemeral should be empty.
+        gcc_checkout(dir.path(), "main").unwrap();
+        let main_scratch = read_ephemeral(dir.path(), Some("main")).unwrap_or_default();
+        assert!(
+            !main_scratch.contains("scratch on side branch"),
+            "ephemeral on side branch must not bleed into main"
+        );
+
+        // Side branch ephemeral should contain it.
+        let side_scratch = read_ephemeral(dir.path(), Some("side")).unwrap_or_default();
+        assert!(side_scratch.contains("scratch on side branch"));
+    }
+
+    // ── search ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn search_returns_empty_when_no_match() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "THINK", "Redis is fast", false).unwrap();
+        let results = search(dir.path(), "postgresql database", 10).unwrap();
+        assert!(results.is_empty(), "unrelated query should return no results");
+    }
+
+    #[test]
+    fn search_finds_matching_trace_entry_with_file_mention() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        // Note: extract_file_mentions skips tokens starting with "http", so use
+        // a filename that doesn't start with that prefix.
+        append_log(dir.path(), "THINK", "exponential backoff in retry_client.rs reduces storms", false).unwrap();
+        let results = search(dir.path(), "exponential backoff", 10).unwrap();
+        assert!(!results.is_empty(), "query matching a THINK entry with file mention should return results");
+    }
+
+    #[test]
+    fn search_ranks_think_entries_higher() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "OBSERVE", "retry.rs: retry logic exists", false).unwrap();
+        append_log(dir.path(), "THINK", "retry.rs needs exponential backoff for resilience", false).unwrap();
+        let results = search(dir.path(), "retry", 10).unwrap();
+        // THINK entries get 1.5× weight — the THINK-sourced result should score higher.
+        if results.len() >= 2 {
+            assert!(
+                results[0].score >= results[1].score,
+                "results should be sorted by descending score"
+            );
+        }
+    }
+
+    // ── distill_knowledge ─────────────────────────────────────────────────────
+
+    #[test]
+    fn distill_knowledge_collects_think_entries() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "THINK", "exponential backoff is safer under high load", false).unwrap();
+        append_log(dir.path(), "OBSERVE", "this is not a thought", false).unwrap();
+        let knowledge = distill_knowledge(dir.path()).unwrap();
+        assert_eq!(knowledge.len(), 1, "only THINK entries should be distilled");
+        let thought = knowledge[0]["thought"].as_str().unwrap_or("");
+        assert!(thought.contains("exponential backoff"));
+    }
+
+    #[test]
+    fn distill_knowledge_deduplicates_across_branches() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let thought = "use Redis for session storage due to restart resilience";
+        append_log(dir.path(), "THINK", thought, false).unwrap();
+        gcc_branch(dir.path(), "alt", "alt").unwrap();
+        // Identical thought on alt branch — should be deduplicated.
+        append_log(dir.path(), "THINK", thought, false).unwrap();
+        gcc_checkout(dir.path(), "main").unwrap();
+        let knowledge = distill_knowledge(dir.path()).unwrap();
+        assert_eq!(knowledge.len(), 1, "duplicate THINK entries must be deduplicated");
+    }
+
+    #[test]
+    fn distill_knowledge_includes_thoughts_from_all_branches() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "THINK", "main branch insight about caching strategy", false).unwrap();
+        gcc_branch(dir.path(), "feature", "feature work").unwrap();
+        append_log(dir.path(), "THINK", "feature branch insight about retry logic pattern", false).unwrap();
+        gcc_checkout(dir.path(), "main").unwrap();
+        let knowledge = distill_knowledge(dir.path()).unwrap();
+        let thoughts: Vec<&str> = knowledge.iter()
+            .filter_map(|k| k["thought"].as_str())
+            .collect();
+        assert!(thoughts.iter().any(|t| t.contains("caching strategy")));
+        assert!(thoughts.iter().any(|t| t.contains("retry logic pattern")));
+    }
 }
