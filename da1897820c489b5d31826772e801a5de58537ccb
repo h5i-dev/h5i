@@ -1,0 +1,1 @@
+{"git_oid":"da1897820c489b5d31826772e801a5de58537ccb","parent_oid":"008ef423164de595f28b211c7af193c6cf26d78f","ai_metadata":{"model_name":"claude-sonnet-4-6","prompt":"prepare integration tests + a binary release pipeline","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"crdt_states":null,"timestamp":"2026-04-20T23:52:10.862615557Z"}
