@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: h5i
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 — native
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: false
+            archive_ext: tar.gz
+
+          # Linux aarch64 — cross-compiled
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: true
+            archive_ext: tar.gz
+
+          # macOS x86_64
+          - target: x86_64-apple-darwin
+            os: macos-13
+            use_cross: false
+            archive_ext: tar.gz
+
+          # macOS arm64 (Apple Silicon)
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            use_cross: false
+            archive_ext: tar.gz
+
+          # Windows x86_64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            use_cross: false
+            archive_ext: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # musl-tools needed for the x86_64-unknown-linux-musl target
+      - name: Install musl-tools (Linux)
+        if: runner.os == 'Linux' && !matrix.use_cross
+        run: sudo apt-get update -q && sudo apt-get install -y musl-tools
+
+      - name: Install cross
+        if: matrix.use_cross
+        uses: taiki-e/install-action@cross
+
+      - name: Build (native)
+        if: "!matrix.use_cross"
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.use_cross
+        run: cross build --release --locked --target ${{ matrix.target }}
+
+      # ── Package ───────────────────────────────────────────────────────────
+
+      - name: Package (Unix)
+        if: matrix.archive_ext == 'tar.gz'
+        shell: bash
+        run: |
+          BIN=target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}
+          ARCHIVE="${{ env.BINARY_NAME }}-${{ github.ref_name }}-${{ matrix.target }}.tar.gz"
+          tar -czf "$ARCHIVE" -C "$(dirname $BIN)" "$(basename $BIN)"
+          echo "ASSET=$ARCHIVE" >> "$GITHUB_ENV"
+          sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+
+      - name: Package (Windows)
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          $BIN = "target\${{ matrix.target }}\release\${{ env.BINARY_NAME }}.exe"
+          $ARCHIVE = "${{ env.BINARY_NAME }}-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          Compress-Archive -Path $BIN -DestinationPath $ARCHIVE
+          "ASSET=$ARCHIVE" | Out-File -FilePath $Env:GITHUB_ENV -Append
+          $hash = (Get-FileHash $ARCHIVE -Algorithm SHA256).Hash.ToLower()
+          "$hash  $ARCHIVE" | Out-File -FilePath "${ARCHIVE}.sha256" -Encoding ASCII
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ matrix.target }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "h5i ${{ github.ref_name }}"
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: artifacts/**
+          body: |
+            ## Install
+
+            **Linux / macOS:**
+            ```bash
+            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/h5i-${{ github.ref_name }}-<TARGET>.tar.gz | tar -xz
+            sudo mv h5i /usr/local/bin/
+            ```
+
+            **Windows:** download the `.zip`, extract `h5i.exe`, and add it to your `PATH`.
+
+            ### Available targets
+
+            | Target | Platform |
+            |--------|---------|
+            | `x86_64-unknown-linux-musl` | Linux x86_64 (static, glibc-free) |
+            | `aarch64-unknown-linux-musl` | Linux arm64 (static, glibc-free) |
+            | `x86_64-apple-darwin` | macOS Intel |
+            | `aarch64-apple-darwin` | macOS Apple Silicon |
+            | `x86_64-pc-windows-msvc` | Windows x86_64 |
+
+            Each archive is accompanied by a `.sha256` checksum file.
