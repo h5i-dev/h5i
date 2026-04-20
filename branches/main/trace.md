@@ -619,3 +619,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [22:19:41] ACT: edited src/ctx.rs
 [22:21:29] ACT: edited src/ctx.rs
 [22:21:38] OBSERVE: read src/server.rs
+[22:21:38] OBSERVE: read src/mcp.rs
