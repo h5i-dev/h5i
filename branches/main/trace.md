@@ -593,3 +593,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [22:12:51] OBSERVE: read types.ts
 [22:12:53] OBSERVE: read README.md
 [22:12:53] OBSERVE: read SearchManager.ts
+[22:12:56] OBSERVE: read SKILL.md
