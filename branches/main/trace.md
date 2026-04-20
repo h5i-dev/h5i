@@ -588,3 +588,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [22:12:43] OBSERVE: read src/main.rs
 [22:12:46] OBSERVE: read ContextBuilder.ts
 [22:12:46] OBSERVE: read mcp-server.ts
+[22:12:48] OBSERVE: read SKILL.md
