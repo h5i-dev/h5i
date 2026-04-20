@@ -45,118 +45,9 @@ The full reasoning workspace — goal, milestones, OTA trace, open TODOs — tra
 
 ---
 
-## Four things h5i does
+## What h5i does
 
-### 1. `h5i commit` — record why the code was written
-
-Every commit stores the exact prompt, model, and agent alongside the diff. With Claude Code hooks installed, this happens automatically — no flags to set.
-
-```bash
-h5i commit -m "add rate limiting"
-```
-
-```
-● a3f9c2b  add rate limiting
-  2026-03-27 14:02  Alice <alice@example.com>
-  model: claude-sonnet-4-6 · agent: claude-code · 312 tokens
-  prompt: "add per-IP rate limiting to the auth endpoint"
-  tests: ✔ 42 passed, 0 failed, 1.23s [pytest]
-```
-
-When a design choice isn't obvious, record the reasoning inline:
-
-```bash
-h5i commit -m "switch session store to Redis" --decisions decisions.json
-```
-
-```
-Decisions:
-  ◆ src/session.rs:44  Redis over in-process HashMap
-    alternatives: in-process HashMap, Memcached
-    40 MB overhead is acceptable; survives process restarts; required for horizontal scaling
-```
-
-The `--audit` flag runs twelve deterministic rules — credential leaks, CI/CD tampering, scope creep — before the commit lands.
-
----
-
-### 2. `h5i notes` — understand what Claude actually did
-
-After a Claude Code session, `h5i notes analyze` parses the conversation log and stores structured metadata linked to the commit.
-
-```bash
-h5i notes analyze        # index the latest session
-h5i notes footprint      # which files did Claude read vs. edit?
-h5i notes uncertainty    # where was Claude unsure?
-h5i notes omissions      # what did Claude defer, stub, or promise but not deliver?
-h5i notes coverage       # which files were edited without being read first?
-h5i notes review         # ranked list of commits that most need human review
-```
-
-**Footprint** reveals the implicit dependencies Git's diff never captures:
-
-```
-── Exploration Footprint ──────────────────────────────────────
-  Session 90130372  ·  503 messages  ·  181 tool calls
-
-  Files Consulted:
-    📖 src/main.rs ×13  [Read]
-    📖 src/server.rs ×17  [Read,Grep]
-
-  Files Edited:
-    ✏ src/main.rs  ×18 edit(s)
-    ✏ src/server.rs  ×17 edit(s)
-
-  Implicit Dependencies (read but not edited):
-    → src/metadata.rs
-    → Cargo.toml
-```
-
-**Uncertainty** surfaces every moment Claude hedged, with confidence score and the exact quote:
-
-```
-── Uncertainty Heatmap ─────────────────────────────────────────────────
-  7 signals  ·  3 files
-
-  src/auth.rs    ████████████░░░░  ●●●  4 signals  avg 28%
-  src/main.rs    ██████░░░░░░░░░░  ●●   2 signals  avg 40%
-  src/server.rs  ██░░░░░░░░░░░░░░  ●    1 signal   avg 52%
-
-  ██ t:32   not sure    src/auth.rs  [25%]
-       "…token validation might break if the token contains special chars…"
-
-  ▓▓ t:220  let me check  src/main.rs  [45%]
-       "…The LSP shows the match still isn't seeing the new arm. Let me check…"
-```
-
-**Omissions** surface what Claude left incomplete — extracted from its own thinking:
-
-```
-── Omission Report ─────────────────────────────────────────────
-  5 signals  ·  2 deferrals  ·  2 placeholders  ·  1 unfulfilled promise
-
-  ⏭ DEFERRAL    src/auth.rs · "for now"
-       "…I'll hardcode the token TTL for now — a proper config value can be added later…"
-
-  ⬜ PLACEHOLDER  src/auth.rs · "stub"
-       "…this refresh handler is a stub; the actual token rotation logic isn't wired up yet…"
-
-  💬 UNFULFILLED  src/auth.rs · "i'll also update"
-     → promised file: src/auth/tests.rs  (never edited)
-```
-
-**Coverage** flags blind edits — files Claude modified without first reading:
-
-```
-  File                        Edits   Coverage   Blind edits
-  src/auth.rs                     4       75%             1
-  src/session.rs                  2        0%             2   ← review these
-  src/main.rs                     1      100%             0
-```
-
----
-
-### 3. `h5i context` — version-controlled reasoning that survives session resets
+### `h5i context` — version-controlled reasoning that survives session resets
 
 Long-running tasks lose context when a session ends. The `h5i context` workspace is a Git-backed reasoning journal: every OBSERVE → THINK → ACT step is stored as a node in a **directed-acyclic-graph** (DAG) with explicit parent links, linked to the code commit it produced, and snapshotted automatically. It survives session resets, machine switches, and team handoffs.
 
@@ -279,59 +170,17 @@ h5i context scan
 
 ---
 
-### 4. `h5i policy` + `h5i compliance` — enforce AI governance rules
+---
 
-As AI-assisted contributions grow, teams need an auditable answer to *"are we following our own rules?"* h5i enforces lightweight policy-as-code at commit time and generates audit-grade compliance reports on demand.
+## Other features
 
-**Define rules once, enforce them everywhere:**
+- **`h5i commit`** — stores the exact prompt, model, agent, and test results alongside every diff. With hooks installed this is automatic. Add `--decisions decisions.json` to record why a design choice was made; `--audit` to run twelve pre-commit integrity rules (credential leaks, CI/CD tampering, scope creep).
 
-```toml
-# .h5i/policy.toml  (committed alongside your code)
-[commit]
-require_ai_provenance = true   # every commit must record model + agent + prompt
-min_message_len = 10
+- **`h5i notes`** — parses the Claude Code session log after each session and stores structured metadata linked to the commit: exploration footprint (files read vs. edited), uncertainty heatmap (every hedge with a confidence score), omissions (deferrals, stubs, unfulfilled promises), and blind-edit coverage (files modified without being read first). `h5i notes review` produces a ranked list of commits most in need of human review.
 
-[paths."src/auth/**"]
-require_ai_provenance = true
-require_audit = true           # security-sensitive paths must pass --audit
-max_ai_ratio = 0.8             # compliance: flag if >80% of auth commits are AI
-```
+- **`h5i policy`** — policy-as-code at commit time. Define rules in `.h5i/policy.toml` (require AI provenance, enforce audit on sensitive paths, cap AI ratio per directory); `h5i commit` blocks and explains any violation.
 
-```bash
-h5i policy init    # scaffold .h5i/policy.toml
-h5i policy check   # dry-run against staged files
-h5i policy show    # inspect current rules
-```
-
-When a rule is violated, `h5i commit` prints a clear explanation and blocks the commit:
-
-```
-✖ Policy violation (company-standard-v1)  (1 rule failed)
-  ✖ [commit.require_ai_provenance]  This commit has no AI provenance…
-! Commit aborted by policy. Use --force to override.
-```
-
-**Audit any date range for compliance reporting:**
-
-```bash
-h5i compliance --since 2025-01-01 --until 2025-03-31
-h5i compliance --format html --output q1-report.html   # dark-theme HTML
-h5i compliance --format json | jq '.policy_violations'
-```
-
-```
-── h5i compliance report  (2025-01-01 – 2025-03-31) ──────────
-  ✔ 142 commits scanned  ·  89 AI (63%)  ·  53 human
-  3 policy violations  ·  98% pass rate
-  2 prompt-injection signal(s) detected across sessions
-  src/payment/**   ai=91% ✖  blind=35% ✖
-
-  commits:
-    a3f8c12  Alice  AI ⚠ policy  add retry logic
-    9e21b04  Bob   AI ⚠ inject(1) 0.50  2 blind  fix token validation
-```
-
-The compliance report automatically scans session thinking blocks and key decisions for injection patterns. Commits with hits are tagged `⚠ inject(N) score` in both text and HTML output.
+- **`h5i compliance`** — generates audit-grade reports over any date range (`--format html` for a dark-theme HTML export). Automatically scans session thinking blocks for prompt-injection signals and tags flagged commits in the output.
 
 ---
 
