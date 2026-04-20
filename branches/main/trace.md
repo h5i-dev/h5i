@@ -608,3 +608,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [22:13:25] OBSERVE: read index.ts
 [22:13:30] OBSERVE: read progressive-disclosure.mdx
 [22:13:30] OBSERVE: read hooks.mdx
+[22:18:43] OBSERVE: read src/main.rs
