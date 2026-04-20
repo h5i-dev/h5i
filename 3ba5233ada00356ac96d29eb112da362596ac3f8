@@ -1,0 +1,1 @@
+{"git_oid":"3ba5233ada00356ac96d29eb112da362596ac3f8","parent_oid":"e7f299e7e2c28ade6cae6a2e227535ef9d4ade3c","ai_metadata":{"model_name":"claude-sonnet-4-6","prompt":"revert hero subtitle paragraph to original who/why/safe/undo copy","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"crdt_states":null,"timestamp":"2026-04-20T22:50:31.416235352Z"}
