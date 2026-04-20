@@ -605,3 +605,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [22:13:20] OBSERVE: read SessionManager.ts
 [22:13:22] OBSERVE: read logger.ts
 [22:13:22] OBSERVE: read CLAUDE.md
+[22:13:25] OBSERVE: read index.ts
