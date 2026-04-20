@@ -600,3 +600,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [22:13:03] OBSERVE: read search-architecture.mdx
 [22:13:07] OBSERVE: read tutorials/01-never-let-your-ai-forget.md
 [22:13:12] OBSERVE: read SKILL.md
+[22:13:12] OBSERVE: read SKILL.md
