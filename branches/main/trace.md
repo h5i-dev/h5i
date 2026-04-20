@@ -596,3 +596,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [22:12:56] OBSERVE: read SKILL.md
 [22:13:00] OBSERVE: read types.ts
 [22:13:00] OBSERVE: read overview.mdx
+[22:13:02] OBSERVE: read .claude/h5i.md
