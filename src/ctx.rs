@@ -72,6 +72,8 @@ pub struct ContextOpts {
     pub log_offset: usize,
     pub metadata_segment: Option<String>,
     pub window: usize, // number of recent commits to show (default K)
+    /// Progressive disclosure depth: 1=compact index, 2=timeline (default), 3=full trace.
+    pub depth: u8,
 }
 
 /// Structured metadata stored in `metadata.yaml`.
@@ -1588,12 +1590,57 @@ fn is_scope_branch(repo: &Repository, branch_name: &str) -> bool {
 
 // ── Terminal display ──────────────────────────────────────────────────────────
 
-pub fn print_context(ctx: &GccContext) {
+/// Depth 1 — compact index (~800 tokens): goal, branch, milestone IDs, commit count.
+/// Fastest orientation; use when you only need to know what exists.
+fn print_context_index(ctx: &GccContext) {
     use console::style;
-
     println!(
         "{}",
-        style("── Context ─────────────────────────────────────────────").dim()
+        style("── Context Index (depth=1) ──────────────────────────────").dim()
+    );
+    let goal: String = ctx.project_goal.chars().take(100).collect();
+    println!(
+        "  branch={}  goal={}",
+        style(&ctx.current_branch).magenta(),
+        if goal.is_empty() { style("(none)".to_string()).dim() } else { style(goal).cyan() }
+    );
+    println!(
+        "  milestones={}  commits={}  trace_lines={}+{}",
+        ctx.milestones.len(),
+        ctx.recent_commits.len(),
+        style(ctx.stable_line_count).green(),
+        style(ctx.dynamic_line_count).yellow(),
+    );
+    if ctx.active_branches.len() > 1 {
+        println!(
+            "  branches: {}",
+            ctx.active_branches
+                .iter()
+                .map(|b| if b == &ctx.current_branch {
+                    format!("*{b}")
+                } else {
+                    b.clone()
+                })
+                .collect::<Vec<_>>()
+                .join("  ")
+        );
+    }
+    for (i, m) in ctx.milestones.iter().enumerate() {
+        let label: String = m.chars().take(72).collect();
+        println!("  m{i}: {label}");
+    }
+    if !ctx.todo_items.is_empty() {
+        println!("  todos: {}", ctx.todo_items.len());
+    }
+}
+
+/// Depth 2 — timeline (~2–5K tokens): adds recent commits and mini-trace.
+/// Default view; covers most orientation needs without the full trace.
+fn print_context_timeline(ctx: &GccContext) {
+    use console::style;
+    println!(
+        "{}",
+        style("── Context (depth=2) ────────────────────────────────────").dim()
     );
     println!(
         "  {} {}  (branch: {})",
@@ -1648,7 +1695,6 @@ pub fn print_context(ctx: &GccContext) {
         }
     }
 
-    // Always show last 8 trace entries (mini-trace) so `show` is useful without --trace.
     if !ctx.mini_trace.is_empty() {
         println!();
         println!("  {}", style("Recent Trace:").bold());
@@ -1666,7 +1712,6 @@ pub fn print_context(ctx: &GccContext) {
         }
     }
 
-    // Open TODOs extracted from NOTE/THINK entries.
     if !ctx.todo_items.is_empty() {
         println!();
         println!("  {}", style("Open TODOs:").bold().yellow());
@@ -1674,12 +1719,33 @@ pub fn print_context(ctx: &GccContext) {
             println!("    {} {}", style("□").yellow(), style(item).dim());
         }
     }
+}
 
-    if !ctx.recent_log_lines.is_empty() {
-        println!();
-        println!("  {}", style("Full OTA Log (recent):").bold());
-        for line in ctx.recent_log_lines.iter().take(10) {
-            println!("    {}", style(line).dim());
+pub fn print_context(ctx: &GccContext) {
+    print_context_depth(ctx, 2);
+}
+
+/// Render context at the requested depth (1=index, 2=timeline, 3=full trace).
+pub fn print_context_depth(ctx: &GccContext, depth: u8) {
+    use console::style;
+    match depth {
+        1 => {
+            print_context_index(ctx);
+        }
+        3 => {
+            // Full output: timeline header + full OTA log.
+            print_context_timeline(ctx);
+            if !ctx.recent_log_lines.is_empty() {
+                println!();
+                println!("  {}", style("Full OTA Log:").bold());
+                for line in &ctx.recent_log_lines {
+                    println!("    {}", style(line).dim());
+                }
+            }
+        }
+        _ => {
+            // depth=2 (default)
+            print_context_timeline(ctx);
         }
     }
 }
@@ -2388,7 +2454,9 @@ pub fn system_prompt(workdir: &Path) -> String {
              - All branches: {}\n\
              - Project goal: {}\n\
              \n\
-             **Start this session** by running `h5i context show --log` to restore your full working context.\n",
+             **Start this session** by running `h5i context show --depth 2` (or `--depth 1` for a quick index, `--depth 3` for the full trace).\n\
+             The `SessionStart` hook injects this automatically if installed — see `h5i hook setup`.\n\
+             The workflow skill at `.claude/skills/h5i-workflow/SKILL.md` documents the full OTA tracing protocol.\n",
             branches.join(", "),
             if goal.is_empty() { "(not set)".to_string() } else { goal }
         )

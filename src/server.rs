@@ -721,6 +721,7 @@ async fn api_context_show(
             log_offset: 0,
             metadata_segment: None,
             window: params.window.unwrap_or(10),
+            depth: 2,
         };
         ctx::gcc_context(workdir, &opts).ok()
     })
