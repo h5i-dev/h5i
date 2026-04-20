@@ -683,3 +683,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [23:22:43] OBSERVE: read src/ctx.rs
 [23:22:52] OBSERVE: read src/ctx.rs
 [23:23:12] ACT: edited src/ctx.rs
+[23:46:38] OBSERVE: tests/ has one integration test file (test_metrics_integration.rs) using Rust library API; no CLI subprocess tests exist yet. .github/workflows/ has only test.yaml. Need to add tests/cli_integration.rs and .github/workflows/release.yaml
