@@ -6,11 +6,13 @@ implement context versioning features
 ## Milestones
 - [x] Initial setup
 - [x] all 5 context-quality features implemented and tested
+- [x] integration tests + release pipeline complete
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-04-20 23:52 UTC] `main`: integration tests + release pipeline complete
 - [2026-04-19 15:41 UTC] `main`: all 5 context-quality features implemented and tested
 - [2026-04-19 14:33 UTC] `main`: fixed 5 UX problems from real session observation
 - [2026-04-19 12:25 UTC] `main`: feat(context): all 5 CMV/Claude-design features implemented, tested, documented, and committed

@@ -691,3 +691,9 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [23:51:41] ACT: edited tests/cli_integration.rs
 [23:52:04] ACT: added tests/cli_integration.rs — 34 end-to-end CLI tests covering init, commit, log, context (init/trace/commit/show --depth 1-3/branch/merge/restore/pack/relevant/scan), hooks (session-start/stop/run), blame, memory snapshot, and error handling
 [23:52:05] ACT: added .github/workflows/release.yaml — matrix build for 5 targets (linux-x86_64-musl, linux-aarch64-musl via cross, macos-x86_64, macos-aarch64, windows-x86_64-msvc), creates GitHub Release with checksums on v* tags
+
+
+---
+_[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
+---
+

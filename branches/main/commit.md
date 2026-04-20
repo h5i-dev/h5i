@@ -95,3 +95,16 @@ Key Decisions now requires technical content; rel_path strips CWD from notes out
 
 ---
 
+## Commit 69e6bc30 — 2026-04-20 23:52 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+1) auto-inject relevant context on Read via hook; 2) ThoughtEntry struct in session_log captures thinking with file context; 3) h5i commit --add <paths> stages files before committing; 4) h5i context knowledge distills THINK entries across branches; 5) h5i context status shows proactive review surface from suggest_review_points
+
+### This Commit's Contribution
+34 CLI subprocess tests in tests/cli_integration.rs (all passing); 5-target release workflow in .github/workflows/release.yaml triggered on v* tags
+
+---
+
