@@ -688,3 +688,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [23:47:54] ACT: wrote tests/cli_integration.rs
 [23:47:57] ACT: edited Cargo.toml
 [23:48:15] ACT: wrote .github/workflows/release.yaml
+[23:51:41] ACT: edited tests/cli_integration.rs
