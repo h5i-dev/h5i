@@ -617,3 +617,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [22:18:55] OBSERVE: read src/ctx.rs
 [22:19:13] THINK: implementing: (1) --depth 1/2/3 on context show; (2) SessionStart hook for auto context injection; (3) Stop hook for auto checkpoint; (4) .claude/skills/h5i-workflow/SKILL.md skill definition. Changes span src/ctx.rs (ContextOpts+print_context) and src/main.rs (HookCommands enum + show handler + hook setup output)
 [22:19:41] ACT: edited src/ctx.rs
+[22:21:29] ACT: edited src/ctx.rs
