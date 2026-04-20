@@ -689,3 +689,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [23:47:57] ACT: edited Cargo.toml
 [23:48:15] ACT: wrote .github/workflows/release.yaml
 [23:51:41] ACT: edited tests/cli_integration.rs
+[23:52:04] ACT: added tests/cli_integration.rs — 34 end-to-end CLI tests covering init, commit, log, context (init/trace/commit/show --depth 1-3/branch/merge/restore/pack/relevant/scan), hooks (session-start/stop/run), blame, memory snapshot, and error handling
