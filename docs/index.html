@@ -423,7 +423,7 @@
     <div class="hero-logo-wrap">
       <img src="_static/logo.png" alt="h5i logo">
     </div>
-    <div class="hero-badge">VERSION CONTROL · AI-READY · OPEN SOURCE</div>
+    <div class="hero-badge">CONTEXT VERSIONING · AI PROVENANCE · OPEN SOURCE</div>
     <h1 class="hero-title">
       <span class="shine-text">Next-Gen AI-Aware Git</span>
     </h1>
@@ -440,10 +440,10 @@
       <button class="copy-btn" onclick="copyInstall()">copy</button>
     </div>
     <div class="hero-stats">
-      <div class="hero-stat"><div class="val">5</div><div class="lbl">SEMANTIC DIMENSIONS</div></div>
-      <div class="hero-stat"><div class="val">14</div><div class="lbl">FEATURES</div></div>
+      <div class="hero-stat"><div class="val">DAG</div><div class="lbl">VERSIONED REASONING</div></div>
+      <div class="hero-stat"><div class="val">4</div><div class="lbl">LIFECYCLE HOOKS</div></div>
       <div class="hero-stat"><div class="val">12</div><div class="lbl">INTEGRITY RULES</div></div>
-      <div class="hero-stat"><div class="val">0</div><div class="lbl">API CALLS FOR HANDOFF</div></div>
+      <div class="hero-stat"><div class="val">25</div><div class="lbl">MCP TOOLS</div></div>
     </div>
   </div>
 </section>
@@ -453,30 +453,55 @@
   <div class="container">
     <div class="section-head reveal">
       <span class="section-tag">Feature Overview</span>
-      <h2 class="section-title">Everything you need to audit AI code</h2>
+      <h2 class="section-title">Reason. Version. Resume.</h2>
       <p class="section-sub">One sidecar. Zero lock-in. Works alongside any Git workflow.</p>
       <div class="divider"></div>
     </div>
     <div class="feat-grid">
       <div class="feat-card reveal">
+        <span class="feat-cmd">h5i context init / trace / commit</span>
+        <div class="feat-name">Versioned reasoning workspace</div>
+        <div class="feat-desc">Every OBSERVE → THINK → ACT step is stored as a DAG node linked to its code commit in <code style="color:var(--red);font-family:var(--mono)">refs/h5i/context</code>. Survives session resets, machine switches, and team handoffs.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i hook session-start</span>
+        <div class="feat-name">Auto context injection</div>
+        <div class="feat-desc">A <code style="color:var(--red);font-family:var(--mono)">SessionStart</code> hook injects prior goal, milestones, and last decisions into every new Claude session — no manual restore step needed.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i context show --depth 1|2|3</span>
+        <div class="feat-name">Progressive disclosure</div>
+        <div class="feat-desc">Pay only for the depth you need: depth&nbsp;1 (~800 tokens) gives a compact index; depth&nbsp;2 adds the timeline; depth&nbsp;3 includes the full OTA log.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i context branch / merge</span>
+        <div class="feat-name">Reasoning branches</div>
+        <div class="feat-desc">Explore a risky alternative without polluting the main thread — exactly like <code style="color:var(--red);font-family:var(--mono)">git branch</code>. Merge nodes are recorded in the DAG with two parent IDs.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i context restore &lt;sha&gt;</span>
+        <div class="feat-name">Reasoning time-travel</div>
+        <div class="feat-desc">Every <code style="color:var(--red);font-family:var(--mono)">h5i commit</code> auto-snapshots the context workspace. Restore reasoning to any past commit SHA — or diff how it evolved between two commits.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i hook stop</span>
+        <div class="feat-name">Auto checkpoint on stop</div>
+        <div class="feat-desc">A <code style="color:var(--red);font-family:var(--mono)">Stop</code> hook summarises recent ACT entries and commits a milestone automatically when Claude stops — the next session always has a clean checkpoint.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i memory snapshot / diff</span>
+        <div class="feat-name">Memory versioning</div>
+        <div class="feat-desc">Snapshots Claude's memory files at every commit in <code style="color:var(--red);font-family:var(--mono)">refs/h5i/memory</code>, diffs them across versions, and syncs them to teammates via <code style="color:var(--red);font-family:var(--mono)">h5i push</code>.</div>
+      </div>
+      <div class="feat-card reveal">
         <span class="feat-cmd">h5i commit --prompt … --audit</span>
         <div class="feat-name">AI-tagged commits</div>
-        <div class="feat-desc">Stores the exact prompt, model, agent ID, and test results alongside every commit in <code style="color:var(--red);font-family:var(--mono)">refs/h5i/notes</code>.</div>
+        <div class="feat-desc">Stores the exact prompt, model, agent ID, and test results alongside every diff in <code style="color:var(--red);font-family:var(--mono)">refs/h5i/notes</code>. Automatic with hooks installed.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i blame &lt;file&gt;</span>
-        <div class="feat-name">AI-aware blame</div>
-        <div class="feat-desc">Per-line authorship enriched with agent name, model, and test badge — line or AST mode.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i log</span>
-        <div class="feat-name">Enriched log</div>
-        <div class="feat-desc">Full AI provenance inline — prompt, model, agent, test badge — in a readable timeline.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i rollback "the OAuth changes"</span>
-        <div class="feat-name">Intent rollback</div>
-        <div class="feat-desc">Reverts a commit by matching your description against stored prompts. No hash needed.</div>
+        <span class="feat-cmd">h5i notes footprint / uncertainty</span>
+        <div class="feat-name">Session analysis</div>
+        <div class="feat-desc">After each session: exploration footprint, uncertainty heatmap (every hedge with confidence score), omissions (stubs, deferrals, broken promises), and blind-edit coverage.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i commit --audit</span>
@@ -484,49 +509,19 @@
         <div class="feat-desc">12 deterministic rules — no AI in the audit path — checking credential leaks, CI/CD tampering, scope creep, and <code style="color:var(--red);font-family:var(--mono)">eval()</code> patterns.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i notes footprint</span>
-        <div class="feat-name">Session footprint</div>
-        <div class="feat-desc">Maps which files the AI read vs. edited per session — surfaces implicit dependencies.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i notes uncertainty</span>
-        <div class="feat-name">Uncertainty heatmap</div>
-        <div class="feat-desc">Every moment the AI hedged, with the exact quote, confidence score, and file-level risk map.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i notes churn</span>
-        <div class="feat-name">File churn</div>
-        <div class="feat-desc">Edit-to-read ratio per file — high-churn code gets flagged for extra review automatically.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i notes graph</span>
-        <div class="feat-name">Intent graph</div>
-        <div class="feat-desc">Visualises the causal chain across commits — which AI commit triggered which downstream change.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i context init / trace / commit</span>
-        <div class="feat-name">Context workspace</div>
-        <div class="feat-desc">Version-controlled notepad (goal, OTA trace, milestones) in <code style="color:var(--red);font-family:var(--mono)">refs/h5i/context</code> — survives session resets.</div>
-      </div>
-      <div class="feat-card reveal">
         <span class="feat-cmd">h5i context scan</span>
         <div class="feat-name">Injection detection</div>
-        <div class="feat-desc">Scans the OTA trace for prompt-injection signals — instruction overrides, role hijacks, credential exfiltration — and reports a 0.0–1.0 risk score.</div>
+        <div class="feat-desc">Scans every OBSERVE/THINK/ACT entry for prompt-injection signals — instruction overrides, role hijacks, credential exfiltration — and reports a 0.0–1.0 risk score.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i resume</span>
         <div class="feat-name">Session handoff</div>
-        <div class="feat-desc">Ready-to-paste briefing — goal, progress, risky files, suggested opening prompt — from local data. No API call.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i memory snapshot / diff</span>
-        <div class="feat-name">Memory tracking</div>
-        <div class="feat-desc">Snapshots Claude's memory files at every commit and diffs them across versions in <code style="color:var(--red);font-family:var(--mono)">refs/h5i/memory</code>.</div>
+        <div class="feat-desc">Ready-to-paste briefing — goal, progress, risky files, suggested opening prompt — generated entirely from local data. No API call.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i push / pull</span>
         <div class="feat-name">Team sharing</div>
-        <div class="feat-desc">Syncs all AI metadata (<code style="color:var(--red);font-family:var(--mono)">refs/h5i/*</code>) to/from the remote in one command — teammates see full provenance.</div>
+        <div class="feat-desc">Syncs all h5i refs (<code style="color:var(--red);font-family:var(--mono)">notes · context · memory</code>) to/from the remote in one command — teammates see full provenance and reasoning history.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i serve</span>
@@ -585,40 +580,40 @@
       <div class="usecase-header">
         <div class="usecase-num">02</div>
         <div>
-          <div class="usecase-title">Keep Claude's context alive across sessions</div>
-          <div class="usecase-sub">A version-controlled notepad in <code style="font-family:var(--mono);color:var(--red)">refs/h5i/context</code> that survives session resets.</div>
+          <div class="usecase-title">Resume exactly where you left off — automatically</div>
+          <div class="usecase-sub">The <code style="font-family:var(--mono);color:var(--red)">SessionStart</code> hook injects prior reasoning into every new Claude session. No manual restore step.</div>
         </div>
       </div>
       <div class="terminal">
         <div class="terminal-bar">
           <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">~/my-project</span>
+          <span class="terminal-path">~/my-project  — new session starts</span>
         </div>
-        <div class="terminal-body"><pre><span class="t-cmt"># Project start — run once</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i context init --goal "Build an OAuth2 login system"</span>
+        <div class="terminal-body"><pre><span class="t-cmt"># SessionStart hook fires automatically — Claude sees this:</span>
+<span class="t-bold">[h5i] Context workspace active — prior reasoning follows.</span>
 
-<span class="t-cmt"># During the session — record reasoning</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i context trace --kind OBSERVE "Redis p99 latency is 2 ms"</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i context trace --kind THINK   "40 MB overhead is acceptable"</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i context trace --kind ACT     "Switching session store to Redis"</span>
+  <span class="t-out">branch=main  goal=Build an OAuth2 login system</span>
+  <span class="t-out">milestones=3  commits=7  trace_lines=142+12</span>
 
-<span class="t-cmt"># After a milestone</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i context commit "Implemented token refresh flow"</span>
+  <span class="t-out">m0: </span><span class="t-pass">[x]</span><span class="t-out"> Initial setup</span>
+  <span class="t-out">m1: </span><span class="t-pass">[x]</span><span class="t-out"> GitHub provider integration</span>
+  <span class="t-out">m2: </span><span class="t-warn">[ ] Token refresh flow</span>
 
-<span class="t-cmt"># New session — restore state instantly</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i context show --trace</span>
+<span class="t-bold">[h5i] Last decisions &amp; actions:</span>
+  <span class="t-ai">THINK:</span> <span class="t-out">40 MB overhead acceptable; Redis survives process restarts</span>
+  <span class="t-red">ACT:</span>   <span class="t-out">switched session store to Redis in src/session.rs</span>
+  <span class="t-warn">NOTE:</span>  <span class="t-out">TODO: integration test for failover path</span>
 
-<span class="t-bold">── Context ──────────────────────────────────────────────────</span>
-  <span class="t-out">Project: Build an OAuth2 login system  (branch: main)</span>
+<span class="t-out">[h5i] Use `h5i context show` for full details.</span>
 
-  <span class="t-bold">Milestones</span>
-    <span class="t-pass">✔ [x]</span> Initial setup
-    <span class="t-warn">○ [ ] Token refresh flow</span>
+<span class="t-cmt"># Need more depth? Progressive disclosure pays only for what you need:</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context show --depth 1</span>  <span class="t-cmt"># ~800 tokens — compact index</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context show --depth 2</span>  <span class="t-cmt"># ~2-5K tokens — timeline (default)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context show --depth 3</span>  <span class="t-cmt"># full OTA log</span>
 
-  <span class="t-bold">Recent Trace</span>
-    <span class="t-out">[14:22:01]</span> <span class="t-red">ACT:</span>     Switching session store to Redis
-    <span class="t-out">[14:21:44]</span> <span class="t-ai">THINK:</span>  40 MB overhead is acceptable
-    <span class="t-out">[14:21:30]</span> <span class="t-pass">OBSERVE:</span> Redis p99 latency is 2 ms</pre></div>
+<span class="t-cmt"># Time-travel to any past commit's reasoning state:</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context restore a3f9c2b</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i context diff a3f9c2b 7216039</span>  <span class="t-cmt"># see how reasoning evolved</span></pre></div>
       </div>
     </div>
 
@@ -801,15 +796,17 @@
         </div>
       </div>
       <div class="install-card reveal">
-        <h3>FIRST COMMIT</h3>
+        <h3>CONTEXT SETUP</h3>
         <div class="code-block">
-<span class="cm"># Commit with AI metadata + audit</span>
-<span class="hl">h5i commit \</span>
-<span class="hl">  -m <span class="st">"add rate limiting"</span> \</span>
-<span class="hl">  --prompt <span class="st">"add per-IP rate limit"</span> \</span>
-<span class="hl">  --model <span class="st">claude-sonnet-4-6</span> \</span>
-<span class="hl">  --agent <span class="st">claude-code</span> \</span>
-<span class="hl">  --audit</span>
+<span class="cm"># Print the full hooks config</span>
+<span class="hl">h5i hook setup</span>
+
+<span class="cm"># Init reasoning workspace</span>
+<span class="hl">h5i context init \</span>
+<span class="hl">  --goal <span class="st">"your project goal"</span></span>
+
+<span class="cm"># SessionStart / Stop / PostToolUse</span>
+<span class="cm"># all wire up from hook setup output</span>
         </div>
       </div>
       <div class="install-card reveal">
@@ -843,8 +840,8 @@
   <div class="cta-glow"></div>
   <div class="container">
     <div class="cta-inner">
-      <h2 class="cta-title">Ready to trust your AI-generated code?</h2>
-      <p class="cta-sub">h5i gives every AI commit an audit trail, an author, and an undo button. Apache 2.0. No lock-in.</p>
+      <h2 class="cta-title">Your AI's reasoning deserves version control too.</h2>
+      <p class="cta-sub">h5i versions the thinking behind your code — so every session resumes where the last one left off. Apache 2.0. No lock-in.</p>
       <div class="hero-actions">
         <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
         <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md" class="btn btn-ghost">Read the Manual</a>
