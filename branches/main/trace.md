@@ -597,3 +597,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 [22:13:00] OBSERVE: read types.ts
 [22:13:00] OBSERVE: read overview.mdx
 [22:13:02] OBSERVE: read .claude/h5i.md
+[22:13:03] OBSERVE: read search-architecture.mdx
