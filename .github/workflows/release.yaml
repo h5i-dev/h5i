@@ -68,7 +68,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      # musl-tools needed for the x86_64-unknown-linux-musl target
+      # musl linker/compiler; OpenSSL is vendored so no system libssl-dev needed
       - name: Install musl-tools (Linux)
         if: runner.os == 'Linux' && !matrix.use_cross
         run: sudo apt-get update -q && sudo apt-get install -y musl-tools
