@@ -26,7 +26,7 @@ cd your-project && h5i init
 
 ---
 
-## Context versioning — the problem h5i solves that no other tool does
+## Context Versioning
 
 Every AI coding session starts cold. The model has no memory of the decisions made last Tuesday, the edge case it deferred, or why the session store switched to Redis. You re-explain. It re-explores. Token budgets burn.
 
