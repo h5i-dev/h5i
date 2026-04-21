@@ -7,7 +7,7 @@
 //!   cargo test --test cli_integration -- --nocapture
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
@@ -113,6 +113,17 @@ fn init_creates_h5i_dir() {
     // .git/.h5i directory must exist after init
     let h5i_dir = repo.path().join(".git").join(".h5i");
     assert!(h5i_dir.exists(), ".git/.h5i was not created by h5i init");
+}
+
+#[test]
+fn init_writes_codex_agents_file() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+
+    let agents_md = repo.path().join("AGENTS.md");
+    let contents = fs::read_to_string(&agents_md).expect("AGENTS.md should exist");
+    assert!(contents.contains("## h5i Integration"));
+    assert!(contents.contains("--agent codex"));
 }
 
 #[test]
@@ -700,6 +711,20 @@ fn memory_snapshot_runs() {
     assert!(
         !stderr(&out).contains("panic"),
         "memory snapshot panicked: {}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn memory_snapshot_supports_codex_agent() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+    repo.make_commit("init.txt", "hello", "initial");
+
+    let out = repo.h5i(&["memory", "snapshot", "--agent", "codex"]);
+    assert!(
+        !stderr(&out).contains("panic"),
+        "codex memory snapshot panicked: {}",
         stderr(&out)
     );
 }

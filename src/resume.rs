@@ -543,7 +543,14 @@ fn compute_memory_summary(
     }
     // Pick the most recent snapshot
     let latest = snapshots.iter().max_by_key(|s| s.timestamp)?;
-    let diff = memory::diff_snapshots(h5i_root, workdir, &latest.commit_oid, None).ok()?;
+    let diff = memory::diff_snapshots(
+        h5i_root,
+        workdir,
+        &latest.commit_oid,
+        None,
+        memory::MemoryAgent::from_env(),
+    )
+    .ok()?;
     Some((diff.added_files.len(), diff.removed_files.len(), diff.modified_files.len()))
 }
 

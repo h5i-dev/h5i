@@ -457,8 +457,13 @@ async fn api_memory_diff(
             .workdir()
             .ok_or_else(|| anyhow::anyhow!("bare repository"))?
             .to_path_buf();
-        let diff =
-            memory::diff_snapshots(&repo.h5i_root, &workdir, &from, to.as_deref())?;
+        let diff = memory::diff_snapshots(
+            &repo.h5i_root,
+            &workdir,
+            &from,
+            to.as_deref(),
+            memory::MemoryAgent::from_env(),
+        )?;
         Ok(MemoryDiffResponse {
             from_label: diff.from_label,
             to_label: diff.to_label,

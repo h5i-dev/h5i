@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use console::style;
 use git2::Oid;
 use std::path::{Path, PathBuf};
@@ -31,6 +31,28 @@ fn truncate(s: &str, max_chars: usize) -> String {
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum AgentRuntime {
+    Claude,
+    Codex,
+}
+
+impl AgentRuntime {
+    fn to_memory_agent(self) -> memory::MemoryAgent {
+        match self {
+            Self::Claude => memory::MemoryAgent::Claude,
+            Self::Codex => memory::MemoryAgent::Codex,
+        }
+    }
+}
+
+fn resolve_memory_agent(agent: Option<AgentRuntime>) -> memory::MemoryAgent {
+    match agent {
+        Some(agent) => agent.to_memory_agent(),
+        None => memory::MemoryAgent::from_env(),
+    }
 }
 
 #[derive(Subcommand)]
@@ -225,7 +247,7 @@ enum Commands {
     #[command(subcommand)]
     Hook(HookCommands),
 
-    /// Version-control Claude's memory state alongside your code
+    /// Version-control agent memory state alongside your code
     Memory {
         #[command(subcommand)]
         action: MemoryCommands,
@@ -580,31 +602,40 @@ enum ContextCommands {
 
 #[derive(Subcommand)]
 enum MemoryCommands {
-    /// Snapshot Claude's current memory into .git/.h5i/memory/<commit-oid>/
+    /// Snapshot agent memory into .git/.h5i/memory/<commit-oid>/
     Snapshot {
         /// Git commit OID to associate this snapshot with (default: HEAD)
         #[arg(long)]
         commit: Option<String>,
-        /// Override the source directory to snapshot (default: ~/.claude/projects/<repo>/memory/)
+        /// Agent memory backend to snapshot (default: inferred from H5I_AGENT_ID, else claude)
+        #[arg(long, value_enum)]
+        agent: Option<AgentRuntime>,
+        /// Override the source directory to snapshot
         #[arg(long, value_name = "DIR")]
         path: Option<PathBuf>,
     },
 
-    /// Show how Claude's memory changed between two snapshots
+    /// Show how agent memory changed between two snapshots
     Diff {
         /// Snapshot to diff from (default: second-to-last snapshot)
         from: Option<String>,
         /// Snapshot to diff to; omit to compare against live memory (default: latest snapshot)
         to: Option<String>,
+        /// Agent memory backend to compare against when diffing to live state
+        #[arg(long, value_enum)]
+        agent: Option<AgentRuntime>,
     },
 
     /// List all memory snapshots
     Log,
 
-    /// Restore Claude's memory to the state captured in a snapshot
+    /// Restore agent memory to the state captured in a snapshot
     Restore {
         /// Commit OID whose snapshot to restore
         commit: String,
+        /// Agent memory backend to restore into
+        #[arg(long, value_enum)]
+        agent: Option<AgentRuntime>,
         /// Skip the confirmation prompt
         #[arg(short, long)]
         yes: bool,
@@ -946,6 +977,46 @@ h5i pull   # pull h5i refs from origin
 ```
 "#;
 
+const H5I_CODEX_INSTRUCTIONS: &str = r#"## h5i Integration
+
+This repository uses **h5i** (a Git sidecar for AI-era version control).
+
+Use `h5i context` to persist reasoning across sessions and `h5i commit` to record AI provenance on code commits.
+
+### Required workflow
+
+At the start of a non-trivial task:
+```bash
+h5i context status
+# If no workspace exists yet:
+h5i context init --goal "<one-line task summary>"
+```
+
+While working:
+```bash
+h5i context trace --kind OBSERVE "<specific fact learned from a file or command>"
+h5i context trace --kind THINK "<chosen approach> over <rejected alternative> because <reason>"
+h5i context trace --kind ACT "edited <file>: <what changed>"
+h5i context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
+```
+
+After a logical milestone:
+```bash
+h5i context commit "<milestone summary>" --detail "<what was done and what remains>"
+```
+
+For code commits:
+```bash
+git add <exact paths>
+h5i commit -m "…" --agent codex --prompt "…"
+```
+
+Before editing a file, prefer:
+```bash
+h5i context relevant <file>
+```
+"#;
+
 fn write_claude_instructions(workdir: &Path) -> anyhow::Result<()> {
     use std::io::Write as _;
 
@@ -967,6 +1038,26 @@ fn write_claude_instructions(workdir: &Path) -> anyhow::Result<()> {
         writeln!(f, "\n@.claude/h5i.md")?;
     }
 
+    Ok(())
+}
+
+fn write_codex_instructions(workdir: &Path) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    let agents_md = workdir.join("AGENTS.md");
+    let existing = std::fs::read_to_string(&agents_md).unwrap_or_default();
+    if existing.contains("## h5i Integration") {
+        return Ok(());
+    }
+
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&agents_md)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(f)?;
+    }
+    writeln!(f, "\n{H5I_CODEX_INSTRUCTIONS}")?;
     Ok(())
 }
 
@@ -997,16 +1088,28 @@ fn main() -> anyhow::Result<()> {
                     e
                 ),
             }
+            match write_codex_instructions(&workdir) {
+                Ok(()) => println!(
+                    "{} {}",
+                    SUCCESS,
+                    style("Codex instructions written to AGENTS.md").green()
+                ),
+                Err(e) => println!(
+                    "{} Could not write Codex instructions: {}",
+                    style("warn:").yellow(),
+                    e
+                ),
+            }
 
             println!();
             println!("  {}", style("Quick-start:").bold());
             println!(
                 "    {}  capture AI provenance on every commit",
-                style("h5i commit -m \"…\" --prompt \"…\" --agent claude-code").cyan()
+                style("h5i commit -m \"…\" --prompt \"…\" --agent codex").cyan()
             );
             println!(
-                "    {}  snapshot Claude's memory after a session",
-                style("h5i memory snapshot").cyan()
+                "    {}  snapshot Codex memory after a session",
+                style("h5i memory snapshot --agent codex").cyan()
             );
             println!(
                 "    {}  push all h5i data to your remote",
@@ -2501,7 +2604,7 @@ jq -c '{
                 .to_path_buf();
 
             match action {
-                MemoryCommands::Snapshot { commit, path } => {
+                MemoryCommands::Snapshot { commit, path, agent } => {
                     // Resolve commit OID: explicit arg or HEAD
                     let oid_str = match commit {
                         Some(ref s) => s.clone(),
@@ -2511,8 +2614,9 @@ jq -c '{
                         }
                     };
 
+                    let memory_agent = resolve_memory_agent(agent);
                     let src = path.as_deref();
-                    let default_dir = memory::claude_memory_dir(&workdir);
+                    let default_dir = memory::default_memory_dir(&workdir, memory_agent);
                     let display_src = src
                         .unwrap_or(&default_dir)
                         .display()
@@ -2521,11 +2625,19 @@ jq -c '{
                     println!(
                         "{} {} → commit {}",
                         STEP,
-                        style("Snapshotting Claude memory").cyan().bold(),
+                        style(format!("Snapshotting {} memory", memory_agent.label()))
+                            .cyan()
+                            .bold(),
                         style(&oid_str[..8.min(oid_str.len())]).magenta()
                     );
 
-                    let count = memory::take_snapshot(&repo.h5i_root, &workdir, &oid_str, src)?;
+                    let count = memory::take_snapshot(
+                        &repo.h5i_root,
+                        &workdir,
+                        &oid_str,
+                        src,
+                        memory_agent,
+                    )?;
 
                     if count == 0 {
                         println!(
@@ -2535,8 +2647,9 @@ jq -c '{
                             style(&display_src).dim()
                         );
                         println!(
-                            "  {} Claude Code creates this directory the first time it saves a memory.",
-                            style("ℹ").blue()
+                            "  {} {} may create this directory lazily on the first memory write.",
+                            style("ℹ").blue(),
+                            style(memory_agent.label()).cyan()
                         );
                         println!(
                             "  {} You can also snapshot any directory with {}",
@@ -2554,9 +2667,10 @@ jq -c '{
                     }
                 }
 
-                MemoryCommands::Diff { from, to } => {
+                MemoryCommands::Diff { from, to, agent } => {
                     // Default: diff last two snapshots (or last snapshot vs. live)
                     let snapshots = memory::list_snapshots(&repo.h5i_root)?;
+                    let memory_agent = resolve_memory_agent(agent);
 
                     let (from_oid, to_oid_opt): (String, Option<String>) = match (from, to) {
                         (Some(f), t) => (f, t),
@@ -2598,6 +2712,7 @@ jq -c '{
                         &workdir,
                         &from_oid,
                         to_oid_opt.as_deref(),
+                        memory_agent,
                     )?;
                     memory::print_memory_diff(&diff);
                 }
@@ -2610,7 +2725,7 @@ jq -c '{
                     memory::print_memory_log(&repo.h5i_root)?;
                 }
 
-                MemoryCommands::Restore { commit, yes } => {
+                MemoryCommands::Restore { commit, agent, yes } => {
                     let snap_meta = {
                         let snaps = memory::list_snapshots(&repo.h5i_root)?;
                         snaps
@@ -2620,6 +2735,7 @@ jq -c '{
                                 anyhow::anyhow!("No snapshot found for commit {}", commit)
                             })?
                     };
+                    let memory_agent = resolve_memory_agent(agent);
 
                     println!(
                         "{} Restore memory snapshot from commit {} ({} file{})?",
@@ -2629,8 +2745,9 @@ jq -c '{
                         if snap_meta.file_count == 1 { "" } else { "s" }
                     );
                     println!(
-                        "  {} This will overwrite your current Claude memory files.",
-                        style("!").yellow()
+                        "  {} This will overwrite your current {} memory files.",
+                        style("!").yellow(),
+                        style(memory_agent.label()).cyan()
                     );
 
                     if !yes {
@@ -2645,14 +2762,23 @@ jq -c '{
                         }
                     }
 
-                    let count =
-                        memory::restore_snapshot(&repo.h5i_root, &workdir, &snap_meta.commit_oid)?;
+                    let count = memory::restore_snapshot(
+                        &repo.h5i_root,
+                        &workdir,
+                        &snap_meta.commit_oid,
+                        memory_agent,
+                    )?;
                     println!(
                         "{} Restored {} file{} to {}",
                         SUCCESS,
                         style(count).cyan(),
                         if count == 1 { "" } else { "s" },
-                        style(memory::claude_memory_dir(&workdir).display().to_string()).dim()
+                        style(
+                            memory::default_memory_dir(&workdir, memory_agent)
+                                .display()
+                                .to_string()
+                        )
+                        .dim()
                     );
                 }
 
