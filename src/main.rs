@@ -1240,11 +1240,11 @@ fn main() -> anyhow::Result<()> {
             println!("  {}", style("Quick-start:").bold());
             println!(
                 "    {}  capture AI provenance on every commit",
-                style("h5i commit -m \"…\" --prompt \"…\" --agent codex").cyan()
+                style("h5i commit -m \"…\" --prompt \"…\" --agent <claude-code|codex>").cyan()
             );
             println!(
-                "    {}  snapshot Codex memory after a session",
-                style("h5i memory snapshot --agent codex").cyan()
+                "    {}  snapshot agent memory after a session",
+                style("h5i memory snapshot [--agent <claude-code|codex>]").cyan()
             );
             println!(
                 "    {}  push all h5i data to your remote",
@@ -2503,7 +2503,9 @@ jq -c '{
 
         Commands::Hook(HookCommands::Stop) => {
             let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let _ = auto_checkpoint_context(&workdir, None);
+            if let Err(e) = auto_checkpoint_context(&workdir, None) {
+                eprintln!("{} Context checkpoint failed: {e}", style("warn:").yellow());
+            }
         }
 
         Commands::Codex { action } => {

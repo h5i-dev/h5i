@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use git2::Repository;
@@ -115,13 +116,20 @@ fn read_sync_state(path: &Path) -> CodexSyncState {
 }
 
 fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
+    collect_jsonl_depth(dir, out, 0);
+}
+
+fn collect_jsonl_depth(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
+    if depth > 4 {
+        return;
+    }
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_jsonl(&path, out);
+            collect_jsonl_depth(&path, out, depth + 1);
         } else if path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
             out.push(path);
         }
@@ -130,11 +138,12 @@ fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
 
 fn session_cwd_matches(session_path: &Path, workdir: &Path) -> bool {
     let target = normalize_display_path(workdir, workdir);
-    let Ok(raw) = fs::read_to_string(session_path) else {
+    let Ok(file) = fs::File::open(session_path) else {
         return false;
     };
-    raw.lines().take(40).any(|line| {
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
+    BufReader::new(file).lines().take(40).any(|line| {
+        let Ok(line) = line else { return false };
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
             return false;
         };
         let cwd = value
@@ -229,6 +238,8 @@ fn extract_apply_patch_events(value: &Value) -> Vec<TraceEvent> {
     extract_patch_events(arguments)
 }
 
+// Parses Codex's apply_patch dialect: lines beginning with "*** Update File: ",
+// "*** Add File: ", or "*** Delete File: " declare file-level actions.
 fn extract_patch_events(arguments: &str) -> Vec<TraceEvent> {
     let mut events = Vec::new();
     for line in arguments.lines() {
