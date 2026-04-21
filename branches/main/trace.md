@@ -703,3 +703,4 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 [00:01:08] ACT: edited .github/workflows/release.yaml
 [00:01:13] ACT: edited Cargo.toml
 [00:01:18] ACT: edited .github/workflows/release.yaml
+[00:14:44] ACT: wrote install.sh
