@@ -700,3 +700,4 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 [00:00:37] OBSERVE: read Cargo.toml
 [00:00:39] ACT: edited Cargo.toml
 [00:00:42] OBSERVE: read .github/workflows/release.yaml
+[00:01:08] ACT: edited .github/workflows/release.yaml
