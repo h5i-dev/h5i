@@ -32,12 +32,6 @@ jobs:
             use_cross: true
             archive_ext: tar.gz
 
-          # macOS x86_64
-          - target: x86_64-apple-darwin
-            os: macos-13
-            use_cross: false
-            archive_ext: tar.gz
-
           # macOS arm64 (Apple Silicon)
           - target: aarch64-apple-darwin
             os: macos-latest
@@ -158,8 +152,7 @@ jobs:
             |--------|---------|
             | `x86_64-unknown-linux-musl` | Linux x86_64 (static, glibc-free) |
             | `aarch64-unknown-linux-musl` | Linux arm64 (static, glibc-free) |
-            | `x86_64-apple-darwin` | macOS Intel |
-            | `aarch64-apple-darwin` | macOS Apple Silicon |
+            | `aarch64-apple-darwin` | macOS (Apple Silicon + Rosetta) |
             | `x86_64-pc-windows-msvc` | Windows x86_64 |
 
             Each archive is accompanied by a `.sha256` checksum file.
