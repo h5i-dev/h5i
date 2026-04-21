@@ -697,3 +697,4 @@ _[Checkpoint: 69e4f796 — all 5 context-quality features implemented and tested
 _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 ---
 
+[00:00:37] OBSERVE: read Cargo.toml
