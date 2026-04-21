@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use console::style;
 use git2::Oid;
 use std::path::{Path, PathBuf};
@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use h5i_core::blame::BlameMode;
 use h5i_core::claude::{keyword_search, AnthropicClient};
+use h5i_core::codex;
 use h5i_core::ctx;
 use h5i_core::memory;
 use h5i_core::metadata::{AiMetadata, Decision, IntegrityLevel, Severity, TestSource};
@@ -31,6 +32,28 @@ fn truncate(s: &str, max_chars: usize) -> String {
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum AgentRuntime {
+    Claude,
+    Codex,
+}
+
+impl AgentRuntime {
+    fn to_memory_agent(self) -> memory::MemoryAgent {
+        match self {
+            Self::Claude => memory::MemoryAgent::Claude,
+            Self::Codex => memory::MemoryAgent::Codex,
+        }
+    }
+}
+
+fn resolve_memory_agent(agent: Option<AgentRuntime>) -> memory::MemoryAgent {
+    match agent {
+        Some(agent) => agent.to_memory_agent(),
+        None => memory::MemoryAgent::from_env(),
+    }
 }
 
 #[derive(Subcommand)]
@@ -225,7 +248,13 @@ enum Commands {
     #[command(subcommand)]
     Hook(HookCommands),
 
-    /// Version-control Claude's memory state alongside your code
+    /// Codex integration helpers for context restore, trace sync, and closeout
+    Codex {
+        #[command(subcommand)]
+        action: CodexCommands,
+    },
+
+    /// Version-control agent memory state alongside your code
     Memory {
         #[command(subcommand)]
         action: MemoryCommands,
@@ -478,7 +507,7 @@ enum ContextCommands {
     /// Show the current reasoning workspace state (branch, commit count, trace size)
     Status,
 
-    /// Print a system prompt for injecting h5i context commands into a Claude agent session
+    /// Print a system prompt for injecting h5i context commands into an agent session
     Prompt,
 
     /// Scan the reasoning trace for prompt-injection patterns and report a risk score
@@ -580,31 +609,40 @@ enum ContextCommands {
 
 #[derive(Subcommand)]
 enum MemoryCommands {
-    /// Snapshot Claude's current memory into .git/.h5i/memory/<commit-oid>/
+    /// Snapshot agent memory into .git/.h5i/memory/<commit-oid>/
     Snapshot {
         /// Git commit OID to associate this snapshot with (default: HEAD)
         #[arg(long)]
         commit: Option<String>,
-        /// Override the source directory to snapshot (default: ~/.claude/projects/<repo>/memory/)
+        /// Agent memory backend to snapshot (default: inferred from H5I_AGENT_ID, else claude)
+        #[arg(long, value_enum)]
+        agent: Option<AgentRuntime>,
+        /// Override the source directory to snapshot
         #[arg(long, value_name = "DIR")]
         path: Option<PathBuf>,
     },
 
-    /// Show how Claude's memory changed between two snapshots
+    /// Show how agent memory changed between two snapshots
     Diff {
         /// Snapshot to diff from (default: second-to-last snapshot)
         from: Option<String>,
         /// Snapshot to diff to; omit to compare against live memory (default: latest snapshot)
         to: Option<String>,
+        /// Agent memory backend to compare against when diffing to live state
+        #[arg(long, value_enum)]
+        agent: Option<AgentRuntime>,
     },
 
     /// List all memory snapshots
     Log,
 
-    /// Restore Claude's memory to the state captured in a snapshot
+    /// Restore agent memory to the state captured in a snapshot
     Restore {
         /// Commit OID whose snapshot to restore
         commit: String,
+        /// Agent memory backend to restore into
+        #[arg(long, value_enum)]
+        agent: Option<AgentRuntime>,
         /// Skip the confirmation prompt
         #[arg(short, long)]
         yes: bool,
@@ -644,6 +682,22 @@ enum HookCommands {
     /// Summarises recent OBSERVE/THINK/ACT entries and calls `h5i context commit`.
     /// Register in .claude/settings.json under "Stop" hooks.
     Stop,
+}
+
+#[derive(Subcommand)]
+enum CodexCommands {
+    /// Print the current shared context so Codex can resume with prior reasoning
+    Prelude,
+
+    /// Sync OBSERVE/ACT traces from the active Codex session JSONL
+    Sync,
+
+    /// Sync the current Codex session and auto-checkpoint the context workspace
+    Finish {
+        /// Optional summary for the context checkpoint
+        #[arg(long)]
+        summary: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -946,6 +1000,41 @@ h5i pull   # pull h5i refs from origin
 ```
 "#;
 
+const H5I_CODEX_INSTRUCTIONS: &str = r#"## h5i Integration
+
+This repository uses **h5i** (a Git sidecar for AI-era version control).
+
+Codex should use `h5i context` as shared cross-session memory and `h5i commit` to record AI provenance on code commits.
+
+### Required workflow
+
+At the start of a non-trivial task:
+```bash
+h5i codex prelude
+# If no workspace exists yet, initialize it once:
+h5i context init --goal "<one-line task summary>"
+```
+
+While working:
+```bash
+h5i context relevant <file>   # before editing a file when relevant
+h5i codex sync                # after a burst of reads/edits to backfill OBSERVE/ACT traces
+h5i context trace --kind THINK "<chosen approach> over <rejected alternative> because <reason>"
+h5i context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
+```
+
+After a logical milestone:
+```bash
+h5i codex finish --summary "<milestone summary>"
+```
+
+For code commits:
+```bash
+git add <exact paths>
+h5i commit -m "…" --agent codex --prompt "…"
+```
+"#;
+
 fn write_claude_instructions(workdir: &Path) -> anyhow::Result<()> {
     use std::io::Write as _;
 
@@ -967,6 +1056,143 @@ fn write_claude_instructions(workdir: &Path) -> anyhow::Result<()> {
         writeln!(f, "\n@.claude/h5i.md")?;
     }
 
+    Ok(())
+}
+
+fn write_codex_instructions(workdir: &Path) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    let agents_md = workdir.join("AGENTS.md");
+    let existing = std::fs::read_to_string(&agents_md).unwrap_or_default();
+    if existing.contains("h5i codex prelude") {
+        return Ok(());
+    }
+
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&agents_md)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(f)?;
+    }
+    writeln!(f, "\n{H5I_CODEX_INSTRUCTIONS}")?;
+    Ok(())
+}
+
+fn print_shared_context_prelude(workdir: &Path) {
+    let has_ctx = match git2::Repository::discover(workdir) {
+        Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
+        Err(_) => false,
+    };
+    if !has_ctx {
+        println!("[h5i] No context workspace yet. Run `h5i context init --goal \"...\"`.");
+        return;
+    }
+
+    let opts = ctx::ContextOpts {
+        branch: None,
+        commit_hash: None,
+        show_log: true,
+        log_offset: 0,
+        metadata_segment: None,
+        window: 3,
+        depth: 1,
+    };
+    let Ok(snap) = ctx::gcc_context(workdir, &opts) else {
+        return;
+    };
+
+    println!("[h5i] Context workspace active — prior reasoning follows.");
+    println!();
+    ctx::print_context_depth(&snap, 1);
+
+    let thinks_acts: Vec<&String> = snap
+        .recent_log_lines
+        .iter()
+        .filter(|l| l.contains("] THINK:") || l.contains("] ACT:"))
+        .rev()
+        .take(5)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if !thinks_acts.is_empty() {
+        println!();
+        println!("[h5i] Last decisions & actions:");
+        for line in thinks_acts {
+            println!("  {line}");
+        }
+    }
+
+    if !snap.todo_items.is_empty() {
+        println!();
+        println!("[h5i] Open TODOs:");
+        for t in snap.todo_items.iter().take(5) {
+            println!("  □ {t}");
+        }
+    }
+    println!();
+    println!("[h5i] Use `h5i context show` for full details.");
+}
+
+fn auto_checkpoint_context(workdir: &Path, explicit_summary: Option<&str>) -> anyhow::Result<()> {
+    let has_ctx = match git2::Repository::discover(workdir) {
+        Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
+        Err(_) => false,
+    };
+    if !has_ctx {
+        return Ok(());
+    }
+
+    let opts = ctx::ContextOpts {
+        branch: None,
+        commit_hash: None,
+        show_log: true,
+        log_offset: 0,
+        metadata_segment: None,
+        window: 1,
+        depth: 3,
+    };
+    let summary = if let Some(summary) = explicit_summary {
+        summary.to_string()
+    } else if let Ok(snap) = ctx::gcc_context(workdir, &opts) {
+        let acts: Vec<String> = snap
+            .recent_log_lines
+            .iter()
+            .filter(|l| l.contains("] ACT:"))
+            .rev()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if acts.is_empty() {
+            "session ended (auto-checkpoint)".to_string()
+        } else {
+            let joined = acts
+                .iter()
+                .map(|l| {
+                    l.split("] ACT:")
+                        .nth(1)
+                        .unwrap_or(l)
+                        .trim()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            truncate(&joined, 120)
+        }
+    } else {
+        "session ended (auto-checkpoint)".to_string()
+    };
+
+    ctx::gcc_commit(workdir, &summary, "")?;
+    println!(
+        "{} Auto-checkpointed context: {}",
+        SUCCESS,
+        style(summary).italic()
+    );
     Ok(())
 }
 
@@ -997,16 +1223,28 @@ fn main() -> anyhow::Result<()> {
                     e
                 ),
             }
+            match write_codex_instructions(&workdir) {
+                Ok(()) => println!(
+                    "{} {}",
+                    SUCCESS,
+                    style("Codex instructions written to AGENTS.md").green()
+                ),
+                Err(e) => println!(
+                    "{} Could not write Codex instructions: {}",
+                    style("warn:").yellow(),
+                    e
+                ),
+            }
 
             println!();
             println!("  {}", style("Quick-start:").bold());
             println!(
                 "    {}  capture AI provenance on every commit",
-                style("h5i commit -m \"…\" --prompt \"…\" --agent claude-code").cyan()
+                style("h5i commit -m \"…\" --prompt \"…\" --agent <claude-code|codex>").cyan()
             );
             println!(
-                "    {}  snapshot Claude's memory after a session",
-                style("h5i memory snapshot").cyan()
+                "    {}  snapshot agent memory after a session",
+                style("h5i memory snapshot [--agent <claude-code|codex>]").cyan()
             );
             println!(
                 "    {}  push all h5i data to your remote",
@@ -2259,121 +2497,54 @@ jq -c '{
         }
 
         Commands::Hook(HookCommands::SessionStart) => {
-            // Inject prior context into Claude's context window at session start.
-            // Claude Code surfaces this hook's stdout to the model, providing
-            // automatic orientation without a manual `h5i context restore`.
             let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let has_ctx = match git2::Repository::discover(&workdir) {
-                Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
-                Err(_) => false,
-            };
-            if !has_ctx {
-                return Ok(());
-            }
-
-            // Single call with show_log=true so we get both mini_trace and recent_log_lines.
-            let opts = ctx::ContextOpts {
-                branch: None,
-                commit_hash: None,
-                show_log: true,
-                log_offset: 0,
-                metadata_segment: None,
-                window: 3,
-                depth: 1,
-            };
-            let Ok(snap) = ctx::gcc_context(&workdir, &opts) else {
-                return Ok(());
-            };
-
-            println!("[h5i] Context workspace active — prior reasoning follows.");
-            println!();
-
-            // Depth-1 index: compact orientation.
-            ctx::print_context_depth(&snap, 1);
-
-            // Last 5 THINK/ACT entries: most actionable prior reasoning.
-            let thinks_acts: Vec<&String> = snap
-                .recent_log_lines
-                .iter()
-                .filter(|l| l.contains("] THINK:") || l.contains("] ACT:"))
-                .rev()
-                .take(5)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect();
-            if !thinks_acts.is_empty() {
-                println!();
-                println!("[h5i] Last decisions & actions:");
-                for line in thinks_acts {
-                    println!("  {line}");
-                }
-            }
-
-            if !snap.todo_items.is_empty() {
-                println!();
-                println!("[h5i] Open TODOs:");
-                for t in snap.todo_items.iter().take(5) {
-                    println!("  □ {t}");
-                }
-            }
-            println!();
-            println!("[h5i] Use `h5i context show` for full details.");
+            print_shared_context_prelude(&workdir);
         }
 
         Commands::Hook(HookCommands::Stop) => {
-            // Auto-checkpoint the context workspace when Claude Code stops.
-            // Reads recent trace entries and commits a milestone summary so
-            // the next session can resume without a manual `h5i context commit`.
             let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let has_ctx = match git2::Repository::discover(&workdir) {
-                Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
-                Err(_) => false,
-            };
-            if !has_ctx {
-                return Ok(());
+            if let Err(e) = auto_checkpoint_context(&workdir, None) {
+                eprintln!("{} Context checkpoint failed: {e}", style("warn:").yellow());
             }
+        }
 
-            // Collect the most recent ACT entries to build an auto-summary.
-            let opts = ctx::ContextOpts {
-                branch: None,
-                commit_hash: None,
-                show_log: true,
-                log_offset: 0,
-                metadata_segment: None,
-                window: 1,
-                depth: 3,
-            };
-            let summary = if let Ok(snap) = ctx::gcc_context(&workdir, &opts) {
-                let acts: Vec<String> = snap
-                    .recent_log_lines
-                    .iter()
-                    .filter(|l| l.contains("] ACT:"))
-                    .rev()
-                    .take(3)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect();
-                if acts.is_empty() {
-                    "session ended (auto-checkpoint)".to_string()
-                } else {
-                    // Strip the timestamp prefix and summarise.
-                    let bodies: Vec<String> = acts
-                        .iter()
-                        .filter_map(|l| l.split("] ACT:").nth(1))
-                        .map(|s| s.trim().to_string())
-                        .collect();
-                    format!("auto-checkpoint: {}", bodies.join("; "))
+        Commands::Codex { action } => {
+            let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            match action {
+                CodexCommands::Prelude => {
+                    print_shared_context_prelude(&workdir);
                 }
-            } else {
-                "session ended (auto-checkpoint)".to_string()
-            };
-
-            match ctx::gcc_commit(&workdir, &summary, "") {
-                Ok(_) => eprintln!("[h5i] Context checkpoint: {summary}"),
-                Err(e) => eprintln!("[h5i] Context checkpoint failed: {e}"),
+                CodexCommands::Sync => match codex::sync_context(&workdir)? {
+                    Some(result) => println!(
+                        "{} Synced Codex session {} ({} OBSERVE, {} ACT, {} new line{})",
+                        SUCCESS,
+                        style(&result.session_id).magenta(),
+                        result.observed,
+                        result.acted,
+                        result.processed_lines,
+                        if result.processed_lines == 1 { "" } else { "s" }
+                    ),
+                    None => println!(
+                        "{} No Codex session found in ~/.codex/sessions for this repo.",
+                        WARN
+                    ),
+                },
+                CodexCommands::Finish { summary } => {
+                    match codex::sync_context(&workdir)? {
+                        Some(result) => println!(
+                            "{} Synced Codex session {} ({} OBSERVE, {} ACT)",
+                            SUCCESS,
+                            style(&result.session_id).magenta(),
+                            result.observed,
+                            result.acted,
+                        ),
+                        None => println!(
+                            "{} No Codex session found in ~/.codex/sessions for this repo.",
+                            WARN
+                        ),
+                    }
+                    auto_checkpoint_context(&workdir, summary.as_deref())?;
+                }
             }
         }
 
@@ -2501,7 +2672,7 @@ jq -c '{
                 .to_path_buf();
 
             match action {
-                MemoryCommands::Snapshot { commit, path } => {
+                MemoryCommands::Snapshot { commit, path, agent } => {
                     // Resolve commit OID: explicit arg or HEAD
                     let oid_str = match commit {
                         Some(ref s) => s.clone(),
@@ -2511,8 +2682,9 @@ jq -c '{
                         }
                     };
 
+                    let memory_agent = resolve_memory_agent(agent);
                     let src = path.as_deref();
-                    let default_dir = memory::claude_memory_dir(&workdir);
+                    let default_dir = memory::default_memory_dir(&workdir, memory_agent);
                     let display_src = src
                         .unwrap_or(&default_dir)
                         .display()
@@ -2521,11 +2693,19 @@ jq -c '{
                     println!(
                         "{} {} → commit {}",
                         STEP,
-                        style("Snapshotting Claude memory").cyan().bold(),
+                        style(format!("Snapshotting {} memory", memory_agent.label()))
+                            .cyan()
+                            .bold(),
                         style(&oid_str[..8.min(oid_str.len())]).magenta()
                     );
 
-                    let count = memory::take_snapshot(&repo.h5i_root, &workdir, &oid_str, src)?;
+                    let count = memory::take_snapshot(
+                        &repo.h5i_root,
+                        &workdir,
+                        &oid_str,
+                        src,
+                        memory_agent,
+                    )?;
 
                     if count == 0 {
                         println!(
@@ -2535,8 +2715,9 @@ jq -c '{
                             style(&display_src).dim()
                         );
                         println!(
-                            "  {} Claude Code creates this directory the first time it saves a memory.",
-                            style("ℹ").blue()
+                            "  {} {} may create this directory lazily on the first memory write.",
+                            style("ℹ").blue(),
+                            style(memory_agent.label()).cyan()
                         );
                         println!(
                             "  {} You can also snapshot any directory with {}",
@@ -2554,9 +2735,10 @@ jq -c '{
                     }
                 }
 
-                MemoryCommands::Diff { from, to } => {
+                MemoryCommands::Diff { from, to, agent } => {
                     // Default: diff last two snapshots (or last snapshot vs. live)
                     let snapshots = memory::list_snapshots(&repo.h5i_root)?;
+                    let memory_agent = resolve_memory_agent(agent);
 
                     let (from_oid, to_oid_opt): (String, Option<String>) = match (from, to) {
                         (Some(f), t) => (f, t),
@@ -2598,6 +2780,7 @@ jq -c '{
                         &workdir,
                         &from_oid,
                         to_oid_opt.as_deref(),
+                        memory_agent,
                     )?;
                     memory::print_memory_diff(&diff);
                 }
@@ -2610,7 +2793,7 @@ jq -c '{
                     memory::print_memory_log(&repo.h5i_root)?;
                 }
 
-                MemoryCommands::Restore { commit, yes } => {
+                MemoryCommands::Restore { commit, agent, yes } => {
                     let snap_meta = {
                         let snaps = memory::list_snapshots(&repo.h5i_root)?;
                         snaps
@@ -2620,6 +2803,7 @@ jq -c '{
                                 anyhow::anyhow!("No snapshot found for commit {}", commit)
                             })?
                     };
+                    let memory_agent = resolve_memory_agent(agent);
 
                     println!(
                         "{} Restore memory snapshot from commit {} ({} file{})?",
@@ -2629,8 +2813,9 @@ jq -c '{
                         if snap_meta.file_count == 1 { "" } else { "s" }
                     );
                     println!(
-                        "  {} This will overwrite your current Claude memory files.",
-                        style("!").yellow()
+                        "  {} This will overwrite your current {} memory files.",
+                        style("!").yellow(),
+                        style(memory_agent.label()).cyan()
                     );
 
                     if !yes {
@@ -2645,14 +2830,23 @@ jq -c '{
                         }
                     }
 
-                    let count =
-                        memory::restore_snapshot(&repo.h5i_root, &workdir, &snap_meta.commit_oid)?;
+                    let count = memory::restore_snapshot(
+                        &repo.h5i_root,
+                        &workdir,
+                        &snap_meta.commit_oid,
+                        memory_agent,
+                    )?;
                     println!(
                         "{} Restored {} file{} to {}",
                         SUCCESS,
                         style(count).cyan(),
                         if count == 1 { "" } else { "s" },
-                        style(memory::claude_memory_dir(&workdir).display().to_string()).dim()
+                        style(
+                            memory::default_memory_dir(&workdir, memory_agent)
+                                .display()
+                                .to_string()
+                        )
+                        .dim()
                     );
                 }
 

@@ -13,6 +13,8 @@
 
 `h5i` (pronounced *high-five*) is a Git sidecar that answers the questions Git can't: *Who prompted this change? What did the AI skip or defer? What was it thinking, and can we safely resume where it left off?*
 
+It currently integrates best with Claude Code and now also bootstraps Codex-oriented repo instructions and memory snapshots.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh | sh
 cd your-project && h5i init
@@ -231,6 +233,26 @@ With all four installed, h5i runs silently in the background: every session star
 
 ```bash
 h5i resume
+```
+
+## Setup with Codex
+
+`h5i init` now writes an `AGENTS.md` section that tells Codex to restore shared context at session start and sync trace data during the session.
+
+Use the Codex helpers directly when you want the same behavior outside the generated instructions:
+
+```bash
+h5i codex prelude                 # print current shared context at session start
+h5i codex sync                    # backfill OBSERVE/ACT traces from the live Codex session
+h5i codex finish --summary "…"    # sync and auto-checkpoint the context workspace
+```
+
+For memory snapshots, target Codex explicitly:
+
+```bash
+h5i memory snapshot --agent codex
+h5i memory diff --agent codex
+h5i memory restore <oid> --agent codex
 ```
 
 ```

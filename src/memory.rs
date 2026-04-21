@@ -11,6 +11,36 @@ use crate::error::H5iError;
 
 pub const MEMORY_REF: &str = "refs/h5i/memory";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryAgent {
+    Claude,
+    Codex,
+}
+
+impl MemoryAgent {
+    pub fn from_agent_id(agent_id: &str) -> Self {
+        let normalized = agent_id.trim().to_ascii_lowercase();
+        if normalized.contains("codex") {
+            Self::Codex
+        } else {
+            Self::Claude
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude",
+            Self::Codex => "Codex",
+        }
+    }
+
+    pub fn from_env() -> Self {
+        std::env::var("H5I_AGENT_ID")
+            .map(|value| Self::from_agent_id(&value))
+            .unwrap_or(Self::Claude)
+    }
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -59,6 +89,19 @@ pub fn claude_memory_dir(workdir: &Path) -> PathBuf {
         .join("memory")
 }
 
+/// Resolves `~/.codex/memories/`.
+pub fn codex_memory_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".codex").join("memories")
+}
+
+pub fn default_memory_dir(workdir: &Path, agent: MemoryAgent) -> PathBuf {
+    match agent {
+        MemoryAgent::Claude => claude_memory_dir(workdir),
+        MemoryAgent::Codex => codex_memory_dir(),
+    }
+}
+
 fn snapshot_dir(h5i_root: &Path, commit_oid: &str) -> PathBuf {
     h5i_root.join("memory").join(commit_oid)
 }
@@ -80,10 +123,11 @@ pub fn take_snapshot(
     workdir: &Path,
     commit_oid: &str,
     source_dir: Option<&Path>,
+    agent: MemoryAgent,
 ) -> Result<usize, H5iError> {
     let mem_dir = match source_dir {
         Some(p) => p.to_path_buf(),
-        None => claude_memory_dir(workdir),
+        None => default_memory_dir(workdir, agent),
     };
 
     let snap_dir = snapshot_dir(h5i_root, commit_oid);
@@ -158,6 +202,7 @@ pub fn diff_snapshots(
     workdir: &Path,
     from_oid: &str,
     to_oid: Option<&str>,
+    agent: MemoryAgent,
 ) -> Result<MemoryDiff, H5iError> {
     let from_dir = snapshot_dir(h5i_root, from_oid);
     if !from_dir.exists() {
@@ -179,10 +224,11 @@ pub fn diff_snapshots(
             (short_oid(oid), read_dir_files(&dir)?)
         }
         None => {
-            let live = claude_memory_dir(workdir);
+            let live = default_memory_dir(workdir, agent);
             if !live.exists() {
                 return Err(H5iError::InvalidPath(format!(
-                    "Claude memory directory not found: {}",
+                    "{} memory directory not found: {}",
+                    agent.label(),
                     live.display()
                 )));
             }
@@ -237,6 +283,7 @@ pub fn restore_snapshot(
     h5i_root: &Path,
     workdir: &Path,
     commit_oid: &str,
+    agent: MemoryAgent,
 ) -> Result<usize, H5iError> {
     let snap_dir = snapshot_dir(h5i_root, commit_oid);
     if !snap_dir.exists() {
@@ -246,7 +293,7 @@ pub fn restore_snapshot(
         )));
     }
 
-    let mem_dir = claude_memory_dir(workdir);
+    let mem_dir = default_memory_dir(workdir, agent);
     fs::create_dir_all(&mem_dir)?;
 
     let mut count = 0;
@@ -525,6 +572,19 @@ mod tests {
         assert_eq!(result.file_name().unwrap(), "memory");
     }
 
+    #[test]
+    fn codex_memory_dir_ends_with_memories() {
+        let result = codex_memory_dir();
+        assert_eq!(result.file_name().unwrap(), "memories");
+    }
+
+    #[test]
+    fn default_memory_dir_uses_codex_path_for_codex() {
+        let dir = tempdir().unwrap();
+        let result = default_memory_dir(dir.path(), MemoryAgent::Codex);
+        assert!(result.ends_with(Path::new(".codex").join("memories")));
+    }
+
     // ── take_snapshot ─────────────────────────────────────────────────────────
 
     #[test]
@@ -533,7 +593,14 @@ mod tests {
         let workdir = tempdir().unwrap();
         let nonexistent = workdir.path().join("does_not_exist");
 
-        let count = take_snapshot(h5i.path(), workdir.path(), "abc123", Some(&nonexistent)).unwrap();
+        let count = take_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "abc123",
+            Some(&nonexistent),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
         assert_eq!(count, 0);
         let meta_path = h5i.path().join("memory").join("abc123").join("_meta.json");
         assert!(meta_path.exists());
@@ -548,7 +615,14 @@ mod tests {
         fs::write(src.path().join("MEMORY.md"), "# Memory\nsome content").unwrap();
         fs::write(src.path().join("feedback.md"), "feedback").unwrap();
 
-        let count = take_snapshot(h5i.path(), workdir.path(), "deadbeef", Some(src.path())).unwrap();
+        let count = take_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "deadbeef",
+            Some(src.path()),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
         assert_eq!(count, 2);
         assert!(h5i.path().join("memory").join("deadbeef").join("MEMORY.md").exists());
     }
@@ -568,9 +642,23 @@ mod tests {
         let h5i = tempdir().unwrap();
         let workdir = tempdir().unwrap();
 
-        take_snapshot(h5i.path(), workdir.path(), "commit1", Some(src.path())).unwrap();
+        take_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "commit1",
+            Some(src.path()),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
-        take_snapshot(h5i.path(), workdir.path(), "commit2", Some(src.path())).unwrap();
+        take_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "commit2",
+            Some(src.path()),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
 
         let snaps = list_snapshots(h5i.path()).unwrap();
         assert_eq!(snaps.len(), 2);
@@ -586,14 +674,35 @@ mod tests {
 
         let src_a = tempdir().unwrap();
         fs::write(src_a.path().join("existing.md"), "old").unwrap();
-        take_snapshot(h5i.path(), workdir.path(), "snap_a", Some(src_a.path())).unwrap();
+        take_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "snap_a",
+            Some(src_a.path()),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
 
         let src_b = tempdir().unwrap();
         fs::write(src_b.path().join("existing.md"), "old").unwrap();
         fs::write(src_b.path().join("new_file.md"), "new").unwrap();
-        take_snapshot(h5i.path(), workdir.path(), "snap_b", Some(src_b.path())).unwrap();
+        take_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "snap_b",
+            Some(src_b.path()),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
 
-        let diff = diff_snapshots(h5i.path(), workdir.path(), "snap_a", Some("snap_b")).unwrap();
+        let diff = diff_snapshots(
+            h5i.path(),
+            workdir.path(),
+            "snap_a",
+            Some("snap_b"),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
         assert_eq!(diff.added_files.len(), 1);
         assert_eq!(diff.added_files[0].0, "new_file.md");
         assert!(diff.removed_files.is_empty());
@@ -607,13 +716,34 @@ mod tests {
         let src_a = tempdir().unwrap();
         fs::write(src_a.path().join("a.md"), "content").unwrap();
         fs::write(src_a.path().join("b.md"), "content").unwrap();
-        take_snapshot(h5i.path(), workdir.path(), "snap_a", Some(src_a.path())).unwrap();
+        take_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "snap_a",
+            Some(src_a.path()),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
 
         let src_b = tempdir().unwrap();
         fs::write(src_b.path().join("a.md"), "content").unwrap();
-        take_snapshot(h5i.path(), workdir.path(), "snap_b", Some(src_b.path())).unwrap();
+        take_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "snap_b",
+            Some(src_b.path()),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
 
-        let diff = diff_snapshots(h5i.path(), workdir.path(), "snap_a", Some("snap_b")).unwrap();
+        let diff = diff_snapshots(
+            h5i.path(),
+            workdir.path(),
+            "snap_a",
+            Some("snap_b"),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
         assert_eq!(diff.removed_files.len(), 1);
         assert_eq!(diff.removed_files[0].0, "b.md");
     }
@@ -625,13 +755,34 @@ mod tests {
 
         let src_a = tempdir().unwrap();
         fs::write(src_a.path().join("notes.md"), "line1\nline2\nline3").unwrap();
-        take_snapshot(h5i.path(), workdir.path(), "snap_a", Some(src_a.path())).unwrap();
+        take_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "snap_a",
+            Some(src_a.path()),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
 
         let src_b = tempdir().unwrap();
         fs::write(src_b.path().join("notes.md"), "line1\nchanged\nline3").unwrap();
-        take_snapshot(h5i.path(), workdir.path(), "snap_b", Some(src_b.path())).unwrap();
+        take_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "snap_b",
+            Some(src_b.path()),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
 
-        let diff = diff_snapshots(h5i.path(), workdir.path(), "snap_a", Some("snap_b")).unwrap();
+        let diff = diff_snapshots(
+            h5i.path(),
+            workdir.path(),
+            "snap_a",
+            Some("snap_b"),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
         assert_eq!(diff.modified_files.len(), 1);
         assert_eq!(diff.modified_files[0].name, "notes.md");
     }
@@ -640,7 +791,16 @@ mod tests {
     fn diff_snapshots_error_on_missing_snapshot() {
         let h5i = tempdir().unwrap();
         let workdir = tempdir().unwrap();
-        assert!(diff_snapshots(h5i.path(), workdir.path(), "nonexistent", Some("also_missing")).is_err());
+        assert!(
+            diff_snapshots(
+                h5i.path(),
+                workdir.path(),
+                "nonexistent",
+                Some("also_missing"),
+                MemoryAgent::Claude,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -650,10 +810,31 @@ mod tests {
 
         let src = tempdir().unwrap();
         fs::write(src.path().join("a.md"), "content").unwrap();
-        take_snapshot(h5i.path(), workdir.path(), "snap_a", Some(src.path())).unwrap();
-        take_snapshot(h5i.path(), workdir.path(), "snap_b", Some(src.path())).unwrap();
+        take_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "snap_a",
+            Some(src.path()),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
+        take_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "snap_b",
+            Some(src.path()),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
 
-        let diff = diff_snapshots(h5i.path(), workdir.path(), "snap_a", Some("snap_b")).unwrap();
+        let diff = diff_snapshots(
+            h5i.path(),
+            workdir.path(),
+            "snap_a",
+            Some("snap_b"),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
         assert!(diff.added_files.is_empty());
         assert!(diff.removed_files.is_empty());
         assert!(diff.modified_files.is_empty());
@@ -665,7 +846,15 @@ mod tests {
     fn restore_snapshot_error_for_missing_oid() {
         let h5i = tempdir().unwrap();
         let workdir = tempdir().unwrap();
-        assert!(restore_snapshot(h5i.path(), workdir.path(), "does_not_exist").is_err());
+        assert!(
+            restore_snapshot(
+                h5i.path(),
+                workdir.path(),
+                "does_not_exist",
+                MemoryAgent::Claude,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -676,9 +865,22 @@ mod tests {
 
         fs::write(src.path().join("MEMORY.md"), "# Memory").unwrap();
         fs::write(src.path().join("feedback.md"), "data").unwrap();
-        take_snapshot(h5i.path(), workdir.path(), "snap1", Some(src.path())).unwrap();
+        take_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "snap1",
+            Some(src.path()),
+            MemoryAgent::Claude,
+        )
+        .unwrap();
 
-        let count = restore_snapshot(h5i.path(), workdir.path(), "snap1").unwrap();
+        let count = restore_snapshot(
+            h5i.path(),
+            workdir.path(),
+            "snap1",
+            MemoryAgent::Claude,
+        )
+        .unwrap();
         assert_eq!(count, 2); // MEMORY.md + feedback.md (not _meta.json)
     }
 }
