@@ -706,3 +706,4 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 [00:14:44] ACT: wrote install.sh
 [00:14:49] OBSERVE: read README.md
 [00:14:52] ACT: edited README.md
+[01:05:10] ACT: edited .github/workflows/release.yaml
