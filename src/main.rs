@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use h5i_core::blame::BlameMode;
 use h5i_core::claude::{keyword_search, AnthropicClient};
+use h5i_core::codex;
 use h5i_core::ctx;
 use h5i_core::memory;
 use h5i_core::metadata::{AiMetadata, Decision, IntegrityLevel, Severity, TestSource};
@@ -246,6 +247,12 @@ enum Commands {
     /// Run `h5i hook run` (or just `h5i hook`) as the PostToolUse handler in .claude/settings.json.
     #[command(subcommand)]
     Hook(HookCommands),
+
+    /// Codex integration helpers for context restore, trace sync, and closeout
+    Codex {
+        #[command(subcommand)]
+        action: CodexCommands,
+    },
 
     /// Version-control agent memory state alongside your code
     Memory {
@@ -500,7 +507,7 @@ enum ContextCommands {
     /// Show the current reasoning workspace state (branch, commit count, trace size)
     Status,
 
-    /// Print a system prompt for injecting h5i context commands into a Claude agent session
+    /// Print a system prompt for injecting h5i context commands into an agent session
     Prompt,
 
     /// Scan the reasoning trace for prompt-injection patterns and report a risk score
@@ -675,6 +682,22 @@ enum HookCommands {
     /// Summarises recent OBSERVE/THINK/ACT entries and calls `h5i context commit`.
     /// Register in .claude/settings.json under "Stop" hooks.
     Stop,
+}
+
+#[derive(Subcommand)]
+enum CodexCommands {
+    /// Print the current shared context so Codex can resume with prior reasoning
+    Prelude,
+
+    /// Sync OBSERVE/ACT traces from the active Codex session JSONL
+    Sync,
+
+    /// Sync the current Codex session and auto-checkpoint the context workspace
+    Finish {
+        /// Optional summary for the context checkpoint
+        #[arg(long)]
+        summary: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -981,39 +1004,34 @@ const H5I_CODEX_INSTRUCTIONS: &str = r#"## h5i Integration
 
 This repository uses **h5i** (a Git sidecar for AI-era version control).
 
-Use `h5i context` to persist reasoning across sessions and `h5i commit` to record AI provenance on code commits.
+Codex should use `h5i context` as shared cross-session memory and `h5i commit` to record AI provenance on code commits.
 
 ### Required workflow
 
 At the start of a non-trivial task:
 ```bash
-h5i context status
-# If no workspace exists yet:
+h5i codex prelude
+# If no workspace exists yet, initialize it once:
 h5i context init --goal "<one-line task summary>"
 ```
 
 While working:
 ```bash
-h5i context trace --kind OBSERVE "<specific fact learned from a file or command>"
+h5i context relevant <file>   # before editing a file when relevant
+h5i codex sync                # after a burst of reads/edits to backfill OBSERVE/ACT traces
 h5i context trace --kind THINK "<chosen approach> over <rejected alternative> because <reason>"
-h5i context trace --kind ACT "edited <file>: <what changed>"
 h5i context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 ```
 
 After a logical milestone:
 ```bash
-h5i context commit "<milestone summary>" --detail "<what was done and what remains>"
+h5i codex finish --summary "<milestone summary>"
 ```
 
 For code commits:
 ```bash
 git add <exact paths>
 h5i commit -m "…" --agent codex --prompt "…"
-```
-
-Before editing a file, prefer:
-```bash
-h5i context relevant <file>
 ```
 "#;
 
@@ -1046,7 +1064,7 @@ fn write_codex_instructions(workdir: &Path) -> anyhow::Result<()> {
 
     let agents_md = workdir.join("AGENTS.md");
     let existing = std::fs::read_to_string(&agents_md).unwrap_or_default();
-    if existing.contains("## h5i Integration") {
+    if existing.contains("h5i codex prelude") {
         return Ok(());
     }
 
@@ -1058,6 +1076,123 @@ fn write_codex_instructions(workdir: &Path) -> anyhow::Result<()> {
         writeln!(f)?;
     }
     writeln!(f, "\n{H5I_CODEX_INSTRUCTIONS}")?;
+    Ok(())
+}
+
+fn print_shared_context_prelude(workdir: &Path) {
+    let has_ctx = match git2::Repository::discover(workdir) {
+        Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
+        Err(_) => false,
+    };
+    if !has_ctx {
+        println!("[h5i] No context workspace yet. Run `h5i context init --goal \"...\"`.");
+        return;
+    }
+
+    let opts = ctx::ContextOpts {
+        branch: None,
+        commit_hash: None,
+        show_log: true,
+        log_offset: 0,
+        metadata_segment: None,
+        window: 3,
+        depth: 1,
+    };
+    let Ok(snap) = ctx::gcc_context(workdir, &opts) else {
+        return;
+    };
+
+    println!("[h5i] Context workspace active — prior reasoning follows.");
+    println!();
+    ctx::print_context_depth(&snap, 1);
+
+    let thinks_acts: Vec<&String> = snap
+        .recent_log_lines
+        .iter()
+        .filter(|l| l.contains("] THINK:") || l.contains("] ACT:"))
+        .rev()
+        .take(5)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if !thinks_acts.is_empty() {
+        println!();
+        println!("[h5i] Last decisions & actions:");
+        for line in thinks_acts {
+            println!("  {line}");
+        }
+    }
+
+    if !snap.todo_items.is_empty() {
+        println!();
+        println!("[h5i] Open TODOs:");
+        for t in snap.todo_items.iter().take(5) {
+            println!("  □ {t}");
+        }
+    }
+    println!();
+    println!("[h5i] Use `h5i context show` for full details.");
+}
+
+fn auto_checkpoint_context(workdir: &Path, explicit_summary: Option<&str>) -> anyhow::Result<()> {
+    let has_ctx = match git2::Repository::discover(workdir) {
+        Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
+        Err(_) => false,
+    };
+    if !has_ctx {
+        return Ok(());
+    }
+
+    let opts = ctx::ContextOpts {
+        branch: None,
+        commit_hash: None,
+        show_log: true,
+        log_offset: 0,
+        metadata_segment: None,
+        window: 1,
+        depth: 3,
+    };
+    let summary = if let Some(summary) = explicit_summary {
+        summary.to_string()
+    } else if let Ok(snap) = ctx::gcc_context(workdir, &opts) {
+        let acts: Vec<String> = snap
+            .recent_log_lines
+            .iter()
+            .filter(|l| l.contains("] ACT:"))
+            .rev()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if acts.is_empty() {
+            "session ended (auto-checkpoint)".to_string()
+        } else {
+            let joined = acts
+                .iter()
+                .map(|l| {
+                    l.split("] ACT:")
+                        .nth(1)
+                        .unwrap_or(l)
+                        .trim()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            truncate(&joined, 120)
+        }
+    } else {
+        "session ended (auto-checkpoint)".to_string()
+    };
+
+    ctx::gcc_commit(workdir, &summary, "")?;
+    println!(
+        "{} Auto-checkpointed context: {}",
+        SUCCESS,
+        style(summary).italic()
+    );
     Ok(())
 }
 
@@ -2362,121 +2497,52 @@ jq -c '{
         }
 
         Commands::Hook(HookCommands::SessionStart) => {
-            // Inject prior context into Claude's context window at session start.
-            // Claude Code surfaces this hook's stdout to the model, providing
-            // automatic orientation without a manual `h5i context restore`.
             let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let has_ctx = match git2::Repository::discover(&workdir) {
-                Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
-                Err(_) => false,
-            };
-            if !has_ctx {
-                return Ok(());
-            }
-
-            // Single call with show_log=true so we get both mini_trace and recent_log_lines.
-            let opts = ctx::ContextOpts {
-                branch: None,
-                commit_hash: None,
-                show_log: true,
-                log_offset: 0,
-                metadata_segment: None,
-                window: 3,
-                depth: 1,
-            };
-            let Ok(snap) = ctx::gcc_context(&workdir, &opts) else {
-                return Ok(());
-            };
-
-            println!("[h5i] Context workspace active — prior reasoning follows.");
-            println!();
-
-            // Depth-1 index: compact orientation.
-            ctx::print_context_depth(&snap, 1);
-
-            // Last 5 THINK/ACT entries: most actionable prior reasoning.
-            let thinks_acts: Vec<&String> = snap
-                .recent_log_lines
-                .iter()
-                .filter(|l| l.contains("] THINK:") || l.contains("] ACT:"))
-                .rev()
-                .take(5)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect();
-            if !thinks_acts.is_empty() {
-                println!();
-                println!("[h5i] Last decisions & actions:");
-                for line in thinks_acts {
-                    println!("  {line}");
-                }
-            }
-
-            if !snap.todo_items.is_empty() {
-                println!();
-                println!("[h5i] Open TODOs:");
-                for t in snap.todo_items.iter().take(5) {
-                    println!("  □ {t}");
-                }
-            }
-            println!();
-            println!("[h5i] Use `h5i context show` for full details.");
+            print_shared_context_prelude(&workdir);
         }
 
         Commands::Hook(HookCommands::Stop) => {
-            // Auto-checkpoint the context workspace when Claude Code stops.
-            // Reads recent trace entries and commits a milestone summary so
-            // the next session can resume without a manual `h5i context commit`.
             let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let has_ctx = match git2::Repository::discover(&workdir) {
-                Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
-                Err(_) => false,
-            };
-            if !has_ctx {
-                return Ok(());
-            }
+            let _ = auto_checkpoint_context(&workdir, None);
+        }
 
-            // Collect the most recent ACT entries to build an auto-summary.
-            let opts = ctx::ContextOpts {
-                branch: None,
-                commit_hash: None,
-                show_log: true,
-                log_offset: 0,
-                metadata_segment: None,
-                window: 1,
-                depth: 3,
-            };
-            let summary = if let Ok(snap) = ctx::gcc_context(&workdir, &opts) {
-                let acts: Vec<String> = snap
-                    .recent_log_lines
-                    .iter()
-                    .filter(|l| l.contains("] ACT:"))
-                    .rev()
-                    .take(3)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect();
-                if acts.is_empty() {
-                    "session ended (auto-checkpoint)".to_string()
-                } else {
-                    // Strip the timestamp prefix and summarise.
-                    let bodies: Vec<String> = acts
-                        .iter()
-                        .filter_map(|l| l.split("] ACT:").nth(1))
-                        .map(|s| s.trim().to_string())
-                        .collect();
-                    format!("auto-checkpoint: {}", bodies.join("; "))
+        Commands::Codex { action } => {
+            let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            match action {
+                CodexCommands::Prelude => {
+                    print_shared_context_prelude(&workdir);
                 }
-            } else {
-                "session ended (auto-checkpoint)".to_string()
-            };
-
-            match ctx::gcc_commit(&workdir, &summary, "") {
-                Ok(_) => eprintln!("[h5i] Context checkpoint: {summary}"),
-                Err(e) => eprintln!("[h5i] Context checkpoint failed: {e}"),
+                CodexCommands::Sync => match codex::sync_context(&workdir)? {
+                    Some(result) => println!(
+                        "{} Synced Codex session {} ({} OBSERVE, {} ACT, {} new line{})",
+                        SUCCESS,
+                        style(&result.session_id).magenta(),
+                        result.observed,
+                        result.acted,
+                        result.processed_lines,
+                        if result.processed_lines == 1 { "" } else { "s" }
+                    ),
+                    None => println!(
+                        "{} No Codex session found in ~/.codex/sessions for this repo.",
+                        WARN
+                    ),
+                },
+                CodexCommands::Finish { summary } => {
+                    match codex::sync_context(&workdir)? {
+                        Some(result) => println!(
+                            "{} Synced Codex session {} ({} OBSERVE, {} ACT)",
+                            SUCCESS,
+                            style(&result.session_id).magenta(),
+                            result.observed,
+                            result.acted,
+                        ),
+                        None => println!(
+                            "{} No Codex session found in ~/.codex/sessions for this repo.",
+                            WARN
+                        ),
+                    }
+                    auto_checkpoint_context(&workdir, summary.as_deref())?;
+                }
             }
         }
 

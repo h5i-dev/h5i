@@ -57,6 +57,15 @@ impl Repo {
             .expect("failed to run h5i")
     }
 
+    fn h5i_with_home(&self, home: &Path, args: &[&str]) -> Output {
+        Command::new(H5I)
+            .args(args)
+            .env("HOME", home)
+            .current_dir(self.path())
+            .output()
+            .expect("failed to run h5i")
+    }
+
     fn h5i_ok(&self, args: &[&str]) -> Output {
         let out = self.h5i(args);
         assert!(
@@ -123,6 +132,7 @@ fn init_writes_codex_agents_file() {
     let agents_md = repo.path().join("AGENTS.md");
     let contents = fs::read_to_string(&agents_md).expect("AGENTS.md should exist");
     assert!(contents.contains("## h5i Integration"));
+    assert!(contents.contains("h5i codex prelude"));
     assert!(contents.contains("--agent codex"));
 }
 
@@ -727,6 +737,36 @@ fn memory_snapshot_supports_codex_agent() {
         "codex memory snapshot panicked: {}",
         stderr(&out)
     );
+}
+
+#[test]
+fn codex_sync_replays_session_activity_into_context() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+    repo.h5i_ok(&["context", "init", "--goal", "codex sync test"]);
+
+    let home = TempDir::new().unwrap();
+    let session_dir = home.path().join(".codex").join("sessions").join("2026").join("04").join("21");
+    fs::create_dir_all(&session_dir).unwrap();
+    let session_path = session_dir.join("rollout-test.jsonl");
+    let session = format!(
+        concat!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"cwd\":\"{}\"}}}}\n",
+            "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"exec_command_end\",\"parsed_cmd\":[{{\"type\":\"read\",\"path\":\"{}/src/main.rs\"}}]}}}}\n",
+            "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"apply_patch\",\"arguments\":\"*** Begin Patch\\n*** Update File: src/main.rs\\n*** End Patch\\n\"}}}}\n"
+        ),
+        repo.path().display(),
+        repo.path().display(),
+    );
+    fs::write(&session_path, session).unwrap();
+
+    let sync = repo.h5i_with_home(home.path(), &["codex", "sync"]);
+    assert!(sync.status.success(), "codex sync failed: {}", stderr(&sync));
+
+    let show = repo.h5i_with_home(home.path(), &["context", "show", "--trace"]);
+    let s = stdout(&show);
+    assert!(s.contains("read src/main.rs"), "context trace missing read: {s}");
+    assert!(s.contains("edited src/main.rs"), "context trace missing edit: {s}");
 }
 
 // ─── error handling ──────────────────────────────────────────────────────────

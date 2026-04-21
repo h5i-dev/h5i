@@ -9,6 +9,10 @@ Command reference for all h5i subcommands and flags.
 - [Installation](#installation)
 - [h5i init](#h5i-init)
 - [h5i hooks](#h5i-hooks)
+- [h5i codex](#h5i-codex)
+  - [h5i codex prelude](#h5i-codex-prelude)
+  - [h5i codex sync](#h5i-codex-sync)
+  - [h5i codex finish](#h5i-codex-finish)
 - [h5i commit](#h5i-commit)
 - [h5i log](#h5i-log)
 - [h5i blame](#h5i-blame)
@@ -93,6 +97,11 @@ h5i init
 
 Initialize h5i in the current Git repository. Creates `.git/.h5i/` with subdirectories for AST snapshots, CRDT state, session logs, and memory snapshots.
 
+Also bootstraps agent-facing instructions:
+
+- `CLAUDE.md` / `.claude/h5i.md` for Claude Code
+- `AGENTS.md` for Codex, including the `h5i codex` workflow
+
 Must be run once per repository before any other h5i command.
 
 ```bash
@@ -143,6 +152,59 @@ h5i hook run     # PostToolUse handler (reads JSON from stdin)
    ```
 
    Once registered, Claude Code gains native access to h5i tools (`h5i_log`, `h5i_blame`, `h5i_context_trace`, `h5i_notes_show`, etc.) without needing shell commands. See [h5i mcp](#h5i-mcp) for the full tool list.
+
+`h5i hook` is currently Claude-specific. Codex does not expose an equivalent repo-local hook configuration, so h5i provides the explicit `h5i codex` workflow instead.
+
+---
+
+## h5i codex
+
+```
+h5i codex prelude
+h5i codex sync
+h5i codex finish [--summary <text>]
+```
+
+Codex integration helpers for restoring shared context, syncing Codex session activity into `h5i context`, and auto-checkpointing the context workspace.
+
+Unlike `h5i hook`, these commands do not depend on an external hook API. They work by reading the active Codex JSONL session under `~/.codex/sessions/` and replaying relevant file activity into `refs/h5i/context`.
+
+### h5i codex prelude
+
+```
+h5i codex prelude
+```
+
+Print the current shared context in a compact session-start format: goal, branch, milestones, recent THINK/ACT entries, and open TODOs.
+
+Use this at the beginning of a Codex session, or whenever you want to re-orient the agent without manually stitching together `h5i context show`, `status`, and `todo`.
+
+### h5i codex sync
+
+```
+h5i codex sync
+```
+
+Scan the active Codex session log for this repository and backfill `OBSERVE` / `ACT` trace entries into `h5i context`.
+
+Currently synced activity includes:
+
+- file reads
+- searches
+- file listing operations
+- `apply_patch` edits, adds, and deletes
+
+Sync state is recorded in `.git/.h5i/codex_sync_state.json`, so repeated runs only process new session events.
+
+### h5i codex finish
+
+```
+h5i codex finish [--summary <text>]
+```
+
+Run `h5i codex sync`, then auto-checkpoint the current context workspace.
+
+If `--summary` is omitted, h5i derives a short checkpoint summary from the most recent `ACT` entries.
 
 ---
 
@@ -994,7 +1056,7 @@ Use this at the start of a session to re-absorb the project's accumulated design
 h5i context prompt
 ```
 
-Print a ready-made system prompt that can be prepended to a Claude session to give it full awareness of the `h5i context` commands and the recommended workflow.
+Print a ready-made system prompt that can be prepended to an agent session to give it full awareness of the `h5i context` commands and the recommended workflow.
 
 ---
 
@@ -1288,7 +1350,14 @@ Anthropic's prompt caching has a 5-minute TTL. If the stable prefix (goal, miles
 
 ## h5i memory
 
-Version and share Claude Code's persistent memory files. Claude stores per-project memory in `~/.claude/projects/<repo-path>/memory/`. These files are local-only by default; `h5i memory` snapshots and versions them under `refs/h5i/memory`.
+Version and share agent memory files under `refs/h5i/memory`.
+
+Supported built-in memory backends:
+
+- `claude` → `~/.claude/projects/<repo-path>/memory/`
+- `codex` → `~/.codex/memories/`
+
+When `--agent` is omitted, h5i infers the backend from `H5I_AGENT_ID` and falls back to `claude`.
 
 ---
 
@@ -1298,17 +1367,18 @@ Version and share Claude Code's persistent memory files. Claude stores per-proje
 h5i memory snapshot [options]
 ```
 
-Snapshot the current state of Claude's memory files and store it as a git object linked to a commit.
+Snapshot the current state of an agent memory backend and store it as a git object linked to a commit.
 
 **Options**
 
 | Option | Description |
 |--------|-------------|
 | `--commit <oid>` | Link snapshot to a specific commit (default: HEAD) |
-| `-m, --message <text>` | Optional annotation message |
+| `--agent <claude\|codex>` | Memory backend to snapshot |
+| `--path <dir>` | Override the source directory completely |
 
 ```bash
-h5i memory snapshot -m "end of session"
+h5i memory snapshot --agent codex
 ```
 
 ---
@@ -1329,7 +1399,13 @@ List all memory snapshots in reverse chronological order, showing the linked com
 h5i memory diff [<from-oid> [<to-oid>]]
 ```
 
-Show what changed between two memory snapshots.
+Show what changed between two memory snapshots, or between a snapshot and the live agent memory directory.
+
+**Options**
+
+| Option | Description |
+|--------|-------------|
+| `--agent <claude\|codex>` | Backend to use when diffing against live memory |
 
 | Form | Compares |
 |------|----------|
@@ -1357,13 +1433,14 @@ memory diff a3f9c2b..b2f3a1c
 h5i memory restore <oid> [options]
 ```
 
-Restore Claude's memory files to the state captured in a snapshot. Prompts for confirmation by default.
+Restore an agent memory backend to the state captured in a snapshot. Prompts for confirmation by default.
 
 **Options**
 
 | Option | Description |
 |--------|-------------|
 | `<oid>` | Commit OID whose linked snapshot to restore (required, positional) |
+| `--agent <claude\|codex>` | Memory backend to restore into |
 | `-y, --yes` | Skip the confirmation prompt |
 
 ---
@@ -1738,7 +1815,7 @@ h5i serve --port 8080
 | **Summary** | Aggregate stats, agent leaderboard, filter pills (AI only / with tests / failing) |
 | **Integrity** | Manually audit any commit message + prompt against all 12 rules without committing |
 | **Intent Graph** | Directed graph of causal commit chains |
-| **Memory** | Browse and diff Claude memory snapshots linked to each commit |
+| **Memory** | Browse and diff agent memory snapshots linked to each commit |
 | **Sessions** | Per-commit session data: exploration footprint, uncertainty heatmap, omissions, churn |
 
 ---
@@ -1989,9 +2066,9 @@ Reconstruct the conflict-free merged state of a file from two CRDT session OIDs 
 
 ```
 .git/.h5i/
-├── memory/                          # Claude memory snapshots
+├── memory/                          # agent memory snapshots
 │   └── <commit-oid>/
-│       ├── <uuid>.jsonl             # Claude Code session log files
+│       ├── <uuid>.jsonl             # session log files / memory artifacts
 │       └── _meta.json               # snapshot timestamp + file count
 ├── session_log/                     # Claude Code session analyses
 │   └── <commit-oid>/
@@ -2011,7 +2088,7 @@ Three additional directories (`ast/`, `crdt/`, `metadata/`) are created on `h5i 
 | Ref | Type | Contains |
 |-----|------|----------|
 | `refs/h5i/notes` | Git notes | Commit metadata: AI provenance, test metrics, causal links, integrity reports, design decisions |
-| `refs/h5i/memory` | Linear commit history | Claude memory snapshots as git tree objects; each commit carries the linked code-commit OID |
+| `refs/h5i/memory` | Linear commit history | Agent memory snapshots as git tree objects; each commit carries the linked code-commit OID |
 | `refs/h5i/context` | Git tree | Context workspace: `main.md`, `.current_branch`, `branches/<name>/{commit.md,trace.md,dag.json,ephemeral.md,metadata.yaml}` |
 | `refs/h5i/ast` | Git objects | AST hash snapshots for semantic blame |
 | `refs/h5i/shadow/<yyyymmdd-hhmmss>` | WIP commit | Pre-rewind working-tree snapshot created by `h5i rewind` before overwriting files. Never on any branch; recover with `git checkout refs/h5i/shadow/<ts> -- .` |

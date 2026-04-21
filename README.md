@@ -237,7 +237,15 @@ h5i resume
 
 ## Setup with Codex
 
-`h5i init` now writes an `AGENTS.md` section that tells Codex to use `h5i context` and `h5i commit` during work on this repo.
+`h5i init` now writes an `AGENTS.md` section that tells Codex to restore shared context at session start and sync trace data during the session.
+
+Use the Codex helpers directly when you want the same behavior outside the generated instructions:
+
+```bash
+h5i codex prelude                 # print current shared context at session start
+h5i codex sync                    # backfill OBSERVE/ACT traces from the live Codex session
+h5i codex finish --summary "…"    # sync and auto-checkpoint the context workspace
+```
 
 For memory snapshots, target Codex explicitly:
 
