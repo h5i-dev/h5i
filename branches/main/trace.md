@@ -722,3 +722,4 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 [18:16:15] OBSERVE: read scripts/observe_session.sh
 [18:16:18] OBSERVE: read scripts/observe_multi.sh
 [18:16:18] OBSERVE: read scripts/demo-dag.sh
+[18:18:50] OBSERVE: observe_session.sh: claude --print | --allowedTools; JSONL at ~/.claude/projects/<encoded>/; python3 inline for tool-call + checklist parsing; SCORE:N/M line for aggregation
