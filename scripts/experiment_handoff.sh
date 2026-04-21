@@ -54,7 +54,7 @@ _find_codex() {
 if [[ "$SYNTHETIC" != "1" ]]; then
   if CODEX_BIN=$(_find_codex); then
     # Use the resolved absolute path so the invocation works regardless of PATH.
-    CODEX_CMD="${CODEX_CMD:-$CODEX_BIN --approval-mode full-auto}"
+    CODEX_CMD="${CODEX_CMD:-$CODEX_BIN exec --full-auto}"
   else
     echo "  ℹ  codex not found — switching to synthetic mode"
     SYNTHETIC=1
