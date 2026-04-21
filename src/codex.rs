@@ -160,8 +160,13 @@ fn session_cwd_matches(session_path: &Path, workdir: &Path) -> bool {
 fn extract_events(value: &Value, workdir: &Path) -> Vec<TraceEvent> {
     let item_type = value.get("type").and_then(Value::as_str).unwrap_or_default();
     match item_type {
+        // Older Codex format: structured exec_command_end with parsed_cmd array.
         "event_msg" => extract_exec_command_events(value, workdir),
-        "response_item" => extract_apply_patch_events(value),
+        // Current Codex: function_call items — handles exec_command (OBSERVE) and
+        // legacy apply_patch (ACT) for older session formats.
+        "response_item" => extract_response_item_events(value, workdir),
+        // Current Codex: apply_patch is emitted as custom_tool_call, not function_call.
+        "custom_tool_call" => extract_custom_tool_call_events(value),
         _ => Vec::new(),
     }
 }
@@ -225,17 +230,152 @@ fn extract_exec_command_events(value: &Value, workdir: &Path) -> Vec<TraceEvent>
     events
 }
 
-fn extract_apply_patch_events(value: &Value) -> Vec<TraceEvent> {
-    if value.pointer("/payload/type").and_then(Value::as_str) != Some("function_call") {
+fn extract_response_item_events(value: &Value, workdir: &Path) -> Vec<TraceEvent> {
+    let payload_type = value
+        .pointer("/payload/type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    match payload_type {
+        "function_call" => {
+            match value.pointer("/payload/name").and_then(Value::as_str) {
+                // Legacy path: apply_patch as a plain function_call (older Codex versions).
+                Some("apply_patch") => value
+                    .pointer("/payload/arguments")
+                    .and_then(Value::as_str)
+                    .map(extract_patch_events)
+                    .unwrap_or_default(),
+                // Current Codex: shell commands are function_call items with name "exec_command"
+                // and an `arguments` JSON string containing a "cmd" key.
+                Some("exec_command") => value
+                    .pointer("/payload/arguments")
+                    .and_then(Value::as_str)
+                    .and_then(|args| serde_json::from_str::<Value>(args).ok())
+                    .and_then(|obj| {
+                        obj.get("cmd")
+                            .and_then(Value::as_str)
+                            .map(|cmd| extract_shell_cmd_events(cmd, workdir))
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            }
+        }
+        // Current Codex: apply_patch is wrapped in a response_item whose payload has
+        // type "custom_tool_call".  The patch text is in payload.input (not arguments).
+        "custom_tool_call" => {
+            if value.pointer("/payload/name").and_then(Value::as_str) != Some("apply_patch") {
+                return Vec::new();
+            }
+            value
+                .pointer("/payload/input")
+                .and_then(Value::as_str)
+                .map(extract_patch_events)
+                .unwrap_or_default()
+        }
+        _ => Vec::new(),
+    }
+}
+
+// Top-level custom_tool_call (kept for forward-compatibility with potential
+// Codex format variations where apply_patch is not wrapped in response_item).
+fn extract_custom_tool_call_events(value: &Value) -> Vec<TraceEvent> {
+    if value.get("name").and_then(Value::as_str) != Some("apply_patch") {
         return Vec::new();
     }
-    if value.pointer("/payload/name").and_then(Value::as_str) != Some("apply_patch") {
-        return Vec::new();
-    }
-    let Some(arguments) = value.pointer("/payload/arguments").and_then(Value::as_str) else {
+    value
+        .get("input")
+        .and_then(Value::as_str)
+        .map(extract_patch_events)
+        .unwrap_or_default()
+}
+
+// Heuristic OBSERVE extraction from a raw shell command string.
+// Handles the most common Codex read/search patterns; ignores build/compile/test
+// commands that are not explorations of the codebase.
+fn extract_shell_cmd_events(cmd: &str, workdir: &Path) -> Vec<TraceEvent> {
+    // Only examine the first command in a pipeline or sequence.
+    let cmd = cmd
+        .split_once(" | ")
+        .or_else(|| cmd.split_once(" && "))
+        .or_else(|| cmd.split_once(" ; "))
+        .map_or(cmd, |(left, _)| left);
+
+    let tokens: Vec<&str> = cmd.split_whitespace().collect();
+    let Some(&bin_path) = tokens.first() else {
         return Vec::new();
     };
-    extract_patch_events(arguments)
+    let bin = bin_path.rsplit('/').next().unwrap_or(bin_path);
+
+    // Non-flag, non-quoted arguments (skip -flag, --flag, 'expr', "expr").
+    let plain_args: Vec<&str> = tokens[1..]
+        .iter()
+        .filter(|t| !t.starts_with('-') && !t.starts_with('\'') && !t.starts_with('"'))
+        .copied()
+        .collect();
+
+    match bin {
+        "cat" | "head" | "tail" | "bat" | "less" | "more" => plain_args
+            .iter()
+            .map(|p| TraceEvent {
+                kind: "OBSERVE",
+                message: format!("read {}", render_path(workdir, p)),
+            })
+            .collect(),
+
+        // sed -n 'Np' file — last plain arg is the file; the expression is quoted.
+        "sed" => plain_args
+            .last()
+            .map(|p| TraceEvent {
+                kind: "OBSERVE",
+                message: format!("read {}", render_path(workdir, p)),
+            })
+            .into_iter()
+            .collect(),
+
+        "grep" | "rg" | "ag" | "ack" => {
+            // rg --files [dir] — list all tracked files.
+            if tokens[1..].iter().any(|t| *t == "--files") {
+                let path = plain_args.first().copied().unwrap_or(".");
+                return vec![TraceEvent {
+                    kind: "OBSERVE",
+                    message: format!("listed files under {}", render_path(workdir, path)),
+                }];
+            }
+            match plain_args.as_slice() {
+                [] => Vec::new(),
+                [path] => vec![TraceEvent {
+                    kind: "OBSERVE",
+                    message: format!("searched {}", render_path(workdir, path)),
+                }],
+                [query, path, ..] => vec![TraceEvent {
+                    kind: "OBSERVE",
+                    message: format!(
+                        "searched {} for \"{}\"",
+                        render_path(workdir, path),
+                        query
+                    ),
+                }],
+            }
+        }
+
+        "find" | "fd" => {
+            let path = plain_args.first().copied().unwrap_or(".");
+            vec![TraceEvent {
+                kind: "OBSERVE",
+                message: format!("listed files under {}", render_path(workdir, path)),
+            }]
+        }
+
+        "ls" => {
+            let path = plain_args.first().copied().unwrap_or(".");
+            vec![TraceEvent {
+                kind: "OBSERVE",
+                message: format!("listed files under {}", render_path(workdir, path)),
+            }]
+        }
+
+        _ => Vec::new(),
+    }
 }
 
 // Parses Codex's apply_patch dialect: lines beginning with "*** Update File: ",
@@ -282,7 +422,7 @@ fn normalize_display_path(workdir: &Path, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_events, extract_patch_events, TraceEvent};
+    use super::{extract_events, extract_patch_events, extract_shell_cmd_events, TraceEvent};
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -335,5 +475,142 @@ mod tests {
         assert_eq!(events[0].message, "read src/main.rs");
         assert_eq!(events[1].message, "searched . for \"Codex\"");
         assert_eq!(events[2].message, "listed files under .");
+    }
+
+    // ── custom_tool_call / apply_patch (current Codex format) ────────────────
+
+    // apply_patch wrapped in response_item (actual current Codex format)
+    #[test]
+    fn extract_events_response_item_custom_tool_call_apply_patch() {
+        let dir = tempdir().unwrap();
+        let event = json!({
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "status": "completed",
+                "name": "apply_patch",
+                "input": "*** Begin Patch\n*** Update File: main.py\n*** Add File: helper.py\n*** End Patch\n"
+            }
+        });
+        let events = extract_events(&event, dir.path());
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0], TraceEvent { kind: "ACT", message: "edited main.py".into() });
+        assert_eq!(events[1], TraceEvent { kind: "ACT", message: "added helper.py".into() });
+    }
+
+    // top-level custom_tool_call (forward-compat / older Codex format)
+    #[test]
+    fn extract_events_top_level_custom_tool_call_apply_patch() {
+        let dir = tempdir().unwrap();
+        let event = json!({
+            "type": "custom_tool_call",
+            "status": "completed",
+            "name": "apply_patch",
+            "input": "*** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch\n"
+        });
+        let events = extract_events(&event, dir.path());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0], TraceEvent { kind: "ACT", message: "edited src/lib.rs".into() });
+    }
+
+    #[test]
+    fn extract_events_custom_tool_call_ignores_other_names() {
+        let dir = tempdir().unwrap();
+        let event = json!({
+            "type": "response_item",
+            "payload": { "type": "custom_tool_call", "name": "exec_command", "input": "x" }
+        });
+        assert!(extract_events(&event, dir.path()).is_empty());
+    }
+
+    // ── response_item / exec_command (current Codex format) ──────────────────
+
+    #[test]
+    fn extract_events_exec_command_sed_read() {
+        let dir = tempdir().unwrap();
+        let event = json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "arguments": serde_json::to_string(&json!({
+                    "cmd": format!("sed -n '1,220p' {}/main.py", dir.path().display()),
+                    "workdir": dir.path().display().to_string()
+                })).unwrap()
+            }
+        });
+        let events = extract_events(&event, dir.path());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, "OBSERVE");
+        assert_eq!(events[0].message, "read main.py");
+    }
+
+    #[test]
+    fn extract_events_exec_command_rg_files() {
+        let dir = tempdir().unwrap();
+        let event = json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "arguments": serde_json::to_string(&json!({
+                    "cmd": "rg --files",
+                    "workdir": dir.path().display().to_string()
+                })).unwrap()
+            }
+        });
+        let events = extract_events(&event, dir.path());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, "OBSERVE");
+        assert!(events[0].message.starts_with("listed files"));
+    }
+
+    // ── extract_shell_cmd_events unit tests ───────────────────────────────────
+
+    #[test]
+    fn shell_cmd_sed_extracts_filename() {
+        let dir = tempdir().unwrap();
+        let events = extract_shell_cmd_events("sed -n '1,50p' main.py", dir.path());
+        assert_eq!(events, vec![TraceEvent { kind: "OBSERVE", message: "read main.py".into() }]);
+    }
+
+    #[test]
+    fn shell_cmd_cat_multiple_files() {
+        let dir = tempdir().unwrap();
+        let events = extract_shell_cmd_events("cat foo.py bar.py", dir.path());
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].message, "read foo.py");
+        assert_eq!(events[1].message, "read bar.py");
+    }
+
+    #[test]
+    fn shell_cmd_rg_files_flag() {
+        let dir = tempdir().unwrap();
+        let events = extract_shell_cmd_events("rg --files", dir.path());
+        assert_eq!(events, vec![TraceEvent { kind: "OBSERVE", message: "listed files under .".into() }]);
+    }
+
+    #[test]
+    fn shell_cmd_rg_search_with_path() {
+        let dir = tempdir().unwrap();
+        let events = extract_shell_cmd_events("rg fetch_user src/", dir.path());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].message, "searched src/ for \"fetch_user\"");
+    }
+
+    #[test]
+    fn shell_cmd_compile_ignored() {
+        let dir = tempdir().unwrap();
+        assert!(extract_shell_cmd_events("python3 -m py_compile main.py", dir.path()).is_empty());
+        assert!(extract_shell_cmd_events("cargo build", dir.path()).is_empty());
+    }
+
+    #[test]
+    fn shell_cmd_pipeline_only_first_command() {
+        let dir = tempdir().unwrap();
+        // Only the `sed` part should be parsed; `grep` in the pipe should be ignored.
+        let events = extract_shell_cmd_events("sed -n '1,10p' main.py | grep def", dir.path());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].message, "read main.py");
     }
 }

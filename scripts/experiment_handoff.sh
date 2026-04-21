@@ -53,8 +53,10 @@ _find_codex() {
 
 if [[ "$SYNTHETIC" != "1" ]]; then
   if CODEX_BIN=$(_find_codex); then
-    # Use the resolved absolute path so the invocation works regardless of PATH.
-    CODEX_CMD="${CODEX_CMD:-$CODEX_BIN exec --full-auto}"
+    # --dangerously-bypass-approvals-and-sandbox: h5i must write to .git/.h5i/
+    # inside the Codex session.  The workspace-write sandbox (--full-auto) makes
+    # .git read-only; bypassing it is safe here because we run in a temp dir.
+    CODEX_CMD="${CODEX_CMD:-$CODEX_BIN exec --dangerously-bypass-approvals-and-sandbox}"
   else
     echo "  ℹ  codex not found — switching to synthetic mode"
     SYNTHETIC=1
@@ -231,6 +233,7 @@ echo "▷  [A.1] Running Claude  (${TASK_CLAUDE_A:0:72}…)"
 CTX_A=$(cd "$WORKDIR_A" && "$H5I" context show --trace 2>/dev/null || true)
 A_THINK=$(count_lines "$CTX_A" "THINK:")
 A_OBSERVE=$(count_lines "$CTX_A" "OBSERVE:")
+A_ACT=$(count_lines "$CTX_A" "ACT:")
 A_CHECKPOINT=$(count_lines "$CTX_A" "\[.*\]")  # context commits look like [sha] message
 
 echo
@@ -281,7 +284,7 @@ _ac "Claude left ≥1 OBSERVE trace"         "$([[ $A_OBSERVE -ge 1 ]] && echo 1
 _ac "Context has ≥1 checkpoint after Claude" "$([[ $A_CHECKPOINT -ge 1 ]] && echo 1 || echo 0)"
 _ac "Prelude output is non-empty / shows context" "$([[ $A_PRELUDE_NONEMPTY -ge 1 ]] && echo 1 || echo 0)"
 _ac "Codex sync added ≥1 OBSERVE trace"    "$([[ $A_POST_OBSERVE -ge $((A_OBSERVE + 1)) ]] && echo 1 || echo 0)"
-_ac "Codex sync added ≥1 ACT trace"        "$([[ $A_POST_ACT -ge 1 ]] && echo 1 || echo 0)"
+_ac "Codex sync added ≥1 ACT trace"        "$([[ $A_POST_ACT -ge $((A_ACT + 1)) ]] && echo 1 || echo 0)"
 
 echo
 echo "  A score: $A_SCORE/$A_TOTAL"
