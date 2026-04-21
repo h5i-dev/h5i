@@ -14,9 +14,11 @@
 `h5i` (pronounced *high-five*) is a Git sidecar that answers the questions Git can't: *Who prompted this change? What did the AI skip or defer? What was it thinking, and can we safely resume where it left off?*
 
 ```bash
-cargo install --git https://github.com/Koukyosyumei/h5i h5i-core
+curl -fsSL https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh | sh
 cd your-project && h5i init
 ```
+
+> **Or build from source:** `cargo install --git https://github.com/Koukyosyumei/h5i h5i-core`
 
 <p align="center">
       <img src="./assets/screenshot_h5i_dag.png" alt="Context DAG" width="90%">
