@@ -23,10 +23,15 @@ fastrand = "2.3.0"
 tiktoken-rs = "0.9.1"
 console = "0.16.2"
 base64 = "0.22.1"
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 axum = "0.7"
 toml = { version = "0.8", features = ["parse", "display"] }
 regex = "1"
+
+# When targeting musl, vendor OpenSSL so the build doesn't require a musl-linked
+# system libssl (libgit2-sys → libssh2-sys → openssl-sys pulls this in).
+[target.'cfg(target_env = "musl")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
 
 [dev-dependencies]
 tempfile = "3.8"
