@@ -725,3 +725,4 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 [18:18:50] OBSERVE: observe_session.sh: claude --print | --allowedTools; JSONL at ~/.claude/projects/<encoded>/; python3 inline for tool-call + checklist parsing; SCORE:N/M line for aggregation
 [18:18:50] OBSERVE: observe_multi.sh: parallel scenarios via OBSERVE_WORKDIR/LABEL/OUTFILE env vars; python3 aggregates SCORE lines into a table
 [18:18:50] THINK: new script needs two ordered scenarios (Claude→Codex, Codex→Claude); Codex run via 'codex --approval-mode full-auto' or synthetic JSONL injection when binary absent; check both that prelude/session-start output is non-empty AND that trace entries cross the boundary
+[18:20:02] ACT: wrote scripts/experiment_handoff.sh
