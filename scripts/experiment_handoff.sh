@@ -35,14 +35,30 @@ set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
 H5I="${H5I_BIN:-h5i}"
-CODEX_CMD="${CODEX_CMD:-codex --approval-mode full-auto}"
+CODEX_CMD="${CODEX_CMD:-}"   # resolved below; can be overridden via env
 SYNTHETIC="${SYNTHETIC:-0}"
 
 [[ "${1:-}" == "--synthetic" ]] && SYNTHETIC=1
 
-if [[ "$SYNTHETIC" != "1" ]] && ! command -v codex &>/dev/null; then
-  echo "  ℹ  codex not found in PATH — switching to synthetic mode"
-  SYNTHETIC=1
+# command -v only searches the current PATH, which may omit nvm/asdf shims when
+# running under Claude Code.  Probe common install locations explicitly.
+_find_codex() {
+  command -v codex 2>/dev/null && return
+  local nvm_bin
+  nvm_bin=$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -1)
+  [[ -x "$nvm_bin/codex" ]] && { echo "$nvm_bin/codex"; return; }
+  [[ -x "$HOME/.local/bin/codex" ]] && { echo "$HOME/.local/bin/codex"; return; }
+  return 1
+}
+
+if [[ "$SYNTHETIC" != "1" ]]; then
+  if CODEX_BIN=$(_find_codex); then
+    # Use the resolved absolute path so the invocation works regardless of PATH.
+    CODEX_CMD="${CODEX_CMD:-$CODEX_BIN --approval-mode full-auto}"
+  else
+    echo "  ℹ  codex not found — switching to synthetic mode"
+    SYNTHETIC=1
+  fi
 fi
 
 WORKDIR_A="${WORKDIR_A:-/tmp/h5i-handoff-A-$$}"
