@@ -778,3 +778,4 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 [03:23:57] OBSERVE: read src/ctx.rs
 [03:23:57] OBSERVE: searched ctx.rs for "fn relevant|pub fn relevant|context_diff|gcc_context|todo_items|stable_line_count|dynamic_line_count|dag|ephemeral|pack_lossless|trace"
 [03:23:57] OBSERVE: read src/ctx.rs
+[03:23:57] OBSERVE: read src/ctx.rs
