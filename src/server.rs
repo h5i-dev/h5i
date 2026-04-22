@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -589,6 +590,27 @@ struct ContextStatusResponse {
     commit_count: usize,
     trace_lines: usize,
     snapshot_count: usize,
+    stable_line_count: usize,
+    dynamic_line_count: usize,
+    todo_count: usize,
+    latest_snapshot_timestamp: String,
+    stale_branch_count: usize,
+    branch_summaries: Vec<ContextBranchSummary>,
+}
+
+#[derive(Serialize, Default, Clone)]
+struct ContextBranchSummary {
+    branch: String,
+    purpose: String,
+    last_milestone: String,
+    last_activity: String,
+    todo_count: usize,
+    trace_lines: usize,
+    milestone_count: usize,
+    snapshot_count: usize,
+    exclusive_milestones: usize,
+    exclusive_trace_lines: usize,
+    is_scope: bool,
 }
 
 async fn api_context_status(State(state): State<Arc<AppState>>) -> Json<ContextStatusResponse> {
@@ -600,28 +622,111 @@ async fn api_context_status(State(state): State<Arc<AppState>>) -> Json<ContextS
         let branch = ctx::current_branch(workdir);
         let branches = ctx::list_branches(workdir);
         let branch_count = branches.len();
+        let current_ctx = ctx::gcc_context(
+            workdir,
+            &ctx::ContextOpts {
+                branch: Some(branch.clone()),
+                commit_hash: None,
+                show_log: false,
+                log_offset: 0,
+                metadata_segment: None,
+                window: 10,
+                depth: 2,
+            },
+        )
+        .ok();
 
         let repo = git2::Repository::discover(workdir).ok();
-        let (goal, commit_count, trace_lines) = repo
+        let snapshots = repo
+            .as_ref()
+            .map(list_context_snapshots)
+            .unwrap_or_default();
+        let latest_snapshot_timestamp = snapshots
+            .first()
+            .map(|s| s.timestamp.clone())
+            .unwrap_or_default();
+        let snapshot_count = snapshots.len();
+        let snapshot_counts: HashMap<String, usize> = snapshots.iter().fold(HashMap::new(), |mut acc, s| {
+            *acc.entry(s.branch.clone()).or_insert(0) += 1;
+            acc
+        });
+
+        let (goal, commit_count, trace_lines, branch_summaries) = repo
             .as_ref()
             .map(|r| {
                 let goal = read_ctx_file(r, "main.md")
                     .map(|t| extract_ctx_section(&t, "Goal"))
                     .unwrap_or_default();
-                let commit_text =
+                let current_commit_text =
                     read_ctx_file(r, &format!("branches/{branch}/commit.md")).unwrap_or_default();
-                let trace_text =
+                let current_trace_text =
                     read_ctx_file(r, &format!("branches/{branch}/trace.md")).unwrap_or_default();
-                let commit_count = commit_text.matches("## Commit ").count();
-                let trace_lines = trace_text.lines().filter(|l| !l.is_empty()).count();
-                (goal, commit_count, trace_lines)
+                let commit_count = current_commit_text.matches("## Commit ").count();
+                let trace_lines = count_trace_entries(&current_trace_text);
+
+                let main_commit_text =
+                    read_ctx_file(r, &format!("branches/{}/commit.md", ctx::MAIN_BRANCH)).unwrap_or_default();
+                let main_trace_text =
+                    read_ctx_file(r, &format!("branches/{}/trace.md", ctx::MAIN_BRANCH)).unwrap_or_default();
+                let main_commits: HashSet<String> = parse_commit_contributions(&main_commit_text).into_iter().collect();
+                let main_trace: HashSet<String> = collect_trace_entries(&main_trace_text).into_iter().collect();
+
+                let mut branch_summaries: Vec<ContextBranchSummary> = branches
+                    .iter()
+                    .map(|name| {
+                        let commit_text =
+                            read_ctx_file(r, &format!("branches/{name}/commit.md")).unwrap_or_default();
+                        let trace_text =
+                            read_ctx_file(r, &format!("branches/{name}/trace.md")).unwrap_or_default();
+                        let branch_ctx = ctx::gcc_context(
+                            workdir,
+                            &ctx::ContextOpts {
+                                branch: Some(name.clone()),
+                                commit_hash: None,
+                                show_log: false,
+                                log_offset: 0,
+                                metadata_segment: None,
+                                window: 10,
+                                depth: 2,
+                            },
+                        )
+                        .ok()
+                        .unwrap_or_default();
+                        let branch_commits = parse_commit_contributions(&commit_text);
+                        let branch_trace = collect_trace_entries(&trace_text);
+                        let (exclusive_milestones, exclusive_trace_lines) = if name == ctx::MAIN_BRANCH {
+                            (0, 0)
+                        } else {
+                            (
+                                branch_commits.iter().filter(|c| !main_commits.contains(*c)).count(),
+                                branch_trace.iter().filter(|l| !main_trace.contains(*l)).count(),
+                            )
+                        };
+                        ContextBranchSummary {
+                            branch: name.clone(),
+                            purpose: extract_branch_purpose(&commit_text, name),
+                            last_milestone: branch_commits.last().cloned().unwrap_or_default(),
+                            last_activity: extract_last_commit_timestamp(&commit_text),
+                            todo_count: branch_ctx.todo_items.len(),
+                            trace_lines: count_trace_entries(&trace_text),
+                            milestone_count: branch_commits.len(),
+                            snapshot_count: snapshot_counts.get(name).copied().unwrap_or(0),
+                            exclusive_milestones,
+                            exclusive_trace_lines,
+                            is_scope: name.starts_with("scope/"),
+                        }
+                    })
+                    .collect();
+                branch_summaries.sort_by(|a, b| a.branch.cmp(&b.branch));
+
+                (goal, commit_count, trace_lines, branch_summaries)
             })
             .unwrap_or_default();
 
-        let snapshot_count = repo
-            .as_ref()
-            .map(|r| count_ctx_snapshots(r))
-            .unwrap_or(0);
+        let stale_branch_count = branch_summaries
+            .iter()
+            .filter(|b| b.branch != branch && b.exclusive_milestones == 0 && b.exclusive_trace_lines == 0)
+            .count();
 
         ContextStatusResponse {
             initialized: true,
@@ -632,6 +737,12 @@ async fn api_context_status(State(state): State<Arc<AppState>>) -> Json<ContextS
             commit_count,
             trace_lines,
             snapshot_count,
+            stable_line_count: current_ctx.as_ref().map(|c| c.stable_line_count).unwrap_or(0),
+            dynamic_line_count: current_ctx.as_ref().map(|c| c.dynamic_line_count).unwrap_or(0),
+            todo_count: current_ctx.as_ref().map(|c| c.todo_items.len()).unwrap_or(0),
+            latest_snapshot_timestamp,
+            stale_branch_count,
+            branch_summaries,
         }
     })
     .await;
@@ -642,6 +753,7 @@ async fn api_context_status(State(state): State<Arc<AppState>>) -> Json<ContextS
 struct ContextSnapshotItem {
     sha: String,
     sha_short: String,
+    context_oid: String,
     timestamp: String,
     branch: String,
     goal: String,
@@ -654,50 +766,7 @@ async fn api_context_snapshots(
     let result = tokio::task::spawn_blocking(move || {
         let workdir = &state.repo_path;
         let repo = git2::Repository::discover(workdir).ok()?;
-        let tip = repo
-            .find_reference(ctx::CTX_REF)
-            .ok()
-            .and_then(|r| r.peel_to_commit().ok())?;
-        let tree = tip.tree().ok()?;
-        let snap_entry = tree
-            .get_name("snapshots")
-            .filter(|e| e.kind() == Some(git2::ObjectType::Tree))?;
-        let snap_tree = repo.find_tree(snap_entry.id()).ok()?;
-
-        let mut items: Vec<ContextSnapshotItem> = Vec::new();
-        for entry in snap_tree.iter() {
-            if entry.kind() != Some(git2::ObjectType::Blob) {
-                continue;
-            }
-            let blob = repo.find_blob(entry.id()).ok()?;
-            let text = std::str::from_utf8(blob.content()).ok()?;
-            let mut item = ContextSnapshotItem::default();
-            let mut milestones: Vec<String> = Vec::new();
-            let mut in_milestones = false;
-            for line in text.lines() {
-                if line.starts_with("**Linked commit:**") {
-                    item.sha = line.split("**Linked commit:**").nth(1).unwrap_or("").trim().to_string();
-                    item.sha_short = item.sha.chars().take(8).collect();
-                } else if line.starts_with("**Timestamp:**") {
-                    item.timestamp = line.split("**Timestamp:**").nth(1).unwrap_or("").trim().to_string();
-                } else if line.starts_with("**Branch:**") {
-                    item.branch = line.split("**Branch:**").nth(1).unwrap_or("").trim().to_string();
-                } else if line.starts_with("**Goal:**") {
-                    item.goal = line.split("**Goal:**").nth(1).unwrap_or("").trim().to_string();
-                } else if line.starts_with("## Recent Context Commits") {
-                    in_milestones = true;
-                } else if in_milestones && line.starts_with("- ") {
-                    milestones.push(line[2..].trim().to_string());
-                }
-            }
-            item.recent_milestones = milestones;
-            if !item.sha.is_empty() {
-                items.push(item);
-            }
-        }
-        // Most recent first (sort by timestamp descending — timestamps are ISO-like strings).
-        items.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        Some(items)
+        Some(list_context_snapshots(&repo))
     })
     .await;
     Json(result.unwrap_or(None).unwrap_or_default())
@@ -744,11 +813,16 @@ struct ContextDiffQuery {
 struct ContextDiffResponse {
     from: String,
     to: String,
+    from_branch: String,
+    to_branch: String,
+    cross_branch: bool,
     goal_changed: bool,
     from_goal: String,
     to_goal: String,
     added_milestones: Vec<String>,
+    removed_milestones: Vec<String>,
     added_trace_lines: Vec<String>,
+    removed_trace_lines: Vec<String>,
 }
 
 async fn api_context_diff(
@@ -761,11 +835,16 @@ async fn api_context_diff(
         Some(ContextDiffResponse {
             from: diff.sha1,
             to: diff.sha2,
+            from_branch: diff.from_branch.clone(),
+            to_branch: diff.to_branch.clone(),
+            cross_branch: diff.from_branch != diff.to_branch,
             goal_changed: diff.goal_changed,
             from_goal: diff.from_goal,
             to_goal: diff.to_goal,
             added_milestones: diff.added_commits,
+            removed_milestones: diff.removed_commits,
             added_trace_lines: diff.added_trace_lines,
+            removed_trace_lines: diff.removed_trace_lines,
         })
     })
     .await;
@@ -806,6 +885,171 @@ async fn api_context_relevant(
     Json(result.unwrap_or(None).unwrap_or_default())
 }
 
+#[derive(serde::Deserialize)]
+struct ContextSearchQuery {
+    q: String,
+    limit: Option<usize>,
+}
+
+#[derive(Serialize, Default)]
+struct ContextSearchResultResponse {
+    file: String,
+    score: f64,
+    snippets: Vec<String>,
+    signal: String,
+    cochanged_with: Vec<String>,
+}
+
+async fn api_context_search(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ContextSearchQuery>,
+) -> Json<Vec<ContextSearchResultResponse>> {
+    let result = tokio::task::spawn_blocking(move || {
+        let query = params.q.trim();
+        if query.is_empty() {
+            return Some(Vec::new());
+        }
+        let items = ctx::search(&state.repo_path, query, params.limit.unwrap_or(8)).ok()?;
+        Some(
+            items
+                .into_iter()
+                .map(|r| ContextSearchResultResponse {
+                    file: r.file,
+                    score: r.score,
+                    snippets: r.snippets,
+                    signal: r.signal,
+                    cochanged_with: r.cochanged_with,
+                })
+                .collect(),
+        )
+    })
+    .await;
+    Json(result.unwrap_or(None).unwrap_or_default())
+}
+
+#[derive(serde::Deserialize, Default)]
+struct ContextDagQuery {
+    branch: Option<String>,
+}
+
+#[derive(Serialize, Default)]
+struct ContextDagResponse {
+    branch: String,
+    node_count: usize,
+    observe_count: usize,
+    think_count: usize,
+    act_count: usize,
+    note_count: usize,
+    merge_count: usize,
+    nodes: Vec<ctx::TraceNode>,
+}
+
+async fn api_context_dag(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ContextDagQuery>,
+) -> Json<ContextDagResponse> {
+    let result = tokio::task::spawn_blocking(move || {
+        let workdir = &state.repo_path;
+        if !ctx::is_initialized(workdir) {
+            return Some(ContextDagResponse::default());
+        }
+        let repo = git2::Repository::discover(workdir).ok()?;
+        let branch = params.branch.unwrap_or_else(|| ctx::current_branch(workdir));
+        let dag_text = read_ctx_file(&repo, &format!("branches/{branch}/dag.json")).unwrap_or_default();
+        let dag: ctx::TraceDag = serde_json::from_str(&dag_text).unwrap_or_default();
+        let observe_count = dag.nodes.iter().filter(|n| n.kind == "OBSERVE").count();
+        let think_count = dag.nodes.iter().filter(|n| n.kind == "THINK").count();
+        let act_count = dag.nodes.iter().filter(|n| n.kind == "ACT").count();
+        let note_count = dag.nodes.iter().filter(|n| n.kind == "NOTE").count();
+        let merge_count = dag.nodes.iter().filter(|n| n.kind == "MERGE").count();
+        Some(ContextDagResponse {
+            branch,
+            node_count: dag.nodes.len(),
+            observe_count,
+            think_count,
+            act_count,
+            note_count,
+            merge_count,
+            nodes: dag.nodes,
+        })
+    })
+    .await;
+    Json(result.unwrap_or(None).unwrap_or_default())
+}
+
+#[derive(serde::Deserialize, Default)]
+struct ContextPromotionQuery {
+    branch: Option<String>,
+}
+
+#[derive(Serialize, Default)]
+struct ContextPromotionResponse {
+    branch: String,
+    purpose: String,
+    ephemeral_count: usize,
+    durable_trace_count: usize,
+    milestone_count: usize,
+    snapshot_count: usize,
+    todo_count: usize,
+    stable_line_count: usize,
+    dynamic_line_count: usize,
+    last_snapshot_timestamp: String,
+    recent_milestones: Vec<String>,
+}
+
+async fn api_context_promotion(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ContextPromotionQuery>,
+) -> Json<ContextPromotionResponse> {
+    let result = tokio::task::spawn_blocking(move || {
+        let workdir = &state.repo_path;
+        if !ctx::is_initialized(workdir) {
+            return Some(ContextPromotionResponse::default());
+        }
+        let branch = params.branch.unwrap_or_else(|| ctx::current_branch(workdir));
+        let repo = git2::Repository::discover(workdir).ok()?;
+        let commit_text = read_ctx_file(&repo, &format!("branches/{branch}/commit.md")).unwrap_or_default();
+        let trace_text = read_ctx_file(&repo, &format!("branches/{branch}/trace.md")).unwrap_or_default();
+        let ephemeral_text = read_ctx_file(&repo, &format!("branches/{branch}/ephemeral.md")).unwrap_or_default();
+        let snapshots = list_context_snapshots(&repo);
+        let last_snapshot_timestamp = snapshots
+            .iter()
+            .find(|s| s.branch == branch)
+            .map(|s| s.timestamp.clone())
+            .unwrap_or_default();
+        let branch_ctx = ctx::gcc_context(
+            workdir,
+            &ctx::ContextOpts {
+                branch: Some(branch.clone()),
+                commit_hash: None,
+                show_log: false,
+                log_offset: 0,
+                metadata_segment: None,
+                window: 10,
+                depth: 2,
+            },
+        )
+        .ok()
+        .unwrap_or_default();
+        let milestones = parse_commit_contributions(&commit_text);
+        Some(ContextPromotionResponse {
+            branch: branch.clone(),
+            purpose: extract_branch_purpose(&commit_text, &branch),
+            ephemeral_count: count_trace_entries(&ephemeral_text),
+            durable_trace_count: count_trace_entries(&trace_text),
+            milestone_count: milestones.len(),
+            snapshot_count: snapshots.iter().filter(|s| s.branch == branch).count(),
+            todo_count: branch_ctx.todo_items.len(),
+            stable_line_count: branch_ctx.stable_line_count,
+            dynamic_line_count: branch_ctx.dynamic_line_count,
+            last_snapshot_timestamp,
+            recent_milestones: milestones.into_iter().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect(),
+        })
+    })
+    .await;
+    Json(result.unwrap_or(None).unwrap_or_default())
+}
+
 // ── Context API helpers ───────────────────────────────────────────────────────
 
 fn read_ctx_file(repo: &git2::Repository, vpath: &str) -> Option<String> {
@@ -827,7 +1071,7 @@ fn extract_ctx_section(text: &str, section: &str) -> String {
     String::new()
 }
 
-fn count_ctx_snapshots(repo: &git2::Repository) -> usize {
+fn list_context_snapshots(repo: &git2::Repository) -> Vec<ContextSnapshotItem> {
     let tree = repo
         .find_reference(ctx::CTX_REF)
         .ok()
@@ -835,20 +1079,112 @@ fn count_ctx_snapshots(repo: &git2::Repository) -> usize {
         .and_then(|c| c.tree().ok());
     let tree = match tree {
         Some(t) => t,
-        None => return 0,
+        None => return vec![],
     };
     let snap_entry = match tree
         .get_name("snapshots")
         .filter(|e| e.kind() == Some(git2::ObjectType::Tree))
     {
         Some(e) => e,
-        None => return 0,
+        None => return vec![],
     };
     let snap_tree = match repo.find_tree(snap_entry.id()) {
         Ok(t) => t,
-        Err(_) => return 0,
+        Err(_) => return vec![],
     };
-    snap_tree.iter().filter(|e| e.kind() == Some(git2::ObjectType::Blob)).count()
+
+    let mut items = Vec::new();
+    for entry in snap_tree.iter() {
+        if entry.kind() != Some(git2::ObjectType::Blob) {
+            continue;
+        }
+        let Ok(blob) = repo.find_blob(entry.id()) else {
+            continue;
+        };
+        let Ok(text) = std::str::from_utf8(blob.content()) else {
+            continue;
+        };
+        let mut item = ContextSnapshotItem::default();
+        let mut milestones = Vec::new();
+        let mut in_milestones = false;
+        for line in text.lines() {
+            if line.starts_with("**Linked commit:**") {
+                item.sha = line.split("**Linked commit:**").nth(1).unwrap_or("").trim().to_string();
+                item.sha_short = item.sha.chars().take(8).collect();
+            } else if line.starts_with("**Context ref OID:**") {
+                item.context_oid = line.split("**Context ref OID:**").nth(1).unwrap_or("").trim().to_string();
+            } else if line.starts_with("**Timestamp:**") {
+                item.timestamp = line.split("**Timestamp:**").nth(1).unwrap_or("").trim().to_string();
+            } else if line.starts_with("**Branch:**") {
+                item.branch = line.split("**Branch:**").nth(1).unwrap_or("").trim().to_string();
+            } else if line.starts_with("**Goal:**") {
+                item.goal = line.split("**Goal:**").nth(1).unwrap_or("").trim().to_string();
+            } else if line.starts_with("## Recent Context Commits") {
+                in_milestones = true;
+            } else if in_milestones && line.starts_with("- ") {
+                milestones.push(line[2..].trim().to_string());
+            }
+        }
+        item.recent_milestones = milestones;
+        if !item.sha.is_empty() {
+            items.push(item);
+        }
+    }
+    items.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    items
+}
+
+fn parse_commit_contributions(commit_text: &str) -> Vec<String> {
+    let mut contributions = Vec::new();
+    for entry in commit_text.split("## Commit ").skip(1) {
+        if let Some(start) = entry.find("### This Commit's Contribution") {
+            let after = &entry[start + "### This Commit's Contribution".len()..];
+            let end = after.find("\n---").unwrap_or(after.len());
+            let text = after[..end].trim().to_string();
+            if !text.is_empty() {
+                contributions.push(text);
+            }
+        }
+    }
+    contributions
+}
+
+fn extract_branch_purpose(commit_text: &str, branch: &str) -> String {
+    commit_text
+        .lines()
+        .find(|line| line.starts_with("**Purpose:**"))
+        .map(|line| line.split("**Purpose:**").nth(1).unwrap_or("").trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Branch: {branch}"))
+}
+
+fn extract_last_commit_timestamp(commit_text: &str) -> String {
+    commit_text
+        .lines()
+        .rev()
+        .find(|line| line.starts_with("## Commit ") && line.contains(" — "))
+        .and_then(|line| line.split(" — ").nth(1))
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn collect_trace_entries(trace_text: &str) -> Vec<String> {
+    trace_text
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.is_empty()
+                && !trimmed.starts_with('#')
+                && !trimmed.starts_with("---")
+                && !trimmed.starts_with("_[Checkpoint")
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+fn count_trace_entries(trace_text: &str) -> usize {
+    collect_trace_entries(trace_text).len()
 }
 
 // ── Server entry point ────────────────────────────────────────────────────────
@@ -874,6 +1210,9 @@ pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
         .route("/api/context/show", get(api_context_show))
         .route("/api/context/diff", get(api_context_diff))
         .route("/api/context/relevant", get(api_context_relevant))
+        .route("/api/context/search", get(api_context_search))
+        .route("/api/context/dag", get(api_context_dag))
+        .route("/api/context/promotion", get(api_context_promotion))
         .with_state(state);
 
     let addr = format!("127.0.0.1:{}", port);
@@ -1335,6 +1674,50 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 .ctx-tag-branch{background:#1a3a2a;color:#3fb950}
 .ctx-mention-text{font-size:12px;color:#c9d1d9;line-height:1.5}
 .ctx-mention-row{padding:5px 0;border-bottom:1px solid #21262d;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+.ctx-health-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 14px}
+.ctx-health-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 12px}
+.ctx-health-label{font-size:10px;color:#484f58;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
+.ctx-health-value{font-size:18px;font-weight:700;color:#e6edf3;line-height:1.2}
+.ctx-health-sub{font-size:11px;color:#8b949e;margin-top:4px}
+.ctx-branch-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.ctx-branch-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px}
+.ctx-branch-top{display:flex;align-items:center;gap:8px;justify-content:space-between;margin-bottom:8px}
+.ctx-branch-name{font-size:12px;font-weight:700;color:#e6edf3}
+.ctx-branch-purpose{font-size:11px;color:#8b949e;line-height:1.5;min-height:34px}
+.ctx-branch-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:10px;color:#484f58}
+.ctx-branch-kpi{display:inline-flex;align-items:center;gap:4px}
+.ctx-search-results{display:grid;gap:8px}
+.ctx-search-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px}
+.ctx-search-top{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap}
+.ctx-search-file{font-family:monospace;font-size:12px;color:#58a6ff}
+.ctx-search-score{font-size:10px;background:#1f3a5f44;color:#58a6ff;padding:2px 8px;border-radius:10px}
+.ctx-search-signal{font-size:10px;background:#21262d;color:#8b949e;padding:2px 8px;border-radius:10px}
+.ctx-search-snippet{font-size:11px;color:#c9d1d9;line-height:1.5;margin-top:6px}
+.ctx-dag-list{display:flex;flex-direction:column;gap:8px}
+.ctx-dag-node{background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:10px 12px}
+.ctx-dag-node-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.ctx-dag-id{font-family:monospace;font-size:10px;color:#8b949e}
+.ctx-dag-content{font-size:12px;color:#c9d1d9;line-height:1.6}
+.ctx-dag-parents{font-size:10px;color:#484f58;margin-top:5px}
+.ctx-kind-pill{font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px}
+.ctx-kind-OBSERVE{background:#1f3a5f;color:#58a6ff}
+.ctx-kind-THINK{background:#2d1f4f;color:#bc8cff}
+.ctx-kind-ACT{background:#1a3a2a;color:#3fb950}
+.ctx-kind-NOTE{background:#3b2e00;color:#e3b341}
+.ctx-kind-MERGE{background:#4b1d5f;color:#ff7bff}
+.ctx-promo-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.ctx-promo-step{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px;text-align:center}
+.ctx-promo-step strong{display:block;font-size:18px;color:#e6edf3}
+.ctx-promo-step span{display:block;font-size:10px;color:#484f58;text-transform:uppercase;letter-spacing:.06em;margin-top:3px}
+.ctx-promo-detail{margin-top:10px;font-size:11px;color:#8b949e;display:flex;gap:14px;flex-wrap:wrap}
+.ctx-warning{background:#3b2e0044;border:1px solid #e3b34144;color:#e3b341;border-radius:8px;padding:9px 11px;font-size:12px;line-height:1.6;margin-bottom:12px}
+.ctx-diff-removed{color:#f85149;padding:3px 0;font-size:12px;display:flex;gap:6px}
+.ctx-diff-removed::before{content:"-";font-weight:700;flex-shrink:0}
+@media (max-width: 900px){
+  .ctx-layout{grid-template-columns:1fr}
+  .ctx-health-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctx-promo-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
 </style>
 </head>
 <body>
@@ -1572,6 +1955,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
       <div id="ctx-main" style="display:none">
         <!-- Branch navigator -->
         <div class="ctx-branch-nav" id="ctx-branch-nav"></div>
+        <div class="ctx-health-grid" id="ctx-health-grid"></div>
+
+        <div class="ctx-section" style="margin-top:0;border-top:none;padding-top:0">
+          <div class="ctx-section-header">
+            <span class="ctx-section-title">Branch Workspace</span>
+          </div>
+          <div class="ctx-branch-grid" id="ctx-branch-grid"></div>
+        </div>
 
         <!-- Snapshot list + viewer -->
         <div class="ctx-layout">
@@ -1614,6 +2005,30 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
           <div class="ctx-trace-stat" id="ctx-trace-stat"></div>
         </div>
 
+        <div class="ctx-section">
+          <div class="ctx-section-header">
+            <span class="ctx-section-title">Promotion Funnel</span>
+            <span class="ctx-section-sub" id="ctx-promo-branch-label"></span>
+            <button class="ctx-btn-ghost" style="font-size:11px;padding:3px 8px" onclick="loadCtxPromotion()">↻</button>
+          </div>
+          <div id="ctx-promo-box">
+            <div class="ctx-viewer-empty" style="padding:24px 0">Loading…</div>
+          </div>
+        </div>
+
+        <div class="ctx-section">
+          <div class="ctx-section-header">
+            <span class="ctx-section-title">Context Search</span>
+          </div>
+          <div class="ctx-relevant-search">
+            <input class="ctx-relevant-input" id="ctx-search-input" type="text"
+              placeholder="auth token validation race condition"
+              onkeydown="if(event.key==='Enter')runCtxSearch()">
+            <button class="ctx-btn" onclick="runCtxSearch()">Search</button>
+          </div>
+          <div class="ctx-search-results" id="ctx-search-results"></div>
+        </div>
+
         <!-- Relevant-file search -->
         <div class="ctx-section">
           <div class="ctx-section-header">
@@ -1626,6 +2041,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
             <button class="ctx-btn" onclick="runCtxRelevant()">Search</button>
           </div>
           <div id="ctx-rel-results"></div>
+        </div>
+
+        <div class="ctx-section">
+          <div class="ctx-section-header">
+            <span class="ctx-section-title">Reasoning DAG</span>
+            <span class="ctx-section-sub" id="ctx-dag-branch-label"></span>
+            <button class="ctx-btn-ghost" style="font-size:11px;padding:3px 8px" onclick="loadCtxDag()">↻</button>
+          </div>
+          <div class="ctx-trace-stat" id="ctx-dag-stat"></div>
+          <div class="ctx-dag-list" id="ctx-dag-box">
+            <div class="ctx-viewer-empty" style="padding:24px 0">Loading…</div>
+          </div>
         </div>
       </div>
     </div>
@@ -2818,6 +3245,9 @@ let ctxSelTo = null;
 let ctxActiveBranch = 'main';
 let ctxAllTraceLines = [];
 let ctxTraceFilter = 'all';
+let ctxStatus = null;
+let ctxDag = null;
+let ctxPromotion = null;
 
 async function loadContextTab() {
   try {
@@ -2826,6 +3256,7 @@ async function loadContextTab() {
       fetch('/api/context/snapshots').then(r => r.json()),
     ]);
 
+    ctxStatus = status || null;
     const sb = id('ctx-status-bar');
     if (status.initialized) {
       ctxActiveBranch = status.current_branch || 'main';
@@ -2842,8 +3273,12 @@ async function loadContextTab() {
           <div class="ctx-stat-item"><div class="ctx-stat-val">${status.branch_count ?? 1}</div><div class="ctx-stat-lbl">Branches</div></div>
         </div>`;
       renderCtxBranchNav(Array.isArray(status.branches) ? status.branches : [], ctxActiveBranch);
+      renderCtxHealth(status);
+      renderCtxBranchGrid(Array.isArray(status.branch_summaries) ? status.branch_summaries : []);
     } else {
       sb.innerHTML = '';
+      id('ctx-health-grid').innerHTML = '';
+      id('ctx-branch-grid').innerHTML = '';
     }
 
     const notInit = id('ctx-not-init');
@@ -2861,10 +3296,43 @@ async function loadContextTab() {
     setText('tab-ctx-count', ctxSnapshots.length);
     renderCtxSnapshots();
     loadCtxTrace(ctxActiveBranch);
+    loadCtxDag(ctxActiveBranch);
+    loadCtxPromotion(ctxActiveBranch);
   } catch(e) {
     console.error('loadContextTab', e);
     id('ctx-snap-list').innerHTML = '<div class="empty-state">Failed to load context data.</div>';
   }
+}
+
+function renderCtxHealth(status) {
+  const el = id('ctx-health-grid');
+  if (!el) return;
+  const latestSnapshot = status.latest_snapshot_timestamp || 'No snapshots yet';
+  const stable = status.stable_line_count ?? 0;
+  const dynamic = status.dynamic_line_count ?? 0;
+  const total = stable + dynamic;
+  const ratio = total ? `${stable}/${dynamic}` : '0/0';
+  el.innerHTML = `
+    <div class="ctx-health-card">
+      <div class="ctx-health-label">Open TODOs</div>
+      <div class="ctx-health-value">${status.todo_count ?? 0}</div>
+      <div class="ctx-health-sub">THINK / NOTE follow-ups</div>
+    </div>
+    <div class="ctx-health-card">
+      <div class="ctx-health-label">Stable vs Live</div>
+      <div class="ctx-health-value">${esc(ratio)}</div>
+      <div class="ctx-health-sub">${total} trace lines in current branch</div>
+    </div>
+    <div class="ctx-health-card">
+      <div class="ctx-health-label">Latest Snapshot</div>
+      <div class="ctx-health-value" style="font-size:14px">${esc(latestSnapshot)}</div>
+      <div class="ctx-health-sub">${status.snapshot_count ?? 0} snapshots captured</div>
+    </div>
+    <div class="ctx-health-card">
+      <div class="ctx-health-label">Stale Branches</div>
+      <div class="ctx-health-value">${status.stale_branch_count ?? 0}</div>
+      <div class="ctx-health-sub">No exclusive milestones or trace</div>
+    </div>`;
 }
 
 function renderCtxBranchNav(branches, activeBranch) {
@@ -2888,7 +3356,13 @@ function switchCtxBranch(branch) {
   });
   const lbl = id('ctx-trace-branch-label');
   if (lbl) lbl.textContent = branch;
+  const dagLbl = id('ctx-dag-branch-label');
+  if (dagLbl) dagLbl.textContent = branch;
+  const promoLbl = id('ctx-promo-branch-label');
+  if (promoLbl) promoLbl.textContent = branch;
   loadCtxTrace(branch);
+  loadCtxDag(branch);
+  loadCtxPromotion(branch);
 }
 
 async function loadCtxTrace(branch) {
@@ -2905,6 +3379,31 @@ async function loadCtxTrace(branch) {
   } catch(e) {
     traceEl.innerHTML = '<div class="ctx-viewer-empty" style="padding:20px">Failed to load trace.</div>';
   }
+}
+
+function renderCtxBranchGrid(summaries) {
+  const el = id('ctx-branch-grid');
+  if (!el) return;
+  if (!summaries.length) {
+    el.innerHTML = '<div class="ctx-viewer-empty" style="padding:24px 0">No branches found.</div>';
+    return;
+  }
+  el.innerHTML = summaries.map(s => `
+    <div class="ctx-branch-card" onclick="switchCtxBranch('${esc(s.branch)}')">
+      <div class="ctx-branch-top">
+        <span class="ctx-branch-name">${esc(s.branch)}</span>
+        <span class="ctx-search-score">${s.is_scope ? 'scope' : 'branch'}</span>
+      </div>
+      <div class="ctx-branch-purpose">${esc(s.purpose || 'No purpose recorded')}</div>
+      <div class="ctx-branch-meta">
+        <span class="ctx-branch-kpi">◈ ${s.milestone_count ?? 0}</span>
+        <span class="ctx-branch-kpi">● ${s.trace_lines ?? 0}</span>
+        <span class="ctx-branch-kpi">☑ ${s.todo_count ?? 0}</span>
+        <span class="ctx-branch-kpi">⇡ ${s.exclusive_milestones ?? 0}/${s.exclusive_trace_lines ?? 0}</span>
+      </div>
+      <div class="ctx-health-sub" style="margin-top:8px">${esc(s.last_milestone || s.last_activity || 'No recent milestone')}</div>
+    </div>
+  `).join('');
 }
 
 function renderCtxTrace() {
@@ -3034,6 +3533,9 @@ function showCtxViewer(s) {
   } else {
     html += `<div class="ctx-viewer-empty" style="padding:16px 0">No milestones recorded at this snapshot.</div>`;
   }
+  if (s.context_oid) {
+    html += `<div class="ctx-viewer-section-title">Context Ref</div><div class="ctx-mention-row"><span class="ctx-mention-tag ctx-tag-branch">OID</span><span class="ctx-mention-text">${esc(s.context_oid)}</span></div>`;
+  }
   id('ctx-viewer').innerHTML = html;
 }
 
@@ -3054,18 +3556,29 @@ async function runCtxDiff() {
       <span style="color:#484f58;font-size:12px">→</span>
       <span class="ctx-snap-sha" style="background:#58a6ff22;color:#58a6ff">${esc(d.to.slice(0,8))}</span>
     </div>`;
+    if (d.cross_branch) {
+      html += `<div class="ctx-warning">Comparing snapshots across branches: <strong>${esc(d.from_branch || '?')}</strong> → <strong>${esc(d.to_branch || '?')}</strong>. Divergence counts and removed items may reflect branch-specific context, not just forward progress.</div>`;
+    }
     if (d.goal_changed) {
       html += `<div class="ctx-diff-goal-change"><div class="ctx-diff-from">${esc(d.from_goal)}</div><div class="ctx-diff-to">${esc(d.to_goal)}</div></div>`;
     }
     if (d.added_milestones && d.added_milestones.length) {
       html += `<div class="ctx-diff-section"><div class="ctx-diff-section-title">New Milestones</div>${d.added_milestones.map(m => `<div class="ctx-diff-added">${esc(m)}</div>`).join('')}</div>`;
     }
+    if (d.removed_milestones && d.removed_milestones.length) {
+      html += `<div class="ctx-diff-section"><div class="ctx-diff-section-title">Removed Milestones</div>${d.removed_milestones.map(m => `<div class="ctx-diff-removed">${esc(m)}</div>`).join('')}</div>`;
+    }
     if (d.added_trace_lines && d.added_trace_lines.length) {
       const shown = d.added_trace_lines.slice(0, 40);
       const more = d.added_trace_lines.length > 40 ? `<div style="color:#484f58;font-size:11px;padding:4px 0">…and ${d.added_trace_lines.length - 40} more</div>` : '';
       html += `<div class="ctx-diff-section"><div class="ctx-diff-section-title">New Trace Lines</div>${shown.map(l => `<div class="ctx-diff-added" style="font-family:monospace">${esc(l)}</div>`).join('')}${more}</div>`;
     }
-    if (!d.goal_changed && !(d.added_milestones||[]).length && !(d.added_trace_lines||[]).length) {
+    if (d.removed_trace_lines && d.removed_trace_lines.length) {
+      const shown = d.removed_trace_lines.slice(0, 40);
+      const more = d.removed_trace_lines.length > 40 ? `<div style="color:#484f58;font-size:11px;padding:4px 0">…and ${d.removed_trace_lines.length - 40} more</div>` : '';
+      html += `<div class="ctx-diff-section"><div class="ctx-diff-section-title">Removed Trace Lines</div>${shown.map(l => `<div class="ctx-diff-removed" style="font-family:monospace">${esc(l)}</div>`).join('')}${more}</div>`;
+    }
+    if (!d.goal_changed && !(d.added_milestones||[]).length && !(d.removed_milestones||[]).length && !(d.added_trace_lines||[]).length && !(d.removed_trace_lines||[]).length) {
       html += '<div class="ctx-viewer-empty" style="padding:20px 0">No differences found.</div>';
     }
     viewer.innerHTML = html;
@@ -3094,6 +3607,110 @@ async function runCtxRelevant() {
   } catch(e) {
     resultsEl.innerHTML = `<div class="empty-state">Search failed: ${esc(String(e))}</div>`;
   }
+}
+
+async function runCtxSearch() {
+  const query = id('ctx-search-input').value.trim();
+  const resultsEl = id('ctx-search-results');
+  if (!query) {
+    resultsEl.innerHTML = '<div class="ctx-viewer-empty" style="padding:12px 0">Enter a query to search context by intent.</div>';
+    return;
+  }
+  resultsEl.innerHTML = '<div class="empty-state"><span class="spinner"></span> Searching context…</div>';
+  try {
+    const rows = await fetch(`/api/context/search?q=${encodeURIComponent(query)}&limit=8`).then(r => r.json());
+    if (!Array.isArray(rows) || !rows.length) {
+      resultsEl.innerHTML = '<div class="ctx-viewer-empty" style="padding:12px 0">No ranked context hits found for this query.</div>';
+      return;
+    }
+    resultsEl.innerHTML = rows.map(r => `
+      <div class="ctx-search-card" onclick="id('ctx-rel-input').value='${esc(r.file)}';runCtxRelevant()">
+        <div class="ctx-search-top">
+          <span class="ctx-search-file">${esc(r.file)}</span>
+          <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <span class="ctx-search-signal">${esc(r.signal || 'trace')}</span>
+            <span class="ctx-search-score">score ${(r.score || 0).toFixed(2)}</span>
+          </span>
+        </div>
+        ${(r.snippets || []).slice(0, 3).map(s => `<div class="ctx-search-snippet">${esc(s)}</div>`).join('')}
+      </div>
+    `).join('');
+  } catch(e) {
+    resultsEl.innerHTML = `<div class="empty-state">Search failed: ${esc(String(e))}</div>`;
+  }
+}
+
+async function loadCtxDag(branch) {
+  const b = branch || ctxActiveBranch || 'main';
+  const el = id('ctx-dag-box');
+  if (!el) return;
+  setText('ctx-dag-branch-label', b);
+  el.innerHTML = '<div class="ctx-viewer-empty" style="padding:24px 0">Loading…</div>';
+  try {
+    ctxDag = await fetch(`/api/context/dag?branch=${encodeURIComponent(b)}`).then(r => r.json());
+    renderCtxDag(ctxDag);
+  } catch(e) {
+    el.innerHTML = `<div class="ctx-viewer-empty" style="padding:24px 0">Failed to load DAG: ${esc(String(e))}</div>`;
+  }
+}
+
+function renderCtxDag(data) {
+  const el = id('ctx-dag-box');
+  const stat = id('ctx-dag-stat');
+  if (!el || !stat) return;
+  if (!data || !Array.isArray(data.nodes) || !data.nodes.length) {
+    stat.innerHTML = '';
+    el.innerHTML = '<div class="ctx-viewer-empty" style="padding:24px 0">No DAG nodes yet for this branch.</div>';
+    return;
+  }
+  stat.innerHTML = `<span style="color:#58a6ff">● ${data.observe_count || 0} observe</span><span style="color:#bc8cff">◆ ${data.think_count || 0} think</span><span style="color:#3fb950">■ ${data.act_count || 0} act</span><span style="color:#e3b341">○ ${data.note_count || 0} note</span><span style="color:#ff7bff">⊕ ${data.merge_count || 0} merge</span><span>— ${data.node_count || 0} total</span>`;
+  el.innerHTML = data.nodes.slice(-14).reverse().map(n => `
+    <div class="ctx-dag-node">
+      <div class="ctx-dag-node-top">
+        <span class="ctx-kind-pill ctx-kind-${esc(n.kind)}">${esc(n.kind)}</span>
+        <span class="ctx-dag-id">${esc((n.id || '').slice(0, 8))}</span>
+        <span class="ctx-snap-ts">${esc(n.timestamp || '')}</span>
+      </div>
+      <div class="ctx-dag-content">${esc(n.content || '')}</div>
+      ${(n.parent_ids || []).length ? `<div class="ctx-dag-parents">parents: ${esc((n.parent_ids || []).map(p => p.slice(0, 8)).join(', '))}</div>` : ''}
+    </div>
+  `).join('');
+}
+
+async function loadCtxPromotion(branch) {
+  const b = branch || ctxActiveBranch || 'main';
+  const el = id('ctx-promo-box');
+  if (!el) return;
+  setText('ctx-promo-branch-label', b);
+  el.innerHTML = '<div class="ctx-viewer-empty" style="padding:24px 0">Loading…</div>';
+  try {
+    ctxPromotion = await fetch(`/api/context/promotion?branch=${encodeURIComponent(b)}`).then(r => r.json());
+    renderCtxPromotion(ctxPromotion);
+  } catch(e) {
+    el.innerHTML = `<div class="ctx-viewer-empty" style="padding:24px 0">Failed to load promotion state: ${esc(String(e))}</div>`;
+  }
+}
+
+function renderCtxPromotion(data) {
+  const el = id('ctx-promo-box');
+  if (!el || !data) return;
+  const milestones = Array.isArray(data.recent_milestones) ? data.recent_milestones : [];
+  el.innerHTML = `
+    <div class="ctx-promo-grid">
+      <div class="ctx-promo-step"><strong>${data.ephemeral_count ?? 0}</strong><span>Ephemeral</span></div>
+      <div class="ctx-promo-step"><strong>${data.durable_trace_count ?? 0}</strong><span>Durable Trace</span></div>
+      <div class="ctx-promo-step"><strong>${data.milestone_count ?? 0}</strong><span>Milestones</span></div>
+      <div class="ctx-promo-step"><strong>${data.snapshot_count ?? 0}</strong><span>Snapshots</span></div>
+      <div class="ctx-promo-step"><strong>${data.todo_count ?? 0}</strong><span>Open TODOs</span></div>
+    </div>
+    <div class="ctx-promo-detail">
+      <span>purpose: ${esc(data.purpose || 'No purpose recorded')}</span>
+      <span>stable/live: ${data.stable_line_count ?? 0}/${data.dynamic_line_count ?? 0}</span>
+      <span>last snapshot: ${esc(data.last_snapshot_timestamp || 'none')}</span>
+    </div>
+    <div class="ctx-viewer-section-title">Recent Promoted Milestones</div>
+    ${milestones.length ? milestones.map(m => `<div class="ctx-milestone-entry">${esc(m)}</div>`).join('') : '<div class="ctx-viewer-empty" style="padding:12px 0">Nothing promoted to milestone yet.</div>'}
+  `;
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────
@@ -3376,6 +3993,9 @@ mod frontend_tests {
             "/api/context/show",
             "/api/context/diff",
             "/api/context/relevant",
+            "/api/context/search",
+            "/api/context/dag",
+            "/api/context/promotion",
         ]
         .into_iter()
         .collect();
