@@ -1236,53 +1236,96 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 .sl-empty{color:#484f58;font-size:13px;padding:20px 0}
 
 /* ── Context tab ── */
-.ctx-not-init{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:32px;text-align:center;color:#484f58;font-size:13px;line-height:1.8}
-.ctx-not-init code{background:#21262d;padding:2px 8px;border-radius:4px;font-size:12px;color:#8b949e}
-.ctx-status-bar{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:20px;align-items:center}
-.ctx-goal{font-size:13px;color:#bc8cff;font-style:italic;flex:1;min-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ctx-meta{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:#8b949e}
-.ctx-meta b{color:#e6edf3}
-.ctx-layout{display:grid;grid-template-columns:280px 1fr;gap:14px;align-items:start}
-.ctx-snap-list{display:flex;flex-direction:column;gap:6px;max-height:420px;overflow-y:auto}
-.ctx-snap-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 12px;cursor:pointer;transition:all .15s;position:relative}
+.ctx-not-init{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:48px 32px;text-align:center;color:#484f58;font-size:13px;line-height:2}
+.ctx-not-init-icon{font-size:28px;margin-bottom:10px}
+.ctx-not-init code{background:#21262d;padding:3px 10px;border-radius:4px;font-size:12px;color:#8b949e}
+.ctx-not-init-cmd{margin-top:10px}
+.ctx-goal-bar{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 16px;margin-bottom:10px;display:flex;align-items:center;gap:10px}
+.ctx-goal-icon{font-size:13px;color:#bc8cff;flex-shrink:0}
+.ctx-goal-text{font-size:13px;color:#bc8cff;font-style:italic;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctx-goal-branch{display:inline-flex;align-items:center;background:#1a3a2a;color:#3fb950;border-radius:10px;font-size:10px;font-weight:700;padding:2px 9px;white-space:nowrap;flex-shrink:0}
+.ctx-stats-bar{display:flex;gap:0;margin-bottom:14px;background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden}
+.ctx-stat-item{flex:1;padding:10px 14px;text-align:center;border-right:1px solid #30363d}
+.ctx-stat-item:last-child{border-right:none}
+.ctx-stat-val{font-size:18px;font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums;line-height:1.2}
+.ctx-stat-lbl{font-size:10px;color:#484f58;text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+.ctx-branch-nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+.ctx-branch-nav-label{font-size:10px;color:#484f58;text-transform:uppercase;letter-spacing:.06em;margin-right:4px;white-space:nowrap}
+.ctx-branch-pill{background:#21262d;border:1px solid #30363d;border-radius:20px;color:#8b949e;padding:4px 12px;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
+.ctx-branch-pill:hover{border-color:#484f58;color:#e6edf3}
+.ctx-branch-pill.active{background:#1a3a2a;border-color:#3fb950;color:#3fb950}
+.ctx-branch-pill.scope{border-color:#58a6ff44;color:#58a6ff99}
+.ctx-branch-pill.scope.active{background:#1f3a5f;border-color:#58a6ff;color:#58a6ff}
+.ctx-layout{display:grid;grid-template-columns:260px 1fr;gap:14px;align-items:start;margin-bottom:16px}
+.ctx-left-col{display:flex;flex-direction:column;gap:8px}
+.ctx-right-col{min-height:280px}
+.ctx-pane-header{display:flex;align-items:center;justify-content:space-between;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#484f58;padding:0 2px 7px;border-bottom:1px solid #21262d}
+.ctx-pane-header span:last-child{background:#21262d;border-radius:8px;padding:1px 8px;color:#8b949e;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400}
+.ctx-snap-list{display:flex;flex-direction:column;gap:5px;max-height:360px;overflow-y:auto}
+.ctx-snap-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:9px 11px;cursor:pointer;transition:all .15s;position:relative}
 .ctx-snap-card:hover{border-color:#484f58;background:#1c2128}
-.ctx-snap-card.sel-from{border-color:#58a6ff;box-shadow:0 0 0 1px #58a6ff33}
-.ctx-snap-card.sel-to{border-color:#bc8cff;box-shadow:0 0 0 1px #bc8cff33}
+.ctx-snap-card.sel-from{border-color:#58a6ff;box-shadow:0 0 0 1px #58a6ff33;background:#1c2940}
+.ctx-snap-card.sel-to{border-color:#bc8cff;box-shadow:0 0 0 1px #bc8cff33;background:#22192f}
 .ctx-snap-sha{font-family:monospace;font-size:11px;font-weight:700;background:#bc8cff22;color:#bc8cff;padding:1px 6px;border-radius:4px}
-.ctx-snap-ts{font-size:10px;color:#484f58;margin-left:6px}
-.ctx-snap-branch{font-size:11px;color:#8b949e;margin-top:3px}
+.ctx-snap-ts{font-size:10px;color:#484f58;margin-left:5px}
+.ctx-snap-badge{font-size:10px;color:#8b949e;margin-top:3px}
 .ctx-snap-goal{font-size:11px;color:#8b949e;font-style:italic;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ctx-sel-badge{position:absolute;top:7px;right:8px;font-size:9px;font-weight:700;padding:1px 7px;border-radius:8px}
 .ctx-sel-from-badge{background:#1f3a5f;color:#58a6ff}
 .ctx-sel-to-badge{background:#2d1f4f;color:#bc8cff}
-.ctx-viewer{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;min-height:300px}
-.ctx-viewer-empty{color:#484f58;text-align:center;padding:50px 20px;font-size:13px;line-height:1.8}
-.ctx-viewer-hdr{font-size:13px;font-weight:600;color:#e6edf3;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.ctx-controls{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
+.ctx-controls{display:flex;gap:6px;align-items:center}
 .ctx-btn{background:linear-gradient(90deg,#bc8cff,#58a6ff);border:none;border-radius:6px;color:#fff;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;transition:opacity .15s}
 .ctx-btn:hover{opacity:.85}
 .ctx-btn:disabled{opacity:.4;cursor:not-allowed}
 .ctx-btn-ghost{background:#21262d;border:1px solid #30363d;border-radius:6px;color:#8b949e;padding:5px 12px;font-size:12px;cursor:pointer;transition:all .15s}
 .ctx-btn-ghost:hover{color:#e6edf3;border-color:#8b949e}
-.ctx-hint{font-size:11px;color:#484f58}
-.ctx-milestone{padding:5px 0;font-size:12px;color:#c9d1d9;border-bottom:1px solid #21262d;display:flex;align-items:baseline;gap:8px}
-.ctx-milestone::before{content:"◈";color:#bc8cff;flex-shrink:0}
-.ctx-trace-box{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:10px;font-size:11px;font-family:monospace;max-height:260px;overflow-y:auto;line-height:1.6;white-space:pre-wrap;color:#8b949e;margin-top:8px}
-.ctx-trace-line-observe{color:#58a6ff}
-.ctx-trace-line-think{color:#bc8cff}
-.ctx-trace-line-act{color:#3fb950}
-.ctx-trace-line-note{color:#e3b341}
+.ctx-hint{font-size:10px;color:#484f58;line-height:1.4}
+.ctx-viewer{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;min-height:280px}
+.ctx-viewer-empty{color:#484f58;text-align:center;padding:60px 20px;font-size:13px;line-height:1.8}
+.ctx-viewer-hdr{display:flex;align-items:center;gap:8px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #30363d}
+.ctx-viewer-sha{font-family:monospace;font-size:12px;font-weight:700;color:#bc8cff;background:#bc8cff22;padding:2px 8px;border-radius:4px}
+.ctx-viewer-ts{font-size:11px;color:#484f58}
+.ctx-viewer-goal{font-size:13px;color:#bc8cff;font-style:italic;margin:8px 0;padding:8px 12px;background:#2d1f4f44;border-radius:6px;border-left:3px solid #bc8cff44}
+.ctx-viewer-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#484f58;margin:12px 0 6px;padding-bottom:4px;border-bottom:1px solid #21262d}
+.ctx-milestone-entry{padding:5px 0;font-size:12px;color:#c9d1d9;border-bottom:1px solid #21262d11;display:flex;align-items:baseline;gap:8px}
+.ctx-milestone-entry::before{content:"◈";color:#bc8cff;flex-shrink:0}
+.ctx-section{margin-top:16px;border-top:1px solid #30363d;padding-top:14px}
+.ctx-section-header{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.ctx-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#484f58}
+.ctx-section-sub{font-size:11px;color:#58a6ff;background:#1f3a5f44;padding:1px 8px;border-radius:8px}
+.ctx-trace-filters{display:flex;gap:4px;flex:1;flex-wrap:wrap}
+.ctx-filter-btn{background:#21262d;border:1px solid #30363d;border-radius:12px;color:#8b949e;padding:3px 10px;font-size:10px;font-weight:600;cursor:pointer;transition:all .15s;text-transform:uppercase;letter-spacing:.04em}
+.ctx-filter-btn:hover{border-color:#484f58;color:#e6edf3}
+.ctx-filter-btn.active[data-kind=all]{background:#21262d;border-color:#484f58;color:#e6edf3}
+.ctx-filter-btn.active[data-kind=OBSERVE]{background:#1f3a5f44;border-color:#58a6ff;color:#58a6ff}
+.ctx-filter-btn.active[data-kind=THINK]{background:#2d1f4f44;border-color:#bc8cff;color:#bc8cff}
+.ctx-filter-btn.active[data-kind=ACT]{background:#1a3a2a44;border-color:#3fb950;color:#3fb950}
+.ctx-filter-btn.active[data-kind=NOTE]{background:#3b2e0044;border-color:#e3b341;color:#e3b341}
+.ctx-trace-timeline{background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:0;max-height:320px;overflow-y:auto;font-size:11px;font-family:monospace;line-height:1.6}
+.ctx-tl-checkpoint{padding:5px 14px;background:#21262d88;border-bottom:1px solid #30363d;color:#484f58;font-size:10px;display:flex;align-items:center;gap:6px;position:sticky;top:0}
+.ctx-tl-checkpoint::before{content:"● ";color:#bc8cff;font-size:9px}
+.ctx-tl-entry{display:flex;align-items:baseline;gap:8px;padding:3px 14px;border-bottom:1px solid #21262d11;transition:background .1s}
+.ctx-tl-entry:hover{background:#21262d44}
+.ctx-tl-entry.kind-OBSERVE{border-left:2px solid #58a6ff44}
+.ctx-tl-entry.kind-THINK{border-left:2px solid #bc8cff44}
+.ctx-tl-entry.kind-ACT{border-left:2px solid #3fb95044}
+.ctx-tl-entry.kind-NOTE{border-left:2px solid #e3b34144}
+.ctx-tl-time{font-size:9px;color:#484f58;flex-shrink:0;min-width:52px}
+.ctx-tl-kind{font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;flex-shrink:0;min-width:52px;text-align:center}
+.ctx-tl-kind-OBSERVE{background:#1f3a5f;color:#58a6ff}
+.ctx-tl-kind-THINK{background:#2d1f4f;color:#bc8cff}
+.ctx-tl-kind-ACT{background:#1a3a2a;color:#3fb950}
+.ctx-tl-kind-NOTE{background:#3b2e00;color:#e3b341}
+.ctx-tl-text{color:#c9d1d9;white-space:pre-wrap;word-break:break-word;flex:1}
+.ctx-trace-stat{display:flex;gap:10px;margin-top:6px;font-size:10px;color:#484f58;flex-wrap:wrap;align-items:center}
+.ctx-diff-hdr{display:flex;align-items:center;gap:6px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #30363d}
+.ctx-diff-goal-change{background:#2d1f4f44;border:1px solid #bc8cff44;border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px;line-height:1.7}
+.ctx-diff-from{color:#f85149;text-decoration:line-through;opacity:.7;margin-bottom:4px}
+.ctx-diff-to{color:#3fb950}
+.ctx-diff-section{margin-bottom:12px}
+.ctx-diff-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#484f58;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #21262d}
 .ctx-diff-added{color:#3fb950;padding:3px 0;font-size:12px;display:flex;gap:6px}
 .ctx-diff-added::before{content:"+";font-weight:700;flex-shrink:0}
-.ctx-diff-section{margin-bottom:14px}
-.ctx-diff-section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#484f58;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #21262d}
-.ctx-goal-change{background:#2d1f4f;border:1px solid #bc8cff44;border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px}
-.ctx-goal-from{color:#8b949e;margin-bottom:4px}
-.ctx-goal-to{color:#bc8cff}
-.ctx-trace-stat{display:flex;gap:14px;margin-top:6px;font-size:11px;color:#484f58;flex-wrap:wrap}
-.ctx-trace-stat b{color:#8b949e}
-.ctx-relevant-section{margin-top:16px;border-top:1px solid #30363d;padding-top:14px}
-.ctx-relevant-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#484f58;margin-bottom:10px}
 .ctx-relevant-search{display:flex;gap:8px;margin-bottom:12px}
 .ctx-relevant-input{flex:1;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:6px 12px;font-size:12px;font-family:monospace;outline:none;transition:border .15s}
 .ctx-relevant-input:focus{border-color:#58a6ff}
@@ -1292,22 +1335,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 .ctx-tag-branch{background:#1a3a2a;color:#3fb950}
 .ctx-mention-text{font-size:12px;color:#c9d1d9;line-height:1.5}
 .ctx-mention-row{padding:5px 0;border-bottom:1px solid #21262d;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
-.ctx-snap-count{font-size:11px;color:#484f58;margin-bottom:8px}
-.ctx-trace-full-section{margin-top:16px;border-top:1px solid #30363d;padding-top:14px}
-.ctx-branch-badge{display:inline-block;background:#1a3a2a;color:#3fb950;border-radius:10px;font-size:10px;font-weight:700;padding:1px 8px;vertical-align:middle}
-.ctx-stat{font-size:11px;color:#484f58;background:#21262d;border-radius:8px;padding:2px 10px}
-.ctx-status-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;width:100%}
-.ctx-snap-head{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
-.ctx-detail-goal{font-size:13px;color:#bc8cff;font-style:italic;margin:8px 0 4px;padding:8px;background:#2d1f4f44;border-radius:6px}
-.ctx-milestone-entry{padding:4px 0;font-size:12px;color:#c9d1d9;border-bottom:1px solid #21262d;display:flex;align-items:baseline;gap:8px}
-.ctx-milestone-entry::before{content:"◈";color:#bc8cff;flex-shrink:0}
-.ctx-trace-entry{padding:3px 0;font-size:11px;font-family:monospace;border-bottom:1px solid #21262d11;line-height:1.5}
-.ctx-trace-observe{color:#58a6ff}
-.ctx-trace-think{color:#bc8cff}
-.ctx-trace-act{color:#3fb950}
-.ctx-trace-note{color:#e3b341}
-.ctx-trace-kind{font-weight:700;font-size:10px;opacity:.75;margin-right:6px}
-.ctx-diff-goal-change{background:#2d1f4f;border:1px solid #bc8cff44;border-radius:6px;padding:10px;margin:8px 0;font-size:12px;line-height:1.7}
 </style>
 </head>
 <body>
@@ -1534,47 +1561,64 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 
     <!-- Context tab -->
     <div id="panel-context" style="display:none">
-      <!-- Workspace status bar -->
       <div id="ctx-status-bar"></div>
 
       <div id="ctx-not-init" class="ctx-not-init" style="display:none">
+        <div class="ctx-not-init-icon">💡</div>
         Context workspace not initialized.<br>
-        Run <code>h5i context init --goal "…"</code> to create it.
+        <div class="ctx-not-init-cmd">Run <code>h5i context init --goal "…"</code> to create it.</div>
       </div>
 
       <div id="ctx-main" style="display:none">
+        <!-- Branch navigator -->
+        <div class="ctx-branch-nav" id="ctx-branch-nav"></div>
+
         <!-- Snapshot list + viewer -->
         <div class="ctx-layout">
-          <div>
-            <div class="ctx-snap-count" id="ctx-snap-count">— snapshots</div>
+          <div class="ctx-left-col">
+            <div class="ctx-pane-header">
+              <span>Snapshots</span>
+              <span id="ctx-snap-count">—</span>
+            </div>
             <div class="ctx-snap-list" id="ctx-snap-list">
               <div class="ctx-viewer-empty">Loading…</div>
             </div>
-          </div>
-          <div>
             <div class="ctx-controls">
-              <button class="ctx-btn" id="ctx-diff-btn" onclick="runCtxDiff()" disabled>⊕ Diff selected</button>
+              <button class="ctx-btn" id="ctx-diff-btn" onclick="runCtxDiff()" disabled>⊕ Diff</button>
               <button class="ctx-btn-ghost" onclick="clearCtxSelection()">Clear</button>
-              <span class="ctx-hint" id="ctx-sel-hint">Click a snapshot to inspect · Ctrl+click to select two for diff</span>
             </div>
+            <div class="ctx-hint" id="ctx-sel-hint">Click snapshot to inspect · click two to diff</div>
+          </div>
+          <div class="ctx-right-col">
             <div class="ctx-viewer" id="ctx-viewer">
               <div class="ctx-viewer-empty">Select a snapshot from the list to inspect its context state.</div>
             </div>
           </div>
         </div>
 
-        <!-- Live workspace OTA trace -->
-        <div class="ctx-trace-full-section">
-          <div class="ctx-relevant-title">Live OTA Trace — current branch</div>
-          <div id="ctx-trace-wrap">
-            <div class="ctx-trace-box" id="ctx-trace-box" style="min-height:160px">Loading…</div>
-            <div class="ctx-trace-stat" id="ctx-trace-stat"></div>
+        <!-- Live OTA trace with filters -->
+        <div class="ctx-section">
+          <div class="ctx-section-header">
+            <span class="ctx-section-title">Live OTA Trace</span>
+            <span class="ctx-section-sub" id="ctx-trace-branch-label"></span>
+            <div class="ctx-trace-filters">
+              <button class="ctx-filter-btn active" data-kind="all" onclick="filterTrace('all')">All</button>
+              <button class="ctx-filter-btn" data-kind="OBSERVE" onclick="filterTrace('OBSERVE')">Observe <span id="tf-obs">0</span></button>
+              <button class="ctx-filter-btn" data-kind="THINK" onclick="filterTrace('THINK')">Think <span id="tf-think">0</span></button>
+              <button class="ctx-filter-btn" data-kind="ACT" onclick="filterTrace('ACT')">Act <span id="tf-act">0</span></button>
+              <button class="ctx-filter-btn" data-kind="NOTE" onclick="filterTrace('NOTE')">Note <span id="tf-note">0</span></button>
+            </div>
+            <button class="ctx-btn-ghost" style="font-size:11px;padding:3px 8px" onclick="loadCtxTrace()">↻</button>
           </div>
+          <div class="ctx-trace-timeline" id="ctx-trace-box">Loading…</div>
+          <div class="ctx-trace-stat" id="ctx-trace-stat"></div>
         </div>
 
         <!-- Relevant-file search -->
-        <div class="ctx-relevant-section">
-          <div class="ctx-relevant-title">Context relevant to a file</div>
+        <div class="ctx-section">
+          <div class="ctx-section-header">
+            <span class="ctx-section-title">Relevant to File</span>
+          </div>
           <div class="ctx-relevant-search">
             <input class="ctx-relevant-input" id="ctx-rel-input" type="text"
               placeholder="src/repository.rs"
@@ -2771,6 +2815,9 @@ function shortPath(p, max) {
 let ctxSnapshots = [];
 let ctxSelFrom = null;
 let ctxSelTo = null;
+let ctxActiveBranch = 'main';
+let ctxAllTraceLines = [];
+let ctxTraceFilter = 'all';
 
 async function loadContextTab() {
   try {
@@ -2779,22 +2826,26 @@ async function loadContextTab() {
       fetch('/api/context/snapshots').then(r => r.json()),
     ]);
 
-    // Status bar
     const sb = id('ctx-status-bar');
     if (status.initialized) {
-      const goal = status.goal ? `<span class="ctx-goal">${esc(status.goal)}</span>` : '';
-      const branchName = status.current_branch || status.branch || '';
-      const branch = branchName ? `<span class="ctx-branch-badge">${esc(branchName)}</span>` : '';
-      const mc = status.commit_count ?? status.milestone_count;
-      const milestones = mc != null
-        ? `<span class="ctx-stat">${mc} milestone${mc === 1 ? '' : 's'}</span>`
-        : '';
-      sb.innerHTML = `<div class="ctx-status-row">${branch}${goal}${milestones}</div>`;
+      ctxActiveBranch = status.current_branch || 'main';
+      sb.innerHTML = `
+        <div class="ctx-goal-bar">
+          <span class="ctx-goal-icon">◎</span>
+          <span class="ctx-goal-text">${esc(status.goal || 'No goal set')}</span>
+          <span class="ctx-goal-branch">${esc(ctxActiveBranch)}</span>
+        </div>
+        <div class="ctx-stats-bar">
+          <div class="ctx-stat-item"><div class="ctx-stat-val">${status.commit_count ?? 0}</div><div class="ctx-stat-lbl">Milestones</div></div>
+          <div class="ctx-stat-item"><div class="ctx-stat-val">${status.trace_lines ?? 0}</div><div class="ctx-stat-lbl">Trace Lines</div></div>
+          <div class="ctx-stat-item"><div class="ctx-stat-val">${status.snapshot_count ?? 0}</div><div class="ctx-stat-lbl">Snapshots</div></div>
+          <div class="ctx-stat-item"><div class="ctx-stat-val">${status.branch_count ?? 1}</div><div class="ctx-stat-lbl">Branches</div></div>
+        </div>`;
+      renderCtxBranchNav(Array.isArray(status.branches) ? status.branches : [], ctxActiveBranch);
     } else {
       sb.innerHTML = '';
     }
 
-    // Show/hide panels
     const notInit = id('ctx-not-init');
     const main = id('ctx-main');
     if (!status.initialized) {
@@ -2806,66 +2857,133 @@ async function loadContextTab() {
     notInit.style.display = 'none';
     main.style.display = '';
 
-    // Snapshots
     ctxSnapshots = Array.isArray(snaps) ? snaps : [];
     setText('tab-ctx-count', ctxSnapshots.length);
-    setText('ctx-snap-count', ctxSnapshots.length + ' snapshot' + (ctxSnapshots.length === 1 ? '' : 's'));
     renderCtxSnapshots();
-
-    // Live trace
-    loadCtxTrace();
+    loadCtxTrace(ctxActiveBranch);
   } catch(e) {
     console.error('loadContextTab', e);
     id('ctx-snap-list').innerHTML = '<div class="empty-state">Failed to load context data.</div>';
   }
 }
 
-async function loadCtxTrace() {
+function renderCtxBranchNav(branches, activeBranch) {
+  const el = id('ctx-branch-nav');
+  if (!el) return;
+  if (!branches.length) { el.innerHTML = ''; return; }
+  const pills = branches.map(b => {
+    const isScope = b.startsWith('scope/');
+    const isActive = b === activeBranch;
+    const cls = ['ctx-branch-pill', isScope ? 'scope' : '', isActive ? 'active' : ''].filter(Boolean).join(' ');
+    const label = isScope ? ('⊙ ' + b.slice(6)) : b;
+    return `<span class="${cls}" data-branch="${esc(b)}" onclick="switchCtxBranch('${esc(b)}')">${esc(label)}</span>`;
+  }).join('');
+  el.innerHTML = `<span class="ctx-branch-nav-label">Branch</span>${pills}`;
+}
+
+function switchCtxBranch(branch) {
+  ctxActiveBranch = branch;
+  document.querySelectorAll('.ctx-branch-pill').forEach(el => {
+    el.classList.toggle('active', el.dataset.branch === branch);
+  });
+  const lbl = id('ctx-trace-branch-label');
+  if (lbl) lbl.textContent = branch;
+  loadCtxTrace(branch);
+}
+
+async function loadCtxTrace(branch) {
+  const traceEl = id('ctx-trace-box');
+  if (!traceEl) return;
+  traceEl.innerHTML = '<div class="ctx-viewer-empty" style="padding:20px">Loading…</div>';
+  const b = branch || ctxActiveBranch || 'main';
+  const lbl = id('ctx-trace-branch-label');
+  if (lbl) lbl.textContent = b;
   try {
-    const data = await fetch('/api/context/show?trace=true').then(r => r.json());
-    const lines = (data && (data.recent_log_lines || data.trace_lines)) || [];
-    const traceEl = id('ctx-trace-box');
-    if (!traceEl) return;
-    if (!lines.length) {
-      traceEl.innerHTML = '<div class="empty-state" style="padding:10px 0">No trace entries yet.</div>';
-      return;
+    const data = await fetch(`/api/context/show?branch=${encodeURIComponent(b)}&trace=true&window=20`).then(r => r.json());
+    ctxAllTraceLines = (data && data.recent_log_lines) || [];
+    renderCtxTrace();
+  } catch(e) {
+    traceEl.innerHTML = '<div class="ctx-viewer-empty" style="padding:20px">Failed to load trace.</div>';
+  }
+}
+
+function renderCtxTrace() {
+  const traceEl = id('ctx-trace-box');
+  if (!traceEl) return;
+  if (!ctxAllTraceLines.length) {
+    traceEl.innerHTML = '<div class="ctx-viewer-empty" style="padding:20px">No trace entries yet.</div>';
+    updateTraceStats({});
+    return;
+  }
+  const counts = { OBSERVE: 0, THINK: 0, ACT: 0, NOTE: 0 };
+  const parsed = ctxAllTraceLines.map(l => {
+    if (l.startsWith('---') || l.startsWith('_[Checkpoint')) {
+      return { type: 'checkpoint', text: l.replace(/^_\[Checkpoint:\s*/, '').replace(/\]_$/, '').replace(/^-+\s*/, '').trim() };
     }
-    const kindClass = k => k === 'OBSERVE' ? 'ctx-trace-observe'
-                        : k === 'THINK'   ? 'ctx-trace-think'
-                        : k === 'ACT'     ? 'ctx-trace-act'
-                        : 'ctx-trace-note';
-    traceEl.innerHTML = lines.slice(-50).map(l => {
-      const m = l.match(/^\[(OBSERVE|THINK|ACT|NOTE)\]\s*(.*)/s);
-      if (m) return `<div class="ctx-trace-entry ${kindClass(m[1])}"><span class="ctx-trace-kind">${esc(m[1])}</span> ${esc(m[2])}</div>`;
-      return `<div class="ctx-trace-entry ctx-trace-note">${esc(l)}</div>`;
-    }).join('');
-  } catch(e) { /* trace section is optional */ }
+    const m = l.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(OBSERVE|THINK|ACT|NOTE):\s*(.*)/s);
+    if (m) { counts[m[2]]++; return { type: 'entry', time: m[1], kind: m[2], text: m[3] }; }
+    const m2 = l.match(/^\[(OBSERVE|THINK|ACT|NOTE)\]\s*(.*)/s);
+    if (m2) { counts[m2[1]]++; return { type: 'entry', time: '', kind: m2[1], text: m2[2] }; }
+    return { type: 'raw', text: l };
+  });
+  setText('tf-obs', counts.OBSERVE);
+  setText('tf-think', counts.THINK);
+  setText('tf-act', counts.ACT);
+  setText('tf-note', counts.NOTE);
+  const filter = ctxTraceFilter;
+  const visible = parsed.filter(p => filter === 'all' || (p.type === 'entry' && p.kind === filter));
+  if (!visible.length) {
+    traceEl.innerHTML = `<div class="ctx-viewer-empty" style="padding:20px">No ${filter} entries.</div>`;
+    updateTraceStats(counts);
+    return;
+  }
+  traceEl.innerHTML = visible.map(p => {
+    if (p.type === 'checkpoint') return `<div class="ctx-tl-checkpoint">${esc(p.text)}</div>`;
+    if (p.type === 'raw') return `<div class="ctx-tl-entry kind-NOTE"><span class="ctx-tl-time"></span><span class="ctx-tl-kind ctx-tl-kind-NOTE">NOTE</span><span class="ctx-tl-text">${esc(p.text)}</span></div>`;
+    return `<div class="ctx-tl-entry kind-${p.kind}"><span class="ctx-tl-time">${esc(p.time)}</span><span class="ctx-tl-kind ctx-tl-kind-${p.kind}">${p.kind}</span><span class="ctx-tl-text">${esc(p.text)}</span></div>`;
+  }).join('');
+  traceEl.scrollTop = traceEl.scrollHeight;
+  updateTraceStats(counts);
+}
+
+function updateTraceStats(counts) {
+  const el = id('ctx-trace-stat');
+  if (!el) return;
+  const total = (counts.OBSERVE || 0) + (counts.THINK || 0) + (counts.ACT || 0) + (counts.NOTE || 0);
+  if (!total) { el.innerHTML = ''; return; }
+  el.innerHTML = `<span style="color:#58a6ff">● ${counts.OBSERVE || 0} observe</span><span style="color:#bc8cff">● ${counts.THINK || 0} think</span><span style="color:#3fb950">● ${counts.ACT || 0} act</span><span style="color:#e3b341">● ${counts.NOTE || 0} note</span><span>— ${total} total</span>`;
+}
+
+function filterTrace(kind) {
+  ctxTraceFilter = kind;
+  document.querySelectorAll('.ctx-filter-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.kind === kind);
+  });
+  renderCtxTrace();
 }
 
 function renderCtxSnapshots() {
   const el = id('ctx-snap-list');
+  const countEl = id('ctx-snap-count');
+  if (countEl) countEl.textContent = ctxSnapshots.length;
   if (!ctxSnapshots.length) {
-    el.innerHTML = `<div class="empty-state" style="padding:30px 0;text-align:center">
-      No context snapshots yet.<br><code style="font-size:11px;color:#8b949e">h5i commit</code> creates one automatically.
-    </div>`;
+    el.innerHTML = `<div class="ctx-viewer-empty" style="padding:30px 0;text-align:center">No context snapshots yet.<br><code style="font-size:11px;color:#8b949e">h5i commit</code> creates one automatically.</div>`;
     return;
   }
   el.innerHTML = ctxSnapshots.map((s, i) => {
     let cls = 'ctx-snap-card';
     let badge = '';
-    if (i === ctxSelFrom) { cls += ' sel-from'; badge = '<span class="mem-sel-badge mem-sel-from-badge">FROM</span>'; }
-    else if (i === ctxSelTo) { cls += ' sel-to'; badge = '<span class="mem-sel-badge mem-sel-to-badge">TO</span>'; }
+    if (i === ctxSelFrom) { cls += ' sel-from'; badge = '<span class="ctx-sel-badge ctx-sel-from-badge">FROM</span>'; }
+    else if (i === ctxSelTo) { cls += ' sel-to'; badge = '<span class="ctx-sel-badge ctx-sel-to-badge">TO</span>'; }
     const ts = new Date(s.timestamp);
     const tsStr = isNaN(ts) ? (s.timestamp || '') : ts.toLocaleString();
     const sha = s.sha_short || (s.sha ? s.sha.slice(0,8) : s.git_sha ? s.git_sha.slice(0,8) : '?');
     const branch = s.branch || 'main';
+    const mc = s.recent_milestones ? s.recent_milestones.length : 0;
     return `<div class="${cls}" onclick="selectCtxSnap(${i})">${badge}
-      <div class="ctx-snap-head">
-        <span class="mem-oid">${esc(sha)}</span>
-        <span class="ctx-branch-badge" style="margin-left:6px">${esc(branch)}</span>
-        <span class="mem-ts">${esc(tsStr)}</span>
-      </div>
-      ${s.goal ? `<div class="ctx-snap-goal">${esc(s.goal.slice(0,80))}${s.goal.length > 80 ? '…' : ''}</div>` : ''}
+      <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap"><span class="ctx-snap-sha">${esc(sha)}</span><span class="ctx-snap-ts">${esc(tsStr)}</span></div>
+      <div class="ctx-snap-badge">${esc(branch)}${mc ? ' · ' + mc + ' milestone' + (mc === 1 ? '' : 's') : ''}</div>
+      ${s.goal ? `<div class="ctx-snap-goal">${esc(s.goal.slice(0,70))}${s.goal.length > 70 ? '…' : ''}</div>` : ''}
     </div>`;
   }).join('');
 }
@@ -2892,10 +3010,10 @@ function clearCtxSelection() {
 function updateCtxControls() {
   id('ctx-diff-btn').disabled = !(ctxSelFrom !== null && ctxSelTo !== null);
   const hint = ctxSelFrom === null
-    ? 'Click a snapshot to inspect · click two to diff'
+    ? 'Click snapshot to inspect · click two to diff'
     : ctxSelTo === null
     ? 'Click another snapshot to compare, or click again to reset'
-    : 'Click ⊕ Diff to compare the two selected snapshots';
+    : 'Click Diff to compare the two selected snapshots';
   setText('ctx-sel-hint', hint);
 }
 
@@ -2904,17 +3022,17 @@ function showCtxViewer(s) {
   const ts = new Date(s.timestamp);
   const tsStr = isNaN(ts) ? (s.timestamp || '') : ts.toLocaleString();
   const milestones = s.recent_milestones || [];
-  let html = `<div class="mem-snap-detail-header">
-    <span class="mem-oid">${esc(sha)}</span>
-    <span class="mem-ts" style="margin-left:8px">${esc(tsStr)}</span>
-    ${s.branch ? `<span class="ctx-branch-badge" style="margin-left:8px">${esc(s.branch)}</span>` : ''}
+  let html = `<div class="ctx-viewer-hdr">
+    <span class="ctx-viewer-sha">${esc(sha)}</span>
+    <span class="ctx-viewer-ts">${esc(tsStr)}</span>
+    ${s.branch ? `<span class="ctx-goal-branch" style="margin-left:auto">${esc(s.branch)}</span>` : ''}
   </div>`;
-  if (s.goal) html += `<div class="ctx-detail-goal">${esc(s.goal)}</div>`;
+  if (s.goal) html += `<div class="ctx-viewer-goal">${esc(s.goal)}</div>`;
+  html += `<div class="ctx-viewer-section-title">Milestones (${milestones.length})</div>`;
   if (milestones.length) {
-    html += `<div class="mem-snap-section-title" style="margin-top:12px">Recent Milestones</div>`;
     html += milestones.map(m => `<div class="ctx-milestone-entry">${esc(m)}</div>`).join('');
   } else {
-    html += `<div class="empty-state" style="padding:16px 0">No milestones recorded.</div>`;
+    html += `<div class="ctx-viewer-empty" style="padding:16px 0">No milestones recorded at this snapshot.</div>`;
   }
   id('ctx-viewer').innerHTML = html;
 }
@@ -2927,35 +3045,32 @@ async function runCtxDiff() {
   const sha2 = s2.sha || s2.git_sha;
   if (!sha1 || !sha2) return;
   const viewer = id('ctx-viewer');
-  viewer.innerHTML = '<div class="empty-state"><span class="spinner"></span> Computing diff…</div>';
+  viewer.innerHTML = '<div class="ctx-viewer-empty"><span class="spinner"></span> Computing diff…</div>';
   try {
     const d = await fetch(`/api/context/diff?from=${encodeURIComponent(sha1)}&to=${encodeURIComponent(sha2)}`).then(r => r.json());
-    let html = `<div class="mem-snap-detail-header">
-      <span style="color:#58a6ff">Context diff</span>
-      <span class="mem-oid" style="margin-left:8px">${esc(d.from.slice(0,8))}</span>
-      <span style="color:#484f58;margin:0 4px">→</span>
-      <span class="mem-oid">${esc(d.to.slice(0,8))}</span>
+    let html = `<div class="ctx-diff-hdr">
+      <span style="color:#58a6ff;font-weight:700;font-size:12px">Context Diff</span>
+      <span class="ctx-snap-sha">${esc(d.from.slice(0,8))}</span>
+      <span style="color:#484f58;font-size:12px">→</span>
+      <span class="ctx-snap-sha" style="background:#58a6ff22;color:#58a6ff">${esc(d.to.slice(0,8))}</span>
     </div>`;
     if (d.goal_changed) {
-      html += `<div class="ctx-diff-goal-change">
-        <div style="color:#f85149">− ${esc(d.from_goal)}</div>
-        <div style="color:#3fb950">+ ${esc(d.to_goal)}</div>
-      </div>`;
+      html += `<div class="ctx-diff-goal-change"><div class="ctx-diff-from">${esc(d.from_goal)}</div><div class="ctx-diff-to">${esc(d.to_goal)}</div></div>`;
     }
     if (d.added_milestones && d.added_milestones.length) {
-      html += `<div class="mem-snap-section-title" style="margin-top:12px">New Milestones</div>`;
-      html += d.added_milestones.map(m => `<div class="ctx-milestone-entry" style="color:#3fb950">+ ${esc(m)}</div>`).join('');
+      html += `<div class="ctx-diff-section"><div class="ctx-diff-section-title">New Milestones</div>${d.added_milestones.map(m => `<div class="ctx-diff-added">${esc(m)}</div>`).join('')}</div>`;
     }
     if (d.added_trace_lines && d.added_trace_lines.length) {
-      html += `<div class="mem-snap-section-title" style="margin-top:12px">New Trace Lines</div>`;
-      html += d.added_trace_lines.map(l => `<div class="ctx-trace-entry ctx-trace-note" style="margin:2px 0">+ ${esc(l)}</div>`).join('');
+      const shown = d.added_trace_lines.slice(0, 40);
+      const more = d.added_trace_lines.length > 40 ? `<div style="color:#484f58;font-size:11px;padding:4px 0">…and ${d.added_trace_lines.length - 40} more</div>` : '';
+      html += `<div class="ctx-diff-section"><div class="ctx-diff-section-title">New Trace Lines</div>${shown.map(l => `<div class="ctx-diff-added" style="font-family:monospace">${esc(l)}</div>`).join('')}${more}</div>`;
     }
     if (!d.goal_changed && !(d.added_milestones||[]).length && !(d.added_trace_lines||[]).length) {
-      html += '<div class="empty-state" style="padding:16px 0">No differences found.</div>';
+      html += '<div class="ctx-viewer-empty" style="padding:20px 0">No differences found.</div>';
     }
     viewer.innerHTML = html;
   } catch(e) {
-    viewer.innerHTML = `<div class="empty-state">Diff failed: ${esc(String(e))}</div>`;
+    viewer.innerHTML = `<div class="ctx-viewer-empty">Diff failed: ${esc(String(e))}</div>`;
   }
 }
 
@@ -2967,15 +3082,15 @@ async function runCtxRelevant() {
   try {
     const d = await fetch(`/api/context/relevant?file=${encodeURIComponent(filePath)}`).then(r => r.json());
     let html = '';
-    const section = (title, items, cls) => {
+    const section = (title, items, tagCls, tagLabel) => {
       if (!items || !items.length) return '';
-      return `<div class="mem-snap-section-title" style="margin-top:12px">${esc(title)}</div>` +
-        items.map(s => `<div class="ctx-trace-entry ${cls}">${esc(s)}</div>`).join('');
+      return `<div class="ctx-viewer-section-title">${esc(title)} (${items.length})</div>` +
+        items.map(s => `<div class="ctx-mention-row"><span class="ctx-mention-tag ${tagCls}">${tagLabel}</span><span class="ctx-mention-text">${esc(s)}</span></div>`).join('');
     };
-    html += section('Milestone Mentions', d.commit_mentions, 'ctx-trace-act');
-    html += section('Trace Mentions', d.trace_mentions, 'ctx-trace-observe');
-    html += section('Cross-Branch Mentions', d.cross_branch_mentions, 'ctx-trace-think');
-    resultsEl.innerHTML = html || '<div class="empty-state" style="padding:12px 0">No context mentions found for this file.</div>';
+    html += section('Milestone Mentions', d.milestone_mentions, 'ctx-tag-milestone', 'MILESTONE');
+    html += section('Trace Mentions', d.trace_mentions, 'ctx-tag-trace', 'TRACE');
+    html += section('Cross-Branch Mentions', d.cross_branch_mentions, 'ctx-tag-branch', 'BRANCH');
+    resultsEl.innerHTML = html || '<div class="ctx-viewer-empty" style="padding:12px 0">No context mentions found for this file.</div>';
   } catch(e) {
     resultsEl.innerHTML = `<div class="empty-state">Search failed: ${esc(String(e))}</div>`;
   }
