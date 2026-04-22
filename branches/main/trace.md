@@ -832,3 +832,9 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 [03:23:58] ACT: edited /home/koukyosyumei/Dev/h5i/src/server.rs
 [03:23:58] ACT: edited /home/koukyosyumei/Dev/h5i/src/ctx.rs
 [03:23:58] ACT: edited /home/koukyosyumei/Dev/h5i/src/ctx.rs
+
+
+---
+_[Checkpoint: 69e83f50 — implemented dashboard context-management improvements: branch-aware snapshot diff, health/search/DAG/promotion views, branch summaries, and frontend wiring with tests]_
+---
+
