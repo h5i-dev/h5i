@@ -763,3 +763,4 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 [02:54:24] ACT: edited src/server.rs
 [02:55:40] ACT: rewrote context tab CSS, HTML, and JS in src/server.rs: stats bar (milestones/trace/snapshot/branch counts), branch navigation pills, visual OTA timeline with OBSERVE/THINK/ACT/NOTE kind filters, improved snapshot viewer with ctx-sel-badge fix, improved diff view, fixed d.commit_mentions->d.milestone_mentions bug, added renderCtxBranchNav/switchCtxBranch/renderCtxTrace/updateTraceStats/filterTrace functions
 [03:23:53] THINK: implemented dashboard context-management upgrades by fixing branch-aware snapshot diffs, exposing ranked context search and DAG data, surfacing branch summaries/health/promotion metrics, and rewiring the context tab to show workflow state instead of only raw artifacts
+[03:23:57] OBSERVE: searched src/ctx.rs for "src/server.rs"
