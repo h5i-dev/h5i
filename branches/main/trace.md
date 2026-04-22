@@ -785,3 +785,4 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 [03:23:57] OBSERVE: read src/ctx.rs
 [03:23:57] OBSERVE: read src/ctx.rs
 [03:23:58] OBSERVE: read src/ctx.rs
+[03:23:58] OBSERVE: searched tab" for "registry|Context"
