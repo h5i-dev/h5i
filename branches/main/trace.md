@@ -759,3 +759,4 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 [02:49:24] OBSERVE: read src/server.rs
 [02:50:44] THINK: will implement: (1) stats bar with milestone/trace/snapshot/branch counts, (2) branch navigation pills (using existing branches[] from API), (3) visual timeline replacing raw trace box with color-coded OBSERVE/THINK/ACT/NOTE entries + checkpoint grouping + kind filters, (4) enhanced snapshot viewer with proper ctx-sel-badge classes (bug fix), (5) fix d.commit_mentions->d.milestone_mentions bug in runCtxRelevant, (6) improved diff view with removed items
 [02:52:24] ACT: edited src/server.rs
+[02:52:48] ACT: edited src/server.rs
