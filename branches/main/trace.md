@@ -765,3 +765,4 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 [03:23:53] THINK: implemented dashboard context-management upgrades by fixing branch-aware snapshot diffs, exposing ranked context search and DAG data, surfacing branch summaries/health/promotion metrics, and rewiring the context tab to show workflow state instead of only raw artifacts
 [03:23:57] OBSERVE: searched src/ctx.rs for "src/server.rs"
 [03:23:57] OBSERVE: searched server.rs for "ctx|context|dashboard|trace|snapshot|milestone"
+[03:23:57] OBSERVE: read src/server.rs
