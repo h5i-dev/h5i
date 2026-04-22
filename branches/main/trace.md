@@ -796,3 +796,4 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 [03:23:58] OBSERVE: read src/server.rs
 [03:23:58] OBSERVE: searched server.rs for "route registry|/api/context/status|top_level_declarations|collect_static_id_refs|tab-ctx-count|ctx-rel-results"
 [03:23:58] OBSERVE: read src/server.rs
+[03:23:58] OBSERVE: read src/server.rs
