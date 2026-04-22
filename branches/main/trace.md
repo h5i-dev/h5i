@@ -756,3 +756,4 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 [02:48:04] OBSERVE: read src/server.rs
 [02:48:08] OBSERVE: read src/server.rs
 [02:49:23] OBSERVE: current context tab has: status bar, snapshot list/viewer, live OTA trace (raw monospace box), and relevant-file search. JS has bug: d.commit_mentions should be d.milestone_mentions. Snapshot cards use wrong CSS classes (mem-sel-badge instead of ctx-sel-badge). Branch data from API is unused. trace_lines count is unused.
+[02:49:24] OBSERVE: read src/server.rs
