@@ -875,3 +875,9 @@ _[Checkpoint: 69ea0faf — Simplify README around basic workflow]_
 [22:24:24] OBSERVE: read bcxh1le6w.output
 [22:24:43] OBSERVE: read bcxh1le6w.output
 [22:30:02] ACT: edited src/main.rs
+
+
+---
+_[Checkpoint: 69ea9fa4 — Goal: simplify the README around the basic h5i workflow. I rewrote it (301 → 204 lines) with a 4-step quick start, an audit section, and a refs table.]_
+---
+

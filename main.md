@@ -9,11 +9,13 @@ implement context versioning features
 - [x] integration tests + release pipeline complete
 - [x] implemented dashboard context-management improvements: branch-aware snapshot diff, health/search/DAG/promotion views, branch summaries, and frontend wiring with tests
 - [x] Simplify README around basic workflow
+- [x] Goal: simplify the README around the basic h5i workflow. I rewrote it (301 → 204 lines) with a 4-step quick start, an audit section, and a refs table.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-04-23 22:39 UTC] `main`: Goal: simplify the README around the basic h5i workflow. I rewrote it (301 → 204 lines) with a 4-step quick start, an audit section, and a refs table.
 - [2026-04-23 12:25 UTC] `main`: Simplify README around basic workflow
 - [2026-04-22 03:24 UTC] `main`: implemented dashboard context-management improvements: branch-aware snapshot diff, health/search/DAG/promotion views, branch summaries, and frontend wiring with tests
 - [2026-04-20 23:52 UTC] `main`: integration tests + release pipeline complete

@@ -134,3 +134,19 @@ Restructured README from 301 → 204 lines. New shape: Quick start (init → hoo
 
 ---
 
+## Commit 69ea9fa4 — 2026-04-23 22:39 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+Restructured README from 301 → 204 lines. New shape: Quick start (init → hook setup → code normally → push) is the backbone; auditing grouped as vibe/context scan/compliance/notes review; a short 'Under the hood' table documents refs/h5i/{notes,context,ast,checkpoints/<agent>} per user's ask for a technical taste; context-subcommand depth collapsed into 'Other things h5i does'.
+
+### This Commit's Contribution
+Next: your review, or further trimming if wanted.
+
+[recap-uuid: def39987-22e3-463c-86b4-c7f41297785b]
+[recap-session: a6ca4f3c-bb57-44af-9788-c355cc81b3e6]
+
+---
+
