@@ -881,3 +881,9 @@ _[Checkpoint: 69ea0faf — Simplify README around basic workflow]_
 _[Checkpoint: 69ea9fa4 — Goal: simplify the README around the basic h5i workflow. I rewrote it (301 → 204 lines) with a 4-step quick start, an audit section, and a refs table.]_
 ---
 
+
+
+---
+_[Checkpoint: 69ea9fa4 — Simplifying the README around the basic workflow (init → hooks/MCP → auto-capture → push → audit) with a short git-refs section. Just fixed Quick-start step 1 to note that h5i init writes both CLAUDE.md and AGENTS.md; next, confirm with you whether the README is ready or needs more trimming.]_
+---
+
