@@ -839,3 +839,4 @@ _[Checkpoint: 69e83f50 — implemented dashboard context-management improvements
 ---
 
 [12:21:58] OBSERVE: read README.md
+[12:22:18] OBSERVE: Current README is ~300 lines; heavy on context-subcommand surface (branch/merge/scope/pack/cached-prefix) and light on end-to-end workflow. User wants it reorganized around: init → hooks/mcp → auto-context → push → audit (scan/compliance/vibe).
