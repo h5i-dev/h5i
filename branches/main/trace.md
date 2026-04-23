@@ -867,3 +867,4 @@ _[Checkpoint: 69ea0faf — Simplify README around basic workflow]_
 [22:16:24] ACT: edited src/ctx.rs
 [22:17:12] ACT: wrote src/recap.rs
 [22:17:25] OBSERVE: read src/lib.rs
+[22:17:28] ACT: edited src/lib.rs
