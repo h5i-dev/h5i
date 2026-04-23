@@ -887,3 +887,4 @@ _[Checkpoint: 69ea9fa4 — Goal: simplify the README around the basic h5i workfl
 _[Checkpoint: 69ea9fa4 — Simplifying the README around the basic workflow (init → hooks/MCP → auto-capture → push → audit) with a short git-refs section. Just fixed Quick-start step 1 to note that h5i init writes both CLAUDE.md and AGENTS.md; next, confirm with you whether the README is ready or needs more trimming.]_
 ---
 
+[22:39:50] ACT: shipped 'h5i context recap': parser in src/recap.rs + CLI variant in main.rs + pub ctx::read_ctx_file + 5 unit tests; idempotency stored in recaps.json at ctx tree root; verified end-to-end against a real session log (2 recaps imported, re-run skipped both)
