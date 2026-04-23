@@ -838,3 +838,4 @@ _[Checkpoint: 69e6bc30 — integration tests + release pipeline complete]_
 _[Checkpoint: 69e83f50 — implemented dashboard context-management improvements: branch-aware snapshot diff, health/search/DAG/promotion views, branch summaries, and frontend wiring with tests]_
 ---
 
+[12:21:58] OBSERVE: read README.md
