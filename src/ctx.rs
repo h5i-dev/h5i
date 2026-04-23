@@ -883,38 +883,64 @@ pub fn restore(workdir: &Path, git_sha: &str) -> Result<String, H5iError> {
 pub struct ContextDiff {
     pub sha1: String,
     pub sha2: String,
+    pub from_branch: String,
+    pub to_branch: String,
     /// Context milestones present in sha2 but not sha1.
     pub added_commits: Vec<String>,
+    /// Context milestones present in sha1 but not sha2.
+    pub removed_commits: Vec<String>,
     /// Trace lines present in sha2 but not sha1 (OTA steps, up to 30).
     pub added_trace_lines: Vec<String>,
+    /// Trace lines present in sha1 but not sha2 (OTA steps, up to 30).
+    pub removed_trace_lines: Vec<String>,
     pub goal_changed: bool,
     pub from_goal: String,
     pub to_goal: String,
+}
+
+#[derive(Debug, Default, Clone)]
+struct SnapshotMeta {
+    branch: String,
+    ctx_oid: String,
+}
+
+fn parse_snapshot_meta(snapshot: &str) -> Result<SnapshotMeta, H5iError> {
+    let ctx_oid = snapshot
+        .lines()
+        .find(|l| l.starts_with("**Context ref OID:**"))
+        .and_then(|l| l.split("**Context ref OID:**").nth(1))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| H5iError::InvalidPath("Snapshot missing Context ref OID".into()))?
+        .to_string();
+    let branch = snapshot
+        .lines()
+        .find(|l| l.starts_with("**Branch:**"))
+        .and_then(|l| l.split("**Branch:**").nth(1))
+        .map(str::trim)
+        .unwrap_or(MAIN_BRANCH)
+        .to_string();
+    Ok(SnapshotMeta { branch, ctx_oid })
 }
 
 /// Compare the context workspace state at two code commits.
 pub fn context_diff(workdir: &Path, sha1: &str, sha2: &str) -> Result<ContextDiff, H5iError> {
     let repo = ctx_git_repo(workdir)?;
 
-    let load_ctx_commit = |sha: &str| -> Result<git2::Commit, H5iError> {
+    let load_ctx_commit = |sha: &str| -> Result<(git2::Commit, SnapshotMeta), H5iError> {
         let short = &sha[..sha.len().min(8)];
         let snap = ctx_read_file(&repo, &format!("snapshots/{short}.md"))
             .ok_or_else(|| H5iError::InvalidPath(format!("No context snapshot for {sha}")))?;
-        let oid_str = snap
-            .lines()
-            .find(|l| l.starts_with("**Context ref OID:**"))
-            .and_then(|l| l.split("**Context ref OID:**").nth(1))
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| H5iError::InvalidPath("Snapshot missing Context ref OID".into()))?
-            .to_string();
-        let oid = git2::Oid::from_str(&oid_str).map_err(H5iError::Git)?;
-        repo.find_commit(oid)
-            .map_err(|_| H5iError::InvalidPath(format!("Context OID {oid_str} not in object store")))
+        let meta = parse_snapshot_meta(&snap)?;
+        let oid = git2::Oid::from_str(&meta.ctx_oid).map_err(H5iError::Git)?;
+        let commit = repo
+            .find_commit(oid)
+            .map_err(|_| H5iError::InvalidPath(format!("Context OID {} not in object store", meta.ctx_oid)))?;
+        Ok((commit, meta))
     };
 
-    let c1 = load_ctx_commit(sha1)?;
-    let c2 = load_ctx_commit(sha2)?;
+    let (c1, meta1) = load_ctx_commit(sha1)?;
+    let (c2, meta2) = load_ctx_commit(sha2)?;
 
     // Read a file from a specific commit's tree.
     let read_from = |commit: &git2::Commit, path: &str| -> String {
@@ -927,25 +953,42 @@ pub fn context_diff(workdir: &Path, sha1: &str, sha2: &str) -> Result<ContextDif
         .unwrap_or_default()
     };
 
-    let branch = current_branch(workdir);
-    let commit_path = format!("branches/{branch}/commit.md");
-    let trace_path = format!("branches/{branch}/trace.md");
+    let commit_path_1 = format!("branches/{}/commit.md", meta1.branch);
+    let commit_path_2 = format!("branches/{}/commit.md", meta2.branch);
+    let trace_path_1 = format!("branches/{}/trace.md", meta1.branch);
+    let trace_path_2 = format!("branches/{}/trace.md", meta2.branch);
 
     let commits1: std::collections::HashSet<String> =
-        extract_recent_commits(&read_from(&c1, &commit_path), 200)
+        extract_recent_commits(&read_from(&c1, &commit_path_1), 200)
             .into_iter()
             .collect();
-    let commits2 = extract_recent_commits(&read_from(&c2, &commit_path), 200);
+    let commits2 = extract_recent_commits(&read_from(&c2, &commit_path_2), 200);
     let added_commits: Vec<String> = commits2
-        .into_iter()
-        .filter(|c| !commits1.contains(c))
+        .iter()
+        .filter(|c| !commits1.contains(*c))
+        .cloned()
+        .collect();
+    let commits2_set: std::collections::HashSet<String> = commits2.into_iter().collect();
+    let removed_commits: Vec<String> = commits1
+        .iter()
+        .filter(|c| !commits2_set.contains(*c))
+        .cloned()
         .collect();
 
     let trace1: std::collections::HashSet<String> =
-        read_from(&c1, &trace_path).lines().map(str::to_string).collect();
-    let added_trace_lines: Vec<String> = read_from(&c2, &trace_path)
+        read_from(&c1, &trace_path_1).lines().map(str::to_string).collect();
+    let trace2_text = read_from(&c2, &trace_path_2);
+    let added_trace_lines: Vec<String> = trace2_text
         .lines()
         .filter(|l| !l.is_empty() && !trace1.contains(*l))
+        .take(30)
+        .map(str::to_string)
+        .collect();
+    let trace2: std::collections::HashSet<String> =
+        trace2_text.lines().map(str::to_string).collect();
+    let removed_trace_lines: Vec<String> = read_from(&c1, &trace_path_1)
+        .lines()
+        .filter(|l| !l.is_empty() && !trace2.contains(*l))
         .take(30)
         .map(str::to_string)
         .collect();
@@ -959,8 +1002,12 @@ pub fn context_diff(workdir: &Path, sha1: &str, sha2: &str) -> Result<ContextDif
     Ok(ContextDiff {
         sha1: sha1.to_string(),
         sha2: sha2.to_string(),
+        from_branch: meta1.branch,
+        to_branch: meta2.branch,
         added_commits,
+        removed_commits,
         added_trace_lines,
+        removed_trace_lines,
         goal_changed,
         from_goal,
         to_goal,
@@ -3194,6 +3241,29 @@ mod tests {
         assert!(
             diff.added_trace_lines.iter().any(|l| l.contains("found a performance issue")),
             "diff should include new trace lines"
+        );
+    }
+
+    #[test]
+    fn context_diff_uses_snapshot_branch_not_current_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+
+        snapshot_for_commit(dir.path(), "sha5555500000000").unwrap();
+
+        gcc_branch(dir.path(), "scope/test", "Investigate branch diff").unwrap();
+        gcc_commit(dir.path(), "side milestone", "implemented scope-only change").unwrap();
+        snapshot_for_commit(dir.path(), "sha6666600000000").unwrap();
+
+        gcc_checkout(dir.path(), MAIN_BRANCH).unwrap();
+
+        let diff = context_diff(dir.path(), "sha55555", "sha66666").unwrap();
+        assert_eq!(diff.from_branch, MAIN_BRANCH);
+        assert_eq!(diff.to_branch, "scope/test");
+        assert!(
+            diff.added_commits.iter().any(|c| c.contains("scope-only change")),
+            "diff should use the snapshot branch's commit history"
         );
     }
 
