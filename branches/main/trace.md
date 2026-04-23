@@ -894,3 +894,4 @@ _[Checkpoint: 69ea9fa4 — Simplifying the README around the basic workflow (ini
 _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 ---
 
+[22:42:07] OBSERVE: read MANUAL.md
