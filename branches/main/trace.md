@@ -854,3 +854,4 @@ _[Checkpoint: 69ea0faf — Simplify README around basic workflow]_
 [12:30:45] ACT: Fixed README Quick-start step 1: now documents that h5i init writes .claude/h5i.md + CLAUDE.md import and AGENTS.md section (previously only mentioned AGENTS.md).
 [22:13:26] OBSERVE: read src/session_log.rs
 [22:13:26] OBSERVE: read src/ctx.rs
+[22:13:52] ACT: starting recap importer: add 'h5i context recap' on-demand subcommand that harvests away_summary JSONL records into gcc_commits, idempotent via uuid set
