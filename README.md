@@ -38,7 +38,12 @@ cd your-project
 h5i init
 ```
 
-This creates `.git/.h5i/` (AST snapshots, metadata, CRDT deltas) and writes an `AGENTS.md` stub so Codex knows how to talk to h5i. Nothing about your normal Git workflow changes.
+This creates `.git/.h5i/` (AST snapshots, metadata, CRDT deltas) and drops the h5i usage rules into the agent instruction files your tools already look for:
+
+- `.claude/h5i.md` + a `@.claude/h5i.md` import appended to `CLAUDE.md` (so Claude Code picks it up on load)
+- an `h5i` section appended to `AGENTS.md` (so Codex picks it up on load)
+
+Both are append-only — any existing content in `CLAUDE.md` / `AGENTS.md` is preserved. Nothing about your normal Git workflow changes.
 
 ### 2. Wire up your agent
 
