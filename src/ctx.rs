@@ -733,6 +733,13 @@ pub fn write_ctx_file(workdir: &Path, vpath: &str, content: &str) -> Result<(), 
     ctx_write_files(&repo, &[(vpath, content)], "h5i context write")
 }
 
+/// Read a single arbitrary file from the context workspace.
+/// Returns `None` if the workspace or file does not exist.
+pub fn read_ctx_file(workdir: &Path, vpath: &str) -> Option<String> {
+    let repo = ctx_git_repo(workdir).ok()?;
+    ctx_read_file(&repo, vpath)
+}
+
 /// List all branch names in the context workspace.
 pub fn list_branches(workdir: &Path) -> Vec<String> {
     ctx_git_repo(workdir)

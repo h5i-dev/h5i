@@ -742,6 +742,42 @@ Show the stable-prefix / dynamic-suffix boundary in the current trace
 Lines in the stable prefix are unchanged across most agent steps and
 benefit from prompt-cache hits; lines in the dynamic suffix change every
 step.
+.TP
+.B recap [\-\-session \fIPATH\fR] [\-\-since \fIISO8601\fR] [\-\-dry\-run]
+Import Claude Code
+.B Recap
+entries (JSONL records with
+.I type=system
+and
+.IR subtype=away_summary )
+from the active session log as context commits.
+Each recap body
+.RI ( "Goal: ... Next: ... (disable recaps in /config)" )
+is split on the
+.I Next:
+boundary into a one-line summary and a detail block, then written as a
+milestone via
+.BR "h5i context commit" .
+Imported UUIDs are tracked in
+.I recaps.json
+at the root of
+.I refs/h5i/context
+so repeated runs are idempotent.
+.RS 4
+.TP
+.BI \-\-session\  PATH
+Explicit JSONL session log to scan.
+Defaults to the most recently modified Claude Code session for the current
+working directory.
+.TP
+.BI \-\-since\  ISO8601
+Only import recaps with a timestamp strictly after this cutoff,
+e.g.\&
+.BR 2026-04-23T00:00:00Z .
+.TP
+.B \-\-dry\-run
+Report what would be imported without modifying the workspace.
+.RE
 .RE
 .
 .\" ─── vibe ───────────────────────────────────────────────────────────────────
