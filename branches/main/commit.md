@@ -167,3 +167,17 @@ Next: your review, or further trimming if wanted.
 
 ---
 
+## Commit 69ea9fb8 — 2026-04-23 22:39 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+[recap-uuid: 3df7814b-59fe-4d59-8a7a-b004443d9e5f]
+[recap-session: a6ca4f3c-bb57-44af-9788-c355cc81b3e6]
+
+### This Commit's Contribution
+On-demand harvester for Claude Code away_summary JSONL records. Parses type=system/subtype=away_summary, splits Goal/Next, creates one gcc_commit per recap, stores imported uuids in recaps.json for idempotency. Flags: --session, --since, --dry-run. 5 tests, all 347 lib tests still pass.
+
+---
+

@@ -11,11 +11,13 @@ implement context versioning features
 - [x] Simplify README around basic workflow
 - [x] Goal: simplify the README around the basic h5i workflow. I rewrote it (301 → 204 lines) with a 4-step quick start, an audit section, and a refs table.
 - [x] Simplifying the README around the basic workflow (init → hooks/MCP → auto-capture → push → audit) with a short git-refs section. Just fixed Quick-start step 1 to note that h5i init writes both CLAUDE.md and AGENTS.md; next, confirm with you whether the README is ready or needs more trimming.
+- [x] added h5i context recap importer
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-04-23 22:39 UTC] `main`: added h5i context recap importer
 - [2026-04-23 22:39 UTC] `main`: Simplifying the README around the basic workflow (init → hooks/MCP → auto-capture → push → audit) with a short git-refs section. Just fixed Quick-start step 1 to note that h5i init writes both CLAUDE.md and AGENTS.md; next, confirm with you whether the README is ready or needs more trimming.
 - [2026-04-23 22:39 UTC] `main`: Goal: simplify the README around the basic h5i workflow. I rewrote it (301 → 204 lines) with a 4-step quick start, an audit section, and a refs table.
 - [2026-04-23 12:25 UTC] `main`: Simplify README around basic workflow

@@ -888,3 +888,9 @@ _[Checkpoint: 69ea9fa4 — Simplifying the README around the basic workflow (ini
 ---
 
 [22:39:50] ACT: shipped 'h5i context recap': parser in src/recap.rs + CLI variant in main.rs + pub ctx::read_ctx_file + 5 unit tests; idempotency stored in recaps.json at ctx tree root; verified end-to-end against a real session log (2 recaps imported, re-run skipped both)
+
+
+---
+_[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
+---
+
