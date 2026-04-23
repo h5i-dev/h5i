@@ -841,3 +841,4 @@ _[Checkpoint: 69e83f50 — implemented dashboard context-management improvements
 [12:21:58] OBSERVE: read README.md
 [12:22:18] OBSERVE: Current README is ~300 lines; heavy on context-subcommand surface (branch/merge/scope/pack/cached-prefix) and light on end-to-end workflow. User wants it reorganized around: init → hooks/mcp → auto-context → push → audit (scan/compliance/vibe).
 [12:23:37] THINK: Restructure README around the end-to-end flow: (1) header+install, (2) quick-start workflow — init, hook setup for Claude, AGENTS.md for Codex, normal coding, push; (3) audit trio — vibe, context scan, compliance (plus notes review); (4) short 'under the hood' section naming the refs/h5i/* refs; (5) other commands as compact list with MANUAL.md pointer. Drop most context-subcommand depth (branch/merge/scope/pack/cached-prefix) — keep show + restore example only. Retain one screenshot + Timeline description.
+[12:25:07] ACT: wrote README.md
