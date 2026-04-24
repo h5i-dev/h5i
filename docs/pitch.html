@@ -699,15 +699,16 @@
           <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
           <span class="terminal-path">A/B evaluation</span>
         </div>
-        <div class="terminal-body"><pre><span class="t-bold">── A/B · 5 trials per arm ─────────────────</span>
+        <div class="terminal-body"><pre><span class="t-bold">── A/B · 10 trials per arm ────────────────</span>
   <span class="t-out">metric            No claims   With claims      Δ</span>
   <span class="t-out">────────────────  ─────────   ───────────  ─────</span>
-  <span class="t-ai">Read tool calls   6.0 ± 0.8     1.0 ± 0    −83%</span>
-  <span class="t-ai">Cache-read tok.    611,624       158,393    −74%</span>
-  <span class="t-ai">Assistant turns   20 ± 2.2     6.2 ± 2.5    −69%</span>
-  <span class="t-ai">Wall time          69s ± 13      23s ± 8    −67%</span>
+  <span class="t-ai">Read tool calls   5.6 ± 1.0     1.0 ± 0    −82%</span>
+  <span class="t-ai">Cache-read tok.    510,284       117,433    −77%</span>
+  <span class="t-ai">Assistant turns  17.1 ± 1.8   4.8 ± 1.2    −72%</span>
+  <span class="t-ai">Wall time           52s ± 9      18s ± 5    −65%</span>
+  <span class="t-ai">Task fidelity         9/10       10/10  ✓</span>
 
-<span class="t-ai">  ✔  Agent reads exactly one file —</span>
+<span class="t-ai">  ✔  All 10 trials read exactly 1 file —</span>
 <span class="t-ai">     the one the claims point at.</span></pre></div>
       </div>
     </div>

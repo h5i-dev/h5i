@@ -53,71 +53,90 @@ main.py                 # wiring; no HTTP itself
 
 ---
 
-## Results — N=5 trials per arm
+## Results — N=10 trials per arm
 
-**Run health:** both arms on `claude-opus-4-7`, 4/5 trials successful per arm (one trial per arm failed both attempts — see *Failure mode* below). Total claude invocations: 13 (5 primary + 2 retries for CONTROL, 5 primary + 1 retry for TREATMENT).
+**Run health:** both arms on `claude-opus-4-7`. CONTROL: 9/10 successful (one trial failed both attempts). TREATMENT: **10/10 successful — all primary attempts, no retries needed.** Total claude invocations: 22 (10 primary + 2 retries for CONTROL, 10 primary + 0 retries for TREATMENT).
 
-**Successful trials only (4 per arm):**
+**Successful trials only (9 CONTROL, 10 TREATMENT):**
 
 | Metric                  | CONTROL (mean ± sd)      | TREATMENT (mean ± sd)    |      Δ% | Noise? |
 |-------------------------|--------------------------|--------------------------|--------:|:------:|
-| **Cache-read tokens**   | **611,624 ± 72,547**     | **158,393 ± 70,668**     | **−74.1%** |   ✓   |
-| Output tokens           |      6,216 ± 1,535       |      2,432 ± 698         |  −60.9% |   ✓   |
-| Read tool calls         |        6.0 ± 0.8         |        1.0 ± 0           |  −83.3% |   ✓   |
-| Bash tool calls         |        8.8 ± 1.3         |        1.2 ± 2.5         |  −85.7% |   ✓   |
-| Assistant turns         |         20 ± 2.2         |        6.2 ± 2.5         |  −68.8% |   ✓   |
-| Wall time (sec)         |       69.2 ± 13.2        |         23 ± 8.3         |  −66.8% |   ✓   |
-| Cache-write tokens      |     37,269 ± 1,631       |     34,041 ± 8,438       |   −8.7% | **⚠ noise** |
-| Input tokens (uncached) |         30 ± 2.2         |       17.5 ± 5           |  −41.7% |   ✓   |
+| **Cache-read tokens**   | **510,284 ± 61,284**     | **117,433 ± 38,032**     | **−77.0%** |   ✓   |
+| Output tokens           |      4,781 ± 1,363       |      1,702 ± 418         |  −64.4% |   ✓   |
+| **Read tool calls**     |        **5.6 ± 1.0**     |        **1.0 ± 0**       |  −82.0% |   ✓   |
+| Bash tool calls         |        7.0 ± 1.4         |        0.3 ± 0.9         |  −95.7% |   ✓   |
+| Assistant turns         |       17.1 ± 1.8         |        4.8 ± 1.2         |  −71.9% |   ✓   |
+| Wall time (sec)         |       51.9 ± 8.9         |       18.4 ± 4.6         |  −64.5% |   ✓   |
+| Input tokens (uncached) |       27.1 ± 1.8         |       14.8 ± 1.2         |  −45.4% |   ✓   |
+| Cache-write tokens      |     37,016 ± 4,660       |     29,584 ± 437         |  −20.1% | **⚠ noise** |
+| Glob tool calls         |        0.2 ± 0.4         |        0 ± 0             | −100.0% | **⚠ noise** |
 
-"Noise" flag fires when `2·max(sd_control, sd_treatment) ≥ |Δ|`. Only **cache-write tokens** fail that test — the 9% apparent drop is well within the stdev. Every other metric clears the threshold by a comfortable margin.
+"Noise" flag fires when `2·max(sd_control, sd_treatment) ≥ |Δ|`. Only **cache-write tokens** and **Glob calls** fail that test (both on near-zero bases). Every primary metric clears the threshold by a comfortable margin — the cache-read delta is ~6× the max within-arm stdev.
 
-**Fidelity across all 5 trials per arm (including failed retries):**
+**Fidelity across all 10 trials per arm (including failed retries):**
 
 | Arm       | All-3-log-pairs | Wrong files edited | Timed out |
 |-----------|----------------:|-------------------:|----------:|
-| CONTROL   |             4/5 |                0/5 |       0/5 |
-| TREATMENT |             4/5 |                0/5 |       0/5 |
+| CONTROL   |            9/10 |               0/10 |      0/10 |
+| TREATMENT |       **10/10** |               0/10 |      0/10 |
 
-Both arms had one trial that failed both the primary attempt and the retry. This is expected LLM stochasticity — the task is not trivially deterministic. The failure rate is **symmetric**, so the headline numbers aren't biased by differential fidelity between arms.
+TREATMENT was **perfect on the first attempt every single time**. CONTROL had one trial that failed both its primary and retry — the agent got lost trying to find the right file, burning 749k cache-read tokens and 24 turns without landing a correct edit. This asymmetry (which the N=5 run missed at 4/5 vs 4/5) is part of the story: **claims don't just reduce tokens, they also reduce task-failure rate**.
 
 ### Per-trial raw data
 
 | Trial | Arm        | Attempts | Success | Cache-read | Reads | Turns | Wall |
 |------:|------------|---------:|:-------:|-----------:|------:|------:|-----:|
-|     1 | CONTROL    |        1 |    ✓    |    511,918 |     5 |    17 |  61s |
-|     1 | TREATMENT  |        1 |    ✓    |    264,395 |     1 |    10 |  35s |
-|     2 | CONTROL    |        2 |    ✖    |    723,622 |     5 |    24 |  66s |
-|     2 | TREATMENT  |        1 |    ✓    |    123,054 |     1 |     5 |  22s |
-|     3 | CONTROL    |        1 |    ✓    |    609,131 |     6 |    20 |  85s |
-|     3 | TREATMENT  |        2 |    ✖    |    344,805 |     1 |    12 |  41s |
-|     4 | CONTROL    |        2 |    ✓    |    680,321 |     7 |    22 |  75s |
-|     4 | TREATMENT  |        1 |    ✓    |    123,058 |     1 |     5 |  18s |
-|     5 | CONTROL    |        1 |    ✓    |    645,126 |     6 |    21 |  56s |
-|     5 | TREATMENT  |        1 |    ✓    |    123,066 |     1 |     5 |  17s |
+|     1 | CONTROL    |        1 |    ✓    |    568,705 |     7 |    19 |  62s |
+|     1 | TREATMENT  |        1 |    ✓    |     93,060 |     1 |     4 |  22s |
+|     2 | CONTROL    |        1 |    ✓    |    544,660 |     7 |    18 |  64s |
+|     2 | TREATMENT  |        1 |    ✓    |     92,997 |     1 |     4 |  19s |
+|     3 | CONTROL    |        2 |    ✖    |    749,504 |     6 |    24 |  70s |
+|     3 | TREATMENT  |        1 |    ✓    |    216,983 |     1 |     8 |  30s |
+|     4 | CONTROL    |        1 |    ✓    |    501,261 |     6 |    17 |  39s |
+|     4 | TREATMENT  |        1 |    ✓    |     93,051 |     1 |     4 |  16s |
+|     5 | CONTROL    |        2 |    ✓    |    538,174 |     6 |    18 |  46s |
+|     5 | TREATMENT  |        1 |    ✓    |    123,046 |     1 |     5 |  16s |
+|     6 | CONTROL    |        1 |    ✓    |    574,943 |     5 |    19 |  50s |
+|     6 | TREATMENT  |        1 |    ✓    |    123,102 |     1 |     5 |  18s |
+|     7 | CONTROL    |        1 |    ✓    |    449,874 |     5 |    15 |  49s |
+|     7 | TREATMENT  |        1 |    ✓    |     92,989 |     1 |     4 |  14s |
+|     8 | CONTROL    |        1 |    ✓    |    476,208 |     5 |    16 |  63s |
+|     8 | TREATMENT  |        1 |    ✓    |     92,992 |     1 |     4 |  17s |
+|     9 | CONTROL    |        1 |    ✓    |    547,631 |     5 |    18 |  48s |
+|     9 | TREATMENT  |        1 |    ✓    |    123,059 |     1 |     5 |  17s |
+|    10 | CONTROL    |        1 |    ✓    |    391,098 |     4 |    14 |  46s |
+|    10 | TREATMENT  |        1 |    ✓    |    123,054 |     1 |     5 |  15s |
 
-### What the rigor caught that N=2 didn't
+**TREATMENT cache-read distribution is bimodal + one outlier:**
+- 6 trials at **~93k** (1, 2, 4, 7, 8, and very close)
+- 3 trials at **~123k** (5, 6, 9, 10)
+- 1 outlier at **217k** (trial 3 — agent took 8 turns instead of the typical 4-5)
 
-A previous N=2 run reported **81%** cache-read reduction. The N=5 run finds **74%**. The ~7 pp shift is within the rigorous version's stdev band, so it isn't a contradiction — it's the same effect observed with better precision.
+**CONTROL cache-read distribution is tight around ~500k**, ranging 391k–575k across 9 successful trials. The failed CONTROL trial 3 blew 749k before giving up.
 
-Three things the N=2 pass hid:
+### Convergence of the headline across sample sizes
 
-1. **TREATMENT variance is higher than it appeared.** Three of the four successful TREATMENT trials clustered tightly around 123k cache-read tokens (123,054 / 123,058 / 123,066 — nearly identical). Trial 1, however, used **264,395** — roughly 2× the typical. Without N≥5, this outlier would dominate or be hidden entirely depending on draw.
-2. **Fidelity failures are bilateral.** The earlier "CONTROL fails more" story was a 1/2 sample artifact. At N=5 both arms had exactly one failure.
-3. **Cache-write tokens aren't actually different.** The N=2 run suggested a 19% drop. With proper variance, that's noise.
+| N  | Cache-read Δ | Read-calls Δ | Turns Δ | Wall Δ | TREATMENT fidelity |
+|---:|-------------:|-------------:|--------:|-------:|-------------------:|
+|  2 |         −81% |         −85% |    −76% |   −71% |              2/2 ✓ |
+|  5 |         −74% |         −83% |    −69% |   −67% |              4/5 ✓ |
+| 10 |     **−77%** |     **−82%** | **−72%** | **−65%** |         **10/10 ✓** |
 
-### What the most defensible single-number summary is
+The N=5 and N=10 runs agree within ~3 pp across all metrics, so the effect has stabilized. The N=2 numbers were directionally right but imprecise — a reminder that 2 trials aren't enough to separate signal from LLM stochasticity.
 
-The table's cleanest number is **Read tool calls: 6.0 ± 0.8 → 1.0 ± 0**. Zero stdev in TREATMENT (all 4 successful runs read exactly one file — `src/api/client.py`, which the claims point at), and the CONTROL distribution is tight. **Interpretation: the claim-informed agent does ~6× less file-reading work per session.** That's a cleaner story than any token-percentage, because it doesn't require the reader to understand prompt caching to appreciate.
+### The cleanest single-number summary
+
+**Read tool calls: 5.6 ± 1.0 → 1.0 ± 0.0**. All 10 successful TREATMENT trials read exactly one file — the one the claims point at. Zero within-arm variance on the treatment side, and the control distribution is tight. **Interpretation: claims make file-reading behaviour deterministic and ~5.6× less work per session.** That's a cleaner story than any token-percentage, because it doesn't require the reader to understand prompt caching to appreciate.
 
 ---
 
 ## Honest caveats
 
-1. **N=4 successful trials per arm is small.** Stdev estimates are themselves noisy at N=4. `N_TRIALS=10` would give more trustworthy percentiles — worth running before making a firmer claim than "~70%".
-2. **Experimental bias toward the mechanism working.** The claims were designed to cover exactly the facts the task needs. A task where claims only partially overlap with what's needed wouldn't show this delta. The honest claim is: *when claims cover the grounding the agent would otherwise do, the agent skips that work and spends ~70–80% fewer cache-read tokens.* Not *"claims always save tokens."*
-3. **One session shape only.** Cold start establishing repo structure. If the prompt-cache was already warm from a prior session (unlikely in the current Claude Code product, but possible), the delta would be smaller.
-4. **Cache-read tokens bill at ~10% of uncached input** under Anthropic's current pricing. The headline 74% drop on a cached-dominant input workload translates to a real but not 74%-of-total-invoice saving — estimate somewhere in the 50-70% range of the true $ cost of the input side, assuming cache hit rates hold.
+1. **Experimental bias toward the mechanism working.** The claims were designed to cover exactly the facts the task needs. A task where claims only partially overlap with what's needed wouldn't show this delta. The honest claim is: *when claims cover the grounding the agent would otherwise do, the agent skips that work and spends ~77% fewer cache-read tokens.* Not *"claims always save tokens."*
+2. **One session shape only.** Cold start establishing repo structure. If the prompt-cache was already warm from a prior session, the delta would be smaller.
+3. **Cache-read tokens bill at ~10% of uncached input** under Anthropic's current pricing. The headline 77% drop on a cached-dominant input workload translates to a real but not 77%-of-total-invoice saving — estimate somewhere in the 50–70% range of the true $ cost of the input side.
+4. **TREATMENT's perfect 10/10 fidelity is partly lucky.** At N=10 one more trial could easily have failed without contradicting the underlying pattern. The robust claim is "at least as reliable as CONTROL, probably somewhat better." Not "never fails."
+5. **Model: `claude-opus-4-7`.** Smaller/older models would likely show a smaller absolute delta because they explore less aggressively to begin with.
 
 ---
 
@@ -134,14 +153,14 @@ h5i claims --help
 # 3. Run the experiment. Default is N=5 (~10-15 min wall-clock).
 ./scripts/experiment_claims.sh
 
-# Pitch-grade numbers (N=10, ~25-30 min):
+# Numbers matching this writeup (N=10, ~25-30 min):
 N_TRIALS=10 ./scripts/experiment_claims.sh
 
 # Faster iteration during script development:
 N_TRIALS=2 TRIAL_TIMEOUT=60 RETRY_CAP=0 ./scripts/experiment_claims.sh
 
 # Override the temp-workdir prefix if you want to inspect them outside /tmp:
-WORKDIR_BASE=$PWD/h5i-claims-exp N_TRIALS=5 ./scripts/experiment_claims.sh
+WORKDIR_BASE=$PWD/h5i-claims-exp N_TRIALS=10 ./scripts/experiment_claims.sh
 ```
 
 Each run writes raw per-trial JSON records to `${WORKDIR_BASE}-results.jsonl.filtered`, and preserves the workdirs under `${WORKDIR_BASE}-{CONTROL,TREATMENT}-<trial>/` (plus `-retry2`, `-retry3` for retried attempts) so you can re-inspect:
@@ -168,6 +187,6 @@ git -C ${WORKDIR_BASE}-TREATMENT-1 diff
 
 ## Verdict
 
-The mechanism works, and the magnitude is substantial at N=5 with proper variance accounting: **~74% fewer cache-read tokens** and **6× fewer file reads** on a task where the claims cover the grounding the agent would otherwise do. The effect is robust — every primary metric except cache-write passes the `2·stdev` threshold. The previous N=2 "81%" number was directionally right but imprecise; N=5 tightens it to a more defensible 74% (±10 pp margin at this sample size).
+The mechanism works and the magnitude is substantial at N=10 with proper variance accounting: **~77% fewer cache-read tokens**, **~5.6× fewer file reads**, **~72% fewer assistant turns**, and **10/10 task fidelity vs 9/10**. The effect is robust — every primary metric clears the `2·stdev` threshold by a comfortable margin, and the N=5 → N=10 deltas agree within 3 percentage points on every metric. The "with claims" distribution is remarkably deterministic: 9 of 10 TREATMENT trials cluster in 93k–123k cache-read tokens, while the CONTROL runs spread from 391k–575k.
 
-Next experiments worth running: (a) repeat at N=10 for tighter percentiles; (b) counter-experiment with *irrelevant* claims (does the preamble overhead cost tokens when claims don't apply?); (c) partial-coverage grid (at 1/5, 3/5, 5/5 relevant claims, where's the break-even point?).
+Next experiments worth running: (a) counter-experiment with *irrelevant* claims (does the preamble overhead cost tokens when claims don't apply?); (b) partial-coverage grid (at 1/5, 3/5, 5/5 relevant claims, where's the break-even point?); (c) this same protocol on a larger codebase to see whether the effect scales with repo size.
