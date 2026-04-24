@@ -952,3 +952,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [15:00:01] ACT: wrote scripts/experiment_claims.sh
 [15:00:31] ACT: Added scripts/experiment_claims.sh — CONTROL vs TREATMENT A/B test on identical seeded repo with/without pre-recorded claims. Parses session JSONL for per-turn token usage (input/output/cache_read/cache_creation) and tool-call counts (Read/Grep/Glob/Edit). N_TRIALS env var for averaging. Prints side-by-side table with delta+percent and a fidelity check (did the agent touch only client.py?).
 [15:13:53] ACT: wrote scripts/experiment_claims_results.md
+[15:18:35] OBSERVE: read README.md
