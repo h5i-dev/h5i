@@ -993,3 +993,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [16:33:35] ACT: wrote scripts/experiment_claims_results.md
 [16:33:38] ACT: All 4 docs updated with N=10 numbers. Key shifts from N=5: cache-read 74->77%, TREATMENT fidelity 4/5 -> 10/10 (perfect, no retries needed). Added fidelity row to README and pitch tables since it's now asymmetric in TREATMENT's favor. results.md adds a convergence table showing N=2/5/10 all agree within ~3pp.
 [19:07:12] OBSERVE: read README.md
+[19:07:54] ACT: edited README.md
