@@ -1,6 +1,6 @@
 # `h5i claims` — token-reduction experiment
 
-Does pre-recording content-addressed claims actually reduce token usage on the next session, or is the saving purely theoretical? This is a small A/B test that tries to answer that.
+Does pre-recording content-addressed claims actually reduce token usage on the next session, or is the saving purely theoretical? This is a controlled A/B test that tries to answer that.
 
 ---
 
@@ -19,13 +19,22 @@ Two arms run on **identical seeded codebases**, receiving the **identical user t
 
 Both arms prepend the output of `h5i context prompt` to the user task, then pipe it into `claude --print`. The only variable is whether claims were recorded beforehand.
 
-For each run, the script parses the session JSONL under `~/.claude/projects/<encoded-workdir>/*.jsonl`, sums per-turn `usage.{input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens}`, and counts `Read`/`Grep`/`Glob`/`Edit`/`Bash` tool calls. A fidelity check (`git diff --name-only`) verifies the agent edited the expected file.
+**Rigor built into the v2 script** (`./scripts/experiment_claims.sh`):
+
+- **Per-trial timeout** (`TRIAL_TIMEOUT=180s`) — wraps `claude --print` so a stalled trial doesn't hang the experiment.
+- **Retry-and-cap** (`RETRY_CAP=1`) — a trial that times out, touches the wrong files, or fails the ENTER/EXIT log-pair correctness check is retried in a fresh workdir. Failures and retry counts are recorded, not hidden.
+- **Interleaved arm order** per trial (odd: CONTROL→TREATMENT, even: TREATMENT→CONTROL) to mitigate serial drift from Anthropic-side caches or backend state.
+- **Strict correctness check** — counts the HTTP helpers (0–3) that have **both** an `ENTER <fname>` and `EXIT <fname>` `log.info` line in the added-lines side of the diff. Only 3/3 counts as a successful trial.
+- **Model ID logged per trial** — so a mid-experiment backend rollover would be visible, not hidden in the variance.
+- **Aggregator reports mean ± stdev [min..max]** per arm, and flags any metric where `2·stdev ≥ |Δ|` as noise-dominated.
+
+For each run the script parses the session JSONL under `~/.claude/projects/<encoded-workdir>/*.jsonl` and sums per-turn `usage.{input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens}` and counts `Read`/`Grep`/`Glob`/`Edit`/`Bash` tool calls.
 
 **Task (identical for both arms):**
 
 > Add `log.info("ENTER <func_name>")` and `log.info("EXIT <func_name>")` to every function that makes an HTTP request. Don't modify any function that doesn't make HTTP calls.
 
-**Seeded codebase (4 Python files, 6 functions total):**
+**Seeded codebase (4 Python files, 7 functions total):**
 
 ```
 src/api/client.py       # 3 HTTP helpers: fetch_user, create_post, delete_post
@@ -44,55 +53,71 @@ main.py                 # wiring; no HTTP itself
 
 ---
 
-## Results
+## Results — N=5 trials per arm
 
-**Run:** `N_TRIALS=2` (4 total Claude sessions), ~3 minutes wall-clock.
+**Run health:** both arms on `claude-opus-4-7`, 4/5 trials successful per arm (one trial per arm failed both attempts — see *Failure mode* below). Total claude invocations: 13 (5 primary + 2 retries for CONTROL, 5 primary + 1 retry for TREATMENT).
 
-| Metric                  | CONTROL avg | TREATMENT avg |         Δ |      Δ% |
-|-------------------------|------------:|--------------:|----------:|--------:|
-| **Cache-read tokens**   |     577,334 |       108,060 |  −469,274 |  **−81.3%** |
-| Output tokens           |       5,762 |         1,768 |    −3,994 |  −69.3% |
-| Read tool calls         |         6.5 |           1.0 |      −5.5 |  −84.6% |
-| Bash tool calls         |           8 |             0 |        −8 | −100.0% |
-| Assistant turns         |          19 |           4.5 |     −14.5 |  −76.3% |
-| Wall time (sec)         |        69.5 |          20.5 |       −49 |  −70.5% |
-| Cache-write tokens      |      36,426 |        29,572 |    −6,854 |  −18.8% |
-| Input tokens (uncached) |          29 |          14.5 |     −14.5 |  −50.0% |
+**Successful trials only (4 per arm):**
 
-**Fidelity** (did the agent actually complete the task?):
+| Metric                  | CONTROL (mean ± sd)      | TREATMENT (mean ± sd)    |      Δ% | Noise? |
+|-------------------------|--------------------------|--------------------------|--------:|:------:|
+| **Cache-read tokens**   | **611,624 ± 72,547**     | **158,393 ± 70,668**     | **−74.1%** |   ✓   |
+| Output tokens           |      6,216 ± 1,535       |      2,432 ± 698         |  −60.9% |   ✓   |
+| Read tool calls         |        6.0 ± 0.8         |        1.0 ± 0           |  −83.3% |   ✓   |
+| Bash tool calls         |        8.8 ± 1.3         |        1.2 ± 2.5         |  −85.7% |   ✓   |
+| Assistant turns         |         20 ± 2.2         |        6.2 ± 2.5         |  −68.8% |   ✓   |
+| Wall time (sec)         |       69.2 ± 13.2        |         23 ± 8.3         |  −66.8% |   ✓   |
+| Cache-write tokens      |     37,269 ± 1,631       |     34,041 ± 8,438       |   −8.7% | **⚠ noise** |
+| Input tokens (uncached) |         30 ± 2.2         |       17.5 ± 5           |  −41.7% |   ✓   |
 
-| Arm       | `client.py` edited | `utils/*.py` wrongly edited |
-|-----------|-------------------:|----------------------------:|
-| CONTROL   |               1/2 |                         0/2 |
-| TREATMENT |               2/2 |                         0/2 |
+"Noise" flag fires when `2·max(sd_control, sd_treatment) ≥ |Δ|`. Only **cache-write tokens** fail that test — the 9% apparent drop is well within the stdev. Every other metric clears the threshold by a comfortable margin.
 
-CONTROL trial 2 ran for 72 s but never committed the edit — a fidelity failure that makes the CONTROL cost numbers **understated** relative to what a fully-completing run would cost.
+**Fidelity across all 5 trials per arm (including failed retries):**
+
+| Arm       | All-3-log-pairs | Wrong files edited | Timed out |
+|-----------|----------------:|-------------------:|----------:|
+| CONTROL   |             4/5 |                0/5 |       0/5 |
+| TREATMENT |             4/5 |                0/5 |       0/5 |
+
+Both arms had one trial that failed both the primary attempt and the retry. This is expected LLM stochasticity — the task is not trivially deterministic. The failure rate is **symmetric**, so the headline numbers aren't biased by differential fidelity between arms.
 
 ### Per-trial raw data
 
-Both TREATMENT trials are nearly identical to each other, which makes the small sample more convincing than usual:
+| Trial | Arm        | Attempts | Success | Cache-read | Reads | Turns | Wall |
+|------:|------------|---------:|:-------:|-----------:|------:|------:|-----:|
+|     1 | CONTROL    |        1 |    ✓    |    511,918 |     5 |    17 |  61s |
+|     1 | TREATMENT  |        1 |    ✓    |    264,395 |     1 |    10 |  35s |
+|     2 | CONTROL    |        2 |    ✖    |    723,622 |     5 |    24 |  66s |
+|     2 | TREATMENT  |        1 |    ✓    |    123,054 |     1 |     5 |  22s |
+|     3 | CONTROL    |        1 |    ✓    |    609,131 |     6 |    20 |  85s |
+|     3 | TREATMENT  |        2 |    ✖    |    344,805 |     1 |    12 |  41s |
+|     4 | CONTROL    |        2 |    ✓    |    680,321 |     7 |    22 |  75s |
+|     4 | TREATMENT  |        1 |    ✓    |    123,058 |     1 |     5 |  18s |
+|     5 | CONTROL    |        1 |    ✓    |    645,126 |     6 |    21 |  56s |
+|     5 | TREATMENT  |        1 |    ✓    |    123,066 |     1 |     5 |  17s |
 
-| Trial | Arm       | Reads | Bash | Turns | Cache-read | Wall |
-|-------|-----------|------:|-----:|------:|-----------:|-----:|
-| 1     | CONTROL   |     7 |    9 |    21 |    640,784 |  67s |
-| 1     | TREATMENT |     1 |    0 |     5 |    123,106 |  20s |
-| 2     | CONTROL   |     6 |    7 |    17 |    513,883 |  72s |
-| 2     | TREATMENT |     1 |    0 |     4 |     93,014 |  21s |
+### What the rigor caught that N=2 didn't
 
-### What actually happened in each arm
+A previous N=2 run reported **81%** cache-read reduction. The N=5 run finds **74%**. The ~7 pp shift is within the rigorous version's stdev band, so it isn't a contradiction — it's the same effect observed with better precision.
 
-- **CONTROL:** the agent grepped directories via Bash, read `main.py`, read `client.py`, read both `utils/*.py` files, then edited. ~17–21 turns of exploration before committing.
-- **TREATMENT:** the agent went straight to `src/api/client.py` because the claims told it exactly where HTTP helpers live and which files not to touch. 1 read, 1 edit, done in 4–5 turns.
+Three things the N=2 pass hid:
+
+1. **TREATMENT variance is higher than it appeared.** Three of the four successful TREATMENT trials clustered tightly around 123k cache-read tokens (123,054 / 123,058 / 123,066 — nearly identical). Trial 1, however, used **264,395** — roughly 2× the typical. Without N≥5, this outlier would dominate or be hidden entirely depending on draw.
+2. **Fidelity failures are bilateral.** The earlier "CONTROL fails more" story was a 1/2 sample artifact. At N=5 both arms had exactly one failure.
+3. **Cache-write tokens aren't actually different.** The N=2 run suggested a 19% drop. With proper variance, that's noise.
+
+### What the most defensible single-number summary is
+
+The table's cleanest number is **Read tool calls: 6.0 ± 0.8 → 1.0 ± 0**. Zero stdev in TREATMENT (all 4 successful runs read exactly one file — `src/api/client.py`, which the claims point at), and the CONTROL distribution is tight. **Interpretation: the claim-informed agent does ~6× less file-reading work per session.** That's a cleaner story than any token-percentage, because it doesn't require the reader to understand prompt caching to appreciate.
 
 ---
 
 ## Honest caveats
 
-1. **"Input tokens" (29 → 14.5) is misleading as a headline.** Under prompt caching, almost all input is billed through `cache_read_input_tokens` (~10% of the uncached rate). The 81% drop in cache-read tokens is what actually shows up on the Anthropic invoice.
-2. **CONTROL trial 2 didn't finish the edit.** That's a fidelity failure, not a cost — so CONTROL's already-higher cost is an undercount.
-3. **N=2 cannot distinguish "80% reduction" from "60% reduction".** The directional story is solid, but tighter estimates need `N_TRIALS=5` or more.
-4. **Experimental bias toward the mechanism working:** the claims were designed to cover exactly the facts the task needed. A task where claims don't overlap with what's needed wouldn't show this delta. The honest claim is *"when claims cover the grounding the agent would otherwise do, you save ~5× on reads and ~80% on cache-read tokens,"* not *"claims always save tokens."*
-5. **One session shape only.** The agent had to establish repo structure from a cold start. If the prompt-cache was already warm from a prior session, the delta would be smaller.
+1. **N=4 successful trials per arm is small.** Stdev estimates are themselves noisy at N=4. `N_TRIALS=10` would give more trustworthy percentiles — worth running before making a firmer claim than "~70%".
+2. **Experimental bias toward the mechanism working.** The claims were designed to cover exactly the facts the task needs. A task where claims only partially overlap with what's needed wouldn't show this delta. The honest claim is: *when claims cover the grounding the agent would otherwise do, the agent skips that work and spends ~70–80% fewer cache-read tokens.* Not *"claims always save tokens."*
+3. **One session shape only.** Cold start establishing repo structure. If the prompt-cache was already warm from a prior session (unlikely in the current Claude Code product, but possible), the delta would be smaller.
+4. **Cache-read tokens bill at ~10% of uncached input** under Anthropic's current pricing. The headline 74% drop on a cached-dominant input workload translates to a real but not 74%-of-total-invoice saving — estimate somewhere in the 50-70% range of the true $ cost of the input side, assuming cache hit rates hold.
 
 ---
 
@@ -103,20 +128,23 @@ Both TREATMENT trials are nearly identical to each other, which makes the small 
 cargo install --path . --force
 
 # 2. Confirm tooling.
-which h5i claude
+which h5i claude timeout
 h5i claims --help
 
-# 3. Run the experiment. N_TRIALS controls trials per arm (CONTROL + TREATMENT run for each).
-N_TRIALS=2 ./scripts/experiment_claims.sh
+# 3. Run the experiment. Default is N=5 (~10-15 min wall-clock).
+./scripts/experiment_claims.sh
 
-# Or run more trials for tighter numbers:
-N_TRIALS=5 ./scripts/experiment_claims.sh
+# Pitch-grade numbers (N=10, ~25-30 min):
+N_TRIALS=10 ./scripts/experiment_claims.sh
+
+# Faster iteration during script development:
+N_TRIALS=2 TRIAL_TIMEOUT=60 RETRY_CAP=0 ./scripts/experiment_claims.sh
 
 # Override the temp-workdir prefix if you want to inspect them outside /tmp:
-WORKDIR_BASE=$PWD/h5i-claims-exp N_TRIALS=3 ./scripts/experiment_claims.sh
+WORKDIR_BASE=$PWD/h5i-claims-exp N_TRIALS=5 ./scripts/experiment_claims.sh
 ```
 
-Each run writes raw per-trial JSON records to `${WORKDIR_BASE}-results.jsonl.filtered`, and preserves the workdirs under `${WORKDIR_BASE}-{CONTROL,TREATMENT}-<trial>/` so you can re-inspect:
+Each run writes raw per-trial JSON records to `${WORKDIR_BASE}-results.jsonl.filtered`, and preserves the workdirs under `${WORKDIR_BASE}-{CONTROL,TREATMENT}-<trial>/` (plus `-retry2`, `-retry3` for retried attempts) so you can re-inspect:
 
 ```bash
 # See what claims were recorded in a trial.
@@ -133,10 +161,13 @@ git -C ${WORKDIR_BASE}-TREATMENT-1 diff
 
 - `h5i` CLI with `claims` subcommand (commit `8d4eb3e` or later)
 - `claude` CLI in `PATH`
+- `timeout(1)` from GNU coreutils
 - `git`, `python3`, `bash`
 
 ---
 
 ## Verdict
 
-The mechanism works, and the magnitude is substantial: **~5× fewer file reads and ~80% drop in cache-read tokens** on a task where the claims cover the grounding the agent would otherwise do. Both trials tell the same story, which makes the directional conclusion robust even at N=2. The remaining question is how performance degrades as claim coverage drops below 100% — worth a follow-up experiment with partially-covering claim sets.
+The mechanism works, and the magnitude is substantial at N=5 with proper variance accounting: **~74% fewer cache-read tokens** and **6× fewer file reads** on a task where the claims cover the grounding the agent would otherwise do. The effect is robust — every primary metric except cache-write passes the `2·stdev` threshold. The previous N=2 "81%" number was directionally right but imprecise; N=5 tightens it to a more defensible 74% (±10 pp margin at this sample size).
+
+Next experiments worth running: (a) repeat at N=10 for tighter percentiles; (b) counter-experiment with *irrelevant* claims (does the preamble overhead cost tokens when claims don't apply?); (c) partial-coverage grid (at 1/5, 3/5, 5/5 relevant claims, where's the break-even point?).

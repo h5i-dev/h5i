@@ -173,16 +173,16 @@ h5i claims list       # live / stale badges
 h5i claims prune      # drop claims whose evidence changed
 ```
 
-**Measured impact** — one controlled A/B (`./scripts/experiment_claims.sh`):
+**Measured impact** — controlled A/B at N=5 trials per arm (`./scripts/experiment_claims.sh`):
 
-| Metric              | No claims | With claims |      Δ |
-|---------------------|----------:|------------:|-------:|
-| Cache-read tokens   |   577,334 |     108,060 | **−81%** |
-| Read tool calls     |       6.5 |         1.0 |   −85% |
-| Assistant turns     |        19 |         4.5 |   −76% |
-| Wall time           |       70s |         21s |   −71% |
+| Metric              | No claims (mean ± sd) | With claims (mean ± sd) |      Δ |
+|---------------------|----------------------:|------------------------:|-------:|
+| Cache-read tokens   |     611,624 ± 72,547  |       158,393 ± 70,668  | **−74%** |
+| Read tool calls     |           6.0 ± 0.8   |               1.0 ± 0   |   −83% |
+| Assistant turns     |            20 ± 2.2   |             6.2 ± 2.5   |   −69% |
+| Wall time           |         69 ± 13 sec   |            23 ± 8 sec   |   −67% |
 
-The full methodology can be found in [`scripts/experiment_claims_results.md`](scripts/experiment_claims_results.md).
+The treated agent reads exactly one file across all successful trials (`σ = 0`) — the one the claims point at. The full methodology, raw per-trial data, and honest caveats are in [`scripts/experiment_claims_results.md`](scripts/experiment_claims_results.md).
 
 ---
 

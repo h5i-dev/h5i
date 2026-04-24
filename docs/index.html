@@ -496,7 +496,7 @@
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i claims add / list / prune</span>
         <div class="feat-name">Content-addressed claims</div>
-        <div class="feat-desc">Record what the agent concluded — each claim pins its evidence as a Merkle hash over the files it depends on. Stays <code style="color:var(--red);font-family:var(--mono)">live</code> until any evidence blob changes, then auto-invalidates. Injected into the next session's preamble so the agent skips re-grounding — cuts cache-read tokens by ~80%.</div>
+        <div class="feat-desc">Record what the agent concluded — each claim pins its evidence as a Merkle hash over the files it depends on. Stays <code style="color:var(--red);font-family:var(--mono)">live</code> until any evidence blob changes, then auto-invalidates. Injected into the next session's preamble so the agent skips re-grounding — measured A/B (N=5) shows <strong>~74% fewer cache-read tokens</strong> and 6× fewer file reads.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i commit --prompt … --audit</span>
@@ -783,16 +783,16 @@
 <span class="t-warn">○ stale</span>   <span class="t-ai">9f02ab1e733c</span>  <span class="t-out">FooError::Parse only constructed in parser.rs</span>
           <span class="t-out">↳  src/parser.rs changed — evidence no longer matches</span>
 
-<span class="t-cmt"># Identical task, identical codebase — measured A/B:</span>
+<span class="t-cmt"># Identical task, identical codebase — measured A/B (N=5 trials per arm):</span>
 
 <span class="t-bold">── Result ─────────────────────────────────────────────</span>
   <span class="t-out">metric             No claims   With claims       Δ</span>
-  <span class="t-ai">Cache-read tokens    577,334       108,060    −81%</span>
-  <span class="t-ai">Read tool calls          6.5           1.0    −85%</span>
-  <span class="t-ai">Assistant turns           19           4.5    −76%</span>
-  <span class="t-ai">Wall time                70s           21s    −71%</span>
+  <span class="t-ai">Read tool calls    6.0 ± 0.8     1.0 ± 0     −83%</span>
+  <span class="t-ai">Cache-read tokens    611,624       158,393    −74%</span>
+  <span class="t-ai">Assistant turns     20 ± 2.2     6.2 ± 2.5   −69%</span>
+  <span class="t-ai">Wall time            69s ± 13      23s ± 8    −67%</span>
 
-<span class="t-pass">✔</span>  <span class="t-out">Agent skipped re-grounding — went straight to the edit.</span></pre></div>
+<span class="t-pass">✔</span>  <span class="t-out">Agent reads one file (the one claims point at) and edits.</span></pre></div>
       </div>
     </div>
   </div>
