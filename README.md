@@ -27,9 +27,19 @@ curl -fsSL https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh | 
 
 ---
 
+## Why h5i
+
+Three commands do most of the work:
+
+- **`h5i context`** — records the goal, milestones, and every OBSERVE / THINK / ACT step of an agent session as first-class git objects. Pick up where the last session stopped, hand a task off from **Claude Code** to **Codex** without losing the thread, and `git diff` your own reasoning.
+- **`h5i claims`** — attach short, content-addressed facts (e.g. *"HTTP helpers live only in `src/api/client.py`"*) to the files that back them. Live claims are injected into future agent sessions, cutting cache-read tokens by **~77%**.
+- **`h5i vibe`** — a 5-second audit of any repo: AI footprint, directories that are fully AI-written, leaked API tokens, and prompt-injection hits. Useful on any codebase you inherit.
+
+---
+
 ## Quick start
 
-The whole workflow is four steps. Once hooks are installed, h5i runs silently — your normal `claude` or `codex` session is automatically captured.
+The whole workflow is five steps. Once hooks are installed, h5i runs silently — your normal `claude` or `codex` session is automatically captured.
 
 ### 1. Initialize
 
@@ -102,7 +112,18 @@ h5i commit -m "switch session store to Redis" \
 
 With hooks installed, `--prompt` is inferred automatically.
 
-### 4. Share with your team
+### 4. Pin reusable facts with `h5i claims`
+
+When an agent figures out something a future session will need — where a helper lives, which module owns a concern, a non-obvious invariant — pin it as a claim so the next session doesn't re-derive it from scratch:
+
+```bash
+h5i claims add "HTTP helpers live only in src/api/client.py" \
+  --path src/api/client.py --path src/middleware.rs
+```
+
+Claims are content-addressed over `(path, blob_oid)` pairs. If any referenced file changes, the claim auto-invalidates — stale guidance never leaks into the next session. Live claims are injected into `h5i context prompt`. See [Cutting token cost](#cutting-token-cost) for measured impact (−77% cache-read tokens).
+
+### 5. Share with your team
 
 h5i metadata lives in dedicated Git refs (see [Under the hood](#under-the-hood)) and is **not** part of a plain `git push`. Sync it in one shot:
 
