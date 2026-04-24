@@ -921,3 +921,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [12:26:00] ACT: edited MEMORY.md
 [14:40:08] THINK: v0 claims feature: blob-OID Merkle evidence hash, JSON per-claim under .git/.h5i/claims/, CLI add/list/prune, inject live claims into h5i context prompt preamble. Deferring auto-extraction and AST-level pinning to future PRs.
 [14:40:16] OBSERVE: read src/error.rs
+[14:40:26] OBSERVE: read src/ctx.rs
