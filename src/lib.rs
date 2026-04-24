@@ -13,6 +13,7 @@ pub mod delta_store;
 pub mod error;
 pub mod memory;
 pub mod metadata;
+pub mod recap;
 pub mod session_log;
 pub mod repository;
 pub mod resume;

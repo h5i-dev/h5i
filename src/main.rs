@@ -589,6 +589,22 @@ enum ContextCommands {
         branch: Option<String>,
     },
 
+    /// Import Claude Code "Recap" (`away_summary`) entries from the active
+    /// session log as context commits. Idempotent — each recap UUID is
+    /// recorded and skipped on subsequent runs.
+    Recap {
+        /// Explicit JSONL session file to scan (default: auto-detect latest)
+        #[arg(long)]
+        session: Option<PathBuf>,
+        /// Only import recaps with an ISO-8601 timestamp after this cutoff
+        /// (e.g. `2026-04-23T00:00:00Z`)
+        #[arg(long)]
+        since: Option<String>,
+        /// Show what would be imported without modifying the workspace
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Search context traces and session footprints for files relevant to a query.
     /// Combines BM25-style scoring over OBSERVE/THINK/ACT entries with git
     /// co-change analysis — no AST or embeddings required.
@@ -3221,6 +3237,67 @@ jq -c '{
                         anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
                     }
                     ctx::print_dag(workdir, branch.as_deref())?;
+                }
+
+                ContextCommands::Recap { session, since, dry_run } => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+
+                    let cutoff = match since {
+                        Some(s) => Some(
+                            s.parse::<chrono::DateTime<chrono::Utc>>()
+                                .map_err(|e| anyhow::anyhow!("invalid --since timestamp: {e}"))?,
+                        ),
+                        None => None,
+                    };
+
+                    // Session-log discovery matches on absolute cwd, so resolve first.
+                    let scan_dir = std::fs::canonicalize(workdir)
+                        .unwrap_or_else(|_| workdir.to_path_buf());
+
+                    let opts = h5i_core::recap::ImportOpts {
+                        since: cutoff,
+                        session_path: session,
+                        dry_run,
+                    };
+
+                    let results = h5i_core::recap::import_recaps(&scan_dir, &opts)?;
+
+                    let imported: Vec<_> = results.iter().filter(|r| !r.skipped).collect();
+                    let skipped: Vec<_> = results.iter().filter(|r| r.skipped).collect();
+
+                    if results.is_empty() {
+                        println!("{} No recaps found in session log.", style("·").dim());
+                    } else {
+                        let verb = if dry_run { "would import" } else { "imported" };
+                        println!(
+                            "{} {} {} new recap(s){}",
+                            SUCCESS,
+                            style(verb).green().bold(),
+                            style(imported.len()).cyan(),
+                            if skipped.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" · {} already imported", skipped.len())
+                            },
+                        );
+                        for r in &imported {
+                            let (summary, _) = h5i_core::recap::split_summary_detail(&r.recap.content);
+                            let display = if summary.is_empty() {
+                                r.recap.uuid.clone()
+                            } else {
+                                summary
+                            };
+                            let short = r.recap.uuid.get(..8).unwrap_or(&r.recap.uuid);
+                            println!(
+                                "  {} {}  {}",
+                                style("✓").green(),
+                                style(short).dim(),
+                                display,
+                            );
+                        }
+                    }
                 }
 
                 ContextCommands::Search { query, limit, history, json } => {

@@ -48,6 +48,7 @@ Command reference for all h5i subcommands and flags.
   - [h5i context pack](#h5i-context-pack)
   - [h5i context ephemeral](#h5i-context-ephemeral)
   - [h5i context cached-prefix](#h5i-context-cached-prefix)
+  - [h5i context recap](#h5i-context-recap)
 - [h5i memory](#h5i-memory)
   - [h5i memory snapshot](#h5i-memory-snapshot)
   - [h5i memory log](#h5i-memory-log)
@@ -1345,6 +1346,43 @@ h5i context cached-prefix
 **Why this matters**
 
 Anthropic's prompt caching has a 5-minute TTL. If the stable prefix (goal, milestones, older trace entries) is serialised before the volatile suffix, repeated agent steps pay only for the dynamic suffix while the stable portion is served from cache. This maps to the cost-recovery finding in the CMV paper (arXiv:2602.22402): cost neutrality within ~10 conversational turns.
+
+---
+
+### h5i context recap
+
+```
+h5i context recap [--session <path>] [--since <iso8601>] [--dry-run]
+```
+
+Import Claude Code **Recap** entries (internally `{"type":"system","subtype":"away_summary"}` JSONL records) from the active session log as context commits.
+
+Claude Code periodically emits a recap of the form `Goal: … <what was done>. Next: … (disable recaps in /config)`. `h5i context recap` harvests those records, splits each body into `(summary, detail)` on the `Next:` boundary, and creates one `h5i context commit` per recap. Imported UUIDs are tracked in `recaps.json` at the root of `refs/h5i/context`, so repeated runs are idempotent.
+
+**Options**
+
+| Option | Description |
+|--------|-------------|
+| `--session <path>` | Explicit JSONL session log to scan (default: auto-detect the latest for the current working directory) |
+| `--since <iso8601>` | Only import recaps with a timestamp strictly after this cutoff, e.g. `2026-04-23T00:00:00Z` |
+| `--dry-run` | Report what would be imported without modifying the workspace |
+
+```bash
+h5i context recap --dry-run
+# ✔  would import 2 new recap(s)
+#   ✓ def39987  Goal: simplify the README around the basic workflow. I rewrote it…
+#   ✓ 3df7814b  Goal: audit the commit flow. I traced H5iRepository::commit…
+
+h5i context recap
+# ✔  imported 2 new recap(s)
+
+h5i context recap            # idempotent on re-run
+# ✔  imported 0 new recap(s) · 2 already imported
+```
+
+**When to use**
+
+Recaps are already concise, timestamped checkpoints produced by Claude Code itself — running `h5i context recap` before `h5i context commit` lets you cheaply promote them into durable milestones instead of writing each summary by hand. The trailing `(disable recaps in /config)` marker and the originating UUID / session ID are preserved in the commit detail so each milestone is traceable back to its source record.
 
 ---
 
