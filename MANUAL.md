@@ -56,6 +56,10 @@ Command reference for all h5i subcommands and flags.
   - [h5i memory restore](#h5i-memory-restore)
   - [h5i memory push](#h5i-memory-push)
   - [h5i memory pull](#h5i-memory-pull)
+- [h5i claims](#h5i-claims)
+  - [h5i claims add](#h5i-claims-add)
+  - [h5i claims list](#h5i-claims-list)
+  - [h5i claims prune](#h5i-claims-prune)
 - [h5i resume](#h5i-resume)
 - [h5i vibe](#h5i-vibe)
 - [h5i policy](#h5i-policy)
@@ -1503,6 +1507,79 @@ Fetch `refs/h5i/memory` from the remote (default: `origin`).
 
 ---
 
+## h5i claims
+
+Record content-addressed claims about the codebase that **auto-invalidate** when their evidence files change. A claim pins `(path, blob_oid)` pairs at HEAD as a Merkle-style fingerprint; any edit to any evidence blob flips the claim from `live` to `stale`. Live claims are injected into the `h5i context prompt` preamble so future sessions can treat them as pre-verified facts instead of re-deriving them from scratch.
+
+Stored under `.git/.h5i/claims/<id>.json`.
+
+**When to use:** record a claim after the agent (or you) concludes something non-obvious about the code that took exploration to establish — "the retry loop lives in `send()`, not a middleware layer," "error variant `FooError::Parse` is never constructed outside `parser.rs`," "the CRDT snapshot cadence is driven by commit, not time." These are the conclusions you'd otherwise pay input tokens to re-derive next session.
+
+---
+
+### h5i claims add
+
+```
+h5i claims add <text> --path <PATH> [--path <PATH>...] [--author <name>]
+```
+
+Record a claim with one or more evidence paths. The paths must exist in HEAD.
+
+**Options**
+
+| Option | Description |
+|--------|-------------|
+| `<text>` | The claim itself (positional, required) |
+| `-p, --path <PATH>` | An evidence path. Pass repeatedly for multi-file evidence. Required. |
+| `--author <name>` | Author tag (default: `$H5I_AGENT_ID`, else `human`) |
+
+```bash
+h5i claims add "retry logic lives in HttpClient::send, not middleware" \
+  --path src/http_client.rs --path src/middleware.rs
+```
+
+```
+✔  Recorded claim 478be84c61e7
+  ↳  retry logic lives in HttpClient::send, not middleware
+  ↳  evidence: src/http_client.rs, src/middleware.rs
+```
+
+---
+
+### h5i claims list
+
+```
+h5i claims list
+```
+
+Show all claims with live/stale status based on the current HEAD. A claim is **live** iff the Merkle fingerprint over its evidence paths still matches the value recorded at `add` time.
+
+```
+STATUS    ID              CREATED                 TEXT
+● live    478be84c61e7    2026-04-24 14:49 UTC    retry logic lives in HttpClient::send, not middleware
+          ↳  src/http_client.rs, src/middleware.rs
+○ stale   9f02ab1e733c    2026-04-18 09:12 UTC    FooError::Parse is only constructed in parser.rs
+          ↳  src/parser.rs, src/error.rs
+
+  → 1 live, 1 stale
+```
+
+---
+
+### h5i claims prune
+
+```
+h5i claims prune
+```
+
+Delete all claims whose evidence blobs have changed since recording. Live claims are untouched.
+
+```
+✔  Pruned 1 stale claim
+```
+
+---
+
 ## h5i resume
 
 ```
@@ -2108,6 +2185,8 @@ Reconstruct the conflict-free merged state of a file from two CRDT session OIDs 
 │   └── <commit-oid>/
 │       ├── <uuid>.jsonl             # session log files / memory artifacts
 │       └── _meta.json               # snapshot timestamp + file count
+├── claims/                          # content-addressed claims with auto-invalidation
+│   └── <claim-id>.json              # {text, evidence_paths, evidence_oid (Merkle over (path, blob_oid)), author, created_at}
 ├── session_log/                     # Claude Code session analyses
 │   └── <commit-oid>/
 │       └── analysis.json
