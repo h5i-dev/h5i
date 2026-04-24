@@ -977,3 +977,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [15:49:09] ACT: edited scripts/experiment_claims.sh
 [15:50:01] ACT: edited scripts/experiment_claims.sh
 [15:51:47] ACT: edited scripts/experiment_claims.sh
+[15:54:49] ACT: experiment_claims.sh v2: added TRIAL_TIMEOUT (180s default) + timeout --kill-after=10 wrapping claude; RETRY_CAP (1 default) with retry loop + fresh workdir per attempt; strict correctness (count_correct_log_pairs: matches log.info ENTER/EXIT per HTTP helper, 0-3); interleaved arm order per trial; parse_session extracts model_id; aggregator prints mean±sd [min..max] per arm, flags noise-dominated metrics (2*sd >= |Δ|), flags cross-arm model drift, splits 'all attempts' vs 'successful trials only', caveats at N<5 and N<10. Default N_TRIALS bumped 1→5. Dry-run on synthetic records confirms the aggregator renders cleanly.
