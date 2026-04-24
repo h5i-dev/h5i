@@ -159,6 +159,33 @@ Ranks commits by uncertainty signals, blind edits (files modified without being 
 
 ---
 
+## Cutting token cost
+
+### `h5i claims` — content-addressed facts that auto-invalidate
+
+Agents pay tokens to re-derive things they already figured out. `h5i claims` records those conclusions with their evidence pinned as a Merkle hash over `(path, blob_oid)` pairs at HEAD. The claim stays `live` until any evidence blob changes, then auto-invalidates. Live claims are injected into `h5i context prompt` as pre-verified facts, so the next session skips the re-grounding.
+
+```bash
+h5i claims add "HTTP helpers live only in src/api/client.py" \
+  --path src/api/client.py --path src/middleware.rs
+
+h5i claims list       # live / stale badges
+h5i claims prune      # drop claims whose evidence changed
+```
+
+**Measured impact** — one controlled A/B (`./scripts/experiment_claims.sh`):
+
+| Metric              | No claims | With claims |      Δ |
+|---------------------|----------:|------------:|-------:|
+| Cache-read tokens   |   577,334 |     108,060 | **−81%** |
+| Read tool calls     |       6.5 |         1.0 |   −85% |
+| Assistant turns     |        19 |         4.5 |   −76% |
+| Wall time           |       70s |         21s |   −71% |
+
+The full methodology can be found in [`scripts/experiment_claims_results.md`](scripts/experiment_claims_results.md).
+
+---
+
 ## Under the hood
 
 h5i is a pure Git sidecar: it stores everything in the same repo, using dedicated refs so it never pollutes your working tree or branch graph.
@@ -183,6 +210,7 @@ git for-each-ref refs/h5i/     # peek at what h5i has stored
 - **`h5i log`** — enriched commit history with prompts, models, tokens, and decisions inline.
 - **`h5i blame <file>`** — line or AST-level blame, annotated with AI provenance per commit.
 - **`h5i policy`** — policy-as-code (`.h5i/policy.toml`): require provenance, cap AI ratio per directory, enforce audit on sensitive paths.
+- **`h5i claims`** — record content-addressed facts about the codebase that auto-invalidate when their evidence blobs change; injects live ones into `h5i context prompt`.
 - **`h5i memory`** — snapshot / diff / restore Claude or Codex memory state alongside the code.
 - **`h5i resume`** — one-screen session-handoff briefing (last branch, high-risk files, suggested opening prompt).
 - **`h5i context restore <sha>`** — time-travel the reasoning workspace to any past commit.

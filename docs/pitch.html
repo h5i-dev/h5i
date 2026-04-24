@@ -673,6 +673,48 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
+     SLIDE 5b — h5i claims  (token reduction)
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:24px;">
+  <div style="width:100%;max-width:1020px;">
+    <div class="section-tag">Feature · h5i claims</div>
+    <h2>81% fewer tokens.<br>Same answer.</h2>
+
+    <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <p style="font-size:1.15rem;">Agents burn tokens every session re-deriving what they already figured out last time. <code>h5i claims</code> records each conclusion with its evidence pinned as a Merkle hash over the files it depends on — stays <span class="green">live</span> until any evidence blob changes, then <span class="red">auto-invalidates</span>.</p>
+        <div class="feat-card">
+          <span class="feat-cmd">h5i claims add "…" --path src/api.rs</span>
+          <h3 style="margin-top:4px;">Content-addressed facts</h3>
+          <p class="feat-desc">Evidence = sha256 over (path, blob_oid) pairs at HEAD. Git tells you when they're stale — no TTL, no guessing.</p>
+        </div>
+        <div class="feat-card">
+          <span class="feat-cmd">h5i context prompt</span>
+          <h3 style="margin-top:4px;">Preamble injection</h3>
+          <p class="feat-desc">Live claims render as <code>## Known facts</code> at session start. Agent treats them as pre-verified — skips re-reading.</p>
+        </div>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">A/B evaluation</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-bold">── Identical task. Identical codebase. ────</span>
+  <span class="t-out">metric             No claims   With claims       Δ</span>
+  <span class="t-out">─────────────────  ─────────   ───────────  ──────</span>
+  <span class="t-ai">Cache-read tokens    577,334       108,060    −81%</span>
+  <span class="t-ai">Read tool calls          6.5           1.0    −85%</span>
+  <span class="t-ai">Assistant turns           19           4.5    −76%</span>
+  <span class="t-ai">Wall time                70s           21s    −71%</span>
+
+<span class="t-ai">  ✔  81% fewer cached input tokens</span>
+<span class="t-ai">     on repeat-work patterns.</span></pre></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
      SLIDE 6 — Compliance & Policy
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">

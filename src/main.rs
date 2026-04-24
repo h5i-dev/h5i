@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use h5i_core::blame::BlameMode;
+use h5i_core::claims;
 use h5i_core::claude::{keyword_search, AnthropicClient};
 use h5i_core::codex;
 use h5i_core::ctx;
@@ -258,6 +259,14 @@ enum Commands {
     Memory {
         #[command(subcommand)]
         action: MemoryCommands,
+    },
+
+    /// Record and query content-addressed claims about the codebase.
+    /// Each claim pins (path, blob_oid) evidence at HEAD; it stays "live"
+    /// until any evidence blob changes, then auto-invalidates.
+    Claims {
+        #[command(subcommand)]
+        action: ClaimsCommands,
     },
 
     /// Inspect AI session activity: footprint, uncertainty, churn, and intent graph
@@ -621,6 +630,28 @@ enum ContextCommands {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum ClaimsCommands {
+    /// Record a claim with evidence pinned to one or more file paths at HEAD
+    Add {
+        /// The claim text (what you want future sessions to treat as pre-verified)
+        text: String,
+        /// One or more file paths that are the evidence for this claim.
+        /// Pass repeatedly: --path src/foo.rs --path src/bar.rs
+        #[arg(short, long = "path", value_name = "PATH", required = true)]
+        paths: Vec<String>,
+        /// Author tag (default: $H5I_AGENT_ID, else "human")
+        #[arg(long)]
+        author: Option<String>,
+    },
+
+    /// List all claims with live/stale status based on current HEAD
+    List,
+
+    /// Remove all claims whose evidence blobs have changed since recording
+    Prune,
 }
 
 #[derive(Subcommand)]
@@ -2920,6 +2951,55 @@ jq -c '{
             }
         }
 
+        Commands::Claims { action } => {
+            let repo = H5iRepository::open(".")?;
+
+            match action {
+                ClaimsCommands::Add { text, paths, author } => {
+                    let claim = claims::add(
+                        &repo.h5i_root,
+                        repo.git(),
+                        &text,
+                        paths,
+                        author,
+                    )?;
+                    println!(
+                        "{} Recorded claim {}",
+                        SUCCESS,
+                        style(&claim.id).magenta().bold(),
+                    );
+                    println!("  {}  {}", style("↳").dim(), style(&claim.text).dim());
+                    println!(
+                        "  {}  evidence: {}",
+                        style("↳").dim(),
+                        style(claim.evidence_paths.join(", ")).dim()
+                    );
+                }
+
+                ClaimsCommands::List => {
+                    let entries = claims::list_with_status(&repo.h5i_root, repo.git())?;
+                    claims::print_list(&entries);
+                }
+
+                ClaimsCommands::Prune => {
+                    let removed = claims::prune_stale(&repo.h5i_root, repo.git())?;
+                    if removed == 0 {
+                        println!(
+                            "{} No stale claims — nothing to prune.",
+                            style("ℹ").blue(),
+                        );
+                    } else {
+                        println!(
+                            "{} Pruned {} stale claim{}",
+                            SUCCESS,
+                            style(removed).cyan().bold(),
+                            if removed == 1 { "" } else { "s" },
+                        );
+                    }
+                }
+            }
+        }
+
         Commands::Context { action } => {
             let workdir = Path::new(".");
             match action {
@@ -3078,6 +3158,13 @@ jq -c '{
 
                 ContextCommands::Prompt => {
                     print!("{}", ctx::system_prompt(workdir));
+                    // Append live, content-addressed claims so the next session
+                    // can skip re-deriving facts that are still evidence-valid.
+                    if let Ok(h5i_repo) = H5iRepository::open(".") {
+                        if let Ok(live) = claims::live_claims(&h5i_repo.h5i_root, h5i_repo.git()) {
+                            print!("{}", claims::render_preamble(&live));
+                        }
+                    }
                 }
 
                 ContextCommands::Scan { branch, json } => {

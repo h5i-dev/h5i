@@ -4,6 +4,7 @@ pub mod injection;
 pub mod compliance;
 pub mod policy;
 pub mod blame;
+pub mod claims;
 pub mod mcp;
 pub mod ctx;
 /// Deprecated alias — use `ctx` instead.
