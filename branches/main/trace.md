@@ -960,3 +960,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [15:20:07] ACT: edited docs/pitch.html
 [15:20:45] ACT: Added claims section to README.md with measured impact table, plus added claims bullet to the 'Other things h5i does' list. Added a new dedicated slide (Slide 5b) to docs/pitch.html between context and compliance slides: title '81% fewer tokens. Same answer.', left column has 3 feat cards, right column simulates the experiment_claims.sh output terminal. Reused existing .feat-card / .terminal / .t-* CSS classes.
 [15:26:33] ACT: edited docs/pitch.html
+[15:26:44] ACT: edited docs/pitch.html
