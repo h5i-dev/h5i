@@ -494,6 +494,11 @@
         <div class="feat-desc">Snapshots Claude's memory files at every commit in <code style="color:var(--red);font-family:var(--mono)">refs/h5i/memory</code>, diffs them across versions, and syncs them to teammates via <code style="color:var(--red);font-family:var(--mono)">h5i push</code>.</div>
       </div>
       <div class="feat-card reveal">
+        <span class="feat-cmd">h5i claims add / list / prune</span>
+        <div class="feat-name">Content-addressed claims</div>
+        <div class="feat-desc">Record what the agent concluded — each claim pins its evidence as a Merkle hash over the files it depends on. Stays <code style="color:var(--red);font-family:var(--mono)">live</code> until any evidence blob changes, then auto-invalidates. Injected into the next session's preamble so the agent skips re-grounding — cuts cache-read tokens by ~80%.</div>
+      </div>
+      <div class="feat-card reveal">
         <span class="feat-cmd">h5i commit --prompt … --audit</span>
         <div class="feat-name">AI-tagged commits</div>
         <div class="feat-desc">Stores the exact prompt, model, agent ID, and test results alongside every diff in <code style="color:var(--red);font-family:var(--mono)">refs/h5i/notes</code>. Automatic with hooks installed.</div>
@@ -749,6 +754,45 @@
   <span class="t-out">Token refresh flow. Review src/auth.rs before editing — 4</span>
   <span class="t-out">uncertainty signals recorded there in the last session.</span>
   <span class="t-out">────────────────────────────────────────────────────────────────</span></pre></div>
+      </div>
+    </div>
+
+    <!-- 7 -->
+    <div class="usecase reveal">
+      <div class="usecase-header">
+        <div class="usecase-num">07</div>
+        <div>
+          <div class="usecase-title">Stop paying tokens to re-derive what the agent already figured out</div>
+          <div class="usecase-sub">Record each conclusion with its evidence pinned as a hash of the files it depends on. Live claims ride in the next session's preamble as pre-verified facts.</div>
+        </div>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">~/my-project</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-cmt"># Record what the agent just figured out, pinned to its evidence files.</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i claims add "retry logic lives in HttpClient::send, not middleware" \
+    --path src/http.rs --path src/middleware.rs</span>
+<span class="t-pass">✔</span>  <span class="t-out">Recorded claim </span><span class="t-ai">478be84c61e7</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">h5i claims list</span>
+
+<span class="t-bold">STATUS    ID            TEXT</span>
+<span class="t-pass">● live</span>    <span class="t-ai">478be84c61e7</span>  <span class="t-out">retry logic lives in HttpClient::send, not middleware</span>
+<span class="t-warn">○ stale</span>   <span class="t-ai">9f02ab1e733c</span>  <span class="t-out">FooError::Parse only constructed in parser.rs</span>
+          <span class="t-out">↳  src/parser.rs changed — evidence no longer matches</span>
+
+<span class="t-cmt"># Identical task, identical codebase — measured A/B:</span>
+
+<span class="t-bold">── Result ─────────────────────────────────────────────</span>
+  <span class="t-out">metric             No claims   With claims       Δ</span>
+  <span class="t-ai">Cache-read tokens    577,334       108,060    −81%</span>
+  <span class="t-ai">Read tool calls          6.5           1.0    −85%</span>
+  <span class="t-ai">Assistant turns           19           4.5    −76%</span>
+  <span class="t-ai">Wall time                70s           21s    −71%</span>
+
+<span class="t-pass">✔</span>  <span class="t-out">Agent skipped re-grounding — went straight to the edit.</span></pre></div>
       </div>
     </div>
   </div>
