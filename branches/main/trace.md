@@ -988,3 +988,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [16:11:56] ACT: Updated all docs from N=2 to N=5 numbers. Headline reframed from 'Cache-read tokens -81%' to 'Read tool calls 6.0->1.0' (stdev 0 in TREATMENT, the most defensible single number). Pitch slide title: '81% fewer tokens' -> '6x fewer file reads'. experiment_claims_results.md rewritten with mean±sd table, failure mode analysis (both arms had 1/5 failures — symmetric), and what-N=5-caught-that-N=2-hid section.
 [16:31:43] ACT: edited README.md
 [16:31:50] ACT: edited docs/pitch.html
+[16:31:56] ACT: edited docs/index.html
