@@ -1026,6 +1026,28 @@ h5i context pack
 
 ---
 
+### Claims — pin reusable facts
+
+`h5i claims` records content-addressed facts about the codebase so future sessions don't re-derive them. Each claim pins a Merkle hash over its evidence files at HEAD — the claim stays **live** until any evidence blob changes, then auto-invalidates. Live claims are injected into `h5i context prompt` (and shown in the SessionStart prelude) as pre-verified facts.
+
+**Record a claim when you have just established a non-obvious fact that a future session would otherwise re-derive** — "X lives only in Y", "the public API is exactly A/B/C", "module M owns concern N", a subtle invariant, or where *not* to look. Don't pin obvious things a quick grep would answer.
+
+```bash
+# After pinning down a fact, record it with the exact files that back it:
+h5i claims add "HTTP helpers live only in src/api/client.py" \
+  --path src/api/client.py --path src/middleware.rs
+
+h5i claims list        # live / stale badges
+h5i claims prune       # drop claims whose evidence changed
+```
+
+**Rules:**
+- Evidence paths must be tracked in HEAD. Only list the files that genuinely back the claim — over-listing makes claims go stale for unrelated edits.
+- If the SessionStart prelude already shows a claim covering what you were about to investigate, trust it — don't re-read the files unless the user asks.
+- If you notice a live claim is wrong, run `h5i claims prune` (removes only stale ones) or delete the JSON in `.git/.h5i/claims/` directly.
+
+---
+
 ### Memory Snapshots
 
 After a significant Claude Code session, snapshot Claude's memory so it can be shared or restored:
@@ -1069,6 +1091,17 @@ h5i codex sync                # after a burst of reads/edits to backfill OBSERVE
 h5i context trace --kind THINK "<chosen approach> over <rejected alternative> because <reason>"
 h5i context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 ```
+
+After pinning down a non-obvious fact a future session would otherwise re-derive
+(where a helper lives, which module owns a concern, a subtle invariant), record
+a content-addressed claim pointing at the files that back it:
+```bash
+h5i claims add "<fact>" --path <file1> --path <file2>
+h5i claims list         # live / stale badges; stale = evidence blobs changed
+h5i claims prune        # drop stale claims
+```
+Live claims are injected into `h5i codex prelude` / `h5i context prompt`, so the
+next session treats them as pre-verified. Trust them; don't re-read the files.
 
 After a logical milestone:
 ```bash
@@ -1178,6 +1211,30 @@ fn print_shared_context_prelude(workdir: &Path) {
             println!("  □ {t}");
         }
     }
+
+    if let Ok(h5i_repo) = H5iRepository::open(workdir) {
+        if let Ok(live) = claims::live_claims(&h5i_repo.h5i_root, h5i_repo.git()) {
+            if !live.is_empty() {
+                const MAX_SHOWN: usize = 10;
+                println!();
+                println!(
+                    "[h5i] Live claims (pre-verified facts — trust, don't re-derive):"
+                );
+                for claim in live.iter().take(MAX_SHOWN) {
+                    let paths = claim.evidence_paths.join(", ");
+                    println!("  ● {}", claim.text);
+                    println!("      ↳ {paths}");
+                }
+                if live.len() > MAX_SHOWN {
+                    println!(
+                        "  … {} more. Run `h5i claims list` to see all.",
+                        live.len() - MAX_SHOWN
+                    );
+                }
+            }
+        }
+    }
+
     println!();
     println!("[h5i] Use `h5i context show` for full details.");
 }
