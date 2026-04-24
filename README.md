@@ -33,7 +33,7 @@ Four commands do most of the work:
 
 - **`h5i context`** — records the goal, milestones, and every OBSERVE / THINK / ACT step of an agent session as first-class git objects. Pick up where the last session stopped, hand a task off from **Claude Code** to **Codex** without losing the thread, and `git diff` your own reasoning.
 - **`h5i claims`** — attach short, content-addressed facts (e.g. *"HTTP helpers live only in `src/api/client.py`"*) to the files that back them. Live claims are injected into future agent sessions, cutting cache-read tokens by **~77%**.
-- **`h5i notes`** — parses each Claude Code session log and attaches the exploration footprint, uncertainty moments, and blind edits (files modified without being read) to the commit. `h5i notes review` then ranks the commits that most need human eyes.
+- **`h5i notes`** — attaches each session's exploration footprint, uncertainty moments, and blind edits to the commit, then ranks the commits that most need human review.
 - **`h5i vibe`** — a 5-second audit of any repo: AI footprint, directories that are fully AI-written, leaked API tokens, and prompt-injection hits. Useful on any codebase you inherit.
 
 ---
