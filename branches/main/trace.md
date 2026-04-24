@@ -908,3 +908,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [11:53:59] OBSERVE: read src/memory.rs
 [11:55:24] OBSERVE: read src/claude.rs
 [11:55:43] OBSERVE: read Cargo.toml
+[11:57:10] OBSERVE: CMAM REST API not publicly documented yet. Known-good API surface is the client-side Memory tool (view/create/str_replace/insert/delete/rename) used inside messages API; managed variant likely has list-stores/list-files/get-file endpoints but shapes unconfirmed. docs.claude.com redirects to platform.claude.com and returns 'Not Found' to WebFetch (SPA needs JS).
