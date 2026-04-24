@@ -682,7 +682,7 @@
 
     <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
       <div style="display:flex;flex-direction:column;gap:14px;">
-        <p style="font-size:1.15rem;">The agent already figured out where the HTTP helpers live. Don't pay tokens to re-derive it next session. <code>h5i claims</code> pins a conclusion to a Merkle hash over its evidence files — stays <span class="green">live</span> until any evidence blob changes, then <span class="red">auto-invalidates</span>.</p>
+        <p style="font-size:1.15rem;">Agents burn tokens every session re-deriving what they already figured out last time. <code>h5i claims</code> records each conclusion with its evidence pinned as a Merkle hash over the files it depends on — stays <span class="green">live</span> until any evidence blob changes, then <span class="red">auto-invalidates</span>.</p>
         <div class="feat-card">
           <span class="feat-cmd">h5i claims add "…" --path src/api.rs</span>
           <h3 style="margin-top:4px;">Content-addressed facts</h3>
