@@ -673,6 +673,60 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
+     SLIDE 5b — h5i claims  (token reduction)
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:24px;">
+  <div style="width:100%;max-width:1020px;">
+    <div class="section-tag">Feature · h5i claims</div>
+    <h2>81% fewer tokens.<br>Same answer.</h2>
+
+    <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <p style="font-size:1.15rem;">The agent already figured out where the HTTP helpers live. Don't pay tokens to re-derive it next session. <code>h5i claims</code> pins a conclusion to a Merkle hash over its evidence files — stays <span class="green">live</span> until any evidence blob changes, then <span class="red">auto-invalidates</span>.</p>
+        <div class="feat-card">
+          <span class="feat-cmd">h5i claims add "…" --path src/api.rs</span>
+          <h3 style="margin-top:4px;">Content-addressed facts</h3>
+          <p class="feat-desc">Evidence = sha256 over (path, blob_oid) pairs at HEAD. Git tells you when they're stale — no TTL, no guessing.</p>
+        </div>
+        <div class="feat-card">
+          <span class="feat-cmd">h5i context prompt</span>
+          <h3 style="margin-top:4px;">Preamble injection</h3>
+          <p class="feat-desc">Live claims render as <code>## Known facts</code> at session start. Agent treats them as pre-verified — skips re-reading.</p>
+        </div>
+        <div class="feat-card">
+          <span class="feat-cmd">./scripts/experiment_claims.sh</span>
+          <h3 style="margin-top:4px;">Measured, not asserted</h3>
+          <p class="feat-desc">A/B script that runs identical tasks with and without claims, parses session JSONL, and prints the delta.</p>
+        </div>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">experiment_claims.sh · N=2</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">N_TRIALS=2 ./scripts/experiment_claims.sh</span>
+
+<span class="t-bold">── RESULTS ────────────────────────────────</span>
+  <span class="t-out">metric                CONTROL   TREATMENT        Δ</span>
+  <span class="t-out">────────────────────  ───────   ─────────   ──────</span>
+  <span class="t-ai">Cache-read tokens     577,334     108,060   −81.3%</span>
+  <span class="t-ai">Read tool calls           6.5         1.0   −84.6%</span>
+  <span class="t-ai">Bash tool calls           8.0         0.0    −100%</span>
+  <span class="t-ai">Assistant turns            19         4.5   −76.3%</span>
+  <span class="t-ai">Wall time (sec)          69.5        20.5   −70.5%</span>
+
+<span class="t-bold">  Fidelity:</span>
+    <span class="t-out">CONTROL     client.py edited: 1/2</span>
+    <span class="t-warn">TREATMENT   client.py edited: 2/2  ✓</span>
+
+<span class="t-ai">  ✔  TREATMENT used 81% fewer cached</span>
+<span class="t-ai">     input tokens on average.</span></pre></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
      SLIDE 6 — Compliance & Policy
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
