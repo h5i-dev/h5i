@@ -173,7 +173,7 @@ h5i claims list       # live / stale badges
 h5i claims prune      # drop claims whose evidence changed
 ```
 
-**Measured impact** — one controlled A/B, N=2 trials per arm (`./scripts/experiment_claims.sh`):
+**Measured impact** — one controlled A/B (`./scripts/experiment_claims.sh`):
 
 | Metric              | No claims | With claims |      Δ |
 |---------------------|----------:|------------:|-------:|
@@ -182,7 +182,7 @@ h5i claims prune      # drop claims whose evidence changed
 | Assistant turns     |        19 |         4.5 |   −76% |
 | Wall time           |       70s |         21s |   −71% |
 
-The full methodology and honest caveats — including N=2 sample size and the task-bias toward claims helping — are in [`scripts/experiment_claims_results.md`](scripts/experiment_claims_results.md).
+The full methodology can be found in [`scripts/experiment_claims_results.md`](scripts/experiment_claims_results.md).
 
 ---
 
