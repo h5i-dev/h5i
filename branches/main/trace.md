@@ -942,3 +942,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [14:48:47] ACT: edited src/main.rs
 [14:49:11] ACT: edited src/main.rs
 [14:50:15] ACT: Implemented v0 claims: src/claims.rs (module + 13 tests, all passing), CLI add/list/prune wired in main.rs, live-claim preamble injected into h5i context prompt. Full suite: 360 tests green. Smoke test confirmed end-to-end: add → list shows live → context prompt renders Known facts section.
+[14:53:09] OBSERVE: read MANUAL.md
