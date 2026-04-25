@@ -1273,3 +1273,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [19:34:48] OBSERVE: read src/claims.rs
 [19:34:48] OBSERVE: read src/memory.rs
 [19:34:50] OBSERVE: read src/ctx.rs
+[19:34:50] OBSERVE: read src/metadata.rs
