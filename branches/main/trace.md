@@ -1248,3 +1248,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [18:41:29] ACT: Tightened TASK in experiment_claims.sh: dropped 'print a summary' requirement, added explicit 'be terse, act don't narrate, no commentary between tool calls, no final summary'. Hypothesis: AUTO_HAIKU's high-cache-write trials (327-467 out/turn) should shift down toward the 250-292 out/turn cluster that already matched CONTROL's cache-write.
 [19:06:12] ACT: edited scripts/experiment_claims.sh
 [19:06:33] ACT: edited scripts/experiment_claims.sh
+[19:06:45] ACT: edited scripts/experiment_claims.sh
