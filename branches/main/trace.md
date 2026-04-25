@@ -1160,3 +1160,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [01:05:10] OBSERVE: read README.md
 [01:52:40] OBSERVE: cargo clippy reports 41 warnings across multiple files (repository.rs, codex.rs, compliance.rs, policy.rs, mcp.rs, ctx.rs, delta_store.rs, memory.rs, session_log.rs, resume.rs, session.rs, main.rs)
 [01:52:43] OBSERVE: read src/repository.rs
+[01:52:46] OBSERVE: read src/repository.rs
