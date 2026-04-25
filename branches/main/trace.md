@@ -1304,3 +1304,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [19:48:35] OBSERVE: read scripts/experiment_claims.sh
 [19:48:49] ACT: edited scripts/experiment_claims.sh
 [19:48:58] ACT: edited scripts/experiment_claims.sh
+[20:22:02] THINK: semantic capsules over more prose summaries because biggest token win comes from changing context unit from natural-language text to stable, invalidatable object references
