@@ -197,6 +197,60 @@ pub fn prune_stale(
     Ok(removed)
 }
 
+// ── Policy (controls how aggressively agents should record claims) ────────────
+
+/// User-tunable frequency policy: how eagerly agents are nudged to record
+/// claims. Read from the `H5I_CLAIMS_FREQUENCY` environment variable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaimsFrequency {
+    /// Do not record any claims this session.
+    Off,
+    /// Record only non-obvious, genuinely reusable facts (default).
+    Low,
+    /// Record any reusable codebase insight, even small-scope ones.
+    High,
+}
+
+impl ClaimsFrequency {
+    pub fn from_env() -> Self {
+        match std::env::var("H5I_CLAIMS_FREQUENCY")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "off" | "none" | "never" => Self::Off,
+            "high" | "aggressive" | "eager" => Self::High,
+            _ => Self::Low,
+        }
+    }
+
+    /// A short, agent-facing hint describing how often to record claims.
+    /// `Low` is the default and carries no extra hint (the CLAUDE.md base
+    /// instructions already cover it), so this returns `None` for that case.
+    pub fn prelude_hint(self) -> Option<&'static str> {
+        match self {
+            Self::Off => Some(
+                "[h5i] Claims frequency: OFF — do NOT record claims in this session, \
+                 even if you would normally consider one worth pinning.",
+            ),
+            Self::Low => None,
+            Self::High => Some(
+                "[h5i] Claims frequency: HIGH — record claims liberally for any reusable \
+                 codebase insight you confirm. TWO HARD RULES: \
+                 (1) Evidence paths minimal — only files whose content, if changed, \
+                 would cast doubt on the claim; not every file you read. Most good \
+                 claims cite 1 file; >3 is a red flag. \
+                 (2) Caveman-style text, ≈30 tokens. Drop articles + copulas + fluff. \
+                 Keep paths/names/numbers exact. Example: \"HTTP only src/api/client.py: \
+                 fetch_user, create_post, delete_post.\" — not \"All HTTP-making \
+                 functions in this project live only in...\". The text is injected \
+                 into every future session's cached prefix; every word costs forever.",
+            ),
+        }
+    }
+}
+
 // ── Preamble rendering (for h5i context prompt) ───────────────────────────────
 
 /// Render a Markdown section listing live claims. Returns an empty string when
@@ -477,6 +531,58 @@ mod tests {
     #[test]
     fn render_preamble_empty_when_no_claims() {
         assert_eq!(render_preamble(&[]), "");
+    }
+
+    // Env-mutating tests are combined into a single test so they cannot race
+    // each other under cargo's parallel test runner.
+    #[test]
+    fn frequency_parses_env_var_levels_and_aliases() {
+        for s in ["", "default", "low", "medium", "weird value"] {
+            std::env::set_var("H5I_CLAIMS_FREQUENCY", s);
+            assert_eq!(
+                ClaimsFrequency::from_env(),
+                ClaimsFrequency::Low,
+                "expected Low for {s:?}"
+            );
+        }
+        for s in ["off", "OFF", "none", "never", " off "] {
+            std::env::set_var("H5I_CLAIMS_FREQUENCY", s);
+            assert_eq!(
+                ClaimsFrequency::from_env(),
+                ClaimsFrequency::Off,
+                "expected Off for {s:?}"
+            );
+        }
+        for s in ["high", "HIGH", "aggressive", "eager"] {
+            std::env::set_var("H5I_CLAIMS_FREQUENCY", s);
+            assert_eq!(
+                ClaimsFrequency::from_env(),
+                ClaimsFrequency::High,
+                "expected High for {s:?}"
+            );
+        }
+        std::env::remove_var("H5I_CLAIMS_FREQUENCY");
+    }
+
+    #[test]
+    fn prelude_hint_is_none_for_low() {
+        assert!(ClaimsFrequency::Low.prelude_hint().is_none());
+    }
+
+    #[test]
+    fn prelude_hint_for_off_says_do_not_record() {
+        let hint = ClaimsFrequency::Off.prelude_hint().unwrap();
+        assert!(hint.contains("OFF"));
+        assert!(hint.to_lowercase().contains("do not record")
+            || hint.to_lowercase().contains("do not"));
+    }
+
+    #[test]
+    fn prelude_hint_for_high_encourages_recording() {
+        let hint = ClaimsFrequency::High.prelude_hint().unwrap();
+        assert!(hint.contains("HIGH"));
+        assert!(hint.to_lowercase().contains("liberal")
+            || hint.to_lowercase().contains("liberally"));
     }
 
     #[test]

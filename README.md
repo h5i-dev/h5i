@@ -29,10 +29,11 @@ curl -fsSL https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh | 
 
 ## Why h5i
 
-Four commands do most of the work:
+Five commands do most of the work:
 
 - **`h5i context`** — records the goal, milestones, and every OBSERVE / THINK / ACT step of an agent session as first-class git objects. Pick up where the last session stopped, hand a task off from **Claude Code** to **Codex** without losing the thread, and `git diff` your own reasoning.
-- **`h5i claims`** — attach short, content-addressed facts (e.g. *"HTTP helpers live only in `src/api/client.py`"*) to the files that back them. Live claims are injected into future agent sessions, cutting cache-read tokens by **~77%**.
+- **`h5i claims`** — attach short, content-addressed facts (e.g. *"HTTP helpers live only in `src/api/client.py`"*) to the files that back them. Live claims are injected into future agent sessions, cutting cache-read tokens by **~69%** at N=10.
+- **`h5i summary`** — pin a per-file orientation (exports, role, structure) keyed by the file's blob OID, auto-invalidated on edit. Eagerly inlined into the prompt so the agent skips re-reading. **−46% cache-read tokens** at N=10 on the same benchmark.
 - **`h5i notes`** — attaches each session's exploration footprint, uncertainty moments, and blind edits to the commit, then ranks the commits that most need human review.
 - **`h5i vibe`** — a 5-second audit of any repo: AI footprint, directories that are fully AI-written, leaked API tokens, and prompt-injection hits. Useful on any codebase you inherit.
 
@@ -122,7 +123,7 @@ h5i claims add "HTTP helpers live only in src/api/client.py" \
   --path src/api/client.py --path src/middleware.rs
 ```
 
-Claims are content-addressed over `(path, blob_oid)` pairs. If any referenced file changes, the claim auto-invalidates — stale guidance never leaks into the next session. Live claims are injected into `h5i context prompt`. See [Cutting token cost](#cutting-token-cost) for measured impact (−77% cache-read tokens).
+Claims are content-addressed over `(path, blob_oid)` pairs. If any referenced file changes, the claim auto-invalidates — stale guidance never leaks into the next session. Live claims are injected into `h5i context prompt`. See [Cutting token cost](#cutting-token-cost) for measured impact (−69% cache-read tokens at N=10).
 
 ### 5. Share with your team
 
@@ -183,29 +184,50 @@ Ranks commits by uncertainty signals, blind edits (files modified without being 
 
 ## Cutting token cost
 
+Two pre-loadable artifacts attack the same loss from different angles. Agents pay tokens to re-derive things every session. Both `h5i claims` and `h5i summary` pin known content into the cached prompt prefix so the next session skips the re-grounding.
+
 ### `h5i claims` — content-addressed facts that auto-invalidate
 
-Agents pay tokens to re-derive things they already figured out. `h5i claims` records those conclusions with their evidence pinned as a Merkle hash over `(path, blob_oid)` pairs at HEAD. The claim stays `live` until any evidence blob changes, then auto-invalidates. Live claims are injected into `h5i context prompt` as pre-verified facts, so the next session skips the re-grounding.
+`h5i claims` records cross-file conclusions with their evidence pinned as a Merkle hash over `(path, blob_oid)` pairs at HEAD. The claim stays `live` until any evidence blob changes, then auto-invalidates.
 
 ```bash
 h5i claims add "HTTP helpers live only in src/api/client.py" \
-  --path src/api/client.py --path src/middleware.rs
+  --path src/api/client.py
 
 h5i claims list       # live / stale badges
 h5i claims prune      # drop claims whose evidence changed
 ```
 
-**Measured impact** — controlled A/B at N=10 trials per arm (`./scripts/experiment_claims.sh`):
+Write claims **caveman-style** (≈30 tokens, drop articles + copulas, keep paths/identifiers exact). The text gets re-read on every cached-prefix turn forever, so brevity at write time pays back forever.
 
-| Metric              | No claims (mean ± sd) | With claims (mean ± sd) |      Δ |
-|---------------------|----------------------:|------------------------:|-------:|
-| Cache-read tokens   |     510,284 ± 61,284  |       117,433 ± 38,032  | **−77%** |
-| Read tool calls     |           5.6 ± 1.0   |               1.0 ± 0   |   −82% |
-| Assistant turns     |          17.1 ± 1.8   |             4.8 ± 1.2   |   −72% |
-| Wall time           |         52 ± 9 sec    |            18 ± 5 sec   |   −65% |
-| Fidelity (success)  |           9/10 ✓      |            **10/10 ✓**  |        |
+### `h5i summary` — per-file orientations keyed by blob OID
 
-All 10 treated trials read exactly one file (`σ = 0`) — the one the claims point at. The full methodology, raw per-trial data, and honest caveats are in [`scripts/experiment_claims_results.md`](scripts/experiment_claims_results.md).
+Where a claim is a fact pinned to multiple files, a summary is a precis of *one* file's content keyed by that file's git blob OID. Because git blobs are immutable, a summary written for blob X is correct for blob X forever — and it auto-invalidates the moment the file is edited (HEAD points at a new blob with no summary). Summaries are eagerly inlined into the prompt prelude when the count fits a budget, so the agent uses them without an extra fetch round-trip.
+
+```bash
+h5i summary set src/api/client.py --text \
+  "HTTP client. requests to api.example.com. Exports: fetch_user(id)→dict, create_post(...), delete_post(id)→bool. Logger \`log\` at top."
+
+h5i summary list      # which HEAD files have summaries; which don't
+h5i summary show <path>
+h5i summary prune     # drop summaries whose blob OID is no longer reachable from HEAD
+```
+
+### Measured impact
+
+Controlled A/B/C at N=10 trials per arm (`./scripts/experiment_claims.sh`), single model `claude-opus-4-7`, MCP server mounted, fidelity **10/10 in every arm**:
+
+| Metric              | No claims/summaries (mean ± sd) | With claims (mean ± sd) |  Δ_claims | With file summaries (mean ± sd) |  Δ_summaries |
+|---------------------|--------------------------------:|------------------------:|----------:|--------------------------------:|-------------:|
+| Cache-read tokens   |              528,136 ± 101,765  |     165,722 ± 105,423   | **−68.6%** |              283,174 ± 113,206  |   **−46.4%** |
+| Read tool calls     |                       5.2 ± 1.1 |               1.0 ± 0   |     −80.8% |                          1.0 ± 0 |       −80.8% |
+| Assistant turns     |                      16.5 ± 2.8 |               6.1 ± 3.2 |     −63.0% |                        9.9 ± 3.5 |       −40.0% |
+| Wall time           |                       46 ± 15 s |              20 ± 7 s   |     −55.6% |                         35 ± 21 s |       −23.1% |
+| Fidelity (success)  |                         10/10 ✓ |                10/10 ✓  |           |                          10/10 ✓ |              |
+
+Both treated arms read **exactly one file** in every trial — the file the agent edits — vs ~5 in the no-artifact baseline. The cache-read deltas exceed `2·max(stdev)` for both arms, so neither is noise.
+
+The full methodology, all four arms (including a `freq=high` arm that quantifies the cost of letting the agent self-record), raw per-trial data, lessons-learned (caveman compression, eager rendering), and honest caveats live in [`scripts/experiment_claims_results.md`](scripts/experiment_claims_results.md).
 
 ---
 
@@ -234,6 +256,7 @@ git for-each-ref refs/h5i/     # peek at what h5i has stored
 - **`h5i blame <file>`** — line or AST-level blame, annotated with AI provenance per commit.
 - **`h5i policy`** — policy-as-code (`.h5i/policy.toml`): require provenance, cap AI ratio per directory, enforce audit on sensitive paths.
 - **`h5i claims`** — record content-addressed facts about the codebase that auto-invalidate when their evidence blobs change; injects live ones into `h5i context prompt`.
+- **`h5i summary`** — pin a per-file orientation keyed by the file's git blob OID; eagerly inlined into the prompt so agents skip re-reading. Auto-invalidates on edit.
 - **`h5i memory`** — snapshot / diff / restore Claude or Codex memory state alongside the code.
 - **`h5i resume`** — one-screen session-handoff briefing (last branch, high-risk files, suggested opening prompt).
 - **`h5i context restore <sha>`** — time-travel the reasoning workspace to any past commit.
