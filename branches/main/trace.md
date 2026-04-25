@@ -1232,3 +1232,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [02:02:01] ACT: Fixed all 41 cargo clippy warnings: removed unused imports + dead code (count_tokens_internal, apply_updates_between, commented-out commit_with_stats), replaced manual idioms with split_once/contains/is_empty/is_multiple_of/rfind/inspect, collapsed nested if, fixed redundant closures, used HashMap insert return, added type aliases + #[allow] for type_complexity / too_many_arguments. cargo clippy is now clean and all 456 tests pass.
 [12:52:54] OBSERVE: read scripts/experiment_claims_results.md
 [13:10:07] OBSERVE: read scripts/experiment_claims.sh
+[13:12:02] OBSERVE: scripts/experiment_claims.sh has 4 arms (CONTROL/TREATMENT/AUTO_CLAIMS/SUMMARIES); arm-specific pre-seeding lives in prepare_arm(), arm rotation in main loop, aggregator hardcodes ARM_ORDER. Adding a 5th arm needs touch-points in: ARMS list, ARM_ORDER in aggregator, freq_for_arm, prepare_arm, verdicts block.
