@@ -1149,3 +1149,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [01:01:35] ACT: edited README.md
 [01:02:13] ACT: edited MANUAL.md
 [01:02:17] OBSERVE: read MANUAL.md
+[01:02:24] ACT: edited MANUAL.md
