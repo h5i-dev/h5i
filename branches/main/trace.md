@@ -1236,3 +1236,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [13:12:12] THINK: Original plan was shadow-session → Haiku-from-transcript. Reconsidering: hand-curated TREATMENT claims describe the CODEBASE (invariants like 'HTTP only in client.py'), not session events. So Haiku should operate on file contents directly, not on a transcript. This drops the shadow-session step entirely — call Haiku once on the seeded repo before the trial, no second claude run needed. Strictly simpler, and matches the user's framing of 'just always use Haiku to write claims'.
 [13:14:16] ACT: edited scripts/experiment_claims.sh
 [13:14:24] ACT: edited scripts/experiment_claims.sh
+[13:14:59] ACT: edited scripts/experiment_claims.sh
