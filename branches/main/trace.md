@@ -1141,3 +1141,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [00:38:34] OBSERVE: read scripts/experiment_claims_results.md
 [00:38:49] OBSERVE: read README.md
 [00:38:52] OBSERVE: read README.md
+[00:39:02] OBSERVE: read MANUAL.md
