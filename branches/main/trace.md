@@ -1242,3 +1242,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [13:15:22] ACT: edited scripts/experiment_claims.sh
 [13:15:42] ACT: edited scripts/experiment_claims.sh
 [13:15:47] ACT: edited scripts/experiment_claims.sh
+[13:17:33] ACT: Edited scripts/experiment_claims.sh: added AUTO_HAIKU as a fifth arm. Touch-points: top doc block, HAIKU_MODEL/HAIKU_TIMEOUT/HAIKU_MAX_CLAIMS config, new haiku_extract_claims() function, AUTO_HAIKU branch in prepare_arm() mirroring TREATMENT shape, ARMS array, ARM_ORDER in aggregator, verdict() call + curation-gap report. bash -n passes. h5i + claude+haiku smoke tests pass.
