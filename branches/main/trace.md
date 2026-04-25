@@ -1180,3 +1180,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [01:54:29] OBSERVE: read src/session_log.rs
 [01:54:31] OBSERVE: read src/repository.rs
 [01:54:34] OBSERVE: read src/repository.rs
+[01:54:36] OBSERVE: read src/resume.rs
