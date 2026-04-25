@@ -926,7 +926,7 @@ fn tool_commit(params: &Value, workdir: &Path) -> Result<Value> {
     let idx = repo.git().index()?;
     let head_empty = repo.git().head().is_err();
     let staged = if head_empty {
-        idx.len() > 0
+        !idx.is_empty()
     } else {
         let head_tree = repo.git().head()?.peel_to_tree()?;
         let diff = repo.git().diff_tree_to_index(Some(&head_tree), Some(&idx), None)?;
@@ -1649,12 +1649,11 @@ pub fn subscribe_resource(
 
     {
         let mut map = subs.lock().unwrap();
-        if map.contains_key(&uri) {
-            // Reuse existing watcher — just refresh the baseline.
-            map.insert(uri, snapshot);
+        // If the URI is already subscribed, refresh its baseline and skip
+        // spawning another watcher thread.
+        if map.insert(uri.clone(), snapshot).is_some() {
             return;
         }
-        map.insert(uri.clone(), snapshot);
     }
 
     // Detached polling thread.  Exits when the URI is removed from `subs`.

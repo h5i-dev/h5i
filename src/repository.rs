@@ -5,7 +5,7 @@ use git2::{Commit, ObjectType, Oid, Signature};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use yrs::updates::decoder::Decode;
 use yrs::{GetString, Text, Transact};
@@ -18,9 +18,8 @@ use chrono::{TimeZone, Utc};
 
 use crate::metadata::{
     AiMetadata, CommitSummary, H5iCommitRecord, IntegrityLevel, IntentEdge, IntentGraph,
-    IntentNode, IntegrityReport, PendingContext, TestMetrics, TestSource, TokenUsage,
+    IntentNode, IntegrityReport, PendingContext, TestMetrics, TestSource,
 };
-use crate::LocalSession;
 
 /// Git ref used to store all h5i commit metadata (AI provenance, test results,
 /// AST hashes, causal links). Using a custom `refs/h5i/` namespace keeps h5i
@@ -149,6 +148,7 @@ impl H5iRepository {
     /// The AST parser is injected as a function pointer to keep the repository
     /// layer language-agnostic. This allows external tools to supply parsers
     /// for different programming languages without modifying the core system.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub fn commit(
         &self,
         message: &str,
@@ -271,55 +271,6 @@ impl H5iRepository {
         Ok(BASE64_STANDARD.encode(binary_data))
     }
 
-    fn count_tokens_internal(&self, text: &str, model: &str) -> usize {
-        use tiktoken_rs::get_bpe_from_model;
-        if let Ok(bpe) = get_bpe_from_model(model) {
-            bpe.encode_with_special_tokens(text).len()
-        } else {
-            text.split_whitespace().count()
-        }
-    }
-
-    /*
-    pub fn commit_with_stats(
-        &self,
-        prompt: &str,
-        model_name: &str,
-        agent_id: &str,
-        file_path: &str,
-        sig: &Signature,
-    ) -> crate::error::Result<Oid> {
-        // 1. 現在の HEAD の内容（コンテキスト）を取得してトークンを数える
-        // 初回コミットなどで HEAD がない場合は空文字として扱う
-        let context_content = self.get_content_at_head(file_path).unwrap_or_default();
-
-        let prompt_tokens = self.count_tokens_internal(prompt, model_name);
-        let content_tokens = self.count_tokens_internal(&context_content, model_name);
-
-        let usage = TokenUsage {
-            prompt_tokens,
-            content_tokens,
-            total_tokens: prompt_tokens + content_tokens,
-            model: model_name.to_string(),
-        };
-
-        // 2. メタデータオブジェクトを構築 (プロンプトをそのまま保存)
-        let ai_meta = AiMetadata {
-            model_name: model_name.to_string(),
-            agent_id: agent_id.to_string(),
-            prompt: prompt.to_string(),
-            usage: Some(usage),
-        };
-
-        // 3. 通常の Git コミットを実行
-        // コミットメッセージにはプロンプトの要約などを使う運用が一般的です
-        let commit_oid = self.commit(prompt, sig, sig, None, TestSource::None, None, vec![])?;
-
-        // 4. メタデータを .h5i/metadata/{oid}.json に保存
-        self.save_ai_metadata(commit_oid, &ai_meta)?;
-
-        Ok(commit_oid)
-    }*/
 }
 
 // ============================================================
@@ -1152,51 +1103,6 @@ impl H5iRepository {
         Ok(text_ref.get_string(&txn))
     }
 
-    /// Applies all CRDT updates associated with commits between `base` and `tip`.
-    ///
-    /// This helper function traverses the commit history from `tip` down to
-    /// (but excluding) `base` and applies the CRDT updates stored for each
-    /// commit.
-    ///
-    /// The function assumes that each commit may have an associated CRDT
-    /// delta stored in the `.h5i` sidecar storage.
-    ///
-    /// # Parameters
-    ///
-    /// - `base` – The base commit where traversal should stop.
-    /// - `tip` – The commit representing the tip of the branch.
-    /// - `file_path` – Path of the file whose updates should be applied.
-    /// - `doc` – The CRDT document being reconstructed.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if update decoding or application fails.
-    fn apply_updates_between(
-        &self,
-        base: Oid,
-        tip: Oid,
-        file_path: &str,
-        doc: &mut yrs::Doc,
-    ) -> Result<(), H5iError> {
-        let mut revwalk = self.git_repo.revwalk()?;
-        revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)?;
-        revwalk.push(tip)?;
-        revwalk.hide(base)?;
-
-        for oid_res in revwalk {
-            let oid = oid_res?;
-            // IMPORTANT:
-            // Load the commit-specific CRDT delta.
-            // The design assumes that the "h5i commit" process persists
-            // these updates as sidecar metadata.
-            if let Ok(update_data) = self.load_specific_delta_for_commit(oid, file_path) {
-                let mut txn = doc.transact_mut();
-                txn.apply_update(yrs::Update::decode_v1(&update_data)?)?;
-            }
-        }
-        Ok(())
-    }
-
     /// Reconstructs the document state by applying all updates from the
     /// beginning of history up to `base_oid`.
     ///
@@ -1263,7 +1169,7 @@ impl H5iRepository {
         file_path: &str,
     ) -> Result<Vec<u8>, H5iError> {
         let delta_path = DeltaStore::committed_path(
-            &self.h5i_root.parent().unwrap(),
+            self.h5i_root.parent().unwrap(),
             &oid.to_string(),
             file_path,
         );
@@ -1328,12 +1234,12 @@ impl H5iRepository {
         let delta_dir = self.h5i_root.join("delta").join(oid.to_string());
 
         // Create directory if necessary
-        std::fs::create_dir_all(&delta_dir).map_err(|e| H5iError::Io(e))?;
+        std::fs::create_dir_all(&delta_dir).map_err(H5iError::Io)?;
 
         let delta_path = delta_dir.join(format!("{}.bin", file_hash));
 
         // Write the delta binary
-        std::fs::write(&delta_path, update_data).map_err(|e| H5iError::Io(e))?;
+        std::fs::write(&delta_path, update_data).map_err(H5iError::Io)?;
 
         Ok(())
     }
@@ -1376,6 +1282,7 @@ impl H5iRepository {
     ///   3. Directory containing the current executable (`../script/`)
     ///
     /// Currently supported extensions: `.py` (via `h5i-py-parser.py`).
+    #[allow(clippy::type_complexity)]
     pub fn make_ast_parser(&self) -> Box<dyn Fn(&std::path::Path) -> Option<String>> {
         let workdir = self.git_repo.workdir().map(|p| p.to_path_buf());
 
@@ -1841,6 +1748,7 @@ impl H5iRepository {
     /// `(shadow_ref, changed_files)` where `changed_files` is a list of
     /// `(relative_path, "added" | "modified" | "deleted")` entries describing
     /// the working-tree changes that were made (or would be made in dry-run mode).
+    #[allow(clippy::type_complexity)]
     pub fn rewind(
         &self,
         sha: &str,
@@ -2923,7 +2831,7 @@ fn is_artifact_path(path: &str) -> bool {
     }
 
     // Check filename
-    if let Some(filename) = path.split('/').last() {
+    if let Some(filename) = path.split('/').next_back() {
         if ARTIFACT_FILENAMES.contains(&filename) {
             return true;
         }
@@ -2981,7 +2889,7 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
     use yrs::ReadTxn;
-    use yrs::{Doc, Text, Transact, Update};
+    use yrs::{Text, Transact};
 
     fn setup_test_repo(root: &std::path::Path) -> H5iRepository {
         let _repo = Repository::init(root).unwrap();
@@ -3350,7 +3258,6 @@ mod tests {
 
 #[cfg(test)]
 mod integration_tests {
-    use crate::delta_store::DeltaStore;
     use crate::metadata::TestSource;
     use crate::repository::{H5iRepository, H5I_NOTES_REF};
     use crate::session::LocalSession;

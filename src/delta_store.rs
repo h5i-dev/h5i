@@ -94,7 +94,7 @@ impl DeltaStore {
     pub fn append_update(&self, data: &[u8]) -> Result<(), H5iError> {
         // Ensure the parent directory (.git/.h5i/delta) exists
         if let Some(parent) = self.log_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| H5iError::Io(e))?;
+            fs::create_dir_all(parent).map_err(H5iError::Io)?;
         }
 
         let mut file = OpenOptions::new()
@@ -127,11 +127,11 @@ impl DeltaStore {
     /// or if the existing log cannot be removed.
     pub fn save_snapshot(&self, state_v1: &[u8]) -> Result<(), H5iError> {
         let snapshot_path = self.log_path.with_extension("snapshot");
-        fs::write(&snapshot_path, state_v1).map_err(|e| H5iError::Io(e))?;
+        fs::write(&snapshot_path, state_v1).map_err(H5iError::Io)?;
 
         // After snapshotting, clear the old delta log
         if self.log_path.exists() {
-            fs::remove_file(&self.log_path).map_err(|e| H5iError::Io(e))?;
+            fs::remove_file(&self.log_path).map_err(H5iError::Io)?;
         }
         Ok(())
     }
