@@ -1178,3 +1178,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [01:54:24] OBSERVE: read src/delta_store.rs
 [01:54:27] OBSERVE: read src/memory.rs
 [01:54:29] OBSERVE: read src/session_log.rs
+[01:54:31] OBSERVE: read src/repository.rs
