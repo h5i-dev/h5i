@@ -153,8 +153,8 @@ pub fn generate_briefing(
                         all[start..]
                             .iter()
                             .map(|l| {
-                                l.splitn(2, "] ACT: ")
-                                    .nth(1)
+                                l.split_once("] ACT: ")
+                                    .map(|x| x.1)
                                     .unwrap_or(l.as_str())
                                     .chars()
                                     .take(120)

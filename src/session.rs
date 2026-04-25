@@ -142,11 +142,11 @@ impl LocalSession {
 
         // Trigger maintenance logic so tests can pass
         self.update_count += 1;
-        if self.update_count % 50 == 0 {
+        if self.update_count.is_multiple_of(50) {
             //let state = txn.encode_;
             let full_state = txn.encode_diff_v1(&StateVector::default());
             self.delta_store.save_snapshot(&full_state)?;
-        } else if self.update_count % 10 == 0 {
+        } else if self.update_count.is_multiple_of(10) {
             self.delta_store.compact()?;
         }
 

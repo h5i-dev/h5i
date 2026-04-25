@@ -451,8 +451,8 @@ fn compute_diff_with_context(from: &str, to: &str, context: usize) -> Vec<DiffLi
         if is_changed {
             let start = i.saturating_sub(context);
             let end = (i + context + 1).min(len);
-            for j in start..end {
-                show[j] = true;
+            for slot in show.iter_mut().take(end).skip(start) {
+                *slot = true;
             }
         }
     }

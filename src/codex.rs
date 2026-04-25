@@ -334,7 +334,7 @@ fn extract_shell_cmd_events(cmd: &str, workdir: &Path) -> Vec<TraceEvent> {
 
         "grep" | "rg" | "ag" | "ack" => {
             // rg --files [dir] — list all tracked files.
-            if tokens[1..].iter().any(|t| *t == "--files") {
+            if tokens[1..].contains(&"--files") {
                 let path = plain_args.first().copied().unwrap_or(".");
                 return vec![TraceEvent {
                     kind: "OBSERVE",

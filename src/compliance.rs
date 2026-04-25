@@ -100,11 +100,11 @@ pub fn compute_compliance_report(
 ) -> Result<ComplianceReport> {
     // Parse date bounds.
     let since_ts: Option<i64> = since
-        .map(|s| parse_date_to_unix(s))
+        .map(parse_date_to_unix)
         .transpose()
         .map_err(|e| H5iError::Metadata(format!("--since: {e}")))?;
     let until_ts: Option<i64> = until
-        .map(|s| parse_date_to_unix(s))
+        .map(parse_date_to_unix)
         .transpose()
         .map_err(|e| H5iError::Metadata(format!("--until: {e}")))?;
 

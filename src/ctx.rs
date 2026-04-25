@@ -611,7 +611,7 @@ pub fn gcc_context(workdir: &Path, opts: &ContextOpts) -> Result<GccContext, H5i
                 if is_todo && (line.contains("] NOTE:") || line.contains("] THINK:")) {
                     // Strip the timestamp prefix: "[HH:MM:SS] KIND: content"
                     let content = line
-                        .splitn(3, ": ")
+                        .split(": ")
                         .nth(1)
                         .map(|s| format!("{}: {}", s, line.splitn(3, ": ").nth(2).unwrap_or("")))
                         .unwrap_or_else(|| line.to_string());
@@ -1152,7 +1152,7 @@ pub fn print_context_diff(diff: &ContextDiff) {
 
     if diff.goal_changed {
         println!();
-        println!("  {} {}", style("Goal changed:").bold().yellow(), "");
+        println!("  {} ", style("Goal changed:").bold().yellow());
         println!("    {} {}", style("-").red(), style(&diff.from_goal).dim());
         println!("    {} {}", style("+").green(), style(&diff.to_goal).cyan());
     }
@@ -1397,9 +1397,9 @@ pub fn pack_lossless(workdir: &Path) -> Result<LosslessPackResult, H5iError> {
         .lines()
         .filter_map(|line| {
             // Lines look like: [HH:MM:SS] KIND: content
-            let rest = line.trim_start_matches(|c: char| c == '[')
-                .splitn(2, ']')
-                .nth(1)
+            let rest = line.trim_start_matches('[')
+                .split_once(']')
+                .map(|x| x.1)
                 .map(str::trim)
                 .unwrap_or(line);
             if rest.is_empty() || line.starts_with('#') || line.starts_with("---") || line.starts_with("_[") {
@@ -1924,8 +1924,8 @@ pub fn print_todos(workdir: &Path) -> Result<(), H5iError> {
     for item in &items {
         // Strip timestamp prefix for cleaner display.
         let content = item
-            .splitn(2, "] ")
-            .nth(1)
+            .split_once("] ")
+            .map(|x| x.1)
             .unwrap_or(item)
             .trim_start_matches("NOTE: ")
             .trim_start_matches("THINK: ");
@@ -1956,8 +1956,8 @@ pub fn distill_knowledge(workdir: &Path) -> Result<Vec<serde_json::Value>, H5iEr
         for line in trace.lines() {
             if line.contains("] THINK:") {
                 let content = line
-                    .splitn(2, "] THINK:")
-                    .nth(1)
+                    .split_once("] THINK:")
+                    .map(|x| x.1)
                     .unwrap_or(line)
                     .trim()
                     .to_string();
@@ -1993,8 +1993,8 @@ pub fn print_knowledge(workdir: &Path) -> Result<(), H5iError> {
         for line in trace.lines() {
             if line.contains("] THINK:") {
                 let content = line
-                    .splitn(2, "] THINK:")
-                    .nth(1)
+                    .split_once("] THINK:")
+                    .map(|x| x.1)
                     .unwrap_or(line)
                     .trim()
                     .to_string();
@@ -2471,7 +2471,8 @@ pub fn print_dag(workdir: &Path, branch: Option<&str>) -> Result<(), H5iError> {
     }
 
     // ── Summary footer ────────────────────────────────────────────────────
-    let counts: [(&str, usize, fn(console::StyledObject<String>) -> console::StyledObject<String>); 5] = [
+    type StyleFn = fn(console::StyledObject<String>) -> console::StyledObject<String>;
+    let counts: [(&str, usize, StyleFn); 5] = [
         ("OBSERVE", dag.nodes.iter().filter(|n| n.kind == "OBSERVE").count(), |s| s.blue()),
         ("THINK",   dag.nodes.iter().filter(|n| n.kind == "THINK").count(),   |s| s.yellow()),
         ("ACT",     dag.nodes.iter().filter(|n| n.kind == "ACT").count(),     |s| s.green()),

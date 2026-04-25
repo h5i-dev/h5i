@@ -1668,14 +1668,12 @@ fn extract_snippet(text: &str, phrase: &str, max_len: usize) -> String {
     let start = text
         .char_indices()
         .map(|(i, _)| i)
-        .filter(|&i| i <= start)
-        .last()
+        .rfind(|&i| i <= start)
         .unwrap_or(0);
     let end = text
         .char_indices()
         .map(|(i, _)| i)
-        .filter(|&i| i <= end)
-        .last()
+        .rfind(|&i| i <= end)
         .unwrap_or(text.len());
     let snippet = &text[start..end];
     let clean: String = snippet.split_whitespace().collect::<Vec<_>>().join(" ");

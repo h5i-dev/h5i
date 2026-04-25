@@ -277,10 +277,10 @@ pub fn should_force_audit(cfg: &PolicyConfig, staged_files: &[String]) -> bool {
         return false;
     }
     for (glob, path_policy) in &cfg.paths {
-        if path_policy.require_audit {
-            if staged_files.iter().any(|f| glob_matches(glob, f)) {
-                return true;
-            }
+        if path_policy.require_audit
+            && staged_files.iter().any(|f| glob_matches(glob, f))
+        {
+            return true;
         }
     }
     false

@@ -1573,7 +1573,7 @@ fn main() -> anyhow::Result<()> {
                 let idx = repo.git().index()?;
                 let head_empty = repo.git().head().is_err(); // true on first commit
                 let staged = if head_empty {
-                    idx.len() > 0
+                    !idx.is_empty()
                 } else {
                     let head_tree = repo.git().head()?.peel_to_tree()?;
                     let diff = repo.git().diff_tree_to_index(Some(&head_tree), Some(&idx), None)?;
@@ -1774,7 +1774,8 @@ fn main() -> anyhow::Result<()> {
 
             // Build a real language-aware AST parser closure.
             let parser_box = repo.make_ast_parser();
-            let ast_parser: Option<&dyn Fn(&std::path::Path) -> Option<String>> = if ast {
+            type AstParser<'a> = &'a dyn Fn(&std::path::Path) -> Option<String>;
+            let ast_parser: Option<AstParser> = if ast {
                 Some(parser_box.as_ref())
             } else {
                 None
@@ -2277,12 +2278,11 @@ fn main() -> anyhow::Result<()> {
                             .map_err(|e| anyhow::anyhow!("--since: {}", e))?;
                         let secs = c.time().seconds();
                         chrono::DateTime::from_timestamp(secs, 0)
-                            .map(|dt| {
+                            .inspect(|dt| {
                                 println!("{} Filtering session to events after {} ({})",
                                     STEP,
                                     style(&sha[..8.min(sha.len())]).magenta(),
                                     style(dt.format("%Y-%m-%d %H:%M UTC")).dim());
-                                dt
                             })
                     }
                 };
@@ -2650,22 +2650,18 @@ jq -c '{
             );
 
             println!(
-                "\n{} {} {} {}",
+                "\n{} Set {} and",
                 style("Tip:").bold(),
-                "Set",
                 style("H5I_MODEL").yellow(),
-                "and",
             );
             println!(
                 "    {} in your shell profile to override the defaults captured by the hook.",
                 style("H5I_AGENT_ID").yellow()
             );
             println!(
-                "\n{} {} {} {}",
+                "\n{} also work without hooks — {} / H5I_MODEL / H5I_AGENT_ID are read automatically at commit time.",
                 style("Env vars").bold(),
-                "also work without hooks —",
-                style("H5I_PROMPT").yellow() ,
-                "/ H5I_MODEL / H5I_AGENT_ID are read automatically at commit time."
+                style("H5I_PROMPT").yellow()
             );
         }
 
