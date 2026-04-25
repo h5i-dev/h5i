@@ -73,9 +73,26 @@ echo "▶  [$LABEL] h5i init"
 (cd "$WORKDIR" && "$H5I_BIN" init 2>&1) | grep -E "^✔|^✖|^warn" || true
 
 # ── 3. Run Claude session ─────────────────────────────────────────────────────
+# Write an ephemeral MCP config so `claude --print` actually mounts the h5i
+# server (not just allows the wildcard). We pin the exact H5I_BIN so test
+# sessions always use the binary the caller asked for, not whatever is on PATH.
+MCP_CONFIG="$WORKDIR/.h5i-mcp-config.json"
+python3 - "$H5I_BIN" "$MCP_CONFIG" <<'EOF'
+import json, sys, shutil
+h5i_bin, out = sys.argv[1], sys.argv[2]
+resolved = shutil.which(h5i_bin) or h5i_bin
+json.dump(
+    {"mcpServers": {"h5i": {"command": resolved, "args": ["mcp"]}}},
+    open(out, "w"),
+    indent=2,
+)
+EOF
+
 echo "▶  [$LABEL] Running Claude (task: ${TASK:0:72}…)"
 (cd "$WORKDIR" && echo "$TASK" \
   | claude --print \
+    --mcp-config "$MCP_CONFIG" \
+    --strict-mcp-config \
     --allowedTools "mcp__h5i__*,Read,Write,Edit,Bash" \
   2>&1) || true
 
@@ -120,13 +137,124 @@ for i, (name, detail) in enumerate(calls, 1):
     print(f"      {detail}")
 EOF
 
-# ── 6. Checklist ──────────────────────────────────────────────────────────────
+# ── 6. Claims analysis ────────────────────────────────────────────────────────
+echo
+echo "── [$LABEL] claims ───────────────────────────────────────────────────────"
+python3 - "$JSONL" "$WORKDIR" << 'EOF'
+import json, pathlib, re, sys
+
+jsonl_path, workdir = sys.argv[1], sys.argv[2]
+
+invocations = []  # (sub, text_or_None, paths_list, raw_cmd, via)
+with open(jsonl_path) as f:
+    for line in f:
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if msg.get("type") != "assistant":
+            continue
+        for block in msg.get("message", {}).get("content", []) or []:
+            if block.get("type") != "tool_use":
+                continue
+            name = block.get("name", "")
+            inp  = block.get("input") or {}
+            # MCP form: mcp__<server>__h5i_claims_{add,list,prune}
+            if "h5i_claims_" in name:
+                sub = name.split("h5i_claims_", 1)[1]
+                if sub not in ("add", "list", "prune"):
+                    continue
+                text  = inp.get("text") if sub == "add" else None
+                paths = inp.get("paths") or [] if sub == "add" else []
+                invocations.append((sub, text, paths, json.dumps(inp), "mcp"))
+                continue
+            # Bash form: plain `h5i claims ...`
+            if name != "Bash":
+                continue
+            cmd = inp.get("command", "")
+            m = re.search(r"\bh5i\s+claims\s+(add|list|prune)\b", cmd)
+            if not m:
+                continue
+            sub = m.group(1)
+            text, paths = None, []
+            if sub == "add":
+                tm = (re.search(r'claims\s+add\s+"((?:[^"\\]|\\.)*)"', cmd)
+                      or re.search(r"claims\s+add\s+'((?:[^'\\]|\\.)*)'", cmd))
+                if tm:
+                    text = tm.group(1)
+                paths = re.findall(r"--path(?:\s+|=)([^\s'\"]+)", cmd)
+            invocations.append((sub, text, paths, cmd, "bash"))
+
+adds   = [i for i in invocations if i[0] == "add"]
+lists  = [i for i in invocations if i[0] == "list"]
+prunes = [i for i in invocations if i[0] == "prune"]
+
+def _fmt_via(rs):
+    vias = [r[4] for r in rs]
+    return f"{len(rs)} ({vias.count('mcp')} mcp, {vias.count('bash')} bash)" if rs else "0"
+
+print(f"  invocations: add={_fmt_via(adds)}  list={_fmt_via(lists)}  prune={_fmt_via(prunes)}")
+if not invocations:
+    print("  (no `h5i claims` invocations — optional for this task)")
+
+for n, (_, text, paths, _, via) in enumerate(adds, 1):
+    print(f"  #{n} add  (via {via}):")
+    print(f"      text  : {text if text is not None else '<could not parse — check raw>'}")
+    print(f"      paths : {', '.join(paths) if paths else '<none — will have failed>'}")
+
+claims_dir = pathlib.Path(workdir) / ".git" / ".h5i" / "claims"
+files = sorted(claims_dir.glob("*.json")) if claims_dir.exists() else []
+print()
+print(f"  recorded on disk: {len(files)} file(s) under .git/.h5i/claims/")
+for p in files:
+    try:
+        j = json.loads(p.read_text())
+        ev = ", ".join(j.get("evidence_paths", []))
+        print(f"    [{j.get('id','?')}] {j.get('text','')[:72]}")
+        print(f"           ↳ {ev}")
+    except Exception as e:
+        print(f"    ! failed to parse {p.name}: {e}")
+
+# Per-attempt verdict: did each `add` attempt end up on disk?
+if adds:
+    recorded_texts = []
+    for p in files:
+        try:
+            recorded_texts.append(json.loads(p.read_text()).get("text", ""))
+        except Exception:
+            pass
+    print()
+    print("  per-attempt verdict:")
+    for n, (_, text, paths, _, via) in enumerate(adds, 1):
+        if text is None:
+            verdict = "?  could not parse text"
+        elif not paths:
+            verdict = "✖  missing paths (add requires ≥1 evidence path)"
+        elif text in recorded_texts:
+            verdict = "✔  recorded"
+        else:
+            verdict = "✖  attempted but NOT on disk (likely errored)"
+        print(f"    #{n} ({via}) {verdict}")
+EOF
+
+# Authoritative live/stale summary from the CLI itself.
+if [[ -d "$WORKDIR/.git/.h5i/claims" ]] \
+    && compgen -G "$WORKDIR/.git/.h5i/claims/*.json" >/dev/null; then
+  echo
+  echo "  live/stale (h5i claims list):"
+  (cd "$WORKDIR" && "$H5I_BIN" claims list 2>&1 | sed 's/^/    /')
+fi
+
+# ── 7. Checklist ──────────────────────────────────────────────────────────────
 echo
 echo "── [$LABEL] checklist ────────────────────────────────────────────────────"
-python3 - "$JSONL" << 'EOF'
-import json, sys
+python3 - "$JSONL" "$WORKDIR" << 'EOF'
+import json, pathlib, re, sys
+
+jsonl_path, workdir = sys.argv[1], sys.argv[2]
+
 calls = []
-with open(sys.argv[1]) as f:
+with open(jsonl_path) as f:
     for line in f:
         msg = json.loads(line)
         if msg.get("type") == "assistant":
@@ -134,29 +262,120 @@ with open(sys.argv[1]) as f:
                 if block.get("type") == "tool_use":
                     calls.append((block["name"], str(block.get("input", {}))))
 
-def bash_has(p): return any("Bash" in n and p in i for n,i in calls)
+# Detection predicates must accept BOTH forms: Bash (`h5i context init ...`)
+# and MCP (`mcp__h5i__h5i_context_init`). The MCP form puts args in the input
+# dict rather than a command string, so we match tool name + the serialised
+# input when looking for keys like "kind" or "model".
+def called(bash_sub, mcp_tool):
+    """Either Bash `h5i <bash_sub>` or MCP tool `mcp__h5i__<mcp_tool>`."""
+    for name, inp in calls:
+        if "Bash" in name and f"h5i {bash_sub}" in inp:
+            return True
+        if name.endswith(mcp_tool) or f"__{mcp_tool}" in name:
+            return True
+    return False
+
+def trace_count(kind):
+    """Count h5i context trace entries of `kind` (Bash `--kind K` or MCP param)."""
+    n = 0
+    for name, inp in calls:
+        if "Bash" in name and f"--kind {kind}" in inp:
+            n += 1
+        elif "h5i_context_trace" in name and f"'kind': '{kind}'" in inp:
+            n += 1
+        elif "h5i_context_trace" in name and f'"kind": "{kind}"' in inp:
+            n += 1
+    return n
+
 def any_has(p):  return any(p in n+i for n,i in calls)
 
-def count_kind(k): return sum(1 for n,i in calls if "Bash" in n and f"--kind {k}" in i)
+REJECTION_WORDS = ("over ", "reject", "instead", "rather than", "chose")
+def think_with_rejection():
+    for name, inp in calls:
+        is_think = (
+            ("Bash" in name and "--kind THINK" in inp)
+            or ("h5i_context_trace" in name
+                and ("'kind': 'THINK'" in inp or '"kind": "THINK"' in inp))
+        )
+        if is_think and any(w in inp for w in REJECTION_WORDS):
+            return True
+    return False
+
+def commit_with_model():
+    # Bash form: `h5i commit ... --model`. MCP form: h5i_commit with a model arg.
+    for name, inp in calls:
+        if "Bash" in name and "h5i commit" in inp and "--model" in inp:
+            return True
+        if "h5i_commit" in name and ("'model'" in inp or '"model"' in inp):
+            return True
+    return False
 
 checks = [
-    ("h5i context init",              bash_has("context init")),
-    ("Read before edit",              any_has("Read")),
-    ("≥1 OBSERVE trace",             count_kind("OBSERVE") >= 1),
-    ("≥1 THINK with rejection",      any("THINK" in i and ("over " in i or "reject" in i or "instead" in i or "rather than" in i or "chose" in i) for n,i in calls if "Bash" in n)),
-    ("≥1 ACT trace",                 count_kind("ACT") >= 1),
-    ("ACT count ≥ files edited",     count_kind("ACT") >= sum(1 for n,_ in calls if n in ("Edit","Write"))),
-    ("NOTE fired (risk/todo/limit)", bash_has("NOTE")),
-    ("h5i context commit",           bash_has("context commit")),
-    ("git add before h5i commit",    bash_has("git add")),
-    ("h5i commit --model --agent",   bash_has("h5i commit") and bash_has("--model")),
-    ("h5i notes analyze",            bash_has("notes analyze")),
+    ("h5i context init",             called("context init", "h5i_context_init")),
+    ("Read before edit",             any_has("Read")),
+    ("≥1 OBSERVE trace",             trace_count("OBSERVE") >= 1),
+    ("≥1 THINK with rejection",      think_with_rejection()),
+    ("≥1 ACT trace",                 trace_count("ACT") >= 1),
+    ("ACT count ≥ files edited",
+        trace_count("ACT") >= sum(1 for n,_ in calls if n in ("Edit","Write"))),
+    ("NOTE fired (risk/todo/limit)", trace_count("NOTE") >= 1),
+    ("h5i context commit",           called("context commit", "h5i_context_commit")),
+    ("git add before h5i commit",
+        any("Bash" in n and re.search(r"\bgit\b.*\badd\b", i) for n,i in calls)),
+    ("h5i commit --model --agent",   commit_with_model()),
+    ("h5i notes analyze",            called("notes analyze", "h5i_notes_analyze")),
 ]
 passed = sum(1 for _,ok in checks if ok)
 for label, ok in checks:
     print(f"  {'✔' if ok else '✖'}  {label}")
 print(f"\n  {passed}/{len(checks)} checks passed")
-# Emit machine-readable score for aggregation
+
+# ── Optional claims checks (only meaningful when claims were attempted) ─────
+bash_adds = sum(
+    1 for n, c in calls
+    if "Bash" in n and re.search(r"\bh5i\s+claims\s+add\b", c)
+)
+mcp_adds = sum(1 for n, _ in calls if "h5i_claims_add" in n)
+add_count = bash_adds + mcp_adds
+claims_dir = pathlib.Path(workdir) / ".git" / ".h5i" / "claims"
+recorded = list(claims_dir.glob("*.json")) if claims_dir.exists() else []
+
+opt_checks = []
+if add_count == 0:
+    opt_checks.append(("h5i claims used (optional)", None))
+else:
+    opt_checks.append(("h5i claims used (optional)", True))
+    # Every add attempt should leave a file on disk.
+    opt_checks.append(("all add attempts recorded",
+                       len(recorded) >= add_count))
+    # No claim should be stale immediately after the session.
+    all_live = True
+    for p in recorded:
+        try:
+            j = json.loads(p.read_text())
+            # We don't recompute evidence_oid here — we trust the recorded one
+            # matches HEAD unless files were subsequently edited. Heuristic:
+            # claims recorded during the same session with no later edits.
+            # The authoritative answer is in the `h5i claims list` output above.
+        except Exception:
+            all_live = False
+    opt_checks.append(("all recorded claims parse cleanly", all_live))
+
+print()
+print("  (optional) claims checks:")
+scored, total = 0, 0
+for label, ok in opt_checks:
+    if ok is None:
+        print(f"  ·  {label} — skipped (no attempts)")
+        continue
+    total += 1
+    if ok:
+        scored += 1
+    print(f"  {'✔' if ok else '✖'}  {label}")
+if total:
+    print(f"\n  {scored}/{total} optional claims checks passed")
+
+# Emit machine-readable score (core only, unchanged for aggregators).
 print(f"\nSCORE:{passed}/{len(checks)}")
 EOF
 

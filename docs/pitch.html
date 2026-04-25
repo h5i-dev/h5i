@@ -678,7 +678,7 @@
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:1020px;">
     <div class="section-tag">Feature · h5i claims</div>
-    <h2>81% fewer tokens.<br>Same answer.</h2>
+    <h2>6× fewer file reads.<br>Same answer.</h2>
 
     <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
       <div style="display:flex;flex-direction:column;gap:14px;">
@@ -699,16 +699,17 @@
           <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
           <span class="terminal-path">A/B evaluation</span>
         </div>
-        <div class="terminal-body"><pre><span class="t-bold">── Identical task. Identical codebase. ────</span>
-  <span class="t-out">metric             No claims   With claims       Δ</span>
-  <span class="t-out">─────────────────  ─────────   ───────────  ──────</span>
-  <span class="t-ai">Cache-read tokens    577,334       108,060    −81%</span>
-  <span class="t-ai">Read tool calls          6.5           1.0    −85%</span>
-  <span class="t-ai">Assistant turns           19           4.5    −76%</span>
-  <span class="t-ai">Wall time                70s           21s    −71%</span>
+        <div class="terminal-body"><pre><span class="t-bold">── A/B · 10 trials per arm ────────────────</span>
+  <span class="t-out">metric            No claims   With claims      Δ</span>
+  <span class="t-out">────────────────  ─────────   ───────────  ─────</span>
+  <span class="t-ai">Read tool calls   5.6 ± 1.0     1.0 ± 0    −82%</span>
+  <span class="t-ai">Cache-read tok.    510,284       117,433    −77%</span>
+  <span class="t-ai">Assistant turns  17.1 ± 1.8   4.8 ± 1.2    −72%</span>
+  <span class="t-ai">Wall time           52s ± 9      18s ± 5    −65%</span>
+  <span class="t-ai">Task fidelity         9/10       10/10  ✓</span>
 
-<span class="t-ai">  ✔  81% fewer cached input tokens</span>
-<span class="t-ai">     on repeat-work patterns.</span></pre></div>
+<span class="t-ai">  ✔  All 10 trials read exactly 1 file —</span>
+<span class="t-ai">     the one the claims point at.</span></pre></div>
       </div>
     </div>
   </div>
