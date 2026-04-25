@@ -1275,3 +1275,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [19:34:50] OBSERVE: read src/ctx.rs
 [19:34:50] OBSERVE: read src/metadata.rs
 [19:34:50] OBSERVE: read src/session.rs
+[19:45:43] OBSERVE: read scripts/experiment_claims.sh
