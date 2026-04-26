@@ -2731,70 +2731,91 @@ jq -c '{
                 style(&remote).yellow()
             );
 
-            // Push h5i notes (AI provenance, test metrics, causal links)
-            let notes_refspec = "refs/h5i/notes:refs/h5i/notes";
-            print!(
-                "  {} {} … ",
-                style("→").dim(),
-                style("refs/h5i/notes").yellow()
-            );
             use std::io::Write as _;
-            std::io::stdout().flush()?;
-            let notes_status = std::process::Command::new("git")
-                .args(["push", &remote, notes_refspec])
-                .current_dir(&workdir)
-                .status()
-                .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
-            if notes_status.success() {
-                println!("{}", style("ok").green());
-            } else {
-                println!("{}", style("failed").red());
-            }
+
+            // Pre-check whether a ref exists locally before invoking `git push`.
+            // Skipping a missing ref with our own warning avoids two lines of
+            // git stderr noise ("error: src refspec ... does not match any" +
+            // "error: failed to push some refs") for the expected case where
+            // the user simply hasn't generated that artifact yet.
+            let ref_exists = |refname: &str| -> bool {
+                std::process::Command::new("git")
+                    .args(["rev-parse", "--verify", "--quiet", refname])
+                    .current_dir(&workdir)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+            };
+
+            // Push one h5i ref. On missing ref, prints a yellow warning with
+            // the hint command. On real push failure, lets git's stderr
+            // through unchanged. Returns true iff the push actually ran and
+            // succeeded — used downstream to gate the "Tip:" footer.
+            let try_push = |refname: &str,
+                            missing_hint: console::StyledObject<&str>,
+                            missing_reason: &str|
+             -> anyhow::Result<bool> {
+                print!("  {} {} … ", style("→").dim(), style(refname).yellow());
+                std::io::stdout().flush()?;
+                if !ref_exists(refname) {
+                    println!(
+                        "{} ({} — run {})",
+                        style("skipped").yellow(),
+                        missing_reason,
+                        missing_hint
+                    );
+                    return Ok(false);
+                }
+                let refspec = format!("+{}:{}", refname, refname);
+                let status = std::process::Command::new("git")
+                    .args(["push", &remote, &refspec])
+                    .current_dir(&workdir)
+                    .status()
+                    .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+                if status.success() {
+                    println!("{}", style("ok").green());
+                    Ok(true)
+                } else {
+                    println!("{}", style("failed").red());
+                    Ok(false)
+                }
+            };
+
+            // Push h5i notes (AI provenance, test metrics, causal links)
+            let notes_pushed = try_push(
+                "refs/h5i/notes",
+                style("h5i commit").bold(),
+                "no AI-provenance commits yet",
+            )?;
 
             // Push memory ref (Claude memory snapshots)
-            let mem_refspec = format!("+{}:{}", memory::MEMORY_REF, memory::MEMORY_REF);
-            print!("  {} {} … ", style("→").dim(), style("refs/h5i/memory").yellow());
-            std::io::stdout().flush()?;
-            let mem_status = std::process::Command::new("git")
-                .args(["push", &remote, &mem_refspec])
-                .current_dir(&workdir)
-                .status()
-                .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
-            if mem_status.success() {
-                println!("{}", style("ok").green());
-            } else {
-                println!("{} (no memory snapshots yet — run {})", style("skipped").dim(), style("h5i memory snapshot").bold());
-            }
+            try_push(
+                memory::MEMORY_REF,
+                style("h5i memory snapshot").bold(),
+                "no memory snapshots yet",
+            )?;
 
             // Push context workspace (refs/h5i/context)
-            print!("  {} {} … ", style("→").dim(), style("refs/h5i/context").yellow());
-            std::io::stdout().flush()?;
-            let ctx_status = std::process::Command::new("git")
-                .args(["push", &remote, "refs/h5i/context:refs/h5i/context"])
-                .current_dir(&workdir)
-                .status()
-                .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
-            if ctx_status.success() {
-                println!("{}", style("ok").green());
-            } else {
-                println!("{} (no context workspace yet — run {})", style("skipped").dim(), style("h5i context init").bold());
-            }
+            try_push(
+                "refs/h5i/context",
+                style("h5i context init").bold(),
+                "no context workspace yet",
+            )?;
 
             // Push AST blobs (refs/h5i/ast)
-            print!("  {} {} … ", style("→").dim(), style("refs/h5i/ast").yellow());
-            std::io::stdout().flush()?;
-            let ast_status = std::process::Command::new("git")
-                .args(["push", &remote, "refs/h5i/ast:refs/h5i/ast"])
-                .current_dir(&workdir)
-                .status()
-                .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
-            if ast_status.success() {
-                println!("{}", style("ok").green());
-            } else {
-                println!("{} (no AST snapshots yet — commit with {})", style("skipped").dim(), style("--ast").bold());
-            }
+            try_push(
+                "refs/h5i/ast",
+                style("h5i commit --ast").bold(),
+                "no AST snapshots yet",
+            )?;
 
-            if notes_status.success() {
+            // Bind to the original variable name so the existing "Tip:" footer
+            // (gated on notes_status.success()) keeps working unchanged.
+            let notes_status_success = notes_pushed;
+
+            if notes_status_success {
                 println!(
                     "\n{} To receive these refs on another machine:\n\
                     \n    git fetch {} refs/h5i/notes:refs/h5i/notes\
