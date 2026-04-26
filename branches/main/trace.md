@@ -1307,3 +1307,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [20:22:02] THINK: semantic capsules over more prose summaries because biggest token win comes from changing context unit from natural-language text to stable, invalidatable object references
 [20:22:02] NOTE: IDEA: investigate capsule/handle-based context objects that can be surfaced as tiny IDs plus selective proof payload instead of always-inlined summaries/claims
 [03:23:07] OBSERVE: read src/main.rs
+[03:23:23] ACT: edited src/main.rs
