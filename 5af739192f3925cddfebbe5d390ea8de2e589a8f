@@ -1,0 +1,1 @@
+{"git_oid":"5af739192f3925cddfebbe5d390ea8de2e589a8f","parent_oid":"904a08879a485e3d53f935da8d3f9de726ed0172","ai_metadata":{"model_name":"claude-opus-4-7","prompt":"the figure's text outside boxes is hard to see in dark mode — fix that","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"crdt_states":null,"timestamp":"2026-04-26T14:28:41.404783370Z"}
