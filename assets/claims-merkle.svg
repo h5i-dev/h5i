@@ -4,34 +4,18 @@
       <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.12"/>
     </filter>
     <marker id="arrow" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto">
-      <path d="M0,0 L8,4 L0,8 Z" class="arrow-fill"/>
+      <path d="M0,0 L8,4 L0,8 Z" fill="#7a8693"/>
     </marker>
-    <style>
-      /* Outside-box text + arrows. Inside-box text and box fills stay
-         light-mode-shaded so the boxes form their own contrast surfaces
-         against any background. */
-      .label    { fill: #586069; }   /* eyebrow labels, italic notes */
-      .body     { fill: #24292e; }   /* caption body */
-      .muted    { fill: #586069; }   /* caption tertiary */
-      .accent-g { fill: #22863a; }   /* live ● */
-      .accent-y { fill: #b08800; }   /* stale ○ */
-      .arrow    { stroke: #7a8693; }
-      .arrow-fill { fill: #7a8693; }
-
-      @media (prefers-color-scheme: dark) {
-        .label    { fill: #8b949e; }
-        .body     { fill: #e6edf3; }
-        .muted    { fill: #8b949e; }
-        .accent-g { fill: #56d364; }
-        .accent-y { fill: #e3b341; }
-        .arrow    { stroke: #8b949e; }
-        .arrow-fill { fill: #8b949e; }
-      }
-    </style>
   </defs>
 
+  <!-- Opaque light background. GitHub's renderer doesn't reliably honor
+       prefers-color-scheme inside SVGs loaded via <img>, so we render the
+       diagram as a self-contained light card that reads the same on both
+       light and dark page backgrounds. -->
+  <rect x="0" y="0" width="820" height="540" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+
   <!-- Title -->
-  <text x="410" y="34" text-anchor="middle" font-size="13" font-weight="600" letter-spacing="2" class="label">CONTENT-ADDRESSED CLAIMS — A MERKLE VIEW</text>
+  <text x="410" y="34" text-anchor="middle" font-size="13" font-weight="600" fill="#586069" letter-spacing="2">CONTENT-ADDRESSED CLAIMS — A MERKLE VIEW</text>
 
   <!-- Claim node -->
   <g filter="url(#shadow)">
@@ -43,19 +27,19 @@
   <text x="148" y="140" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#3a7d4d">id: 478be84c · 2026-04-25 14:49 UTC · author: human</text>
 
   <!-- Vertical arrow to evidence_oid -->
-  <line x1="410" y1="162" x2="410" y2="208" stroke-width="1.5" class="arrow" marker-end="url(#arrow)"/>
-  <text x="420" y="190" font-size="11" font-style="italic" class="label">computed at add-time, stored on the claim</text>
+  <line x1="410" y1="162" x2="410" y2="208" stroke="#7a8693" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="420" y="190" font-size="11" font-style="italic" fill="#586069">computed at add-time, stored on the claim</text>
 
   <!-- evidence_oid node -->
   <g filter="url(#shadow)">
-    <rect x="270" y="220" width="280" height="64" rx="10" fill="#ffffff" stroke="#959da5" stroke-width="1.5"/>
+    <rect x="270" y="220" width="280" height="64" rx="10" fill="#fafbfc" stroke="#959da5" stroke-width="1.5"/>
   </g>
   <text x="410" y="244" text-anchor="middle" font-size="10.5" font-weight="700" fill="#586069" letter-spacing="1.2">EVIDENCE_OID · MERKLE ROOT</text>
   <text x="410" y="270" text-anchor="middle" font-size="14" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#24292e">sha256(p₁ ‖ oid₁ ‖ p₂ ‖ oid₂)</text>
 
   <!-- Diverging arrows to leaves -->
-  <line x1="350" y1="284" x2="220" y2="328" stroke-width="1.5" class="arrow" marker-end="url(#arrow)"/>
-  <line x1="470" y1="284" x2="600" y2="328" stroke-width="1.5" class="arrow" marker-end="url(#arrow)"/>
+  <line x1="350" y1="284" x2="220" y2="328" stroke="#7a8693" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="470" y1="284" x2="600" y2="328" stroke="#7a8693" stroke-width="1.5" marker-end="url(#arrow)"/>
 
   <!-- Leaf 1 -->
   <g filter="url(#shadow)">
@@ -75,13 +59,13 @@
 
   <!-- Caption -->
   <g transform="translate(60, 462)">
-    <text x="0" y="0" font-size="12.5" class="body">
+    <text x="0" y="0" font-size="12.5" fill="#24292e">
       <tspan font-weight="600">Edit any evidence file</tspan> → its blob OID changes → <tspan font-weight="600">evidence_oid recomputes ≠ stored value</tspan> → the claim flips
     </text>
-    <text x="0" y="20" font-size="12.5" class="body">
-      <tspan class="accent-g" font-weight="600">live ●</tspan> → <tspan class="accent-y" font-weight="600">stale ○</tspan>. No human re-validation. <tspan font-family="ui-monospace, 'SF Mono', monospace" font-size="11.5">h5i claims prune</tspan> drops the stale ones; the rest stay trustworthy.
+    <text x="0" y="20" font-size="12.5" fill="#24292e">
+      <tspan fill="#22863a" font-weight="600">live ●</tspan> → <tspan fill="#b08800" font-weight="600">stale ○</tspan>. No human re-validation. <tspan font-family="ui-monospace, 'SF Mono', monospace" font-size="11.5">h5i claims prune</tspan> drops the stale ones; the rest stay trustworthy.
     </text>
-    <text x="0" y="50" font-size="12" class="muted">
+    <text x="0" y="50" font-size="12" fill="#586069">
       Live claims are eagerly inlined into the SessionStart prelude — the next agent treats them as <tspan font-style="italic">pre-verified facts</tspan> and skips re-derivation.
     </text>
   </g>
