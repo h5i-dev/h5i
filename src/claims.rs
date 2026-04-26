@@ -322,6 +322,77 @@ pub fn print_list(entries: &[ClaimWithStatus]) {
     );
 }
 
+/// Print claims grouped by evidence path. Each path heading lists every claim
+/// that pins it (a multi-path claim appears under each of its paths). Files
+/// with no claims are omitted. Replaces the per-file orientation view that
+/// `h5i summary list` used to provide.
+pub fn print_list_grouped_by_path(entries: &[ClaimWithStatus]) {
+    if entries.is_empty() {
+        println!(
+            "  {} No claims recorded. Run {} to add one.",
+            style("ℹ").blue(),
+            style("h5i claims add …").bold()
+        );
+        return;
+    }
+
+    // path → Vec<&ClaimWithStatus>. BTreeMap for stable, sorted output.
+    let mut by_path: std::collections::BTreeMap<&str, Vec<&ClaimWithStatus>> =
+        std::collections::BTreeMap::new();
+    for entry in entries {
+        for path in &entry.claim.evidence_paths {
+            by_path.entry(path.as_str()).or_default().push(entry);
+        }
+    }
+
+    for (path, claims_for_path) in &by_path {
+        println!("{}", style(path).bold().underlined());
+        for entry in claims_for_path {
+            let badge = match entry.status {
+                ClaimStatus::Live => style("● live ").green().bold().to_string(),
+                ClaimStatus::Stale => style("○ stale").yellow().bold().to_string(),
+            };
+            println!(
+                "  {}  {}  {}",
+                badge,
+                style(&entry.claim.id).magenta(),
+                entry.claim.text,
+            );
+            // If this claim pins multiple paths, surface the others so the
+            // reader knows the claim isn't path-exclusive.
+            if entry.claim.evidence_paths.len() > 1 {
+                let others: Vec<&str> = entry
+                    .claim
+                    .evidence_paths
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|p| *p != *path)
+                    .collect();
+                if !others.is_empty() {
+                    println!(
+                        "          {} also pins: {}",
+                        style("↳").dim(),
+                        style(others.join(", ")).dim(),
+                    );
+                }
+            }
+        }
+        println!();
+    }
+
+    let live = entries.iter().filter(|c| c.status == ClaimStatus::Live).count();
+    let stale = entries.len() - live;
+    let path_count = by_path.len();
+    println!(
+        "  {} {} live, {} stale across {} path{}",
+        style("→").dim(),
+        style(live).cyan().bold(),
+        style(stale).yellow().bold(),
+        style(path_count).cyan().bold(),
+        if path_count == 1 { "" } else { "s" },
+    );
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

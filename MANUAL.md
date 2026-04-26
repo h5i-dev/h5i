@@ -60,11 +60,6 @@ Command reference for all h5i subcommands and flags.
   - [h5i claims add](#h5i-claims-add)
   - [h5i claims list](#h5i-claims-list)
   - [h5i claims prune](#h5i-claims-prune)
-- [h5i summary](#h5i-summary)
-  - [h5i summary set](#h5i-summary-set)
-  - [h5i summary show](#h5i-summary-show)
-  - [h5i summary list](#h5i-summary-list)
-  - [h5i summary prune](#h5i-summary-prune)
 - [h5i resume](#h5i-resume)
 - [h5i vibe](#h5i-vibe)
 - [h5i policy](#h5i-policy)
@@ -1554,7 +1549,7 @@ h5i claims add "retry logic lives in HttpClient::send, not middleware" \
 ### h5i claims list
 
 ```
-h5i claims list
+h5i claims list [--group-by-path]
 ```
 
 Show all claims with live/stale status based on the current HEAD. A claim is **live** iff the Merkle fingerprint over its evidence paths still matches the value recorded at `add` time.
@@ -1569,6 +1564,21 @@ STATUS    ID              CREATED                 TEXT
   → 1 live, 1 stale
 ```
 
+**`--group-by-path`** organises the same data by file path, with each claim listed under every path it pins. Useful for the per-file orientation view ("what do I know about `src/api/client.py`?"). Multi-path claims appear under each of their paths, with the *also pins* line surfacing the cross-cutting nature.
+
+```
+src/api/client.py
+  ● live  478be84c61e7  HTTP only src/api/client.py: fetch_user, create_post, delete_post.
+src/http_client.rs
+  ● live  c2d7e1f9aa31  retry logic lives in HttpClient::send, not middleware
+          ↳ also pins: src/middleware.rs
+src/middleware.rs
+  ● live  c2d7e1f9aa31  retry logic lives in HttpClient::send, not middleware
+          ↳ also pins: src/http_client.rs
+
+  → 2 live, 0 stale across 3 paths
+```
+
 ---
 
 ### h5i claims prune
@@ -1581,110 +1591,6 @@ Delete all claims whose evidence blobs have changed since recording. Live claims
 
 ```
 ✔  Pruned 1 stale claim
-```
-
----
-
-## h5i summary
-
-Pin a short summary to a file's **current git blob OID**. A summary describes what's in *one file* (exports, role, structure) so future sessions can fetch a ≤200-token orientation instead of re-reading the whole file. Distinct from `h5i claims`, which pins cross-file *facts* via a Merkle hash over multiple paths.
-
-Stored under `.git/.h5i/summaries/<blob_oid>.json`.
-
-**Lifecycle:** because git blobs are content-addressed and immutable, a summary written for blob `X` is correct for blob `X` forever. When the file is edited, HEAD points at a new blob with no summary yet; the old summary stays on disk (still accessible if you have the OID) but isn't surfaced for that path until someone writes a new one for the new blob. Run `h5i summary prune` to delete summaries whose blobs are no longer reachable from any HEAD path.
-
-**Surfacing:** `h5i context prompt` and the `SessionStart` hook prelude render summaries one of two ways depending on volume:
-
-- **Eager** (default for small repos): inline the full summary content under `## Pre-cached file summaries` so the agent reads it directly. Triggered when ≤10 files have summaries *and* total summary content ≤2000 chars.
-- **Listing-only**: print just the paths under `## File summaries available`. Triggered above the eager budget; the agent fetches what it needs via `h5i_summary_get` (MCP) or `h5i summary show <path>`.
-
-The eager path is what makes summaries actually save tokens — without it the per-file fetch round-trips eat the savings (see `scripts/experiment_claims_results.md`).
-
-**Writing style:** caveman-style, ≈80 tokens. Drop articles/copulas/fluff, keep paths + identifiers + types + signatures exact. The summary text is paid for on every cache-read of every later turn, so brevity compounds.
-
----
-
-### h5i summary set
-
-```
-h5i summary set <PATH> [--text <TEXT> | --from-file <FILE>] [--author <NAME>]
-```
-
-Pin a summary to the file's current HEAD blob. The path must exist in HEAD. Provide the body inline with `--text`, or read it from a file with `--from-file` (use `-` for stdin). If a summary already exists for the same blob OID, it is overwritten.
-
-**Options**
-
-| Option | Description |
-|--------|-------------|
-| `<PATH>` | File path tracked in HEAD (positional, required) |
-| `--text <TEXT>` | Inline summary body. Mutually exclusive with `--from-file`. |
-| `--from-file <FILE>` | Read body from a file (`-` for stdin). Mutually exclusive with `--text`. |
-| `--author <NAME>` | Author tag (default: `$H5I_AGENT_ID`, else `human`) |
-
-```bash
-h5i summary set src/api/client.py --text \
-  "HTTP client. requests to api.example.com. Exports: fetch_user(id)→dict, create_post(title,body,author_id)→dict, delete_post(id)→bool. Logger \`log\` at top via getLogger(__name__). No retries."
-```
-
-```
-✔  Recorded summary for src/api/client.py (blob f328e4d9d04c)
-```
-
-Or piped from stdin:
-
-```bash
-cat <<'EOF' | h5i summary set src/api/client.py --from-file -
-HTTP client. requests to api.example.com. Exports: …
-EOF
-```
-
----
-
-### h5i summary show
-
-```
-h5i summary show <PATH>
-```
-
-Print the summary for the file's current HEAD blob, or `(none)` if no summary has been written for this content yet.
-
-```
-── src/api/client.py (blob f328e4d9d04c)  ────────────────
-HTTP client. requests to api.example.com. Exports: fetch_user(id)→dict, …
-```
-
----
-
-### h5i summary list
-
-```
-h5i summary list
-```
-
-Walk the HEAD tree and show every tracked file with a `set`/`none` flag for whether its current blob has a summary.
-
-```
-STATUS    BLOB            PATH
-● set    f328e4d9d04c    src/api/client.py
-○ none   1519936aafae    src/utils/format.py
-○ none   2bf42a31cce8    src/utils/validate.py
-● set    8c7b1e9d2f74    main.py
-
-  → 2 with summary, 2 without
-```
-
----
-
-### h5i summary prune
-
-```
-h5i summary prune
-```
-
-Delete summaries whose blob OID is no longer reachable from any HEAD-tracked path (i.e. the file has been edited everywhere it appeared). Summaries for live blobs are untouched. Mirrors `h5i claims prune`, but the semantics are different: claims can become *wrong* (stale), summaries can only become *unreachable* (still correct for their blob, just no longer pointed to).
-
-```
-✔  Pruned 3 orphaned summary blobs
 ```
 
 ---
@@ -2103,10 +2009,6 @@ After restarting Claude Code, all h5i tools become available natively inside any
 | `h5i_claims_add` | `h5i claims add` | Record a content-addressed claim pinned to evidence paths at HEAD |
 | `h5i_claims_list` | `h5i claims list` | All claims with live/stale status |
 | `h5i_claims_prune` | `h5i claims prune` | Drop claims whose evidence blobs changed |
-| `h5i_summary_set` | `h5i summary set` | Pin a summary to a file's current blob OID |
-| `h5i_summary_get` | `h5i summary show` | Fetch the summary for a file's current HEAD blob (or `found:false`) |
-| `h5i_summary_list` | `h5i summary list` | Per-file flag: which HEAD-tracked files have summaries |
-| `h5i_summary_prune` | `h5i summary prune` | Drop summaries whose blob OID is no longer reachable from HEAD |
 
 **Tool parameters**
 
@@ -2141,13 +2043,9 @@ After restarting Claude Code, all h5i tools become available natively inside any
 | `h5i_context_show` | `branch` | string | no | current | Branch to inspect |
 | `h5i_context_show` | `window` | integer | no | 3 | Recent checkpoints to include |
 | `h5i_context_show` | `trace` | boolean | no | false | Include recent OTA trace lines |
-| `h5i_claims_add` | `text` | string | **yes** | — | Claim text (caveman-style, ≈30 tokens) |
+| `h5i_claims_add` | `text` | string | **yes** | — | Claim text (caveman-style, ≈30 tokens; up to ~80 tokens for per-file orientation claims) |
 | `h5i_claims_add` | `paths` | string[] | **yes** | — | Evidence paths tracked in HEAD; minimal set whose edits would invalidate the claim |
 | `h5i_claims_add` | `author` | string | no | `$H5I_AGENT_ID` else `human` | Author tag |
-| `h5i_summary_set` | `path` | string | **yes** | — | File path tracked in HEAD |
-| `h5i_summary_set` | `text` | string | **yes** | — | Summary body (caveman-style, ≈80 tokens) |
-| `h5i_summary_set` | `author` | string | no | `$H5I_AGENT_ID` else `human` | Author tag |
-| `h5i_summary_get` | `path` | string | **yes** | — | File path tracked in HEAD |
 
 ### Resources
 

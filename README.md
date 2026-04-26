@@ -29,11 +29,10 @@ curl -fsSL https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh | 
 
 ## Why h5i
 
-Five commands do most of the work:
+Four commands do most of the work:
 
 - **`h5i context`** — records the goal, milestones, and every OBSERVE / THINK / ACT step of an agent session as first-class git objects. Pick up where the last session stopped, hand a task off from **Claude Code** to **Codex** without losing the thread, and `git diff` your own reasoning.
-- **`h5i claims`** — attach short, content-addressed facts (e.g. *"HTTP helpers live only in `src/api/client.py`"*) to the files that back them. Live claims are injected into future agent sessions, cutting cache-read tokens by **~69%** at N=10.
-- **`h5i summary`** — pin a per-file orientation (exports, role, structure) keyed by the file's blob OID, auto-invalidated on edit. Eagerly inlined into the prompt so the agent skips re-reading. **−46% cache-read tokens** at N=10 on the same benchmark.
+- **`h5i claims`** — attach short, content-addressed facts (e.g. *"HTTP helpers live only in `src/api/client.py`"*) to the files that back them. Live claims are injected into future agent sessions, cutting cache-read tokens by **~69%** at N=10. Single-path claims double as per-file orientations; use `h5i claims list --group-by-path` to see what's known about each file.
 - **`h5i notes`** — attaches each session's exploration footprint, uncertainty moments, and blind edits to the commit, then ranks the commits that most need human review.
 - **`h5i vibe`** — a 5-second audit of any repo: AI footprint, directories that are fully AI-written, leaked API tokens, and prompt-injection hits. Useful on any codebase you inherit.
 
@@ -184,50 +183,47 @@ Ranks commits by uncertainty signals, blind edits (files modified without being 
 
 ## Cutting token cost
 
-Two pre-loadable artifacts attack the same loss from different angles. Agents pay tokens to re-derive things every session. Both `h5i claims` and `h5i summary` pin known content into the cached prompt prefix so the next session skips the re-grounding.
+`h5i claims` is the load-bearing primitive. Agents pay tokens every session to re-derive things they already knew last time. Claims pin known content (cross-cutting facts and per-file orientations alike) into the cached prompt prefix so the next session skips the re-grounding.
 
 ### `h5i claims` — content-addressed facts that auto-invalidate
 
-`h5i claims` records cross-file conclusions with their evidence pinned as a Merkle hash over `(path, blob_oid)` pairs at HEAD. The claim stays `live` until any evidence blob changes, then auto-invalidates.
+<p align="center">
+  <img src="./assets/claims-merkle.svg" alt="A claim sits above its evidence: each evidence path resolves to a git blob OID at HEAD, and a Merkle root (evidence_oid) is computed over the (path, blob_oid) pairs. Editing any evidence file changes its blob OID, which changes the Merkle root, which auto-invalidates the claim from live to stale." width="100%">
+</p>
+
+`h5i claims` records conclusions with their evidence pinned as a Merkle hash over `(path, blob_oid)` pairs at HEAD. The claim stays `live` until any evidence blob changes, then auto-invalidates.
 
 ```bash
-h5i claims add "HTTP helpers live only in src/api/client.py" \
+# Cross-cutting fact (multiple paths)
+h5i claims add "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
   --path src/api/client.py
 
-h5i claims list       # live / stale badges
-h5i claims prune      # drop claims whose evidence changed
+# Per-file orientation (single path, longer text)
+h5i claims add "src/api/client.py | HTTP. fetch_user(id: int)→dict GET, create_post(title,body,author_id)→dict POST, delete_post(id: int)→bool DELETE. Logger \`log\` top." \
+  --path src/api/client.py
+
+h5i claims list                    # live / stale badges
+h5i claims list --group-by-path    # what's known about each file
+h5i claims prune                   # drop claims whose evidence changed
 ```
 
-Write claims **caveman-style** (≈30 tokens, drop articles + copulas, keep paths/identifiers exact). The text gets re-read on every cached-prefix turn forever, so brevity at write time pays back forever.
-
-### `h5i summary` — per-file orientations keyed by blob OID
-
-Where a claim is a fact pinned to multiple files, a summary is a precis of *one* file's content keyed by that file's git blob OID. Because git blobs are immutable, a summary written for blob X is correct for blob X forever — and it auto-invalidates the moment the file is edited (HEAD points at a new blob with no summary). Summaries are eagerly inlined into the prompt prelude when the count fits a budget, so the agent uses them without an extra fetch round-trip.
-
-```bash
-h5i summary set src/api/client.py --text \
-  "HTTP client. requests to api.example.com. Exports: fetch_user(id)→dict, create_post(...), delete_post(id)→bool. Logger \`log\` at top."
-
-h5i summary list      # which HEAD files have summaries; which don't
-h5i summary show <path>
-h5i summary prune     # drop summaries whose blob OID is no longer reachable from HEAD
-```
+Write claims **caveman-style** (~30 tokens for cross-cutting facts; up to ~80 tokens for per-file orientations). Drop articles and copulas, keep paths/identifiers exact. The text gets re-read on every cached-prefix turn forever, so brevity at write time pays back forever.
 
 ### Measured impact
 
-Controlled A/B/C at N=10 trials per arm (`./scripts/experiment_claims.sh`), single model `claude-opus-4-7`, MCP server mounted, fidelity **10/10 in every arm**:
+Controlled experiment at N=10 trials per arm (`./scripts/experiment_claims.sh`), single model `claude-opus-4-7`, MCP server mounted, fidelity **10/10 in every arm**:
 
-| Metric              | No claims/summaries (mean ± sd) | With claims (mean ± sd) |  Δ_claims | With file summaries (mean ± sd) |  Δ_summaries |
-|---------------------|--------------------------------:|------------------------:|----------:|--------------------------------:|-------------:|
-| Cache-read tokens   |              528,136 ± 101,765  |     165,722 ± 105,423   | **−68.6%** |              283,174 ± 113,206  |   **−46.4%** |
-| Read tool calls     |                       5.2 ± 1.1 |               1.0 ± 0   |     −80.8% |                          1.0 ± 0 |       −80.8% |
-| Assistant turns     |                      16.5 ± 2.8 |               6.1 ± 3.2 |     −63.0% |                        9.9 ± 3.5 |       −40.0% |
-| Wall time           |                       46 ± 15 s |              20 ± 7 s   |     −55.6% |                         35 ± 21 s |       −23.1% |
-| Fidelity (success)  |                         10/10 ✓ |                10/10 ✓  |           |                          10/10 ✓ |              |
+| Metric              | No claims (mean ± sd) | With claims (mean ± sd) |  Δ |
+|---------------------|----------------------:|------------------------:|---:|
+| Cache-read tokens   |    528,136 ± 101,765  |     165,722 ± 105,423   | **−68.6%** |
+| Read tool calls     |             5.2 ± 1.1 |               1.0 ± 0   |     −80.8% |
+| Assistant turns     |            16.5 ± 2.8 |               6.1 ± 3.2 |     −63.0% |
+| Wall time           |             46 ± 15 s |              20 ± 7 s   |     −55.6% |
+| Fidelity (success)  |               10/10 ✓ |                10/10 ✓  |           |
 
-Both treated arms read **exactly one file** in every trial — the file the agent edits — vs ~5 in the no-artifact baseline. The cache-read deltas exceed `2·max(stdev)` for both arms, so neither is noise.
+The treated arm reads **exactly one file** in every trial — the file the agent edits — vs ~5 in the no-claims baseline. The cache-read delta exceeds `2·max(stdev)`, so it isn't noise.
 
-The full methodology, all four arms (including a `freq=high` arm that quantifies the cost of letting the agent self-record), raw per-trial data, lessons-learned (caveman compression, eager rendering), and honest caveats live in [`scripts/experiment_claims_results.md`](scripts/experiment_claims_results.md).
+The full methodology, raw per-trial data, lessons-learned (caveman compression, eager rendering), and honest caveats live in [`scripts/experiment_claims_results.md`](scripts/experiment_claims_results.md).
 
 ---
 
@@ -255,8 +251,7 @@ git for-each-ref refs/h5i/     # peek at what h5i has stored
 - **`h5i log`** — enriched commit history with prompts, models, tokens, and decisions inline.
 - **`h5i blame <file>`** — line or AST-level blame, annotated with AI provenance per commit.
 - **`h5i policy`** — policy-as-code (`.h5i/policy.toml`): require provenance, cap AI ratio per directory, enforce audit on sensitive paths.
-- **`h5i claims`** — record content-addressed facts about the codebase that auto-invalidate when their evidence blobs change; injects live ones into `h5i context prompt`.
-- **`h5i summary`** — pin a per-file orientation keyed by the file's git blob OID; eagerly inlined into the prompt so agents skip re-reading. Auto-invalidates on edit.
+- **`h5i claims`** — record content-addressed facts about the codebase that auto-invalidate when their evidence blobs change; injects live ones into `h5i context prompt`. Single-path claims double as per-file orientations.
 - **`h5i memory`** — snapshot / diff / restore Claude or Codex memory state alongside the code.
 - **`h5i resume`** — one-screen session-handoff briefing (last branch, high-risk files, suggested opening prompt).
 - **`h5i context restore <sha>`** — time-travel the reasoning workspace to any past commit.

@@ -7,35 +7,21 @@
 #   input tokens (fewer Read/Grep calls, smaller per-turn context).
 #
 # Method:
-#   Four arms on an identical seeded codebase, identical user task:
+#   Two arms, production-realistic auto-curation:
 #
-#     CONTROL     — no claims recorded, no summaries; H5I_CLAIMS_FREQUENCY=off.
-#                   Baseline: what the task costs with none of the h5i machinery.
-#     TREATMENT   — 5 hand-curated claims pre-recorded; H5I_CLAIMS_FREQUENCY=off.
-#                   Upper bound on savings: retrieval-only, no recording overhead,
-#                   author already decided what was worth pinning.
-#     AUTO_CLAIMS — no pre-recorded claims; H5I_CLAIMS_FREQUENCY=high.
-#                   Realistic cost of letting the agent record claims during a
-#                   normal session. Single-session — shows the ADD overhead
-#                   without the future-session retrieval benefit, so this arm
-#                   is an UPPER BOUND on the cost of defaulting frequency=high.
-#     SUMMARIES   — 4 pre-cached blob-OID-keyed file summaries; no claims.
-#                   The agent can fetch each file's orientation via
-#                   h5i_summary_get(path) instead of doing a full Read. Tests
-#                   whether summaries can substitute for Reads on a task that
-#                   only needs orientation, not full content.
+#     CONTROL              — no pre-seeding. Baseline.
+#     AUTO_HAIKU_CLAIMS    — one Haiku call at workdir setup writes claims
+#                            from the seeded source; the working session
+#                            (Opus) then runs the task with those claims
+#                            already in the cached prompt prefix.
+#
+#   The working session uses Opus (claude --print) for both arms — same model.
+#   Only the per-workdir Haiku setup cost (~$0.01) and the seeded claims differ.
 #
 #   For each run we parse the Claude session JSONL, sum per-turn token usage,
-#   count tool calls, and count `h5i claims add` invocations (Bash + MCP).
-#   A three-column comparison table is printed at the end.
-#
-# What the AUTO_CLAIMS arm does and does NOT measure:
-#   DOES measure    — cost of agent-initiated claim recording on this task.
-#   DOES NOT measure — future-session retrieval benefit from those claims.
-#   The honest read: if AUTO_CLAIMS tokens ≈ CONTROL + small δ, the overhead is
-#   cheap and the default=high bet only needs ~δ of retrieval savings in some
-#   later session to break even. If AUTO_CLAIMS ≫ CONTROL, default=high has a
-#   high hill to climb.
+#   count tool calls, and read out cache_creation/cache_read deltas. A
+#   comparison table is printed at the end with the AUTO_HAIKU_CLAIMS arm's
+#   Δ% vs CONTROL.
 #
 # Rigor built in:
 #   · Per-trial wall-clock timeout (TRIAL_TIMEOUT) so a stalled claude run
@@ -43,11 +29,11 @@
 #   · Retry-and-cap (RETRY_CAP): a trial that times out, writes to the wrong
 #     files, or fails the ENTER/EXIT log-pair check is retried in a fresh
 #     workdir; failures and retry counts are recorded and reported.
-#   · Cyclic 3-arm order per trial (Latin-square-ish rotation) to mitigate
-#     serial drift from Anthropic-side caches or backend state.
+#   · Cyclic 2-arm order per trial (alternating start) to mitigate serial
+#     drift from Anthropic-side caches or backend state.
 #   · MCP server mounted via --mcp-config so the agent can reach `h5i_claims_*`
-#     tools natively; without this, the AUTO_CLAIMS arm would be artificially
-#     discouraged from recording because it could only use the Bash form.
+#     tools natively; without this, the agent would be artificially discouraged
+#     from using claims because it could only see them via the Bash form.
 #   · The aggregator reports mean ± stdev [min, max] per arm and flags any
 #     metric where 2·stdev ≥ |Δ| as noise-dominated.
 #   · The model ID is extracted from each session JSONL and printed — so a
@@ -82,6 +68,14 @@ TRIAL_TIMEOUT="${TRIAL_TIMEOUT:-180}"
 RETRY_CAP="${RETRY_CAP:-1}"
 WORKDIR_BASE="${WORKDIR_BASE:-/tmp/h5i-claims-exp-$$}"
 
+# AUTO_HAIKU_CLAIMS arm: cheap-model claim extraction. The Haiku call is
+# one-shot; it just needs to produce JSON. We invoke
+# `claude --print --model $HAIKU_MODEL` rather than the Anthropic SDK directly
+# so this script has no extra deps.
+HAIKU_MODEL="${HAIKU_MODEL:-claude-haiku-4-5}"
+HAIKU_TIMEOUT="${HAIKU_TIMEOUT:-90}"
+HAIKU_MAX_CLAIMS="${HAIKU_MAX_CLAIMS:-5}"
+
 PASS="✔"
 FAIL="✖"
 STEP="▶"
@@ -109,43 +103,29 @@ makes an HTTP request in this project. Use the already-imported logger \
 \`log.info(\"EXIT <func_name>\")\`. Do NOT modify any function that does not \
 make HTTP calls. When done, print a summary of which files you edited."
 
-# ── Claims recorded for the TREATMENT arm (caveman-style) ─────────────────────
-# Each line is: <text>|<path1>,<path2>,...
-# Caveman style: drop articles/copulas/fluff, keep paths + identifiers + numbers
-# exact. Each claim ≈30 tokens or fewer.
-read -r -d '' CLAIMS_SPEC <<'SPEC' || true
-HTTP only src/api/client.py: fetch_user, create_post, delete_post.|src/api/client.py
-src/utils/format.py: format_date, truncate. Pure, no HTTP.|src/utils/format.py
-src/utils/validate.py: validate_email, validate_id. Pure, no HTTP.|src/utils/validate.py
-main.py wires helpers. No direct HTTP.|main.py
-Logger `log` at top src/api/client.py via `from logging import getLogger; log = getLogger(__name__)`.|src/api/client.py
-SPEC
-
-# ── Summaries recorded for the SUMMARIES arm (caveman-style) ──────────────────
-# Each line is: <path>|<summary text> (single-line per summary).
-# Caveman style: ≤80 tokens. Keep paths, identifiers, types, signatures exact.
-# Drop fluff like "this file contains" / "module that does" / "of any kind".
-read -r -d '' SUMMARIES_SPEC <<'SPEC' || true
-src/api/client.py|HTTP client. `requests` to BASE='https://api.example.com'. Exports: fetch_user(id)→dict (GET /users/<id>), create_post(title,body,author_id)→dict (POST /posts), delete_post(id)→bool (DELETE /posts/<id>). Logger `log` bound top via `getLogger(__name__)`. No retries. All 3 funcs make HTTP.
-src/utils/format.py|Pure format helpers, no I/O. Exports: format_date(dt)→str (YYYY-MM-DD), truncate(s,n)→str. No HTTP.
-src/utils/validate.py|Pure validation, no I/O. Exports: validate_email(s)→bool (regex), validate_id(x)→bool (positive int). No HTTP.
-main.py|Entry point. Imports fetch_user/create_post/delete_post from src.api.client + format/validate helpers. demo(user_id): validate id, fetch_user, print. No direct HTTP — delegates to client.py.
-SPEC
+# Hand-curated CLAIMS_SPEC / SUMMARIES_SPEC heredocs were dropped in the
+# Haiku-only restructure. All non-CONTROL arms now derive their pre-seeded
+# artifacts from a Haiku call against the seeded source files.
 
 # ── Project seed ──────────────────────────────────────────────────────────────
 seed_project() {
   local dir="$1"
   rm -rf "$dir"
-  mkdir -p "$dir/src/api" "$dir/src/utils"
+  mkdir -p "$dir/src/api" "$dir/src/utils" "$dir/src/models" "$dir/src/storage" "$dir/src/workers"
   git -C "$dir" init -q
   git -C "$dir" config user.email "claims-exp@h5i.dev"
   git -C "$dir" config user.name  "Claims Experiment"
 
-  cat > "$dir/src/api/__init__.py" <<'PYEOF'
-PYEOF
+  : > "$dir/src/__init__.py"
+  : > "$dir/src/api/__init__.py"
+  : > "$dir/src/utils/__init__.py"
+  : > "$dir/src/models/__init__.py"
+  : > "$dir/src/storage/__init__.py"
+  : > "$dir/src/workers/__init__.py"
 
+  # ── HTTP files (4) — these are the targets ─────────────────────────────────
   cat > "$dir/src/api/client.py" <<'PYEOF'
-"""HTTP client helpers for the example API."""
+"""HTTP client — user + post helpers."""
 import requests
 from logging import getLogger
 
@@ -172,9 +152,111 @@ def delete_post(post_id: int) -> bool:
     return resp.status_code == 204
 PYEOF
 
-  cat > "$dir/src/utils/__init__.py" <<'PYEOF'
+  cat > "$dir/src/api/auth.py" <<'PYEOF'
+"""HTTP auth endpoints."""
+import requests
+from logging import getLogger
+
+log = getLogger(__name__)
+
+BASE = "https://api.example.com/auth"
+
+
+def login(user: str, pw: str) -> dict:
+    resp = requests.post(f"{BASE}/login", json={"u": user, "p": pw}, timeout=5)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def logout(token: str) -> bool:
+    resp = requests.post(f"{BASE}/logout", headers={"Authorization": token}, timeout=5)
+    return resp.status_code == 204
+
+
+def refresh_token(token: str) -> dict:
+    resp = requests.post(f"{BASE}/refresh", headers={"Authorization": token}, timeout=5)
+    resp.raise_for_status()
+    return resp.json()
 PYEOF
 
+  cat > "$dir/src/api/billing.py" <<'PYEOF'
+"""HTTP billing endpoints."""
+import requests
+from logging import getLogger
+
+log = getLogger(__name__)
+
+BASE = "https://api.example.com/billing"
+
+
+def charge_card(token: str, amount: int) -> dict:
+    resp = requests.post(f"{BASE}/charge", json={"token": token, "amount": amount}, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_invoice(invoice_id: str) -> dict:
+    resp = requests.get(f"{BASE}/invoices/{invoice_id}", timeout=5)
+    resp.raise_for_status()
+    return resp.json()
+PYEOF
+
+  cat > "$dir/src/api/notifications.py" <<'PYEOF'
+"""HTTP notification endpoints."""
+import requests
+from logging import getLogger
+
+log = getLogger(__name__)
+
+BASE = "https://api.example.com/notify"
+
+
+def send_email(to: str, subject: str, body: str) -> bool:
+    resp = requests.post(f"{BASE}/email", json={"to": to, "subject": subject, "body": body}, timeout=5)
+    return resp.status_code == 200
+
+
+def send_sms(to: str, body: str) -> bool:
+    resp = requests.post(f"{BASE}/sms", json={"to": to, "body": body}, timeout=5)
+    return resp.status_code == 200
+PYEOF
+
+  # ── Decoy files in api/ — sound HTTP-ish but are local ─────────────────────
+  cat > "$dir/src/api/metrics.py" <<'PYEOF'
+"""Local Prometheus-style counters — no HTTP."""
+from collections import defaultdict
+from logging import getLogger
+
+log = getLogger(__name__)
+
+_counters: dict = defaultdict(int)
+
+
+def record_request(name: str) -> None:
+    _counters[name] += 1
+
+
+def get_counters() -> dict:
+    return dict(_counters)
+PYEOF
+
+  cat > "$dir/src/api/health.py" <<'PYEOF'
+"""Local process health probes — no HTTP."""
+import os
+from logging import getLogger
+
+log = getLogger(__name__)
+
+
+def is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+PYEOF
+
+  # ── Pure utils (5) — no I/O at all ─────────────────────────────────────────
   cat > "$dir/src/utils/format.py" <<'PYEOF'
 """Pure formatting helpers — no I/O."""
 from datetime import datetime
@@ -205,74 +287,397 @@ def validate_id(x: int) -> bool:
     return isinstance(x, int) and x > 0
 PYEOF
 
+  cat > "$dir/src/utils/crypto.py" <<'PYEOF'
+"""Pure crypto helpers — no I/O."""
+import hashlib
+import hmac
+
+
+def sha256_hex(s: str) -> str:
+    return hashlib.sha256(s.encode()).hexdigest()
+
+
+def hmac_sign(key: bytes, msg: bytes) -> str:
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+PYEOF
+
+  cat > "$dir/src/utils/parse.py" <<'PYEOF'
+"""Pure parsers — no I/O."""
+from datetime import datetime
+
+
+def parse_iso(s: str) -> datetime:
+    return datetime.fromisoformat(s)
+
+
+def parse_csv_line(line: str) -> list:
+    return [c.strip() for c in line.split(",")]
+PYEOF
+
+  cat > "$dir/src/utils/paths.py" <<'PYEOF'
+"""Pure path helpers — no I/O."""
+import os
+
+
+def relative_to(path: str, base: str) -> str:
+    return os.path.relpath(path, base)
+
+
+def splitext(path: str) -> tuple:
+    return os.path.splitext(path)
+PYEOF
+
+  # ── Models (4) — dataclasses ───────────────────────────────────────────────
+  cat > "$dir/src/models/user.py" <<'PYEOF'
+"""User dataclass."""
+from dataclasses import dataclass
+
+
+@dataclass
+class User:
+    id: int
+    name: str
+    email: str
+PYEOF
+
+  cat > "$dir/src/models/post.py" <<'PYEOF'
+"""Post dataclass."""
+from dataclasses import dataclass
+
+
+@dataclass
+class Post:
+    id: int
+    title: str
+    body: str
+    author_id: int
+PYEOF
+
+  cat > "$dir/src/models/invoice.py" <<'PYEOF'
+"""Invoice dataclass."""
+from dataclasses import dataclass
+
+
+@dataclass
+class Invoice:
+    id: str
+    amount: int
+    paid: bool
+PYEOF
+
+  cat > "$dir/src/models/session.py" <<'PYEOF'
+"""Session dataclass."""
+from dataclasses import dataclass
+
+
+@dataclass
+class Session:
+    token: str
+    user_id: int
+    expires_at: int
+PYEOF
+
+  # ── Storage (3) — local only, decoy names ──────────────────────────────────
+  cat > "$dir/src/storage/cache.py" <<'PYEOF'
+"""In-memory cache — no external calls."""
+from logging import getLogger
+
+log = getLogger(__name__)
+
+_store: dict = {}
+
+
+def cache_get(key: str):
+    return _store.get(key)
+
+
+def cache_set(key: str, value) -> None:
+    _store[key] = value
+PYEOF
+
+  cat > "$dir/src/storage/db.py" <<'PYEOF'
+"""Local SQLite — no HTTP."""
+import sqlite3
+from logging import getLogger
+
+log = getLogger(__name__)
+
+_conn = None
+
+
+def connect(path: str):
+    global _conn
+    _conn = sqlite3.connect(path)
+    return _conn
+
+
+def execute(sql: str, params: tuple = ()) -> list:
+    if _conn is None:
+        raise RuntimeError("not connected")
+    return _conn.execute(sql, params).fetchall()
+PYEOF
+
+  cat > "$dir/src/storage/fs.py" <<'PYEOF'
+"""Pure local-filesystem helpers."""
+
+
+def read_text(path: str) -> str:
+    with open(path) as f:
+        return f.read()
+
+
+def write_text(path: str, text: str) -> None:
+    with open(path, "w") as f:
+        f.write(text)
+PYEOF
+
+  # ── Workers (2) — local, decoy names ───────────────────────────────────────
+  cat > "$dir/src/workers/queue.py" <<'PYEOF'
+"""Local deque-backed queue — no SQS."""
+from collections import deque
+from logging import getLogger
+
+log = getLogger(__name__)
+
+_q: deque = deque()
+
+
+def enqueue(item) -> None:
+    _q.append(item)
+
+
+def dequeue():
+    return _q.popleft() if _q else None
+PYEOF
+
+  cat > "$dir/src/workers/scheduler.py" <<'PYEOF'
+"""Local cron-like scheduler — no HTTP."""
+import threading
+import time
+from logging import getLogger
+
+log = getLogger(__name__)
+
+_stop = threading.Event()
+
+
+def schedule(every_sec: int, fn) -> None:
+    def loop():
+        while not _stop.is_set():
+            fn()
+            time.sleep(every_sec)
+    threading.Thread(target=loop, daemon=True).start()
+
+
+def stop() -> None:
+    _stop.set()
+PYEOF
+
+  # ── Top-level wiring ───────────────────────────────────────────────────────
   cat > "$dir/main.py" <<'PYEOF'
-"""Entry point that wires helpers together."""
-from src.api.client import fetch_user, create_post, delete_post
-from src.utils.format import format_date, truncate
-from src.utils.validate import validate_id
+"""Entry point — wires HTTP and local helpers."""
+from src.api.client import fetch_user
+from src.api.auth import login
+from src.api.billing import get_invoice
+from src.api.notifications import send_email
+from src.utils.format import format_date
+from src.utils.validate import validate_email
+from src.storage.cache import cache_get
+from src.workers.queue import enqueue
 
 
-def demo(user_id: int) -> None:
-    if not validate_id(user_id):
-        raise ValueError("user_id must be a positive int")
-    user = fetch_user(user_id)
-    name = truncate(user.get("name", ""), 40)
-    print(name)
+def demo() -> None:
+    if not validate_email("a@b.c"):
+        return
+    user = fetch_user(1)
+    cache_get(str(user))
+    enqueue(user)
 
 
 if __name__ == "__main__":
-    demo(1)
+    demo()
+PYEOF
+
+  cat > "$dir/config.py" <<'PYEOF'
+"""Constants only — no I/O."""
+API_BASE = "https://api.example.com"
+TIMEOUT = 5
+RETRIES = 3
 PYEOF
 
   git -C "$dir" add -A
-  git -C "$dir" commit -q -m "seed: api client + utils"
+  git -C "$dir" commit -q -m "seed: 28-file project (4 HTTP, 6 decoy/local, 5 utils, 4 models, 5 storage/workers)"
+}
+
+# ── Haiku claim extraction (used by AUTO_HAIKU arm) ──────────────────────────
+# Calls a small, cheap model on the seeded codebase ONCE and asks it to write
+# up to $HAIKU_MAX_CLAIMS caveman-style claims as strict JSON. We dump every
+# .py file in $dir into the prompt; the toy codebase is small enough that
+# inlining is cheaper than any tool-use loop.
+#
+# Why no session transcript: hand-curated TREATMENT claims describe codebase
+# INVARIANTS ("HTTP only in client.py"), not session events. Static-from-files
+# is sufficient and strictly simpler.
+#
+# Output: prints a JSON array to stdout: [{"text": "...", "paths": [...]}, ...]
+#         On failure (timeout, parse error) prints "[]" and warns to stderr.
+#         Never fails the caller.
+haiku_extract_claims() {
+  local dir="$1"
+  local files_dump prompt raw rc
+
+  # Inline every .py file under $dir, paths relative. find -not skips .git.
+  files_dump=$(cd "$dir" && find . -type f -name '*.py' \
+    -not -path './.git/*' -not -path './.h5i-ctx/*' \
+    | sed 's|^\./||' | sort \
+    | while read -r f; do
+        printf '<file path="%s">\n' "$f"
+        cat "$f"
+        printf '</file>\n'
+      done)
+
+  # Heredoc carrier; the codebase dump is appended at the end so the model
+  # sees the rules first, the data last.
+  prompt=$(cat <<EOF
+You write caveman-style code orientation claims for an AI coding assistant.
+A claim is one terse sentence (~30 tokens) pinning an INVARIANT fact about
+the codebase: where something lives, what is pure, what is NOT in a file.
+Each claim cites the file path(s) it depends on. If any cited file changes,
+the claim auto-invalidates — so prefer facts that bear on file content, not
+on incidental wording.
+
+Caveman style:
+- ~30 tokens per claim, hard cap.
+- Drop articles ("the", "a"), copulas ("is", "are"), filler ("the file contains").
+- Keep paths, identifiers, function names, types EXACT.
+- Bias toward INVARIANTS and NEGATIVE facts ("X only in Y", "Y has no Z").
+- Each claim should pin a fact a future session would otherwise re-derive
+  via Read or Grep.
+
+Good examples:
+- "HTTP only src/api/client.py: fetch_user, create_post, delete_post."
+- "src/utils/format.py: format_date, truncate. Pure, no HTTP."
+- "main.py wires helpers. No direct HTTP."
+
+Bad (do NOT produce):
+- "The src/api/client.py file contains HTTP helpers." (verbose, copula)
+- "fetch_user was modified to add logging." (event, not invariant)
+- "Code is organized into modules." (vacuous)
+
+Produce up to ${HAIKU_MAX_CLAIMS} claims as a STRICT JSON array. Output
+nothing else — no prose before or after, no markdown fences:
+
+[{"text": "...", "paths": ["src/foo.py"]}, ...]
+
+CODEBASE:
+${files_dump}
+EOF
+)
+
+  set +e
+  raw=$(printf '%s' "$prompt" | timeout --kill-after=5 "${HAIKU_TIMEOUT}" \
+    claude --print --model "$HAIKU_MODEL" 2>/dev/null)
+  rc=$?
+  set -e
+
+  if [ "$rc" -ne 0 ]; then
+    echo "  ⚠  Haiku call exited rc=$rc (timeout or error); proceeding with no claims" >&2
+    echo "[]"
+    return 0
+  fi
+
+  # Parse + validate. Strip code fences if Haiku ignored the "no markdown" rule.
+  # Truncate to HAIKU_MAX_CLAIMS as a belt-and-braces cap.
+  python3 - "$raw" "$HAIKU_MAX_CLAIMS" <<'PYEOF'
+import json, re, sys
+raw = sys.argv[1].strip()
+cap = int(sys.argv[2])
+m = re.match(r"^```(?:json)?\s*\n?(.*?)\n?```\s*$", raw, re.DOTALL)
+if m:
+    raw = m.group(1).strip()
+try:
+    parsed = json.loads(raw)
+    if not isinstance(parsed, list):
+        raise ValueError("top-level JSON is not a list")
+    cleaned = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        paths = item.get("paths") or []
+        if not isinstance(text, str) or not text.strip():
+            continue
+        if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+            continue
+        if not paths:
+            continue
+        cleaned.append({"text": text.strip(), "paths": paths})
+        if len(cleaned) >= cap:
+            break
+    print(json.dumps(cleaned))
+except Exception as e:
+    sys.stderr.write(f"  ⚠  Haiku output not parseable as JSON: {e}\n")
+    sys.stderr.write(f"     raw (first 400 chars): {raw[:400]!r}\n")
+    print("[]")
+PYEOF
+}
+
+# ── Seed helper — used by AUTO_HAIKU_CLAIMS ──────────────────────────────────
+seed_haiku_claims() {
+  local dir="$1"
+  echo "  $STEP  [haiku-claims] calling Haiku ($HAIKU_MODEL)…" >&2
+  local haiku_json haiku_spec n_claims
+  haiku_json=$(haiku_extract_claims "$dir")
+  echo "$haiku_json" > "$dir/.h5i-haiku-claims.json"
+  n_claims=$(echo "$haiku_json" | python3 -c \
+    "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+  echo "  [haiku-claims] produced $n_claims claim(s)" >&2
+
+  haiku_spec=$(echo "$haiku_json" | python3 -c "
+import json, sys
+for item in json.load(sys.stdin):
+    text = item['text'].replace('|', ' ').replace('\n', ' ')
+    paths = ','.join(item['paths'])
+    print(f'{text}|{paths}')
+" 2>/dev/null || true)
+
+  while IFS='|' read -r text paths; do
+    [[ -z "$text" ]] && continue
+    local args=()
+    IFS=',' read -ra ps <<< "$paths"
+    for p in "${ps[@]}"; do args+=(--path "$p"); done
+    (cd "$dir" && "$H5I" claims add "$text" "${args[@]}" >/dev/null 2>&1) || {
+      echo "  $FAIL  failed to record Haiku claim: $text" >&2
+    }
+  done <<< "$haiku_spec"
 }
 
 # ── h5i init + per-arm pre-seeding ────────────────────────────────────────────
-# ARM is one of: CONTROL, TREATMENT, AUTO_CLAIMS, SUMMARIES.
-#   CONTROL     — no pre-seeded claims, no pre-seeded summaries.
-#   TREATMENT   — seed the 5 CLAIMS_SPEC entries as live claims pinned to HEAD.
-#   AUTO_CLAIMS — no pre-seeded artefacts (the agent will record claims itself).
-#   SUMMARIES   — seed the 4 SUMMARIES_SPEC entries as blob-keyed file summaries.
+# ARM is one of: CONTROL, AUTO_HAIKU_CLAIMS.
+#   CONTROL              — no pre-seeded claims.
+#   AUTO_HAIKU_CLAIMS    — Haiku-curated claims (one Haiku call at setup).
 prepare_arm() {
   local dir="$1" arm="$2"
   (cd "$dir" && "$H5I" init >/dev/null 2>&1) || true
   (cd "$dir" && "$H5I" context init --goal \
     "add logging to HTTP helpers; leave other functions untouched" >/dev/null 2>&1) || true
 
-  if [[ "$arm" == "TREATMENT" ]]; then
-    while IFS='|' read -r text paths; do
-      [[ -z "$text" ]] && continue
-      local args=()
-      IFS=',' read -ra ps <<< "$paths"
-      for p in "${ps[@]}"; do args+=(--path "$p"); done
-      (cd "$dir" && "$H5I" claims add "$text" "${args[@]}" >/dev/null 2>&1) || {
-        echo "  $FAIL  failed to record claim: $text"
-      }
-    done <<< "$CLAIMS_SPEC"
-  fi
-
-  if [[ "$arm" == "SUMMARIES" ]]; then
-    while IFS='|' read -r path text; do
-      [[ -z "$path" ]] && continue
-      (cd "$dir" && "$H5I" summary set "$path" --text "$text" >/dev/null 2>&1) || {
-        echo "  $FAIL  failed to record summary for: $path"
-      }
-    done <<< "$SUMMARIES_SPEC"
-  fi
+  case "$arm" in
+    AUTO_HAIKU_CLAIMS)
+      seed_haiku_claims "$dir"
+      ;;
+    CONTROL)
+      : # nothing
+      ;;
+  esac
 }
 
 # Map an arm to the H5I_CLAIMS_FREQUENCY value the claude subprocess should see.
-#   CONTROL     — off (baseline; no claim machinery active in-session).
-#   TREATMENT   — off (pre-seeded claims are already present; prevent new ones
-#                      from being recorded so the measurement stays pure).
-#   AUTO_CLAIMS — high (agent is actively encouraged to record claims).
-#   SUMMARIES   — off (we're measuring the summary mechanism alone, not claims).
+# All current arms run with freq=off — pre-seeded artifacts are present (or
+# absent in CONTROL), and we don't want the agent to record additional claims
+# mid-session and confound the measurement.
 freq_for_arm() {
-  case "$1" in
-    AUTO_CLAIMS) echo "high" ;;
-    *)           echo "off"  ;;
-  esac
+  echo "off"
 }
 
 # Write an ephemeral MCP-config JSON for the claude --print subprocess so the
@@ -413,9 +818,21 @@ count_correct_log_pairs() {
   local dir="$1" diff seed
   seed="$(seed_oid "$dir")"
   [[ -z "$seed" ]] && { echo 0; return; }
-  diff=$(git -C "$dir" diff "$seed" -- src/api/client.py 2>/dev/null || true)
+  # Collect diff across all 4 HTTP files. A pair counts only if both ENTER+EXIT
+  # lines appear in the added (+) side of the diff for that function name.
+  diff=$(git -C "$dir" diff "$seed" -- \
+    src/api/client.py src/api/auth.py src/api/billing.py src/api/notifications.py \
+    2>/dev/null || true)
   local pairs=0 fn has_enter has_exit
-  for fn in fetch_user create_post delete_post; do
+  # All 10 HTTP functions across the 4 HTTP files:
+  #   client.py:        fetch_user, create_post, delete_post
+  #   auth.py:          login, logout, refresh_token
+  #   billing.py:       charge_card, get_invoice
+  #   notifications.py: send_email, send_sms
+  for fn in fetch_user create_post delete_post \
+            login logout refresh_token \
+            charge_card get_invoice \
+            send_email send_sms; do
     has_enter=$(echo "$diff" | grep -cE "^\+.*log\.info\(.*ENTER.*${fn}" || true)
     has_exit=$(echo  "$diff" | grep -cE "^\+.*log\.info\(.*EXIT.*${fn}"  || true)
     if [ "$has_enter" -ge 1 ] && [ "$has_exit" -ge 1 ]; then
@@ -486,18 +903,23 @@ run_arm_once() {
     echo "  elapsed: ${elapsed}s" >&2
   fi
 
-  # Correctness: both ENTER+EXIT logs for all 3 HTTP helpers.
+  # Correctness: both ENTER+EXIT logs for all 10 HTTP helpers (across 4 files).
   local correct_log_pairs
   correct_log_pairs=$(count_correct_log_pairs "$dir")
-  # Fidelity (seed..HEAD so committed edits count): did the agent touch
-  # client.py? Did it wrongly edit utils/format.py or utils/validate.py?
+  # Fidelity: did the agent touch any of the 4 HTTP files?
+  # And did it wrongly edit any non-HTTP file (decoys + utils + models + storage + workers + main + config)?
   local changed client_edited utils_edited_wrongly
   changed="$(files_changed_since_seed "$dir")"
-  client_edited=$(echo "$changed" | grep -c "src/api/client.py" || true)
+  # `client_edited` retains its name for log-line continuity; semantically it's
+  # "any of the 4 HTTP files were edited".
+  client_edited=$(echo "$changed" | grep -c -E "src/api/(client|auth|billing|notifications)\.py" || true)
+  # `utils_edited_wrongly` retains its name for JSONL-field continuity; semantically
+  # it's "any non-HTTP source file was edited". Excludes h5i metadata and __init__.
   utils_edited_wrongly=$(echo "$changed" \
-    | grep -c -E "src/utils/(format|validate)\.py" || true)
+    | grep -c -E "src/(utils|models|storage|workers)/[a-z_]+\.py|src/api/(metrics|health)\.py|^main\.py$|^config\.py$" \
+    || true)
 
-  echo "  correctness: $correct_log_pairs/3 log pairs, client_edited=$client_edited, utils_wrongly=$utils_edited_wrongly" >&2
+  echo "  correctness: $correct_log_pairs/10 log pairs, http_files_edited=$client_edited, wrong_files=$utils_edited_wrongly" >&2
 
   # Emit record.
   python3 - "$arm" "$trial" "$elapsed" "$client_edited" "$utils_edited_wrongly" "$correct_log_pairs" "$timed_out" "$freq" "$parsed" <<'PYEOF'
@@ -526,7 +948,7 @@ try:
     r = json.loads(sys.argv[1])
 except Exception:
     sys.exit(1)
-ok = (r.get("correct_log_pairs", 0) == 3
+ok = (r.get("correct_log_pairs", 0) == 10
       and r.get("utils_edited_wrongly", 0) == 0
       and not r.get("timed_out", False))
 sys.exit(0 if ok else 1)
@@ -581,7 +1003,7 @@ RESULTS_FILE="${WORKDIR_BASE}-results.jsonl"
 # Cyclic 4-arm rotation per trial to mitigate serial drift (Anthropic-side
 # caches, backend load, model-state drift). Each trial cycles through all
 # four arms with a rotating starting offset — Latin-square-ish.
-ARMS=(CONTROL TREATMENT AUTO_CLAIMS SUMMARIES)
+ARMS=(CONTROL AUTO_HAIKU_CLAIMS)
 ARM_COUNT=${#ARMS[@]}
 for i in $(seq 1 "$N_TRIALS"); do
   offset=$(( (i - 1) % ARM_COUNT ))
@@ -605,7 +1027,7 @@ python3 - "$RESULTS_JSON_ONLY" <<'PYEOF'
 import json, sys, statistics as stats
 path = sys.argv[1]
 
-ARM_ORDER = ["CONTROL", "TREATMENT", "AUTO_CLAIMS", "SUMMARIES"]
+ARM_ORDER = ["CONTROL", "AUTO_HAIKU_CLAIMS"]
 arms = {a: [] for a in ARM_ORDER}
 with open(path) as f:
     for line in f:
@@ -756,10 +1178,10 @@ for arm_name in ARM_ORDER:
     if not rs:
         continue
     all_pairs = [r.get("correct_log_pairs", 0) for r in rs]
-    perfect = sum(1 for p in all_pairs if p == 3)
+    perfect = sum(1 for p in all_pairs if p == 10)
     utils_wrong = sum(1 for r in rs if r.get("utils_edited_wrongly", 0) > 0)
     timed_out = sum(1 for r in rs if r.get("timed_out"))
-    print(f"    {arm_name:11s}  all-3-log-pairs: {perfect}/{len(rs)}   "
+    print(f"    {arm_name:11s}  all-10-log-pairs: {perfect}/{len(rs)}   "
           f"wrong files: {utils_wrong}   timed out: {timed_out}")
 
 # ── Headline verdict ─────────────────────────────────────────────────────────
@@ -789,45 +1211,11 @@ else:
               + ("  ⚠ within-arm stdev ≥ |Δ|" if noisy and abs(pct) > 0 else ""))
 
     verdict(
-        "TREATMENT (pre-curated claims)", "TREATMENT",
+        "AUTO_HAIKU_CLAIMS (Haiku-curated claims)", "AUTO_HAIKU_CLAIMS",
         direction="savings",
-        explain_win="retrieval savings from pre-seeded claims",
-        explain_loss="pre-seeded claims did not help",
+        explain_win="Haiku-auto-curated claims pay off in retrieval",
+        explain_loss="Haiku-curated claims did not help on this task",
     )
-    verdict(
-        "AUTO_CLAIMS (freq=high, single-session)", "AUTO_CLAIMS",
-        direction="overhead",
-        explain_win="recording overhead — future sessions must recover this much",
-        explain_loss="AUTO_CLAIMS actually cost less than CONTROL (surprising)",
-    )
-    verdict(
-        "SUMMARIES (pre-cached file summaries)", "SUMMARIES",
-        direction="savings",
-        explain_win="orientation savings from blob-keyed file summaries",
-        explain_loss="pre-cached summaries did not help",
-    )
-
-    # Break-even hint: if AUTO_CLAIMS costs X% more than CONTROL, and TREATMENT
-    # (post-recording) saves Y%, then the knob pays off if the agent reaps
-    # TREATMENT-like savings in any future session. Printed only when both arms
-    # have data.
-    if succ.get("TREATMENT") and succ.get("AUTO_CLAIMS"):
-        t_cr = summarize([r.get("cache_read_tokens", 0) for r in succ["TREATMENT"]])
-        a_cr = summarize([r.get("cache_read_tokens", 0) for r in succ["AUTO_CLAIMS"]])
-        overhead_abs = a_cr['mean'] - c_cr['mean']
-        savings_abs  = c_cr['mean'] - t_cr['mean']
-        if savings_abs > 0:
-            break_even = overhead_abs / savings_abs
-            print()
-            print(f"  Break-even estimate (rough): the AUTO_CLAIMS arm pays back its "
-                  f"{overhead_abs:,.0f}-token overhead after "
-                  f"~{break_even:.2f} future session(s) at TREATMENT-level savings.")
-            if break_even < 1:
-                print(f"    → default=high pays off within the same session (good sign)")
-            elif break_even < 3:
-                print(f"    → default=high pays off within a few sessions (plausible)")
-            else:
-                print(f"    → default=high needs many future sessions to pay back (risky)")
 
 # ── Sample-size caveat ──────────────────────────────────────────────────────
 print()
@@ -843,8 +1231,9 @@ PYEOF
 echo
 echo "══════════════════════════════════════════════════════════════════════════"
 echo "  Raw per-trial records:  $RESULTS_JSON_ONLY"
-echo "  Workdirs preserved:     ${WORKDIR_BASE}-{CONTROL,TREATMENT,AUTO_CLAIMS,SUMMARIES}-<trial>"
-echo "  Inspect a run:          cat <workdir>/.git/.h5i/claims/*.json"
+echo "  Workdirs preserved:     ${WORKDIR_BASE}-{CONTROL,AUTO_HAIKU_CLAIMS}-<trial>"
+echo "  Inspect claims:         cat <workdir>/.git/.h5i/claims/*.json"
+echo "  Inspect Haiku output:   cat <AUTO_HAIKU_CLAIMS-workdir>/.h5i-haiku-claims.json"
 echo "══════════════════════════════════════════════════════════════════════════"
 echo
 echo "$STEP  done."

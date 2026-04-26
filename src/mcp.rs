@@ -28,10 +28,6 @@
 //! | `h5i_claims_add` | `h5i claims add` |
 //! | `h5i_claims_list` | `h5i claims list` |
 //! | `h5i_claims_prune` | `h5i claims prune` |
-//! | `h5i_summary_set` | `h5i summary set` |
-//! | `h5i_summary_get` | `h5i summary show` |
-//! | `h5i_summary_list` | `h5i summary list` |
-//! | `h5i_summary_prune` | `h5i summary prune` |
 //!
 //! ## Resources exposed
 //!
@@ -54,7 +50,6 @@ use crate::claims;
 use crate::ctx::{self, ContextOpts};
 use crate::repository::H5iRepository;
 use crate::session_log;
-use crate::summaries;
 
 // ── JSON-RPC 2.0 types ────────────────────────────────────────────────────────
 
@@ -668,84 +663,6 @@ pub fn tool_definitions() -> Value {
                 "properties": {}
             }
         },
-        // ── summaries ──────────────────────────────────────────────────────────
-        {
-            "name": "h5i_summary_set",
-            "description": "Pin a short summary (≈100–300 tokens, markdown) to the \
-                CURRENT HEAD blob of `path`. Use this to record what's in a file — \
-                exports, key types, role, structure — so future sessions can fetch \
-                this orientation instead of re-reading the file. Each git blob is \
-                immutable, so the summary stays correct for that exact content \
-                forever; when the file is edited, HEAD points at a new blob with \
-                no summary yet (the old one is preserved but inaccessible by path \
-                lookup until someone writes a new one). Distinct from claims: \
-                claims pin cross-file FACTS; summaries describe ONE file's CONTENT.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "File path tracked in HEAD."
-                    },
-                    "text": {
-                        "type": "string",
-                        "description": "The summary text. Keep it dense — exports, role, \
-                            invariants. ≤300 tokens is the sweet spot."
-                    },
-                    "author": {
-                        "type": "string",
-                        "description": "Optional author tag. Defaults to $H5I_AGENT_ID, \
-                            then 'human'."
-                    }
-                },
-                "required": ["path", "text"]
-            }
-        },
-        {
-            "name": "h5i_summary_get",
-            "description": "Fetch the summary for `path`'s CURRENT HEAD blob. \
-                Returns the summary text + metadata when one exists for the exact \
-                blob HEAD points at, otherwise indicates none is available. \
-                PREFER THIS over `Read` when you only need orientation (which \
-                file does what, what's exported, where to look for X). Reading \
-                the full file is still correct for line-level edits — but for \
-                navigation a summary is dramatically cheaper.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "File path tracked in HEAD."
-                    }
-                },
-                "required": ["path"]
-            }
-        },
-        {
-            "name": "h5i_summary_list",
-            "description": "List every HEAD-tracked file with a flag for whether a \
-                summary exists for its current blob. Use this at session start to \
-                see which files you can orient on cheaply via h5i_summary_get and \
-                which still require a full Read. Returns counts (with-summary, \
-                without-summary, total) plus per-file rows.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {}
-            }
-        },
-        {
-            "name": "h5i_summary_prune",
-            "description": "Delete summaries whose blob OID is no longer reachable \
-                from any HEAD-tracked path (i.e. the blob has been replaced \
-                everywhere). Live summaries are left untouched. Returns the \
-                number of summaries removed. Safe periodic cleanup; not required \
-                for correctness because each summary is content-addressed and \
-                cannot become 'wrong'.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {}
-            }
-        }
     ])
 }
 
@@ -1331,93 +1248,6 @@ fn tool_claims_prune(_params: &Value, workdir: &Path) -> Result<Value> {
     })))
 }
 
-// ── Summary handlers ──────────────────────────────────────────────────────────
-
-fn tool_summary_set(params: &Value, workdir: &Path) -> Result<Value> {
-    let path = params
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("missing required param: path"))?;
-    let text = params
-        .get("text")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("missing required param: text"))?;
-    let author = params
-        .get("author")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let repo = H5iRepository::open(workdir)?;
-    let s = summaries::set(&repo.h5i_root, repo.git(), path, text, author)?;
-    Ok(json_content(json!({
-        "blob_oid": s.blob_oid,
-        "path": s.path,
-        "text_chars": s.text.len(),
-        "author": s.author,
-        "created_at": s.created_at.to_rfc3339(),
-    })))
-}
-
-fn tool_summary_get(params: &Value, workdir: &Path) -> Result<Value> {
-    let path = params
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("missing required param: path"))?;
-    let repo = H5iRepository::open(workdir)?;
-    let blob_oid = summaries::blob_oid_at_head(repo.git(), path)?;
-    match summaries::get_by_blob(&repo.h5i_root, &blob_oid)? {
-        Some(s) => Ok(json_content(json!({
-            "found": true,
-            "blob_oid": s.blob_oid,
-            "path": s.path,
-            "text": s.text,
-            "author": s.author,
-            "created_at": s.created_at.to_rfc3339(),
-        }))),
-        None => Ok(json_content(json!({
-            "found": false,
-            "blob_oid": blob_oid,
-            "path": path,
-            "message": "No summary for this path's current HEAD blob. \
-                       Use Read for full content, then optionally h5i_summary_set.",
-        }))),
-    }
-}
-
-fn tool_summary_list(_params: &Value, workdir: &Path) -> Result<Value> {
-    let repo = H5iRepository::open(workdir)?;
-    let head = summaries::list_for_head(&repo.h5i_root, repo.git())?;
-    let with: Vec<Value> = head
-        .iter()
-        .filter(|s| s.summary.is_some())
-        .map(|s| json!({"path": s.path, "blob_oid": s.current_blob_oid}))
-        .collect();
-    let without: Vec<Value> = head
-        .iter()
-        .filter(|s| s.summary.is_none())
-        .map(|s| json!({"path": s.path, "blob_oid": s.current_blob_oid}))
-        .collect();
-    Ok(json_content(json!({
-        "with_summary": with,
-        "without_summary": without,
-        "with_count": with.len(),
-        "without_count": without.len(),
-        "total": head.len(),
-    })))
-}
-
-fn tool_summary_prune(_params: &Value, workdir: &Path) -> Result<Value> {
-    let repo = H5iRepository::open(workdir)?;
-    let removed = summaries::prune_unreachable(&repo.h5i_root, repo.git())?;
-    Ok(json_content(json!({
-        "removed": removed,
-        "message": if removed == 0 {
-            "No unreachable summaries — nothing to prune.".to_string()
-        } else {
-            format!("Pruned {removed} orphaned summary blob(s).")
-        }
-    })))
-}
-
 // ── Tool call dispatch ────────────────────────────────────────────────────────
 
 /// Dispatch a `tools/call` invocation to the appropriate handler.
@@ -1454,10 +1284,6 @@ pub fn call_tool(name: &str, params: &Value, workdir: &Path) -> Result<Value> {
         "h5i_claims_add" => tool_claims_add(params, workdir),
         "h5i_claims_list" => tool_claims_list(params, workdir),
         "h5i_claims_prune" => tool_claims_prune(params, workdir),
-        "h5i_summary_set" => tool_summary_set(params, workdir),
-        "h5i_summary_get" => tool_summary_get(params, workdir),
-        "h5i_summary_list" => tool_summary_list(params, workdir),
-        "h5i_summary_prune" => tool_summary_prune(params, workdir),
         other => anyhow::bail!("Unknown tool: {}", other),
     }
 }
@@ -2059,10 +1885,6 @@ mod tests {
             "h5i_claims_add",
             "h5i_claims_list",
             "h5i_claims_prune",
-            "h5i_summary_set",
-            "h5i_summary_get",
-            "h5i_summary_list",
-            "h5i_summary_prune",
         ];
         for name in &expected {
             assert!(names.contains(name), "missing tool: {}", name);
@@ -2787,131 +2609,4 @@ mod tests {
         assert!(names.contains(&"h5i_claims_prune"));
     }
 
-    // ── h5i_summary_set / get / list / prune ─────────────────────────────────
-
-    #[test]
-    fn summary_set_records_summary_pinned_to_blob() {
-        let (_dir, path) = make_repo();
-        let r = tool_summary_set(
-            &json!({"path": "hello.rs", "text": "Trivial Rust entry point."}),
-            &path,
-        );
-        assert!(r.is_ok(), "{:?}", r);
-        let body: Value = serde_json::from_str(
-            r.unwrap()["content"][0]["text"].as_str().unwrap(),
-        )
-        .unwrap();
-        assert_eq!(body["path"], "hello.rs");
-        assert_eq!(body["text_chars"], "Trivial Rust entry point.".len());
-        assert!(!body["blob_oid"].as_str().unwrap().is_empty());
-    }
-
-    #[test]
-    fn summary_set_missing_path_is_error() {
-        let (_dir, path) = make_repo();
-        let r = tool_summary_set(&json!({"text": "x"}), &path);
-        assert!(r.is_err());
-    }
-
-    #[test]
-    fn summary_set_missing_text_is_error() {
-        let (_dir, path) = make_repo();
-        let r = tool_summary_set(&json!({"path": "hello.rs"}), &path);
-        assert!(r.is_err());
-    }
-
-    #[test]
-    fn summary_get_returns_text_after_set() {
-        let (_dir, path) = make_repo();
-        tool_summary_set(
-            &json!({"path": "hello.rs", "text": "summary body"}),
-            &path,
-        )
-        .unwrap();
-        let r = tool_summary_get(&json!({"path": "hello.rs"}), &path).unwrap();
-        let body: Value =
-            serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(body["found"], true);
-        assert_eq!(body["text"], "summary body");
-    }
-
-    #[test]
-    fn summary_get_returns_not_found_for_unsummarised_blob() {
-        let (_dir, path) = make_repo();
-        let r = tool_summary_get(&json!({"path": "hello.rs"}), &path).unwrap();
-        let body: Value =
-            serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(body["found"], false);
-        assert!(body["message"].as_str().unwrap().contains("h5i_summary_set"));
-    }
-
-    #[test]
-    fn summary_list_reports_with_and_without_counts() {
-        let (_dir, path) = make_repo();
-        // make_repo() seeds with "hello.rs" only.
-        let r = tool_summary_list(&json!({}), &path).unwrap();
-        let body: Value =
-            serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(body["total"], 1);
-        assert_eq!(body["with_count"], 0);
-        assert_eq!(body["without_count"], 1);
-
-        tool_summary_set(
-            &json!({"path": "hello.rs", "text": "hi"}),
-            &path,
-        )
-        .unwrap();
-        let r2 = tool_summary_list(&json!({}), &path).unwrap();
-        let body2: Value =
-            serde_json::from_str(r2["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(body2["with_count"], 1);
-        assert_eq!(body2["without_count"], 0);
-    }
-
-    #[test]
-    fn summary_prune_drops_unreachable_blobs() {
-        let (_dir, path) = make_repo();
-        tool_summary_set(
-            &json!({"path": "hello.rs", "text": "v1 summary"}),
-            &path,
-        )
-        .unwrap();
-
-        // Edit + commit so the v1 blob is no longer reachable.
-        fs::write(path.join("hello.rs"), "fn main() { let _ = 2; }").unwrap();
-        let repo = git2::Repository::open(&path).unwrap();
-        let sig = git2::Signature::now("Test", "test@test.com").unwrap();
-        let mut index = repo.index().unwrap();
-        index.add_path(Path::new("hello.rs")).unwrap();
-        index.write().unwrap();
-        let tree_id = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_id).unwrap();
-        let parent = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "edit", &tree, &[&parent])
-            .unwrap();
-
-        let r = tool_summary_prune(&json!({}), &path).unwrap();
-        let body: Value =
-            serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(body["removed"], 1);
-    }
-
-    #[test]
-    fn tools_list_includes_summary_tools() {
-        let defs = tool_definitions();
-        let names: Vec<&str> = defs
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|t| t["name"].as_str().unwrap())
-            .collect();
-        for n in [
-            "h5i_summary_set",
-            "h5i_summary_get",
-            "h5i_summary_list",
-            "h5i_summary_prune",
-        ] {
-            assert!(names.contains(&n), "missing {n}");
-        }
-    }
 }

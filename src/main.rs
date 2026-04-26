@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 
 use h5i_core::blame::BlameMode;
 use h5i_core::claims;
-use h5i_core::summaries;
 use h5i_core::claude::{keyword_search, AnthropicClient};
 use h5i_core::codex;
 use h5i_core::ctx;
@@ -268,16 +267,6 @@ enum Commands {
     Claims {
         #[command(subcommand)]
         action: ClaimsCommands,
-    },
-
-    /// Pin a short summary to a file's current blob OID. A summary
-    /// describes what's in one file (exports, role, structure) so future
-    /// sessions can fetch a ≤200-token orientation instead of re-reading
-    /// the whole file. Auto-invalidates on edit (same content-addressing
-    /// trick as claims), but each blob keeps its own summary forever.
-    Summary {
-        #[command(subcommand)]
-        action: SummaryCommands,
     },
 
     /// Inspect AI session activity: footprint, uncertainty, churn, and intent graph
@@ -659,41 +648,15 @@ enum ClaimsCommands {
     },
 
     /// List all claims with live/stale status based on current HEAD
-    List,
+    List {
+        /// Group claims by file path. Multi-path claims appear under each
+        /// of their evidence paths. Replaces the per-file orientation view
+        /// that `h5i summary list` used to provide.
+        #[arg(long = "group-by-path")]
+        group_by_path: bool,
+    },
 
     /// Remove all claims whose evidence blobs have changed since recording
-    Prune,
-}
-
-#[derive(Subcommand)]
-enum SummaryCommands {
-    /// Pin a summary to the file's current HEAD blob.
-    /// Provide the summary inline with --text, or read it from a file with
-    /// --from-file (use "-" for stdin). One of the two is required.
-    Set {
-        /// Path to the file being summarised (must be tracked in HEAD).
-        path: String,
-        /// Inline summary text. Mutually exclusive with --from-file.
-        #[arg(long, conflicts_with = "from_file")]
-        text: Option<String>,
-        /// Read summary text from a file (or "-" for stdin).
-        #[arg(long = "from-file", value_name = "FILE")]
-        from_file: Option<String>,
-        /// Author tag (default: $H5I_AGENT_ID, else "human").
-        #[arg(long)]
-        author: Option<String>,
-    },
-
-    /// Show the summary for the file's current HEAD blob (or "(none)").
-    Show {
-        /// File path tracked in HEAD.
-        path: String,
-    },
-
-    /// List every HEAD-tracked file and whether it has a summary.
-    List,
-
-    /// Remove summaries whose blob OID is not reachable from any HEAD path.
     Prune,
 }
 
@@ -806,11 +769,9 @@ const H5I_CLAUDE_INSTRUCTIONS: &str = r#"## h5i Integration
 
 This repository uses **h5i** (a Git sidecar for AI-era version control).
 
-**Prefer MCP tools over Bash commands wherever possible.**
-h5i exposes native MCP tools (`h5i_context_trace`, `h5i_commit`, `h5i_notes_analyze`, etc.)
-that are faster and safer than shelling out. Use `Bash: h5i …` only when no MCP tool covers the operation.
+**Prefer MCP tools over Bash commands wherever possible.** h5i exposes native MCP tools (`h5i_context_trace`, `h5i_context_commit`, `h5i_commit`, `h5i_claims_add`, …) — they're faster and avoid shell-quoting pitfalls. Use `Bash: h5i …` only when no MCP tool covers the operation.
 
-h5i stores metadata in `refs/h5i/notes` and `refs/h5i/memory`; these refs are NOT included in a plain `git push` — use `h5i push` to share them.
+h5i metadata lives in `refs/h5i/*` and is NOT pushed by plain `git push`. Use `h5i push` to share it.
 
 ---
 
@@ -820,19 +781,19 @@ Apply these automatically, without being asked.
 
 ### Context workspace
 
-**At the start of every non-trivial task**, run:
+**At the start of every non-trivial task:**
 ```bash
 h5i context status
 # If no workspace exists yet, initialize one:
 h5i context init --goal "<one-line summary of what you are about to do>"
 ```
 
-**While working**, emit a trace entry for each distinct insight or action.
+**While working**, emit one trace entry per distinct insight or action.
 One OBSERVE per file read. One THINK per design decision. One ACT per file edited.
-A typical single-file task has 5–8 entries; a multi-file task has more.
+A typical single-file task has 5–8 entries; multi-file tasks have more.
 
 ```bash
-# One per file read — say what matters about it, not just that you read it:
+# One per file read — say what MATTERS, not just that you read it:
 h5i context trace --kind OBSERVE "<specific finding, constraint, or surprising detail>"
 
 # One per design decision — always include what you rejected and why:
@@ -853,28 +814,33 @@ h5i context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 
 **After completing a logical milestone** (analysis done, feature implemented, bug fixed):
 ```bash
-h5i context commit "<milestone summary>" \
-  --detail "<what was done and what is left>"
+h5i context commit "<milestone summary>" --detail "<what was done and what is left>"
 ```
 
-### Notes
-
-After every `h5i commit`, immediately run:
+**Branch your reasoning** when you want to explore an alternative without losing the current thread:
 ```bash
-h5i notes analyze   # links the just-completed Claude Code session to HEAD
+h5i context branch experiment/sync-retry --purpose "try sync retry as a simpler fallback"
+# ... explore ...
+h5i context checkout main                   # return to main reasoning branch
+h5i context merge experiment/sync-retry     # merge findings back if useful
+```
+
+**Before editing a non-trivial file**, surface prior reasoning that mentions it:
+```bash
+h5i context relevant src/repository.rs
 ```
 
 ---
 
-### Committing
+### Committing code
 
-**Always stage files before committing** — `h5i_commit` (MCP) and `h5i commit` (CLI) only commit what is staged and will error if nothing is staged.
+**Always stage files before committing.** `h5i_commit` only commits what is staged and errors if nothing is staged.
 
 ```bash
-git add <file1> <file2> …   # stage exactly the files you changed — never git add .
+git add <file1> <file2> …   # never `git add .`
 ```
 
-Then commit via MCP tool (preferred):
+Then commit via MCP (preferred):
 ```
 h5i_commit(message="…", model="claude-sonnet-4-6", agent="claude-code", prompt="…")
 ```
@@ -884,290 +850,76 @@ Or via Bash if MCP is unavailable:
 h5i commit -m "…" --model claude-sonnet-4-6 --agent claude-code --prompt "…"
 ```
 
-Additional flags to add when relevant:
-- `--tests`  — when tests were added or modified (captures test metrics)
-- `--audit`  — on security-sensitive, authentication, or high-risk changes
+Add flags when relevant:
+- `--tests`  — tests were added or modified (captures test metrics)
+- `--audit`  — security-sensitive, authentication, or high-risk changes
 
-**Example:**
-```bash
-git add src/http_client.rs
-h5i commit -m "add retry logic to HTTP client" \
-  --model claude-sonnet-4-6 \
-  --agent claude-code \
-  --prompt "add exponential backoff to the HTTP client"
-# ✔  Committed a3f8c12  add retry logic to HTTP client
-#    model: claude-sonnet-4-6 · agent: claude-code · 312 tokens
-```
-
----
-
-### Understanding History
-
-```
-h5i log --limit 10    # recent commits with AI metadata (model, agent, token count)
-h5i blame src/main.rs # line-level blame annotated with AI provenance per commit
-```
-
-**Example `h5i log` output:**
-```
-● a3f8c12  add retry logic to HTTP client
-  2026-03-27 14:02  Alice <alice@example.com>
-  model: claude-sonnet-4-6 · agent: claude-code · 312 tokens
-  prompt: "add exponential backoff to the HTTP client"
-
-● 9e21b04  fix off-by-one in parser
-  2026-03-26 11:45  Bob <bob@example.com>
-  (no AI metadata)
-```
-
----
-
-### Notes — Session Analysis
-
-`h5i notes` parses Claude Code session logs and stores enriched metadata (exploration footprint, causal chain, uncertainty moments, file churn) linked to a commit.
-
-**Typical workflow after finishing a task:**
-
-```bash
-# 1. Analyze the just-completed Claude Code session and link to HEAD
-h5i notes analyze
-
-# 2. Inspect what files Claude consulted vs edited
-h5i notes show
-
-# 3. See where Claude expressed uncertainty
-h5i notes uncertainty
-
-# 4. See where Claude deferred, left stubs, or made promises it didn't keep
-h5i notes omissions
-
-# 5. Filter either of the above to a specific file
-h5i notes uncertainty --file src/repository.rs
-h5i notes omissions  --file src/repository.rs
-
-# 6. View cumulative edit-churn across all analyzed sessions
-h5i notes churn
-
-# 7. Visualize the chain of intents across recent commits
-h5i notes graph --limit 20
-
-# 8. Identify commits that most need human review
-h5i notes review --limit 50
-```
-
-**Example `h5i notes show` output:**
-```
-── Exploration Footprint ──────────────────────────────────
-  Session a3f8c12d  ·  42 messages  ·  138 tool calls
-
-  Files Consulted:
-    📖 src/repository.rs  ×4  (Read,Grep)
-    📖 src/metadata.rs    ×2  (Read)
-
-  Files Edited:
-    ✏ src/repository.rs  ×3 edit(s)
-    ✏ src/main.rs         ×1 edit(s)
-
-── Causal Chain ─────────────────────────────────────────────
-  Trigger:
-    "add exponential backoff to the HTTP client"
-
-  Key Decisions:
-    1. Used tokio::time::sleep for async-compatible delay
-    2. Capped retries at 5 to avoid infinite loops
-
-  Considered / Rejected:
-    - Synchronous std::thread::sleep (incompatible with async runtime)
-```
-
-**Example `h5i notes review` output:**
-```
-Suggested Review Points — 2 commits flagged (scanned 50, min_score=0.40)
-──────────────────────────────────────────────────────────────
-  #1  a3f8c12  score 0.74  ████████░░
-     Alice · 2026-03-27 14:02 UTC
-     add retry logic to HTTP client
-     ⚠ high uncertainty · 5 edits · 4 files touched
-
-  #2  9e21b04  score 0.45  ████░░░░░░
-     Bob · 2026-03-26 11:45 UTC
-     refactor parser
-     moderate complexity
-```
-
----
-
-### Context — Reasoning Workspace
-
-`h5i context` manages a `.h5i-ctx/` workspace that lets you checkpoint, branch, and review your own reasoning across sessions — analogous to git but for *agent thinking* rather than code.
-
-**Initialize once per project (or per major task):**
-
-```bash
-h5i context init --goal "refactor the HTTP client to support retries and timeouts"
-```
-
-**During a task, use these commands to structure your reasoning:**
-
-```bash
-# Checkpoint progress after completing a logical step
-h5i context commit "analyzed existing HTTP client" \
-  --detail "read repository.rs and metadata.rs; identified retry entry points"
-
-# Log individual OTA (Observe–Think–Act) steps as you work
-h5i context trace --kind OBSERVE "HttpClient::send has no retry logic"
-h5i context trace --kind THINK   "exponential backoff with jitter is safest"
-h5i context trace --kind ACT     "added retry loop in send() with 5-attempt cap"
-
-# Explore an alternative approach without losing your current thread
-h5i context branch experiment/sync-retry --purpose "try sync retry as a simpler fallback"
-# ... explore ...
-h5i context checkout main   # return to main reasoning branch
-h5i context merge experiment/sync-retry  # merge findings back if useful
-
-# Review current state before continuing a task
-h5i context show --trace --window 5
-h5i context status
-```
-
-**Example `h5i context show` output:**
-```
-── h5i-ctx · branch: main ──────────────────────────────────
-  Goal: refactor the HTTP client to support retries and timeouts
-
-  Recent commits (3):
-    [c1a2b3] analyzed existing HTTP client
-    [d4e5f6] implemented retry loop
-    [g7h8i9] added timeout parameter
-
-── Trace (last 10 lines) ────────────────────────────────────
-  [OBSERVE] HttpClient::send has no retry logic
-  [THINK]   exponential backoff with jitter is safest
-  [ACT]     added retry loop in send() with 5-attempt cap
-  [NOTE]    TODO: add integration test for timeout path
-```
-
-Use `h5i context prompt` to get a ready-made system prompt you can prepend to an agent session to inject full context awareness.
-
-### Context versioning
-
-Every `h5i commit` automatically snapshots the context workspace state and links it to the git commit SHA. Use these commands to navigate that history:
-
-```bash
-# Before editing a file — load all context entries that mention it
-h5i context relevant src/repository.rs
-
-# Restore context to the state it was in at a given git commit
-h5i context restore <sha>
-
-# See how the context workspace changed between two code commits
-h5i context diff <sha1> <sha2>
-
-# Compact old context history (run git gc afterwards to free space)
-h5i context pack
-```
+Every `h5i commit` automatically snapshots the context workspace and links it to the git commit SHA, so the workspace state is recoverable per code commit (`h5i context restore <sha>`, `h5i context diff <sha1> <sha2>`).
 
 ---
 
 ### Claims — pin reusable facts
 
-`h5i claims` records content-addressed facts about the codebase so future sessions don't re-derive them. Each claim pins a Merkle hash over its evidence files at HEAD — the claim stays **live** until any evidence blob changes, then auto-invalidates. Live claims are injected into `h5i context prompt` (and shown in the SessionStart prelude) as pre-verified facts.
+`h5i claims` records content-addressed facts so future sessions don't re-derive them. Each claim pins a Merkle hash over its evidence files at HEAD; it stays **live** until any evidence blob changes, then auto-invalidates. Live claims are injected into the SessionStart prelude / `h5i context prompt` as pre-verified facts.
 
-**Record a claim when you have just established a non-obvious fact that a future session would otherwise re-derive** — "X lives only in Y", "the public API is exactly A/B/C", "module M owns concern N", a subtle invariant, or where *not* to look. Don't pin obvious things a quick grep would answer.
+**Two flavors, both stored as plain claims (only the length and path-count differ):**
+- **Cross-cutting fact** (~30 tokens, multiple paths). Example: *"HTTP only src/api/{client,auth,billing}.py."*
+- **Per-file orientation** (~80 tokens, single path) — replaces the deprecated `h5i summary`. Example: *"src/api/client.py | HTTP. fetch_user(id: int)→dict GET, create_post(...)→dict POST, delete_post(id: int)→bool DELETE. Logger \`log\` top."*
 
-Prefer the MCP tools (`h5i_claims_add`, `h5i_claims_list`, `h5i_claims_prune`) — they return structured JSON and avoid shell-quoting pitfalls:
+**Record a claim when you have just established a non-obvious fact a future session would otherwise re-derive** — "X lives only in Y", "module M owns concern N", a subtle invariant, the public API of a struct, where *not* to look. Don't pin trivia a quick grep would answer.
+
+Prefer the MCP tool:
 ```
 h5i_claims_add(
-  text="HTTP helpers live only in src/api/client.py",
-  paths=["src/api/client.py", "src/middleware.rs"]
+  text="HTTP only src/api/client.py: fetch_user, create_post, delete_post.",
+  paths=["src/api/client.py"]
 )
 h5i_claims_list()       # → {claims: [...], live: N, stale: M}
 h5i_claims_prune()      # → {removed: N}
 ```
 
-Or via Bash if MCP is unavailable:
+Or via Bash:
 ```bash
-h5i claims add "HTTP helpers live only in src/api/client.py" \
-  --path src/api/client.py --path src/middleware.rs
-
-h5i claims list        # live / stale badges
-h5i claims prune       # drop claims whose evidence changed
+h5i claims add "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
+  --path src/api/client.py
+h5i claims list                  # all claims, flat
+h5i claims list --group-by-path  # claims grouped by file ("what's known about each file")
+h5i claims prune                 # drop claims whose evidence changed
 ```
 
 **Evidence-path rule — the single most important thing to get right:**
 Pick the *minimum* set of files whose content, if edited, should cause the claim to be re-checked. Ask: *"If I changed file X, would this claim's truth be in doubt?"* If no, do not include X — even if you read X while establishing the claim.
 
-Why this matters: the claim auto-invalidates the moment *any* evidence blob changes. Over-listing guarantees rapid staleness from unrelated edits, which trains future sessions to distrust claims and erases the benefit.
+Why: the claim auto-invalidates the moment *any* evidence blob changes. Over-listing guarantees rapid staleness from unrelated edits and trains future sessions to distrust claims.
 
-Concrete example. Claim: *"HTTP helpers live only in `src/api/client.py`"*.
+Concrete example. Claim: *"HTTP only in `src/api/client.py`"*.
 - ✔ Good: `--path src/api/client.py` (one path). If client.py changes, re-check. Edits to formatters/validators/main.py do not affect the truth of this claim.
-- ✖ Bad: `--path src/api/client.py --path src/utils/format.py --path src/utils/validate.py --path main.py`. Four paths guarantee the claim goes stale the next time someone touches an unrelated helper — even though the claim was still true.
+- ✖ Bad: `--path src/api/client.py --path src/utils/format.py --path main.py`. Goes stale the next time someone touches an unrelated helper — even though the claim was still true.
 
-Rule of thumb: **most good claims cite 1 file; >3 is a red flag you're confusing "files I read" with "files that back the claim"**. Scoped "ownership" claims (one file owns concern X) usually need one path — the owner. "The public API is exactly A/B/C" claims need the file that declares the API, not every caller.
+Rule of thumb: **most good claims cite 1 file; >3 is a red flag** you're confusing "files I read" with "files that back the claim".
 
 **Other rules:**
 - Evidence paths must be tracked in HEAD.
 - If the SessionStart prelude already shows a claim covering what you were about to investigate, trust it — don't re-read the files unless the user asks.
-- If you notice a live claim is wrong, run `h5i claims prune` (removes only stale ones) or delete the JSON in `.git/.h5i/claims/` directly.
+- If a live claim is wrong, fix it: `h5i claims prune` removes only stale ones; you can also delete the JSON in `.git/.h5i/claims/` directly to remove a wrong-but-live claim.
 
-**Write claim text in caveman style. Cap: ≈30 tokens.**
-Drop articles, copulas, fluff. Keep file paths, identifier names, numbers exact. Live claims are injected into every future session's cached prefix and re-read on every turn — every word costs forever.
+**Write claim text in caveman style.**
+- Cross-cutting: ~30 tokens. Per-file orientation: ~80 tokens.
+- Drop articles, copulas, fluff. Keep paths, identifier names, types, numeric constants exact.
+- Live claims are re-read on every cached-prefix turn forever — every word costs forever.
 
 | | Bloated (don't) | Caveman (do) |
 |---|---|---|
-| Cross-file ownership | "All HTTP-making functions in this project live only in src/api/client.py (fetch_user, create_post, delete_post). main.py and src/utils/* contain no direct HTTP calls." | "HTTP only src/api/client.py: fetch_user, create_post, delete_post. main.py + utils/* no HTTP." |
+| Cross-cutting | "All HTTP-making functions in this project live only in src/api/client.py (fetch_user, create_post, delete_post). main.py and src/utils/* contain no direct HTTP." | "HTTP only src/api/client.py: fetch_user, create_post, delete_post. main.py + utils/* no HTTP." |
+| Per-file | "The src/api/client.py file is an HTTP client module that uses the requests library to call the example API. It exports three functions and a logger." | "src/api/client.py \\| HTTP. requests to api.example.com. fetch_user(id: int)→dict GET, create_post(...)→dict POST, delete_post(id: int)→bool DELETE. Logger \\`log\\` top." |
 | Invariant | "The session token must be validated using a constant-time comparison to avoid timing attacks." | "Session token: constant-time compare. Timing attack risk." |
-| Public API | "The public API of the Repository struct consists of init, commit, log, blame, and resolve." | "Repository pub API: init, commit, log, blame, resolve." |
 
-**Frequency knob (`$H5I_CLAIMS_FREQUENCY`)** — the user can tune how eagerly you should record claims:
-- `off` — do not record any claims this session, even if one would normally be warranted.
+**Frequency knob (`$H5I_CLAIMS_FREQUENCY`)** — the user can tune how eagerly you record claims:
+- `off` — do not record any this session, even if one would normally be warranted.
 - `low` (default) — only non-obvious, genuinely reusable facts.
-- `high` — record liberally; pin any reusable codebase insight so future sessions skip re-derivation. The evidence-path rule above applies *especially* here — over-listing evidence under `high` is how the whole feature collapses into staleness noise.
+- `high` — record liberally; pin any reusable codebase insight. The evidence-path rule applies *especially* here.
 
 The SessionStart prelude prints the active policy when it is `off` or `high`. Follow the most recent policy line you see, even if it contradicts this base guidance.
-
----
-
-### Summaries — cached per-file orientations
-
-`h5i summary` pins a short markdown summary (≈100–300 tokens) to one file's *current blob OID*. It complements claims at a different granularity:
-- **Claim** = a cross-file fact, pinned to a *set* of files (e.g. *"HTTP helpers live only in src/api/client.py"*).
-- **Summary** = a precis of *one file's content* (e.g. *"client.py: requests-based API. Exports fetch_user, create_post, delete_post. Imports requests, logging."*).
-
-Summaries are content-addressed by git blob OID, so they auto-invalidate the moment a file's content changes — but unlike claims, every blob keeps its summary forever (a blob is immutable).
-
-**When to USE a summary** (preferred over Read for orientation):
-- For small projects, summary content is **already inlined in the prelude** under `## Pre-cached file summaries`. **Do NOT call `h5i_summary_get` for paths shown there — the text is right above; just read it.** Each redundant fetch costs a round-trip turn that re-reads the whole cached prefix.
-- For larger projects (>10 cached summaries or >2K total chars), the prelude shows a `## File summaries available` listing-only banner. In that mode, call `h5i_summary_get(path)` for the *specific* files you need — not all of them.
-- Reading the full file via `Read` is still correct for line-level *edits*. Summaries are for navigation and orientation only.
-
-**When to RECORD a summary** (`h5i_summary_set`):
-- After reading a non-trivial file you orient on but don't edit, and that future sessions are likely to need orientation on too.
-- Keep it dense: exports, the file's *job*, key invariants, what to NOT expect. Skip implementation details.
-
-**Write summary text in caveman style. Hard cap: ≈80 tokens.**
-A summary is read by every future session that orients on the file. Each word it contains is paid for on every cache-read of every later turn — over many sessions it dwarfs the one-time write cost. Drop articles, copulas, descriptive fluff. Keep exact: file paths, identifier names, types, numeric constants, error names.
-
-| | Bloated (don't) | Caveman (do) |
-|---|---|---|
-| Module precis | "This file is the HTTP client module for the project. It uses the `requests` library to make calls against the `https://api.example.com` base URL. It exports three functions: `fetch_user`, `create_post`, and `delete_post`. There is also a logger imported at the top of the file." | "HTTP client. `requests` to api.example.com. Exports: fetch_user(id)→dict (GET /users/<id>), create_post(title,body,author_id)→dict (POST /posts), delete_post(id)→bool (DELETE /posts/<id>). Logger `log` bound top." |
-
-```
-h5i_summary_set(
-  path="src/api/client.py",
-  text="HTTP client. `requests` to api.example.com. Exports: fetch_user(id)→dict (GET /users/<id>), create_post(title,body,author_id)→dict, delete_post(id)→bool. Logger `log` at top. No retries."
-)
-```
-
-Or via Bash if MCP is unavailable: `h5i summary set <path> --text "<body>"`.
-
-**Difference vs claims at a glance:**
-| | Claim | Summary |
-|---|---|---|
-| Replaces | re-deriving a *cross-file conclusion* | re-reading *one file* |
-| Trust | high — someone asserted this fact | medium — lossy compression |
-| Granularity | a set of files | a single file's blob |
-| Best at session start | ≤3 active claims | ≤20 cached summaries |
 
 ---
 
@@ -1187,7 +939,7 @@ h5i memory restore <oid>   # restore memory to the state at a given commit
 ### Sharing h5i Data
 
 ```bash
-h5i push   # push all h5i refs (notes, memory) to origin
+h5i push   # push all h5i refs to origin
 h5i pull   # pull h5i refs from origin
 ```
 "#;
@@ -1198,43 +950,75 @@ This repository uses **h5i** (a Git sidecar for AI-era version control).
 
 Codex should use `h5i context` as shared cross-session memory and `h5i commit` to record AI provenance on code commits.
 
-### Required workflow
+### Workflow
 
-At the start of a non-trivial task:
+**At the start of a non-trivial task:**
 ```bash
 h5i codex prelude
 # If no workspace exists yet, initialize it once:
 h5i context init --goal "<one-line task summary>"
 ```
 
-While working:
+**While working:**
 ```bash
-h5i context relevant <file>   # before editing a file when relevant
-h5i codex sync                # after a burst of reads/edits to backfill OBSERVE/ACT traces
+h5i context relevant <file>   # before editing — surfaces prior reasoning + claims that mention this file
+h5i codex sync                # after a burst of reads/edits — backfills OBSERVE/ACT traces
 h5i context trace --kind THINK "<chosen approach> over <rejected alternative> because <reason>"
 h5i context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 ```
 
-After pinning down a non-obvious fact a future session would otherwise re-derive
-(where a helper lives, which module owns a concern, a subtle invariant), record
-a content-addressed claim pointing at the files that back it:
-```bash
-h5i claims add "<fact>" --path <file1> --path <file2>
-h5i claims list         # live / stale badges; stale = evidence blobs changed
-h5i claims prune        # drop stale claims
-```
-Live claims are injected into `h5i codex prelude` / `h5i context prompt`, so the
-next session treats them as pre-verified. Trust them; don't re-read the files.
-
-After a logical milestone:
+**After a logical milestone:**
 ```bash
 h5i codex finish --summary "<milestone summary>"
 ```
 
-For code commits:
+### Claims — pin reusable facts
+
+After establishing a non-obvious fact a future session would otherwise re-derive
+(where a helper lives, which module owns a concern, a subtle invariant), record
+a content-addressed claim pointing at the files that back it. Live claims are
+injected into `h5i codex prelude` / `h5i context prompt`, so the next session
+treats them as pre-verified — trust them; don't re-read the files.
+
+**Two flavors:**
+
+Cross-cutting fact (~30 tokens, multiple paths):
+```bash
+h5i claims add "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
+  --path src/api/client.py
+```
+
+Per-file orientation (~80 tokens, single path) — replaces the deprecated `h5i summary`:
+```bash
+h5i claims add "src/api/client.py | HTTP. fetch_user(id: int)→dict GET, create_post(...)→dict POST, delete_post(id: int)→bool DELETE. Logger \`log\` top." \
+  --path src/api/client.py
+```
+
+Inspect:
+```bash
+h5i claims list                    # live / stale badges
+h5i claims list --group-by-path    # claims grouped by file ("what's known about each file")
+h5i claims prune                   # drop stale claims
+```
+
+**Caveman style.** Drop articles, copulas, fluff. Keep paths, identifier names, types, numbers exact. Pick the *minimum* evidence-path set: most good claims cite 1 file; >3 is a red flag you're confusing "files I read" with "files that back the claim". Live claim text is re-read on every cached-prefix turn forever — every word costs forever.
+
+### Code commits
+
 ```bash
 git add <exact paths>
 h5i commit -m "…" --agent codex --prompt "…"
+```
+
+Add flags when relevant:
+- `--tests`  — tests were added or modified
+- `--audit`  — security-sensitive or high-risk changes
+
+### Sharing h5i Data
+
+```bash
+h5i push   # push all h5i refs to origin
+h5i pull   # pull h5i refs from origin
 ```
 "#;
 
@@ -1357,20 +1141,6 @@ fn print_shared_context_prelude(workdir: &Path) {
             }
         }
 
-        // File-summary preamble. Eagerly inline summary content when the
-        // count fits the budget — eliminates per-file h5i_summary_get round
-        // trips (each is a separate assistant turn that re-reads the whole
-        // cached prefix). Above the budget, we render a listing-only banner
-        // and the agent lazy-fetches what it needs.
-        if let Ok(head) =
-            summaries::list_for_head(&h5i_repo.h5i_root, h5i_repo.git())
-        {
-            let rendered = summaries::render_full_or_banner(&head);
-            if !rendered.is_empty() {
-                println!();
-                print!("{rendered}");
-            }
-        }
     }
 
     if let Some(hint) = claims::ClaimsFrequency::from_env().prelude_hint() {
@@ -2825,70 +2595,91 @@ jq -c '{
                 style(&remote).yellow()
             );
 
-            // Push h5i notes (AI provenance, test metrics, causal links)
-            let notes_refspec = "refs/h5i/notes:refs/h5i/notes";
-            print!(
-                "  {} {} … ",
-                style("→").dim(),
-                style("refs/h5i/notes").yellow()
-            );
             use std::io::Write as _;
-            std::io::stdout().flush()?;
-            let notes_status = std::process::Command::new("git")
-                .args(["push", &remote, notes_refspec])
-                .current_dir(&workdir)
-                .status()
-                .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
-            if notes_status.success() {
-                println!("{}", style("ok").green());
-            } else {
-                println!("{}", style("failed").red());
-            }
+
+            // Pre-check whether a ref exists locally before invoking `git push`.
+            // Skipping a missing ref with our own warning avoids two lines of
+            // git stderr noise ("error: src refspec ... does not match any" +
+            // "error: failed to push some refs") for the expected case where
+            // the user simply hasn't generated that artifact yet.
+            let ref_exists = |refname: &str| -> bool {
+                std::process::Command::new("git")
+                    .args(["rev-parse", "--verify", "--quiet", refname])
+                    .current_dir(&workdir)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+            };
+
+            // Push one h5i ref. On missing ref, prints a yellow warning with
+            // the hint command. On real push failure, lets git's stderr
+            // through unchanged. Returns true iff the push actually ran and
+            // succeeded — used downstream to gate the "Tip:" footer.
+            let try_push = |refname: &str,
+                            missing_hint: console::StyledObject<&str>,
+                            missing_reason: &str|
+             -> anyhow::Result<bool> {
+                print!("  {} {} … ", style("→").dim(), style(refname).yellow());
+                std::io::stdout().flush()?;
+                if !ref_exists(refname) {
+                    println!(
+                        "{} ({} — run {})",
+                        style("skipped").yellow(),
+                        missing_reason,
+                        missing_hint
+                    );
+                    return Ok(false);
+                }
+                let refspec = format!("+{}:{}", refname, refname);
+                let status = std::process::Command::new("git")
+                    .args(["push", &remote, &refspec])
+                    .current_dir(&workdir)
+                    .status()
+                    .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+                if status.success() {
+                    println!("{}", style("ok").green());
+                    Ok(true)
+                } else {
+                    println!("{}", style("failed").red());
+                    Ok(false)
+                }
+            };
+
+            // Push h5i notes (AI provenance, test metrics, causal links)
+            let notes_pushed = try_push(
+                "refs/h5i/notes",
+                style("h5i commit").bold(),
+                "no AI-provenance commits yet",
+            )?;
 
             // Push memory ref (Claude memory snapshots)
-            let mem_refspec = format!("+{}:{}", memory::MEMORY_REF, memory::MEMORY_REF);
-            print!("  {} {} … ", style("→").dim(), style("refs/h5i/memory").yellow());
-            std::io::stdout().flush()?;
-            let mem_status = std::process::Command::new("git")
-                .args(["push", &remote, &mem_refspec])
-                .current_dir(&workdir)
-                .status()
-                .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
-            if mem_status.success() {
-                println!("{}", style("ok").green());
-            } else {
-                println!("{} (no memory snapshots yet — run {})", style("skipped").dim(), style("h5i memory snapshot").bold());
-            }
+            try_push(
+                memory::MEMORY_REF,
+                style("h5i memory snapshot").bold(),
+                "no memory snapshots yet",
+            )?;
 
             // Push context workspace (refs/h5i/context)
-            print!("  {} {} … ", style("→").dim(), style("refs/h5i/context").yellow());
-            std::io::stdout().flush()?;
-            let ctx_status = std::process::Command::new("git")
-                .args(["push", &remote, "refs/h5i/context:refs/h5i/context"])
-                .current_dir(&workdir)
-                .status()
-                .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
-            if ctx_status.success() {
-                println!("{}", style("ok").green());
-            } else {
-                println!("{} (no context workspace yet — run {})", style("skipped").dim(), style("h5i context init").bold());
-            }
+            try_push(
+                "refs/h5i/context",
+                style("h5i context init").bold(),
+                "no context workspace yet",
+            )?;
 
             // Push AST blobs (refs/h5i/ast)
-            print!("  {} {} … ", style("→").dim(), style("refs/h5i/ast").yellow());
-            std::io::stdout().flush()?;
-            let ast_status = std::process::Command::new("git")
-                .args(["push", &remote, "refs/h5i/ast:refs/h5i/ast"])
-                .current_dir(&workdir)
-                .status()
-                .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
-            if ast_status.success() {
-                println!("{}", style("ok").green());
-            } else {
-                println!("{} (no AST snapshots yet — commit with {})", style("skipped").dim(), style("--ast").bold());
-            }
+            try_push(
+                "refs/h5i/ast",
+                style("h5i commit --ast").bold(),
+                "no AST snapshots yet",
+            )?;
 
-            if notes_status.success() {
+            // Bind to the original variable name so the existing "Tip:" footer
+            // (gated on notes_status.success()) keeps working unchanged.
+            let notes_status_success = notes_pushed;
+
+            if notes_status_success {
                 println!(
                     "\n{} To receive these refs on another machine:\n\
                     \n    git fetch {} refs/h5i/notes:refs/h5i/notes\
@@ -3172,9 +2963,13 @@ jq -c '{
                     );
                 }
 
-                ClaimsCommands::List => {
+                ClaimsCommands::List { group_by_path } => {
                     let entries = claims::list_with_status(&repo.h5i_root, repo.git())?;
-                    claims::print_list(&entries);
+                    if group_by_path {
+                        claims::print_list_grouped_by_path(&entries);
+                    } else {
+                        claims::print_list(&entries);
+                    }
                 }
 
                 ClaimsCommands::Prune => {
@@ -3187,91 +2982,6 @@ jq -c '{
                     } else {
                         println!(
                             "{} Pruned {} stale claim{}",
-                            SUCCESS,
-                            style(removed).cyan().bold(),
-                            if removed == 1 { "" } else { "s" },
-                        );
-                    }
-                }
-            }
-        }
-
-        Commands::Summary { action } => {
-            let repo = H5iRepository::open(".")?;
-            match action {
-                SummaryCommands::Set {
-                    path,
-                    text,
-                    from_file,
-                    author,
-                } => {
-                    let body = match (text, from_file) {
-                        (Some(t), None) => t,
-                        (None, Some(p)) => {
-                            if p == "-" {
-                                use std::io::Read as _;
-                                let mut s = String::new();
-                                std::io::stdin().read_to_string(&mut s)?;
-                                s
-                            } else {
-                                std::fs::read_to_string(&p)?
-                            }
-                        }
-                        (Some(_), Some(_)) => {
-                            anyhow::bail!("--text and --from-file are mutually exclusive")
-                        }
-                        (None, None) => {
-                            anyhow::bail!("provide --text or --from-file")
-                        }
-                    };
-                    let s = summaries::set(
-                        &repo.h5i_root,
-                        repo.git(),
-                        &path,
-                        &body,
-                        author,
-                    )?;
-                    println!(
-                        "{} Recorded summary for {} (blob {})",
-                        SUCCESS,
-                        style(&s.path).bold(),
-                        style(&s.blob_oid[..12.min(s.blob_oid.len())]).magenta(),
-                    );
-                }
-
-                SummaryCommands::Show { path } => {
-                    match summaries::get_for_head(&repo.h5i_root, repo.git(), &path)? {
-                        Some(s) => {
-                            println!(
-                                "── {} (blob {})  ────────────────",
-                                style(&s.path).bold(),
-                                style(&s.blob_oid[..12.min(s.blob_oid.len())]).magenta(),
-                            );
-                            println!("{}", s.text);
-                        }
-                        None => println!(
-                            "{} No summary for {} at HEAD's current blob.",
-                            style("ℹ").blue(),
-                            style(&path).bold(),
-                        ),
-                    }
-                }
-
-                SummaryCommands::List => {
-                    let head = summaries::list_for_head(&repo.h5i_root, repo.git())?;
-                    summaries::print_list_for_head(&head);
-                }
-
-                SummaryCommands::Prune => {
-                    let removed = summaries::prune_unreachable(&repo.h5i_root, repo.git())?;
-                    if removed == 0 {
-                        println!(
-                            "{} No unreachable summaries — nothing to prune.",
-                            style("ℹ").blue(),
-                        );
-                    } else {
-                        println!(
-                            "{} Pruned {} orphaned summary blob{}",
                             SUCCESS,
                             style(removed).cyan().bold(),
                             if removed == 1 { "" } else { "s" },
@@ -3441,20 +3151,11 @@ jq -c '{
                     print!("{}", ctx::system_prompt(workdir));
                     // Append live, content-addressed claims so the next session
                     // can skip re-deriving facts that are still evidence-valid.
+                    // Single-path claims serve as per-file orientations
+                    // (the role formerly held by h5i summary).
                     if let Ok(h5i_repo) = H5iRepository::open(".") {
                         if let Ok(live) = claims::live_claims(&h5i_repo.h5i_root, h5i_repo.git()) {
                             print!("{}", claims::render_preamble(&live));
-                        }
-                        // Inject pre-cached file summaries directly into the
-                        // prompt when the count fits the eager budget. This
-                        // saves the per-file h5i_summary_get round-trip turns
-                        // (each turn re-reads the cached prefix). Above the
-                        // budget, render_full_or_banner falls back to a
-                        // path-only banner and the agent fetches lazily.
-                        if let Ok(head) =
-                            summaries::list_for_head(&h5i_repo.h5i_root, h5i_repo.git())
-                        {
-                            print!("{}", summaries::render_full_or_banner(&head));
                         }
                     }
                     // Surface the user-tuned frequency policy (off/high) so the
