@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 
 use h5i_core::blame::BlameMode;
 use h5i_core::claims;
-use h5i_core::summaries;
 use h5i_core::claude::{keyword_search, AnthropicClient};
 use h5i_core::codex;
 use h5i_core::ctx;
@@ -268,16 +267,6 @@ enum Commands {
     Claims {
         #[command(subcommand)]
         action: ClaimsCommands,
-    },
-
-    /// Pin a short summary to a file's current blob OID. A summary
-    /// describes what's in one file (exports, role, structure) so future
-    /// sessions can fetch a ≤200-token orientation instead of re-reading
-    /// the whole file. Auto-invalidates on edit (same content-addressing
-    /// trick as claims), but each blob keeps its own summary forever.
-    Summary {
-        #[command(subcommand)]
-        action: SummaryCommands,
     },
 
     /// Inspect AI session activity: footprint, uncertainty, churn, and intent graph
@@ -659,41 +648,15 @@ enum ClaimsCommands {
     },
 
     /// List all claims with live/stale status based on current HEAD
-    List,
+    List {
+        /// Group claims by file path. Multi-path claims appear under each
+        /// of their evidence paths. Replaces the per-file orientation view
+        /// that `h5i summary list` used to provide.
+        #[arg(long = "group-by-path")]
+        group_by_path: bool,
+    },
 
     /// Remove all claims whose evidence blobs have changed since recording
-    Prune,
-}
-
-#[derive(Subcommand)]
-enum SummaryCommands {
-    /// Pin a summary to the file's current HEAD blob.
-    /// Provide the summary inline with --text, or read it from a file with
-    /// --from-file (use "-" for stdin). One of the two is required.
-    Set {
-        /// Path to the file being summarised (must be tracked in HEAD).
-        path: String,
-        /// Inline summary text. Mutually exclusive with --from-file.
-        #[arg(long, conflicts_with = "from_file")]
-        text: Option<String>,
-        /// Read summary text from a file (or "-" for stdin).
-        #[arg(long = "from-file", value_name = "FILE")]
-        from_file: Option<String>,
-        /// Author tag (default: $H5I_AGENT_ID, else "human").
-        #[arg(long)]
-        author: Option<String>,
-    },
-
-    /// Show the summary for the file's current HEAD blob (or "(none)").
-    Show {
-        /// File path tracked in HEAD.
-        path: String,
-    },
-
-    /// List every HEAD-tracked file and whether it has a summary.
-    List,
-
-    /// Remove summaries whose blob OID is not reachable from any HEAD path.
     Prune,
 }
 
@@ -1128,49 +1091,6 @@ The SessionStart prelude prints the active policy when it is `off` or `high`. Fo
 
 ---
 
-### Summaries — cached per-file orientations
-
-`h5i summary` pins a short markdown summary (≈100–300 tokens) to one file's *current blob OID*. It complements claims at a different granularity:
-- **Claim** = a cross-file fact, pinned to a *set* of files (e.g. *"HTTP helpers live only in src/api/client.py"*).
-- **Summary** = a precis of *one file's content* (e.g. *"client.py: requests-based API. Exports fetch_user, create_post, delete_post. Imports requests, logging."*).
-
-Summaries are content-addressed by git blob OID, so they auto-invalidate the moment a file's content changes — but unlike claims, every blob keeps its summary forever (a blob is immutable).
-
-**When to USE a summary** (preferred over Read for orientation):
-- For small projects, summary content is **already inlined in the prelude** under `## Pre-cached file summaries`. **Do NOT call `h5i_summary_get` for paths shown there — the text is right above; just read it.** Each redundant fetch costs a round-trip turn that re-reads the whole cached prefix.
-- For larger projects (>10 cached summaries or >2K total chars), the prelude shows a `## File summaries available` listing-only banner. In that mode, call `h5i_summary_get(path)` for the *specific* files you need — not all of them.
-- Reading the full file via `Read` is still correct for line-level *edits*. Summaries are for navigation and orientation only.
-
-**When to RECORD a summary** (`h5i_summary_set`):
-- After reading a non-trivial file you orient on but don't edit, and that future sessions are likely to need orientation on too.
-- Keep it dense: exports, the file's *job*, key invariants, what to NOT expect. Skip implementation details.
-
-**Write summary text in caveman style. Hard cap: ≈80 tokens.**
-A summary is read by every future session that orients on the file. Each word it contains is paid for on every cache-read of every later turn — over many sessions it dwarfs the one-time write cost. Drop articles, copulas, descriptive fluff. Keep exact: file paths, identifier names, types, numeric constants, error names.
-
-| | Bloated (don't) | Caveman (do) |
-|---|---|---|
-| Module precis | "This file is the HTTP client module for the project. It uses the `requests` library to make calls against the `https://api.example.com` base URL. It exports three functions: `fetch_user`, `create_post`, and `delete_post`. There is also a logger imported at the top of the file." | "HTTP client. `requests` to api.example.com. Exports: fetch_user(id)→dict (GET /users/<id>), create_post(title,body,author_id)→dict (POST /posts), delete_post(id)→bool (DELETE /posts/<id>). Logger `log` bound top." |
-
-```
-h5i_summary_set(
-  path="src/api/client.py",
-  text="HTTP client. `requests` to api.example.com. Exports: fetch_user(id)→dict (GET /users/<id>), create_post(title,body,author_id)→dict, delete_post(id)→bool. Logger `log` at top. No retries."
-)
-```
-
-Or via Bash if MCP is unavailable: `h5i summary set <path> --text "<body>"`.
-
-**Difference vs claims at a glance:**
-| | Claim | Summary |
-|---|---|---|
-| Replaces | re-deriving a *cross-file conclusion* | re-reading *one file* |
-| Trust | high — someone asserted this fact | medium — lossy compression |
-| Granularity | a set of files | a single file's blob |
-| Best at session start | ≤3 active claims | ≤20 cached summaries |
-
----
-
 ### Memory Snapshots
 
 After a significant Claude Code session, snapshot Claude's memory so it can be shared or restored:
@@ -1357,20 +1277,6 @@ fn print_shared_context_prelude(workdir: &Path) {
             }
         }
 
-        // File-summary preamble. Eagerly inline summary content when the
-        // count fits the budget — eliminates per-file h5i_summary_get round
-        // trips (each is a separate assistant turn that re-reads the whole
-        // cached prefix). Above the budget, we render a listing-only banner
-        // and the agent lazy-fetches what it needs.
-        if let Ok(head) =
-            summaries::list_for_head(&h5i_repo.h5i_root, h5i_repo.git())
-        {
-            let rendered = summaries::render_full_or_banner(&head);
-            if !rendered.is_empty() {
-                println!();
-                print!("{rendered}");
-            }
-        }
     }
 
     if let Some(hint) = claims::ClaimsFrequency::from_env().prelude_hint() {
@@ -3172,9 +3078,13 @@ jq -c '{
                     );
                 }
 
-                ClaimsCommands::List => {
+                ClaimsCommands::List { group_by_path } => {
                     let entries = claims::list_with_status(&repo.h5i_root, repo.git())?;
-                    claims::print_list(&entries);
+                    if group_by_path {
+                        claims::print_list_grouped_by_path(&entries);
+                    } else {
+                        claims::print_list(&entries);
+                    }
                 }
 
                 ClaimsCommands::Prune => {
@@ -3187,91 +3097,6 @@ jq -c '{
                     } else {
                         println!(
                             "{} Pruned {} stale claim{}",
-                            SUCCESS,
-                            style(removed).cyan().bold(),
-                            if removed == 1 { "" } else { "s" },
-                        );
-                    }
-                }
-            }
-        }
-
-        Commands::Summary { action } => {
-            let repo = H5iRepository::open(".")?;
-            match action {
-                SummaryCommands::Set {
-                    path,
-                    text,
-                    from_file,
-                    author,
-                } => {
-                    let body = match (text, from_file) {
-                        (Some(t), None) => t,
-                        (None, Some(p)) => {
-                            if p == "-" {
-                                use std::io::Read as _;
-                                let mut s = String::new();
-                                std::io::stdin().read_to_string(&mut s)?;
-                                s
-                            } else {
-                                std::fs::read_to_string(&p)?
-                            }
-                        }
-                        (Some(_), Some(_)) => {
-                            anyhow::bail!("--text and --from-file are mutually exclusive")
-                        }
-                        (None, None) => {
-                            anyhow::bail!("provide --text or --from-file")
-                        }
-                    };
-                    let s = summaries::set(
-                        &repo.h5i_root,
-                        repo.git(),
-                        &path,
-                        &body,
-                        author,
-                    )?;
-                    println!(
-                        "{} Recorded summary for {} (blob {})",
-                        SUCCESS,
-                        style(&s.path).bold(),
-                        style(&s.blob_oid[..12.min(s.blob_oid.len())]).magenta(),
-                    );
-                }
-
-                SummaryCommands::Show { path } => {
-                    match summaries::get_for_head(&repo.h5i_root, repo.git(), &path)? {
-                        Some(s) => {
-                            println!(
-                                "── {} (blob {})  ────────────────",
-                                style(&s.path).bold(),
-                                style(&s.blob_oid[..12.min(s.blob_oid.len())]).magenta(),
-                            );
-                            println!("{}", s.text);
-                        }
-                        None => println!(
-                            "{} No summary for {} at HEAD's current blob.",
-                            style("ℹ").blue(),
-                            style(&path).bold(),
-                        ),
-                    }
-                }
-
-                SummaryCommands::List => {
-                    let head = summaries::list_for_head(&repo.h5i_root, repo.git())?;
-                    summaries::print_list_for_head(&head);
-                }
-
-                SummaryCommands::Prune => {
-                    let removed = summaries::prune_unreachable(&repo.h5i_root, repo.git())?;
-                    if removed == 0 {
-                        println!(
-                            "{} No unreachable summaries — nothing to prune.",
-                            style("ℹ").blue(),
-                        );
-                    } else {
-                        println!(
-                            "{} Pruned {} orphaned summary blob{}",
                             SUCCESS,
                             style(removed).cyan().bold(),
                             if removed == 1 { "" } else { "s" },
@@ -3441,20 +3266,11 @@ jq -c '{
                     print!("{}", ctx::system_prompt(workdir));
                     // Append live, content-addressed claims so the next session
                     // can skip re-deriving facts that are still evidence-valid.
+                    // Single-path claims serve as per-file orientations
+                    // (the role formerly held by h5i summary).
                     if let Ok(h5i_repo) = H5iRepository::open(".") {
                         if let Ok(live) = claims::live_claims(&h5i_repo.h5i_root, h5i_repo.git()) {
                             print!("{}", claims::render_preamble(&live));
-                        }
-                        // Inject pre-cached file summaries directly into the
-                        // prompt when the count fits the eager budget. This
-                        // saves the per-file h5i_summary_get round-trip turns
-                        // (each turn re-reads the cached prefix). Above the
-                        // budget, render_full_or_banner falls back to a
-                        // path-only banner and the agent fetches lazily.
-                        if let Ok(head) =
-                            summaries::list_for_head(&h5i_repo.h5i_root, h5i_repo.git())
-                        {
-                            print!("{}", summaries::render_full_or_banner(&head));
                         }
                     }
                     // Surface the user-tuned frequency policy (off/high) so the
