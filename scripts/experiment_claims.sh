@@ -7,25 +7,21 @@
 #   input tokens (fewer Read/Grep calls, smaller per-turn context).
 #
 # Method:
-#   Four-arm factorial — production-realistic auto-curation only. Each pre-seeded
-#   arm uses a single Haiku call to write the claims and/or summaries from the
-#   seeded source, then the working agent (Opus) runs the task with those
-#   artifacts already cached in the prompt prefix.
+#   Two arms, production-realistic auto-curation:
 #
 #     CONTROL              — no pre-seeding. Baseline.
-#     AUTO_HAIKU_CLM       — Haiku-curated claims only. Cross-cutting invariants
-#                            ("HTTP only in {a,b,c}.py") seeded as live claims.
-#     AUTO_HAIKU_SUM       — Haiku-curated summaries only. Per-file blob-keyed
-#                            summaries with signatures + types + HTTP/non-HTTP marker.
-#     AUTO_HAIKU_SUM_CLM   — both: Haiku writes claims AND summaries. Tests
-#                            whether the two stack or saturate.
+#     AUTO_HAIKU_CLAIMS    — one Haiku call at workdir setup writes claims
+#                            from the seeded source; the working session
+#                            (Opus) then runs the task with those claims
+#                            already in the cached prompt prefix.
 #
-#   Each non-CONTROL arm pays a single ~$0.01 Haiku call at workdir setup.
-#   The working session uses Opus (claude --print) — same model as CONTROL.
+#   The working session uses Opus (claude --print) for both arms — same model.
+#   Only the per-workdir Haiku setup cost (~$0.01) and the seeded claims differ.
 #
 #   For each run we parse the Claude session JSONL, sum per-turn token usage,
 #   count tool calls, and read out cache_creation/cache_read deltas. A
-#   comparison table is printed at the end with each arm's Δ% vs CONTROL.
+#   comparison table is printed at the end with the AUTO_HAIKU_CLAIMS arm's
+#   Δ% vs CONTROL.
 #
 # Rigor built in:
 #   · Per-trial wall-clock timeout (TRIAL_TIMEOUT) so a stalled claude run
@@ -33,11 +29,11 @@
 #   · Retry-and-cap (RETRY_CAP): a trial that times out, writes to the wrong
 #     files, or fails the ENTER/EXIT log-pair check is retried in a fresh
 #     workdir; failures and retry counts are recorded and reported.
-#   · Cyclic 3-arm order per trial (Latin-square-ish rotation) to mitigate
-#     serial drift from Anthropic-side caches or backend state.
+#   · Cyclic 2-arm order per trial (alternating start) to mitigate serial
+#     drift from Anthropic-side caches or backend state.
 #   · MCP server mounted via --mcp-config so the agent can reach `h5i_claims_*`
-#     tools natively; without this, the AUTO_CLAIMS arm would be artificially
-#     discouraged from recording because it could only use the Bash form.
+#     tools natively; without this, the agent would be artificially discouraged
+#     from using claims because it could only see them via the Bash form.
 #   · The aggregator reports mean ± stdev [min, max] per arm and flags any
 #     metric where 2·stdev ≥ |Δ| as noise-dominated.
 #   · The model ID is extracted from each session JSONL and printed — so a
@@ -72,15 +68,13 @@ TRIAL_TIMEOUT="${TRIAL_TIMEOUT:-180}"
 RETRY_CAP="${RETRY_CAP:-1}"
 WORKDIR_BASE="${WORKDIR_BASE:-/tmp/h5i-claims-exp-$$}"
 
-# AUTO_HAIKU arm: cheap-model claim extraction. The Haiku call is one-shot;
-# it just needs to produce JSON. We invoke `claude --print --model $HAIKU_MODEL`
-# rather than the Anthropic SDK directly so this script has no extra deps.
+# AUTO_HAIKU_CLAIMS arm: cheap-model claim extraction. The Haiku call is
+# one-shot; it just needs to produce JSON. We invoke
+# `claude --print --model $HAIKU_MODEL` rather than the Anthropic SDK directly
+# so this script has no extra deps.
 HAIKU_MODEL="${HAIKU_MODEL:-claude-haiku-4-5}"
 HAIKU_TIMEOUT="${HAIKU_TIMEOUT:-90}"
 HAIKU_MAX_CLAIMS="${HAIKU_MAX_CLAIMS:-5}"
-# Eager-render falls back to listing-only above 10 files / 2K chars; staying at 6
-# keeps Haiku-curated summaries within the inline regime.
-HAIKU_MAX_SUMMARIES="${HAIKU_MAX_SUMMARIES:-6}"
 
 PASS="✔"
 FAIL="✖"
@@ -628,114 +622,7 @@ except Exception as e:
 PYEOF
 }
 
-# ── Haiku per-file summary extraction ────────────────────────────────────────
-# Asks Haiku to produce up to $HAIKU_MAX_SUMMARIES per-file summaries from the
-# seeded source. Each summary is the production-realistic equivalent of the
-# hand-curated SUMMARIES_SPEC the prior version of this script used.
-#
-# Output: prints a JSON array to stdout: [{"path": "src/foo.py", "text": "..."}, ...]
-#         On failure, prints "[]" and warns to stderr. Never fails the caller.
-haiku_extract_summaries() {
-  local dir="$1"
-  local files_dump prompt raw rc
-
-  files_dump=$(cd "$dir" && find . -type f -name '*.py' \
-    -not -path './.git/*' -not -path './.h5i-ctx/*' \
-    | sed 's|^\./||' | sort \
-    | while read -r f; do
-        printf '<file path="%s">\n' "$f"
-        cat "$f"
-        printf '</file>\n'
-      done)
-
-  prompt=$(cat <<EOF
-You write caveman-style per-file summaries for an AI coding assistant.
-A summary is one terse line (~80 tokens) describing one source file,
-keyed by the file's blob OID. When the file changes, the summary
-auto-invalidates — so prefer facts that bear on file content, not
-on incidental wording.
-
-Caveman style:
-- ~80 tokens per summary, hard cap.
-- Drop articles ("the", "a"), copulas ("is", "are"), filler ("the file contains", "this module").
-- Keep paths, function names, parameter types, return types, key constants EXACT.
-- Mark whether the file makes HTTP calls. Be explicit ("HTTP", "NO HTTP").
-- Bias toward what a future session needs without reading the file:
-  signatures, return types, key URLs/constants, side-effects.
-
-Good examples:
-- "src/api/client.py | HTTP. requests to BASE='https://api.example.com'. fetch_user(id: int)→dict GET, create_post(title,body,author_id)→dict POST, delete_post(id: int)→bool DELETE. Logger \`log\` top. All 3 funcs HTTP."
-- "src/utils/format.py | Pure. format_date(dt: datetime)→str (YYYY-MM-DD), truncate(s: str, n: int)→str. NO HTTP."
-- "src/api/metrics.py | Local prometheus counters via defaultdict. record_request(name), get_counters()→dict. NO HTTP."
-
-Bad (do NOT produce):
-- "The file has helper functions for the API." (vague)
-- "This module wraps requests..." (verbose, copula)
-- "Used to handle HTTP requests" (event description, not invariant)
-
-Pick the up-to-${HAIKU_MAX_SUMMARIES} most orientation-relevant files
-from the codebase below — files an agent would benefit from understanding
-without a full Read. Prefer files with HTTP boundaries, decoy files that
-look HTTP-ish but aren't, and key entry points.
-
-Output STRICT JSON ONLY — no prose, no markdown fences:
-[{"path": "src/foo.py", "text": "..."}, ...]
-
-CODEBASE:
-${files_dump}
-EOF
-)
-
-  set +e
-  raw=$(printf '%s' "$prompt" | timeout --kill-after=5 "${HAIKU_TIMEOUT}" \
-    claude --print --model "$HAIKU_MODEL" 2>/dev/null)
-  rc=$?
-  set -e
-
-  if [ "$rc" -ne 0 ]; then
-    echo "  ⚠  Haiku summary call exited rc=$rc; proceeding with no summaries" >&2
-    echo "[]"
-    return 0
-  fi
-
-  python3 - "$raw" "$HAIKU_MAX_SUMMARIES" <<'PYEOF'
-import json, re, sys
-raw = sys.argv[1].strip()
-cap = int(sys.argv[2])
-m = re.match(r"^```(?:json)?\s*\n?(.*?)\n?```\s*$", raw, re.DOTALL)
-if m:
-    raw = m.group(1).strip()
-try:
-    parsed = json.loads(raw)
-    if not isinstance(parsed, list):
-        raise ValueError("top-level JSON is not a list")
-    cleaned = []
-    seen = set()
-    for item in parsed:
-        if not isinstance(item, dict):
-            continue
-        path = item.get("path")
-        text = item.get("text")
-        if not isinstance(path, str) or not path.strip():
-            continue
-        if not isinstance(text, str) or not text.strip():
-            continue
-        path = path.strip()
-        if path in seen:
-            continue
-        seen.add(path)
-        cleaned.append({"path": path, "text": text.strip()})
-        if len(cleaned) >= cap:
-            break
-    print(json.dumps(cleaned))
-except Exception as e:
-    sys.stderr.write(f"  ⚠  Haiku summary output not parseable as JSON: {e}\n")
-    sys.stderr.write(f"     raw (first 400 chars): {raw[:400]!r}\n")
-    print("[]")
-PYEOF
-}
-
-# ── Seed helpers — used by AUTO_HAIKU_CLM, AUTO_HAIKU_SUM, AUTO_HAIKU_SUM_CLM ─
+# ── Seed helper — used by AUTO_HAIKU_CLAIMS ──────────────────────────────────
 seed_haiku_claims() {
   local dir="$1"
   echo "  $STEP  [haiku-claims] calling Haiku ($HAIKU_MODEL)…" >&2
@@ -765,38 +652,10 @@ for item in json.load(sys.stdin):
   done <<< "$haiku_spec"
 }
 
-seed_haiku_summaries() {
-  local dir="$1"
-  echo "  $STEP  [haiku-summaries] calling Haiku ($HAIKU_MODEL)…" >&2
-  local haiku_json haiku_spec n_summaries
-  haiku_json=$(haiku_extract_summaries "$dir")
-  echo "$haiku_json" > "$dir/.h5i-haiku-summaries.json"
-  n_summaries=$(echo "$haiku_json" | python3 -c \
-    "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
-  echo "  [haiku-summaries] produced $n_summaries summary(ies)" >&2
-
-  haiku_spec=$(echo "$haiku_json" | python3 -c "
-import json, sys
-for item in json.load(sys.stdin):
-    path = item['path']
-    text = item['text'].replace('|', ' ').replace('\n', ' ')
-    print(f'{path}|{text}')
-" 2>/dev/null || true)
-
-  while IFS='|' read -r path text; do
-    [[ -z "$path" ]] && continue
-    (cd "$dir" && "$H5I" summary set "$path" --text "$text" >/dev/null 2>&1) || {
-      echo "  $FAIL  failed to record Haiku summary for: $path" >&2
-    }
-  done <<< "$haiku_spec"
-}
-
 # ── h5i init + per-arm pre-seeding ────────────────────────────────────────────
-# ARM is one of: CONTROL, AUTO_HAIKU_CLM, AUTO_HAIKU_SUM, AUTO_HAIKU_SUM_CLM.
-#   CONTROL              — no pre-seeded claims, no pre-seeded summaries.
-#   AUTO_HAIKU_CLM       — Haiku-curated claims only.
-#   AUTO_HAIKU_SUM       — Haiku-curated summaries only.
-#   AUTO_HAIKU_SUM_CLM   — Haiku-curated claims AND summaries (two Haiku calls).
+# ARM is one of: CONTROL, AUTO_HAIKU_CLAIMS.
+#   CONTROL              — no pre-seeded claims.
+#   AUTO_HAIKU_CLAIMS    — Haiku-curated claims (one Haiku call at setup).
 prepare_arm() {
   local dir="$1" arm="$2"
   (cd "$dir" && "$H5I" init >/dev/null 2>&1) || true
@@ -804,15 +663,8 @@ prepare_arm() {
     "add logging to HTTP helpers; leave other functions untouched" >/dev/null 2>&1) || true
 
   case "$arm" in
-    AUTO_HAIKU_CLM)
+    AUTO_HAIKU_CLAIMS)
       seed_haiku_claims "$dir"
-      ;;
-    AUTO_HAIKU_SUM)
-      seed_haiku_summaries "$dir"
-      ;;
-    AUTO_HAIKU_SUM_CLM)
-      seed_haiku_claims "$dir"
-      seed_haiku_summaries "$dir"
       ;;
     CONTROL)
       : # nothing
@@ -1151,7 +1003,7 @@ RESULTS_FILE="${WORKDIR_BASE}-results.jsonl"
 # Cyclic 4-arm rotation per trial to mitigate serial drift (Anthropic-side
 # caches, backend load, model-state drift). Each trial cycles through all
 # four arms with a rotating starting offset — Latin-square-ish.
-ARMS=(CONTROL AUTO_HAIKU_CLM AUTO_HAIKU_SUM AUTO_HAIKU_SUM_CLM)
+ARMS=(CONTROL AUTO_HAIKU_CLAIMS)
 ARM_COUNT=${#ARMS[@]}
 for i in $(seq 1 "$N_TRIALS"); do
   offset=$(( (i - 1) % ARM_COUNT ))
@@ -1175,7 +1027,7 @@ python3 - "$RESULTS_JSON_ONLY" <<'PYEOF'
 import json, sys, statistics as stats
 path = sys.argv[1]
 
-ARM_ORDER = ["CONTROL", "AUTO_HAIKU_CLM", "AUTO_HAIKU_SUM", "AUTO_HAIKU_SUM_CLM"]
+ARM_ORDER = ["CONTROL", "AUTO_HAIKU_CLAIMS"]
 arms = {a: [] for a in ARM_ORDER}
 with open(path) as f:
     for line in f:
@@ -1359,46 +1211,11 @@ else:
               + ("  ⚠ within-arm stdev ≥ |Δ|" if noisy and abs(pct) > 0 else ""))
 
     verdict(
-        "AUTO_HAIKU_CLM (Haiku-curated claims only)", "AUTO_HAIKU_CLM",
+        "AUTO_HAIKU_CLAIMS (Haiku-curated claims)", "AUTO_HAIKU_CLAIMS",
         direction="savings",
-        explain_win="cross-cutting invariants seeded as claims pay off in retrieval",
+        explain_win="Haiku-auto-curated claims pay off in retrieval",
         explain_loss="Haiku-curated claims did not help on this task",
     )
-    verdict(
-        "AUTO_HAIKU_SUM (Haiku-curated summaries only)", "AUTO_HAIKU_SUM",
-        direction="savings",
-        explain_win="per-file orientation summaries pay off in retrieval",
-        explain_loss="Haiku-curated summaries did not help on this task",
-    )
-    verdict(
-        "AUTO_HAIKU_SUM_CLM (claims + summaries)", "AUTO_HAIKU_SUM_CLM",
-        direction="savings",
-        explain_win="claims + summaries stack (or saturate) above either alone",
-        explain_loss="combined did not help — diminishing or interfering signals",
-    )
-
-    # Stack-vs-saturate check: does CLM + SUM beat the better of CLM-alone or
-    # SUM-alone? If yes by ≥5pp, the two seeding mechanisms are complementary.
-    # If the combined arm matches the best single arm, they're saturating.
-    if all(succ.get(k) for k in ("AUTO_HAIKU_CLM", "AUTO_HAIKU_SUM", "AUTO_HAIKU_SUM_CLM")):
-        clm = summarize([r.get("cache_read_tokens", 0) for r in succ["AUTO_HAIKU_CLM"]])
-        sum_ = summarize([r.get("cache_read_tokens", 0) for r in succ["AUTO_HAIKU_SUM"]])
-        both = summarize([r.get("cache_read_tokens", 0) for r in succ["AUTO_HAIKU_SUM_CLM"]])
-        if c_cr['mean'] > 0:
-            clm_pct = (c_cr['mean'] - clm['mean']) / c_cr['mean'] * 100.0
-            sum_pct = (c_cr['mean'] - sum_['mean']) / c_cr['mean'] * 100.0
-            both_pct = (c_cr['mean'] - both['mean']) / c_cr['mean'] * 100.0
-            best_single = max(clm_pct, sum_pct)
-            stack_gain = both_pct - best_single
-            print()
-            print(f"  Stack check: CLM saves {clm_pct:+.1f}%, SUM saves {sum_pct:+.1f}%, "
-                  f"BOTH saves {both_pct:+.1f}%")
-            if stack_gain >= 5:
-                print(f"    → claims + summaries STACK (combined beats best single by {stack_gain:+.1f}pp)")
-            elif stack_gain > -5:
-                print(f"    → claims + summaries SATURATE (combined ≈ best single, gap {stack_gain:+.1f}pp)")
-            else:
-                print(f"    → claims + summaries INTERFERE (combined worse than best single by {-stack_gain:.1f}pp)")
 
 # ── Sample-size caveat ──────────────────────────────────────────────────────
 print()
@@ -1414,9 +1231,9 @@ PYEOF
 echo
 echo "══════════════════════════════════════════════════════════════════════════"
 echo "  Raw per-trial records:  $RESULTS_JSON_ONLY"
-echo "  Workdirs preserved:     ${WORKDIR_BASE}-{CONTROL,AUTO_HAIKU_CLM,AUTO_HAIKU_SUM,AUTO_HAIKU_SUM_CLM}-<trial>"
+echo "  Workdirs preserved:     ${WORKDIR_BASE}-{CONTROL,AUTO_HAIKU_CLAIMS}-<trial>"
 echo "  Inspect claims:         cat <workdir>/.git/.h5i/claims/*.json"
-echo "  Inspect Haiku output:   cat <workdir>/.h5i-haiku-{claims,summaries}.json"
+echo "  Inspect Haiku output:   cat <AUTO_HAIKU_CLAIMS-workdir>/.h5i-haiku-claims.json"
 echo "══════════════════════════════════════════════════════════════════════════"
 echo
 echo "$STEP  done."
