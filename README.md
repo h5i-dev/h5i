@@ -187,6 +187,10 @@ Ranks commits by uncertainty signals, blind edits (files modified without being 
 
 ### `h5i claims` — content-addressed facts that auto-invalidate
 
+<p align="center">
+  <img src="./assets/claims-merkle.svg" alt="A claim sits above its evidence: each evidence path resolves to a git blob OID at HEAD, and a Merkle root (evidence_oid) is computed over the (path, blob_oid) pairs. Editing any evidence file changes its blob OID, which changes the Merkle root, which auto-invalidates the claim from live to stale." width="100%">
+</p>
+
 `h5i claims` records conclusions with their evidence pinned as a Merkle hash over `(path, blob_oid)` pairs at HEAD. The claim stays `live` until any evidence blob changes, then auto-invalidates.
 
 ```bash
