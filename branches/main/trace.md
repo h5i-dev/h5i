@@ -1388,3 +1388,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [14:21:18] ACT: edited README.md
 [14:21:38] OBSERVE: read assets/claims-merkle.svg
 [14:28:21] ACT: wrote assets/claims-merkle.svg
+[14:31:32] ACT: wrote assets/claims-merkle.svg
