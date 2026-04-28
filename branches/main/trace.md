@@ -1397,3 +1397,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [00:25:11] OBSERVE: read Cargo.toml
 [00:25:11] OBSERVE: read src/main.rs
 [00:25:11] OBSERVE: read src/lib.rs
+[00:25:11] OBSERVE: read tests/cli_integration.rs
