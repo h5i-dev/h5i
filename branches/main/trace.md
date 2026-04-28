@@ -1429,3 +1429,4 @@ _[Checkpoint: 69effe6a — assessed production-readiness path for h5i and identi
 
 [00:29:45] ACT: edited src/storage.rs, src/lib.rs, src/repository.rs, src/main.rs: added versioned storage layout helpers, h5i doctor validation/repair/export, safer h5i root resolution, and removed git-index panic in policy check
 [00:31:53] ACT: edited tests/cli_integration.rs: added doctor CLI coverage for missing sidecar and --repair layout creation
+[00:34:20] ACT: edited src/repository.rs: added fallback h5i signature for recovery/shadow/AST refs and removed a test dependency on global git config
