@@ -181,3 +181,16 @@ On-demand harvester for Claude Code away_summary JSONL records. Parses type=syst
 
 ---
 
+## Commit 69effe6a — 2026-04-28 00:25 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+On-demand harvester for Claude Code away_summary JSONL records. Parses type=system/subtype=away_summary, splits Goal/Next, creates one gcc_commit per recap, stores imported uuids in recaps.json for idempotency. Flags: --session, --since, --dry-run. 5 tests, all 347 lib tests still pass.
+
+### This Commit's Contribution
+
+
+---
+
