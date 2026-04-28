@@ -1427,3 +1427,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 _[Checkpoint: 69effe6a — assessed production-readiness path for h5i and identified stabilization roadmap]_
 ---
 
+[00:29:45] ACT: edited src/storage.rs, src/lib.rs, src/repository.rs, src/main.rs: added versioned storage layout helpers, h5i doctor validation/repair/export, safer h5i root resolution, and removed git-index panic in policy check
