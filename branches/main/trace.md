@@ -1464,3 +1464,4 @@ _[Checkpoint: 69effe6a — assessed production-readiness path for h5i and identi
 [00:38:12] OBSERVE: read src/repository.rs
 [00:38:12] OBSERVE: searched src/main.rs for "serde_json""
 [00:38:12] OBSERVE: searched main.rs for "serde_json::json|use serde_json"
+[00:38:12] OBSERVE: read src/claims.rs
