@@ -1433,3 +1433,4 @@ _[Checkpoint: 69effe6a — assessed production-readiness path for h5i and identi
 [00:36:32] ACT: edited src/storage.rs: report repaired schema-version as an OK repair instead of leaving a stale warning
 [00:38:12] THINK: Initial hardening slice adds versioned layout + doctor + targeted panic removal over a broad migration/import system because validation/repair establishes the production recovery boundary with low risk.
 [00:38:12] OBSERVE: searched src/ctx.rs for "src/repository.rs"
+[00:38:12] OBSERVE: searched src/repository.rs for "src/main.rs"
