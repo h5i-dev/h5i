@@ -13,11 +13,13 @@ implement context versioning features
 - [x] Simplifying the README around the basic workflow (init → hooks/MCP → auto-capture → push → audit) with a short git-refs section. Just fixed Quick-start step 1 to note that h5i init writes both CLAUDE.md and AGENTS.md; next, confirm with you whether the README is ready or needs more trimming.
 - [x] added h5i context recap importer
 - [x] assessed production-readiness path for h5i and identified stabilization roadmap
+- [x] implemented storage doctor and recovery hardening
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-04-28 00:38 UTC] `main`: implemented storage doctor and recovery hardening
 - [2026-04-28 00:25 UTC] `main`: assessed production-readiness path for h5i and identified stabilization roadmap
 - [2026-04-23 22:39 UTC] `main`: added h5i context recap importer
 - [2026-04-23 22:39 UTC] `main`: Simplifying the README around the basic workflow (init → hooks/MCP → auto-capture → push → audit) with a short git-refs section. Just fixed Quick-start step 1 to note that h5i init writes both CLAUDE.md and AGENTS.md; next, confirm with you whether the README is ready or needs more trimming.
