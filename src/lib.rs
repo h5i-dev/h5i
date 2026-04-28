@@ -16,6 +16,7 @@ pub mod memory;
 pub mod metadata;
 pub mod recap;
 pub mod session_log;
+pub mod storage;
 pub mod repository;
 pub mod resume;
 pub mod review;

@@ -12,6 +12,7 @@ use h5i_core::ctx;
 use h5i_core::memory;
 use h5i_core::metadata::{AiMetadata, Decision, IntegrityLevel, Severity, TestSource};
 use h5i_core::session_log;
+use h5i_core::storage::{self, DoctorSeverity};
 use h5i_core::repository::H5iRepository;
 use h5i_core::review::REVIEW_THRESHOLD;
 use h5i_core::session::LocalSession;
@@ -296,6 +297,21 @@ enum Commands {
     ///
     ///   "h5i": { "command": "h5i", "args": ["mcp"] }
     Mcp,
+
+    /// Validate and repair h5i sidecar storage and refs
+    Doctor {
+        /// Create missing sidecar directories and schema metadata
+        #[arg(long)]
+        repair: bool,
+
+        /// Export a recovery copy of .git/.h5i plus a refs manifest into this directory
+        #[arg(long, value_name = "DIR")]
+        export: Option<PathBuf>,
+
+        /// Output raw JSON instead of the pretty report
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Show an instant AI footprint audit: how much of this repo is AI-generated,
     /// which directories are fully AI-written, and where the riskiest files are
@@ -1213,6 +1229,45 @@ fn auto_checkpoint_context(workdir: &Path, explicit_summary: Option<&str>) -> an
     Ok(())
 }
 
+fn print_doctor_report(report: &storage::DoctorReport) {
+    let status = if report.ok { SUCCESS } else { ERROR };
+    let label = if report.ok {
+        style("storage healthy").green().bold()
+    } else {
+        style("storage problems found").red().bold()
+    };
+    println!("{} {}", status, label);
+    println!("  root: {}", style(report.h5i_root.display()).dim());
+    match report.schema_version {
+        Some(v) => println!("  schema: {}", style(v).cyan()),
+        None => println!("  schema: {}", style("missing").yellow()),
+    }
+    if report.repaired {
+        println!("  repaired: {}", style("yes").green());
+    }
+    if let Some(path) = &report.export_path {
+        println!("  export: {}", style(path.display()).cyan());
+    }
+
+    if report.issues.is_empty() {
+        println!("\n  {}", style("No issues found.").dim());
+        return;
+    }
+
+    println!();
+    for issue in &report.issues {
+        let prefix = match issue.severity {
+            DoctorSeverity::Ok => style("ok").green(),
+            DoctorSeverity::Warning => style("warn").yellow(),
+            DoctorSeverity::Error => style("error").red().bold(),
+        };
+        println!("  {} [{}] {}", prefix, issue.code, issue.detail);
+        if let Some(repair) = &issue.repair {
+            println!("      repair: {}", style(repair).dim());
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -1445,9 +1500,7 @@ fn main() -> anyhow::Result<()> {
                 if let Ok(Some(cfg)) = h5i_core::policy::load_policy(&workdir) {
                     // Collect staged file paths from the git index.
                     let staged_files: Vec<String> = {
-                        let mut idx = repo.git().index().unwrap_or_else(|_| {
-                            panic!("cannot open git index")
-                        });
+                        let mut idx = repo.git().index()?;
                         let _ = idx.read(true);
                         idx.iter()
                             .map(|e| String::from_utf8_lossy(&e.path).to_string())
@@ -3451,6 +3504,23 @@ jq -c '{
             let workdir = std::env::current_dir()?;
             eprintln!("h5i-mcp: listening on stdio (workdir: {})", workdir.display());
             h5i_core::mcp::run_stdio(workdir)?;
+        }
+
+        Commands::Doctor {
+            repair,
+            export,
+            json,
+        } => {
+            let git_repo = git2::Repository::discover(".")?;
+            let report = storage::doctor(&git_repo, repair, export.as_deref())?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print_doctor_report(&report);
+            }
+            if !report.ok {
+                std::process::exit(2);
+            }
         }
 
         Commands::Vibe { limit, json } => {

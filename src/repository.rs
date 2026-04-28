@@ -28,6 +28,14 @@ use crate::metadata::{
 pub const H5I_NOTES_REF: &str = "refs/h5i/notes";
 pub const H5I_AST_REF: &str = "refs/h5i/ast";
 
+fn fallback_signature() -> Result<Signature<'static>, H5iError> {
+    Signature::now("h5i", "h5i@local").map_err(H5iError::Git)
+}
+
+fn repo_signature_or_fallback(repo: &Repository) -> Result<Signature<'_>, H5iError> {
+    repo.signature().or_else(|_| fallback_signature())
+}
+
 pub struct H5iRepository {
     git_repo: Repository,
     pub h5i_root: PathBuf,
@@ -71,21 +79,8 @@ impl H5iRepository {
     /// - the `.h5i` directories cannot be created
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, H5iError> {
         let git_repo = Repository::discover(path)?;
-        let h5i_root = git_repo
-            .path()
-            .parent()
-            .ok_or_else(|| {
-                H5iError::InvalidPath(
-                    "Could not find the parent directory of the repository".to_string(),
-                )
-            })?
-            .join(".git/.h5i");
-
-        if !h5i_root.exists() {
-            fs::create_dir_all(&h5i_root)?;
-            fs::create_dir_all(h5i_root.join("metadata"))?;
-            fs::create_dir_all(h5i_root.join("crdt"))?;
-        }
+        let h5i_root = crate::storage::h5i_root_for_repo(&git_repo)?;
+        crate::storage::ensure_layout(&h5i_root)?;
 
         Ok(H5iRepository { git_repo, h5i_root })
     }
@@ -172,8 +167,13 @@ impl H5iRepository {
         // Scan staged files
         for entry in index.iter() {
             let path_bytes = &entry.path;
-            let path_str = std::str::from_utf8(path_bytes).unwrap();
-            let full_path = self.git_repo.workdir().unwrap().join(path_str);
+            let path_str = std::str::from_utf8(path_bytes).map_err(|e| {
+                H5iError::InvalidPath(format!("staged path is not valid UTF-8: {e}"))
+            })?;
+            let workdir = self.git_repo.workdir().ok_or_else(|| {
+                H5iError::InvalidPath("h5i commit requires a non-bare repository".to_string())
+            })?;
+            let full_path = workdir.join(path_str);
 
             // Harvest AST (Optional)
             if let Some(parser) = ast_parser {
@@ -1168,11 +1168,13 @@ impl H5iRepository {
         oid: Oid,
         file_path: &str,
     ) -> Result<Vec<u8>, H5iError> {
-        let delta_path = DeltaStore::committed_path(
-            self.h5i_root.parent().unwrap(),
-            &oid.to_string(),
-            file_path,
-        );
+        let git_common_dir = self.h5i_root.parent().ok_or_else(|| {
+            H5iError::InvalidPath(format!(
+                "h5i sidecar path has no parent: {}",
+                self.h5i_root.display()
+            ))
+        })?;
+        let delta_path = DeltaStore::committed_path(git_common_dir, &oid.to_string(), file_path);
 
         if !delta_path.exists() {
             return Err(H5iError::Internal("Delta not found for this commit".into()));
@@ -1827,7 +1829,7 @@ impl H5iRepository {
                 let shadow_tree_oid = index.write_tree().map_err(H5iError::Git)?;
                 let shadow_tree = repo.find_tree(shadow_tree_oid).map_err(H5iError::Git)?;
 
-                let sig = repo.signature().map_err(H5iError::Git)?;
+                let sig = repo_signature_or_fallback(repo)?;
                 let head_commit = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
                 let parents: Vec<git2::Commit<'_>> = head_commit.iter().cloned().collect();
                 let parent_refs: Vec<&git2::Commit<'_>> = parents.iter().collect();
@@ -2119,9 +2121,7 @@ impl H5iRepository {
         let tree_oid = builder.write()?;
         let tree = self.git_repo.find_tree(tree_oid)?;
 
-        let sig = self.git_repo.signature().unwrap_or_else(|_| {
-            git2::Signature::now("h5i", "h5i@local").unwrap()
-        });
+        let sig = repo_signature_or_fallback(&self.git_repo)?;
         let parents: Vec<&git2::Commit> = parent_commit.iter().collect();
         self.git_repo.commit(
             Some(H5I_AST_REF),
@@ -3085,7 +3085,7 @@ mod tests {
         let h5i_repo = setup_test_repo(dir.path());
         let git_repo = &h5i_repo.git_repo;
         let file_path = "main.py";
-        let sig = git_repo.signature()?;
+        let sig = Signature::now("test", "test@example.com")?;
 
         // Helper to attach metadata to a commit via Git Notes
         let attach_metadata =

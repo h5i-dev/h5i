@@ -144,6 +144,29 @@ fn init_is_idempotent() {
     repo.h5i_ok(&["init"]);
 }
 
+#[test]
+fn doctor_repair_creates_storage_layout() {
+    let repo = Repo::new();
+
+    let out = repo.h5i_ok(&["doctor", "--repair"]);
+    let s = stdout(&out);
+    assert!(s.contains("storage healthy"), "unexpected doctor output: {s}");
+
+    let h5i_dir = repo.path().join(".git").join(".h5i");
+    assert!(h5i_dir.join("storage-version").exists());
+    assert!(h5i_dir.join("claims").is_dir());
+}
+
+#[test]
+fn doctor_without_repair_reports_missing_sidecar() {
+    let repo = Repo::new();
+
+    let out = repo.h5i(&["doctor"]);
+    assert_eq!(out.status.code(), Some(2));
+    let s = stdout(&out);
+    assert!(s.contains("missing_sidecar"), "unexpected doctor output: {s}");
+}
+
 // ─── commit ─────────────────────────────────────────────────────────────────
 
 #[test]
