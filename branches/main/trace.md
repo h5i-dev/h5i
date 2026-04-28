@@ -1457,3 +1457,4 @@ _[Checkpoint: 69effe6a — assessed production-readiness path for h5i and identi
 [00:38:12] OBSERVE: read src/delta_store.rs
 [00:38:12] OBSERVE: read src/delta_store.rs
 [00:38:12] OBSERVE: searched src/repository.rs
+[00:38:12] OBSERVE: read src/repository.rs
