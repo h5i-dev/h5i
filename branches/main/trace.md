@@ -1393,3 +1393,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [00:25:11] THINK: Answer production-readiness as staged maturity roadmap grounded in repo surface and risk areas over generic advice because h5i already has broad CLI/MCP/server functionality.
 [00:25:11] OBSERVE: listed files under .
 [00:25:11] OBSERVE: listed files under .
+[00:25:11] OBSERVE: read README.md
