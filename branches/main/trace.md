@@ -1418,3 +1418,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [00:25:11] OBSERVE: read install.sh
 [00:25:11] OBSERVE: read src/policy.rs
 [00:25:11] OBSERVE: read .github/workflows/release.yaml
+[00:25:11] OBSERVE: read install.sh
