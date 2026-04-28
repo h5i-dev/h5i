@@ -1409,3 +1409,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [00:25:11] OBSERVE: searched src for "TODO|FIXME|unwrap\(|expect\(|panic!|unimplemented!|todo!"
 [00:25:11] OBSERVE: listed files under .github
 [00:25:11] OBSERVE: searched .github for "Cargo.toml"
+[00:25:11] OBSERVE: searched Cargo.toml for "\[profile|deny|forbid|clippy|rustfmt|audit|release|cross"
