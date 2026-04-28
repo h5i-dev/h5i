@@ -1412,3 +1412,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [00:25:11] OBSERVE: searched Cargo.toml for "\[profile|deny|forbid|clippy|rustfmt|audit|release|cross"
 [00:25:11] OBSERVE: listed files under .github
 [00:25:11] OBSERVE: read .github/workflows/test.yaml
+[00:25:11] OBSERVE: read .github/workflows/test.yaml
