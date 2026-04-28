@@ -1390,3 +1390,4 @@ _[Checkpoint: 69ea9fb8 — added h5i context recap importer]_
 [14:28:21] ACT: wrote assets/claims-merkle.svg
 [14:31:32] ACT: wrote assets/claims-merkle.svg
 [15:11:59] ACT: wrote scripts/experiment_claims_results.md
+[00:25:11] THINK: Answer production-readiness as staged maturity roadmap grounded in repo surface and risk areas over generic advice because h5i already has broad CLI/MCP/server functionality.
