@@ -1488,3 +1488,4 @@ _[Checkpoint: 69effe6a — assessed production-readiness path for h5i and identi
 [00:38:12] OBSERVE: searched memory.rs for "fn restore_snapshot|default_memory_dir|claude_memory_dir"
 [00:38:12] OBSERVE: read src/memory.rs
 [00:38:12] OBSERVE: read src/memory.rs
+[00:38:12] OBSERVE: read src/memory.rs
