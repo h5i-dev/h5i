@@ -264,3 +264,16 @@ Earlier iterations cranked density too far. Pass 1 (CSS): html base 14px, line-h
 
 ---
 
+## Commit 69fa7234 — 2026-05-05 22:41 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+DagViz.tsx: 5-lane SVG layout (OBSERVE/THINK/ACT/NOTE/MERGE) with HTML nodes positioned absolutely and an SVG layer behind drawing cubic-bezier parent->child edges. Default 40 last nodes, 'Show all' toggle. Hover highlights a node and tints all incident edges with the lane colour. RecentActivity: replaces the old mini_trace summary list with full DAG node content (4-line clamp), kind tag, timestamp, and node id — finally surfaces what OBSERVE / THINK / ACT entries actually said. Bundle CSS 354KB.
+
+---
+

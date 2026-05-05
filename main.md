@@ -25,11 +25,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/Workbench.tsx; edited src/Workbench.tsx; edited src/theme.css
 - [x] Size pass: bump text closer to GitHub-comfortable
 - [x] edited ReviewView.tsx; edited ReviewView.tsx; edited ReviewView.tsx
+- [x] DAG visualization + full OBSERVE/THINK/ACT content
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-05 22:41 UTC] `main`: DAG visualization + full OBSERVE/THINK/ACT content
 - [2026-05-05 22:34 UTC] `main`: edited ReviewView.tsx; edited ReviewView.tsx; edited ReviewView.tsx
 - [2026-05-05 22:33 UTC] `main`: Size pass: bump text closer to GitHub-comfortable
 - [2026-05-05 22:28 UTC] `main`: edited src/Workbench.tsx; edited src/Workbench.tsx; edited src/theme.css
