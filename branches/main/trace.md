@@ -137,3 +137,4 @@ _[Checkpoint: 69fa637a — edited server.rs; edited server.rs; Bootstrapped /v2 
 _[Checkpoint: 69fa63b7 — edited server.rs; edited server.rs; Bootstrapped /v2 React workbench. web/ created with Vite+React+TS+Blueprint.js (103 …]_
 ---
 
+[21:46:33] OBSERVE: read metadata.rs
