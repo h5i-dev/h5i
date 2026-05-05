@@ -158,3 +158,4 @@ _[Checkpoint: 69fa63b7 — edited server.rs; edited server.rs; Bootstrapped /v2 
 [21:53:12] ACT: edited server.rs
 [21:53:15] OBSERVE: read server.rs
 [21:56:05] ACT: edited server.rs
+[21:58:00] ACT: Stages B-E complete. New TS/TSX: api.ts (extended types), RefsTab, SessionsTab, IntegrityTab, ContextTab, MemoryView, ReviewView. Workbench restructured: top-nav mode switcher (Explore/Review/Memory), right pane has Blueprint Tabs (Refs/Sessions/Integrity/Context/Summary). build.rs auto-runs npm run build when web/src changes (via file mtime check + cargo:rerun-if-changed). Routes: / serves SPA, /v2 alias, /legacy = old FRONTEND_HTML, /assets/*path -> rust-embed (handler prepends 'assets/' since route strips it). Tests: all 449 pass (legacy const still tested). Bundle 239KB JS / 343KB CSS / ~74KB+98KB+100KB JS gzipped.
