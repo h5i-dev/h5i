@@ -244,6 +244,23 @@ enum Commands {
         remote: String,
     },
 
+    /// Fetch all h5i refs (notes + memory + context + ast) from a remote in one shot.
+    ///
+    /// By default, divergent local refs are KEPT — fast-forwards apply silently,
+    /// `refs/h5i/notes` is auto-merged via `git notes merge -s union`, and other
+    /// chain-style refs (memory / context / ast) are left alone with a warning
+    /// when they have diverged. Pass `--force` to overwrite those local refs.
+    Pull {
+        /// Remote to pull from
+        #[arg(short, long, default_value = "origin")]
+        remote: String,
+
+        /// Overwrite local refs that have diverged from the remote.
+        /// Has no effect on refs/h5i/notes (always merged with strategy=union).
+        #[arg(short, long)]
+        force: bool,
+    },
+
     /// Manage Claude Code hooks for automatic prompt capture and context tracing.
     /// Run `h5i hook setup` to print install instructions.
     /// Run `h5i hook run` (or just `h5i hook`) as the PostToolUse handler in .claude/settings.json.
@@ -1227,6 +1244,125 @@ fn auto_checkpoint_context(workdir: &Path, explicit_summary: Option<&str>) -> an
         style(summary).italic()
     );
     Ok(())
+}
+
+/// Recursively merge two git trees with `overlay` winning on path conflicts.
+///
+/// Used by `h5i pull` to union-merge `refs/h5i/notes` after a divergence:
+/// since each tree entry is keyed by code-commit OID and code commits are
+/// content-addressed, two parties' notes typically annotate disjoint OIDs
+/// and "union" is exactly the right merge for them. On the rare case the
+/// same code-commit OID is annotated on both sides (would imply offline
+/// concurrent annotation of the same commit), `overlay` wins — we use this
+/// to prefer local content over incoming so a pull is never destructive.
+///
+/// Subtrees are merged recursively so a future fan-out by libgit2 (which
+/// our notes refs use today only with flat trees, but may not forever)
+/// keeps working without code changes here.
+fn union_merge_trees(
+    repo: &git2::Repository,
+    base: Option<&git2::Tree<'_>>,
+    overlay: Option<&git2::Tree<'_>>,
+) -> Result<git2::Oid, git2::Error> {
+    use std::collections::BTreeMap;
+
+    enum Slot {
+        Blob(i32, git2::Oid),
+        Subtree(git2::Oid),
+    }
+
+    let mut merged: BTreeMap<String, Slot> = BTreeMap::new();
+
+    if let Some(t) = base {
+        for entry in t.iter() {
+            let name = match entry.name() {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            match entry.kind() {
+                Some(git2::ObjectType::Blob) => {
+                    merged.insert(name, Slot::Blob(entry.filemode(), entry.id()));
+                }
+                Some(git2::ObjectType::Tree) => {
+                    merged.insert(name, Slot::Subtree(entry.id()));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if let Some(t) = overlay {
+        for entry in t.iter() {
+            let name = match entry.name() {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            match entry.kind() {
+                Some(git2::ObjectType::Blob) => {
+                    merged.insert(name, Slot::Blob(entry.filemode(), entry.id()));
+                }
+                Some(git2::ObjectType::Tree) => {
+                    let merged_oid = match merged.get(&name) {
+                        Some(Slot::Subtree(prev_oid)) => {
+                            let prev = repo.find_tree(*prev_oid)?;
+                            let new = repo.find_tree(entry.id())?;
+                            union_merge_trees(repo, Some(&prev), Some(&new))?
+                        }
+                        _ => entry.id(),
+                    };
+                    merged.insert(name, Slot::Subtree(merged_oid));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut builder = repo.treebuilder(None)?;
+    for (name, slot) in &merged {
+        match slot {
+            Slot::Blob(mode, oid) => {
+                builder.insert(name.as_str(), *oid, *mode)?;
+            }
+            Slot::Subtree(oid) => {
+                builder.insert(name.as_str(), *oid, 0o040000)?;
+            }
+        }
+    }
+    builder.write()
+}
+
+/// Build a union-merge commit of two notes commits and return its OID.
+///
+/// The new commit has both inputs as parents (so future fast-forwards from
+/// either side stay valid) and a tree that is the union of both — with the
+/// `local` side winning on the (theoretical) per-OID conflict.
+fn union_merge_notes_commits(
+    repo: &git2::Repository,
+    local_oid: git2::Oid,
+    incoming_oid: git2::Oid,
+) -> Result<git2::Oid, git2::Error> {
+    let local_commit = repo.find_commit(local_oid)?;
+    let incoming_commit = repo.find_commit(incoming_oid)?;
+    let local_tree = local_commit.tree()?;
+    let incoming_tree = incoming_commit.tree()?;
+
+    // base = incoming (loser), overlay = local (winner) → local wins on conflict.
+    let merged_tree_oid = union_merge_trees(repo, Some(&incoming_tree), Some(&local_tree))?;
+    let merged_tree = repo.find_tree(merged_tree_oid)?;
+
+    let sig = repo
+        .signature()
+        .unwrap_or_else(|_| git2::Signature::now("h5i", "h5i@local").unwrap());
+
+    let parents = [&local_commit, &incoming_commit];
+    repo.commit(
+        None,
+        &sig,
+        &sig,
+        "h5i pull: union-merge of refs/h5i/notes",
+        &merged_tree,
+        &parents,
+    )
 }
 
 fn print_doctor_report(report: &storage::DoctorReport) {
@@ -2746,6 +2882,232 @@ jq -c '{
                     style(&remote).yellow(),
                     style(&remote).yellow(),
                     style("git pull").bold()
+                );
+            }
+        }
+
+        Commands::Pull { remote, force } => {
+            let workdir = std::env::current_dir()?;
+
+            println!(
+                "{} {} from {}",
+                STEP,
+                style("Pulling all h5i refs").cyan().bold(),
+                style(&remote).yellow()
+            );
+
+            use std::io::Write as _;
+
+            // Helper: run `git <args>` in the working dir, capturing output.
+            let git = |args: &[&str]| -> std::io::Result<std::process::Output> {
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(&workdir)
+                    .output()
+            };
+
+            // Helper: resolve a ref to its full SHA, or None if it doesn't exist.
+            let resolve_ref = |refname: &str| -> Option<String> {
+                let out = std::process::Command::new("git")
+                    .args(["rev-parse", "--verify", "--quiet", refname])
+                    .current_dir(&workdir)
+                    .output()
+                    .ok()?;
+                if out.status.success() {
+                    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            };
+
+            // Helper: is `ancestor` an ancestor of `descendant`?
+            let is_ancestor = |ancestor: &str, descendant: &str| -> bool {
+                std::process::Command::new("git")
+                    .args(["merge-base", "--is-ancestor", ancestor, descendant])
+                    .current_dir(&workdir)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+            };
+
+            // Sync one h5i ref from the remote, choosing the safest action that
+            // preserves local data:
+            //
+            //   missing on remote → skip
+            //   no local copy     → install (fast install)
+            //   identical         → up to date
+            //   local ⊑ remote    → fast-forward
+            //   remote ⊑ local    → keep local (we're ahead)
+            //   diverged          → notes: union-merge; others: keep unless --force
+            //
+            // We always fetch into a per-call temp ref under refs/h5i/_incoming/
+            // first so the remote's value can never overwrite the live local ref
+            // implicitly — every ref update goes through `git update-ref` here.
+            // The temp ref is deleted at the end of each call.
+            //
+            // Returns true iff the live local ref was changed by this call.
+            let sync_one = |refname: &str| -> anyhow::Result<bool> {
+                print!("  {} {} … ", style("→").dim(), style(refname).yellow());
+                std::io::stdout().flush()?;
+
+                let basename = refname.rsplit('/').next().unwrap_or("ref");
+                let incoming = format!("refs/h5i/_incoming/{}", basename);
+
+                // Always force-fetch into the temp ref. The temp ref is
+                // private to this call, so this can never destroy user data;
+                // it just guarantees we get the remote's latest into a known
+                // local name we can compare against.
+                let fetch_refspec = format!("+{}:{}", refname, incoming);
+                let fetch = git(&["fetch", "--no-write-fetch-head", &remote, &fetch_refspec])?;
+
+                if !fetch.status.success() {
+                    let stderr = String::from_utf8_lossy(&fetch.stderr);
+                    let missing = stderr.contains("couldn't find remote ref")
+                        || stderr.contains("does not exist");
+                    if missing {
+                        println!(
+                            "{} ({})",
+                            style("skipped").yellow(),
+                            style("not present on remote").dim()
+                        );
+                    } else {
+                        println!("{}", style("failed").red());
+                        eprint!("{}", stderr);
+                    }
+                    return Ok(false);
+                }
+
+                let local = resolve_ref(refname);
+                let incoming_oid = match resolve_ref(&incoming) {
+                    Some(oid) => oid,
+                    None => {
+                        println!("{}", style("failed").red());
+                        eprintln!(
+                            "internal: fetched {} but could not resolve {}",
+                            refname, incoming
+                        );
+                        return Ok(false);
+                    }
+                };
+
+                // Outcome decided per-branch; helper closures keep the match
+                // arms readable without repeating the update-ref + report code.
+                let install = |label: &str| -> anyhow::Result<bool> {
+                    let st = git(&["update-ref", refname, &incoming_oid])?;
+                    if !st.status.success() {
+                        println!("{}", style("failed").red());
+                        eprint!("{}", String::from_utf8_lossy(&st.stderr));
+                        Ok(false)
+                    } else {
+                        println!("{} ({})", style("ok").green(), style(label).dim());
+                        Ok(true)
+                    }
+                };
+
+                let updated = match local.as_deref() {
+                    None => install("new")?,
+                    Some(l) if l == incoming_oid => {
+                        println!("{} ({})", style("ok").green(), style("up to date").dim());
+                        false
+                    }
+                    Some(l) if is_ancestor(l, &incoming_oid) => install("fast-forward")?,
+                    Some(l) if is_ancestor(&incoming_oid, l) => {
+                        println!(
+                            "{} ({})",
+                            style("ok").green(),
+                            style("local ahead — kept").dim()
+                        );
+                        false
+                    }
+                    Some(local_oid_str) => {
+                        // Diverged. For `refs/h5i/notes` we can union-merge
+                        // safely because each tree entry is keyed by a
+                        // content-addressed code-commit OID, so disjoint
+                        // annotations never overlap. Other refs (memory /
+                        // context / ast) are linear chains where merging
+                        // would require domain-specific knowledge — for
+                        // those we keep local unless --force.
+                        //
+                        // We can't use `git notes merge` directly: it
+                        // refuses to operate on refs outside `refs/notes/*`.
+                        // Instead we drive the merge ourselves via git2,
+                        // build the merged commit, and update the ref to
+                        // point at it.
+                        if refname == "refs/h5i/notes" {
+                            let g2 = git2::Repository::open(&workdir)
+                                .map_err(|e| anyhow::anyhow!("open git2 repo: {e}"))?;
+                            let local_git2 = git2::Oid::from_str(local_oid_str)
+                                .map_err(|e| anyhow::anyhow!("parse local oid: {e}"))?;
+                            let incoming_git2 = git2::Oid::from_str(&incoming_oid)
+                                .map_err(|e| anyhow::anyhow!("parse incoming oid: {e}"))?;
+                            let merge_result =
+                                union_merge_notes_commits(&g2, local_git2, incoming_git2);
+                            match merge_result {
+                                Ok(new_oid) => {
+                                    let new_oid_str = new_oid.to_string();
+                                    let st = git(&[
+                                        "update-ref",
+                                        refname,
+                                        &new_oid_str,
+                                        local_oid_str,
+                                    ])?;
+                                    if st.status.success() {
+                                        println!(
+                                            "{} ({})",
+                                            style("ok").green(),
+                                            style("merged (union)").dim()
+                                        );
+                                        true
+                                    } else {
+                                        println!("{}", style("failed").red());
+                                        eprint!("{}", String::from_utf8_lossy(&st.stderr));
+                                        false
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("{}", style("failed").red());
+                                    eprintln!("union-merge of notes refs failed: {e}");
+                                    false
+                                }
+                            }
+                        } else if force {
+                            install("forced over divergent local")?
+                        } else {
+                            println!(
+                                "{} ({})",
+                                style("kept local").yellow(),
+                                style("diverged — pass --force to overwrite").dim()
+                            );
+                            false
+                        }
+                    }
+                };
+
+                // Always clean up the temp ref. We ignore errors here because
+                // (a) it's best-effort housekeeping and (b) `update-ref -d`
+                // returns success even if the ref is already gone on most git
+                // versions, but we don't want a flaky cleanup to mask the
+                // primary outcome.
+                let _ = git(&["update-ref", "-d", &incoming]);
+
+                Ok(updated)
+            };
+
+            let notes_changed = sync_one("refs/h5i/notes")?;
+            sync_one(memory::MEMORY_REF)?;
+            sync_one("refs/h5i/context")?;
+            sync_one("refs/h5i/ast")?;
+
+            if notes_changed {
+                println!(
+                    "\n{} Inspect what arrived with:\n\
+                    \n    {}\
+                    \n    {}\
+                    \n    {}",
+                    style("Tip:").bold(),
+                    style("h5i log").bold(),
+                    style("h5i notes show").bold(),
+                    style("h5i memory log").bold(),
                 );
             }
         }

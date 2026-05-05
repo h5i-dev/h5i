@@ -833,3 +833,534 @@ fn context_init_outside_git_repo_fails_gracefully() {
         stdout(&out)
     );
 }
+
+// ─── h5i pull ───────────────────────────────────────────────────────────────
+
+/// End-to-end push/pull round-trip:
+///
+///   sender  ── h5i push ──▶  bare remote  ◀── h5i pull ──  receiver
+///
+/// We wire a sender repo and a receiver repo to the same bare remote, push the
+/// h5i refs from sender, and verify they land in receiver after `h5i pull`.
+#[test]
+fn pull_roundtrips_h5i_refs_through_a_bare_remote() {
+    // 1. Bare remote that both clones can talk to.
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    // 2. Sender: real commit + h5i provenance, then push.
+    let sender = Repo::new();
+    sender.h5i_ok(&["init"]);
+    sender.make_commit("a.rs", "fn main() {}", "first commit");
+    run_ok(
+        Command::new("git")
+            .args(["remote", "add", "origin", &remote_url])
+            .current_dir(sender.path()),
+    );
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+    let push_out = sender.h5i_ok(&["push", "--remote", "origin"]);
+    let push_s = stdout(&push_out);
+    assert!(
+        push_s.contains("refs/h5i/notes"),
+        "push output should mention notes ref:\n{push_s}"
+    );
+
+    // 3. Receiver: fresh repo wired to the same bare remote. We deliberately
+    // don't fetch `main` — `h5i pull` is about h5i refs, not code branches —
+    // and `git init -b main` already left refs/heads/main checked out, so
+    // fetching into it would be rejected anyway.
+    let receiver = Repo::new();
+    run_ok(
+        Command::new("git")
+            .args(["remote", "add", "origin", &remote_url])
+            .current_dir(receiver.path()),
+    );
+    receiver.h5i_ok(&["init"]);
+
+    // Sanity-check: receiver has no h5i notes ref before pulling.
+    let pre = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", "refs/h5i/notes"])
+        .current_dir(receiver.path())
+        .status()
+        .unwrap();
+    assert!(
+        !pre.success(),
+        "receiver should not yet have refs/h5i/notes before pull"
+    );
+
+    // 4. Pull and assert.
+    let pull_out = receiver.h5i_ok(&["pull", "--remote", "origin"]);
+    let pull_s = stdout(&pull_out);
+    assert!(
+        pull_s.contains("Pulling all h5i refs"),
+        "pull stdout should announce itself:\n{pull_s}"
+    );
+    assert!(
+        pull_s.contains("refs/h5i/notes") && pull_s.contains("ok"),
+        "pull stdout should report notes ref ok:\n{pull_s}"
+    );
+
+    let post = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", "refs/h5i/notes"])
+        .current_dir(receiver.path())
+        .output()
+        .unwrap();
+    assert!(
+        post.status.success(),
+        "receiver should now have refs/h5i/notes after pull:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&post.stdout),
+        String::from_utf8_lossy(&post.stderr),
+    );
+
+    // The notes ref should resolve to the same OID on both sides.
+    let sender_oid = run_ok(
+        Command::new("git")
+            .args(["rev-parse", "refs/h5i/notes"])
+            .current_dir(sender.path()),
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&sender_oid.stdout).trim(),
+        String::from_utf8_lossy(&post.stdout).trim(),
+        "sender and receiver should agree on refs/h5i/notes after pull"
+    );
+}
+
+/// `h5i pull` should succeed (and skip cleanly) against a remote that has
+/// no h5i refs at all — e.g. the very first time anyone runs it on a repo.
+#[test]
+fn pull_skips_gracefully_when_remote_has_no_h5i_refs() {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    // Seed `main` on the remote so `git fetch` has something to talk to,
+    // but deliberately leave refs/h5i/* unset.
+    let seeder = Repo::new();
+    fs::write(seeder.path().join("seed.txt"), "seed").unwrap();
+    run_ok(
+        Command::new("git")
+            .args(["add", "seed.txt"])
+            .current_dir(seeder.path()),
+    );
+    run_ok(
+        Command::new("git")
+            .args(["commit", "-m", "seed"])
+            .current_dir(seeder.path()),
+    );
+    run_ok(
+        Command::new("git")
+            .args(["remote", "add", "origin", &remote_url])
+            .current_dir(seeder.path()),
+    );
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(seeder.path()),
+    );
+
+    let receiver = Repo::new();
+    run_ok(
+        Command::new("git")
+            .args(["remote", "add", "origin", &remote_url])
+            .current_dir(receiver.path()),
+    );
+    receiver.h5i_ok(&["init"]);
+
+    let out = receiver.h5i_ok(&["pull", "--remote", "origin"]);
+    let s = stdout(&out);
+    assert!(
+        s.contains("skipped"),
+        "pull against an empty remote should report skipped refs:\n{s}"
+    );
+}
+
+// ─── h5i pull: conflict handling ────────────────────────────────────────────
+
+/// Build a bare git remote and a Repo wired to it (origin → remote).
+/// The Repo has h5i initialised so subsequent h5i commands work.
+fn repo_wired_to(remote_url: &str) -> Repo {
+    let r = Repo::new();
+    run_ok(
+        Command::new("git")
+            .args(["remote", "add", "origin", remote_url])
+            .current_dir(r.path()),
+    );
+    r.h5i_ok(&["init"]);
+    r
+}
+
+/// Resolve a ref's full SHA in the given repo, or None if the ref doesn't exist.
+fn resolve_ref_in(repo: &Repo, refname: &str) -> Option<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", refname])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    if out.status.success() {
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// Pulling a second time after a successful first pull should be idempotent
+/// and report `up to date` for the previously-fetched ref.
+#[test]
+fn pull_is_idempotent_when_already_up_to_date() {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    let sender = repo_wired_to(&remote_url);
+    sender.make_commit("a.rs", "fn main() {}", "first");
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+    sender.h5i_ok(&["push", "--remote", "origin"]);
+
+    let receiver = repo_wired_to(&remote_url);
+    let first = stdout(&receiver.h5i_ok(&["pull", "--remote", "origin"]));
+    assert!(
+        first.contains("(new)"),
+        "first pull should report (new):\n{first}"
+    );
+
+    let second = stdout(&receiver.h5i_ok(&["pull", "--remote", "origin"]));
+    assert!(
+        second.contains("up to date"),
+        "second pull should report up to date for notes:\n{second}"
+    );
+}
+
+/// When the remote's ref strictly extends the receiver's ref, pull should
+/// fast-forward without prompting.
+#[test]
+fn pull_fast_forwards_when_remote_extends_local() {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    let sender = repo_wired_to(&remote_url);
+    sender.make_commit("a.rs", "fn main() {}", "first");
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+    sender.h5i_ok(&["push", "--remote", "origin"]);
+
+    let receiver = repo_wired_to(&remote_url);
+    receiver.h5i_ok(&["pull", "--remote", "origin"]);
+    let after_first = resolve_ref_in(&receiver, "refs/h5i/notes").unwrap();
+
+    // Sender extends notes with another commit, then pushes.
+    sender.make_commit("b.rs", "fn extra() {}", "second");
+    sender.h5i_ok(&["push", "--remote", "origin"]);
+    let sender_tip = resolve_ref_in(&sender, "refs/h5i/notes").unwrap();
+    assert_ne!(sender_tip, after_first, "sender should have moved forward");
+
+    let pull_out = stdout(&receiver.h5i_ok(&["pull", "--remote", "origin"]));
+    assert!(
+        pull_out.contains("fast-forward"),
+        "pull stdout should report fast-forward:\n{pull_out}"
+    );
+    assert_eq!(
+        resolve_ref_in(&receiver, "refs/h5i/notes").unwrap(),
+        sender_tip,
+        "receiver should be at sender's new tip after fast-forward",
+    );
+}
+
+/// When the receiver's ref strictly extends the remote's ref (e.g. the
+/// receiver did one more `h5i commit` after pulling), pull should keep
+/// the local ref untouched.
+#[test]
+fn pull_keeps_local_when_local_is_ahead() {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    let sender = repo_wired_to(&remote_url);
+    sender.make_commit("a.rs", "fn main() {}", "first");
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+    sender.h5i_ok(&["push", "--remote", "origin"]);
+
+    let receiver = repo_wired_to(&remote_url);
+    receiver.h5i_ok(&["pull", "--remote", "origin"]);
+    // Receiver makes its own h5i commit on top, so refs/h5i/notes now
+    // strictly extends what's on the remote.
+    receiver.make_commit("c.rs", "fn local() {}", "local-only");
+    let local_tip = resolve_ref_in(&receiver, "refs/h5i/notes").unwrap();
+
+    let pull_out = stdout(&receiver.h5i_ok(&["pull", "--remote", "origin"]));
+    assert!(
+        pull_out.contains("local ahead"),
+        "pull stdout should report local ahead:\n{pull_out}"
+    );
+    assert_eq!(
+        resolve_ref_in(&receiver, "refs/h5i/notes").unwrap(),
+        local_tip,
+        "receiver should keep its tip when ahead of remote",
+    );
+}
+
+/// When sender and receiver both have notes for *different* code commits,
+/// their `refs/h5i/notes` chains have no common ancestor and pull must
+/// union-merge so neither side loses its annotations.
+#[test]
+fn pull_union_merges_diverged_notes_so_no_annotations_are_lost() {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    let sender = repo_wired_to(&remote_url);
+    sender.make_commit("a.rs", "fn a() {}", "sender commit");
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+    sender.h5i_ok(&["push", "--remote", "origin"]);
+    let sender_code_oid = String::from_utf8_lossy(
+        &run_ok(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(sender.path()),
+        )
+        .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Receiver works in parallel — never pulled, makes its own commit.
+    let receiver = repo_wired_to(&remote_url);
+    receiver.make_commit("b.rs", "fn b() {}", "receiver commit");
+    let receiver_code_oid = String::from_utf8_lossy(
+        &run_ok(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(receiver.path()),
+        )
+        .stdout,
+    )
+    .trim()
+    .to_string();
+    assert_ne!(sender_code_oid, receiver_code_oid);
+
+    let pull_out = stdout(&receiver.h5i_ok(&["pull", "--remote", "origin"]));
+    assert!(
+        pull_out.contains("merged (union)"),
+        "pull should report a union merge:\n{pull_out}"
+    );
+
+    // Both code commits should have a notes blob in the merged tree.
+    let tree = run_ok(
+        Command::new("git")
+            .args(["ls-tree", "-r", "refs/h5i/notes"])
+            .current_dir(receiver.path()),
+    );
+    let tree_s = String::from_utf8_lossy(&tree.stdout);
+    assert!(
+        tree_s.contains(&sender_code_oid),
+        "merged notes tree should contain sender's commit ({sender_code_oid}):\n{tree_s}"
+    );
+    assert!(
+        tree_s.contains(&receiver_code_oid),
+        "merged notes tree should contain receiver's commit ({receiver_code_oid}):\n{tree_s}"
+    );
+
+    // The merge commit should have both inputs as parents.
+    let parents = run_ok(
+        Command::new("git")
+            .args(["log", "--pretty=%P", "-1", "refs/h5i/notes"])
+            .current_dir(receiver.path()),
+    );
+    let parents_s = String::from_utf8_lossy(&parents.stdout);
+    assert_eq!(
+        parents_s.trim().split_whitespace().count(),
+        2,
+        "merge commit should have two parents:\n{parents_s}"
+    );
+}
+
+/// On a non-notes ref divergence (here: refs/h5i/context, which is a linear
+/// chain we can't auto-merge), pull MUST keep the local ref untouched and
+/// report the divergence rather than overwriting silently.
+#[test]
+fn pull_keeps_local_on_diverged_context_without_force() {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    // Sender initialises a context workspace and pushes.
+    let sender = repo_wired_to(&remote_url);
+    sender.make_commit("a.rs", "fn a() {}", "seed sender");
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+    sender.h5i_ok(&["context", "init", "--goal", "sender goal"]);
+    sender.h5i_ok(&["push", "--remote", "origin"]);
+
+    // Receiver initialises a *different* context workspace.
+    let receiver = repo_wired_to(&remote_url);
+    receiver.h5i_ok(&["context", "init", "--goal", "receiver goal"]);
+    let receiver_ctx_before = resolve_ref_in(&receiver, "refs/h5i/context").unwrap();
+    let sender_ctx = resolve_ref_in(&sender, "refs/h5i/context").unwrap();
+    assert_ne!(
+        receiver_ctx_before, sender_ctx,
+        "context refs must differ for this test to mean anything"
+    );
+
+    let pull_out = stdout(&receiver.h5i_ok(&["pull", "--remote", "origin"]));
+    assert!(
+        pull_out.contains("kept local") && pull_out.contains("--force"),
+        "pull should report kept-local and mention --force:\n{pull_out}"
+    );
+
+    let receiver_ctx_after = resolve_ref_in(&receiver, "refs/h5i/context").unwrap();
+    assert_eq!(
+        receiver_ctx_before, receiver_ctx_after,
+        "receiver's context ref must be unchanged when pulled without --force"
+    );
+}
+
+/// With `--force`, a divergent non-notes ref should be overwritten with the
+/// remote's value.
+#[test]
+fn pull_force_overwrites_diverged_context() {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    let sender = repo_wired_to(&remote_url);
+    sender.make_commit("a.rs", "fn a() {}", "seed sender");
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+    sender.h5i_ok(&["context", "init", "--goal", "sender goal"]);
+    sender.h5i_ok(&["push", "--remote", "origin"]);
+    let sender_ctx = resolve_ref_in(&sender, "refs/h5i/context").unwrap();
+
+    let receiver = repo_wired_to(&remote_url);
+    receiver.h5i_ok(&["context", "init", "--goal", "receiver goal"]);
+    let receiver_ctx_before = resolve_ref_in(&receiver, "refs/h5i/context").unwrap();
+    assert_ne!(receiver_ctx_before, sender_ctx);
+
+    let pull_out = stdout(&receiver.h5i_ok(&["pull", "--remote", "origin", "--force"]));
+    assert!(
+        pull_out.contains("forced"),
+        "pull --force should report a forced update:\n{pull_out}"
+    );
+    assert_eq!(
+        resolve_ref_in(&receiver, "refs/h5i/context").unwrap(),
+        sender_ctx,
+        "after --force, receiver's context ref should match sender's",
+    );
+}
+
+/// `--force` must NOT clobber refs/h5i/notes — it should still take the
+/// merging path so notes from both sides are preserved.
+#[test]
+fn pull_force_still_union_merges_notes() {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    let sender = repo_wired_to(&remote_url);
+    sender.make_commit("a.rs", "fn a() {}", "sender commit");
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+    sender.h5i_ok(&["push", "--remote", "origin"]);
+    let sender_code_oid = String::from_utf8_lossy(
+        &run_ok(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(sender.path()),
+        )
+        .stdout,
+    )
+    .trim()
+    .to_string();
+
+    let receiver = repo_wired_to(&remote_url);
+    receiver.make_commit("b.rs", "fn b() {}", "receiver commit");
+    let receiver_code_oid = String::from_utf8_lossy(
+        &run_ok(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(receiver.path()),
+        )
+        .stdout,
+    )
+    .trim()
+    .to_string();
+
+    let pull_out = stdout(&receiver.h5i_ok(&["pull", "--remote", "origin", "--force"]));
+    assert!(
+        pull_out.contains("merged (union)"),
+        "even with --force, notes should be merged (not forced):\n{pull_out}"
+    );
+
+    let tree = run_ok(
+        Command::new("git")
+            .args(["ls-tree", "-r", "refs/h5i/notes"])
+            .current_dir(receiver.path()),
+    );
+    let tree_s = String::from_utf8_lossy(&tree.stdout);
+    assert!(tree_s.contains(&sender_code_oid));
+    assert!(tree_s.contains(&receiver_code_oid));
+}
