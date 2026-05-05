@@ -176,3 +176,4 @@ _[Checkpoint: 69fa6800 — edited server.rs; edited server.rs; Stages B-E comple
 [22:01:50] ACT: edited src/theme.css
 [22:06:11] ACT: edited Cargo.toml
 [22:06:18] ACT: edited server.rs
+[22:09:41] ACT: Fixed two navbar overlap bugs + Context UX. Replaced Blueprint Navbar absolute-centred groups with custom flex header. Right-pane tabs reduced 5->3 (removed Context+Summary). Promoted Context to top-level mode since it shows repo-wide data. Removed debug-embed feature from rust-embed for faster iteration.
