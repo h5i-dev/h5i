@@ -307,3 +307,9 @@ _[Checkpoint: 69fa7371 — Context as default + Palantir-grade tables]_
 _[Checkpoint: 69fa738a — edited ContextView.tsx; edited theme.css; edited ContextView.tsx]_
 ---
 
+
+
+---
+_[Checkpoint: 69fa73d7 — edited ContextView.tsx; edited theme.css; edited ContextView.tsx]_
+---
+
