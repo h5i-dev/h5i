@@ -394,3 +394,16 @@ Reorganised Context dashboard rows: was full/full/full/2-col(milestones+activity
 
 ---
 
+## Commit 69fa768b — 2026-05-05 23:00 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Restructured to match Explore's 3-pane rhythm: Recent milestones | Reasoning DAG | Recent activity. OTA balance restored to full width above the row. Each column max-height 720px (DAG 660 since it has its own canvas). Milestone and activity items now render as single horizontally-scrollable lines with thin scrollbars and a 24px right-edge fade mask so clipped content is visible. ctx-row-three uses 1fr/1.4fr/1fr at >=1280px (DAG gets the wider middle), 1fr/1.6fr/1fr at narrower widths, collapses to 1 col at <=1000px. Sticky section headers within columns.
+
+---
+
