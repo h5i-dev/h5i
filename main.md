@@ -12,11 +12,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Blueprint refresh — iteration 2 (typography, density, emoji strip)
 - [x] edited src/server.rs; edited src/server.rs; Iteration 2: removed emoji from tabs (8), pills (3), dim-rows (5), Run Integ…
 - [x] edited src/server.rs; edited src/server.rs; Iteration 2: removed emoji from tabs (8), pills (3), dim-rows (5), Run Integ…
+- [x] Structural rebuild: React+Blueprint workbench at /v2 (first slice)
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-05 21:38 UTC] `main`: Structural rebuild: React+Blueprint workbench at /v2 (first slice)
 - [2026-05-05 21:29 UTC] `main`: edited src/server.rs; edited src/server.rs; Iteration 2: removed emoji from tabs (8), pills (3), dim-rows (5), Run Integ…
 - [2026-05-05 21:27 UTC] `main`: edited src/server.rs; edited src/server.rs; Iteration 2: removed emoji from tabs (8), pills (3), dim-rows (5), Run Integ…
 - [2026-05-05 21:27 UTC] `main`: Blueprint refresh — iteration 2 (typography, density, emoji strip)
