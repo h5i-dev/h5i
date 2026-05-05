@@ -50,3 +50,4 @@ _[Checkpoint: 69fa52fc — h5i pull is now safe-by-default with conflict handlin
 [20:42:47] OBSERVE: read src/main.rs
 [20:43:22] ACT: edited src/main.rs
 [21:14:52] THINK: User approved Palantir/Blueprint visual-only approach. Plan: extract design tokens (colors, type, spacing) into shared CSS, apply to highest-value pages first (log, blame, notes review). Avoid JS build step.
+[21:15:04] OBSERVE: read src/server.rs
