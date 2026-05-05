@@ -56,3 +56,16 @@ Additive override block at end of <style> in src/server.rs. Tokens: --bp-bg, --b
 
 ---
 
+## Commit 69fa60b9 — 2026-05-05 21:27 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Visual depth pass. HTML edits remove emoji from primary nav. CSS: smaller base size, tabular numerics, themed scrollbars, focus rings, sticky table headers, flat sidebar sections, uppercase tabs. Reversible by deleting iteration-2 CSS block plus reverting ~12 small HTML edits.
+
+---
+

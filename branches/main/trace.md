@@ -79,3 +79,9 @@ _[Checkpoint: 69fa5f42 — edited src/main.rs; edited src/server.rs; Appended Bl
 [21:25:23] ACT: edited src/server.rs
 [21:26:08] ACT: edited src/server.rs
 [21:27:21] ACT: Iteration 2: removed emoji from tabs (8), pills (3), dim-rows (5), Run Integrity Check button, audit-btn states, mem 'Diff Selected'. Replaced dim-row emoji with colored .dim-mark squares (8px). Appended ~80 lines of CSS: 13px base font, 1.45 line-height, themed scrollbars, focus-visible rings, ::selection color, sticky table headers, hoverable rows, sidebar cards flattened to divider-separated sections, tabs uppercase 11px, tabular-nums on all numerics, monospace for OIDs/numbers, NonIdealState empty-state pattern. Build OK, page now 151KB (was 143KB), 53 bp-token refs in rendered HTML.
+
+
+---
+_[Checkpoint: 69fa60b9 — Blueprint refresh — iteration 2 (typography, density, emoji strip)]_
+---
+
