@@ -43,3 +43,16 @@ Additive override block at end of <style> in src/server.rs. Tokens: --bp-bg, --b
 
 ---
 
+## Commit 69fa5f42 — 2026-05-05 21:21 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+Additive override block at end of <style> in src/server.rs. Tokens: --bp-bg, --bp-surface, --bp-elev, --bp-border, --bp-text*, --bp-blue/green/orange/red/violet, --bp-radius (2px). Verified: cargo build ok, server serves index 143KB with 44 occurrences of bp-* tokens, /api endpoints respond. Reversible by deleting one CSS block. Not yet committed to git.
+
+### This Commit's Contribution
+
+
+---
+
