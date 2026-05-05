@@ -108,3 +108,4 @@ _[Checkpoint: 69fa6144 — edited src/server.rs; edited src/server.rs; Iteration
 [21:32:52] ACT: wrote web/src/api.ts
 [21:33:18] ACT: wrote web/src/theme.css
 [21:33:45] ACT: wrote web/src/Workbench.tsx
+[21:34:01] ACT: wrote web/src/CommitDetail.tsx
