@@ -160,3 +160,16 @@ Right pane: Refs (intent-graph parents/children/causal links, click to navigate)
 
 ---
 
+## Commit 69fa6aa5 — 2026-05-05 22:09 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Replaced Blueprint Navbar absolute-centred Alignment groups with flex layout. Right pane is now Refs/Sessions/Integrity (3 tabs). Context promoted to top-level mode. rust-embed debug-embed removed for read-from-disk in debug.
+
+---
+
