@@ -6,3 +6,4 @@
 [20:06:20] ACT: edited src/main.rs
 [20:06:29] OBSERVE: read src/main.rs
 [20:06:44] ACT: edited src/main.rs
+[20:06:51] ACT: Added Commands::Pull variant in src/main.rs and a Pull handler that fans 'git fetch +refspec' calls across refs/h5i/{notes,memory,context,ast}, distinguishes 'not present on remote' from real fetch failures, and prints a Tip footer pointing at h5i log/notes show/memory log.
