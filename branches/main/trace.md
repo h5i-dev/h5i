@@ -375,3 +375,9 @@ _[Checkpoint: 69fa769d — edited ContextView.tsx; edited DagViz.tsx; edited the
 _[Checkpoint: 69fa7805 — Resizable 3-pane Context (Explore visual style)]_
 ---
 
+
+
+---
+_[Checkpoint: 69fa7820 — edited ContextView.tsx; edited ContextView.tsx; edited theme.css]_
+---
+
