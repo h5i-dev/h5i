@@ -134,3 +134,16 @@ Primary development branch
 
 ---
 
+## Commit 69fa67e8 — 2026-05-05 21:58 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Right pane: Refs (intent-graph parents/children/causal links, click to navigate), Sessions (per-commit session-log), Integrity (auto-runs audit on selection), Context (workspace status). Modes: Review (sortable review-points table w/ score bars), Memory (snapshot list). Build hook: build.rs detects stale dist via mtime, invokes npm install/build, opt-out via H5I_SKIP_WEB_BUILD env. Asset serving fixed: /assets/*path handler prepends 'assets/' before rust-embed lookup. Legacy UI preserved at /legacy for unmigrated Intent Graph viz. Not yet visually verified in browser.
+
+---
+

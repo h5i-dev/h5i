@@ -15,11 +15,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Structural rebuild: React+Blueprint workbench at /v2 (first slice)
 - [x] edited server.rs; edited server.rs; Bootstrapped /v2 React workbench. web/ created with Vite+React+TS+Blueprint.js (103 …
 - [x] edited server.rs; edited server.rs; Bootstrapped /v2 React workbench. web/ created with Vite+React+TS+Blueprint.js (103 …
+- [x] Workbench feature parity: right-pane tabs + mode switcher + build hook + flip /
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-05 21:58 UTC] `main`: Workbench feature parity: right-pane tabs + mode switcher + build hook + flip /
 - [2026-05-05 21:40 UTC] `main`: edited server.rs; edited server.rs; Bootstrapped /v2 React workbench. web/ created with Vite+React+TS+Blueprint.js (103 …
 - [2026-05-05 21:39 UTC] `main`: edited server.rs; edited server.rs; Bootstrapped /v2 React workbench. web/ created with Vite+React+TS+Blueprint.js (103 …
 - [2026-05-05 21:38 UTC] `main`: Structural rebuild: React+Blueprint workbench at /v2 (first slice)
