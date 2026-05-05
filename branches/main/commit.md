@@ -251,3 +251,16 @@ Earlier iterations cranked density too far. Pass 1 (CSS): html base 14px, line-h
 
 ---
 
+## Commit 69fa705b — 2026-05-05 22:34 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+Earlier iterations cranked density too far. Pass 1 (CSS): html base 14px, line-height 1.5, all major surfaces +1-2px. Body 14, table 13, eyebrow 11 (was 10), monospace 12 (was 11), commit message 17 (was 15), KPI label 10 (was 9). Pass 2 (TSX inline): bumped 27 hardcoded fontSize values across 11 files. Tags default to 12px instead of forcing 10. Bundle CSS 352KB (was 344). Not regressed: density still tight enough that tables stay information-dense.
+
+### This Commit's Contribution
+
+
+---
+
