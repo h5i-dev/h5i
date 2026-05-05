@@ -249,3 +249,4 @@ _[Checkpoint: 69fa6f16 — edited src/Workbench.tsx; edited src/Workbench.tsx; e
 [22:32:37] ACT: edited RefsTab.tsx
 [22:32:45] ACT: edited CrossRef.tsx
 [22:32:48] ACT: edited ContextStrip.tsx
+[22:32:51] ACT: edited MemoryView.tsx
