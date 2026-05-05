@@ -381,3 +381,16 @@ Reorganised Context dashboard rows: was full/full/full/2-col(milestones+activity
 
 ---
 
+## Commit 69fa7582 — 2026-05-05 22:56 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+Reorganised Context dashboard rows: was full/full/full/2-col(milestones+activity)/full(DAG)/full(branches)/full(snapshots), now full/full/2-col(OTA+Milestones)/full(DAG)/full(activity)/full(branches)/full(snapshots). OTA balance and Recent milestones share a row sized 0.8fr/1.2fr (OTA narrower, milestones wider) with align-items: start so OTA doesn't stretch awkwardly when milestones list is tall. Recent activity now stands alone full-width below DAG so long OBSERVE/THINK content has room to breathe.
+
+### This Commit's Contribution
+
+
+---
+
