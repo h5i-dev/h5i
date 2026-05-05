@@ -66,3 +66,4 @@ _[Checkpoint: 69fa5f38 — Palantir/Blueprint visual refresh — first cut]_
 _[Checkpoint: 69fa5f42 — edited src/main.rs; edited src/server.rs; Appended Blueprint override CSS block (~155 lines) at end of <style> in src/se…]_
 ---
 
+[21:22:52] OBSERVE: read src/server.rs
