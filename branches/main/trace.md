@@ -282,3 +282,9 @@ _[Checkpoint: 69fa705b — edited ReviewView.tsx; edited ReviewView.tsx; edited 
 _[Checkpoint: 69fa7234 — DAG visualization + full OBSERVE/THINK/ACT content]_
 ---
 
+
+
+---
+_[Checkpoint: 69fa724a — edited ContextView.tsx; edited ContextView.tsx; edited theme.css]_
+---
+

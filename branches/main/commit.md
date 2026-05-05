@@ -277,3 +277,16 @@ DagViz.tsx: 5-lane SVG layout (OBSERVE/THINK/ACT/NOTE/MERGE) with HTML nodes pos
 
 ---
 
+## Commit 69fa724a — 2026-05-05 22:42 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+DagViz.tsx: 5-lane SVG layout (OBSERVE/THINK/ACT/NOTE/MERGE) with HTML nodes positioned absolutely and an SVG layer behind drawing cubic-bezier parent->child edges. Default 40 last nodes, 'Show all' toggle. Hover highlights a node and tints all incident edges with the lane colour. RecentActivity: replaces the old mini_trace summary list with full DAG node content (4-line clamp), kind tag, timestamp, and node id — finally surfaces what OBSERVE / THINK / ACT entries actually said. Bundle CSS 354KB.
+
+### This Commit's Contribution
+
+
+---
+
