@@ -54,3 +54,9 @@ _[Checkpoint: 69fa52fc — h5i pull is now safe-by-default with conflict handlin
 [21:15:31] OBSERVE: read src/server.rs
 [21:19:22] ACT: edited src/server.rs
 [21:20:56] ACT: Appended Blueprint override CSS block (~155 lines) at end of <style> in src/server.rs (line 1721). Defines :root tokens for Blueprint dark palette (slate/steel surfaces #1c2127/#252a31, sharp 2-3px corners, flat fills, muted intent colors), then overrides existing rules: header, sidebar, tabs, pills, badges, timeline, commit cards, tables, buttons, integrity report, ctx-kind pills.
+
+
+---
+_[Checkpoint: 69fa5f38 — Palantir/Blueprint visual refresh — first cut]_
+---
+
