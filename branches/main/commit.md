@@ -186,3 +186,16 @@ Replaced Blueprint Navbar absolute-centred Alignment groups with flex layout. Ri
 
 ---
 
+## Commit 69fa6d73 — 2026-05-05 22:21 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+GitHub linking, branch picker, persistent context strip, per-commit Context tab. Backend: get_log_at_branch, /api/branches, /api/commit-files.
+
+---
+

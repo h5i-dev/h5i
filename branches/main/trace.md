@@ -204,3 +204,9 @@ _[Checkpoint: 69fa6b02 — edited Cargo.toml; edited server.rs; Fixed two navbar
 [22:19:27] ACT: wrote src/Workbench.tsx
 [22:19:40] ACT: edited src/CommitDetail.tsx
 [22:19:58] ACT: edited src/theme.css
+
+
+---
+_[Checkpoint: 69fa6d73 — GitHub deep-links + branch switcher + context as first-class]_
+---
+
