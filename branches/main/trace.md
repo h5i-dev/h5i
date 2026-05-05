@@ -125,3 +125,9 @@ _[Checkpoint: 69fa6144 — edited src/server.rs; edited src/server.rs; Iteration
 _[Checkpoint: 69fa6367 — Structural rebuild: React+Blueprint workbench at /v2 (first slice)]_
 ---
 
+
+
+---
+_[Checkpoint: 69fa637a — edited server.rs; edited server.rs; Bootstrapped /v2 React workbench. web/ created with Vite+React+TS+Blueprint.js (103 …]_
+---
+
