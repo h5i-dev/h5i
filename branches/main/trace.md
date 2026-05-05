@@ -171,3 +171,4 @@ _[Checkpoint: 69fa67e8 — Workbench feature parity: right-pane tabs + mode swit
 _[Checkpoint: 69fa6800 — edited server.rs; edited server.rs; Stages B-E complete. New TS/TSX: api.ts (extended types), RefsTab, SessionsTab, Inte…]_
 ---
 
+[22:01:27] ACT: wrote src/Workbench.tsx
