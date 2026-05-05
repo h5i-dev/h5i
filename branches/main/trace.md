@@ -100,3 +100,4 @@ _[Checkpoint: 69fa6144 — edited src/server.rs; edited src/server.rs; Iteration
 [21:31:54] THINK: Structural rebuild plan: web/ subdir with Vite+React+TS+Blueprint.js, build to web/dist/, embed via rust-embed, serve at /v2 leaving / untouched. First slice: 3-pane workbench with virtualized commit table.
 [21:32:04] OBSERVE: read .gitignore
 [21:32:07] ACT: edited .gitignore
+[21:32:19] ACT: wrote web/package.json
