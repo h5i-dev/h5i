@@ -251,3 +251,4 @@ _[Checkpoint: 69fa6f16 — edited src/Workbench.tsx; edited src/Workbench.tsx; e
 [22:32:48] ACT: edited ContextStrip.tsx
 [22:32:51] ACT: edited MemoryView.tsx
 [22:32:54] ACT: edited SessionsTab.tsx
+[22:32:57] ACT: edited BranchPicker.tsx
