@@ -20,11 +20,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Fix navbar overlap + promote Context to top-level mode
 - [x] edited Cargo.toml; edited server.rs; Fixed two navbar overlap bugs + Context UX. Replaced Blueprint Navbar absolute-cent…
 - [x] GitHub deep-links + branch switcher + context as first-class
+- [x] wrote src/Workbench.tsx; edited src/CommitDetail.tsx; edited src/theme.css
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-05 22:22 UTC] `main`: wrote src/Workbench.tsx; edited src/CommitDetail.tsx; edited src/theme.css
 - [2026-05-05 22:21 UTC] `main`: GitHub deep-links + branch switcher + context as first-class
 - [2026-05-05 22:11 UTC] `main`: edited Cargo.toml; edited server.rs; Fixed two navbar overlap bugs + Context UX. Replaced Blueprint Navbar absolute-cent…
 - [2026-05-05 22:09 UTC] `main`: Fix navbar overlap + promote Context to top-level mode
