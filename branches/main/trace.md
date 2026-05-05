@@ -141,3 +141,4 @@ _[Checkpoint: 69fa63b7 — edited server.rs; edited server.rs; Bootstrapped /v2 
 [21:49:10] ACT: wrote src/api.ts
 [21:49:26] ACT: wrote src/RefsTab.tsx
 [21:49:43] ACT: wrote src/SessionsTab.tsx
+[21:49:54] ACT: wrote src/IntegrityTab.tsx
