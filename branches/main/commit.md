@@ -212,3 +212,16 @@ GitHub linking, branch picker, persistent context strip, per-commit Context tab.
 
 ---
 
+## Commit 69fa6efe — 2026-05-05 22:28 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Replaced thin ContextTab (goal+stats only) with ContextView calling 5 endpoints in parallel. Sections: hero with KPI tiles, promotion pipeline flow, OTA balance bar, recent milestones, recent trace with timestamps, open TODOs, branches table, snapshot history.
+
+---
+
