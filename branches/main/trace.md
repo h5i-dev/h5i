@@ -118,3 +118,4 @@ _[Checkpoint: 69fa6144 — edited src/server.rs; edited src/server.rs; Iteration
 [21:36:19] ACT: edited server.rs
 [21:36:29] ACT: edited server.rs
 [21:36:33] ACT: edited server.rs
+[21:38:47] ACT: Bootstrapped /v2 React workbench. web/ created with Vite+React+TS+Blueprint.js (103 npm pkgs, 2369 modules). Files: package.json, vite.config.ts (base=/v2/, /api proxy to :8765 for dev), tsconfig.json, index.html, src/main.tsx, src/api.ts, src/theme.css, src/Workbench.tsx, src/CommitDetail.tsx, src/CrossRef.tsx. Cargo.toml: rust-embed 8.5, mime_guess 2.0. server.rs: WebAsset embed struct, v2_index/v2_asset handlers, 3 new routes (/v2, /v2/, /v2/*path). Built bundle: ~600KB raw, ~167KB gzipped. Verified: /v2 serves index, JS asset 212KB w/ correct mime, /api/commits unchanged, / unchanged, all 449 cargo tests pass.
