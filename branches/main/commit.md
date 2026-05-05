@@ -329,3 +329,16 @@ Primary development branch
 
 ---
 
+## Commit 69fa743c — 2026-05-05 22:50 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Removed max-width: 1200px / margin: 0 auto from .ctx-view so the dashboard fills the viewport like Explore mode. Inner caps preserve reading line-length: hero text 60ch (~470px), hero purpose 80ch, milestones list 90ch, activity body 90ch. Wider padding kicks in at >=1600px (28px -> 36px). Tables and DAG fill the available width naturally.
+
+---
+

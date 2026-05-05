@@ -30,11 +30,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Context as default + Palantir-grade tables
 - [x] edited ContextView.tsx; edited theme.css; edited ContextView.tsx
 - [x] edited ContextView.tsx; edited theme.css; edited ContextView.tsx
+- [x] Context view goes full-width with inner readability caps
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-05 22:50 UTC] `main`: Context view goes full-width with inner readability caps
 - [2026-05-05 22:48 UTC] `main`: edited ContextView.tsx; edited theme.css; edited ContextView.tsx
 - [2026-05-05 22:47 UTC] `main`: edited ContextView.tsx; edited theme.css; edited ContextView.tsx
 - [2026-05-05 22:47 UTC] `main`: Context as default + Palantir-grade tables
