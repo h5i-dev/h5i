@@ -165,3 +165,9 @@ _[Checkpoint: 69fa63b7 — edited server.rs; edited server.rs; Bootstrapped /v2 
 _[Checkpoint: 69fa67e8 — Workbench feature parity: right-pane tabs + mode switcher + build hook + flip /]_
 ---
 
+
+
+---
+_[Checkpoint: 69fa6800 — edited server.rs; edited server.rs; Stages B-E complete. New TS/TSX: api.ts (extended types), RefsTab, SessionsTab, Inte…]_
+---
+
