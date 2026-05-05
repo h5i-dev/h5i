@@ -197,3 +197,4 @@ _[Checkpoint: 69fa6b02 — edited Cargo.toml; edited server.rs; Fixed two navbar
 [22:15:54] OBSERVE: read server.rs
 [22:16:13] ACT: edited server.rs
 [22:16:17] ACT: edited server.rs
+[22:17:45] ACT: edited src/api.ts
