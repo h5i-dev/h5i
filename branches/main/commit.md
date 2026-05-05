@@ -290,3 +290,16 @@ DagViz.tsx: 5-lane SVG layout (OBSERVE/THINK/ACT/NOTE/MERGE) with HTML nodes pos
 
 ---
 
+## Commit 69fa7371 — 2026-05-05 22:47 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Default mode is now Context (Context|Explore|Review|Memory order). Branches table: sortable headers w/ ▴/▾ indicators, active branch pinned to top with blue left-border accent and HEAD tag, freshness dot column (green=<1h, orange=<1d, gray=stale), inline sparkbars for milestones (violet) and trace (blue), exclusive cell w/ subtle units. Snapshots table: pinned newest at top, Δ column showing time delta to previous snapshot, goal-evolution Icon when goal changed between snapshots. CSS: .ctx-table sort indicators, .ctx-fresh-dot, .ctx-spark-track/fill, active row inset shadow.
+
+---
+
