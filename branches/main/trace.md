@@ -364,3 +364,4 @@ _[Checkpoint: 69fa768b — Three-column Context layout with single-line clipping
 _[Checkpoint: 69fa769d — edited ContextView.tsx; edited DagViz.tsx; edited theme.css]_
 ---
 
+[23:05:34] ACT: wrote HSplit.tsx
