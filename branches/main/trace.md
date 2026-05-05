@@ -36,3 +36,4 @@ _[Checkpoint: 69fa4e7d — implemented h5i pull (top-level, mirrors h5i push)]_
 [20:27:14] OBSERVE: read pre-write.ts
 [20:27:16] OBSERVE: read tests/cli_integration.rs
 [20:27:23] OBSERVE: read cerebrum.md
+[20:27:29] OBSERVE: read README.md
