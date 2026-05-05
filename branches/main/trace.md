@@ -26,3 +26,4 @@ _[Checkpoint: 69fa4e7d — implemented h5i pull (top-level, mirrors h5i push)]_
 [20:25:00] ACT: edited src/main.rs
 [20:25:15] ACT: edited src/main.rs
 [20:27:06] OBSERVE: read README.md
+[20:27:06] OBSERVE: read how-it-works.md
