@@ -139,3 +139,4 @@ _[Checkpoint: 69fa63b7 — edited server.rs; edited server.rs; Bootstrapped /v2 
 
 [21:46:33] OBSERVE: read metadata.rs
 [21:49:10] ACT: wrote src/api.ts
+[21:49:26] ACT: wrote src/RefsTab.tsx
