@@ -1,0 +1,1369 @@
+/* Workbench shell — fills the viewport, three-pane grid layout. */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bp-bg);
+  color: var(--bp-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI",
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+:root {
+  --bp-bg: #1c2127;
+  --bp-surface: #252a31;
+  --bp-surface-2: #2f343c;
+  --bp-elev: #383e47;
+  --bp-border: #404854;
+  --bp-text: #f6f7f9;
+  --bp-text-muted: #abb3bf;
+  --bp-text-dim: #8f99a8;
+  --bp-blue: #2d72d2;
+  --bp-blue-hi: #4c90f0;
+  --bp-violet: #8f5fbf;
+  --bp-green-hi: #72ca9b;
+  --bp-orange: #c87619;
+  --bp-red: #cd4246;
+}
+
+/* Top-level workbench layout */
+.wb-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* Custom flex header (replaces Blueprint Navbar's absolute-centre groups,
+   which overlap when the LEFT group is wide). Three-column flex: brand,
+   centred mode switcher, right-side actions. The mode switcher gets
+   margin: auto so it stays centred without absolute positioning. */
+.wb-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 12px;
+  background: var(--bp-surface);
+  border-bottom: 1px solid var(--bp-border);
+  gap: 8px;
+}
+.wb-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+.wb-brand {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--bp-text);
+  letter-spacing: 0;
+}
+.wb-header-sep {
+  color: var(--bp-border);
+  font-size: 14px;
+}
+.wb-repo {
+  color: var(--bp-blue-hi);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wb-branch-tag {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace !important;
+  font-size: 10px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.wb-header-modes {
+  margin: 0 auto;
+  flex: 0 0 auto;
+}
+.wb-header-modes .bp5-button {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  padding: 6px 12px;
+}
+.wb-header-modes .bp5-button.bp5-active {
+  background: var(--bp-blue-bg, rgba(45, 114, 210, 0.18));
+  color: var(--bp-blue-hi);
+}
+.wb-header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin-left: 8px;
+}
+.wb-header-right .bp5-button {
+  font-size: 11px;
+}
+
+.wb-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 380px 1fr 360px;
+  background: var(--bp-bg);
+}
+
+.wb-body-single {
+  grid-template-columns: 1fr;
+}
+
+.wb-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--bp-border);
+  overflow: hidden;
+}
+
+.wb-pane:last-child {
+  border-right: none;
+}
+
+.wb-pane-header {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bp-text-dim);
+  background: var(--bp-surface);
+  border-bottom: 1px solid var(--bp-border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.wb-pane-empty {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--bp-text-dim);
+  font-size: 12px;
+}
+
+/* Commit table — compact cell padding, monospace OID column */
+.bp5-html-table.wb-commits-table {
+  width: 100%;
+  font-size: 12px;
+}
+.bp5-html-table.wb-commits-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bp-surface);
+  z-index: 1;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--bp-text-dim);
+  padding: 6px 10px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--bp-border) !important;
+  box-shadow: none !important;
+}
+.bp5-html-table.wb-commits-table tbody tr {
+  cursor: pointer;
+}
+.bp5-html-table.wb-commits-table tbody tr:hover {
+  background: var(--bp-surface-2);
+}
+.bp5-html-table.wb-commits-table tbody tr.selected {
+  background: rgba(45, 114, 210, 0.18);
+}
+.bp5-html-table.wb-commits-table tbody td {
+  padding: 6px 10px !important;
+  border-top: 1px solid var(--bp-border) !important;
+  vertical-align: middle;
+}
+.wb-oid {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-size: 11px;
+  color: var(--bp-blue-hi);
+}
+.wb-oid.ai {
+  color: var(--bp-violet);
+}
+.wb-msg {
+  max-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Detail pane */
+.wb-detail-section {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--bp-border);
+}
+.wb-detail-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bp-text-dim);
+  margin-bottom: 8px;
+}
+.wb-detail-msg {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--bp-text);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+.wb-detail-byline {
+  font-size: 12px;
+  color: var(--bp-text-muted);
+}
+.wb-detail-grid {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 6px 14px;
+  font-size: 12px;
+}
+.wb-detail-key {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--bp-text-dim);
+  font-weight: 600;
+  padding-top: 1px;
+}
+.wb-detail-val {
+  color: var(--bp-text);
+  word-break: break-word;
+}
+.wb-detail-val.mono {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-size: 11px;
+}
+.wb-detail-prompt {
+  color: var(--bp-violet);
+  font-style: normal;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+/* Cross-reference (right pane) */
+.wb-xref-stat {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--bp-border);
+  font-size: 12px;
+}
+.wb-xref-stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--bp-text-dim);
+  font-weight: 600;
+}
+.wb-xref-stat-val {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--bp-text);
+  font-weight: 600;
+}
+
+/* Right-pane Blueprint Tabs — flatten into the pane header, no extra padding.
+   Three tabs in a 360px pane → ~120px each, well within range. */
+.wb-right-tabs {
+  width: 100%;
+}
+.wb-right-tabs .bp5-tab-list {
+  padding: 0;
+  gap: 0;
+  display: flex;
+  width: 100%;
+}
+.wb-right-tabs .bp5-tab {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--bp-text-dim);
+  padding: 9px 0;
+  margin: 0;
+  line-height: 1;
+  flex: 1 1 0;
+  text-align: center;
+  min-width: 0;
+}
+
+/* Context mode: a wider canvas so branch summaries breathe */
+.wb-context-body {
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+/* ── Persistent context strip ────────────────────────────────────────────── */
+.wb-ctx-strip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  background: linear-gradient(
+    to right,
+    rgba(143, 95, 191, 0.08),
+    rgba(45, 114, 210, 0.05)
+  );
+  border-bottom: 1px solid var(--bp-border);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s;
+  user-select: none;
+}
+.wb-ctx-strip:hover {
+  background: linear-gradient(
+    to right,
+    rgba(143, 95, 191, 0.14),
+    rgba(45, 114, 210, 0.09)
+  );
+}
+.wb-ctx-strip-empty {
+  cursor: default;
+  background: var(--bp-surface);
+}
+.wb-ctx-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--bp-violet);
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--bp-violet);
+  border-radius: 2px;
+  line-height: 1;
+}
+.wb-ctx-goal {
+  flex: 1;
+  min-width: 0;
+  color: var(--bp-text);
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.wb-ctx-goal-empty {
+  flex: 1;
+  color: var(--bp-text-dim);
+  font-size: 11px;
+}
+.wb-ctx-goal-empty code {
+  background: var(--bp-elev);
+  padding: 1px 6px;
+  border-radius: 2px;
+  color: var(--bp-text-muted);
+  font-size: 10px;
+}
+.wb-ctx-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.wb-ctx-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-size: 11px;
+}
+.wb-ctx-stat-val {
+  color: var(--bp-text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.wb-ctx-stat-label {
+  color: var(--bp-text-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Branch picker ───────────────────────────────────────────────────────── */
+.wb-branch-button.bp5-button {
+  padding: 0 4px !important;
+  min-height: 24px !important;
+  background: transparent !important;
+  border: 1px solid var(--bp-border);
+  border-radius: 2px;
+}
+.wb-branch-button.bp5-button:hover {
+  background: var(--bp-elev) !important;
+  border-color: var(--bp-border-strong, #5c7080);
+}
+.wb-branch-button .wb-branch-tag {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace !important;
+  font-size: 10px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 4px !important;
+}
+.wb-branch-button .bp5-icon {
+  color: var(--bp-text-dim);
+}
+.wb-branch-menu {
+  min-width: 240px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.wb-branch-menu .bp5-menu-divider {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--bp-text-dim);
+  font-weight: 600;
+}
+
+/* ── Context dashboard (full-width Context mode) ─────────────────────────── */
+.ctx-view {
+  /* Fill the viewport like the Explore mode does. Prose elements inside
+     get their own max-width caps so reading line length stays comfortable
+     even on a 27" display. */
+  padding: 18px 28px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+@media (min-width: 1600px) {
+  .ctx-view {
+    padding: 22px 36px 60px;
+  }
+}
+
+.ctx-eyebrow {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--bp-violet);
+  margin-bottom: 6px;
+}
+
+.ctx-hero {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px;
+  padding: 18px 22px;
+  background: linear-gradient(
+    135deg,
+    rgba(143, 95, 191, 0.10),
+    rgba(45, 114, 210, 0.06)
+  );
+  border: 1px solid var(--bp-border);
+  border-radius: 3px;
+  align-items: center;
+}
+.ctx-hero-goal {
+  min-width: 0;
+}
+.ctx-hero-text {
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--bp-text);
+  line-height: 1.4;
+  word-break: break-word;
+}
+.ctx-hero-purpose {
+  font-size: 12px;
+  color: var(--bp-text-muted);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.ctx-kpis {
+  display: flex;
+  gap: 18px;
+  flex-shrink: 0;
+}
+.ctx-kpi {
+  text-align: right;
+  min-width: 50px;
+}
+.ctx-kpi-val {
+  font-size: 26px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--bp-text);
+  line-height: 1;
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+}
+.ctx-kpi-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--bp-text-dim);
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+/* Section card */
+.ctx-section {
+  background: var(--bp-surface);
+  border: 1px solid var(--bp-border);
+  border-radius: 3px;
+  padding: 14px 18px;
+}
+.ctx-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--bp-border);
+}
+.ctx-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--bp-text-dim);
+}
+.ctx-section-sub {
+  font-size: 11px;
+  color: var(--bp-text-dim);
+  font-weight: 400;
+  margin-left: auto;
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+}
+
+/* Two-column row for milestones + trace */
+.ctx-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+@media (max-width: 900px) {
+  .ctx-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Three-pane workbench row (Explore-style, edge-to-edge) ─────────────
+   Breaks out of .ctx-view's horizontal padding via negative margins so the
+   row spans the full viewport. Bordered top and bottom to read as a
+   distinct sub-workbench. */
+.ctx-three-bleed {
+  margin-left: -28px;
+  margin-right: -28px;
+  border-top: 1px solid var(--bp-border);
+  border-bottom: 1px solid var(--bp-border);
+  background: var(--bp-bg);
+  height: 720px;
+  display: flex;
+}
+@media (min-width: 1600px) {
+  .ctx-three-bleed {
+    margin-left: -36px;
+    margin-right: -36px;
+  }
+}
+@media (max-width: 1000px) {
+  /* On narrow screens, drop the splitter and stack panes vertically. */
+  .ctx-three-bleed {
+    margin-left: 0;
+    margin-right: 0;
+    height: auto;
+    border: 1px solid var(--bp-border);
+    border-radius: 3px;
+    flex-direction: column;
+  }
+  .ctx-three-bleed .hsplit {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: auto auto auto;
+  }
+  .ctx-three-bleed .hsplit-divider {
+    display: none;
+  }
+}
+
+/* HSplit grid container fills its parent. */
+.hsplit {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.hsplit-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Divider: 1px visible line, 7px hit area via ::before. */
+.hsplit-divider {
+  position: relative;
+  background: var(--bp-border);
+  cursor: col-resize;
+  z-index: 2;
+  transition: background 0.12s;
+}
+.hsplit-divider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+.hsplit-divider:hover,
+.hsplit-divider:active {
+  background: var(--bp-blue-hi);
+}
+
+/* CtxPane: workbench-style pane reusing the Explore look. */
+.ctx-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bp-bg);
+  overflow: hidden;
+}
+.ctx-pane-header {
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bp-text-dim);
+  background: var(--bp-surface);
+  border-bottom: 1px solid var(--bp-border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.ctx-pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px;
+}
+/* DAG pane removes the inner padding so its canvas can stretch edge-to-edge. */
+.ctx-pane-body:has(.ctx-dag-shell) {
+  padding: 0;
+}
+.ctx-pane-body .ctx-dag-shell {
+  border: none;
+  border-radius: 0;
+  max-height: none;
+  height: 100%;
+}
+
+/* Clipped milestones: each item is a single horizontally-scrollable line.
+   Default scrollbar is thin and dim; on hover the right edge fades to
+   hint at clipped content. */
+.ctx-milestones-clipped li {
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  /* Mask the right edge so users can SEE that content is clipped. */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    black 0,
+    black calc(100% - 24px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    black 0,
+    black calc(100% - 24px),
+    transparent 100%
+  );
+  padding-right: 24px;
+}
+.ctx-milestones-clipped li::-webkit-scrollbar {
+  height: 4px;
+}
+.ctx-milestones-clipped li::-webkit-scrollbar-thumb {
+  background: var(--bp-border);
+}
+.ctx-milestones-clipped li:hover {
+  background: var(--bp-elev);
+}
+
+/* Clipped activity: same single-line treatment for the body. */
+.ctx-activity-clipped li {
+  padding: 8px 0;
+}
+.ctx-activity-clipped .ctx-activity-body {
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  display: block;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: unset;
+  max-width: none;
+  scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    black 0,
+    black calc(100% - 24px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    black 0,
+    black calc(100% - 24px),
+    transparent 100%
+  );
+  padding-right: 24px;
+}
+.ctx-activity-clipped .ctx-activity-body::-webkit-scrollbar {
+  height: 4px;
+}
+.ctx-activity-clipped .ctx-activity-body::-webkit-scrollbar-thumb {
+  background: var(--bp-border);
+}
+
+/* DAG inside a narrow column: shell already has overflow-x for the canvas;
+   nothing extra needed beyond the column max-height. */
+.ctx-row-three .ctx-dag-shell {
+  max-height: 660px;
+}
+
+/* Promotion pipeline */
+.ctx-flow {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex-wrap: wrap;
+}
+.ctx-flow-row {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 0;
+  min-width: 140px;
+}
+.ctx-flow-step {
+  flex: 1;
+  padding: 12px 14px;
+  background: var(--bp-bg);
+  border: 1px solid var(--bp-border);
+  border-radius: 3px;
+  text-align: left;
+}
+.ctx-flow-step.emphasis {
+  border-color: var(--bp-violet);
+  background: rgba(143, 95, 191, 0.10);
+}
+.ctx-flow-val {
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--bp-text);
+  line-height: 1;
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+}
+.ctx-flow-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--bp-text-muted);
+  margin-top: 6px;
+}
+.ctx-flow-hint {
+  font-size: 10px;
+  color: var(--bp-text-dim);
+  margin-top: 3px;
+  line-height: 1.3;
+}
+.ctx-flow-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  color: var(--bp-text-dim);
+  font-size: 18px;
+}
+
+/* OTA balance */
+.ctx-ota-bar {
+  display: flex;
+  height: 10px;
+  background: var(--bp-elev);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.ctx-ota-segment {
+  height: 100%;
+  transition: width 0.2s;
+}
+.ctx-ota-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 10px;
+  font-size: 11px;
+}
+.ctx-ota-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ctx-ota-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.ctx-ota-legend-label {
+  color: var(--bp-text-muted);
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.ctx-ota-legend-val {
+  color: var(--bp-text);
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* Milestones list */
+.ctx-milestones {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ctx-milestones li {
+  position: relative;
+  padding: 6px 0 6px 22px;
+  font-size: 12px;
+  color: var(--bp-text);
+  line-height: 1.5;
+  border-top: 1px solid var(--bp-border);
+}
+.ctx-milestones li:first-child {
+  border-top: none;
+}
+.ctx-milestones li::before {
+  content: "◆";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  color: var(--bp-violet);
+  font-size: 10px;
+}
+.ctx-milestones li.ctx-more {
+  color: var(--bp-text-dim);
+  font-style: italic;
+}
+.ctx-milestones li.ctx-more::before {
+  content: "";
+}
+
+/* Recent activity (DAG-driven, replaces old mini_trace list) */
+.ctx-activity {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ctx-activity li {
+  padding: 8px 0;
+  border-top: 1px solid var(--bp-border);
+}
+.ctx-activity li:first-child {
+  border-top: none;
+}
+.ctx-activity-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.ctx-activity-ts {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-size: 11px;
+  color: var(--bp-text-dim);
+}
+.ctx-activity-id {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-size: 10px;
+  color: var(--bp-text-dim);
+  margin-left: auto;
+  opacity: 0.6;
+}
+.ctx-activity-body {
+  font-size: 12px;
+  color: var(--bp-text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── Reasoning DAG visualization ─────────────────────────────────────── */
+.ctx-dag-shell {
+  width: 100%;
+  overflow: auto;
+  background: var(--bp-bg);
+  border: 1px solid var(--bp-border);
+  border-radius: 3px;
+  padding: 0;
+  max-height: 720px;
+}
+.ctx-dag-canvas {
+  position: relative;
+}
+.ctx-dag-edges {
+  display: block;
+}
+.ctx-dag-lane-header {
+  position: absolute;
+  top: 0;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: var(--bp-surface);
+  border-bottom: 1px solid var(--bp-border);
+}
+.ctx-dag-lane-label {
+  flex: 1;
+}
+.ctx-dag-lane-count {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  color: var(--bp-text-dim);
+  font-size: 10px;
+}
+.ctx-dag-node {
+  position: absolute;
+  background: var(--bp-surface);
+  border: 1px solid var(--bp-border);
+  border-radius: 2px;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: default;
+  transition: background 0.12s, border-color 0.12s;
+  overflow: hidden;
+}
+.ctx-dag-node:hover,
+.ctx-dag-node.hi {
+  background: var(--bp-surface-2);
+  z-index: 2;
+}
+.ctx-dag-node-time {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-size: 10px;
+  color: var(--bp-text-dim);
+  flex-shrink: 0;
+}
+.ctx-dag-node-content {
+  font-size: 11px;
+  color: var(--bp-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.ctx-dag-controls {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+/* TODOs */
+.ctx-todos {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ctx-todos li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--bp-text);
+  padding: 4px 0;
+  border-top: 1px solid var(--bp-border);
+}
+.ctx-todos li:first-child {
+  border-top: none;
+}
+
+/* Branches table + snapshots reuse the same look */
+.ctx-branches {
+  width: 100%;
+  font-size: 12px;
+}
+.ctx-branches thead th {
+  font-size: 10px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--bp-text-dim) !important;
+  padding: 6px 10px !important;
+  border-bottom: 1px solid var(--bp-border) !important;
+  font-weight: 600;
+  position: relative;
+}
+.ctx-branches tbody tr.scope {
+  background: rgba(45, 114, 210, 0.05);
+}
+.ctx-branches tbody td {
+  padding: 6px 10px !important;
+  border-top: 1px solid var(--bp-border) !important;
+  vertical-align: middle;
+}
+.ctx-branches tbody td.mono {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.ctx-cell-purpose {
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--bp-text-muted);
+  font-size: 11px;
+}
+
+/* Sortable header indicator */
+.ctx-table thead th[data-sortable="true"] {
+  transition: color 0.12s, background 0.12s;
+}
+.ctx-table thead th[data-sortable="true"]:hover {
+  color: var(--bp-text-muted) !important;
+  background: var(--bp-elev);
+}
+.ctx-table thead th[data-sorted]::after {
+  content: "▾";
+  position: relative;
+  margin-left: 4px;
+  color: var(--bp-blue-hi);
+  display: inline-block;
+}
+.ctx-table thead th[data-sorted="asc"]::after {
+  content: "▴";
+}
+
+/* Active row pinned to top with left-border accent */
+.ctx-table tbody tr.active {
+  background: rgba(45, 114, 210, 0.08) !important;
+  position: relative;
+}
+.ctx-table tbody tr.active td:first-child {
+  box-shadow: inset 3px 0 0 var(--bp-blue);
+}
+.ctx-table tbody tr.active.scope {
+  background: rgba(143, 95, 191, 0.10) !important;
+}
+
+/* Freshness dot — live status indicator at the row start */
+.ctx-fresh-cell {
+  text-align: center;
+  padding: 6px 4px !important;
+}
+.ctx-fresh-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bp-text-dim);
+}
+.ctx-fresh-dot.fresh {
+  background: var(--bp-green-hi);
+  box-shadow: 0 0 6px var(--bp-green-hi);
+}
+.ctx-fresh-dot.recent {
+  background: var(--bp-orange);
+}
+.ctx-fresh-dot.stale {
+  background: var(--bp-text-dim);
+}
+.ctx-fresh-dot.unknown {
+  background: transparent;
+  border: 1px solid var(--bp-border);
+}
+
+/* Inline sparkbar cell: number on the left, proportional fill on the right */
+.ctx-spark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ctx-spark-val {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--bp-text);
+  min-width: 22px;
+  text-align: right;
+}
+.ctx-spark-track {
+  flex: 1;
+  height: 4px;
+  background: var(--bp-elev);
+  border-radius: 2px;
+  overflow: hidden;
+  min-width: 30px;
+}
+.ctx-spark-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.2s;
+}
+
+/* Exclusive cell — split numbers with subtle units */
+.ctx-exclusive {
+  white-space: nowrap;
+}
+.ctx-excl-num {
+  color: var(--bp-text);
+  font-weight: 600;
+}
+.ctx-excl-unit {
+  color: var(--bp-text-dim);
+  margin-left: 1px;
+  margin-right: 4px;
+  font-size: 10px;
+}
+.ctx-excl-sep {
+  color: var(--bp-text-dim);
+  margin-right: 4px;
+}
+
+/* Snapshot delta cell */
+.ctx-delta-cell {
+  color: var(--bp-text-muted);
+  font-size: 11px;
+}
+.ctx-cell-activity {
+  white-space: nowrap;
+}
+
+.ctx-empty-hint {
+  font-size: 12px;
+  color: var(--bp-text-dim);
+  padding: 12px 0;
+}
+.ctx-empty-hint code {
+  background: var(--bp-elev);
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-size: 10px;
+  color: var(--bp-text-muted);
+}
+
+/* The default .wb-context-body max-width was 920px from the old layout —
+   override for the new dashboard which manages its own width. */
+.wb-context-body:has(.ctx-view) {
+  max-width: none;
+  margin: 0;
+}
+
+/* ── GitHub link icon next to OID in commit list ─────────────────────────── */
+.wb-oid-gh {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  color: var(--bp-text-dim);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.wb-commits-table tbody tr:hover .wb-oid-gh {
+  opacity: 0.8;
+}
+.wb-oid-gh:hover {
+  color: var(--bp-blue-hi);
+  opacity: 1 !important;
+}
+.wb-oid-gh .bp5-icon {
+  font-size: 11px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Sizing pass — closer to GitHub comfortable. Earlier iterations cranked
+   density too far for general reading; this lifts every primary text rule
+   ~1-2px without losing the dense Palantir feel for eyebrows and tags.
+   ───────────────────────────────────────────────────────────────────────── */
+html, body { font-size: 14px; }
+body { line-height: 1.5; }
+
+/* Header */
+.wb-brand { font-size: 15px; }
+.wb-repo { font-size: 14px; }
+.wb-header-modes .bp5-button { font-size: 12px !important; padding: 7px 14px; }
+.wb-header-right .bp5-button { font-size: 12px; }
+
+/* Context strip — make the goal visibly the main thing on the line */
+.wb-ctx-strip { font-size: 13px; padding: 8px 16px; }
+.wb-ctx-label { font-size: 10px; }
+.wb-ctx-goal { font-size: 13px; }
+.wb-ctx-goal-empty { font-size: 12px; }
+.wb-ctx-goal-empty code { font-size: 11px; }
+.wb-ctx-stat { font-size: 12px; }
+.wb-ctx-stat-val { font-size: 13px; }
+.wb-ctx-stat-label { font-size: 10px; }
+
+/* Pane headers stay uppercase eyebrows but readable */
+.wb-pane-header { font-size: 11px; padding: 10px 16px; }
+.wb-pane-empty { font-size: 13px; }
+
+/* Commit list — primary table */
+.wb-commits-table { font-size: 13px; }
+.wb-commits-table thead th { font-size: 11px; padding: 8px 12px !important; }
+.wb-commits-table tbody td { padding: 8px 12px !important; }
+.wb-oid { font-size: 12px; }
+.wb-msg { font-size: 13px; }
+
+/* Detail pane */
+.wb-detail-section { padding: 16px 20px; }
+.wb-detail-msg { font-size: 17px; line-height: 1.4; }
+.wb-detail-byline { font-size: 13px; }
+.wb-detail-title { font-size: 11px; margin-bottom: 10px; }
+.wb-detail-grid { font-size: 13px; gap: 8px 16px; grid-template-columns: 110px 1fr; }
+.wb-detail-key { font-size: 11px; }
+.wb-detail-val { font-size: 13px; }
+.wb-detail-val.mono { font-size: 12px; }
+.wb-detail-prompt { line-height: 1.55; }
+
+/* Right-pane tabs */
+.wb-right-tabs .bp5-tab { font-size: 11px; padding: 11px 0; }
+
+/* Status bar */
+.wb-statusbar { height: 26px; font-size: 12px; }
+
+/* Context dashboard */
+.ctx-eyebrow { font-size: 10px; }
+.ctx-hero { padding: 22px 26px; gap: 28px; }
+.ctx-hero-text { font-size: 18px; line-height: 1.45; max-width: 60ch; }
+.ctx-hero-purpose { font-size: 13px; max-width: 80ch; }
+.ctx-milestones { max-width: 90ch; }
+.ctx-activity-body { max-width: 90ch; }
+.ctx-kpi-val { font-size: 28px; }
+.ctx-kpi-label { font-size: 10px; }
+.ctx-section { padding: 16px 20px; }
+.ctx-section-title { font-size: 12px; }
+.ctx-section-sub { font-size: 12px; }
+.ctx-flow-step { padding: 14px 16px; }
+.ctx-flow-val { font-size: 24px; }
+.ctx-flow-label { font-size: 11px; }
+.ctx-flow-hint { font-size: 11px; }
+.ctx-ota-legend { font-size: 12px; gap: 16px; }
+.ctx-ota-legend-label { font-size: 10px; }
+.ctx-ota-legend-val { font-size: 12px; }
+.ctx-milestones li { font-size: 13px; padding: 8px 0 8px 24px; }
+.ctx-milestones li.ctx-more { font-size: 12px; }
+.ctx-trace { font-size: 12px; }
+.ctx-trace li { padding: 5px 0; }
+.ctx-trace-ts { font-size: 11px; }
+.ctx-todos li { font-size: 13px; padding: 6px 0; }
+.ctx-branches { font-size: 13px; }
+.ctx-branches thead th { font-size: 11px !important; padding: 8px 12px !important; }
+.ctx-branches tbody td { padding: 8px 12px !important; }
+.ctx-branches tbody td.mono { font-size: 12px; }
+.ctx-cell-purpose { font-size: 12px; }
+.ctx-empty-hint { font-size: 13px; }
+.ctx-empty-hint code { font-size: 11px; }
+
+/* Tags — Blueprint default is 12px; only force smaller on micro-tags */
+.bp5-tag { font-size: 12px !important; }
+.bp5-tag.bp5-minimal[style*="fontSize"] { /* let inline overrides win */ }
+
+/* Branch tag inside header — stays small but legible */
+.wb-branch-button .wb-branch-tag {
+  font-size: 11px !important;
+}
+
+/* Section/dimension info in legacy area we still inherit */
+.dim-row { font-size: 13px; }
+.side-row { font-size: 11px; }
+.side-row b { font-size: 13px; }
+.wb-right-tabs .bp5-tab[aria-selected="true"] {
+  color: var(--bp-blue-hi);
+}
+.wb-right-tabs .bp5-tab-indicator {
+  background: var(--bp-blue);
+  height: 2px;
+}
+.wb-right-tabs .bp5-tab:hover {
+  color: var(--bp-text);
+}
+
+/* Inline mono cells inside tables */
+.wb-commits-table td.mono,
+.wb-commits-table .mono {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+/* Navbar mode buttons — keep them tight in the centre group */
+.bp5-navbar .bp5-button-group .bp5-button {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  padding: 6px 12px;
+}
+
+/* Status bar at bottom */
+.wb-statusbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 24px;
+  padding: 0 14px;
+  background: var(--bp-surface);
+  border-top: 1px solid var(--bp-border);
+  font-size: 11px;
+  color: var(--bp-text-dim);
+}
+.wb-statusbar .bp5-divider {
+  border-color: var(--bp-border);
+}

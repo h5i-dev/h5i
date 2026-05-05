@@ -26,3 +26,8 @@ target
 # Added by cargo
 
 /target
+
+# Web frontend (Vite + React + Blueprint workbench served at /v2)
+/web/node_modules
+/web/dist
+/web/.vite
