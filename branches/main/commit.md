@@ -173,3 +173,16 @@ Replaced Blueprint Navbar absolute-centred Alignment groups with flex layout. Ri
 
 ---
 
+## Commit 69fa6b02 — 2026-05-05 22:11 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+Replaced Blueprint Navbar absolute-centred Alignment groups with flex layout. Right pane is now Refs/Sessions/Integrity (3 tabs). Context promoted to top-level mode. rust-embed debug-embed removed for read-from-disk in debug.
+
+### This Commit's Contribution
+
+
+---
+

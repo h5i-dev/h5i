@@ -18,11 +18,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Workbench feature parity: right-pane tabs + mode switcher + build hook + flip /
 - [x] edited server.rs; edited server.rs; Stages B-E complete. New TS/TSX: api.ts (extended types), RefsTab, SessionsTab, Inte…
 - [x] Fix navbar overlap + promote Context to top-level mode
+- [x] edited Cargo.toml; edited server.rs; Fixed two navbar overlap bugs + Context UX. Replaced Blueprint Navbar absolute-cent…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-05 22:11 UTC] `main`: edited Cargo.toml; edited server.rs; Fixed two navbar overlap bugs + Context UX. Replaced Blueprint Navbar absolute-cent…
 - [2026-05-05 22:09 UTC] `main`: Fix navbar overlap + promote Context to top-level mode
 - [2026-05-05 21:58 UTC] `main`: edited server.rs; edited server.rs; Stages B-E complete. New TS/TSX: api.ts (extended types), RefsTab, SessionsTab, Inte…
 - [2026-05-05 21:58 UTC] `main`: Workbench feature parity: right-pane tabs + mode switcher + build hook + flip /
