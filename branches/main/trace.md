@@ -38,3 +38,9 @@ _[Checkpoint: 69fa4e7d — implemented h5i pull (top-level, mirrors h5i push)]_
 [20:27:23] OBSERVE: read cerebrum.md
 [20:27:29] OBSERVE: read README.md
 [20:28:07] ACT: edited tests/cli_integration.rs
+
+
+---
+_[Checkpoint: 69fa52fc — h5i pull is now safe-by-default with conflict handling]_
+---
+
