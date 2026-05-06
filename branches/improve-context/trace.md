@@ -210,3 +210,4 @@ _[Checkpoint: 69fb4375 — edited Cargo.toml]_
 _[Checkpoint: 69fb4d81 — edited Cargo.toml]_
 ---
 
+[14:17:56] OBSERVE: read docs/index.html
