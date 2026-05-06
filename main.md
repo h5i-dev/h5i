@@ -57,11 +57,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited ContextView.tsx; edited ContextView.tsx; edited theme.css
 - [x] Assessed web UI improvement opportunities: hierarchy, actions, responsive layout, and mode utility.
 - [x] Improved web UI utility with quick search, actionable context commands, and command-copy affordances.
+- [x] CLI context writes now require a same-named current-git-branch context purpose before trace or milestone commands proceed.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-06 03:41 UTC] `main`: CLI context writes now require a same-named current-git-branch context purpose before trace or milestone commands proceed.
 - [2026-05-06 03:33 UTC] `main`: Improved web UI utility with quick search, actionable context commands, and command-copy affordances.
 - [2026-05-06 03:25 UTC] `main`: Assessed web UI improvement opportunities: hierarchy, actions, responsive layout, and mode utility.
 - [2026-05-06 03:17 UTC] `main`: edited ContextView.tsx; edited ContextView.tsx; edited theme.css

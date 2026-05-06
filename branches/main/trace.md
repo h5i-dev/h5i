@@ -650,3 +650,9 @@ _[Checkpoint: 69fab673 — Improved web UI utility with quick search, actionable
 [03:41:42] OBSERVE: read tests/cli_integration.rs
 [03:41:42] ACT: edited /home/koukyosyumei/Dev/h5i/tests/cli_integration.rs
 [03:41:48] THINK: Enforce branch purpose at CLI context-write boundaries instead of core context APIs because MCP callers currently rely on auto-init behavior while CLI users need explicit branch intent before durable context writes.
+
+
+---
+_[Checkpoint: 69fab880 — CLI context writes now require a same-named current-git-branch context purpose before trace or milestone commands proceed.]_
+---
+
