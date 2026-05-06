@@ -43,11 +43,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited theme.css; edited ContextView.tsx; edited ContextView.tsx
 - [x] edited theme.css; edited ContextView.tsx; edited ContextView.tsx
 - [x] edited theme.css; edited ContextView.tsx; edited ContextView.tsx
+- [x] Hyperliquid-style design pass: mint accent + near-black bg + borderless cards + KPI density
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-06 02:32 UTC] `main`: Hyperliquid-style design pass: mint accent + near-black bg + borderless cards + KPI density
 - [2026-05-06 02:27 UTC] `main`: edited theme.css; edited ContextView.tsx; edited ContextView.tsx
 - [2026-05-06 02:25 UTC] `main`: edited theme.css; edited ContextView.tsx; edited ContextView.tsx
 - [2026-05-06 02:22 UTC] `main`: edited theme.css; edited ContextView.tsx; edited ContextView.tsx
