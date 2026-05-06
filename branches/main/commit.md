@@ -511,3 +511,16 @@ Primary development branch
 
 ---
 
+## Commit 69faa874 — 2026-05-06 02:33 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+1) Signature accent: redefined :root tokens — bg #0a0c10 (was #1c2127), surface #12161c, accent mint #42e2d0 / hi #7cefe0. Mapped --bp-blue/blue-hi/blue-bg to accent so existing rules cascade. 2) Borders pruned on .ctx-section and .ctx-hero — surface contrast does separation now. 3) KPI tertiary line via .ctx-kpi-sub (mono tabular-nums, 10px dim) — Milestones shows '<branches> branches', Trace shows '<stable> stable · <live> live', Snapshots shows 'last <relative>', TODOs shows 'across <branches> branches', Branches shows '<stale> stale'. 4) OTA legend gains percent column. Hardcoded blue rgbas in 6 places replaced with var(--h5-accent-bg) / accent rgbas. Violet bumped from #8f5fbf to #b48bd9 to read against darker bg. Greens / oranges / reds brightened slightly to match.
+
+### This Commit's Contribution
+
+
+---
+

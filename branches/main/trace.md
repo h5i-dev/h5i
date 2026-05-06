@@ -434,3 +434,9 @@ _[Checkpoint: 69faa6fb — edited theme.css; edited ContextView.tsx; edited Cont
 _[Checkpoint: 69faa85a — Hyperliquid-style design pass: mint accent + near-black bg + borderless cards + KPI density]_
 ---
 
+
+
+---
+_[Checkpoint: 69faa874 — edited theme.css; edited theme.css; edited theme.css]_
+---
+
