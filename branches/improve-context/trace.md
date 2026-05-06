@@ -73,3 +73,4 @@ _[Checkpoint: 69fabd94 — Implemented git-branch goals plus independent context
 [04:06:26] OBSERVE: searched MANUAL.md for "context init|context branch|context trace|context commit|Context|reasoning"
 [04:06:26] OBSERVE: read MANUAL.md
 [04:06:26] OBSERVE: read MANUAL.md
+[04:06:26] OBSERVE: read man/man1/h5i.1
