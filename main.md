@@ -66,11 +66,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/…
 - [x] edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/…
 - [x] edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/release.yaml
+- [x] edited .github/workflows/release.yaml
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-06 13:15 UTC] `improve-context`: edited .github/workflows/release.yaml
 - [2026-05-06 13:12 UTC] `improve-context`: edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/release.yaml
 - [2026-05-06 13:07 UTC] `improve-context`: edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/…
 - [2026-05-06 13:06 UTC] `improve-context`: edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/…
