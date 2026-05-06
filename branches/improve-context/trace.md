@@ -261,3 +261,4 @@ _[Checkpoint: 69fb523e — edited docs/index.html; wrote docs/sitemap.xml; Wrote
 [14:40:18] OBSERVE: read docs/blog/uncertainty-heatmap.html
 [14:40:21] ACT: edited docs/blog/auditing-ai-generated-code.html
 [14:40:24] ACT: edited docs/blog/auditing-ai-generated-code.html
+[14:40:27] ACT: edited docs/blog/from-git-blame-to-ai-blame.html
