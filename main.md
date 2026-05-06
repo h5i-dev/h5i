@@ -75,11 +75,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited Cargo.toml
 - [x] edited Cargo.toml
 - [x] edited Cargo.toml
+- [x] wrote docs/sitemap.xml; wrote docs/robots.txt; SEO pass on docs/: added OG/Twitter/canonical/JSON-LD to index.html and p…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-06 14:20 UTC] `improve-context`: wrote docs/sitemap.xml; wrote docs/robots.txt; SEO pass on docs/: added OG/Twitter/canonical/JSON-LD to index.html and p…
 - [2026-05-06 14:17 UTC] `improve-context`: edited Cargo.toml
 - [2026-05-06 13:34 UTC] `improve-context`: edited Cargo.toml
 - [2026-05-06 13:34 UTC] `improve-context`: edited Cargo.toml

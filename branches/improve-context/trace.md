@@ -219,3 +219,9 @@ _[Checkpoint: 69fb4d81 — edited Cargo.toml]_
 [14:19:52] ACT: wrote docs/sitemap.xml
 [14:19:55] ACT: wrote docs/robots.txt
 [14:19:58] ACT: SEO pass on docs/: added OG/Twitter/canonical/JSON-LD to index.html and pitch.html; created sitemap.xml and robots.txt
+
+
+---
+_[Checkpoint: 69fb4e34 — wrote docs/sitemap.xml; wrote docs/robots.txt; SEO pass on docs/: added OG/Twitter/canonical/JSON-LD to index.html and p…]_
+---
+
