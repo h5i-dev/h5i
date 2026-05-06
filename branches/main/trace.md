@@ -543,3 +543,4 @@ _[Checkpoint: 69fab2a1 — Recent milestones now show context-commit SHA + times
 _[Checkpoint: 69fab2b3 — edited ContextView.tsx; edited ContextView.tsx; edited theme.css]_
 ---
 
+[03:20:18] OBSERVE: read server.rs
