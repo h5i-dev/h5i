@@ -657,3 +657,4 @@ _[Checkpoint: 69fab880 — CLI context writes now require a same-named current-g
 ---
 
 [03:45:59] OBSERVE: read src/main.rs
+[03:45:59] OBSERVE: read src/ctx.rs
