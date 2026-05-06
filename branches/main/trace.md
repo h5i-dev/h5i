@@ -573,3 +573,4 @@ _[Checkpoint: 69fab49c — Assessed web UI improvement opportunities: hierarchy,
 ---
 
 [03:31:22] OBSERVE: read web/src/api.ts
+[03:31:22] OBSERVE: read web/src/BranchPicker.tsx
