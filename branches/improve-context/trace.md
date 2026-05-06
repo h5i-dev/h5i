@@ -231,3 +231,4 @@ _[Checkpoint: 69fb4e34 — wrote docs/sitemap.xml; wrote docs/robots.txt; SEO pa
 [14:29:24] ACT: wrote docs/blog/reduce-claude-token-costs.html
 [14:31:07] ACT: wrote docs/blog/prompt-injection-in-agent-traces.html
 [14:32:51] ACT: wrote docs/blog/from-git-blame-to-ai-blame.html
+[14:34:31] ACT: wrote docs/blog/uncertainty-heatmap.html
