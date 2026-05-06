@@ -12,20 +12,32 @@ body {
 }
 
 :root {
-  --bp-bg: #1c2127;
-  --bp-surface: #252a31;
-  --bp-surface-2: #2f343c;
-  --bp-elev: #383e47;
-  --bp-border: #404854;
+  /* h5i palette — Hyperliquid-style near-black + mint signature accent.
+     The blue tokens are reused as the accent so existing references
+     cascade automatically. */
+  --bp-bg: #0a0c10;          /* near-black, slight blue tint */
+  --bp-surface: #12161c;     /* +1 tier of separation, no border needed */
+  --bp-surface-2: #1a1f26;   /* +2 tier — hover state for rows/cards */
+  --bp-elev: #232931;        /* +3 — control backgrounds */
+  --bp-border: #2a3138;      /* dimmer than before; used sparingly */
+  --bp-border-strong: #3a424b;
   --bp-text: #f6f7f9;
   --bp-text-muted: #abb3bf;
-  --bp-text-dim: #8f99a8;
-  --bp-blue: #2d72d2;
-  --bp-blue-hi: #4c90f0;
-  --bp-violet: #8f5fbf;
-  --bp-green-hi: #72ca9b;
-  --bp-orange: #c87619;
-  --bp-red: #cd4246;
+  --bp-text-dim: #6b7785;
+  /* Signature accent: vibrant mint/teal. Replaces Blueprint blue everywhere.
+     Distinct from Hyperliquid's pure mint by a slight aqua-shift. */
+  --h5-accent: #42e2d0;
+  --h5-accent-hi: #7cefe0;
+  --h5-accent-bg: rgba(66, 226, 208, 0.14);
+  --h5-accent-glow: rgba(66, 226, 208, 0.32);
+  /* Map legacy blue tokens to the accent so existing rules cascade. */
+  --bp-blue: var(--h5-accent);
+  --bp-blue-hi: var(--h5-accent-hi);
+  --bp-blue-bg: var(--h5-accent-bg);
+  --bp-violet: #b48bd9;
+  --bp-green-hi: #5ee2a0;
+  --bp-orange: #f0a050;
+  --bp-red: #ff6b6b;
 }
 
 /* Top-level workbench layout */
@@ -94,7 +106,7 @@ body {
   padding: 6px 12px;
 }
 .wb-header-modes .bp5-button.bp5-active {
-  background: var(--bp-blue-bg, rgba(45, 114, 210, 0.18));
+  background: var(--bp-blue-bg, var(--h5-accent-bg));
   color: var(--bp-blue-hi);
 }
 .wb-header-right {
@@ -186,7 +198,7 @@ body {
   background: var(--bp-surface-2);
 }
 .bp5-html-table.wb-commits-table tbody tr.selected {
-  background: rgba(45, 114, 210, 0.18);
+  background: var(--h5-accent-bg);
 }
 .bp5-html-table.wb-commits-table tbody td {
   padding: 6px 10px !important;
@@ -323,8 +335,8 @@ body {
   padding: 6px 14px;
   background: linear-gradient(
     to right,
-    rgba(143, 95, 191, 0.08),
-    rgba(45, 114, 210, 0.05)
+    rgba(180, 139, 217, 0.10),
+    rgba(66, 226, 208, 0.05)
   );
   border-bottom: 1px solid var(--bp-border);
   font-size: 12px;
@@ -335,8 +347,8 @@ body {
 .wb-ctx-strip:hover {
   background: linear-gradient(
     to right,
-    rgba(143, 95, 191, 0.14),
-    rgba(45, 114, 210, 0.09)
+    rgba(180, 139, 217, 0.14),
+    rgba(66, 226, 208, 0.10)
   );
 }
 .wb-ctx-strip-empty {
@@ -471,10 +483,9 @@ body {
   padding: 18px 22px;
   background: linear-gradient(
     135deg,
-    rgba(143, 95, 191, 0.10),
-    rgba(45, 114, 210, 0.06)
+    rgba(180, 139, 217, 0.08),
+    rgba(66, 226, 208, 0.06)
   );
-  border: 1px solid var(--bp-border);
   border-radius: 3px;
   align-items: center;
 }
@@ -520,11 +531,27 @@ body {
   font-weight: 600;
   margin-top: 4px;
 }
+/* Tertiary line under KPI label — tiny dim metadata. */
+.ctx-kpi-sub {
+  font-size: 10px;
+  color: var(--bp-text-dim);
+  margin-top: 2px;
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ctx-ota-legend-pct {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--bp-text-dim);
+  margin-left: 2px;
+}
 
-/* Section card */
+/* Section card — borderless; surface-color contrast against ctx-view bg
+   does the separation. Hyperliquid-style. */
 .ctx-section {
   background: var(--bp-surface);
-  border: 1px solid var(--bp-border);
   border-radius: 3px;
   padding: 14px 18px;
 }
@@ -775,7 +802,7 @@ body {
 }
 .ctx-flow-step.emphasis {
   border-color: var(--bp-violet);
-  background: rgba(143, 95, 191, 0.10);
+  background: rgba(180, 139, 217, 0.10);
 }
 .ctx-flow-val {
   font-size: 22px;
@@ -1050,7 +1077,7 @@ body {
   position: relative;
 }
 .ctx-branches tbody tr.scope {
-  background: rgba(45, 114, 210, 0.05);
+  background: rgba(66, 226, 208, 0.05);
 }
 .ctx-branches tbody td {
   padding: 6px 10px !important;
@@ -1092,14 +1119,14 @@ body {
 
 /* Active row pinned to top with left-border accent */
 .ctx-table tbody tr.active {
-  background: rgba(45, 114, 210, 0.08) !important;
+  background: var(--h5-accent-bg) !important;
   position: relative;
 }
 .ctx-table tbody tr.active td:first-child {
   box-shadow: inset 3px 0 0 var(--bp-blue);
 }
 .ctx-table tbody tr.active.scope {
-  background: rgba(143, 95, 191, 0.10) !important;
+  background: rgba(180, 139, 217, 0.10) !important;
 }
 
 /* Freshness dot — live status indicator at the row start */

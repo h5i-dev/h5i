@@ -83,8 +83,6 @@ export function ContextView() {
   return (
     <div className="ctx-view">
       <Hero status={status} show={show} promotion={promotion} />
-      <PromotionFlow p={promotion} dag={dag} />
-      <OtaBalance dag={dag} />
 
       {/* Three-pane workbench-style row, matches Explore's visual feel:
           edge-to-edge, no gap, 1px draggable dividers between panes,
@@ -148,6 +146,11 @@ export function ContextView() {
           <SnapshotsTable snapshots={snapshots} />
         </Section>
       ) : null}
+
+      {/* Diagnostics live at the bottom — useful for debugging the context
+          pipeline and OTA balance, but not the primary content. */}
+      <PromotionFlow p={promotion} dag={dag} />
+      <OtaBalance dag={dag} />
     </div>
   );
 }
@@ -463,28 +466,74 @@ function Hero({
         ) : null}
       </div>
       <div className="ctx-kpis">
-        <Kpi value={show.milestones.length} label="milestones" />
-        <Kpi value={status.trace_lines} label="trace lines" />
-        <Kpi value={status.snapshot_count} label="snapshots" />
+        <Kpi
+          value={show.milestones.length}
+          label="milestones"
+          sub={
+            status.branch_summaries.length > 1
+              ? `${status.branch_summaries.length} branches`
+              : undefined
+          }
+        />
+        <Kpi
+          value={status.trace_lines}
+          label="trace lines"
+          sub={`${status.stable_line_count} stable · ${status.dynamic_line_count} live`}
+        />
+        <Kpi
+          value={status.snapshot_count}
+          label="snapshots"
+          sub={
+            status.latest_snapshot_timestamp
+              ? `last ${formatRelative(parseUtcStamp(status.latest_snapshot_timestamp))}`
+              : undefined
+          }
+        />
         <Kpi
           value={show.todo_items.length}
           label="todos"
           intent={show.todo_items.length > 0 ? "warning" : undefined}
+          sub={
+            show.todo_items.length > 0
+              ? `${status.branch_summaries.filter((b) => b.todo_count > 0).length} branches`
+              : undefined
+          }
         />
-        <Kpi value={status.branch_count} label="branches" />
+        <Kpi
+          value={status.branch_count}
+          label="branches"
+          sub={
+            status.stale_branch_count > 0
+              ? `${status.stale_branch_count} stale`
+              : undefined
+          }
+        />
       </div>
     </div>
   );
+}
+
+// "3h ago", "2d ago", "just now" — used under the snapshots KPI.
+function formatRelative(d: Date | null): string {
+  if (!d) return "—";
+  const ms = Date.now() - d.getTime();
+  if (ms < 60 * 1000) return "just now";
+  if (ms < 60 * 60 * 1000) return `${Math.round(ms / 60_000)}m ago`;
+  if (ms < 24 * 60 * 60 * 1000) return `${Math.round(ms / 3_600_000)}h ago`;
+  return `${Math.round(ms / 86_400_000)}d ago`;
 }
 
 function Kpi({
   value,
   label,
   intent,
+  sub,
 }: {
   value: number | string;
   label: string;
   intent?: "warning";
+  /** Optional secondary line — tiny, dimmer; e.g. "+2 today", "1 active". */
+  sub?: string;
 }) {
   return (
     <div className="ctx-kpi">
@@ -495,6 +544,7 @@ function Kpi({
         {value}
       </div>
       <div className="ctx-kpi-label">{label}</div>
+      {sub ? <div className="ctx-kpi-sub">{sub}</div> : null}
     </div>
   );
 }
@@ -586,16 +636,22 @@ function OtaBalance({ dag }: { dag: ContextDag }) {
         )}
       </div>
       <div className="ctx-ota-legend">
-        {segments.map((s) => (
-          <span key={s.label} className="ctx-ota-legend-item">
-            <span
-              className="ctx-ota-swatch"
-              style={{ background: s.color }}
-            />
-            <span className="ctx-ota-legend-label">{s.label}</span>
-            <span className="ctx-ota-legend-val">{s.count}</span>
-          </span>
-        ))}
+        {segments.map((s) => {
+          const pct = total > 0 ? (s.count / total) * 100 : 0;
+          return (
+            <span key={s.label} className="ctx-ota-legend-item">
+              <span
+                className="ctx-ota-swatch"
+                style={{ background: s.color }}
+              />
+              <span className="ctx-ota-legend-label">{s.label}</span>
+              <span className="ctx-ota-legend-val">{s.count}</span>
+              <span className="ctx-ota-legend-pct">
+                {pct >= 0.5 ? `${pct.toFixed(0)}%` : "—"}
+              </span>
+            </span>
+          );
+        })}
       </div>
     </div>
   );
