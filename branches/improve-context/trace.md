@@ -216,3 +216,4 @@ _[Checkpoint: 69fb4d81 — edited Cargo.toml]_
 [14:17:57] OBSERVE: read docs/CNAME
 [14:19:36] ACT: edited docs/index.html
 [14:19:45] ACT: edited docs/pitch.html
+[14:19:52] ACT: wrote docs/sitemap.xml
