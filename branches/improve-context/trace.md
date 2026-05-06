@@ -13,3 +13,4 @@
 [04:03:28] OBSERVE: read src/main.rs
 [04:03:28] OBSERVE: read src/main.rs
 [04:03:28] OBSERVE: read web/src/api.ts
+[04:03:28] OBSERVE: read web/src/api.ts
