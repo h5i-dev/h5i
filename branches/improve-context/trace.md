@@ -68,3 +68,4 @@
 _[Checkpoint: 69fabd94 — Implemented git-branch goals plus independent context-branch purposes as CLI guards and UI metadata.]_
 ---
 
+[04:06:22] ACT: Updated MANUAL.md and h5i(1) to document git-branch goals, independent h5i context-branch purposes, and the two-layer guard before context trace/commit.
