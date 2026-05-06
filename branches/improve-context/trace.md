@@ -94,3 +94,4 @@ _[Checkpoint: 69fabd94 — Implemented git-branch goals plus independent context
 [04:06:26] OBSERVE: read MANUAL.md
 [04:06:26] OBSERVE: searched \[--purpose|context for "<name>"
 [04:06:26] OBSERVE: searched MANUAL.md for "branch <name> \[--purpose|context init --goal|Active branch: main|branches/<branch>|Project goal|Project goal|Goal \+ milestone|h5i context branch"
+[04:06:26] OBSERVE: read MANUAL.md
