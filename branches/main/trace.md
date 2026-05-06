@@ -384,3 +384,9 @@ _[Checkpoint: 69fa7820 — edited ContextView.tsx; edited ContextView.tsx; edite
 [02:21:58] OBSERVE: read ContextView.tsx
 [02:22:03] ACT: edited ContextView.tsx
 [02:22:08] ACT: edited ContextView.tsx
+
+
+---
+_[Checkpoint: 69faa5e0 — Reorder Context: Hero -> 3-pane -> Tables -> Promotion + OTA at bottom]_
+---
+
