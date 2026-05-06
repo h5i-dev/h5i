@@ -459,3 +459,16 @@ PromotionFlow and OtaBalance are diagnostics, not primary content. Moved them be
 
 ---
 
+## Commit 69faa5e6 — 2026-05-06 02:22 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+PromotionFlow and OtaBalance are diagnostics, not primary content. Moved them below Branches and Snapshots so users land on the working surface (3-pane Milestones/DAG/Activity) immediately after the goal hero. New flow: Hero (what's the project about?) -> 3-pane workbench (drill down) -> open TODOs -> Branches -> Snapshots -> Promotion pipeline + OTA balance (diagnostics).
+
+### This Commit's Contribution
+
+
+---
+
