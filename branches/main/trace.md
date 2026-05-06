@@ -565,3 +565,4 @@ _[Checkpoint: 69fab2b3 — edited ContextView.tsx; edited ContextView.tsx; edite
 [03:25:08] OBSERVE: read web/src/ContextView.tsx
 [03:25:08] OBSERVE: read web/package.json
 [03:25:08] OBSERVE: read web/package.json
+[03:25:13] THINK: Prioritize workflow utility and information hierarchy over decorative redesign because the current UI is already a dense workbench with many context surfaces.
