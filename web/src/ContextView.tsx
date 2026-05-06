@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Callout,
   HTMLTable,
@@ -10,7 +10,10 @@ import {
 
 import {
   api,
+  type BranchInfo,
   type ContextDag,
+  type ContextDiff,
+  type ContextMilestoneEntry,
   type ContextPromotion,
   type ContextShow,
   type ContextSnapshotItem,
@@ -36,6 +39,8 @@ interface AllCtx {
   promotion: ContextPromotion;
   dag: ContextDag;
   snapshots: ContextSnapshotItem[];
+  branches: BranchInfo[];
+  milestones: ContextMilestoneEntry[];
 }
 
 export function ContextView() {
@@ -51,9 +56,11 @@ export function ContextView() {
       api.contextPromotion(),
       api.contextDag(),
       api.contextSnapshots(),
+      api.branches(),
+      api.contextMilestones(),
     ])
-      .then(([status, show, promotion, dag, snapshots]) => {
-        setData({ status, show, promotion, dag, snapshots });
+      .then(([status, show, promotion, dag, snapshots, branches, milestones]) => {
+        setData({ status, show, promotion, dag, snapshots, branches, milestones });
       })
       .catch((e) => setError(String(e)));
   }, []);
@@ -77,12 +84,27 @@ export function ContextView() {
     );
   }
 
-  const { status, show, promotion, dag, snapshots } = data;
-  const cleanMilestones = stripCheckmarks(show.milestones).reverse(); // newest first
+  const { status, show, promotion, dag, snapshots, branches, milestones } = data;
+  // Newest milestones at the top. The structured /api/context/milestones is
+  // the preferred source — it has SHA + timestamp per row. We fall back to
+  // the bare-string list from /api/context/show if the structured call
+  // returns nothing (e.g. context not initialised, or main.md branch).
+  const milestoneRows: ContextMilestoneEntry[] =
+    milestones.length > 0
+      ? [...milestones].reverse()
+      : stripCheckmarks(show.milestones)
+          .map((s) => ({ sha_short: "", timestamp: "", contribution: s }))
+          .reverse();
+  const activeBranch = branches.find((b) => b.is_head) ?? null;
 
   return (
     <div className="ctx-view">
-      <Hero status={status} show={show} promotion={promotion} />
+      <Hero
+        status={status}
+        show={show}
+        promotion={promotion}
+        activeBranch={activeBranch}
+      />
 
       {/* Three-pane workbench-style row, matches Explore's visual feel:
           edge-to-edge, no gap, 1px draggable dividers between panes,
@@ -95,16 +117,24 @@ export function ContextView() {
           leftMinPx={240}
           rightMinPx={260}
         >
-          <CtxPane title="Recent milestones" count={cleanMilestones.length}>
-            {cleanMilestones.length === 0 ? (
+          <CtxPane title="Recent milestones" count={milestoneRows.length}>
+            {milestoneRows.length === 0 ? (
               <EmptyHint>
                 No milestones yet — <code>h5i context commit "&lt;summary&gt;"</code>
               </EmptyHint>
             ) : (
               <ol className="ctx-milestones ctx-milestones-clipped">
-                {cleanMilestones.map((m, i) => (
-                  <li key={i} title={m}>
-                    {m}
+                {milestoneRows.map((m, i) => (
+                  <li key={`${m.sha_short}-${i}`} title={m.contribution}>
+                    {m.sha_short ? (
+                      <span
+                        className="ctx-milestone-sha"
+                        title={`Context commit ${m.sha_short}${m.timestamp ? " · " + m.timestamp : ""}`}
+                      >
+                        {m.sha_short.slice(0, 7)}
+                      </span>
+                    ) : null}
+                    <span className="ctx-milestone-text">{m.contribution}</span>
                   </li>
                 ))}
               </ol>
@@ -137,8 +167,8 @@ export function ContextView() {
         </Section>
       ) : null}
 
-      <Section title="Branches" count={status.branch_summaries.length}>
-        <BranchesTable status={status} />
+      <Section title="Branches" count={branches.filter((b) => !b.is_remote).length}>
+        <BranchesTable branches={branches} />
       </Section>
 
       {snapshots.length > 0 ? (
@@ -155,46 +185,72 @@ export function ContextView() {
   );
 }
 
-// ── Branches table — sortable, active-pinned, freshness, sparkbars ────────
+// ── Branches table — git + context joined, sortable, active-pinned ─────────
 
-type BranchSortKey = "activity" | "branch" | "milestones" | "trace" | "todos" | "exclusive";
+type BranchSortKey =
+  | "branch"
+  | "activity"
+  | "ahead"
+  | "ai"
+  | "milestones"
+  | "trace"
+  | "todos";
 
-function BranchesTable({ status }: { status: ContextStatus }) {
+function BranchesTable({ branches }: { branches: BranchInfo[] }) {
   const [sortKey, setSortKey] = useState<BranchSortKey>("activity");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
-  const all = status.branch_summaries;
-  const maxMilestones = Math.max(1, ...all.map((b) => b.milestone_count));
-  const maxTrace = Math.max(1, ...all.map((b) => b.trace_lines));
+  // Local branches only — remote tracking refs duplicate the data and clutter
+  // the unified view. The branch picker still shows them when explicitly
+  // browsing.
+  const local = useMemo(() => branches.filter((b) => !b.is_remote), [branches]);
 
-  // Active branch is always pinned to the top regardless of sort.
+  const maxMilestones = Math.max(
+    1,
+    ...local.map((b) => b.context?.milestone_count ?? 0),
+  );
+  const maxTrace = Math.max(
+    1,
+    ...local.map((b) => b.context?.trace_lines ?? 0),
+  );
+  const maxWalked = Math.max(1, ...local.map((b) => b.walked_commit_count ?? 0));
+
+  // Active branch (HEAD) is always pinned to the top regardless of sort.
   const sorted = useMemo(() => {
-    const active = all.find((b) => b.branch === status.current_branch);
-    const others = all.filter((b) => b.branch !== status.current_branch);
+    const active = local.find((b) => b.is_head);
+    const others = local.filter((b) => !b.is_head);
     const dir = sortDir === "asc" ? 1 : -1;
     others.sort((a, b) => {
       switch (sortKey) {
         case "branch":
-          return dir * a.branch.localeCompare(b.branch);
+          return dir * a.name.localeCompare(b.name);
+        case "activity": {
+          const ta = a.context?.last_activity ?? a.last_commit?.timestamp ?? "";
+          const tb = b.context?.last_activity ?? b.last_commit?.timestamp ?? "";
+          return dir * ta.localeCompare(tb);
+        }
+        case "ahead":
+          return dir * ((a.ahead ?? 0) - (b.ahead ?? 0));
+        case "ai":
+          return dir * ((a.ai_commit_count ?? 0) - (b.ai_commit_count ?? 0));
         case "milestones":
-          return dir * (a.milestone_count - b.milestone_count);
-        case "trace":
-          return dir * (a.trace_lines - b.trace_lines);
-        case "todos":
-          return dir * (a.todo_count - b.todo_count);
-        case "exclusive":
           return (
             dir *
-            (a.exclusive_milestones +
-              a.exclusive_trace_lines -
-              (b.exclusive_milestones + b.exclusive_trace_lines))
+            ((a.context?.milestone_count ?? 0) -
+              (b.context?.milestone_count ?? 0))
           );
-        case "activity":
-          return dir * a.last_activity.localeCompare(b.last_activity);
+        case "trace":
+          return (
+            dir * ((a.context?.trace_lines ?? 0) - (b.context?.trace_lines ?? 0))
+          );
+        case "todos":
+          return (
+            dir * ((a.context?.todo_count ?? 0) - (b.context?.todo_count ?? 0))
+          );
       }
     });
     return active ? [active, ...others] : others;
-  }, [all, sortKey, sortDir, status.current_branch]);
+  }, [local, sortKey, sortDir]);
 
   const headerProps = (key: BranchSortKey, width?: number) => ({
     onClick: () => {
@@ -222,34 +278,42 @@ function BranchesTable({ status }: { status: ContextStatus }) {
           <th {...headerProps("branch")}>Branch</th>
           <th>Purpose</th>
           <th {...headerProps("activity", 130)}>Last activity</th>
+          <th {...headerProps("ahead", 100)}>Ahead/Behind</th>
+          <th {...headerProps("ai", 110)}>AI commits</th>
           <th {...headerProps("milestones", 130)}>Milestones</th>
           <th {...headerProps("trace", 130)}>Trace</th>
           <th {...headerProps("todos", 70)}>TODOs</th>
-          <th {...headerProps("exclusive", 110)}>Exclusive</th>
         </tr>
       </thead>
       <tbody>
         {sorted.map((b) => {
-          const isActive = b.branch === status.current_branch;
-          const fresh = freshnessClass(parseUtcStamp(b.last_activity));
+          const ctxInfo = b.context;
+          const lastActivityStr =
+            ctxInfo?.last_activity ?? formatIsoToUtc(b.last_commit?.timestamp);
+          const fresh = freshnessClass(parseUtcStamp(lastActivityStr));
+          const purpose = ctxInfo?.purpose ?? "";
+          const lastCommitMsg = b.last_commit?.message?.split("\n")[0] ?? "";
           return (
             <tr
-              key={b.branch}
-              className={
-                (isActive ? "active " : "") + (b.is_scope ? "scope" : "")
+              key={b.name}
+              className={b.is_head ? "active" : ""}
+              title={
+                b.last_commit
+                  ? `Tip: ${b.last_commit.short_oid} — ${lastCommitMsg}`
+                  : undefined
               }
             >
               <td className="ctx-fresh-cell">
                 <span
                   className={"ctx-fresh-dot " + fresh}
-                  title={`Last activity: ${b.last_activity}`}
+                  title={`Last activity: ${lastActivityStr || "—"}`}
                 />
               </td>
               <td>
                 <Tag minimal style={{ fontFamily: "monospace" }}>
-                  {b.branch}
+                  {b.name}
                 </Tag>
-                {isActive ? (
+                {b.is_head ? (
                   <Tag
                     intent="primary"
                     minimal
@@ -264,7 +328,7 @@ function BranchesTable({ status }: { status: ContextStatus }) {
                     HEAD
                   </Tag>
                 ) : null}
-                {b.is_scope ? (
+                {!b.has_context_branch ? (
                   <Tag
                     minimal
                     style={{
@@ -274,46 +338,69 @@ function BranchesTable({ status }: { status: ContextStatus }) {
                       textTransform: "uppercase",
                       color: "var(--bp-text-dim)",
                     }}
+                    title="No matching context branch — run `h5i context branch <name>` to create one"
                   >
-                    scope
+                    no ctx
                   </Tag>
                 ) : null}
               </td>
-              <td className="ctx-cell-purpose" title={b.purpose}>
-                {b.purpose}
+              <td className="ctx-cell-purpose" title={purpose || lastCommitMsg}>
+                {purpose ? (
+                  purpose
+                ) : (
+                  <span style={{ color: "var(--bp-text-dim)" }}>
+                    {lastCommitMsg || "—"}
+                  </span>
+                )}
               </td>
               <td className="ctx-cell-activity">
                 <span style={{ color: "var(--bp-text-muted)", fontSize: 11 }}>
-                  {b.last_activity}
+                  {lastActivityStr || "—"}
                 </span>
               </td>
-              <td>
-                <SparkCell value={b.milestone_count} max={maxMilestones} color="var(--bp-violet)" />
-              </td>
-              <td>
-                <SparkCell value={b.trace_lines} max={maxTrace} color="var(--bp-blue)" />
-              </td>
               <td className="mono">
-                {b.todo_count > 0 ? (
-                  <span style={{ color: "var(--bp-orange)", fontWeight: 600 }}>
-                    {b.todo_count}
-                  </span>
+                <AheadBehindCell ahead={b.ahead} behind={b.behind} />
+              </td>
+              <td>
+                {b.walked_commit_count != null ? (
+                  <SparkCell
+                    value={b.ai_commit_count ?? 0}
+                    max={maxWalked}
+                    color="var(--bp-violet)"
+                  />
                 ) : (
                   <span style={{ color: "var(--bp-text-dim)" }}>—</span>
                 )}
               </td>
-              <td
-                className="mono ctx-exclusive"
-                title={`${b.exclusive_milestones} milestones · ${b.exclusive_trace_lines} trace lines unique to this branch`}
-              >
-                {b.exclusive_milestones > 0 || b.exclusive_trace_lines > 0 ? (
-                  <>
-                    <span className="ctx-excl-num">{b.exclusive_milestones}</span>
-                    <span className="ctx-excl-unit">m</span>
-                    <span className="ctx-excl-sep">·</span>
-                    <span className="ctx-excl-num">{b.exclusive_trace_lines}</span>
-                    <span className="ctx-excl-unit">l</span>
-                  </>
+              <td>
+                {ctxInfo ? (
+                  <SparkCell
+                    value={ctxInfo.milestone_count}
+                    max={maxMilestones}
+                    color="var(--bp-violet)"
+                  />
+                ) : (
+                  <span style={{ color: "var(--bp-text-dim)" }}>—</span>
+                )}
+              </td>
+              <td>
+                {ctxInfo ? (
+                  <SparkCell
+                    value={ctxInfo.trace_lines}
+                    max={maxTrace}
+                    color="var(--bp-blue)"
+                  />
+                ) : (
+                  <span style={{ color: "var(--bp-text-dim)" }}>—</span>
+                )}
+              </td>
+              <td className="mono">
+                {ctxInfo == null ? (
+                  <span style={{ color: "var(--bp-text-dim)" }}>—</span>
+                ) : ctxInfo.todo_count > 0 ? (
+                  <span style={{ color: "var(--bp-orange)", fontWeight: 600 }}>
+                    {ctxInfo.todo_count}
+                  </span>
                 ) : (
                   <span style={{ color: "var(--bp-text-dim)" }}>—</span>
                 )}
@@ -350,11 +437,17 @@ function SparkCell({
   );
 }
 
-// ── Snapshot history table — time-delta column, goal-evolution highlight ──
+// ── Snapshot history table — time-delta + click-to-expand-diff ────────────
 
 function SnapshotsTable({ snapshots }: { snapshots: ContextSnapshotItem[] }) {
   // API returns oldest-first; reverse so newest is on top.
   const items = useMemo(() => [...snapshots].reverse(), [snapshots]);
+  const [expandedOid, setExpandedOid] = useState<string | null>(null);
+
+  const toggleExpand = (oid: string) => {
+    setExpandedOid((prev) => (prev === oid ? null : oid));
+  };
+
   return (
     <HTMLTable className="ctx-branches ctx-table" interactive compact>
       <thead>
@@ -365,6 +458,7 @@ function SnapshotsTable({ snapshots }: { snapshots: ContextSnapshotItem[] }) {
           <th>Goal at the time</th>
           <th style={{ width: 90 }}>Δ</th>
           <th style={{ width: 160 }}>Timestamp</th>
+          <th style={{ width: 28 }} />
         </tr>
       </thead>
       <tbody>
@@ -375,49 +469,226 @@ function SnapshotsTable({ snapshots }: { snapshots: ContextSnapshotItem[] }) {
             ? formatDelta(parseUtcStamp(s.timestamp), parseUtcStamp(next.timestamp))
             : null;
           const fresh = i === 0 ? freshnessClass(parseUtcStamp(s.timestamp)) : "";
+          const isExpanded = expandedOid === s.context_oid;
+          const canDiff = next != null;
           return (
-            <tr key={s.context_oid} className={i === 0 ? "active" : ""}>
-              <td className="ctx-fresh-cell">
-                {i === 0 ? (
-                  <span
-                    className={"ctx-fresh-dot " + fresh}
-                    title={`Latest snapshot · ${s.timestamp}`}
-                  />
-                ) : null}
-              </td>
-              <td>
-                <span className="wb-oid">{s.sha_short.slice(0, 7)}</span>
-              </td>
-              <td>
-                <Tag minimal style={{ fontFamily: "monospace", fontSize: 11 }}>
-                  {s.branch}
-                </Tag>
-              </td>
-              <td className="ctx-cell-purpose" title={s.goal}>
-                {goalChanged ? (
-                  <span
-                    style={{ color: "var(--bp-violet)", fontWeight: 500 }}
-                    title={`Changed from: ${next!.goal}`}
-                  >
-                    <Icon icon="changes" size={11} style={{ marginRight: 4 }} />
-                    {s.goal}
-                  </span>
-                ) : (
-                  s.goal
-                )}
-              </td>
-              <td className="mono ctx-delta-cell">
-                {delta ? delta : <span style={{ color: "var(--bp-text-dim)" }}>—</span>}
-              </td>
-              <td style={{ fontSize: 12, color: "var(--bp-text-muted)" }}>
-                {s.timestamp}
-              </td>
-            </tr>
+            <React.Fragment key={s.context_oid}>
+              <tr
+                className={
+                  (i === 0 ? "active " : "") +
+                  (isExpanded ? "expanded " : "") +
+                  (canDiff ? "expandable" : "")
+                }
+                onClick={() => canDiff && toggleExpand(s.context_oid)}
+              >
+                <td className="ctx-fresh-cell">
+                  {i === 0 ? (
+                    <span
+                      className={"ctx-fresh-dot " + fresh}
+                      title={`Latest snapshot · ${s.timestamp}`}
+                    />
+                  ) : null}
+                </td>
+                <td>
+                  <span className="wb-oid">{s.sha_short.slice(0, 7)}</span>
+                </td>
+                <td>
+                  <Tag minimal style={{ fontFamily: "monospace", fontSize: 11 }}>
+                    {s.branch}
+                  </Tag>
+                </td>
+                <td className="ctx-cell-purpose" title={s.goal}>
+                  {goalChanged ? (
+                    <span
+                      style={{ color: "var(--bp-violet)", fontWeight: 500 }}
+                      title={`Changed from: ${next!.goal}`}
+                    >
+                      <Icon icon="changes" size={11} style={{ marginRight: 4 }} />
+                      {s.goal}
+                    </span>
+                  ) : (
+                    s.goal
+                  )}
+                </td>
+                <td className="mono ctx-delta-cell">
+                  {delta ? delta : <span style={{ color: "var(--bp-text-dim)" }}>—</span>}
+                </td>
+                <td style={{ fontSize: 12, color: "var(--bp-text-muted)" }}>
+                  {s.timestamp}
+                </td>
+                <td className="ctx-expand-cell">
+                  {canDiff ? (
+                    <Icon
+                      icon={isExpanded ? "chevron-up" : "chevron-down"}
+                      size={11}
+                      color="var(--bp-text-dim)"
+                    />
+                  ) : null}
+                </td>
+              </tr>
+              {isExpanded && next ? (
+                <tr className="ctx-snapshot-diff-row">
+                  <td colSpan={7} style={{ padding: 0 }}>
+                    <SnapshotDiff fromSha={next.sha} toSha={s.sha} />
+                  </td>
+                </tr>
+              ) : null}
+            </React.Fragment>
           );
         })}
       </tbody>
     </HTMLTable>
   );
+}
+
+// Loads /api/context/diff for a single (older → newer) snapshot pair and
+// shows the milestones + trace deltas. Cached implicitly per-mount; remounts
+// when the user collapses & re-expands.
+function SnapshotDiff({ fromSha, toSha }: { fromSha: string; toSha: string }) {
+  const [diff, setDiff] = useState<ContextDiff | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDiff(null);
+    setError(null);
+    api
+      .contextDiff(fromSha, toSha)
+      .then(setDiff)
+      .catch((e) => setError(String(e)));
+  }, [fromSha, toSha]);
+
+  if (error) {
+    return (
+      <div className="ctx-snapshot-diff" style={{ color: "var(--bp-red)" }}>
+        Failed to load diff: {error}
+      </div>
+    );
+  }
+  if (!diff) {
+    return (
+      <div className="ctx-snapshot-diff">
+        <Spinner size={14} /> Loading diff…
+      </div>
+    );
+  }
+
+  const empty =
+    !diff.goal_changed &&
+    diff.added_milestones.length === 0 &&
+    diff.removed_milestones.length === 0 &&
+    diff.added_trace_lines.length === 0 &&
+    diff.removed_trace_lines.length === 0;
+
+  return (
+    <div className="ctx-snapshot-diff">
+      <div className="ctx-diff-meta">
+        <span className="ctx-diff-arrow">
+          <span className="wb-oid">{diff.from.slice(0, 7)}</span>
+          {" → "}
+          <span className="wb-oid">{diff.to.slice(0, 7)}</span>
+        </span>
+        {diff.cross_branch ? (
+          <Tag minimal intent="warning" style={{ marginLeft: 8, fontSize: 10 }}>
+            cross-branch · {diff.from_branch} → {diff.to_branch}
+          </Tag>
+        ) : null}
+      </div>
+
+      {empty ? (
+        <div className="ctx-diff-empty">No context changes between these snapshots.</div>
+      ) : null}
+
+      {diff.goal_changed ? (
+        <div className="ctx-diff-section">
+          <div className="ctx-diff-label">Goal change</div>
+          <div className="ctx-diff-goal">
+            <div className="ctx-diff-goal-from">
+              <span className="ctx-diff-marker minus">−</span>
+              {diff.from_goal || "(empty)"}
+            </div>
+            <div className="ctx-diff-goal-to">
+              <span className="ctx-diff-marker plus">+</span>
+              {diff.to_goal || "(empty)"}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {diff.added_milestones.length > 0 ? (
+        <div className="ctx-diff-section">
+          <div className="ctx-diff-label">
+            Milestones added{" "}
+            <span className="ctx-diff-count">{diff.added_milestones.length}</span>
+          </div>
+          <ul className="ctx-diff-list">
+            {diff.added_milestones.map((m, i) => (
+              <li key={i} className="ctx-diff-add">
+                <span className="ctx-diff-marker plus">+</span>
+                {stripCheckmark(m)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {diff.removed_milestones.length > 0 ? (
+        <div className="ctx-diff-section">
+          <div className="ctx-diff-label">
+            Milestones removed{" "}
+            <span className="ctx-diff-count">{diff.removed_milestones.length}</span>
+          </div>
+          <ul className="ctx-diff-list">
+            {diff.removed_milestones.map((m, i) => (
+              <li key={i} className="ctx-diff-remove">
+                <span className="ctx-diff-marker minus">−</span>
+                {stripCheckmark(m)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {diff.added_trace_lines.length > 0 || diff.removed_trace_lines.length > 0 ? (
+        <div className="ctx-diff-section">
+          <div className="ctx-diff-label">
+            Trace delta{" "}
+            <span className="ctx-diff-count">
+              +{diff.added_trace_lines.length} / −{diff.removed_trace_lines.length}
+            </span>
+          </div>
+          <ul className="ctx-diff-list ctx-diff-trace">
+            {diff.added_trace_lines.slice(0, 8).map((t, i) => (
+              <li key={`a${i}`} className="ctx-diff-add">
+                <span className="ctx-diff-marker plus">+</span>
+                {t}
+              </li>
+            ))}
+            {diff.removed_trace_lines.slice(0, 8).map((t, i) => (
+              <li key={`r${i}`} className="ctx-diff-remove">
+                <span className="ctx-diff-marker minus">−</span>
+                {t}
+              </li>
+            ))}
+            {diff.added_trace_lines.length + diff.removed_trace_lines.length > 16 ? (
+              <li
+                style={{
+                  color: "var(--bp-text-dim)",
+                  fontStyle: "italic",
+                  fontSize: 11,
+                }}
+              >
+                + more trace lines elided
+              </li>
+            ) : null}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function stripCheckmark(s: string): string {
+  return s.replace(/^\[.\]\s*/, "");
 }
 
 // ── Time helpers ──────────────────────────────────────────────────────────
@@ -445,24 +716,91 @@ function formatDelta(later: Date | null, earlier: Date | null): string | null {
   return `${Math.round(ms / 86_400_000)}d`;
 }
 
+// Convert RFC-3339 timestamp from /api/branches.last_commit.timestamp into the
+// "YYYY-MM-DD HH:MM UTC" shape that parseUtcStamp / freshnessClass expect.
+function formatIsoToUtc(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+}
+
+// Ahead/behind with arrows, dim when both zero, hidden when no upstream.
+function AheadBehindCell({
+  ahead,
+  behind,
+}: {
+  ahead: number | null;
+  behind: number | null;
+}) {
+  if (ahead == null && behind == null) {
+    return <span style={{ color: "var(--bp-text-dim)" }}>—</span>;
+  }
+  const a = ahead ?? 0;
+  const b = behind ?? 0;
+  if (a === 0 && b === 0) {
+    return <span style={{ color: "var(--bp-text-dim)" }}>even</span>;
+  }
+  return (
+    <span style={{ display: "inline-flex", gap: 6, alignItems: "baseline" }}>
+      {a > 0 ? (
+        <span style={{ color: "var(--bp-green-hi)" }}>↑{a}</span>
+      ) : null}
+      {b > 0 ? (
+        <span style={{ color: "var(--bp-orange)" }}>↓{b}</span>
+      ) : null}
+    </span>
+  );
+}
+
 function Hero({
   status,
   show,
   promotion,
+  activeBranch,
 }: {
   status: ContextStatus;
   show: ContextShow;
   promotion: ContextPromotion;
+  activeBranch: BranchInfo | null;
 }) {
+  // The active git branch's context.purpose is the per-branch *intent*. We
+  // surface it as the primary text when a context branch is linked; the
+  // workspace-wide project goal becomes secondary. When no context branch
+  // exists for the active git branch, we fall back to the workspace goal
+  // and show a CTA to create one.
+  const hasLinkedCtx = activeBranch?.context != null;
+  const branchPurpose = activeBranch?.context?.purpose ?? promotion.purpose;
+  const projectGoal = show.project_goal;
+
   return (
     <div className="ctx-hero">
       <div className="ctx-hero-goal">
-        <div className="ctx-eyebrow">Goal · {status.current_branch}</div>
-        <div className="ctx-hero-text">
-          {show.project_goal || "(no goal recorded)"}
+        <div className="ctx-eyebrow">
+          {hasLinkedCtx ? "Branch intent" : "Project goal"} ·{" "}
+          {activeBranch?.name ?? status.current_branch}
         </div>
-        {promotion.purpose ? (
-          <div className="ctx-hero-purpose">{promotion.purpose}</div>
+        <div className="ctx-hero-text">
+          {hasLinkedCtx
+            ? branchPurpose || "(no purpose recorded for this branch)"
+            : projectGoal || "(no goal recorded)"}
+        </div>
+        {hasLinkedCtx && projectGoal ? (
+          <div className="ctx-hero-purpose">
+            <span style={{ color: "var(--bp-text-dim)", fontSize: 11, marginRight: 6, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>
+              Project
+            </span>
+            {projectGoal}
+          </div>
+        ) : null}
+        {!hasLinkedCtx && activeBranch && !activeBranch.is_remote ? (
+          <div className="ctx-hero-cta">
+            <Icon icon="info-sign" size={11} style={{ marginRight: 4 }} />
+            No context branch yet for{" "}
+            <code>{activeBranch.name}</code>. Create one with{" "}
+            <code>h5i context branch {activeBranch.name} --purpose "&lt;intent&gt;"</code>.
+          </div>
         ) : null}
       </div>
       <div className="ctx-kpis">

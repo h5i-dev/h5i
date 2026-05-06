@@ -450,6 +450,35 @@ body {
   color: var(--bp-text-dim);
   font-weight: 600;
 }
+/* Dot in the branch picker indicating a same-named context branch exists. */
+.wb-branch-ctx-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--h5-accent);
+  box-shadow: 0 0 4px var(--h5-accent-glow);
+  flex-shrink: 0;
+}
+
+/* Hero CTA when active branch has no matching context branch. */
+.ctx-hero-cta {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--bp-text-muted);
+  background: var(--bp-elev);
+  border-left: 2px solid var(--h5-accent);
+  padding: 8px 12px;
+  border-radius: 2px;
+  line-height: 1.5;
+}
+.ctx-hero-cta code {
+  background: var(--bp-bg);
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-size: 11px;
+  color: var(--h5-accent-hi);
+}
 
 /* ── Context dashboard (full-width Context mode) ─────────────────────────── */
 .ctx-view {
@@ -739,9 +768,21 @@ body {
   background: var(--bp-elev);
 }
 
-/* Clipped activity: same single-line treatment for the body. */
+/* Clipped activity: single-line by default, click to expand inline. */
 .ctx-activity-clipped li {
   padding: 8px 0;
+  cursor: pointer;
+  transition: background 0.12s;
+  border-radius: 2px;
+  margin: 0 -6px;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.ctx-activity-clipped li:hover {
+  background: var(--bp-surface-2);
+}
+.ctx-activity-clipped li.expanded {
+  background: var(--bp-surface-2);
 }
 .ctx-activity-clipped .ctx-activity-body {
   white-space: nowrap;
@@ -771,6 +812,33 @@ body {
 }
 .ctx-activity-clipped .ctx-activity-body::-webkit-scrollbar-thumb {
   background: var(--bp-border);
+}
+/* Expanded entry: switch to multi-line wrap, drop the right-fade mask, and
+   bound the height with internal vertical scroll so a 50-line OBSERVE can't
+   dominate the column. */
+.ctx-activity-clipped li.expanded .ctx-activity-body {
+  white-space: pre-wrap;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-mask-image: none;
+  mask-image: none;
+  padding-right: 0;
+  max-height: 280px;
+  line-height: 1.55;
+  word-break: break-word;
+  border-left: 2px solid var(--h5-accent);
+  padding-left: 10px;
+  margin-top: 6px;
+  color: var(--bp-text);
+}
+.ctx-activity-chevron {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--bp-text-dim);
+  flex-shrink: 0;
+}
+.ctx-activity-clipped li.expanded .ctx-activity-chevron {
+  color: var(--h5-accent-hi);
 }
 
 /* DAG inside a narrow column: shell already has overflow-x for the canvas;
@@ -914,6 +982,32 @@ body {
 }
 .ctx-milestones li.ctx-more::before {
   content: "";
+}
+
+/* Per-milestone SHA chip — looks like a git short-OID, links visually to
+   the rest of the workbench's identifier convention. */
+.ctx-milestone-sha {
+  display: inline-block;
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--h5-accent-hi);
+  background: var(--h5-accent-bg);
+  padding: 1px 6px;
+  border-radius: 2px;
+  margin-right: 8px;
+  letter-spacing: 0.04em;
+  vertical-align: baseline;
+  flex-shrink: 0;
+}
+.ctx-milestone-text {
+  /* So the SHA stays inline while the text takes the rest of the row. */
+}
+/* In clipped (3-pane) mode, the SHA stays put while the text scrolls
+   horizontally — the mask is applied to the parent <li>, so the chip
+   participates in the fade just like the text. */
+.ctx-milestones-clipped li {
+  display: block;
 }
 
 /* Recent activity (DAG-driven, replaces old mini_trace list) */
@@ -1207,6 +1301,141 @@ body {
 .ctx-delta-cell {
   color: var(--bp-text-muted);
   font-size: 11px;
+}
+
+/* Expandable snapshot row + diff drawer */
+.ctx-table tbody tr.expandable {
+  cursor: pointer;
+}
+.ctx-table tbody tr.expandable:hover {
+  background: var(--bp-surface-2);
+}
+.ctx-table tbody tr.expanded {
+  background: var(--bp-surface-2) !important;
+}
+.ctx-expand-cell {
+  text-align: center;
+  padding: 6px !important;
+}
+.ctx-snapshot-diff-row td {
+  background: var(--bp-bg);
+  border-top: none !important;
+}
+.ctx-snapshot-diff {
+  padding: 14px 18px 18px;
+  background: var(--bp-bg);
+  border-left: 2px solid var(--h5-accent);
+  margin-left: 28px;
+}
+.ctx-diff-meta {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-size: 11px;
+  color: var(--bp-text-dim);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+}
+.ctx-diff-arrow .wb-oid {
+  font-size: 11px;
+}
+.ctx-diff-empty {
+  font-size: 12px;
+  color: var(--bp-text-dim);
+  padding: 8px 0;
+  font-style: italic;
+}
+.ctx-diff-section {
+  margin-top: 14px;
+}
+.ctx-diff-section:first-of-type {
+  margin-top: 0;
+}
+.ctx-diff-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--bp-text-dim);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.ctx-diff-count {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--bp-text);
+  background: var(--bp-elev);
+  padding: 1px 6px;
+  border-radius: 2px;
+  margin-left: 6px;
+  letter-spacing: 0;
+}
+.ctx-diff-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ctx-diff-list li {
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 4px 8px;
+  border-radius: 2px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ctx-diff-list li.ctx-diff-add {
+  background: rgba(94, 226, 160, 0.08);
+  color: var(--bp-text);
+}
+.ctx-diff-list li.ctx-diff-remove {
+  background: rgba(255, 107, 107, 0.08);
+  color: var(--bp-text-muted);
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 107, 107, 0.4);
+}
+.ctx-diff-marker {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-weight: 700;
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+}
+.ctx-diff-marker.plus {
+  color: var(--bp-green-hi);
+}
+.ctx-diff-marker.minus {
+  color: var(--bp-red);
+}
+.ctx-diff-trace li {
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-size: 11px;
+}
+.ctx-diff-goal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ctx-diff-goal-from,
+.ctx-diff-goal-to {
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 6px 10px;
+  border-radius: 2px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ctx-diff-goal-from {
+  background: rgba(255, 107, 107, 0.08);
+  color: var(--bp-text-muted);
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 107, 107, 0.4);
+}
+.ctx-diff-goal-to {
+  background: rgba(94, 226, 160, 0.08);
+  color: var(--bp-text);
 }
 .ctx-cell-activity {
   white-space: nowrap;

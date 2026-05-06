@@ -66,7 +66,21 @@ export function BranchPicker({
                     {local.map((b) => (
                       <MenuItem
                         key={b.name}
-                        text={b.name}
+                        text={
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            {b.name}
+                            {b.has_context_branch ? (
+                              <span
+                                className="wb-branch-ctx-dot"
+                                title={
+                                  b.context?.purpose
+                                    ? `Context: ${b.context.purpose}`
+                                    : "Has linked context branch"
+                                }
+                              />
+                            ) : null}
+                          </span>
+                        }
                         icon={b.is_head ? "tick" : "git-branch"}
                         active={b.name === current}
                         onClick={() => {
@@ -74,7 +88,18 @@ export function BranchPicker({
                           setOpen(false);
                         }}
                         labelElement={
-                          b.upstream ? (
+                          b.ahead != null && (b.ahead > 0 || (b.behind ?? 0) > 0) ? (
+                            <span
+                              style={{
+                                color: "var(--bp-text-dim)",
+                                fontFamily: "monospace",
+                                fontSize: 11,
+                              }}
+                            >
+                              {b.ahead > 0 ? `↑${b.ahead}` : ""}
+                              {(b.behind ?? 0) > 0 ? `↓${b.behind}` : ""}
+                            </span>
+                          ) : b.upstream ? (
                             <span
                               style={{
                                 color: "var(--bp-text-dim)",
