@@ -46,11 +46,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Hyperliquid-style design pass: mint accent + near-black bg + borderless cards + KPI density
 - [x] edited theme.css; edited theme.css; edited theme.css
 - [x] edited theme.css; edited theme.css; edited theme.css
+- [x] Backend: unified /api/branches with git + context join
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-06 02:52 UTC] `main`: Backend: unified /api/branches with git + context join
 - [2026-05-06 02:45 UTC] `main`: edited theme.css; edited theme.css; edited theme.css
 - [2026-05-06 02:33 UTC] `main`: edited theme.css; edited theme.css; edited theme.css
 - [2026-05-06 02:32 UTC] `main`: Hyperliquid-style design pass: mint accent + near-black bg + borderless cards + KPI density

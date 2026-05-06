@@ -537,3 +537,16 @@ Primary development branch
 
 ---
 
+## Commit 69faacd8 — 2026-05-06 02:52 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Extended BranchInfo with: ahead/behind (via git2 graph_ahead_behind, when upstream exists), last_commit (oid+short+msg+author+ISO ts), ai_commit_count + walked_commit_count (walks last 100 commits via revwalk + load_h5i_record, checks ai_metadata), context (ContextBranchLink: purpose, last_milestone, last_activity, milestone_count, trace_lines, snapshot_count, todo_count — populated when a same-named context branch exists), has_context_branch flag. Helpers walk_branch_tip and build_context_branch_link factor reusable logic. Heavy work skipped for remote branches. Tests: 449/449 pass.
+
+---
+
