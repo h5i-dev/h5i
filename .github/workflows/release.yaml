@@ -62,6 +62,21 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      # Build the React workbench up-front so cross's Docker container (which
+      # has no Node/npm) doesn't have to. With H5I_SKIP_WEB_BUILD=1 set on the
+      # cargo step below, build.rs trusts the pre-built web/dist/ and rust-embed
+      # bakes it into the binary.
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend
+        working-directory: web
+        run: npm ci && npm run build
+
       # musl linker/compiler; OpenSSL is vendored so no system libssl-dev needed
       - name: Install musl-tools (Linux)
         if: runner.os == 'Linux' && !matrix.use_cross
@@ -73,10 +88,15 @@ jobs:
 
       - name: Build (native)
         if: "!matrix.use_cross"
+        env:
+          H5I_SKIP_WEB_BUILD: '1'
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Build (cross)
         if: matrix.use_cross
+        env:
+          H5I_SKIP_WEB_BUILD: '1'
+          CROSS_CONTAINER_OPTS: '-e H5I_SKIP_WEB_BUILD'
         run: cross build --release --locked --target ${{ matrix.target }}
 
       # ── Package ───────────────────────────────────────────────────────────
