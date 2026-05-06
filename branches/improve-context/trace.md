@@ -126,3 +126,9 @@ _[Checkpoint: 69fb3c18 — edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited /
 ---
 
 [13:05:21] ACT: edited .github/workflows/release.yaml
+
+
+---
+_[Checkpoint: 69fb3caa — edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/…]_
+---
+
