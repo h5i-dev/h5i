@@ -8,3 +8,4 @@
 [15:07:13] ACT: wrote docs/blog/cve-2026-33068-bypass-permissions-settings.html
 [15:07:19] ACT: edited docs/blog/index.html
 [15:07:27] ACT: edited docs/blog/index.html
+[15:07:32] ACT: edited docs/sitemap.xml
