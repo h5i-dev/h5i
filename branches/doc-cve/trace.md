@@ -16,3 +16,9 @@
 _[Checkpoint: 69fb594f — Added two CVE write-up blog posts]_
 ---
 
+
+
+---
+_[Checkpoint: 69fb595b — edited docs/blog/index.html; edited docs/sitemap.xml; Wrote docs/blog/cve-2025-59536-startup-trust-dialog.html and docs/…]_
+---
+
