@@ -69,11 +69,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited .github/workflows/release.yaml
 - [x] edited .github/workflows/release.yaml
 - [x] session ended (auto-checkpoint)
+- [x] edited Cargo.toml
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-06 13:19 UTC] `improve-context`: edited Cargo.toml
 - [2026-05-06 13:18 UTC] `improve-context`: session ended (auto-checkpoint)
 - [2026-05-06 13:16 UTC] `improve-context`: edited .github/workflows/release.yaml
 - [2026-05-06 13:15 UTC] `improve-context`: edited .github/workflows/release.yaml
