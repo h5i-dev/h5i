@@ -10,3 +10,9 @@
 [15:07:27] ACT: edited docs/blog/index.html
 [15:07:32] ACT: edited docs/sitemap.xml
 [15:07:54] ACT: Wrote docs/blog/cve-2025-59536-startup-trust-dialog.html and docs/blog/cve-2026-33068-bypass-permissions-settings.html. Updated docs/blog/index.html (cards + JSON-LD) and docs/sitemap.xml. docs/index.html doesn't list individual posts, no change needed there.
+
+
+---
+_[Checkpoint: 69fb594f — Added two CVE write-up blog posts]_
+---
+

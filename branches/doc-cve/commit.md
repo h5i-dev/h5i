@@ -4,3 +4,16 @@
 
 _Commits will be appended below._
 
+## Commit 69fb594f — 2026-05-06 15:07 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Wrote docs/blog/cve-2025-59536-startup-trust-dialog.html (CWE-94 startup trust dialog code injection, fixed in 1.0.111) and docs/blog/cve-2026-33068-bypass-permissions-settings.html (CWE-807 bypassPermissions via committed .claude/settings.json, fixed in 2.1.53). Both posts are technical write-ups with NVD/GHSA citations, severity tables, mitigation steps, and an h5i-as-incident-response framing. Wired both into docs/blog/index.html (cards + JSON-LD) and docs/sitemap.xml.
+
+---
+
