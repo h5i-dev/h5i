@@ -145,3 +145,9 @@ _[Checkpoint: 69fb3cba — edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edi
 _[Checkpoint: 69fb3d29 — edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/…]_
 ---
 
+
+
+---
+_[Checkpoint: 69fb3e49 — edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/release.yaml]_
+---
+
