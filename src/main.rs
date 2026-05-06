@@ -3437,6 +3437,7 @@ jq -c '{
                     if !ctx::is_initialized(workdir) {
                         anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
                     }
+                    ctx::prepare_current_git_branch_context(workdir)?;
                     ctx::gcc_commit(workdir, &summary, &detail)?;
                     println!(
                         "{} {} — {}",
@@ -3449,6 +3450,13 @@ jq -c '{
                 ContextCommands::Branch { name, purpose } => {
                     if !ctx::is_initialized(workdir) {
                         anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    if purpose.trim().is_empty() {
+                        anyhow::bail!(
+                            "Context branch '{}' requires a purpose. Run `h5i context branch {} --purpose \"<intent>\"`.",
+                            name,
+                            name
+                        );
                     }
                     ctx::gcc_branch(workdir, &name, &purpose)?;
                     println!(
@@ -3513,9 +3521,10 @@ jq -c '{
                 }
 
                 ContextCommands::Trace { kind, content, ephemeral } => {
-                    // Auto-bootstrap: trace can fire before `h5i context init` is called
-                    // (e.g. from PostToolUse hooks). append_log creates refs/h5i/context on
-                    // first write, so no explicit init is needed here.
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    ctx::prepare_current_git_branch_context(workdir)?;
                     ctx::append_log(workdir, &kind, &content, ephemeral)?;
                     let marker = if ephemeral {
                         style("◇").dim()

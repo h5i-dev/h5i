@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  Button,
   Callout,
   HTMLTable,
   Icon,
@@ -7,6 +8,7 @@ import {
   Spinner,
   Tag,
 } from "@blueprintjs/core";
+import type { IconName } from "@blueprintjs/icons";
 
 import {
   api,
@@ -106,6 +108,12 @@ export function ContextView() {
         activeBranch={activeBranch}
       />
 
+      <NextActions
+        status={status}
+        show={show}
+        activeBranch={activeBranch}
+      />
+
       {/* Three-pane workbench-style row, matches Explore's visual feel:
           edge-to-edge, no gap, 1px draggable dividers between panes,
           sticky pane headers, internal scrolling per pane. */}
@@ -160,7 +168,12 @@ export function ContextView() {
           <ul className="ctx-todos">
             {show.todo_items.map((t, i) => (
               <li key={i}>
-                <Icon icon="dot" size={10} intent="warning" /> {t}
+                <Icon icon="dot" size={10} intent="warning" />
+                <span>{t}</span>
+                <CopyButton
+                  text={`h5i context trace --kind NOTE "TODO: ${escapeCommandText(t)}"`}
+                  label="Copy note"
+                />
               </li>
             ))}
           </ul>
@@ -183,6 +196,117 @@ export function ContextView() {
       <OtaBalance dag={dag} />
     </div>
   );
+}
+
+function NextActions({
+  status,
+  show,
+  activeBranch,
+}: {
+  status: ContextStatus;
+  show: ContextShow;
+  activeBranch: BranchInfo | null;
+}) {
+  const branch = activeBranch?.name ?? status.current_branch;
+  const hasLinkedCtx = activeBranch?.context != null;
+  const needsContextBranch = activeBranch && !activeBranch.is_remote && !hasLinkedCtx;
+  const staleBranches = status.stale_branch_count;
+  type Action = {
+    icon: IconName;
+    title: string;
+    detail: string;
+    command: string;
+  };
+
+  const rawActions: Array<Action | null> = [
+    needsContextBranch
+      ? {
+          icon: "git-branch",
+          title: "Create branch context",
+          detail: `Attach reasoning memory to ${branch}.`,
+          command: `h5i context branch ${branch} --purpose "<intent>"`,
+        }
+      : null,
+    show.todo_items.length > 0
+      ? {
+          icon: "warning-sign",
+          title: "Resolve open TODOs",
+          detail: `${show.todo_items.length} context TODO${show.todo_items.length === 1 ? "" : "s"} need attention.`,
+          command: `h5i context show`,
+        }
+      : null,
+    {
+      icon: "endorsed",
+      title: "Record milestone",
+      detail: "Promote the current outcome into durable context.",
+      command: `h5i context commit "<milestone summary>"`,
+    },
+    {
+      icon: "git-commit",
+      title: "Commit with provenance",
+      detail: "Tie the current context state to git history.",
+      command: `h5i commit -m "<message>" --agent codex --prompt "<prompt>"`,
+    },
+    staleBranches > 0
+      ? {
+          icon: "time",
+          title: "Review stale branches",
+          detail: `${staleBranches} context branch${staleBranches === 1 ? "" : "es"} have no recent activity.`,
+          command: `h5i context show --depth 2`,
+        }
+      : null,
+  ];
+  const actions = rawActions.filter((a): a is Action => a != null);
+
+  return (
+    <div className="ctx-actions">
+      <div className="ctx-actions-head">
+        <span className="ctx-section-title">Next actions</span>
+        <span className="ctx-section-sub">{branch}</span>
+      </div>
+      <div className="ctx-action-grid">
+        {actions.map((action) => (
+          <div className="ctx-action" key={action.title}>
+            <Icon icon={action.icon} size={14} />
+            <div className="ctx-action-main">
+              <div className="ctx-action-title">{action.title}</div>
+              <div className="ctx-action-detail">{action.detail}</div>
+              <code>{action.command}</code>
+            </div>
+            <CopyButton text={action.command} label="Copy" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void navigator.clipboard?.writeText(text).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1200);
+      },
+      () => undefined,
+    );
+  };
+  return (
+    <Button
+      minimal
+      small
+      icon={copied ? "tick" : "clipboard"}
+      onClick={copy}
+      title={text}
+    >
+      {copied ? "Copied" : label}
+    </Button>
+  );
+}
+
+function escapeCommandText(s: string): string {
+  return s.replace(/["\\]/g, "\\$&");
 }
 
 // ── Branches table — git + context joined, sortable, active-pinned ─────────

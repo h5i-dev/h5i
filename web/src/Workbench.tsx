@@ -3,7 +3,12 @@ import {
   Button,
   ButtonGroup,
   HTMLTable,
+  InputGroup,
+  Menu,
+  MenuDivider,
+  MenuItem,
   NonIdealState,
+  Popover,
   Spinner,
   Tab,
   Tabs,
@@ -141,6 +146,15 @@ export function Workbench() {
         </nav>
 
         <div className="wb-header-right">
+          <QuickSearch
+            commits={commits}
+            onSelectCommit={jumpToCommit}
+            onSelectBranch={(name) => {
+              setActiveBranch(name);
+              setMode("explore");
+            }}
+            onOpenContext={() => setMode("context")}
+          />
           {repo?.github_url ? (
             <a
               href={repo.github_url}
@@ -218,6 +232,135 @@ export function Workbench() {
         branch={branchInUI}
       />
     </div>
+  );
+}
+
+type SearchHit =
+  | { kind: "commit"; id: string; title: string; detail: string; oid: string }
+  | { kind: "branch"; id: string; title: string; detail: string; name: string }
+  | { kind: "command"; id: string; title: string; detail: string; run: () => void };
+
+function QuickSearch({
+  commits,
+  onSelectCommit,
+  onSelectBranch,
+  onOpenContext,
+}: {
+  commits: Commit[] | null;
+  onSelectCommit: (oid: string) => void;
+  onSelectBranch: (name: string) => void;
+  onOpenContext: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [branches, setBranches] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    if (!open || branches !== null) return;
+    api
+      .branches()
+      .then((bs) => setBranches(bs.filter((b) => !b.is_remote).map((b) => b.name)))
+      .catch(() => setBranches([]));
+  }, [open, branches]);
+
+  const hits = useMemo<SearchHit[]>(() => {
+    const q = query.trim().toLowerCase();
+    const commandHits: SearchHit[] = [
+      {
+        kind: "command",
+        id: "context",
+        title: "Open Context dashboard",
+        detail: "Workspace goal, trace, branches, snapshots",
+        run: onOpenContext,
+      },
+    ];
+    if (!q) return commandHits;
+
+    const commitHits =
+      commits
+        ?.filter((c) => {
+          const haystack = `${c.short_oid} ${c.git_oid} ${c.message} ${c.author} ${c.ai_model ?? ""}`.toLowerCase();
+          return haystack.includes(q);
+        })
+        .slice(0, 7)
+        .map<SearchHit>((c) => ({
+          kind: "commit",
+          id: `commit:${c.git_oid}`,
+          oid: c.git_oid,
+          title: `${c.short_oid.slice(0, 7)} ${c.message.split("\n")[0]}`,
+          detail: `${c.author.split(" ")[0]}${c.ai_model ? " · " + shortModel(c.ai_model) : ""}`,
+        })) ?? [];
+
+    const branchHits =
+      branches
+        ?.filter((b) => b.toLowerCase().includes(q))
+        .slice(0, 5)
+        .map<SearchHit>((b) => ({
+          kind: "branch",
+          id: `branch:${b}`,
+          name: b,
+          title: b,
+          detail: "Switch branch",
+        })) ?? [];
+
+    return [...commitHits, ...branchHits, ...commandHits.filter((h) => h.title.toLowerCase().includes(q))];
+  }, [branches, commits, onOpenContext, query]);
+
+  const choose = (hit: SearchHit) => {
+    if (hit.kind === "commit") onSelectCommit(hit.oid);
+    if (hit.kind === "branch") onSelectBranch(hit.name);
+    if (hit.kind === "command") hit.run();
+    setQuery("");
+    setOpen(false);
+  };
+
+  return (
+    <Popover
+      isOpen={open}
+      onInteraction={setOpen}
+      placement="bottom-end"
+      minimal
+      content={
+        <Menu className="wb-search-menu">
+          <MenuDivider title={query.trim() ? "Results" : "Quick actions"} />
+          {hits.length === 0 ? (
+            <MenuItem disabled text="No matches" icon="search" />
+          ) : (
+            hits.map((hit) => (
+              <MenuItem
+                key={hit.id}
+                icon={
+                  hit.kind === "commit"
+                    ? "git-commit"
+                    : hit.kind === "branch"
+                      ? "git-branch"
+                      : "lightbulb"
+                }
+                text={
+                  <span className="wb-search-hit">
+                    <span className="wb-search-hit-title">{hit.title}</span>
+                    <span className="wb-search-hit-detail">{hit.detail}</span>
+                  </span>
+                }
+                onClick={() => choose(hit)}
+              />
+            ))
+          )}
+        </Menu>
+      }
+    >
+      <InputGroup
+        className="wb-search"
+        leftIcon="search"
+        placeholder="Search commits, branches"
+        value={query}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          setQuery(e.currentTarget.value);
+          setOpen(true);
+        }}
+      />
+    </Popover>
   );
 }
 

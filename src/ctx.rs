@@ -380,6 +380,58 @@ pub fn current_branch(workdir: &Path) -> String {
         .unwrap_or_else(|| MAIN_BRANCH.to_string())
 }
 
+/// Return the current git branch name, falling back to the active context branch
+/// when HEAD is detached or not yet resolved.
+pub fn current_git_branch(workdir: &Path) -> String {
+    ctx_git_repo(workdir)
+        .ok()
+        .and_then(|repo| {
+            let from_head = repo
+                .head()
+                .ok()
+                .and_then(|h| h.shorthand().map(str::to_string));
+            from_head.or_else(|| read_unborn_head_branch(&repo))
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| current_branch(workdir))
+}
+
+fn read_unborn_head_branch(repo: &Repository) -> Option<String> {
+    let head_path = repo.path().join("HEAD");
+    let head = std::fs::read_to_string(head_path).ok()?;
+    head.trim()
+        .strip_prefix("ref: refs/heads/")
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+}
+
+/// Ensure the current git branch has a same-named context branch with a
+/// non-empty purpose, and make it the active context branch for subsequent
+/// writes. This is intentionally used at CLI write boundaries so traces and
+/// milestones don't drift onto an unrelated context branch.
+pub fn prepare_current_git_branch_context(workdir: &Path) -> Result<String, H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    let git_branch = current_git_branch(workdir);
+    let commit_path = format!("branches/{git_branch}/commit.md");
+    let purpose = ctx_read_file(&repo, &commit_path)
+        .and_then(|text| extract_branch_purpose(&text))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    if purpose.is_none() {
+        return Err(H5iError::InvalidPath(format!(
+            "No context purpose recorded for current git branch '{git_branch}'. \
+             Run `h5i context branch {git_branch} --purpose \"<intent>\"` first."
+        )));
+    }
+
+    if current_branch(workdir) != git_branch {
+        set_current_branch(&repo, &git_branch)?;
+    }
+
+    Ok(git_branch)
+}
+
 fn set_current_branch(repo: &Repository, branch: &str) -> Result<(), H5iError> {
     ctx_write_files(repo, &[(".current_branch", branch)], "h5i context checkout")
 }
@@ -2634,11 +2686,17 @@ fn ensure_branch_git(repo: &Repository, name: &str, purpose: &str) -> Result<(),
     let trace_path = format!("branches/{name}/trace.md");
     let meta_path = format!("branches/{name}/metadata.yaml");
 
-    let missing_commit = ctx_read_file(repo, &commit_path).is_none();
+    let existing_commit_text = ctx_read_file(repo, &commit_path);
+    let missing_commit = existing_commit_text.is_none();
     let missing_trace = ctx_read_file(repo, &trace_path).is_none();
     let missing_meta = ctx_read_file(repo, &meta_path).is_none();
+    let missing_purpose = existing_commit_text
+        .as_deref()
+        .and_then(extract_branch_purpose)
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true);
 
-    if !missing_commit && !missing_trace && !missing_meta {
+    if !missing_commit && !missing_trace && !missing_meta && !missing_purpose {
         return Ok(()); // already exists
     }
 
@@ -2652,6 +2710,13 @@ fn ensure_branch_git(repo: &Repository, name: &str, purpose: &str) -> Result<(),
             "# Branch: {name}\n\n\
              **Purpose:** {purpose}\n\n\
              _Commits will be appended below._\n\n"
+        );
+        changes.push((&commit_path, commit_content.clone()));
+    } else if missing_purpose {
+        commit_content = ensure_commit_purpose(
+            existing_commit_text.as_deref().unwrap_or_default(),
+            name,
+            purpose,
         );
         changes.push((&commit_path, commit_content.clone()));
     } else {
@@ -2674,6 +2739,30 @@ fn ensure_branch_git(repo: &Repository, name: &str, purpose: &str) -> Result<(),
 
     let str_changes: Vec<(&str, &str)> = changes.iter().map(|(p, c)| (*p, c.as_str())).collect();
     ctx_write_files(repo, &str_changes, &format!("h5i context branch: {name}"))
+}
+
+fn ensure_commit_purpose(commit_text: &str, branch: &str, purpose: &str) -> String {
+    if commit_text.contains("**Purpose:**") {
+        let mut out = String::new();
+        for line in commit_text.lines() {
+            if line.trim_start().starts_with("**Purpose:**") {
+                out.push_str(&format!("**Purpose:** {purpose}\n"));
+            } else {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        out
+    } else {
+        format!(
+            "# Branch: {branch}\n\n\
+             **Purpose:** {purpose}\n\n\
+             {}",
+            commit_text
+                .trim_start_matches(&format!("# Branch: {branch}"))
+                .trim_start()
+        )
+    }
 }
 
 /// Append a one-line progress note to `main.md` under `## Notes`.
@@ -3788,6 +3877,36 @@ mod tests {
             commit_md.contains("explore LRU cache approach"),
             "branch purpose should be recorded in commit.md"
         );
+    }
+
+    #[test]
+    fn prepare_current_git_branch_context_requires_same_named_purpose() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        let repo = Repository::open(dir.path()).unwrap();
+        repo.set_head("refs/heads/feature/needs-purpose").unwrap();
+        init(dir.path(), "goal").unwrap();
+
+        let err = prepare_current_git_branch_context(dir.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("h5i context branch feature/needs-purpose --purpose"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn prepare_current_git_branch_context_switches_to_git_branch_with_purpose() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        let repo = Repository::open(dir.path()).unwrap();
+        repo.set_head("refs/heads/feature/with-purpose").unwrap();
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "feature/with-purpose", "implement purpose guard").unwrap();
+        gcc_checkout(dir.path(), MAIN_BRANCH).unwrap();
+
+        let branch = prepare_current_git_branch_context(dir.path()).unwrap();
+        assert_eq!(branch, "feature/with-purpose");
+        assert_eq!(current_branch(dir.path()), "feature/with-purpose");
     }
 
     // ── gcc_commit edge cases ─────────────────────────────────────────────────

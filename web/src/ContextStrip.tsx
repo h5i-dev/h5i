@@ -27,13 +27,23 @@ export function ContextStrip({
   }, [repoBranch]);
 
   if (!status || !status.initialized) {
+    const initCommand = `h5i context init --goal "<summary>"`;
     return (
       <div className="wb-ctx-strip wb-ctx-strip-empty">
         <span className="wb-ctx-label">Context</span>
         <span className="wb-ctx-goal-empty">
-          No context workspace —{" "}
-          <code>h5i context init --goal "&lt;summary&gt;"</code> to start one.
+          No context workspace.
+          <code>{initCommand}</code>
         </span>
+        <Button
+          minimal
+          small
+          icon="clipboard"
+          onClick={() => void navigator.clipboard?.writeText(initCommand)}
+          title="Copy init command"
+        >
+          Copy
+        </Button>
       </div>
     );
   }

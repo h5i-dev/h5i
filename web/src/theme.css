@@ -119,6 +119,54 @@ body {
 .wb-header-right .bp5-button {
   font-size: 11px;
 }
+.wb-search.bp5-input-group {
+  width: 240px;
+}
+.wb-search .bp5-input {
+  height: 28px;
+  background: var(--bp-bg);
+  border: 1px solid var(--bp-border);
+  color: var(--bp-text);
+  box-shadow: none;
+  font-size: 12px;
+}
+.wb-search .bp5-input:focus {
+  border-color: var(--h5-accent);
+  box-shadow: 0 0 0 1px var(--h5-accent-bg);
+}
+.wb-search-menu {
+  width: 360px;
+  max-height: 58vh;
+  overflow: auto;
+}
+.wb-search-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.wb-search-hit-title {
+  color: var(--bp-text);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 290px;
+}
+.wb-search-hit-detail {
+  color: var(--bp-text-dim);
+  font-size: 10px;
+}
+@media (max-width: 1050px) {
+  .wb-search.bp5-input-group {
+    width: 180px;
+  }
+}
+@media (max-width: 840px) {
+  .wb-search.bp5-input-group {
+    display: none;
+  }
+}
 
 .wb-body {
   flex: 1;
@@ -388,6 +436,7 @@ body {
   border-radius: 2px;
   color: var(--bp-text-muted);
   font-size: 10px;
+  margin-left: 6px;
 }
 .wb-ctx-meta {
   display: flex;
@@ -478,6 +527,65 @@ body {
   border-radius: 2px;
   font-size: 11px;
   color: var(--h5-accent-hi);
+}
+
+/* Action rail: small copyable workflow commands surfaced near the top. */
+.ctx-actions {
+  background: var(--bp-surface);
+  border-radius: 3px;
+  padding: 12px 14px;
+}
+.ctx-actions-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.ctx-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.ctx-action {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--bp-bg);
+  border: 1px solid var(--bp-border);
+  border-radius: 3px;
+}
+.ctx-action .bp5-icon {
+  color: var(--h5-accent-hi);
+}
+.ctx-action-main {
+  min-width: 0;
+}
+.ctx-action-title {
+  color: var(--bp-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.ctx-action-detail {
+  color: var(--bp-text-muted);
+  font-size: 11px;
+  margin-top: 2px;
+}
+.ctx-action code {
+  display: block;
+  color: var(--bp-text-dim);
+  background: transparent;
+  font-size: 10px;
+  margin-top: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 900px) {
+  .ctx-action-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ── Context dashboard (full-width Context mode) ─────────────────────────── */
@@ -1150,6 +1258,10 @@ body {
   color: var(--bp-text);
   padding: 4px 0;
   border-top: 1px solid var(--bp-border);
+}
+.ctx-todos li > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
 }
 .ctx-todos li:first-child {
   border-top: none;
