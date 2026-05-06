@@ -48,3 +48,4 @@
 [04:03:28] OBSERVE: read src/ctx.rs
 [04:03:28] OBSERVE: read src/ctx.rs
 [04:03:28] OBSERVE: read tests/cli_integration.rs
+[04:03:28] OBSERVE: searched tests/cli_integration.rs for "src/ctx.rs"
