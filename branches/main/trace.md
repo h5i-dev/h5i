@@ -612,3 +612,4 @@ _[Checkpoint: 69fab49c — Assessed web UI improvement opportunities: hierarchy,
 _[Checkpoint: 69fab673 — Improved web UI utility with quick search, actionable context commands, and command-copy affordances.]_
 ---
 
+[03:41:42] OBSERVE: read src/ctx.rs
