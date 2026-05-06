@@ -1,0 +1,1 @@
+{"nodes":[{"id":"af8dbbd1","parent_ids":[],"kind":"NOTE","content":"Branch purpose established for improve-context so CLI context writes now attach to the same-named git branch instead of drifting onto main.","timestamp":"03:48:33"}]}
