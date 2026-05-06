@@ -518,3 +518,4 @@ _[Checkpoint: 69fab0d3 — Snapshot diff drawer + expandable OBSERVE entries]_
 _[Checkpoint: 69fab0eb — edited DagViz.tsx; edited theme.css; edited theme.css]_
 ---
 
+[03:11:41] OBSERVE: read server.rs
