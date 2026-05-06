@@ -600,3 +600,4 @@ _[Checkpoint: 69fab49c — Assessed web UI improvement opportunities: hierarchy,
 [03:31:25] THINK: Implement a lightweight quick-search and copyable workflow commands over a larger redesign because it improves day-to-day utility without changing backend API contracts.
 [03:33:07] OBSERVE: read web/src/Workbench.tsx
 [03:33:07] OBSERVE: read web/src/ContextView.tsx
+[03:33:07] OBSERVE: read web/src/ContextStrip.tsx
