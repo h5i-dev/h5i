@@ -531,3 +531,9 @@ _[Checkpoint: 69fab0eb — edited DagViz.tsx; edited theme.css; edited theme.css
 [03:15:22] ACT: edited ContextView.tsx
 [03:15:33] ACT: edited ContextView.tsx
 [03:15:46] ACT: edited theme.css
+
+
+---
+_[Checkpoint: 69fab2a1 — Recent milestones now show context-commit SHA + timestamp]_
+---
+

@@ -628,3 +628,16 @@ Wired /api/context/diff into SnapshotsTable: row click toggles a diff drawer (ne
 
 ---
 
+## Commit 69fab2a1 — 2026-05-06 03:16 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Added parse_commit_milestones() in server.rs that extracts {sha_short, timestamp, contribution} from each '## Commit <sha> — <ts>' header in commit.md (existing parse_commit_contributions now thin wrapper that drops sha/ts). New endpoint /api/context/milestones?branch=X returns Vec<ContextMilestoneEntry>. Frontend: api.ts adds ContextMilestoneEntry + contextMilestones(branch?). ContextView loads it in parallel with the other context calls; falls back to show.milestones strings when context not initialised. Each milestone row in the panel now shows a mint-tinted mono SHA chip (7-char) followed by the contribution text; tooltip on the chip reveals 'Context commit <sha> · <timestamp>'. 449/449 tests pass.
+
+---
+

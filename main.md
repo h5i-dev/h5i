@@ -53,11 +53,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited ContextView.tsx; edited BranchPicker.tsx; edited theme.css
 - [x] Snapshot diff drawer + expandable OBSERVE entries
 - [x] edited DagViz.tsx; edited theme.css; edited theme.css
+- [x] Recent milestones now show context-commit SHA + timestamp
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-06 03:16 UTC] `main`: Recent milestones now show context-commit SHA + timestamp
 - [2026-05-06 03:09 UTC] `main`: edited DagViz.tsx; edited theme.css; edited theme.css
 - [2026-05-06 03:09 UTC] `main`: Snapshot diff drawer + expandable OBSERVE entries
 - [2026-05-06 03:02 UTC] `main`: edited ContextView.tsx; edited BranchPicker.tsx; edited theme.css
