@@ -48,13 +48,18 @@ export function ContextStrip({
     );
   }
 
+  const goal = status.git_branch_goal || status.goal;
+
   return (
     <div className="wb-ctx-strip" onClick={onOpen} role="button" tabIndex={0}>
       <span className="wb-ctx-label">Context</span>
-      <span className="wb-ctx-goal" title={status.goal}>
-        {status.goal || "(no goal recorded)"}
+      <span className="wb-ctx-goal" title={goal}>
+        {goal || "(no goal recorded for this git branch)"}
       </span>
       <span className="wb-ctx-meta">
+        <Tag minimal style={{ fontFamily: "monospace", fontSize: 11 }}>
+          {status.git_branch || repoBranch || "git"}
+        </Tag>
         <Tag minimal style={{ fontFamily: "monospace", fontSize: 11 }}>
           {status.current_branch}
         </Tag>

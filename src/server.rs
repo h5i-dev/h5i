@@ -949,6 +949,8 @@ async fn api_session_list(
 struct ContextStatusResponse {
     initialized: bool,
     current_branch: String,
+    git_branch: String,
+    git_branch_goal: String,
     goal: String,
     branch_count: usize,
     branches: Vec<String>,
@@ -985,6 +987,8 @@ async fn api_context_status(State(state): State<Arc<AppState>>) -> Json<ContextS
             return ContextStatusResponse::default();
         }
         let branch = ctx::current_branch(workdir);
+        let git_branch = ctx::current_git_branch(workdir);
+        let git_branch_goal = ctx::git_branch_goal(workdir, &git_branch).unwrap_or_default();
         let branches = ctx::list_branches(workdir);
         let branch_count = branches.len();
         let current_ctx = ctx::gcc_context(
@@ -1096,6 +1100,8 @@ async fn api_context_status(State(state): State<Arc<AppState>>) -> Json<ContextS
         ContextStatusResponse {
             initialized: true,
             current_branch: branch,
+            git_branch,
+            git_branch_goal,
             goal,
             branch_count,
             branches,
@@ -1577,13 +1583,13 @@ fn parse_commit_milestones(commit_text: &str) -> Vec<ContextMilestoneEntry> {
     entries
 }
 
-fn extract_branch_purpose(commit_text: &str, branch: &str) -> String {
+fn extract_branch_purpose(commit_text: &str, _branch: &str) -> String {
     commit_text
         .lines()
         .find(|line| line.starts_with("**Purpose:**"))
         .map(|line| line.split("**Purpose:**").nth(1).unwrap_or("").trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("Branch: {branch}"))
+        .unwrap_or_default()
 }
 
 fn extract_last_commit_timestamp(commit_text: &str) -> String {

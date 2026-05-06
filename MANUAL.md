@@ -773,8 +773,10 @@ A version-controlled reasoning workspace stored in `refs/h5i/context` that survi
 refs/h5i/context tree:
 ├── main.md                        ← global roadmap: goal, milestones, notes
 ├── .current_branch                ← active branch name
+├── git-goals/
+│   └── <git-branch>.md            ← goal for the current Git branch
 └── branches/
-    └── <branch>/
+    └── <context-branch>/
         ├── commit.md              ← milestone summaries (append-only)
         ├── trace.md              ← human-readable OTA execution trace
         ├── dag.json              ← DAG of trace nodes with parent links
@@ -785,6 +787,8 @@ refs/h5i/context tree:
 **Recommended per-session workflow**
 
 ```bash
+h5i context init --goal "implement retry-safe HTTP client" # once per Git branch
+h5i context branch retry-backoff --purpose "try exponential backoff with jitter"
 h5i context show --trace                                   # session start: restore state
 h5i context trace --kind OBSERVE "..."                     # during: durable observation
 h5i context trace --kind OBSERVE "quick scratch" --ephemeral  # during: throwaway note
@@ -795,6 +799,13 @@ h5i context cached-prefix                                  # check prompt-cache 
 h5i context status                                         # session end: overview
 ```
 
+`h5i context trace` and `h5i context commit` require both setup layers:
+
+- the current **Git branch** has a goal from `h5i context init --goal "<goal>"`
+- the active **h5i context branch** has a purpose from `h5i context branch <name> --purpose "<intent>"`
+
+One Git branch can contain multiple h5i context branches, so agents can explore several options without switching Git branches.
+
 ---
 
 ### h5i context init
@@ -803,14 +814,15 @@ h5i context status                                         # session end: overvi
 h5i context init --goal <text>
 ```
 
-Create the context workspace and set the project goal. Must be run once before other `h5i context` commands.
+Create the context workspace if needed and set the goal for the current Git branch. Run it once per Git branch before writing context on that branch.
 
 | Option | Description |
 |--------|-------------|
-| `--goal <text>` | The overall goal for this task or project (required) |
+| `--goal <text>` | Goal for the current Git branch (required before `trace` / `commit`) |
 
 ```bash
 h5i context init --goal "Build an OAuth2 login system"
+h5i context init --goal "Implement retry-safe HTTP client"   # on another Git branch
 ```
 
 ---
@@ -821,7 +833,7 @@ h5i context init --goal "Build an OAuth2 login system"
 h5i context show [options]
 ```
 
-Print working context: goal, milestone progress, recent commits, and optionally the OTA trace.
+Print working context: current Git branch goal, active h5i context branch, milestone progress, recent commits, and optionally the OTA trace.
 
 **Options**
 
@@ -836,7 +848,8 @@ Print working context: goal, milestone progress, recent commits, and optionally 
 
 ```
 ── Context ──────────────────────────────────────────────────
-  Goal: Build an OAuth2 login system  (branch: main)
+  Goal: Build an OAuth2 login system  (branch: oauth-provider)
+  Git branch: feature/oauth  |  Context branch: oauth-provider
 
   Milestones:
     ✔ [x] Initial setup
@@ -860,6 +873,8 @@ h5i context trace --kind <KIND> [--ephemeral] <content>
 ```
 
 Append a single OTA (Observe–Think–Act) entry to the trace log.
+
+Before writing, the CLI verifies that the current Git branch has a goal and the active h5i context branch has a purpose. If either is missing, it prints the setup command to run.
 
 By default the entry is **durable**: it is written to `trace.md` (human-readable) and to `dag.json` (the DAG), and it survives snapshots and session resets.
 
@@ -892,6 +907,8 @@ h5i context commit <summary> [--detail <text>]
 
 Save a milestone checkpoint. Appended to `commit.md` on the current branch.
 
+Like `trace`, this refuses to write until the current Git branch has a goal and the active h5i context branch has a purpose.
+
 **Options**
 
 | Option | Description |
@@ -909,20 +926,21 @@ h5i context commit "Implemented token refresh flow" \
 ### h5i context branch
 
 ```
-h5i context branch <name> [--purpose <text>]
+h5i context branch <name> --purpose <text>
 ```
 
-Create a new context branch and switch to it. Use this before exploring a risky alternative so the main thread is preserved.
+Create a new h5i context branch and switch to it. Use this before exploring a risky alternative so the current context branch is preserved. Multiple h5i context branches can live under the same Git branch.
 
 **Options**
 
 | Option | Description |
 |--------|-------------|
 | `<name>` | Branch name (required, positional) |
-| `--purpose <text>` | One-line description of what this branch is exploring |
+| `--purpose <text>` | One-line description of what this context branch is exploring (required by the CLI) |
 
 ```bash
 h5i context branch experiment/sync-session --purpose "try synchronous session store as fallback"
+h5i context branch experiment/redis-session --purpose "try Redis-backed session store"
 ```
 
 ---
@@ -990,15 +1008,17 @@ h5i context status
 
 Print an overview of the current workspace state:
 
-- Active branch and its milestone commit + trace-line counts
-- Other reasoning branches (if any)
+- Current Git branch and its goal
+- Active h5i context branch and its milestone commit + trace-line counts
+- Other h5i context branches (if any)
 - **Scoped subagents** — `scope/*` branches listed separately so active delegations are visible at a glance
 - **Trace cache split** — how many trace lines fall in the stable prefix (prompt-cache friendly) vs. the dynamic suffix (changes every step)
 - **Commits flagged for review** — if `h5i notes analyze` has been run, the top 3 commits scoring above 0.40 on the review heuristic are surfaced inline, so you don't need a separate `h5i notes review` call to spot what needs human attention
 
 ```
 ── Context Status ──────────────────────────────────────────────
-  Active branch: main  |  3 branches  |  5 commits  |  87 log lines
+  Git branch: feature/auth  |  goal: Build OAuth2 login system
+  Context branch: oauth-provider  |  3 branches  |  5 commits  |  87 log lines
   Other branches: experiment/sync-session
   Scoped subagents: scope/investigate-auth
   Trace: stable 47 lines  ·  dynamic 40 lines  (prompt-cache boundary)
@@ -1239,7 +1259,7 @@ Retrieve all context workspace entries that mention a specific file. Run this **
 |---------|--------|
 | **Milestones** | Context commits whose contribution text mentions the file |
 | **Trace mentions** | OTA trace lines that mention the file, with one line of surrounding context |
-| **Cross-branch** | Trace lines and milestones from other reasoning branches that mention the file |
+| **Cross-branch** | Trace lines and milestones from other h5i context branches that mention the file |
 
 ```
 ── Context relevant to src/repository.rs ─────────────────────────────────────
@@ -1613,7 +1633,7 @@ The briefing grows richer as more h5i features are active:
 
 | Section | Requires |
 |---------|----------|
-| Goal + milestone progress | `h5i context init` |
+| Git-branch goal + milestone progress | `h5i context init --goal "<goal>"` and an active context branch purpose |
 | Last session stats + risky files | `h5i notes analyze` run after each session |
 | Memory changes | `h5i memory snapshot` run after each session |
 | Agent + model in header | Claude Code hook, or `H5I_MODEL` / `H5I_AGENT_ID` env vars |
@@ -1991,12 +2011,12 @@ After restarting Claude Code, all h5i tools become available natively inside any
 | `h5i_notes_coverage` | `h5i notes coverage` | Per-file blind-edit coverage |
 | `h5i_notes_review` | `h5i notes review` | Commits ranked by review worthiness |
 | `h5i_notes_churn` | `h5i notes churn` | Aggregate file churn across all sessions |
-| `h5i_context_init` | `h5i context init` | Initialize the reasoning workspace |
+| `h5i_context_init` | `h5i context init` | Initialize context and set the current Git branch goal |
 | `h5i_context_trace` | `h5i context trace` | Append an OBSERVE/THINK/ACT/NOTE step |
 | `h5i_context_commit` | `h5i context commit` | Checkpoint reasoning progress |
-| `h5i_context_branch` | `h5i context branch` | Create a reasoning branch |
-| `h5i_context_checkout` | `h5i context checkout` | Switch active reasoning branch |
-| `h5i_context_merge` | `h5i context merge` | Merge a reasoning branch back into current |
+| `h5i_context_branch` | `h5i context branch` | Create a h5i context branch with a purpose |
+| `h5i_context_checkout` | `h5i context checkout` | Switch active h5i context branch |
+| `h5i_context_merge` | `h5i context merge` | Merge a h5i context branch back into current |
 | `h5i_context_show` | `h5i context show` | Full workspace state as JSON |
 | `h5i_context_status` | `h5i context status` | Compact workspace summary (includes proactive review flags) |
 | `h5i_context_knowledge` | `h5i context knowledge` | All THINK entries across every branch as structured JSON |
@@ -2031,7 +2051,7 @@ After restarting Claude Code, all h5i tools become available natively inside any
 | `h5i_notes_coverage` | `max_ratio` | number (0–1) | no | — | Only files at or below this read-before-edit ratio |
 | `h5i_notes_review` | `limit` | integer | no | 50 | Commits to scan |
 | `h5i_notes_review` | `min_score` | number (0–1) | no | 0.4 | Minimum review score |
-| `h5i_context_init` | `goal` | string | no | — | Project goal for the reasoning session |
+| `h5i_context_init` | `goal` | string | no | — | Goal for the current Git branch |
 | `h5i_context_trace` | `kind` | `"OBSERVE"` \| `"THINK"` \| `"ACT"` \| `"NOTE"` | **yes** | — | Trace entry type |
 | `h5i_context_trace` | `content` | string | **yes** | — | Content of the trace step |
 | `h5i_context_commit` | `summary` | string | **yes** | — | One-line checkpoint summary |

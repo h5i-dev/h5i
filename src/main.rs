@@ -3435,9 +3435,11 @@ jq -c '{
 
                 ContextCommands::Commit { summary, detail } => {
                     if !ctx::is_initialized(workdir) {
-                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                        anyhow::bail!(
+                            ".h5i-ctx/ not initialized. Run `h5i context init --goal \"<goal>\"` first."
+                        );
                     }
-                    ctx::prepare_current_git_branch_context(workdir)?;
+                    ctx::prepare_context_write(workdir)?;
                     ctx::gcc_commit(workdir, &summary, &detail)?;
                     println!(
                         "{} {} — {}",
@@ -3522,9 +3524,11 @@ jq -c '{
 
                 ContextCommands::Trace { kind, content, ephemeral } => {
                     if !ctx::is_initialized(workdir) {
-                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                        anyhow::bail!(
+                            ".h5i-ctx/ not initialized. Run `h5i context init --goal \"<goal>\"` first."
+                        );
                     }
-                    ctx::prepare_current_git_branch_context(workdir)?;
+                    ctx::prepare_context_write(workdir)?;
                     ctx::append_log(workdir, &kind, &content, ephemeral)?;
                     let marker = if ephemeral {
                         style("◇").dim()

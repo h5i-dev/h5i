@@ -95,6 +95,8 @@ export interface ContextBranchSummary {
 export interface ContextStatus {
   initialized: boolean;
   current_branch: string;
+  git_branch: string;
+  git_branch_goal: string;
   goal: string;
   branch_count: number;
   branches: string[];
@@ -113,6 +115,8 @@ export interface ContextStatus {
 // endpoint: full milestone list, recent commits, mini OTA trace, todos.
 export interface ContextShow {
   project_goal: string;
+  git_branch: string;
+  git_branch_goal: string;
   milestones: string[];
   active_branches: string[];
   current_branch: string;

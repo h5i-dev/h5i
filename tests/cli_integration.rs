@@ -328,7 +328,7 @@ fn context_trace_note() {
 }
 
 #[test]
-fn context_trace_requires_purpose_on_current_git_branch() {
+fn context_trace_requires_goal_on_current_git_branch() {
     let repo = Repo::new();
     repo.h5i_ok(&["init"]);
     repo.h5i_ok(&["context", "init", "--goal", "trace test"]);
@@ -342,7 +342,7 @@ fn context_trace_requires_purpose_on_current_git_branch() {
     assert!(!out.status.success(), "trace unexpectedly succeeded");
     let err = stderr(&out);
     assert!(
-        err.contains("h5i context branch feature/purpose-required --purpose"),
+        err.contains("h5i context init --goal"),
         "unexpected stderr: {err}"
     );
 }

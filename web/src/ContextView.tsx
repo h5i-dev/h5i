@@ -207,9 +207,13 @@ function NextActions({
   show: ContextShow;
   activeBranch: BranchInfo | null;
 }) {
-  const branch = activeBranch?.name ?? status.current_branch;
-  const hasLinkedCtx = activeBranch?.context != null;
-  const needsContextBranch = activeBranch && !activeBranch.is_remote && !hasLinkedCtx;
+  const gitBranch = status.git_branch || activeBranch?.name || "(unknown git branch)";
+  const contextBranch = status.current_branch;
+  const contextSummary = status.branch_summaries.find(
+    (b) => b.branch === contextBranch,
+  );
+  const needsGitGoal = !status.git_branch_goal;
+  const needsContextPurpose = !contextSummary?.purpose;
   const staleBranches = status.stale_branch_count;
   type Action = {
     icon: IconName;
@@ -219,12 +223,20 @@ function NextActions({
   };
 
   const rawActions: Array<Action | null> = [
-    needsContextBranch
+    needsGitGoal
+      ? {
+          icon: "flag",
+          title: "Set git branch goal",
+          detail: `Define the objective for ${gitBranch}.`,
+          command: `h5i context init --goal "<goal>"`,
+        }
+      : null,
+    needsContextPurpose
       ? {
           icon: "git-branch",
-          title: "Create branch context",
-          detail: `Attach reasoning memory to ${branch}.`,
-          command: `h5i context branch ${branch} --purpose "<intent>"`,
+          title: "Create context branch",
+          detail: "Start an exploration path with a purpose.",
+          command: `h5i context branch <name> --purpose "<intent>"`,
         }
       : null,
     show.todo_items.length > 0
@@ -262,7 +274,9 @@ function NextActions({
     <div className="ctx-actions">
       <div className="ctx-actions-head">
         <span className="ctx-section-title">Next actions</span>
-        <span className="ctx-section-sub">{branch}</span>
+        <span className="ctx-section-sub">
+          {gitBranch} / {contextBranch}
+        </span>
       </div>
       <div className="ctx-action-grid">
         {actions.map((action) => (
@@ -889,41 +903,44 @@ function Hero({
   promotion: ContextPromotion;
   activeBranch: BranchInfo | null;
 }) {
-  // The active git branch's context.purpose is the per-branch *intent*. We
-  // surface it as the primary text when a context branch is linked; the
-  // workspace-wide project goal becomes secondary. When no context branch
-  // exists for the active git branch, we fall back to the workspace goal
-  // and show a CTA to create one.
-  const hasLinkedCtx = activeBranch?.context != null;
-  const branchPurpose = activeBranch?.context?.purpose ?? promotion.purpose;
+  const gitBranch = status.git_branch || activeBranch?.name || "(unknown git branch)";
+  const gitGoal = status.git_branch_goal || show.git_branch_goal;
   const projectGoal = show.project_goal;
+  const contextBranch = status.current_branch;
+  const contextPurpose =
+    status.branch_summaries.find((b) => b.branch === contextBranch)?.purpose ??
+    promotion.purpose;
 
   return (
     <div className="ctx-hero">
       <div className="ctx-hero-goal">
         <div className="ctx-eyebrow">
-          {hasLinkedCtx ? "Branch intent" : "Project goal"} ·{" "}
-          {activeBranch?.name ?? status.current_branch}
+          Git branch goal · {gitBranch}
         </div>
         <div className="ctx-hero-text">
-          {hasLinkedCtx
-            ? branchPurpose || "(no purpose recorded for this branch)"
-            : projectGoal || "(no goal recorded)"}
+          {gitGoal || projectGoal || "(no goal recorded for this git branch)"}
         </div>
-        {hasLinkedCtx && projectGoal ? (
-          <div className="ctx-hero-purpose">
-            <span style={{ color: "var(--bp-text-dim)", fontSize: 11, marginRight: 6, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>
-              Project
-            </span>
-            {projectGoal}
-          </div>
-        ) : null}
-        {!hasLinkedCtx && activeBranch && !activeBranch.is_remote ? (
+        <div className="ctx-hero-purpose">
+          <span style={{ color: "var(--bp-text-dim)", fontSize: 11, marginRight: 6, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>
+            Context
+          </span>
+          <Tag minimal style={{ fontFamily: "monospace", marginRight: 8 }}>
+            {contextBranch}
+          </Tag>
+          {contextPurpose || "(no purpose recorded for this context branch)"}
+        </div>
+        {!gitGoal ? (
           <div className="ctx-hero-cta">
             <Icon icon="info-sign" size={11} style={{ marginRight: 4 }} />
-            No context branch yet for{" "}
-            <code>{activeBranch.name}</code>. Create one with{" "}
-            <code>h5i context branch {activeBranch.name} --purpose "&lt;intent&gt;"</code>.
+            No goal yet for git branch <code>{gitBranch}</code>. Set one with{" "}
+            <code>h5i context init --goal "&lt;goal&gt;"</code>.
+          </div>
+        ) : null}
+        {!contextPurpose ? (
+          <div className="ctx-hero-cta">
+            <Icon icon="info-sign" size={11} style={{ marginRight: 4 }} />
+            No purpose yet for h5i context branch <code>{contextBranch}</code>. Create or switch with{" "}
+            <code>h5i context branch &lt;name&gt; --purpose "&lt;intent&gt;"</code>.
           </div>
         ) : null}
       </div>
