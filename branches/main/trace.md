@@ -572,3 +572,4 @@ _[Checkpoint: 69fab2b3 — edited ContextView.tsx; edited ContextView.tsx; edite
 _[Checkpoint: 69fab49c — Assessed web UI improvement opportunities: hierarchy, actions, responsive layout, and mode utility.]_
 ---
 
+[03:31:22] OBSERVE: read web/src/api.ts
