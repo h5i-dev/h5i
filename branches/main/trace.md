@@ -440,3 +440,9 @@ _[Checkpoint: 69faa85a — Hyperliquid-style design pass: mint accent + near-bla
 _[Checkpoint: 69faa874 — edited theme.css; edited theme.css; edited theme.css]_
 ---
 
+
+
+---
+_[Checkpoint: 69faab4b — edited theme.css; edited theme.css; edited theme.css]_
+---
+
