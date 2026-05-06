@@ -277,3 +277,4 @@ _[Checkpoint: 69fb523e — edited docs/index.html; wrote docs/sitemap.xml; Wrote
 _[Checkpoint: 69fb531f — edited docs/blog/reduce-claude-token-costs.html; edited docs/blog/uncertainty-heatmap.html; edited docs/blog/uncertainty…]_
 ---
 
+[15:01:41] OBSERVE: read docs/blog/prompt-injection-in-agent-traces.html
