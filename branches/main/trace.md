@@ -477,3 +477,9 @@ _[Checkpoint: 69faacee — edited theme.css; edited server.rs; edited server.rs]
 [02:55:03] OBSERVE: read BranchPicker.tsx
 [02:55:15] ACT: edited BranchPicker.tsx
 [02:55:28] ACT: edited theme.css
+
+
+---
+_[Checkpoint: 69faaeb1 — UI: integrate /api/branches as the unified git+context branch view]_
+---
+

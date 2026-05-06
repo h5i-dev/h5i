@@ -563,3 +563,16 @@ Extended BranchInfo with: ahead/behind (via git2 graph_ahead_behind, when upstre
 
 ---
 
+## Commit 69faaeb1 — 2026-05-06 03:00 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+api.ts: extended BranchInfo with ahead/behind/last_commit/ai_commit_count/walked_commit_count/context (ContextBranchLink)/has_context_branch. ContextView: AllCtx now loads /api/branches in parallel; activeBranch derived from is_head; passed into Hero. Hero: shows active branch's context.purpose as primary text (eyebrow 'Branch intent · X') with project goal as secondary; falls back to project goal when no linked ctx, with inline CTA showing the h5i context branch CLI command. BranchesTable: rewritten to consume BranchInfo[] (local only); 9 columns (freshness/branch+HEAD+no-ctx tag/purpose/last activity/ahead↑↓behind/AI sparkbar over walked count/milestones/trace/todos). 'no ctx' tag with tooltip when has_context_branch=false. AheadBehindCell w/ green↑/orange↓ arrows or 'even' or '—'. BranchPicker: shows mint dot next to branches with linked context, ahead/behind in label instead of just upstream when divergent. New CSS: .wb-branch-ctx-dot (mint, glow), .ctx-hero-cta (left-accent panel).
+
+---
+
