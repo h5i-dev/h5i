@@ -119,3 +119,9 @@ _[Checkpoint: 69fabe46 — Updated manual and man page for git-branch goals plus
 [13:02:04] OBSERVE: read .github/workflows/release.yaml
 [13:02:08] OBSERVE: read build.rs
 [13:02:20] OBSERVE: read src/server.rs
+
+
+---
+_[Checkpoint: 69fb3c18 — edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei…]_
+---
+
