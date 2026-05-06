@@ -116,3 +116,4 @@ _[Checkpoint: 69fabd94 — Implemented git-branch goals plus independent context
 _[Checkpoint: 69fabe46 — Updated manual and man page for git-branch goals plus h5i context-branch purposes.]_
 ---
 
+[13:02:04] OBSERVE: read .github/workflows/release.yaml
