@@ -602,3 +602,16 @@ Primary development branch
 
 ---
 
+## Commit 69fab0d3 — 2026-05-06 03:09 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Wired /api/context/diff into SnapshotsTable: row click toggles a diff drawer (newer→older pair) with sections for goal change (red strikethrough from-goal vs green to-goal), milestones added/removed, trace delta (capped 8 each side). React.Fragment used to inject second tr after expandable rows. Empty state when no changes. Cross-branch warning tag when from/to branches differ. RecentActivity (in clipped 3-pane mode): each entry is now click-to-expand. Collapsed: single-line scroll w/ fade mask (existing). Expanded: pre-wrap multi-line, max-height 280px with vertical scroll, mint left-border accent, chevron flips ▸/▾. Tracked via expandedIds Set in component state.
+
+---
+
