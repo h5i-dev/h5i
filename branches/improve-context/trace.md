@@ -117,3 +117,4 @@ _[Checkpoint: 69fabe46 — Updated manual and man page for git-branch goals plus
 ---
 
 [13:02:04] OBSERVE: read .github/workflows/release.yaml
+[13:02:08] OBSERVE: read build.rs
