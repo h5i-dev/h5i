@@ -278,3 +278,4 @@ _[Checkpoint: 69fb531f — edited docs/blog/reduce-claude-token-costs.html; edit
 ---
 
 [15:01:41] OBSERVE: read docs/blog/prompt-injection-in-agent-traces.html
+[15:01:44] OBSERVE: read docs/blog/index.html
