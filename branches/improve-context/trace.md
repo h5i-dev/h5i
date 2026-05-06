@@ -256,3 +256,4 @@ _[Checkpoint: 69fb523e — edited docs/index.html; wrote docs/sitemap.xml; Wrote
 [14:40:01] OBSERVE: read docs/blog/auditing-ai-generated-code.html
 [14:40:04] OBSERVE: read docs/blog/from-git-blame-to-ai-blame.html
 [14:40:10] OBSERVE: read docs/blog/persistent-memory-for-claude-code.html
+[14:40:13] OBSERVE: read docs/blog/prompt-injection-in-agent-traces.html
