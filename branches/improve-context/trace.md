@@ -47,3 +47,4 @@
 [04:03:28] ACT: edited /home/koukyosyumei/Dev/h5i/src/server.rs
 [04:03:28] OBSERVE: read src/ctx.rs
 [04:03:28] OBSERVE: read src/ctx.rs
+[04:03:28] OBSERVE: read tests/cli_integration.rs
