@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The h5i Blog — Practical Workflows for Claude Code &amp; AI-Era Git</title>
+  <meta name="description" content="Engineering posts on Claude Code workflows, AI provenance, prompt-injection detection, token-cost reduction, and per-line AI blame — from the team behind h5i, the Git sidecar for AI-era version control.">
+  <meta name="keywords" content="claude code blog, ai engineering blog, ai code review, ai provenance, prompt caching, prompt injection detection, h5i blog">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://h5i.dev/blog/">
+  <link rel="icon" type="image/png" href="../_static/logo.png">
+  <link rel="apple-touch-icon" href="../_static/logo.png">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="The h5i Blog — Practical Workflows for Claude Code &amp; AI-Era Git">
+  <meta property="og:description" content="Engineering posts on Claude Code workflows, AI provenance, prompt-injection detection, token-cost reduction, and per-line AI blame.">
+  <meta property="og:url" content="https://h5i.dev/blog/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="The h5i Blog — Practical Workflows for Claude Code &amp; AI-Era Git">
+  <meta name="twitter:description" content="Engineering posts on Claude Code workflows, AI provenance, prompt injection, and per-line AI blame.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Blog",
+    "name": "The h5i Blog",
+    "description": "Engineering posts on Claude Code workflows, AI provenance, prompt-injection detection, and per-line AI blame.",
+    "url": "https://h5i.dev/blog/",
+    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
+    "blogPost": [
+      {"@type": "BlogPosting", "headline": "Giving Claude Code Persistent Memory Across Sessions", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/persistent-memory-for-claude-code.html"},
+      {"@type": "BlogPosting", "headline": "From git blame to AI blame: per-line provenance for AI-era code", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/from-git-blame-to-ai-blame.html"},
+      {"@type": "BlogPosting", "headline": "Cutting Claude API Token Costs 77% with Content-Addressed Claims", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/reduce-claude-token-costs.html"},
+      {"@type": "BlogPosting", "headline": "Auditing AI-Generated Code: A Practical Framework", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/auditing-ai-generated-code.html"},
+      {"@type": "BlogPosting", "headline": "Detecting Prompt Injection in Agent Reasoning Traces", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/prompt-injection-in-agent-traces.html"},
+      {"@type": "BlogPosting", "headline": "Vibe Coding With Claude Is Fun — Until It Silently Ships a Risk", "datePublished": "2026-04-15", "url": "https://h5i.dev/blog/uncertainty-heatmap.html"}
+    ]
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../_static/blog.css">
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="../index.html"><img src="../_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="../index.html">Home</a></li>
+    <li><a href="index.html">Blog</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<section class="index-hero">
+  <div class="post-eyebrow">The h5i Blog</div>
+  <h1>Practical workflows for Claude Code &amp; AI-era Git</h1>
+  <p>
+    Engineering posts on AI provenance, agent memory, prompt-injection detection, token-cost
+    reduction, and per-line blame for AI-touched code.
+  </p>
+</section>
+
+<section class="post-list">
+
+  <a class="post-card" href="persistent-memory-for-claude-code.html">
+    <div class="card-meta">
+      <span>Workflow</span>
+      <span>2026-05-06</span>
+      <span>8 min read</span>
+    </div>
+    <h2>Giving Claude Code Persistent Memory Across Sessions</h2>
+    <p>Anthropic gives you a memory primitive. h5i gives you the layers above it — versioned reasoning, per-commit snapshots, and a SessionStart hook that injects the right slice of context into every new session.</p>
+  </a>
+
+  <a class="post-card" href="from-git-blame-to-ai-blame.html">
+    <div class="card-meta">
+      <span>Workflow</span>
+      <span>2026-05-06</span>
+      <span>8 min read</span>
+    </div>
+    <h2>From <code>git blame</code> to AI blame: per-line provenance for AI-era code</h2>
+    <p><code>git blame</code> answers "who wrote this" with a name and a date. h5i blame adds the prompt, the model, the agent, and the test result that produced each line — same ergonomics, four more answers.</p>
+  </a>
+
+  <a class="post-card" href="reduce-claude-token-costs.html">
+    <div class="card-meta">
+      <span>Benchmark</span>
+      <span>2026-05-06</span>
+      <span>9 min read</span>
+    </div>
+    <h2>Cutting Claude API Token Costs 77% with Content-Addressed Claims</h2>
+    <p>Prompt caching solves the cost of re-sending. It does not solve the cost of re-deriving. The A/B benchmark, N=10: 510k → 117k cache-read tokens, 5.6× → 1.0× file reads, identical task fidelity.</p>
+  </a>
+
+  <a class="post-card" href="auditing-ai-generated-code.html">
+    <div class="card-meta">
+      <span>Practice</span>
+      <span>2026-05-06</span>
+      <span>9 min read</span>
+    </div>
+    <h2>Auditing AI-Generated Code: A Practical Framework</h2>
+    <p>Your team merges 50 PRs a week, 30 of them AI-assisted. A four-vector framework — blind edits, uncertainty, scope creep, prompt injection — produces a single ranked review queue.</p>
+  </a>
+
+  <a class="post-card" href="prompt-injection-in-agent-traces.html">
+    <div class="card-meta">
+      <span>Security</span>
+      <span>2026-05-06</span>
+      <span>10 min read</span>
+    </div>
+    <h2>Detecting Prompt Injection in Agent Reasoning Traces</h2>
+    <p>The injection lives in the trace, not the output. Eight deterministic regex rules over OBSERVE/THINK/ACT entries catch override and exfiltration patterns with no model in the audit path.</p>
+  </a>
+
+  <a class="post-card" href="uncertainty-heatmap.html">
+    <div class="card-meta">
+      <span>Code Review</span>
+      <span>2026-04-15</span>
+      <span>7 min read</span>
+    </div>
+    <h2>Vibe Coding With Claude Is Fun — Until It Silently Ships a Risk</h2>
+    <p>One command to make Claude confess every line it wasn't sure about. Inside the thinking blocks: a calibrated vocabulary of self-doubt that becomes a per-file review heatmap.</p>
+  </a>
+
+</section>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="../index.html">Home</a>
+      <a href="index.html">Blog</a>
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -3,9 +3,49 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i — Next-Gen AI-Aware Git</title>
-  <meta name="description" content="h5i (high-five) is a Git sidecar that extends version control for teams where AI agents write production code alongside humans.">
+  <title>h5i — AI-Aware Git Sidecar for Claude Code &amp; Codex</title>
+  <meta name="description" content="h5i is an open-source Git sidecar that captures AI provenance, versioned reasoning, and session memory for Claude Code and Codex agents. Audit prompts, detect blind edits, persist context across sessions.">
+  <meta name="keywords" content="claude code, codex, ai provenance, ai code review, prompt injection detection, agent memory, version control, ai-generated code audit, git sidecar, h5i">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://h5i.dev/">
   <link rel="icon" type="image/png" href="_static/logo.png">
+  <link rel="apple-touch-icon" href="_static/logo.png">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="h5i — AI-Aware Git Sidecar for Claude Code &amp; Codex">
+  <meta property="og:description" content="Capture AI provenance, versioned reasoning, and session memory for Claude Code and Codex agents. Open source, no lock-in.">
+  <meta property="og:url" content="https://h5i.dev/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="og:image:alt" content="h5i web dashboard showing AI commit timeline, integrity score, and prompt history">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="h5i — AI-Aware Git Sidecar for Claude Code &amp; Codex">
+  <meta name="twitter:description" content="Capture AI provenance, versioned reasoning, and session memory for Claude Code and Codex agents.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <!-- Structured data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "h5i",
+    "alternateName": "high-five",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Linux, macOS, Windows",
+    "description": "A Git sidecar that captures AI provenance, versioned reasoning, and session memory for Claude Code and Codex agents.",
+    "url": "https://h5i.dev/",
+    "sameAs": ["https://github.com/Koukyosyumei/h5i"],
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "author": {"@type": "Person", "name": "Koukyosyumei"},
+    "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+  }
+  </script>
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -408,6 +448,7 @@
     <li><a href="#usecases">Use Cases</a></li>
     <li><a href="#dashboard">Dashboard</a></li>
     <li><a href="#install">Install</a></li>
+    <li><a href="blog/index.html">Blog</a></li>
     <li><a href="pitch.html">Pitch Deck</a></li>
     <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
   </ul>
