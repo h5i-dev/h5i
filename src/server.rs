@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
-    extract::{Query, State},
-    response::{Html, Json},
+    extract::{Path, Query, State},
+    http::{header, StatusCode},
+    response::{Html, IntoResponse, Json, Response},
     routing::get,
     Router,
 };
@@ -63,6 +64,9 @@ pub struct EnrichedCommit {
 #[derive(Deserialize)]
 pub struct LogQuery {
     pub limit: Option<usize>,
+    /// Optional branch (or any ref-ish: tag, "origin/x", abbrev). When omitted
+    /// the walk starts at HEAD as before.
+    pub branch: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -158,8 +162,41 @@ fn fallback_report() -> IntegrityReport {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-async fn index() -> Html<&'static str> {
+// `/` now serves the React + Blueprint workbench (web/dist/) bundled into
+// the binary at compile time. The previous single-file dashboard is still
+// reachable at `/legacy` for tabs whose interactive visualizations haven't
+// been migrated yet (notably the Intent Graph SVG renderer).
+//
+// In debug builds rust-embed reads from disk on each request, so editing
+// frontend files and re-running `npm run build` updates the served bundle
+// without rebuilding the Rust binary. Release builds embed at compile time.
+
+#[derive(rust_embed::Embed)]
+#[folder = "web/dist/"]
+struct WebAsset;
+
+async fn index() -> Response {
+    serve_embedded("index.html")
+}
+
+async fn legacy_index() -> Html<&'static str> {
     Html(FRONTEND_HTML)
+}
+
+async fn workbench_asset(Path(path): Path<String>) -> Response {
+    // The /assets/*path route strips the "assets/" prefix from the URL, but
+    // rust-embed indexes by the full path under web/dist/, so we put it back.
+    serve_embedded(&format!("assets/{}", path))
+}
+
+fn serve_embedded(path: &str) -> Response {
+    match WebAsset::get(path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
+        }
+        None => (StatusCode::NOT_FOUND, "not found").into_response(),
+    }
 }
 
 async fn api_repo(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
@@ -229,9 +266,13 @@ async fn api_commits(
     let path = state.repo_path.clone();
     let limit = params.limit.unwrap_or(100);
 
+    let branch = params.branch.clone();
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<EnrichedCommit>> {
         let repo = H5iRepository::open(&path)?;
-        let records = repo.get_log(limit)?;
+        let records = match branch.as_deref() {
+            Some(b) if !b.is_empty() => repo.get_log_at_branch(b, limit)?,
+            _ => repo.get_log(limit)?,
+        };
         let mut enriched = Vec::new();
 
         for record in records {
@@ -323,6 +364,142 @@ async fn api_commits(
     .await;
 
     Json(result.unwrap_or_else(|_| Ok(vec![])).unwrap_or_default())
+}
+
+// ── Branches ──────────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Default)]
+struct BranchInfo {
+    name: String,
+    is_head: bool,
+    is_remote: bool,
+    upstream: Option<String>,
+    target_oid: Option<String>,
+}
+
+async fn api_branches(State(state): State<Arc<AppState>>) -> Json<Vec<BranchInfo>> {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<BranchInfo>> {
+        let repo = H5iRepository::open(&path)?;
+        let git = repo.git();
+        let head_name = git
+            .head()
+            .ok()
+            .and_then(|h| h.shorthand().map(String::from));
+
+        let mut out = Vec::new();
+        for typ in [git2::BranchType::Local, git2::BranchType::Remote] {
+            let branches = match git.branches(Some(typ)) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            for b in branches.flatten() {
+                let (branch, _) = b;
+                let name = match branch.name() {
+                    Ok(Some(n)) => n.to_string(),
+                    _ => continue,
+                };
+                // Skip the synthetic origin/HEAD pointer.
+                if name.ends_with("/HEAD") {
+                    continue;
+                }
+                let upstream = if matches!(typ, git2::BranchType::Local) {
+                    branch
+                        .upstream()
+                        .ok()
+                        .and_then(|u| u.name().ok().flatten().map(String::from))
+                } else {
+                    None
+                };
+                let target_oid = branch.get().target().map(|o| o.to_string());
+                out.push(BranchInfo {
+                    is_head: matches!(typ, git2::BranchType::Local)
+                        && head_name.as_deref() == Some(name.as_str()),
+                    is_remote: matches!(typ, git2::BranchType::Remote),
+                    name,
+                    upstream,
+                    target_oid,
+                });
+            }
+        }
+        // Local branches first (sorted), then remotes (sorted).
+        out.sort_by(|a, b| match (a.is_remote, b.is_remote) {
+            (false, true) => std::cmp::Ordering::Less,
+            (true, false) => std::cmp::Ordering::Greater,
+            _ => a.name.cmp(&b.name),
+        });
+        Ok(out)
+    })
+    .await;
+
+    Json(result.unwrap_or_else(|_| Ok(vec![])).unwrap_or_default())
+}
+
+// ── Files changed by a single commit ──────────────────────────────────────────
+//
+// Used by the per-commit Context tab to look up which paths to ask
+// `/api/context/relevant?file=X` about.
+
+#[derive(Deserialize)]
+pub struct CommitFilesQuery {
+    pub oid: String,
+}
+
+#[derive(Serialize, Default)]
+struct CommitFiles {
+    oid: String,
+    files: Vec<String>,
+    truncated: bool,
+}
+
+async fn api_commit_files(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<CommitFilesQuery>,
+) -> Json<CommitFiles> {
+    let path = state.repo_path.clone();
+    let oid_str = params.oid.clone();
+    const MAX_FILES: usize = 100;
+
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<CommitFiles> {
+        let repo = H5iRepository::open(&path)?;
+        let git = repo.git();
+        let oid = git2::Oid::from_str(&oid_str)?;
+        let commit = git.find_commit(oid)?;
+        let tree = commit.tree()?;
+        // Diff against first parent (or the empty tree for the root commit).
+        let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+        let diff = git.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)?;
+
+        let mut files: Vec<String> = Vec::new();
+        diff.foreach(
+            &mut |delta, _| {
+                if files.len() >= MAX_FILES {
+                    return false;
+                }
+                if let Some(p) = delta.new_file().path().or_else(|| delta.old_file().path()) {
+                    if let Some(s) = p.to_str() {
+                        files.push(s.to_string());
+                    }
+                }
+                true
+            },
+            None,
+            None,
+            None,
+        )?;
+
+        let truncated = files.len() >= MAX_FILES;
+        files.sort();
+        files.dedup();
+        Ok(CommitFiles {
+            oid: oid_str,
+            files,
+            truncated,
+        })
+    })
+    .await;
+
+    Json(result.unwrap_or_else(|_| Ok(CommitFiles::default())).unwrap_or_default())
 }
 
 /// Integrity check against the *current staging area* (manual form).
@@ -1194,8 +1371,14 @@ pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/", get(index))
+        .route("/v2", get(index))
+        .route("/v2/", get(index))
+        .route("/legacy", get(legacy_index))
+        .route("/assets/*path", get(workbench_asset))
         .route("/api/repo", get(api_repo))
+        .route("/api/branches", get(api_branches))
         .route("/api/commits", get(api_commits))
+        .route("/api/commit-files", get(api_commit_files))
         .route("/api/integrity", get(api_integrity))
         .route("/api/integrity/commit", get(api_integrity_commit))
         .route("/api/intent-graph", get(api_intent_graph))
@@ -1718,6 +1901,266 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
   .ctx-health-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .ctx-promo-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+/* ─────────────────────────────────────────────────────────────
+   Blueprint refresh — Palantir-style visual tokens (override).
+   Delete this block to revert to the original GitHub-dark look.
+   ───────────────────────────────────────────────────────────── */
+:root{
+  --bp-bg:#1c2127;
+  --bp-surface:#252a31;
+  --bp-surface-2:#2f343c;
+  --bp-elev:#383e47;
+  --bp-border:#404854;
+  --bp-border-strong:#5c7080;
+  --bp-text:#f6f7f9;
+  --bp-text-muted:#abb3bf;
+  --bp-text-dim:#8f99a8;
+  --bp-blue:#2d72d2;
+  --bp-blue-hi:#4c90f0;
+  --bp-blue-bg:#2d72d233;
+  --bp-green:#238551;
+  --bp-green-hi:#72ca9b;
+  --bp-green-bg:#23855133;
+  --bp-orange:#c87619;
+  --bp-orange-bg:#c8761933;
+  --bp-red:#cd4246;
+  --bp-red-bg:#cd424633;
+  --bp-violet:#8f5fbf;
+  --bp-violet-bg:#8f5fbf33;
+  --bp-radius:2px;
+  --bp-radius-lg:3px;
+}
+body{background:var(--bp-bg);color:var(--bp-text);font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI","Helvetica Neue",Arial,sans-serif}
+.header{background:var(--bp-surface);border-bottom:1px solid var(--bp-border);backdrop-filter:none;height:50px}
+.logo{font-weight:600;letter-spacing:0;color:var(--bp-text)}
+.logo-icon{background:var(--bp-blue);box-shadow:none;border-radius:var(--bp-radius);font-weight:700}
+.header-sep{color:var(--bp-border)}
+.repo-name{color:var(--bp-blue-hi);font-weight:500}
+.branch-badge{background:var(--bp-elev);border:1px solid var(--bp-border);border-radius:var(--bp-radius);color:var(--bp-text-muted);text-transform:uppercase;font-size:10px;letter-spacing:.04em;padding:2px 8px}
+.refresh-btn,.gh-repo-link{background:var(--bp-elev);border:1px solid var(--bp-border);border-radius:var(--bp-radius);color:var(--bp-text-muted)}
+.refresh-btn:hover,.gh-repo-link:hover{color:var(--bp-text);border-color:var(--bp-border-strong)}
+.stats-bar{background:var(--bp-surface);border-bottom:1px solid var(--bp-border)}
+.stat{color:var(--bp-text-muted)}
+.stat b{color:var(--bp-text)}
+.dot-blue{background:var(--bp-blue-hi)}.dot-purple{background:var(--bp-violet)}.dot-green{background:var(--bp-green-hi)}.dot-red{background:var(--bp-red)}.dot-orange{background:var(--bp-orange)}.dot-gray{background:var(--bp-border-strong)}
+.sidebar{border-right:1px solid var(--bp-border)}
+.card{background:var(--bp-surface);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
+.card-title,.chart-title{color:var(--bp-text-dim);font-weight:600;letter-spacing:.08em}
+.dim-tag{border-radius:var(--bp-radius);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.tag-blue{background:var(--bp-blue-bg);color:var(--bp-blue-hi)}
+.tag-green{background:var(--bp-green-bg);color:var(--bp-green-hi)}
+.tag-purple{background:var(--bp-violet-bg);color:var(--bp-violet)}
+.tag-orange{background:var(--bp-orange-bg);color:var(--bp-orange)}
+.tag-yellow{background:var(--bp-orange-bg);color:var(--bp-orange)}
+.side-row{color:var(--bp-text-muted)}
+.side-row b{color:var(--bp-text)}
+.health-rate.good{color:var(--bp-green-hi)}.health-rate.warn{color:var(--bp-orange)}.health-rate.bad{color:var(--bp-red)}
+.tabs{border-bottom:1px solid var(--bp-border)}
+.tab{color:var(--bp-text-muted);font-weight:500;border-radius:0;padding:9px 14px}
+.tab:hover{color:var(--bp-text);background:var(--bp-elev)}
+.tab.active{color:var(--bp-blue-hi);border-bottom-color:var(--bp-blue)}
+.tab-badge{background:var(--bp-elev);color:var(--bp-text-muted);border-radius:var(--bp-radius);font-weight:600}
+.tab.active .tab-badge{background:var(--bp-blue-bg);color:var(--bp-blue-hi)}
+.search-input,.int-input,.ig-select{background:var(--bp-bg);border:1px solid var(--bp-border);border-radius:var(--bp-radius);color:var(--bp-text)}
+.search-input:focus,.int-input:focus{border-color:var(--bp-blue);box-shadow:0 0 0 1px var(--bp-blue)}
+.pill{background:var(--bp-elev);border:1px solid var(--bp-border);border-radius:var(--bp-radius);color:var(--bp-text-muted);text-transform:uppercase;font-size:11px;font-weight:600;letter-spacing:.04em;padding:3px 10px}
+.pill:hover{color:var(--bp-text);border-color:var(--bp-border-strong)}
+.pill.active{background:var(--bp-blue-bg);border-color:var(--bp-blue);color:var(--bp-blue-hi)}
+.pill.active.red-pill{background:var(--bp-red-bg);border-color:var(--bp-red);color:var(--bp-red)}
+.timeline::before{background:var(--bp-border);border-radius:0;width:1px;left:11px}
+.commit-card{background:var(--bp-surface);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
+.commit-card:hover{border-color:var(--bp-border-strong);background:var(--bp-surface-2)}
+.commit-card.expanded{border-color:var(--bp-blue)}
+.commit-card.failing{border-left:3px solid var(--bp-red)}
+.commit-card.passing{border-left:3px solid var(--bp-green)}
+.commit-dot{border:2px solid var(--bp-bg);width:11px;height:11px}
+.ai-dot{background:var(--bp-violet);box-shadow:none}
+.human-dot{background:var(--bp-elev);border-color:var(--bp-border-strong)}
+.oid-chip{font-family:'SFMono-Regular','Consolas','Liberation Mono',monospace;border-radius:var(--bp-radius);font-weight:500;letter-spacing:.05em;padding:1px 6px}
+.oid-ai{background:var(--bp-violet-bg);color:var(--bp-violet)}
+.oid-human{background:var(--bp-blue-bg);color:var(--bp-blue-hi)}
+.commit-msg{font-weight:500}
+.byline{color:var(--bp-text-muted)}
+.byline .author{color:var(--bp-blue-hi)}
+.gh-commit-link{background:var(--bp-blue-bg);color:var(--bp-blue-hi);border:1px solid var(--bp-blue);border-radius:var(--bp-radius)}
+.gh-commit-link:hover{background:var(--bp-blue);color:#fff;border-color:var(--bp-blue-hi)}
+.badge{border-radius:var(--bp-radius);font-weight:500;text-transform:uppercase;font-size:10px;letter-spacing:.05em;padding:2px 7px}
+.b-model{background:var(--bp-violet-bg);color:var(--bp-violet)}
+.b-agent{background:var(--bp-orange-bg);color:var(--bp-orange)}
+.b-test-ok{background:var(--bp-green-bg);color:var(--bp-green-hi)}
+.b-test-fail{background:var(--bp-red-bg);color:var(--bp-red)}
+.b-test-warn{background:var(--bp-orange-bg);color:var(--bp-orange)}
+.b-tool,.b-dur,.b-tok{background:var(--bp-elev);color:var(--bp-text-muted);border:1px solid var(--bp-border)}
+.b-ast{background:var(--bp-green-bg);color:var(--bp-green-hi)}
+.b-crdt,.b-cause{background:var(--bp-blue-bg);color:var(--bp-blue-hi);border:none}
+.b-cov{background:var(--bp-violet-bg);color:var(--bp-violet)}
+.commit-detail{border-top:1px solid var(--bp-border)}
+.dk{color:var(--bp-text-dim)}
+.dv{color:var(--bp-text)}
+.dv.prompt-text{color:var(--bp-violet);font-style:normal}
+.test-table th,.agent-table th{color:var(--bp-text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.05em;font-size:10px;border-bottom:1px solid var(--bp-border);padding:6px 8px}
+.test-table td,.agent-table td{padding:5px 8px;border-bottom:1px solid var(--bp-border)}
+.td-pass{color:var(--bp-green-hi)}.td-fail{color:var(--bp-red)}.td-skip{color:var(--bp-orange)}.td-tot{color:var(--bp-text)}
+.run-btn,.ig-btn{background:var(--bp-blue);border:1px solid var(--bp-blue);border-radius:var(--bp-radius);color:#fff;font-weight:500;letter-spacing:.02em;padding:7px 16px;box-shadow:none}
+.run-btn:hover,.ig-btn:hover{background:var(--bp-blue-hi);border-color:var(--bp-blue-hi);opacity:1}
+.audit-btn{background:var(--bp-elev);border:1px solid var(--bp-border);border-radius:var(--bp-radius);color:var(--bp-text-muted)}
+.audit-btn:hover{color:var(--bp-text);background:var(--bp-surface-2);border-color:var(--bp-border-strong)}
+.audit-result-box{background:var(--bp-bg);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
+.rules-detail-toggle{color:var(--bp-blue-hi)}
+.rules-detail-toggle:hover{color:var(--bp-blue)}
+.rules-detail-panel{background:var(--bp-bg);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
+.rule-pass{color:var(--bp-green-hi)}.rule-fail{color:var(--bp-red)}.rule-warn{color:var(--bp-orange)}
+.rule-id-label{color:var(--bp-text-dim)}
+.int-report{background:var(--bp-surface);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
+.lv-valid{background:var(--bp-green-bg);color:var(--bp-green-hi);border-radius:var(--bp-radius);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.lv-warning{background:var(--bp-orange-bg);color:var(--bp-orange);border-radius:var(--bp-radius);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.lv-violation{background:var(--bp-red-bg);color:var(--bp-red);border-radius:var(--bp-radius);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.finding{border-radius:var(--bp-radius);border-left:3px solid transparent}
+.rv{background:var(--bp-red-bg);border-left-color:var(--bp-red)}
+.rw{background:var(--bp-orange-bg);border-left-color:var(--bp-orange)}
+.ri{background:var(--bp-blue-bg);border-left-color:var(--bp-blue)}
+.finding-rule{border-radius:var(--bp-radius);font-weight:700;letter-spacing:.05em}
+.rv .finding-rule{background:var(--bp-red-bg);color:var(--bp-red)}
+.rw .finding-rule{background:var(--bp-orange-bg);color:var(--bp-orange)}
+.ri .finding-rule{background:var(--bp-blue-bg);color:var(--bp-blue-hi)}
+.success-msg{color:var(--bp-green-hi)}
+.sum-card,.chart-section{background:var(--bp-surface);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
+.agent-bar-bg{background:var(--bp-elev);border-radius:var(--bp-radius);height:4px}
+.agent-bar-fill{background:var(--bp-blue);border-radius:var(--bp-radius);height:4px}
+.fail-item{background:var(--bp-red-bg);border-radius:var(--bp-radius);border-left:3px solid var(--bp-red)}
+.fail-oid{color:var(--bp-red)}
+.fail-counts{color:var(--bp-red)}
+.empty-state{color:var(--bp-text-dim)}
+.spinner{border-color:var(--bp-border);border-top-color:var(--bp-blue)}
+.ig-canvas-wrap{background:var(--bp-bg);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
+.ctx-kind-pill{border-radius:var(--bp-radius);font-weight:700;letter-spacing:.05em}
+.ctx-kind-OBSERVE{background:var(--bp-blue-bg);color:var(--bp-blue-hi)}
+.ctx-kind-THINK{background:var(--bp-violet-bg);color:var(--bp-violet)}
+.ctx-kind-ACT{background:var(--bp-green-bg);color:var(--bp-green-hi)}
+.ctx-kind-NOTE{background:var(--bp-orange-bg);color:var(--bp-orange)}
+.ctx-kind-MERGE{background:var(--bp-violet-bg);color:var(--bp-violet)}
+.ctx-promo-step{background:var(--bp-surface);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
+.ctx-warning{background:var(--bp-orange-bg);border:1px solid var(--bp-orange);color:var(--bp-orange);border-radius:var(--bp-radius)}
+
+/* ─────────────────────────────────────────────────────────────
+   Blueprint refresh — iteration 2
+   Typography, density, focus, scrollbars, callouts, sticky tables
+   ───────────────────────────────────────────────────────────── */
+html{font-size:13px}
+body{line-height:1.45;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;font-feature-settings:"ss01","cv01"}
+::selection{background:var(--bp-blue);color:#fff}
+::-moz-selection{background:var(--bp-blue);color:#fff}
+code,kbd,samp,pre,.mono,.dv.mono,.oid-chip,.fail-oid,.rule-id-label{font-family:'SFMono-Regular','Menlo','Consolas','Liberation Mono',monospace;font-feature-settings:"liga" 0,"calt" 0}
+*{scrollbar-width:thin;scrollbar-color:var(--bp-border) transparent}
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:var(--bp-border);border-radius:var(--bp-radius);border:2px solid var(--bp-bg)}
+*::-webkit-scrollbar-thumb:hover{background:var(--bp-border-strong)}
+:focus-visible{outline:2px solid var(--bp-blue-hi);outline-offset:1px;border-radius:var(--bp-radius)}
+button:focus,input:focus,select:focus,textarea:focus,a:focus{outline:none}
+input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none;border-color:var(--bp-blue);box-shadow:0 0 0 1px var(--bp-blue)}
+a{color:var(--bp-blue-hi)}a:hover{color:var(--bp-blue)}
+
+/* Header — flatter, tighter Blueprint navbar */
+.header{padding:0 16px;height:48px;box-shadow:0 1px 0 var(--bp-border);border-bottom-color:transparent}
+.logo{font-size:14px;gap:8px}
+.logo-icon{width:24px;height:24px;font-size:11px}
+.header-sep{font-size:14px;margin:0 4px;color:var(--bp-border-strong)}
+.repo-name{font-size:13px}
+.refresh-btn,.gh-repo-link{height:28px;display:inline-flex;align-items:center;gap:6px;padding:0 10px;font-size:12px;font-weight:500}
+
+/* Stats bar — Blueprint divided stat strip */
+.stats-bar{padding:8px 16px;gap:0}
+.stat{padding:0 14px;border-right:1px solid var(--bp-border);font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--bp-text-dim);font-weight:600}
+.stat:first-child{padding-left:0}
+.stat:last-child{border-right:none}
+.stat b{font-size:14px;color:var(--bp-text);font-weight:600;margin-left:6px;letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums;font-family:'SFMono-Regular','Menlo','Consolas',monospace}
+.dot{width:6px;height:6px}
+
+/* Sidebar — flat sections separated by divider lines, no card boxes */
+.sidebar{padding:6px 0;width:220px}
+.card{background:transparent;border:none;border-bottom:1px solid var(--bp-border);border-radius:0;padding:14px 16px;margin:0}
+.card:last-child{border-bottom:none}
+.card-title{font-size:10px;letter-spacing:.1em;color:var(--bp-text-dim);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.card-title::after{content:"";flex:1;height:1px;background:var(--bp-border)}
+.dim-row{font-size:12px;padding:5px 0;color:var(--bp-text);gap:9px}
+.dim-mark{display:inline-block;width:8px;height:8px;border-radius:1px;flex-shrink:0}
+.dim-mark-blue{background:var(--bp-blue-hi)}
+.dim-mark-green{background:var(--bp-green-hi)}
+.dim-mark-violet{background:var(--bp-violet)}
+.dim-mark-orange{background:var(--bp-orange)}
+.dim-mark-yellow{background:#e3b341}
+.side-row{padding:3px 0;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--bp-text-dim);font-weight:600}
+.side-row b{font-size:12px;letter-spacing:0;text-transform:none;color:var(--bp-text);font-family:'SFMono-Regular','Menlo','Consolas',monospace;font-variant-numeric:tabular-nums;font-weight:600}
+.health-rate{font-variant-numeric:tabular-nums;letter-spacing:-.02em;font-size:20px}
+
+/* Tabs — uppercase Blueprint nav strip */
+.tabs{margin:0 -20px 16px;padding:0 20px}
+.tab{padding:10px 14px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.tab.active{border-bottom-width:2px}
+.tab .tab-badge{margin-left:6px;padding:1px 6px;font-size:10px;letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums}
+
+/* Search row + inputs */
+.search-row{margin-bottom:14px;gap:6px}
+.search-input{height:30px;padding:5px 11px;font-size:12px}
+.pill{padding:4px 10px;font-size:10px;letter-spacing:.06em}
+.ig-select{height:26px;padding:0 8px;font-size:11px}
+
+/* Commit cards — tighter, stronger hover affordance */
+.commit-card{padding:10px 12px;transition:background .12s,border-color .12s,box-shadow .12s}
+.commit-card:hover{box-shadow:inset 0 0 0 1px var(--bp-border-strong)}
+.commit-msg{font-size:13px}
+.byline{font-size:11px;color:var(--bp-text-dim)}
+.oid-chip{font-size:11px;padding:2px 6px;letter-spacing:.04em}
+.badge{font-size:10px;padding:2px 6px;letter-spacing:.06em}
+.commit-detail{padding-top:10px;margin-top:10px}
+.detail-grid{font-size:11px;grid-template-columns:90px 1fr}
+.dk{font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;color:var(--bp-text-dim)}
+.dv.mono{font-size:11px}
+
+/* Tables — sticky headers, hoverable rows, tabular numbers */
+.test-table,.agent-table{font-size:11px}
+.test-table thead th,.agent-table thead th{position:sticky;top:0;background:var(--bp-surface);z-index:1}
+.test-table tbody tr,.agent-table tbody tr{transition:background .1s}
+.test-table tbody tr:hover,.agent-table tbody tr:hover{background:var(--bp-elev)}
+.test-table td,.agent-table td{font-variant-numeric:tabular-nums}
+
+/* Buttons */
+.run-btn{height:32px;padding:0 18px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.ig-btn{height:28px;padding:0 14px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.audit-btn{height:26px;padding:0 12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.audit-btn:hover{color:var(--bp-blue-hi);border-color:var(--bp-blue);background:var(--bp-blue-bg)}
+
+/* Empty state — Blueprint NonIdealState */
+.empty-state{padding:60px 24px;font-size:13px;color:var(--bp-text-dim);font-weight:400;display:flex;flex-direction:column;align-items:center;gap:8px}
+.spinner{width:16px;height:16px;border-width:2px}
+
+/* Section / chart headings */
+.section-hdr{font-size:11px;font-weight:600;color:var(--bp-text-dim);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--bp-border)}
+.chart-title{padding-bottom:8px;border-bottom:1px solid var(--bp-border);font-size:11px}
+.chart-section{padding:14px 16px}
+
+/* Summary cards — tabular numerics */
+.sum-card{padding:14px 16px}
+.sum-num{font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.sum-label{font-size:10px;color:var(--bp-text-dim);text-transform:uppercase;letter-spacing:.07em;font-weight:600;margin-top:2px}
+
+/* Integrity report */
+.int-report{padding:14px 16px}
+.ir-score{font-size:24px;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.ir-label{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--bp-text-dim);font-weight:600}
+.lv-valid,.lv-warning,.lv-violation{font-size:10px;padding:3px 8px;letter-spacing:.06em}
+
+/* Inline form labels */
+.int-label{font-size:10px;text-transform:uppercase;letter-spacing:.07em;font-weight:600;color:var(--bp-text-dim);margin-bottom:5px}
+
+/* Context promo numbers */
+.ctx-promo-step strong{font-variant-numeric:tabular-nums;letter-spacing:-.02em;font-size:18px;color:var(--bp-text)}
+.ctx-promo-step span{font-size:9px;letter-spacing:.07em}
+
+/* Misc — gradient swatch in IG legend → flat */
+.ig-legend-line{background:var(--bp-border)!important}
 </style>
 </head>
 <body>
@@ -1755,11 +2198,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
   <aside class="sidebar">
     <div class="card">
       <div class="card-title">5 Dimensions</div>
-      <div class="dim-row"><span class="dim-icon">⏱</span>Temporal<span class="dim-tag tag-blue" style="margin-left:auto">Git</span></div>
-      <div class="dim-row"><span class="dim-icon">🌳</span>Structural<span class="dim-tag tag-green" style="margin-left:auto">AST</span></div>
-      <div class="dim-row"><span class="dim-icon">🧠</span>Intentional<span class="dim-tag tag-purple" style="margin-left:auto">AI</span></div>
-      <div class="dim-row"><span class="dim-icon">🧪</span>Empirical<span class="dim-tag tag-orange" style="margin-left:auto">Tests</span></div>
-      <div class="dim-row"><span class="dim-icon">🔗</span>Associative<span class="dim-tag tag-yellow" style="margin-left:auto">CRDT</span></div>
+      <div class="dim-row"><span class="dim-mark dim-mark-blue"></span>Temporal<span class="dim-tag tag-blue" style="margin-left:auto">Git</span></div>
+      <div class="dim-row"><span class="dim-mark dim-mark-green"></span>Structural<span class="dim-tag tag-green" style="margin-left:auto">AST</span></div>
+      <div class="dim-row"><span class="dim-mark dim-mark-violet"></span>Intentional<span class="dim-tag tag-purple" style="margin-left:auto">AI</span></div>
+      <div class="dim-row"><span class="dim-mark dim-mark-orange"></span>Empirical<span class="dim-tag tag-orange" style="margin-left:auto">Tests</span></div>
+      <div class="dim-row"><span class="dim-mark dim-mark-yellow"></span>Associative<span class="dim-tag tag-yellow" style="margin-left:auto">CRDT</span></div>
     </div>
 
     <div class="card">
@@ -1789,23 +2232,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
   <main class="content">
     <!-- Tabs -->
     <div class="tabs">
-      <button class="tab active" onclick="switchTab('timeline')">⎇ Timeline<span class="tab-badge" id="tab-count">0</span></button>
-      <button class="tab" onclick="switchTab('summary')">📊 Summary</button>
-      <button class="tab" onclick="switchTab('integrity')">🛡 Integrity</button>
-      <button class="tab" onclick="switchTab('intentgraph')">🔗 Intent Graph</button>
-      <button class="tab" onclick="switchTab('review')">🔍 Review Points<span class="tab-badge" id="tab-review-count">—</span></button>
-      <button class="tab" onclick="switchTab('memory');loadMemorySnapshots()">🧠 Memory<span class="tab-badge" id="tab-mem-count">—</span></button>
-      <button class="tab" onclick="switchTab('sessions');loadSessionList()">🔬 Sessions<span class="tab-badge" id="tab-sl-count">—</span></button>
-      <button class="tab" onclick="switchTab('context');loadContextTab()">💡 Context<span class="tab-badge" id="tab-ctx-count">—</span></button>
+      <button class="tab active" onclick="switchTab('timeline')">Timeline<span class="tab-badge" id="tab-count">0</span></button>
+      <button class="tab" onclick="switchTab('summary')">Summary</button>
+      <button class="tab" onclick="switchTab('integrity')">Integrity</button>
+      <button class="tab" onclick="switchTab('intentgraph')">Intent Graph</button>
+      <button class="tab" onclick="switchTab('review')">Review Points<span class="tab-badge" id="tab-review-count">—</span></button>
+      <button class="tab" onclick="switchTab('memory');loadMemorySnapshots()">Memory<span class="tab-badge" id="tab-mem-count">—</span></button>
+      <button class="tab" onclick="switchTab('sessions');loadSessionList()">Sessions<span class="tab-badge" id="tab-sl-count">—</span></button>
+      <button class="tab" onclick="switchTab('context');loadContextTab()">Context<span class="tab-badge" id="tab-ctx-count">—</span></button>
     </div>
 
     <!-- Timeline panel -->
     <div id="panel-timeline">
       <div class="search-row">
         <input class="search-input" id="search" placeholder="Search commits, authors, models…" oninput="filter()">
-        <span class="pill" id="pill-ai" onclick="toggleFilter('ai')">🤖 AI only</span>
-        <span class="pill" id="pill-test" onclick="toggleFilter('test')">🧪 With tests</span>
-        <span class="pill" id="pill-fail" onclick="toggleFilter('fail')">✖ Failing</span>
+        <span class="pill" id="pill-ai" onclick="toggleFilter('ai')">AI only</span>
+        <span class="pill" id="pill-test" onclick="toggleFilter('test')">With tests</span>
+        <span class="pill" id="pill-fail" onclick="toggleFilter('fail')">Failing</span>
       </div>
       <div class="timeline" id="timeline-list">
         <div class="empty-state"><span class="spinner"></span> Loading commits…</div>
@@ -1874,7 +2317,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
           <label class="int-label" for="int-prompt">AI prompt (optional)</label>
           <textarea class="int-input int-textarea" id="int-prompt" placeholder="Describe the AI prompt used to generate this commit…"></textarea>
         </div>
-        <button class="run-btn" id="btn-run" onclick="runIntegrity()">🛡 Run Integrity Check</button>
+        <button class="run-btn" id="btn-run" onclick="runIntegrity()">Run Integrity Check</button>
       </div>
       <div class="int-result" id="int-result"></div>
     </div>
@@ -2276,7 +2719,7 @@ function commitHTML(c, i) {
     <div class="badges">${badges}</div>
     <div class="audit-section" onclick="event.stopPropagation()">
       <button class="audit-btn" id="audit-btn-${i}" onclick="runCommitAudit('${esc(c.git_oid)}', ${i})">
-        🛡 Audit
+        Audit
       </button>
       <div id="audit-result-${i}"></div>
     </div>
@@ -2300,16 +2743,16 @@ async function runCommitAudit(oid, idx) {
   const btn = id('audit-btn-' + idx);
   const out = id('audit-result-' + idx);
   btn.disabled = true;
-  btn.textContent = '🛡 Auditing…';
+  btn.textContent = 'Auditing…';
   out.innerHTML = '<div style="margin-top:8px;color:#8b949e;font-size:12px"><span class="spinner"></span> Running integrity rules…</div>';
 
   try {
     const data = await fetch(`/api/integrity/commit?oid=${encodeURIComponent(oid)}`).then(r => r.json());
     out.innerHTML = `<div class="audit-result-box">${renderIntegrityHTML(data, 'ar-' + idx)}</div>`;
-    btn.textContent = '🛡 Re-audit';
+    btn.textContent = 'Re-audit';
   } catch(e) {
     out.innerHTML = `<div class="audit-result-box" style="color:#f85149;font-size:12px">⚠ Audit failed: ${esc(String(e))}</div>`;
-    btn.textContent = '🛡 Retry';
+    btn.textContent = 'Retry';
   } finally {
     btn.disabled = false;
   }
@@ -2343,7 +2786,7 @@ async function runIntegrity() {
     out.innerHTML = `<div style="color:#f85149;font-size:12px">⚠ Request failed: ${esc(String(e))}</div>`;
   } finally {
     btn.disabled = false;
-    btn.textContent = '🛡 Run Integrity Check';
+    btn.textContent = 'Run Integrity Check';
   }
 }
 

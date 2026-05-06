@@ -318,6 +318,46 @@ impl H5iRepository {
         Ok(records)
     }
 
+    /// Like `get_log`, but walks history starting at the tip of the given
+    /// branch (e.g. "main", "feature/x") instead of HEAD. Returns an error
+    /// if the branch can't be resolved to a local or remote-tracking ref.
+    pub fn get_log_at_branch(
+        &self,
+        branch: &str,
+        limit: usize,
+    ) -> Result<Vec<H5iCommitRecord>, H5iError> {
+        let mut revwalk = self.git_repo.revwalk()?;
+
+        // Try local branch first, then remote-tracking, then raw refspec.
+        let local = self
+            .git_repo
+            .find_branch(branch, git2::BranchType::Local)
+            .ok();
+        let remote = self
+            .git_repo
+            .find_branch(branch, git2::BranchType::Remote)
+            .ok();
+        let oid = if let Some(b) = local.or(remote) {
+            b.get().target().ok_or_else(|| {
+                H5iError::Git(git2::Error::from_str("branch has no target oid"))
+            })?
+        } else {
+            // Fall back to revparse so tags / "origin/foo" / abbreviations work.
+            self.git_repo.revparse_single(branch)?.id()
+        };
+        revwalk.push(oid)?;
+
+        let mut records = Vec::new();
+        for oid in revwalk.take(limit) {
+            let oid = oid?;
+            let record = self
+                .load_h5i_record(oid)
+                .unwrap_or_else(|_| H5iCommitRecord::minimal_from_git(&self.git_repo, oid));
+            records.push(record);
+        }
+        Ok(records)
+    }
+
     /// Retrieves the extended `h5i` commit log including AI metadata.
     ///
     /// This method behaves similarly to `get_log`, but is intended as the
