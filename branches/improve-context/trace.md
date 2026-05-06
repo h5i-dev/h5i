@@ -125,3 +125,4 @@ _[Checkpoint: 69fabe46 — Updated manual and man page for git-branch goals plus
 _[Checkpoint: 69fb3c18 — edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei…]_
 ---
 
+[13:05:21] ACT: edited .github/workflows/release.yaml
