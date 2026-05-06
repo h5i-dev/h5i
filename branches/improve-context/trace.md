@@ -266,3 +266,4 @@ _[Checkpoint: 69fb523e — edited docs/index.html; wrote docs/sitemap.xml; Wrote
 [14:40:33] ACT: edited docs/blog/persistent-memory-for-claude-code.html
 [14:40:37] ACT: edited docs/blog/persistent-memory-for-claude-code.html
 [14:40:40] ACT: edited docs/blog/prompt-injection-in-agent-traces.html
+[14:40:46] ACT: edited docs/blog/prompt-injection-in-agent-traces.html
