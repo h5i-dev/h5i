@@ -269,11 +269,21 @@ export function RecentActivity({
 }: {
   dag: ContextDag;
   /** When true, each entry is rendered as a single horizontally-scrollable
-   * line so the section fits narrowly inside a column. Hover or click to
-   * reveal the full content via horizontal scroll. */
+   * line so the section fits narrowly inside a column. Click an entry to
+   * expand it inline and show the full multi-line content. */
   clipped?: boolean;
 }) {
   const [showAll, setShowAll] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   if (dag.nodes.length === 0) {
     return (
@@ -299,8 +309,14 @@ export function RecentActivity({
                 : n.kind === "NOTE"
                   ? "warning"
                   : undefined;
+          const isExpanded = expandedIds.has(n.id);
           return (
-            <li key={n.id} title={clipped ? n.content : undefined}>
+            <li
+              key={n.id}
+              className={isExpanded ? "expanded" : ""}
+              title={clipped && !isExpanded ? n.content : undefined}
+              onClick={() => toggleExpanded(n.id)}
+            >
               <div className="ctx-activity-head">
                 <Tag
                   intent={intent}
@@ -315,6 +331,9 @@ export function RecentActivity({
                 </Tag>
                 <span className="ctx-activity-ts">{n.timestamp}</span>
                 <span className="ctx-activity-id">{n.id.slice(0, 7)}</span>
+                <span className="ctx-activity-chevron" aria-hidden>
+                  {isExpanded ? "▾" : "▸"}
+                </span>
               </div>
               <div className="ctx-activity-body">{n.content}</div>
             </li>

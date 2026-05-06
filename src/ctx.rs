@@ -96,6 +96,8 @@ pub struct DepEntry {
 #[derive(Serialize, Debug, Clone, Default)]
 pub struct GccContext {
     pub project_goal: String,
+    pub git_branch: String,
+    pub git_branch_goal: String,
     pub milestones: Vec<String>,
     pub active_branches: Vec<String>,
     pub current_branch: String,
@@ -299,6 +301,10 @@ fn ephemeral_path(branch: &str) -> String {
     format!("branches/{branch}/ephemeral.md")
 }
 
+fn git_goal_path(git_branch: &str) -> String {
+    format!("git-goals/{git_branch}.md")
+}
+
 fn read_dag(repo: &Repository, branch: &str) -> TraceDag {
     ctx_read_file(repo, &dag_path(branch))
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -320,10 +326,15 @@ fn node_id(kind: &str, timestamp: &str, content: &str) -> String {
 /// Initialize the context workspace in `refs/h5i/context`.
 pub fn init(workdir: &Path, goal: &str) -> Result<(), H5iError> {
     let repo = ctx_git_repo(workdir)?;
+    let git_branch = current_git_branch(workdir);
 
     // If the ref already exists, only ensure the main branch files are present.
     if repo.find_reference(CTX_REF).is_ok() {
-        return ensure_branch_git(&repo, MAIN_BRANCH, "Primary development branch");
+        ensure_branch_git(&repo, MAIN_BRANCH, "Primary development branch")?;
+        if !goal.trim().is_empty() {
+            set_git_branch_goal(&repo, &git_branch, goal)?;
+        }
+        return Ok(());
     }
 
     let main_content = format!(
@@ -358,6 +369,7 @@ pub fn init(workdir: &Path, goal: &str) -> Result<(), H5iError> {
                 &format!("branches/{MAIN_BRANCH}/metadata.yaml"),
                 meta_content,
             ),
+            (&git_goal_path(&git_branch), goal),
         ],
         "h5i context init",
     )
@@ -378,6 +390,88 @@ pub fn current_branch(workdir: &Path) -> String {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| MAIN_BRANCH.to_string())
+}
+
+/// Return the current git branch name, falling back to the active context branch
+/// when HEAD is detached or not yet resolved.
+pub fn current_git_branch(workdir: &Path) -> String {
+    ctx_git_repo(workdir)
+        .ok()
+        .and_then(|repo| {
+            let from_head = repo
+                .head()
+                .ok()
+                .and_then(|h| h.shorthand().map(str::to_string));
+            from_head.or_else(|| read_unborn_head_branch(&repo))
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| current_branch(workdir))
+}
+
+fn read_unborn_head_branch(repo: &Repository) -> Option<String> {
+    let head_path = repo.path().join("HEAD");
+    let head = std::fs::read_to_string(head_path).ok()?;
+    head.trim()
+        .strip_prefix("ref: refs/heads/")
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+}
+
+fn set_git_branch_goal(repo: &Repository, git_branch: &str, goal: &str) -> Result<(), H5iError> {
+    let content = format!("# Git Branch Goal: {git_branch}\n\n{goal}\n");
+    ctx_write_files(
+        repo,
+        &[(&git_goal_path(git_branch), &content)],
+        &format!("h5i context init: git branch goal {git_branch}"),
+    )
+}
+
+pub fn git_branch_goal(workdir: &Path, git_branch: &str) -> Option<String> {
+    let repo = ctx_git_repo(workdir).ok()?;
+    ctx_read_file(&repo, &git_goal_path(git_branch))
+        .map(|text| {
+            text.lines()
+                .filter(|line| !line.starts_with('#'))
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim()
+                .to_string()
+        })
+        .filter(|s| !s.is_empty())
+}
+
+pub fn context_branch_purpose(workdir: &Path, branch: &str) -> Option<String> {
+    let repo = ctx_git_repo(workdir).ok()?;
+    ctx_read_file(&repo, &format!("branches/{branch}/commit.md"))
+        .and_then(|text| extract_branch_purpose(&text))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Ensure the current git branch has a goal and the active h5i context branch
+/// has a purpose. One git branch can have many h5i context branches; this guard
+/// intentionally validates both levels without requiring their names to match.
+pub fn prepare_context_write(workdir: &Path) -> Result<(), H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    let git_branch = current_git_branch(workdir);
+    if git_branch_goal(workdir, &git_branch).is_none() {
+        return Err(H5iError::InvalidPath(format!(
+            "No context goal recorded for current git branch '{git_branch}'. \
+             Run `h5i context init --goal \"<goal>\"` first."
+        )));
+    }
+
+    let ctx_branch = current_branch(workdir);
+    if context_branch_purpose(workdir, &ctx_branch).is_none() {
+        return Err(H5iError::InvalidPath(format!(
+            "No context purpose recorded for active h5i context branch '{ctx_branch}'. \
+             Run `h5i context branch <name> --purpose \"<intent>\"` or \
+             `h5i context checkout <existing-context-branch>` first."
+        )));
+    }
+
+    drop(repo);
+    Ok(())
 }
 
 fn set_current_branch(repo: &Repository, branch: &str) -> Result<(), H5iError> {
@@ -548,6 +642,8 @@ pub fn gcc_merge(workdir: &Path, source_branch: &str) -> Result<String, H5iError
 /// CONTEXT — retrieve structured context at multiple granularities.
 pub fn gcc_context(workdir: &Path, opts: &ContextOpts) -> Result<GccContext, H5iError> {
     let repo = ctx_git_repo(workdir)?;
+    let git_branch = current_git_branch(workdir);
+    let git_branch_goal = git_branch_goal(workdir, &git_branch).unwrap_or_default();
     let branch_name = opts
         .branch
         .clone()
@@ -646,6 +742,8 @@ pub fn gcc_context(workdir: &Path, opts: &ContextOpts) -> Result<GccContext, H5i
 
     Ok(GccContext {
         project_goal,
+        git_branch,
+        git_branch_goal,
         milestones,
         active_branches,
         current_branch: branch_name,
@@ -1652,9 +1750,15 @@ fn print_context_index(ctx: &GccContext) {
         "{}",
         style("── Context Index (depth=1) ──────────────────────────────").dim()
     );
-    let goal: String = ctx.project_goal.chars().take(100).collect();
+    let goal_source = if ctx.git_branch_goal.is_empty() {
+        &ctx.project_goal
+    } else {
+        &ctx.git_branch_goal
+    };
+    let goal: String = goal_source.chars().take(100).collect();
     println!(
-        "  branch={}  goal={}",
+        "  git_branch={}  context_branch={}  goal={}",
+        style(&ctx.git_branch).cyan(),
         style(&ctx.current_branch).magenta(),
         if goal.is_empty() { style("(none)".to_string()).dim() } else { style(goal).cyan() }
     );
@@ -1696,15 +1800,27 @@ fn print_context_timeline(ctx: &GccContext) {
         "{}",
         style("── Context (depth=2) ────────────────────────────────────").dim()
     );
+    let goal_source = if ctx.git_branch_goal.is_empty() {
+        &ctx.project_goal
+    } else {
+        &ctx.git_branch_goal
+    };
     println!(
         "  {} {}  (branch: {})",
-        style("Project:").bold(),
-        if ctx.project_goal.is_empty() {
+        style("Goal:").bold(),
+        if goal_source.is_empty() {
             style("(no goal set)".to_string()).dim()
         } else {
-            style(ctx.project_goal.chars().take(80).collect::<String>()).cyan()
+            style(goal_source.chars().take(80).collect::<String>()).cyan()
         },
         style(&ctx.current_branch).magenta(),
+    );
+    println!(
+        "  {} {}  |  {} {}",
+        style("Git branch:").dim(),
+        style(&ctx.git_branch).cyan(),
+        style("Context branch:").dim(),
+        style(&ctx.current_branch).magenta()
     );
 
     if !ctx.milestones.is_empty() {
@@ -1818,6 +1934,8 @@ pub fn print_status(workdir: &Path) -> Result<(), H5iError> {
     }
 
     let repo = ctx_git_repo(workdir)?;
+    let git_branch = current_git_branch(workdir);
+    let git_goal = git_branch_goal(workdir, &git_branch).unwrap_or_default();
     let branch = current_branch(workdir);
     let branches = ctx_list_branches_git(&repo);
 
@@ -1834,8 +1952,19 @@ pub fn print_status(workdir: &Path) -> Result<(), H5iError> {
         style("── Context Status ──────────────────────────────────────────────").dim()
     );
     println!(
+        "  {} {}  |  {} {}",
+        style("Git branch:").dim(),
+        style(&git_branch).cyan().bold(),
+        style("goal:").dim(),
+        if git_goal.is_empty() {
+            style("(missing; run h5i context init --goal \"<goal>\")".to_string()).yellow()
+        } else {
+            style(git_goal.chars().take(80).collect::<String>()).cyan()
+        }
+    );
+    println!(
         "  {} {}  |  {} branch{}  |  {} commit{}  |  {} log line{}",
-        style("Active branch:").dim(),
+        style("Context branch:").dim(),
         style(&branch).magenta().bold(),
         style(branches.len()).cyan(),
         if branches.len() == 1 { "" } else { "es" },
@@ -2634,11 +2763,17 @@ fn ensure_branch_git(repo: &Repository, name: &str, purpose: &str) -> Result<(),
     let trace_path = format!("branches/{name}/trace.md");
     let meta_path = format!("branches/{name}/metadata.yaml");
 
-    let missing_commit = ctx_read_file(repo, &commit_path).is_none();
+    let existing_commit_text = ctx_read_file(repo, &commit_path);
+    let missing_commit = existing_commit_text.is_none();
     let missing_trace = ctx_read_file(repo, &trace_path).is_none();
     let missing_meta = ctx_read_file(repo, &meta_path).is_none();
+    let missing_purpose = existing_commit_text
+        .as_deref()
+        .and_then(extract_branch_purpose)
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true);
 
-    if !missing_commit && !missing_trace && !missing_meta {
+    if !missing_commit && !missing_trace && !missing_meta && !missing_purpose {
         return Ok(()); // already exists
     }
 
@@ -2652,6 +2787,13 @@ fn ensure_branch_git(repo: &Repository, name: &str, purpose: &str) -> Result<(),
             "# Branch: {name}\n\n\
              **Purpose:** {purpose}\n\n\
              _Commits will be appended below._\n\n"
+        );
+        changes.push((&commit_path, commit_content.clone()));
+    } else if missing_purpose {
+        commit_content = ensure_commit_purpose(
+            existing_commit_text.as_deref().unwrap_or_default(),
+            name,
+            purpose,
         );
         changes.push((&commit_path, commit_content.clone()));
     } else {
@@ -2674,6 +2816,30 @@ fn ensure_branch_git(repo: &Repository, name: &str, purpose: &str) -> Result<(),
 
     let str_changes: Vec<(&str, &str)> = changes.iter().map(|(p, c)| (*p, c.as_str())).collect();
     ctx_write_files(repo, &str_changes, &format!("h5i context branch: {name}"))
+}
+
+fn ensure_commit_purpose(commit_text: &str, branch: &str, purpose: &str) -> String {
+    if commit_text.contains("**Purpose:**") {
+        let mut out = String::new();
+        for line in commit_text.lines() {
+            if line.trim_start().starts_with("**Purpose:**") {
+                out.push_str(&format!("**Purpose:** {purpose}\n"));
+            } else {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        out
+    } else {
+        format!(
+            "# Branch: {branch}\n\n\
+             **Purpose:** {purpose}\n\n\
+             {}",
+            commit_text
+                .trim_start_matches(&format!("# Branch: {branch}"))
+                .trim_start()
+        )
+    }
 }
 
 /// Append a one-line progress note to `main.md` under `## Notes`.
@@ -3788,6 +3954,46 @@ mod tests {
             commit_md.contains("explore LRU cache approach"),
             "branch purpose should be recorded in commit.md"
         );
+    }
+
+    #[test]
+    fn prepare_context_write_requires_current_git_branch_goal() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "main goal").unwrap();
+        let repo = Repository::open(dir.path()).unwrap();
+        repo.set_head("refs/heads/feature/needs-purpose").unwrap();
+
+        let err = prepare_context_write(dir.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("h5i context init --goal"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn prepare_context_write_requires_active_context_branch_purpose() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "option-a", "").unwrap();
+
+        let err = prepare_context_write(dir.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("h5i context branch <name> --purpose"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn prepare_context_write_allows_multiple_context_branches_per_git_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "option-a", "try option a").unwrap();
+        assert!(prepare_context_write(dir.path()).is_ok());
+        gcc_branch(dir.path(), "option-b", "try option b").unwrap();
+        assert!(prepare_context_write(dir.path()).is_ok());
     }
 
     // ── gcc_commit edge cases ─────────────────────────────────────────────────

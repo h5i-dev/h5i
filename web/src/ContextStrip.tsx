@@ -27,24 +27,39 @@ export function ContextStrip({
   }, [repoBranch]);
 
   if (!status || !status.initialized) {
+    const initCommand = `h5i context init --goal "<summary>"`;
     return (
       <div className="wb-ctx-strip wb-ctx-strip-empty">
         <span className="wb-ctx-label">Context</span>
         <span className="wb-ctx-goal-empty">
-          No context workspace —{" "}
-          <code>h5i context init --goal "&lt;summary&gt;"</code> to start one.
+          No context workspace.
+          <code>{initCommand}</code>
         </span>
+        <Button
+          minimal
+          small
+          icon="clipboard"
+          onClick={() => void navigator.clipboard?.writeText(initCommand)}
+          title="Copy init command"
+        >
+          Copy
+        </Button>
       </div>
     );
   }
 
+  const goal = status.git_branch_goal || status.goal;
+
   return (
     <div className="wb-ctx-strip" onClick={onOpen} role="button" tabIndex={0}>
       <span className="wb-ctx-label">Context</span>
-      <span className="wb-ctx-goal" title={status.goal}>
-        {status.goal || "(no goal recorded)"}
+      <span className="wb-ctx-goal" title={goal}>
+        {goal || "(no goal recorded for this git branch)"}
       </span>
       <span className="wb-ctx-meta">
+        <Tag minimal style={{ fontFamily: "monospace", fontSize: 11 }}>
+          {status.git_branch || repoBranch || "git"}
+        </Tag>
         <Tag minimal style={{ fontFamily: "monospace", fontSize: 11 }}>
           {status.current_branch}
         </Tag>

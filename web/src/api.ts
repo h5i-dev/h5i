@@ -95,6 +95,8 @@ export interface ContextBranchSummary {
 export interface ContextStatus {
   initialized: boolean;
   current_branch: string;
+  git_branch: string;
+  git_branch_goal: string;
   goal: string;
   branch_count: number;
   branches: string[];
@@ -113,6 +115,8 @@ export interface ContextStatus {
 // endpoint: full milestone list, recent commits, mini OTA trace, todos.
 export interface ContextShow {
   project_goal: string;
+  git_branch: string;
+  git_branch_goal: string;
   milestones: string[];
   active_branches: string[];
   current_branch: string;
@@ -170,6 +174,31 @@ export interface ContextSnapshotItem {
   recent_milestones: string[];
 }
 
+// `/api/context/milestones?branch=X` — structured per-commit milestones with
+// the context-commit short SHA and timestamp from the commit.md header.
+// Lets the UI show a hash chip per milestone instead of just text.
+export interface ContextMilestoneEntry {
+  sha_short: string;
+  timestamp: string;
+  contribution: string;
+}
+
+// `/api/context/diff?from=&to=` — the delta between two context snapshots.
+export interface ContextDiff {
+  from: string;
+  to: string;
+  from_branch: string;
+  to_branch: string;
+  cross_branch: boolean;
+  goal_changed: boolean;
+  from_goal: string;
+  to_goal: string;
+  added_milestones: string[];
+  removed_milestones: string[];
+  added_trace_lines: string[];
+  removed_trace_lines: string[];
+}
+
 export interface MemorySnapshot {
   oid: string;
   short_oid: string;
@@ -195,12 +224,45 @@ export interface ReviewPoint {
   triggers: ReviewTrigger[];
 }
 
+export interface BranchLastCommit {
+  oid: string;
+  short_oid: string;
+  message: string;
+  author: string;
+  timestamp: string;
+}
+
+export interface ContextBranchLink {
+  name: string;
+  purpose: string;
+  last_milestone: string;
+  last_activity: string;
+  milestone_count: number;
+  trace_lines: number;
+  snapshot_count: number;
+  todo_count: number;
+}
+
 export interface BranchInfo {
   name: string;
   is_head: boolean;
   is_remote: boolean;
   upstream: string | null;
   target_oid: string | null;
+  /** Commits ahead of upstream (null when no upstream tracking). */
+  ahead: number | null;
+  /** Commits behind upstream (null when no upstream tracking). */
+  behind: number | null;
+  /** Tip of the branch — most recent commit. */
+  last_commit: BranchLastCommit | null;
+  /** AI-assisted commits within the walked window. */
+  ai_commit_count: number | null;
+  /** How many commits we walked from the branch tip (capped). */
+  walked_commit_count: number | null;
+  /** Same-named context branch info, when one exists. */
+  context: ContextBranchLink | null;
+  /** Whether a same-named context branch exists. Drives the "Create context" CTA. */
+  has_context_branch: boolean;
 }
 
 export interface CommitFiles {
@@ -255,6 +317,14 @@ export const api = {
   contextPromotion: () => getJSON<ContextPromotion>("/api/context/promotion"),
   contextDag: () => getJSON<ContextDag>("/api/context/dag"),
   contextSnapshots: () => getJSON<ContextSnapshotItem[]>("/api/context/snapshots"),
+  contextDiff: (from: string, to: string) =>
+    getJSON<ContextDiff>(
+      `/api/context/diff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    ),
+  contextMilestones: (branch?: string) => {
+    const q = branch ? `?branch=${encodeURIComponent(branch)}` : "";
+    return getJSON<ContextMilestoneEntry[]>(`/api/context/milestones${q}`);
+  },
   contextRelevant: (file: string) =>
     getJSON<ContextRelevant | unknown>(
       `/api/context/relevant?file=${encodeURIComponent(file)}`,

@@ -328,6 +328,41 @@ fn context_trace_note() {
 }
 
 #[test]
+fn context_trace_requires_goal_on_current_git_branch() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+    repo.h5i_ok(&["context", "init", "--goal", "trace test"]);
+    run_ok(
+        Command::new("git")
+            .args(["switch", "-c", "feature/purpose-required"])
+            .current_dir(repo.path()),
+    );
+
+    let out = repo.h5i(&["context", "trace", "--kind", "NOTE", "should fail"]);
+    assert!(!out.status.success(), "trace unexpectedly succeeded");
+    let err = stderr(&out);
+    assert!(
+        err.contains("h5i context init --goal"),
+        "unexpected stderr: {err}"
+    );
+}
+
+#[test]
+fn context_branch_requires_purpose_in_cli() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+    repo.h5i_ok(&["context", "init", "--goal", "branch purpose test"]);
+
+    let out = repo.h5i(&["context", "branch", "feature/no-purpose"]);
+    assert!(!out.status.success(), "branch unexpectedly succeeded");
+    let err = stderr(&out);
+    assert!(
+        err.contains("requires a purpose"),
+        "unexpected stderr: {err}"
+    );
+}
+
+#[test]
 fn context_trace_appears_in_show() {
     let repo = Repo::new();
     repo.h5i_ok(&["init"]);

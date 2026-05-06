@@ -550,7 +550,8 @@ research (CMV arXiv:2602.22402, Claude Code design-space arXiv:2604.14228):
 refs/h5i/context tree:
     main.md                  \(em global roadmap: goal, milestones, notes
     .current_branch          \(em active branch name
-    branches/<branch>/
+    git-goals/<git-branch>.md \(em goal for a Git branch
+    branches/<context-branch>/
         commit.md            \(em milestone summaries (append-only)
         trace.md             \(em human-readable OTA execution trace
         dag.json             \(em DAG of trace nodes with parent links
@@ -563,17 +564,21 @@ refs/h5i/context tree:
 .RS 4
 .TP
 .B init \-\-goal \fITEXT\fR
-Create the workspace with an initial project goal.
+Create the workspace if needed and set the goal for the current Git branch.
+Run once per Git branch before writing context on that branch.
 .TP
 .B commit \fISUMMARY\fR [\-\-detail \fITEXT\fR]
 Save a milestone checkpoint (one-line summary + optional detail).
 Also clears the ephemeral scratch buffer for the current branch.
+Requires the current Git branch to have a goal and the active h5i context
+branch to have a purpose.
 .TP
-.B branch \fINAME\fR [\-\-purpose \fITEXT\fR]
-Create and switch to a new reasoning branch.
+.B branch \fINAME\fR \-\-purpose \fITEXT\fR
+Create and switch to a new h5i context branch.
+Multiple h5i context branches can live under the same Git branch.
 .TP
 .B checkout \fINAME\fR
-Switch to an existing reasoning branch.
+Switch to an existing h5i context branch.
 .TP
 .B merge \fIBRANCH\fR
 Merge a completed branch's log and summaries into the current branch.
@@ -597,6 +602,8 @@ when the subagent finishes.
 .TP
 .B trace [\-\-ephemeral] \-\-kind \fIKIND\fR \fICONTENT\fR
 Append an OTA (Observe\(enThink\(enAct) trace entry.
+Requires the current Git branch to have a goal and the active h5i context
+branch to have a purpose.
 Valid
 .I KIND
 values:
@@ -647,8 +654,8 @@ Scroll back N lines from the end of the trace.
 .RE
 .TP
 .B status
-Overview of the current workspace: active branch, milestone commit count,
-trace line count, other reasoning branches,
+Overview of the current workspace: current Git branch goal, active h5i
+context branch, milestone commit count, trace line count, other context branches,
 .B scoped subagents
 .RI ( scope/*
 branches listed separately), and the
@@ -690,7 +697,7 @@ must have context snapshots (created automatically by
 Retrieve all context entries that mention
 .IR FILE .
 Searches the current branch's trace and milestone log, plus all other
-reasoning branches, and prints matching entries grouped by section.
+context branches, and prints matching entries grouped by section.
 Run this
 .B before
 editing a file to recover accumulated reasoning about it without
@@ -720,7 +727,7 @@ trace.
 Only NOTE and THINK entries are searched (OBSERVE lines are ignored).
 .TP
 .B knowledge
-Distill all THINK entries from every reasoning branch into a deduplicated
+Distill all THINK entries from every h5i context branch into a deduplicated
 project knowledge base.
 Useful at session start to re-absorb accumulated design rationale without
 re-reading every branch trace in full.
@@ -1258,6 +1265,7 @@ h5i notes omissions
 .SS Context workspace
 .nf
 h5i context init \-\-goal "build OAuth2 login system"
+h5i context branch oauth\-provider \-\-purpose "implement provider login path"
 h5i context trace \-\-kind OBSERVE "HttpClient::send has no retry logic"
 h5i context trace \-\-kind THINK   "exponential backoff with jitter is safest"
 h5i context trace \-\-kind ACT     "added retry loop in send() with 5-attempt cap"
@@ -1265,7 +1273,7 @@ h5i context commit "implemented retry loop" \\
     \-\-detail "capped at 5 attempts; uses tokio::time::sleep"
 h5i context branch experiment/sync\-retry \-\-purpose "try sync fallback"
 # ...explore...
-h5i context checkout main
+h5i context checkout oauth\-provider
 h5i context status
 .fi
 .SS Context versioning

@@ -367,6 +367,31 @@ async fn api_commits(
 }
 
 // ── Branches ──────────────────────────────────────────────────────────────────
+//
+// `/api/branches` is the unified branch list: git side (ahead/behind, last
+// commit, AI ratio) joined with the matching context branch (by name) so the
+// frontend can render a single branch row as the integrated unit.
+
+#[derive(Serialize, Default)]
+struct BranchLastCommit {
+    oid: String,
+    short_oid: String,
+    message: String,
+    author: String,
+    timestamp: String,
+}
+
+#[derive(Serialize, Default)]
+struct ContextBranchLink {
+    name: String,
+    purpose: String,
+    last_milestone: String,
+    last_activity: String,
+    milestone_count: usize,
+    trace_lines: usize,
+    snapshot_count: usize,
+    todo_count: usize,
+}
 
 #[derive(Serialize, Default)]
 struct BranchInfo {
@@ -375,7 +400,25 @@ struct BranchInfo {
     is_remote: bool,
     upstream: Option<String>,
     target_oid: Option<String>,
+    /// Commits ahead of upstream (None when no upstream tracking).
+    ahead: Option<usize>,
+    /// Commits behind upstream (None when no upstream tracking).
+    behind: Option<usize>,
+    /// Tip of the branch — most recent commit.
+    last_commit: Option<BranchLastCommit>,
+    /// AI-assisted commits within the last `walked_commit_count` commits.
+    ai_commit_count: Option<usize>,
+    /// How many commits we walked from the branch tip (cap to keep API fast).
+    walked_commit_count: Option<usize>,
+    /// Same-named context branch info, when one exists. Lets the UI render
+    /// git + reasoning as a single row per branch.
+    context: Option<ContextBranchLink>,
+    /// True if a context branch with the same name exists. Lets the UI offer
+    /// "Create context for this branch" inline when this is false.
+    has_context_branch: bool,
 }
+
+const BRANCH_WALK_CAP: usize = 100;
 
 async fn api_branches(State(state): State<Arc<AppState>>) -> Json<Vec<BranchInfo>> {
     let path = state.repo_path.clone();
@@ -386,6 +429,22 @@ async fn api_branches(State(state): State<Arc<AppState>>) -> Json<Vec<BranchInfo
             .head()
             .ok()
             .and_then(|h| h.shorthand().map(String::from));
+
+        // Pre-compute context-branch listing once (cheap) so we can match by name
+        // for every git branch without re-listing.
+        let workdir = git.workdir().map(|p| p.to_path_buf());
+        let ctx_branches: HashSet<String> = workdir
+            .as_ref()
+            .map(|w| ctx::list_branches(w).into_iter().collect())
+            .unwrap_or_default();
+
+        // Snapshot counts per context branch — same pattern api_context_status uses.
+        let snapshot_counts: HashMap<String, usize> = list_context_snapshots(git)
+            .iter()
+            .fold(HashMap::new(), |mut acc, s| {
+                *acc.entry(s.branch.clone()).or_insert(0) += 1;
+                acc
+            });
 
         let mut out = Vec::new();
         for typ in [git2::BranchType::Local, git2::BranchType::Remote] {
@@ -399,26 +458,62 @@ async fn api_branches(State(state): State<Arc<AppState>>) -> Json<Vec<BranchInfo
                     Ok(Some(n)) => n.to_string(),
                     _ => continue,
                 };
-                // Skip the synthetic origin/HEAD pointer.
                 if name.ends_with("/HEAD") {
                     continue;
                 }
-                let upstream = if matches!(typ, git2::BranchType::Local) {
-                    branch
-                        .upstream()
-                        .ok()
-                        .and_then(|u| u.name().ok().flatten().map(String::from))
+                let is_local = matches!(typ, git2::BranchType::Local);
+                let target_oid = branch.get().target();
+                let upstream_ref = if is_local { branch.upstream().ok() } else { None };
+                let upstream_name = upstream_ref
+                    .as_ref()
+                    .and_then(|u| u.name().ok().flatten().map(String::from));
+
+                // Ahead/behind only meaningful when upstream exists.
+                let (ahead, behind) = match (target_oid, upstream_ref.as_ref().and_then(|u| u.get().target())) {
+                    (Some(local), Some(remote)) => {
+                        match git.graph_ahead_behind(local, remote) {
+                            Ok((a, b)) => (Some(a), Some(b)),
+                            Err(_) => (None, None),
+                        }
+                    }
+                    _ => (None, None),
+                };
+
+                // Walk commits from tip — only for local branches (remote tracking
+                // refs have the same data as their local counterparts in most cases).
+                let (last_commit, ai_count, walked) = if is_local {
+                    if let Some(oid) = target_oid {
+                        walk_branch_tip(&repo, oid, BRANCH_WALK_CAP)
+                    } else {
+                        (None, None, None)
+                    }
+                } else {
+                    (None, None, None)
+                };
+
+                // Context branch match by name.
+                let has_ctx = ctx_branches.contains(&name);
+                let context = if is_local && has_ctx {
+                    workdir
+                        .as_ref()
+                        .and_then(|w| build_context_branch_link(git, w, &name, &snapshot_counts))
                 } else {
                     None
                 };
-                let target_oid = branch.get().target().map(|o| o.to_string());
+
                 out.push(BranchInfo {
-                    is_head: matches!(typ, git2::BranchType::Local)
-                        && head_name.as_deref() == Some(name.as_str()),
-                    is_remote: matches!(typ, git2::BranchType::Remote),
-                    name,
-                    upstream,
-                    target_oid,
+                    is_head: is_local && head_name.as_deref() == Some(name.as_str()),
+                    is_remote: !is_local,
+                    name: name.clone(),
+                    upstream: upstream_name,
+                    target_oid: target_oid.map(|o| o.to_string()),
+                    ahead,
+                    behind,
+                    last_commit,
+                    ai_commit_count: ai_count,
+                    walked_commit_count: walked,
+                    context,
+                    has_context_branch: is_local && has_ctx,
                 });
             }
         }
@@ -433,6 +528,99 @@ async fn api_branches(State(state): State<Arc<AppState>>) -> Json<Vec<BranchInfo
     .await;
 
     Json(result.unwrap_or_else(|_| Ok(vec![])).unwrap_or_default())
+}
+
+// Walks up to `cap` commits from `tip`, returning (latest commit info, count
+// of those commits with AI metadata, count actually walked). Used by
+// /api/branches to show the tip + AI density for each branch.
+fn walk_branch_tip(
+    repo: &H5iRepository,
+    tip: git2::Oid,
+    cap: usize,
+) -> (Option<BranchLastCommit>, Option<usize>, Option<usize>) {
+    let git = repo.git();
+    let mut revwalk = match git.revwalk() {
+        Ok(r) => r,
+        Err(_) => return (None, None, None),
+    };
+    if revwalk.push(tip).is_err() {
+        return (None, None, None);
+    }
+
+    let mut latest: Option<BranchLastCommit> = None;
+    let mut walked = 0usize;
+    let mut ai = 0usize;
+    for oid_res in revwalk.take(cap) {
+        let oid = match oid_res {
+            Ok(o) => o,
+            Err(_) => break,
+        };
+        if walked == 0 {
+            if let Ok(commit) = git.find_commit(oid) {
+                let msg = commit.message().unwrap_or("").trim().to_string();
+                let author = commit.author().name().unwrap_or("Unknown").to_string();
+                let ts = commit.time();
+                let timestamp =
+                    chrono::DateTime::<chrono::Utc>::from_timestamp(ts.seconds(), 0)
+                        .map(|d| d.to_rfc3339())
+                        .unwrap_or_default();
+                latest = Some(BranchLastCommit {
+                    oid: oid.to_string(),
+                    short_oid: format!("{:.8}", oid.to_string()),
+                    message: msg,
+                    author,
+                    timestamp,
+                });
+            }
+        }
+        walked += 1;
+        if let Ok(record) = repo.load_h5i_record(oid) {
+            if record.ai_metadata.is_some() {
+                ai += 1;
+            }
+        }
+    }
+    (latest, Some(ai), Some(walked))
+}
+
+// Build a ContextBranchLink for a context branch matching the given git
+// branch name. Mirrors the inline computation in api_context_status; pulled
+// out so api_branches can reuse it.
+fn build_context_branch_link(
+    repo: &git2::Repository,
+    workdir: &std::path::Path,
+    name: &str,
+    snapshot_counts: &HashMap<String, usize>,
+) -> Option<ContextBranchLink> {
+    let commit_text = read_ctx_file(repo, &format!("branches/{name}/commit.md"))?;
+    let trace_text =
+        read_ctx_file(repo, &format!("branches/{name}/trace.md")).unwrap_or_default();
+    let branch_commits = parse_commit_contributions(&commit_text);
+    let trace_lines = count_trace_entries(&trace_text);
+    let branch_ctx = ctx::gcc_context(
+        workdir,
+        &ctx::ContextOpts {
+            branch: Some(name.to_string()),
+            commit_hash: None,
+            show_log: false,
+            log_offset: 0,
+            metadata_segment: None,
+            window: 10,
+            depth: 2,
+        },
+    )
+    .ok()
+    .unwrap_or_default();
+    Some(ContextBranchLink {
+        name: name.to_string(),
+        purpose: extract_branch_purpose(&commit_text, name),
+        last_milestone: branch_commits.last().cloned().unwrap_or_default(),
+        last_activity: extract_last_commit_timestamp(&commit_text),
+        milestone_count: branch_commits.len(),
+        trace_lines,
+        snapshot_count: snapshot_counts.get(name).copied().unwrap_or(0),
+        todo_count: branch_ctx.todo_items.len(),
+    })
 }
 
 // ── Files changed by a single commit ──────────────────────────────────────────
@@ -761,6 +949,8 @@ async fn api_session_list(
 struct ContextStatusResponse {
     initialized: bool,
     current_branch: String,
+    git_branch: String,
+    git_branch_goal: String,
     goal: String,
     branch_count: usize,
     branches: Vec<String>,
@@ -797,6 +987,8 @@ async fn api_context_status(State(state): State<Arc<AppState>>) -> Json<ContextS
             return ContextStatusResponse::default();
         }
         let branch = ctx::current_branch(workdir);
+        let git_branch = ctx::current_git_branch(workdir);
+        let git_branch_goal = ctx::git_branch_goal(workdir, &git_branch).unwrap_or_default();
         let branches = ctx::list_branches(workdir);
         let branch_count = branches.len();
         let current_ctx = ctx::gcc_context(
@@ -908,6 +1100,8 @@ async fn api_context_status(State(state): State<Arc<AppState>>) -> Json<ContextS
         ContextStatusResponse {
             initialized: true,
             current_branch: branch,
+            git_branch,
+            git_branch_goal,
             goal,
             branch_count,
             branches,
@@ -1000,6 +1194,34 @@ struct ContextDiffResponse {
     removed_milestones: Vec<String>,
     added_trace_lines: Vec<String>,
     removed_trace_lines: Vec<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ContextMilestonesQuery {
+    /// Optional context branch (defaults to the current context branch).
+    pub branch: Option<String>,
+}
+
+async fn api_context_milestones(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ContextMilestonesQuery>,
+) -> Json<Vec<ContextMilestoneEntry>> {
+    let result = tokio::task::spawn_blocking(move || -> Option<Vec<ContextMilestoneEntry>> {
+        let workdir = &state.repo_path;
+        if !ctx::is_initialized(workdir) {
+            return None;
+        }
+        let repo = H5iRepository::open(workdir).ok()?;
+        let git = repo.git();
+        let branch = params
+            .branch
+            .clone()
+            .unwrap_or_else(|| ctx::current_branch(workdir));
+        let commit_text = read_ctx_file(git, &format!("branches/{branch}/commit.md"))?;
+        Some(parse_commit_milestones(&commit_text))
+    })
+    .await;
+    Json(result.unwrap_or(None).unwrap_or_default())
 }
 
 async fn api_context_diff(
@@ -1312,27 +1534,62 @@ fn list_context_snapshots(repo: &git2::Repository) -> Vec<ContextSnapshotItem> {
 }
 
 fn parse_commit_contributions(commit_text: &str) -> Vec<String> {
-    let mut contributions = Vec::new();
+    parse_commit_milestones(commit_text)
+        .into_iter()
+        .map(|m| m.contribution)
+        .collect()
+}
+
+/// One entry in `commit.md`: header `## Commit <sha> — <ts>` plus the
+/// `### This Commit's Contribution` body, parsed into structured form so the
+/// UI can show the git SHA + timestamp next to each milestone instead of the
+/// raw text alone.
+#[derive(Serialize, Default)]
+pub struct ContextMilestoneEntry {
+    /// Short SHA as it appears in the commit.md header (typically 7-8 chars).
+    pub sha_short: String,
+    /// Timestamp string from the same header (everything after the em-dash).
+    pub timestamp: String,
+    /// The contribution body text.
+    pub contribution: String,
+}
+
+fn parse_commit_milestones(commit_text: &str) -> Vec<ContextMilestoneEntry> {
+    let mut entries = Vec::new();
     for entry in commit_text.split("## Commit ").skip(1) {
+        // Header line: "<sha> — <ts>\n..." (or "<sha> — <ts> [MERGE: ...]\n...").
+        let header_end = entry.find('\n').unwrap_or(entry.len());
+        let header = &entry[..header_end];
+        let mut header_iter = header.splitn(2, " — ");
+        let sha_short = header_iter.next().unwrap_or("").trim().to_string();
+        let timestamp = header_iter
+            .next()
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+
         if let Some(start) = entry.find("### This Commit's Contribution") {
             let after = &entry[start + "### This Commit's Contribution".len()..];
             let end = after.find("\n---").unwrap_or(after.len());
-            let text = after[..end].trim().to_string();
-            if !text.is_empty() {
-                contributions.push(text);
+            let contribution = after[..end].trim().to_string();
+            if !contribution.is_empty() {
+                entries.push(ContextMilestoneEntry {
+                    sha_short,
+                    timestamp,
+                    contribution,
+                });
             }
         }
     }
-    contributions
+    entries
 }
 
-fn extract_branch_purpose(commit_text: &str, branch: &str) -> String {
+fn extract_branch_purpose(commit_text: &str, _branch: &str) -> String {
     commit_text
         .lines()
         .find(|line| line.starts_with("**Purpose:**"))
         .map(|line| line.split("**Purpose:**").nth(1).unwrap_or("").trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("Branch: {branch}"))
+        .unwrap_or_default()
 }
 
 fn extract_last_commit_timestamp(commit_text: &str) -> String {
@@ -1391,6 +1648,7 @@ pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
         .route("/api/context/status", get(api_context_status))
         .route("/api/context/snapshots", get(api_context_snapshots))
         .route("/api/context/show", get(api_context_show))
+        .route("/api/context/milestones", get(api_context_milestones))
         .route("/api/context/diff", get(api_context_diff))
         .route("/api/context/relevant", get(api_context_relevant))
         .route("/api/context/search", get(api_context_search))
