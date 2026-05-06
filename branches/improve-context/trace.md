@@ -22,3 +22,4 @@
 [04:03:28] OBSERVE: read src/server.rs
 [04:03:28] OBSERVE: read web/src/ContextView.tsx
 [04:03:28] OBSERVE: read web/src/ContextView.tsx
+[04:03:28] OBSERVE: read src/server.rs
