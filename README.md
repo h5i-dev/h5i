@@ -18,7 +18,7 @@
   <strong>Claude Code and Codex can write code. h5i remembers why they wrote it.</strong>
 </p>
 
-`h5i` (pronounced "high-five") is a Git sidecar for AI-era development. It captures the prompt, model, file reads, edits, decisions, TODOs, and session memory behind each change, then stores that context in dedicated Git refs next to your code.
+`h5i` (pronounced "high-five") is a Git sidecar for AI-era development. It captures the prompt, model, file reads, edits, decisions, TODOs, and context behind each change, then stores that context in dedicated Git refs next to your code.
 
 If you use coding agents, star this repo to track the tool that makes their work reviewable, resumable, and auditable.
 
