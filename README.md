@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Koukyosyumei/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/Koukyosyumei/h5i/actions/workflows/test.yaml/badge.svg"></a>
-  <a href="https://github.com/Koukyosyumei/h5i/blob/main/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/github/license/Koukyosyumei/h5i?color=blue"></a>
-  <a href="https://github.com/Koukyosyumei/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Koukyosyumei/h5i?style=social"></a>
+  <a href="https://github.com/Koukyosyumei/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml/badge.svg"></a>
+  <a href="https://github.com/Koukyosyumei/h5i/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/github/license/h5i-dev/h5i?color=blue"></a>
+  <a href="https://github.com/Koukyosyumei/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/h5i-dev/h5i?style=social"></a>
 </p>
 
 <p align="center">
@@ -32,7 +32,7 @@ cargo install --git https://github.com/Koukyosyumei/h5i h5i-core
 ```
 
 <p align="center">
-  <img src="./assets/screenshot_h5i_server.png" alt="h5i web dashboard showing AI commit timeline and context details" width="95%">
+  <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
 </p>
 
 ## Why Developers Star h5i
@@ -127,7 +127,7 @@ h5i serve        # http://localhost:7150
 ```
 
 <p align="center">
-  <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
+  <img src="./assets/screenshot_h5i_server.png" alt="h5i web dashboard showing AI commit timeline and context details" width="95%">
 </p>
 
 ## Core Commands
