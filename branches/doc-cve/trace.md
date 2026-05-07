@@ -26,3 +26,4 @@ _[Checkpoint: 69fb595b — edited docs/blog/index.html; edited docs/sitemap.xml;
 [19:31:31] OBSERVE: listed files under .
 [19:31:31] OBSERVE: read README.md
 [19:31:31] OBSERVE: read Cargo.toml
+[19:31:31] OBSERVE: read docs/index.html
