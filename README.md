@@ -270,7 +270,7 @@ You probably do not need h5i for tiny throwaway scripts.
 
 - [Manual](MANUAL.md) - full command reference
 - [Tutorials](tutorials/) - guided workflows
-- [Blog](docs/blog/) - design notes, audits, and case studies
+- [Blog](https://h5i.dev/blog/index.html) - design notes, audits, and case studies
 - [Website](https://h5i.dev/) - project overview
 
 ## Contributing
