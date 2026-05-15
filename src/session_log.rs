@@ -378,7 +378,7 @@ pub fn find_latest_session(workdir: &Path) -> Option<PathBuf> {
         })
         .collect();
 
-    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.sort_by_key(|c| std::cmp::Reverse(c.0));
     candidates.into_iter().next().map(|(_, p)| p)
 }
 
@@ -397,7 +397,7 @@ fn collect_latest_jsonl_in_dir(dir: &Path) -> Option<PathBuf> {
             Some((modified, e.path()))
         })
         .collect();
-    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.sort_by_key(|c| std::cmp::Reverse(c.0));
     candidates.into_iter().next().map(|(_, p)| p)
 }
 
@@ -830,7 +830,7 @@ pub fn analyze_session(
             count: *count,
         })
         .collect();
-    consulted.sort_by(|a, b| b.count.cmp(&a.count));
+    consulted.sort_by_key(|c| std::cmp::Reverse(c.count));
 
     let edited_vec: Vec<String> = {
         let mut v: Vec<String> = files_written.iter().cloned().collect();
@@ -1036,7 +1036,7 @@ pub fn aggregate_churn(h5i_root: &Path) -> Vec<FileChurn> {
             FileChurn { file, edit_count: edits, read_count: reads, churn_score }
         })
         .collect();
-    churn.sort_by(|a, b| b.edit_count.cmp(&a.edit_count));
+    churn.sort_by_key(|c| std::cmp::Reverse(c.edit_count));
     churn
 }
 
@@ -1179,7 +1179,9 @@ pub(crate) fn group_annotations_by_file(
     let mut list: Vec<(String, Vec<f32>)> = map.into_iter().collect();
     list.sort_by(|a, b| {
         let avg = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
-        avg(&a.1).partial_cmp(&avg(&b.1)).unwrap()
+        avg(&a.1)
+            .partial_cmp(&avg(&b.1))
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     list
 }
@@ -1370,7 +1372,11 @@ pub fn print_uncertainty(analysis: &SessionAnalysis, file_filter: Option<&str>) 
 
     // Pointer row: ↑t:N labels under the top-4 riskiest signals
     let mut top_signals: Vec<&UncertaintyAnnotation> = annotations.clone();
-    top_signals.sort_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap());
+    top_signals.sort_by(|a, b| {
+        a.confidence
+            .partial_cmp(&b.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     top_signals.dedup_by_key(|a| a.turn);
     top_signals.truncate(4);
     top_signals.sort_by_key(|a| a.turn);

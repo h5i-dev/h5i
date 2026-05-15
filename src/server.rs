@@ -4504,7 +4504,7 @@ mod frontend_tests {
         let mut rest = js;
         while let Some(pos) = rest.find(needle) {
             rest = &rest[pos + "fetch('".len()..];
-            let end = rest.find(|c| c == '\'' || c == '?').unwrap_or(rest.len());
+            let end = rest.find(['\'', '?']).unwrap_or(rest.len());
             paths.push(rest[..end].to_string());
             rest = &rest[end..];
         }

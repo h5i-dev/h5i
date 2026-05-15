@@ -82,6 +82,7 @@ Command reference for all h5i subcommands and flags.
 - [Appendix: Storage Layout](#appendix-storage-layout)
 - [Appendix: Integrity Rules](#appendix-integrity-rules)
 - [Appendix: Test Adapter Schema](#appendix-test-adapter-schema)
+- [Appendix: Environment Variables](#appendix-environment-variables)
 
 ---
 
@@ -2535,3 +2536,54 @@ Bundled adapters in `script/`:
 |---------|-------|
 | `h5i-pytest-adapter.py` | `python script/h5i-pytest-adapter.py` — uses `pytest-json-report` when available, falls back to output parsing |
 | `h5i-cargo-test-adapter.sh` | `bash script/h5i-cargo-test-adapter.sh` — accumulates counts across lib/integration/doc-test sections |
+
+---
+
+## Appendix: Environment Variables
+
+h5i reads the following environment variables. All are optional — h5i ships with sensible defaults.
+
+### Commit provenance
+
+Auto-captured when the Claude Code hook is installed; you usually do not set these by hand.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `H5I_PROMPT` | unset | User prompt that triggered the current commit. Falls back to `--prompt` if both are present. |
+| `H5I_MODEL` | unset | AI model name recorded on the commit (e.g. `claude-sonnet-4-6`). |
+| `H5I_AGENT_ID` | unset | Agent identifier recorded on the commit (e.g. `claude-code`, `codex`). Also used as the default `--author` for `h5i claims` and the default backend for `h5i codex` / inference. |
+
+### Tests
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `H5I_TEST_CMD` | unset | Shell command h5i runs when `--tests` is passed without `--test-cmd`/`--test-results`. Its stdout must be a [test-adapter JSON object](#appendix-test-adapter-schema). |
+| `H5I_TEST_RESULTS` | unset | Path to a pre-produced test-results JSON file. Equivalent to passing `--test-results`. |
+
+### AST parser
+
+`h5i` shells out to `python3 h5i-py-parser.py` for Python AST extraction.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `H5I_PARSER_DIR` | unset | Directory to search **first** for `h5i-py-parser.py`. Must be an existing directory; if it exists but is not a directory (or does not exist), h5i logs a warning at `warn` level and falls through to `<repo>/script/` then `<bindir>/[..]/script/`. |
+| `H5I_PARSER_TIMEOUT_SECS` | `30` | Hard timeout (whole seconds) for the parser subprocess. The child is killed if it exceeds this. Non-positive or non-numeric values fall back to the default. |
+
+### Claims
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `H5I_CLAIMS_FREQUENCY` | `low` | How eagerly agents should record `h5i claims add` entries. One of `off` / `low` / `high`. Surfaced in the SessionStart prelude when not `low`. See [h5i claims](#h5i-claims). |
+
+### Intent / search
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `H5I_SEARCH_MODEL` | model-dependent | Claude model used for `h5i notes graph --analyze` intent extraction. Requires `ANTHROPIC_API_KEY` to take effect. |
+| `ANTHROPIC_API_KEY` | unset | API key used by `h5i notes graph --analyze`. When unset, intent falls back to stored prompts / commit messages. |
+
+### Logging
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `H5I_LOG` | `off` | `tracing_subscriber` env filter for h5i's internal diagnostics (subprocess timeouts, invalid `H5I_PARSER_DIR`, etc.). Typical values: `h5i_core=warn`, `h5i_core=debug`. Logs go to stderr so stdout stays clean for piped/MCP consumers. `RUST_LOG` is also honored as a fallback. |

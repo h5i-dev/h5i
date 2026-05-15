@@ -262,7 +262,7 @@ pub fn compute_vibe_report(repo: &H5iRepository, limit: usize) -> Result<VibeRep
 
     // ── Final assembly ────────────────────────────────────────────────────────
     let mut ai_models: Vec<(String, usize)> = model_counts.into_iter().collect();
-    ai_models.sort_by(|a, b| b.1.cmp(&a.1));
+    ai_models.sort_by_key(|m| std::cmp::Reverse(m.1));
 
     let mut human_authors: Vec<String> = human_author_set.into_iter().collect();
     human_authors.sort();

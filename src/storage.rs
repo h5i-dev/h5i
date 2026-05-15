@@ -261,7 +261,7 @@ fn validate_refs(repo: &Repository, issues: &mut Vec<DoctorIssue>) {
                 DoctorSeverity::Warning,
                 "missing_ref",
                 format!("{name} is not present yet"),
-                Some(format!("create it by using the corresponding h5i command")),
+                Some("create it by using the corresponding h5i command".to_string()),
             )),
         }
     }

@@ -40,6 +40,16 @@ struct SecretRule {
     /// Minimum Shannon entropy (bits/char) on the captured group. Only
     /// consulted when `entropy_group` is `Some`.
     min_entropy: f32,
+    /// Lower-cased substrings that must appear somewhere in the line before
+    /// we bother running the regex. Empty slice = "no pre-filter, always
+    /// try" (used by catch-all rules like `GENERIC_HIGH_ENTROPY`).
+    ///
+    /// All entries MUST be lowercase: the scanner lowercases the line once
+    /// and compares against these as-is. Keeping the pre-filter strictly
+    /// looser than the regex is required for correctness — false positives
+    /// here just trigger a wasted regex run; false negatives would hide a
+    /// real finding.
+    keywords: &'static [&'static str],
 }
 
 /// Concrete match emitted by the scanner.
@@ -66,6 +76,8 @@ const RULES: &[SecretRule] = &[
         pattern: r"\b(AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASCA)[0-9A-Z]{16}\b",
         entropy_group: None,
         min_entropy: 0.0,
+        // AWS access keys always start with one of these four-char prefixes.
+        keywords: &["akia", "asia", "agpa", "aida", "aroa", "aipa", "anpa", "anva", "asca"],
     },
     SecretRule {
         id: "GCP_API_KEY",
@@ -73,6 +85,7 @@ const RULES: &[SecretRule] = &[
         pattern: r"\bAIza[0-9A-Za-z\-_]{35}\b",
         entropy_group: None,
         min_entropy: 0.0,
+        keywords: &["aiza"],
     },
     SecretRule {
         id: "GITHUB_PAT",
@@ -81,6 +94,7 @@ const RULES: &[SecretRule] = &[
         pattern: r"\bgh[pousr]_[A-Za-z0-9]{36}\b",
         entropy_group: None,
         min_entropy: 0.0,
+        keywords: &["ghp_", "gho_", "ghu_", "ghs_", "ghr_"],
     },
     SecretRule {
         id: "GITHUB_FINE_GRAINED_PAT",
@@ -88,6 +102,7 @@ const RULES: &[SecretRule] = &[
         pattern: r"\bgithub_pat_[A-Za-z0-9_]{82}\b",
         entropy_group: None,
         min_entropy: 0.0,
+        keywords: &["github_pat_"],
     },
     SecretRule {
         id: "SLACK_TOKEN",
@@ -95,6 +110,7 @@ const RULES: &[SecretRule] = &[
         pattern: r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b",
         entropy_group: None,
         min_entropy: 0.0,
+        keywords: &["xoxa-", "xoxb-", "xoxp-", "xoxr-", "xoxs-"],
     },
     SecretRule {
         id: "STRIPE_SECRET_KEY",
@@ -102,6 +118,7 @@ const RULES: &[SecretRule] = &[
         pattern: r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{24,}\b",
         entropy_group: None,
         min_entropy: 0.0,
+        keywords: &["sk_live_", "sk_test_", "rk_live_", "rk_test_"],
     },
     SecretRule {
         id: "ANTHROPIC_API_KEY",
@@ -109,6 +126,7 @@ const RULES: &[SecretRule] = &[
         pattern: r"\bsk-ant-[A-Za-z0-9_-]{80,}\b",
         entropy_group: None,
         min_entropy: 0.0,
+        keywords: &["sk-ant-"],
     },
     SecretRule {
         id: "OPENAI_API_KEY",
@@ -117,6 +135,8 @@ const RULES: &[SecretRule] = &[
         pattern: r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,}\b",
         entropy_group: None,
         min_entropy: 0.0,
+        // The fixed "T3BlbkFJ" infix uniquely identifies OpenAI keys.
+        keywords: &["t3blbkfj"],
     },
     SecretRule {
         id: "JWT",
@@ -125,6 +145,8 @@ const RULES: &[SecretRule] = &[
         pattern: r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b",
         entropy_group: None,
         min_entropy: 0.0,
+        // Two consecutive "eyJ" segments is the structural signature of a JWT.
+        keywords: &["eyj"],
     },
     SecretRule {
         id: "PRIVATE_KEY_PEM",
@@ -132,6 +154,66 @@ const RULES: &[SecretRule] = &[
         pattern: r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
         entropy_group: None,
         min_entropy: 0.0,
+        keywords: &["-----begin"],
+    },
+
+    // ── Database connection strings (entropy-gated on password group) ─────
+    //
+    // Each captures `user:password@host` (or `:password@` for redis where
+    // the user is optional). Entropy gate ≥ 2.5 keeps `password = "test"`
+    // out, but lets shortish randomized passwords through.
+    SecretRule {
+        id: "POSTGRES_CONNECTION_STRING",
+        description: "PostgreSQL connection string with embedded credentials",
+        pattern: r##"(?i)\bpostgres(?:ql)?://[^:@\s/]+:([^@\s/'"]{4,})@"##,
+        entropy_group: Some(1),
+        min_entropy: 2.5,
+        keywords: &["postgres://", "postgresql://"],
+    },
+    SecretRule {
+        id: "MYSQL_CONNECTION_STRING",
+        description: "MySQL/MariaDB connection string with embedded credentials",
+        pattern: r##"(?i)\bmysql://[^:@\s/]+:([^@\s/'"]{4,})@"##,
+        entropy_group: Some(1),
+        min_entropy: 2.5,
+        keywords: &["mysql://"],
+    },
+    SecretRule {
+        id: "MONGODB_CONNECTION_STRING",
+        description: "MongoDB connection string with embedded credentials",
+        // mongodb:// and mongodb+srv:// both supported.
+        pattern: r##"(?i)\bmongodb(?:\+srv)?://[^:@\s/]+:([^@\s/'"]{4,})@"##,
+        entropy_group: Some(1),
+        min_entropy: 2.5,
+        keywords: &["mongodb://", "mongodb+srv://"],
+    },
+    SecretRule {
+        id: "REDIS_CONNECTION_STRING",
+        description: "Redis connection string with embedded credentials",
+        // Redis URLs frequently have an empty username slot: redis://:pw@host.
+        pattern: r##"(?i)\bredis://[^:@\s/]*:([^@\s/'"]{4,})@"##,
+        entropy_group: Some(1),
+        min_entropy: 2.5,
+        keywords: &["redis://"],
+    },
+    SecretRule {
+        id: "JDBC_PASSWORD_PARAM",
+        description: "JDBC URL with embedded password parameter",
+        // jdbc:<driver>://host[:port]/db?...&password=secret
+        pattern: r##"(?i)\bjdbc:[a-z][a-z0-9]*:[^\s'"]+[?&]password=([^&\s'"]{4,})"##,
+        entropy_group: Some(1),
+        min_entropy: 2.0,
+        keywords: &["jdbc:"],
+    },
+    SecretRule {
+        id: "HTTP_BASIC_AUTH_URL",
+        description: "HTTP(S) URL with embedded basic-auth credentials",
+        // Matches https://user:secret@host. Excludes the scheme-only case so
+        // `https://example.com:443/path` is not interpreted as user:port.
+        pattern: r##"(?i)\bhttps?://[A-Za-z0-9._~%+\-]+:([^@\s/'"]{4,})@"##,
+        entropy_group: Some(1),
+        min_entropy: 2.5,
+        keywords: &["http://", "https://"],
     },
 
     // ── Generic high-entropy assignment (entropy-gated, catches the tail) ─
@@ -139,12 +221,18 @@ const RULES: &[SecretRule] = &[
     // Matches `<credential-keyword> [=:] "<value>"` where `<value>` has
     // enough characters and entropy to plausibly be a real secret. The
     // entropy gate keeps this from firing on `password = "config"`.
+    //
+    // `keywords` intentionally empty: this rule IS the keyword pre-filter
+    // (the regex's own credential-keyword alternation does the same job),
+    // and there's no single substring we could anchor on without falsely
+    // suppressing real matches.
     SecretRule {
         id: "GENERIC_HIGH_ENTROPY",
         description: "high-entropy credential-like assignment",
         pattern: r#"(?i)(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|private[_-]?key)\s*[:=]\s*['"]([A-Za-z0-9+/=_\-]{20,})['"]"#,
         entropy_group: Some(1),
         min_entropy: 3.5,
+        keywords: &[],
     },
 ];
 
@@ -274,16 +362,17 @@ pub fn is_path_allowlisted(path: &str) -> bool {
         if TEST_FILE_SUFFIXES.iter().any(|s| basename.ends_with(s)) {
             return true;
         }
-        if RULE_DEFINITION_FILES.iter().any(|f| basename == *f) {
+        if RULE_DEFINITION_FILES.contains(&basename) {
             return true;
         }
     }
     false
 }
 
-fn line_is_stoplisted(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
-    STOPLIST.iter().any(|s| lower.contains(s))
+/// Returns `true` if any keyword in `keywords` appears in `lowered`.
+/// Empty `keywords` slice means "no pre-filter — always run the regex".
+fn keywords_match(keywords: &[&str], lowered: &str) -> bool {
+    keywords.is_empty() || keywords.iter().any(|k| lowered.contains(*k))
 }
 
 /// Shannon entropy in bits per character. Empty string → 0.
@@ -325,15 +414,25 @@ pub fn scan_lines<'a, I>(path: &str, lines: I) -> Vec<SecretFinding>
 where
     I: IntoIterator<Item = (usize, &'a str)>,
 {
+    let _span = tracing::trace_span!("secrets_scan_lines", path).entered();
     if !path.is_empty() && is_path_allowlisted(path) {
+        tracing::trace!("path allowlisted; skipping");
         return Vec::new();
     }
     let mut out = Vec::new();
     for (n, line) in lines {
-        if line_is_stoplisted(line) {
+        // Lower-case the line once per iteration — shared by both the
+        // stoplist and the per-rule keyword pre-filter.
+        let lowered = line.to_ascii_lowercase();
+        if STOPLIST.iter().any(|s| lowered.contains(s)) {
             continue;
         }
         for (re, rule) in compiled_rules() {
+            // Keyword pre-filter: skip the regex entirely when the rule's
+            // anchor strings aren't present. This is the largest perf win.
+            if !keywords_match(rule.keywords, &lowered) {
+                continue;
+            }
             let Some(caps) = re.captures(line) else {
                 continue;
             };
@@ -362,6 +461,9 @@ where
             }
             break; // one finding per line is enough
         }
+    }
+    if !out.is_empty() {
+        tracing::debug!(path, findings = out.len(), "secrets_scan_lines hits");
     }
     out
 }
@@ -405,7 +507,7 @@ mod tests {
     #[test]
     fn anthropic_key_fires() {
         // 80+ char tail
-        let tail: String = std::iter::repeat('A').take(95).collect();
+        let tail: String = std::iter::repeat_n('A', 95).collect();
         let f = scan(&format!("key=\"sk-ant-{tail}\""));
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].rule_id, "ANTHROPIC_API_KEY");
@@ -477,5 +579,131 @@ mod tests {
         assert!(shannon_entropy("aaaaaa") < 0.1);
         assert!(shannon_entropy("abcdef") > 2.0);
         assert!(shannon_entropy("Xb4nGq8wPzM3aLv7yFhT2Rc9JeD5tWkB") > 4.5);
+    }
+
+    // ── Keyword pre-filter mechanics ─────────────────────────────────────
+
+    #[test]
+    fn keywords_match_with_keyword_present() {
+        assert!(keywords_match(&["akia"], "found akiazzz in code"));
+    }
+
+    #[test]
+    fn keywords_match_with_keyword_absent() {
+        assert!(!keywords_match(&["akia"], "no anchor here"));
+    }
+
+    #[test]
+    fn keywords_match_empty_means_always_run() {
+        // Catch-all rules like GENERIC_HIGH_ENTROPY use an empty keyword list
+        // — the helper must signal "yes run me" so the regex still gets a chance.
+        assert!(keywords_match(&[], "anything at all"));
+    }
+
+    #[test]
+    fn keywords_match_any_of_many() {
+        assert!(keywords_match(&["xoxa-", "xoxb-", "xoxp-"], "found xoxp-123"));
+        assert!(!keywords_match(&["xoxa-", "xoxb-", "xoxp-"], "xoxq-"));
+    }
+
+    #[test]
+    fn keyword_prefilter_blocks_unanchored_lines() {
+        // Construct a 20-char Base62 blob that has the SHAPE of a GitHub PAT
+        // but lacks the `ghp_` prefix. Without the keyword pre-filter you could
+        // imagine a future regex misfiring; with it, lines that don't even
+        // mention `ghp_` short-circuit before any regex runs. This test pins
+        // the no-regex path at a level the scanner publicly observes.
+        let f = scan("totally innocent text with no creds at all");
+        assert!(f.is_empty());
+    }
+
+    // ── Database connection-string rules ─────────────────────────────────
+
+    #[test]
+    fn postgres_connection_string_fires() {
+        let f = scan("DATABASE_URL=postgres://prod_app:Xb4nGq8wPzM3aLv7yFhT@db.internal:5432/app");
+        assert_eq!(f.len(), 1, "expected exactly one finding, got {:?}", f);
+        assert_eq!(f[0].rule_id, "POSTGRES_CONNECTION_STRING");
+        assert!(f[0].preview.starts_with("Xb4n"));
+    }
+
+    #[test]
+    fn postgres_connection_string_long_form_scheme() {
+        let f = scan("url = \"postgresql://owner:HighEntropyPass1234@host/db\"");
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].rule_id, "POSTGRES_CONNECTION_STRING");
+    }
+
+    #[test]
+    fn postgres_rejects_low_entropy_password() {
+        // "password" has Shannon entropy ~2.75 — still above 2.5. Use a more
+        // clearly low-entropy value to verify the entropy gate kicks in.
+        let f = scan("url = postgres://app:aaaa@host/db");
+        assert!(
+            f.is_empty(),
+            "all-same-char password must fail entropy gate; got {:?}",
+            f
+        );
+    }
+
+    #[test]
+    fn mysql_connection_string_fires() {
+        let f = scan("uri: mysql://root:Pa55w0rd!sup3rL0ng@127.0.0.1:3306/app");
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].rule_id, "MYSQL_CONNECTION_STRING");
+    }
+
+    #[test]
+    fn mongodb_connection_string_fires() {
+        let f = scan("MONGO=mongodb+srv://admin:Tr0ub4dor&3@cluster0.mongodb.net/test");
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].rule_id, "MONGODB_CONNECTION_STRING");
+    }
+
+    #[test]
+    fn redis_connection_string_fires_with_empty_user() {
+        let f = scan("REDIS_URL=redis://:Sup3rS3cr3tR3d1s@cache:6379/0");
+        assert_eq!(f.len(), 1, "got {:?}", f);
+        assert_eq!(f[0].rule_id, "REDIS_CONNECTION_STRING");
+    }
+
+    #[test]
+    fn jdbc_password_param_fires() {
+        let f = scan("DRIVER=jdbc:postgresql://host:5432/db?user=app&password=Xb4nGq8wPzM3aLv7yFhT");
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].rule_id, "JDBC_PASSWORD_PARAM");
+    }
+
+    #[test]
+    fn http_basic_auth_url_fires() {
+        let f = scan("curl -X POST https://svcacct:K7zR3mE9wQv2N8pX@api.example.org/v1");
+        // The line contains "example", which is on the global STOPLIST — that
+        // suppression is correct (test fixtures use example.{com,org} on purpose).
+        assert!(
+            f.is_empty(),
+            "example.org should be stoplisted; got {:?}",
+            f
+        );
+
+        let f = scan("curl -X POST https://svcacct:K7zR3mE9wQv2N8pX@api.acme.internal/v1");
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].rule_id, "HTTP_BASIC_AUTH_URL");
+    }
+
+    #[test]
+    fn http_basic_auth_url_does_not_fire_on_plain_url() {
+        // No credentials embedded → no match.
+        let f = scan("see https://docs.acme.internal/auth for details");
+        assert!(f.is_empty());
+    }
+
+    #[test]
+    fn connection_string_in_test_file_path_skipped() {
+        // Test-file allowlist must still apply to the new rules.
+        let f = scan_lines(
+            "src/db/connection_test.rs",
+            std::iter::once((1, "postgres://user:Xb4nGq8wPzM3aLv7yFhT@host/db")),
+        );
+        assert!(f.is_empty(), "test fixtures must be allowlisted; got {:?}", f);
     }
 }

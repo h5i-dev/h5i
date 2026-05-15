@@ -149,6 +149,14 @@ impl H5iRepository {
         caused_by: Vec<String>,
         decisions: Vec<Decision>,
     ) -> Result<Oid, H5iError> {
+        let _span = tracing::info_span!(
+            "h5i_commit",
+            with_ai = ai_meta.is_some(),
+            with_tests = !matches!(test_source, TestSource::None),
+            with_ast = ast_parser.is_some(),
+            decisions = decisions.len(),
+        )
+        .entered();
         let mut index = self.git_repo.index()?;
 
         // 1. Prepare optional features
@@ -234,6 +242,9 @@ impl H5iRepository {
         self.git_repo
             .note(author, committer, Some(H5I_NOTES_REF), commit_oid, &metadata_json, true)?;
 
+        let short = commit_oid.to_string();
+        let short = &short[..short.len().min(8)];
+        tracing::debug!(oid = %short, "h5i_commit complete");
         Ok(commit_oid)
     }
 
@@ -1170,20 +1181,12 @@ impl H5iRepository {
 
             let script_path = find_parser_script(script_name, workdir.as_deref())?;
 
-            let output = std::process::Command::new("python3")
-                .arg(&script_path)
-                .arg(path)
-                .output()
-                .ok()?;
+            // Canonicalize the input path so symlinks resolve and we pass an
+            // absolute, normalized path to the parser. If the file does not
+            // exist on disk yet (e.g. virtual paths), fall back to the raw path.
+            let arg_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
 
-            if output.status.success() {
-                String::from_utf8(output.stdout)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-            } else {
-                None
-            }
+            run_parser_subprocess(&script_path, &arg_path)
         })
     }
 
@@ -2305,7 +2308,7 @@ impl H5iRepository {
         }
 
         let mut ranked: Vec<(String, usize)> = counts.into_iter().collect();
-        ranked.sort_by(|a, b| b.1.cmp(&a.1));
+        ranked.sort_by_key(|r| std::cmp::Reverse(r.1));
         ranked.truncate(result_limit);
         Ok(ranked)
     }
@@ -2759,44 +2762,169 @@ fn is_artifact_path(path: &str) -> bool {
 
 // ── Parser script discovery ───────────────────────────────────────────────────
 
-/// Searches for `script_name` in the standard locations and returns the first
-/// path that exists.
-fn find_parser_script(
+/// Default timeout for the AST parser subprocess. Overridable via the
+/// `H5I_PARSER_TIMEOUT_SECS` environment variable.
+const PARSER_TIMEOUT_SECS_DEFAULT: u64 = 30;
+
+/// Resolves the parser timeout from an explicit env-value string. Accepts a
+/// positive integer; returns the default for any other input (unset, empty,
+/// non-numeric, zero).
+fn resolve_parser_timeout(env_value: Option<&str>) -> std::time::Duration {
+    let secs = env_value
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(PARSER_TIMEOUT_SECS_DEFAULT);
+    std::time::Duration::from_secs(secs)
+}
+
+fn parser_timeout() -> std::time::Duration {
+    resolve_parser_timeout(std::env::var("H5I_PARSER_TIMEOUT_SECS").ok().as_deref())
+}
+
+/// Runs the parser script under `python3 <script> <path>` with the given
+/// timeout. Returns `None` on any failure (spawn, timeout, non-zero exit,
+/// non-UTF8 stdout, empty output). Testable variant of [`run_parser_subprocess`].
+fn run_parser_subprocess_with_timeout(
+    script_path: &std::path::Path,
+    arg_path: &std::path::Path,
+    timeout: std::time::Duration,
+) -> Option<String> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let mut child = std::process::Command::new("python3")
+        .arg(script_path)
+        .arg(arg_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut buf = String::new();
+                if let Some(out) = child.stdout.take() {
+                    // Cap output to 64 MiB to bound memory if the parser misbehaves.
+                    const MAX_OUTPUT: u64 = 64 * 1024 * 1024;
+                    let _ = out.take(MAX_OUTPUT).read_to_string(&mut buf);
+                }
+                let trimmed = buf.trim().to_string();
+                return (!trimmed.is_empty()).then_some(trimmed);
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    tracing::warn!(
+                        script = %script_path.display(),
+                        path = %arg_path.display(),
+                        "AST parser exceeded timeout; killed"
+                    );
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+fn run_parser_subprocess(
+    script_path: &std::path::Path,
+    arg_path: &std::path::Path,
+) -> Option<String> {
+    run_parser_subprocess_with_timeout(script_path, arg_path, parser_timeout())
+}
+
+/// Validates and canonicalizes a candidate script path. Returns `Some` only if
+/// the path resolves to a regular file (not a directory or broken symlink).
+fn pick_parser_path(candidate: std::path::PathBuf) -> Option<std::path::PathBuf> {
+    let meta = std::fs::metadata(&candidate).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    std::fs::canonicalize(&candidate).ok().or(Some(candidate))
+}
+
+/// Testable core of [`find_parser_script`]. Takes the parser-dir override and
+/// exe-dir as explicit parameters so tests can drive every branch without
+/// touching process-global env state.
+///
+/// Search order:
+///   1. `parser_dir_override` (if set and is a real directory)
+///   2. `<workdir>/script/<script_name>`
+///   3. `<exe_dir>/script/<script_name>` then `<exe_dir>/../script/<script_name>`
+fn find_parser_script_inner(
     script_name: &str,
     workdir: Option<&std::path::Path>,
+    parser_dir_override: Option<&std::path::Path>,
+    exe_dir: Option<&std::path::Path>,
 ) -> Option<std::path::PathBuf> {
-    // 1. Explicit override via environment variable.
-    if let Ok(dir) = std::env::var("H5I_PARSER_DIR") {
-        let p = std::path::Path::new(&dir).join(script_name);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-
-    // 2. `script/` inside the repository working directory.
-    if let Some(wd) = workdir {
-        let p = wd.join("script").join(script_name);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-
-    // 3. Relative to the h5i binary (`<bin_dir>/../script/` for development builds,
-    //    `<bin_dir>/script/` for flat installs).
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(bin_dir) = exe.parent() {
-            for candidate in &[
-                bin_dir.join("script").join(script_name),
-                bin_dir.join("..").join("script").join(script_name),
-            ] {
-                if candidate.exists() {
-                    return Some(candidate.clone());
+    if let Some(dir_path) = parser_dir_override {
+        match std::fs::metadata(dir_path) {
+            Ok(m) if m.is_dir() => {
+                if let Some(p) = pick_parser_path(dir_path.join(script_name)) {
+                    return Some(p);
                 }
+            }
+            Ok(_) => {
+                tracing::warn!(
+                    path = %dir_path.display(),
+                    "H5I_PARSER_DIR exists but is not a directory; ignoring"
+                );
+            }
+            Err(_) => {
+                tracing::warn!(
+                    path = %dir_path.display(),
+                    "H5I_PARSER_DIR does not exist; ignoring"
+                );
+            }
+        }
+    }
+
+    if let Some(wd) = workdir {
+        if let Some(p) = pick_parser_path(wd.join("script").join(script_name)) {
+            return Some(p);
+        }
+    }
+
+    if let Some(bin_dir) = exe_dir {
+        for candidate in [
+            bin_dir.join("script").join(script_name),
+            bin_dir.join("..").join("script").join(script_name),
+        ] {
+            if let Some(p) = pick_parser_path(candidate) {
+                return Some(p);
             }
         }
     }
 
     None
+}
+
+/// Searches for `script_name` in the standard locations and returns the first
+/// path that exists. Reads `H5I_PARSER_DIR` and `std::env::current_exe()` from
+/// the environment; delegates the actual search to [`find_parser_script_inner`].
+fn find_parser_script(
+    script_name: &str,
+    workdir: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    let parser_dir = std::env::var_os("H5I_PARSER_DIR").map(std::path::PathBuf::from);
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.to_path_buf()));
+    find_parser_script_inner(
+        script_name,
+        workdir,
+        parser_dir.as_deref(),
+        exe_dir.as_deref(),
+    )
 }
 
 #[cfg(test)]
@@ -2896,7 +3024,7 @@ mod tests {
             "legacy commit",
             "legacy.txt",
             "old data",
-            &vec![],
+            &[],
         );
 
         // h5i_log should fallback to minimal record
@@ -2918,7 +3046,7 @@ mod tests {
             "initial",
             "README.md",
             "Line 1\nLine 2",
-            &vec![],
+            &[],
         );
 
         let results = h5i_repo.blame(path, BlameMode::Line).unwrap();
@@ -3089,5 +3217,296 @@ mod tests {
         let ref_name = shadow_ref.unwrap();
         assert!(ref_name.starts_with("refs/h5i/shadow/"));
         assert!(repo.find_reference(&ref_name).is_ok(), "shadow ref must exist in git");
+    }
+
+    // ── Parser subprocess hardening tests ─────────────────────────────────
+
+    #[test]
+    fn parser_timeout_default_when_unset() {
+        assert_eq!(
+            resolve_parser_timeout(None),
+            std::time::Duration::from_secs(PARSER_TIMEOUT_SECS_DEFAULT)
+        );
+    }
+
+    #[test]
+    fn parser_timeout_uses_valid_env_value() {
+        assert_eq!(
+            resolve_parser_timeout(Some("5")),
+            std::time::Duration::from_secs(5)
+        );
+    }
+
+    #[test]
+    fn parser_timeout_rejects_zero() {
+        // Zero would mean "immediate timeout, never run" — silently fall back.
+        assert_eq!(
+            resolve_parser_timeout(Some("0")),
+            std::time::Duration::from_secs(PARSER_TIMEOUT_SECS_DEFAULT)
+        );
+    }
+
+    #[test]
+    fn parser_timeout_rejects_garbage() {
+        assert_eq!(
+            resolve_parser_timeout(Some("not-a-number")),
+            std::time::Duration::from_secs(PARSER_TIMEOUT_SECS_DEFAULT)
+        );
+        assert_eq!(
+            resolve_parser_timeout(Some("")),
+            std::time::Duration::from_secs(PARSER_TIMEOUT_SECS_DEFAULT)
+        );
+        assert_eq!(
+            resolve_parser_timeout(Some("-3")),
+            std::time::Duration::from_secs(PARSER_TIMEOUT_SECS_DEFAULT)
+        );
+    }
+
+    #[test]
+    fn find_parser_uses_valid_override() {
+        let tmp = tempdir().unwrap();
+        let dir = tmp.path();
+        let script = dir.join("h5i-py-parser.py");
+        fs::write(&script, "# stub").unwrap();
+
+        let found = find_parser_script_inner("h5i-py-parser.py", None, Some(dir), None);
+        let found = found.expect("override directory should be used");
+        assert!(found.is_absolute(), "result should be canonicalized to absolute");
+        assert_eq!(found.file_name().unwrap(), "h5i-py-parser.py");
+    }
+
+    #[test]
+    fn find_parser_rejects_override_that_is_a_file_not_dir() {
+        let tmp = tempdir().unwrap();
+        let file_not_dir = tmp.path().join("not-a-dir");
+        fs::write(&file_not_dir, "i am a file").unwrap();
+
+        let found =
+            find_parser_script_inner("h5i-py-parser.py", None, Some(&file_not_dir), None);
+        assert!(found.is_none(), "override that points at a file must be ignored");
+    }
+
+    #[test]
+    fn find_parser_ignores_missing_override() {
+        let tmp = tempdir().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        let found =
+            find_parser_script_inner("h5i-py-parser.py", None, Some(&missing), None);
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn find_parser_rejects_override_dir_without_script() {
+        // Override directory exists but the script file is not inside it.
+        let tmp = tempdir().unwrap();
+        let found =
+            find_parser_script_inner("h5i-py-parser.py", None, Some(tmp.path()), None);
+        assert!(
+            found.is_none(),
+            "empty override dir should not match anything"
+        );
+    }
+
+    #[test]
+    fn find_parser_rejects_override_pointing_to_directory_named_like_script() {
+        // The override resolves to `<dir>/h5i-py-parser.py` but that path is a
+        // directory, not a regular file. pick_parser_path must reject it.
+        let tmp = tempdir().unwrap();
+        let trap = tmp.path().join("h5i-py-parser.py");
+        fs::create_dir(&trap).unwrap();
+        let found =
+            find_parser_script_inner("h5i-py-parser.py", None, Some(tmp.path()), None);
+        assert!(found.is_none(), "a directory named like the script must not match");
+    }
+
+    #[test]
+    fn find_parser_falls_back_to_workdir_script_dir() {
+        let tmp = tempdir().unwrap();
+        let script_dir = tmp.path().join("script");
+        fs::create_dir(&script_dir).unwrap();
+        let script = script_dir.join("h5i-py-parser.py");
+        fs::write(&script, "# stub").unwrap();
+
+        let found = find_parser_script_inner(
+            "h5i-py-parser.py",
+            Some(tmp.path()),
+            None, // no override
+            None, // no exe_dir
+        );
+        let found = found.expect("workdir/script/ should be discovered");
+        assert_eq!(found.file_name().unwrap(), "h5i-py-parser.py");
+    }
+
+    #[test]
+    fn find_parser_falls_back_to_exe_dir_script() {
+        let tmp = tempdir().unwrap();
+        let script_dir = tmp.path().join("script");
+        fs::create_dir(&script_dir).unwrap();
+        let script = script_dir.join("h5i-py-parser.py");
+        fs::write(&script, "# stub").unwrap();
+
+        // Simulate "h5i binary lives in tmp/, script is at tmp/script/foo.py"
+        let found = find_parser_script_inner(
+            "h5i-py-parser.py",
+            None,
+            None,
+            Some(tmp.path()),
+        );
+        let found = found.expect("exe_dir/script/ should be discovered");
+        assert_eq!(found.file_name().unwrap(), "h5i-py-parser.py");
+    }
+
+    #[test]
+    fn find_parser_override_wins_over_workdir() {
+        let tmp = tempdir().unwrap();
+
+        let workdir = tmp.path().join("repo");
+        fs::create_dir_all(workdir.join("script")).unwrap();
+        fs::write(workdir.join("script/h5i-py-parser.py"), "# workdir version").unwrap();
+
+        let override_dir = tmp.path().join("override");
+        fs::create_dir(&override_dir).unwrap();
+        fs::write(override_dir.join("h5i-py-parser.py"), "# override version").unwrap();
+
+        let found = find_parser_script_inner(
+            "h5i-py-parser.py",
+            Some(&workdir),
+            Some(&override_dir),
+            None,
+        )
+        .expect("a script should be found");
+
+        // The override dir wins; canonicalize so platform-specific resolutions don't
+        // change which dir-name comparison we use.
+        let override_canon = std::fs::canonicalize(&override_dir).unwrap();
+        assert!(
+            found.starts_with(&override_canon),
+            "override should win over workdir; got {}",
+            found.display()
+        );
+    }
+
+    fn python3_available() -> bool {
+        std::process::Command::new("python3")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn run_parser_returns_stdout_on_success() {
+        if !python3_available() {
+            eprintln!("skipping: python3 not on PATH");
+            return;
+        }
+        let tmp = tempdir().unwrap();
+        let script = tmp.path().join("parser.py");
+        // The script ignores its argument and prints a fixed s-expression.
+        fs::write(&script, "import sys\nprint('(module (fn foo))')\n").unwrap();
+        let target = tmp.path().join("input.py");
+        fs::write(&target, "def foo():\n    pass\n").unwrap();
+
+        let out = run_parser_subprocess_with_timeout(
+            &script,
+            &target,
+            std::time::Duration::from_secs(10),
+        );
+        assert_eq!(out.as_deref(), Some("(module (fn foo))"));
+    }
+
+    #[test]
+    fn run_parser_returns_none_on_nonzero_exit() {
+        if !python3_available() {
+            eprintln!("skipping: python3 not on PATH");
+            return;
+        }
+        let tmp = tempdir().unwrap();
+        let script = tmp.path().join("parser.py");
+        fs::write(&script, "import sys\nsys.exit(1)\n").unwrap();
+        let target = tmp.path().join("input.py");
+        fs::write(&target, "x = 1\n").unwrap();
+
+        let out = run_parser_subprocess_with_timeout(
+            &script,
+            &target,
+            std::time::Duration::from_secs(10),
+        );
+        assert!(out.is_none());
+    }
+
+    #[test]
+    fn run_parser_returns_none_on_empty_output() {
+        if !python3_available() {
+            eprintln!("skipping: python3 not on PATH");
+            return;
+        }
+        let tmp = tempdir().unwrap();
+        let script = tmp.path().join("parser.py");
+        // Whitespace-only output trims to empty -> treated as failure.
+        fs::write(&script, "print('   ')\n").unwrap();
+        let target = tmp.path().join("input.py");
+        fs::write(&target, "x = 1\n").unwrap();
+
+        let out = run_parser_subprocess_with_timeout(
+            &script,
+            &target,
+            std::time::Duration::from_secs(10),
+        );
+        assert!(out.is_none(), "whitespace-only output should be rejected");
+    }
+
+    #[test]
+    fn run_parser_kills_runaway_child_on_timeout() {
+        if !python3_available() {
+            eprintln!("skipping: python3 not on PATH");
+            return;
+        }
+        let tmp = tempdir().unwrap();
+        let script = tmp.path().join("parser.py");
+        // Sleep longer than the timeout — parser must be killed.
+        fs::write(
+            &script,
+            "import time\nwhile True:\n    time.sleep(10)\n",
+        )
+        .unwrap();
+        let target = tmp.path().join("input.py");
+        fs::write(&target, "x = 1\n").unwrap();
+
+        let started = std::time::Instant::now();
+        let out = run_parser_subprocess_with_timeout(
+            &script,
+            &target,
+            std::time::Duration::from_millis(400),
+        );
+        let elapsed = started.elapsed();
+
+        assert!(out.is_none(), "timed-out parser must return None");
+        // Generous upper bound: deadline + poll-slop + reap. If we exceeded 5s,
+        // the kill path is broken.
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "timeout did not fire within 5s (took {:?})",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn run_parser_returns_none_when_script_missing() {
+        let tmp = tempdir().unwrap();
+        let missing = tmp.path().join("nope.py");
+        let target = tmp.path().join("input.py");
+        fs::write(&target, "x = 1\n").unwrap();
+
+        // python3 will exit non-zero when given a missing script (it prints to
+        // stderr which we discard) — we must surface that as None.
+        let out = run_parser_subprocess_with_timeout(
+            &missing,
+            &target,
+            std::time::Duration::from_secs(5),
+        );
+        assert!(out.is_none());
     }
 }

@@ -1474,7 +1474,7 @@ pub fn subscribe_resource(
     let snapshot = resource_snapshot(&uri, &workdir);
 
     {
-        let mut map = subs.lock().unwrap();
+        let mut map = subs.lock().unwrap_or_else(|e| e.into_inner());
         // If the URI is already subscribed, refresh its baseline and skip
         // spawning another watcher thread.
         if map.insert(uri.clone(), snapshot).is_some() {
@@ -1490,7 +1490,7 @@ pub fn subscribe_resource(
 
             // Check if still subscribed and retrieve the last-known snapshot.
             let last = {
-                let map = subs.lock().unwrap();
+                let map = subs.lock().unwrap_or_else(|e| e.into_inner());
                 match map.get(&uri) {
                     Some(s) => s.clone(),
                     None => return, // Unsubscribed — exit.
@@ -1507,7 +1507,7 @@ pub fn subscribe_resource(
             // Persist the new snapshot before pushing so we don't re-notify
             // on the next poll if the client hasn't re-read yet.
             {
-                let mut map = subs.lock().unwrap();
+                let mut map = subs.lock().unwrap_or_else(|e| e.into_inner());
                 if !map.contains_key(&uri) {
                     return; // Unsubscribed while computing snapshot.
                 }
@@ -1535,6 +1535,12 @@ pub fn subscribe_resource(
 /// Process one JSON-RPC request and return a response (or `None` for
 /// notifications, which must not be answered).
 pub fn handle_request(req: JsonRpcRequest, workdir: &Path) -> Option<JsonRpcResponse> {
+    let _span = tracing::debug_span!(
+        "mcp_handle_request",
+        method = %req.method,
+        id = ?req.id,
+    )
+    .entered();
     match req.method.as_str() {
         // ── Notifications (no response) ───────────────────────────────────────
         "notifications/initialized" | "notifications/cancelled" => None,
@@ -1698,7 +1704,7 @@ pub fn run_stdio(workdir: PathBuf) -> Result<()> {
                 match req.params.get("uri").and_then(Value::as_str) {
                     None => Some(JsonRpcResponse::err(req.id, -32602, "missing param: uri")),
                     Some(uri) => {
-                        subs.lock().unwrap().remove(uri);
+                        subs.lock().unwrap_or_else(|e| e.into_inner()).remove(uri);
                         Some(JsonRpcResponse::ok(req.id, json!({})))
                     }
                 }

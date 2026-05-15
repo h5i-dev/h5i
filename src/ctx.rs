@@ -311,6 +311,25 @@ fn read_dag(repo: &Repository, branch: &str) -> TraceDag {
         .unwrap_or_default()
 }
 
+/// Returns the reasoning DAG for `branch`, or the active context branch when
+/// `branch` is `None`. Returns an empty DAG when no context workspace exists
+/// yet — callers can detect "no DAG" via `dag.nodes.is_empty()`.
+///
+/// Public so other modules (e.g. the PR comment renderer) can read the DAG
+/// without poking into the on-disk JSON layout directly.
+pub fn dag_for_branch(
+    workdir: &Path,
+    branch: Option<&str>,
+) -> Result<TraceDag, H5iError> {
+    let repo = match ctx_git_repo(workdir) {
+        Ok(r) => r,
+        Err(_) => return Ok(TraceDag::default()),
+    };
+    let active = current_branch(workdir);
+    let branch = branch.unwrap_or(&active);
+    Ok(read_dag(&repo, branch))
+}
+
 fn node_id(kind: &str, timestamp: &str, content: &str) -> String {
     let mut h = Sha256::new();
     h.update(kind.as_bytes());
@@ -318,7 +337,11 @@ fn node_id(kind: &str, timestamp: &str, content: &str) -> String {
     h.update(timestamp.as_bytes());
     h.update(b"|");
     h.update(content.as_bytes());
-    format!("{:08x}", u32::from_be_bytes(h.finalize()[..4].try_into().unwrap()))
+    let digest = h.finalize();
+    format!(
+        "{:08x}",
+        u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]])
+    )
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
