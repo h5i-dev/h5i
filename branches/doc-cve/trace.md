@@ -133,3 +133,4 @@ _[Checkpoint: 6a07324f — Y-CRDT removed; resolve now does text 3-way merge]_
 [14:49:58] OBSERVE: read src/main.rs
 [14:50:01] OBSERVE: read src/main.rs
 [14:50:23] OBSERVE: read src/ctx.rs
+[14:50:48] OBSERVE: read src/codex.rs
