@@ -433,3 +433,16 @@ Tracing: info_span on H5iRepository::commit (with_ai/with_tests/with_ast/decisio
 
 ---
 
+## Commit 6a079653 — 2026-05-15 21:55 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+Tracing: info_span on H5iRepository::commit (with_ai/with_tests/with_ast/decisions fields), pr::render_body (limit + aggregates debug log), mcp::handle_request (method, id), secrets::scan_lines (trace level). Clippy: 28 warnings → 0 (sort_by_key on 7 descending sorts, vec! cleanup x8, useless format! x3, slice-iter instead of indexed loops x2, range-over-pr-tests fix). CI: clippy --all-targets -- -D warnings now enforced on every PR; added Swatinem/rust-cache for cold-start speed; rustfmt enforcement deferred (codebase has 364KB of fmt diff = separate cleanup PR). E2E: new tests/e2e_noun_workflow.rs covers capture/commit, recall/log+context show+context status, audit/review, share/pr body (including checks-pass-clean assertion), and legacy commit/log verbs both work AND emit deprecation hints. 513 tests pass (was 484, +29). RUSTFLAGS=-D warnings env in CI catches future warnings as errors.
+
+### This Commit's Contribution
+
+
+---
+

@@ -567,3 +567,9 @@ _[Checkpoint: 6a07962f — Production hardening II]_
 ---
 
 [21:55:31] THINK: For this round I'll drop fmt enforcement and keep just clippy + build + test (which already gives us 80% of the polish value).
+
+
+---
+_[Checkpoint: 6a079653 — wrote .github/workflows/test.yaml; edited .github/workflows/test.yaml; wrote tests/e2e_noun_workflow.rs]_
+---
+
