@@ -581,3 +581,4 @@ _[Checkpoint: 6a07978d — wrote .github/workflows/test.yaml; edited .github/wor
 ---
 
 [23:30:38] OBSERVE: listed files under .
+[23:30:38] OBSERVE: listed files under ../cli
