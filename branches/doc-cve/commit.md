@@ -316,3 +316,16 @@ Added > [!NOTE] all-clear banner when both deterministic checks (CREDENTIAL_LEAK
 
 ---
 
+## Commit 6a078c09 — 2026-05-15 21:11 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+Added > [!NOTE] all-clear banner when both deterministic checks (CREDENTIAL_LEAK + DUPLICATED_CODE) pass; firing sections now footnote the partner check when it came back clean. Compressed consecutive same-kind OBSERVE/ACT runs of >=3 nodes into one summary node ('3 edits across 1 file: src/pr.rs') with synthetic IDs and edge rewiring; THINK/NOTE/MERGE pass through verbatim. Widened mermaid label budget from 50 to 100 chars so THINK reasoning is readable. Live preview: 290 raw nodes -> 15 readable blocks. Added 7 unit tests for compression, run-extension, kind-boundary, dedup, and edge rewiring. 484 tests passing.
+
+### This Commit's Contribution
+
+
+---
+
