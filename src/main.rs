@@ -1928,7 +1928,7 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                 "The PR comment is idempotent — re-running upserts in place via an HTML marker.",
             ],
         ),
-        _ => return ("", &[], &[]),
+        _ => ("", &[], &[]),
     }
 }
 

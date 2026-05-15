@@ -292,8 +292,8 @@ fn compress_dag_units(visible: &[&TraceNode]) -> (Vec<DagUnit>, HashMap<String, 
             let run_len = j - i;
             if run_len >= DAG_COMPRESS_RUN {
                 let synth = format!("sum_{}", visible[j - 1].id);
-                for k in i..j {
-                    remap.insert(visible[k].id.clone(), synth.clone());
+                for node in &visible[i..j] {
+                    remap.insert(node.id.clone(), synth.clone());
                 }
                 units.push(DagUnit {
                     id: synth,
@@ -330,11 +330,11 @@ fn summarize_mechanical_run(visible: &[&TraceNode], start: usize, end: usize) ->
     let total = end - start;
     let mut files: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for k in start..end {
+    for node in &visible[start..end] {
         // Hook-generated content is `"<verb> <path>"`; take the trailing token
         // as the path. For nonstandard content (e.g. multi-word notes), fall
         // back to the whole content trimmed.
-        let c = visible[k].content.trim();
+        let c = node.content.trim();
         // Take the last whitespace-delimited token, which for hook-generated
         // entries is the file path.
         let token = c.split_whitespace().next_back().unwrap_or(c).to_string();
@@ -504,6 +504,7 @@ fn mermaid_label(kind: &str, content: &str) -> String {
 ///   5. 📜 Per-commit provenance (collapsible if >5 AI commits)
 ///   6. Footer
 pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
+    let _span = tracing::info_span!("pr_render_body", limit).entered();
     let repo = H5iRepository::open(workdir)?;
     let records = repo
         .h5i_log(limit)
@@ -521,6 +522,14 @@ pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
     let secret_rows = collect_secret_rows(&records, &by_oid);
     let dup_rows = collect_duplicate_rows(&records, &by_oid);
     let dag = ctx::dag_for_branch(workdir, None).unwrap_or_default();
+    tracing::debug!(
+        records = records.len(),
+        review_points = review_points.len(),
+        secrets = secret_rows.len(),
+        duplicates = dup_rows.len(),
+        dag_nodes = dag.nodes.len(),
+        "pr_render_body aggregates",
+    );
 
     let mut ai_count = 0usize;
     let mut total_tokens = 0usize;
@@ -1202,9 +1211,7 @@ mod tests {
         let mut nodes = Vec::new();
         for i in 0..(DAG_NODE_LIMIT + 5) {
             // Each parents the previous, building a long linear chain.
-            let id = format!("n{:08x}", i);
-            let parents: &[&str] = if i == 0 { &[] } else { &[] };
-            let _ = parents; // silence warning, we set below
+            let id = format!("n{i:08x}");
             let parent_str: Vec<String> = if i == 0 {
                 vec![]
             } else {
@@ -1227,7 +1234,7 @@ mod tests {
         // Edges that reference an elided node must not appear, otherwise
         // Mermaid declares an unstyled phantom node.
         assert!(
-            !s.contains(&format!("n_n00000000 --> ")),
+            !s.contains(&"n_n00000000 --> ".to_string()),
             "edges from elided nodes must be suppressed"
         );
     }

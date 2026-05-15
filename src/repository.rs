@@ -149,6 +149,14 @@ impl H5iRepository {
         caused_by: Vec<String>,
         decisions: Vec<Decision>,
     ) -> Result<Oid, H5iError> {
+        let _span = tracing::info_span!(
+            "h5i_commit",
+            with_ai = ai_meta.is_some(),
+            with_tests = !matches!(test_source, TestSource::None),
+            with_ast = ast_parser.is_some(),
+            decisions = decisions.len(),
+        )
+        .entered();
         let mut index = self.git_repo.index()?;
 
         // 1. Prepare optional features
@@ -234,6 +242,9 @@ impl H5iRepository {
         self.git_repo
             .note(author, committer, Some(H5I_NOTES_REF), commit_oid, &metadata_json, true)?;
 
+        let short = commit_oid.to_string();
+        let short = &short[..short.len().min(8)];
+        tracing::debug!(oid = %short, "h5i_commit complete");
         Ok(commit_oid)
     }
 
@@ -2297,7 +2308,7 @@ impl H5iRepository {
         }
 
         let mut ranked: Vec<(String, usize)> = counts.into_iter().collect();
-        ranked.sort_by(|a, b| b.1.cmp(&a.1));
+        ranked.sort_by_key(|r| std::cmp::Reverse(r.1));
         ranked.truncate(result_limit);
         Ok(ranked)
     }
@@ -3013,7 +3024,7 @@ mod tests {
             "legacy commit",
             "legacy.txt",
             "old data",
-            &vec![],
+            &[],
         );
 
         // h5i_log should fallback to minimal record
@@ -3035,7 +3046,7 @@ mod tests {
             "initial",
             "README.md",
             "Line 1\nLine 2",
-            &vec![],
+            &[],
         );
 
         let results = h5i_repo.blame(path, BlameMode::Line).unwrap();

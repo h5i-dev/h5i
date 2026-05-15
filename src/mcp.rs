@@ -1535,6 +1535,12 @@ pub fn subscribe_resource(
 /// Process one JSON-RPC request and return a response (or `None` for
 /// notifications, which must not be answered).
 pub fn handle_request(req: JsonRpcRequest, workdir: &Path) -> Option<JsonRpcResponse> {
+    let _span = tracing::debug_span!(
+        "mcp_handle_request",
+        method = %req.method,
+        id = ?req.id,
+    )
+    .entered();
     match req.method.as_str() {
         // ── Notifications (no response) ───────────────────────────────────────
         "notifications/initialized" | "notifications/cancelled" => None,

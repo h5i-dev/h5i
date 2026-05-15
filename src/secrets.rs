@@ -362,7 +362,7 @@ pub fn is_path_allowlisted(path: &str) -> bool {
         if TEST_FILE_SUFFIXES.iter().any(|s| basename.ends_with(s)) {
             return true;
         }
-        if RULE_DEFINITION_FILES.iter().any(|f| basename == *f) {
+        if RULE_DEFINITION_FILES.contains(&basename) {
             return true;
         }
     }
@@ -414,7 +414,9 @@ pub fn scan_lines<'a, I>(path: &str, lines: I) -> Vec<SecretFinding>
 where
     I: IntoIterator<Item = (usize, &'a str)>,
 {
+    let _span = tracing::trace_span!("secrets_scan_lines", path).entered();
     if !path.is_empty() && is_path_allowlisted(path) {
+        tracing::trace!("path allowlisted; skipping");
         return Vec::new();
     }
     let mut out = Vec::new();
@@ -460,6 +462,9 @@ where
             break; // one finding per line is enough
         }
     }
+    if !out.is_empty() {
+        tracing::debug!(path, findings = out.len(), "secrets_scan_lines hits");
+    }
     out
 }
 
@@ -502,7 +507,7 @@ mod tests {
     #[test]
     fn anthropic_key_fires() {
         // 80+ char tail
-        let tail: String = std::iter::repeat('A').take(95).collect();
+        let tail: String = std::iter::repeat_n('A', 95).collect();
         let f = scan(&format!("key=\"sk-ant-{tail}\""));
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].rule_id, "ANTHROPIC_API_KEY");

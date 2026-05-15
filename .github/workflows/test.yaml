@@ -2,27 +2,41 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    # Run on PRs against any base branch so feature branches get checked.
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
 
 jobs:
-  build:
-
+  test:
+    name: build · test · clippy · fmt
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
-    - name: Set Git User for Tests
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
-    - name: Build
-      run: |
-        cargo build --verbose
-    - name: Run tests
-      run: |
-        cargo test --verbose
+      - uses: actions/checkout@v4
+
+      - name: Set Git user for tests
+        # Required because some tests perform real Git operations
+        # (commit / blame / log) and libgit2 needs author + committer.
+        run: |
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          # NB: rustfmt enforcement deferred — codebase is not yet fmt-clean.
+          # See https://github.com/h5i-dev/h5i/issues for the cleanup tracker.
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo clippy (deny warnings)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: cargo build
+        run: cargo build --verbose --all-targets
+
+      - name: cargo test
+        run: cargo test --verbose

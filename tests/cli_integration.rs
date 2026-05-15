@@ -1247,7 +1247,7 @@ fn pull_union_merges_diverged_notes_so_no_annotations_are_lost() {
     );
     let parents_s = String::from_utf8_lossy(&parents.stdout);
     assert_eq!(
-        parents_s.trim().split_whitespace().count(),
+        parents_s.split_whitespace().count(),
         2,
         "merge commit should have two parents:\n{parents_s}"
     );

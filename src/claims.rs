@@ -440,8 +440,8 @@ mod tests {
         let workdir = tempdir().unwrap();
         let repo = init_repo_with_file(workdir.path(), "a.txt", "hello");
 
-        let oid1 = compute_evidence_oid(&repo, &vec!["a.txt".into()]).unwrap();
-        let oid2 = compute_evidence_oid(&repo, &vec!["a.txt".into()]).unwrap();
+        let oid1 = compute_evidence_oid(&repo, &["a.txt".into()]).unwrap();
+        let oid2 = compute_evidence_oid(&repo, &["a.txt".into()]).unwrap();
         assert_eq!(oid1, oid2);
     }
 
@@ -450,9 +450,9 @@ mod tests {
         let workdir = tempdir().unwrap();
         let repo = init_repo_with_file(workdir.path(), "a.txt", "hello");
 
-        let before = compute_evidence_oid(&repo, &vec!["a.txt".into()]).unwrap();
+        let before = compute_evidence_oid(&repo, &["a.txt".into()]).unwrap();
         edit_and_commit(&repo, workdir.path(), "a.txt", "hello world");
-        let after = compute_evidence_oid(&repo, &vec!["a.txt".into()]).unwrap();
+        let after = compute_evidence_oid(&repo, &["a.txt".into()]).unwrap();
 
         assert_ne!(before, after);
     }
@@ -463,9 +463,9 @@ mod tests {
         let repo = init_repo_with_file(workdir.path(), "a.txt", "hello");
         add_file_and_commit(&repo, workdir.path(), "b.txt", "other");
 
-        let before = compute_evidence_oid(&repo, &vec!["a.txt".into()]).unwrap();
+        let before = compute_evidence_oid(&repo, &["a.txt".into()]).unwrap();
         edit_and_commit(&repo, workdir.path(), "b.txt", "changed");
-        let after = compute_evidence_oid(&repo, &vec!["a.txt".into()]).unwrap();
+        let after = compute_evidence_oid(&repo, &["a.txt".into()]).unwrap();
 
         assert_eq!(before, after);
     }
