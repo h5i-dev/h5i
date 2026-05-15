@@ -166,3 +166,4 @@ _[Checkpoint: 6a07324f — Y-CRDT removed; resolve now does text 3-way merge]_
 [15:00:36] OBSERVE: read src/repository.rs
 [15:01:24] ACT: wrote src/pr.rs
 [15:02:01] ACT: edited src/main.rs
+[15:03:43] ACT: Collapsed verb surface: added capture/recall/audit/share noun groups via pre-clap argv rewriter (no field duplication). Hidden 11 legacy verbs (commit/log/blame/push/pull/memory/claims/notes/context/vibe/compliance) from --help with stderr deprecation hints. Top-level help shrunk from ~25 to 17 visible commands. h5i pr post + h5i pr body wired through new src/pr.rs (uses gh CLI, MARKER-tagged sticky upsert via gh api PATCH). All 432 tests pass; release build green.
