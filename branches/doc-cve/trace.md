@@ -77,3 +77,4 @@ _[Checkpoint: 6a072d83 — deleted README.md; added README.md]_
 [14:37:09] OBSERVE: read src/repository.rs
 [14:37:39] OBSERVE: read src/repository.rs
 [14:37:51] OBSERVE: read src/storage.rs
+[14:38:02] ACT: edited Cargo.toml
