@@ -445,3 +445,9 @@ _[Checkpoint: 6a0788de — edited src/pr.rs; edited src/pr.rs; edited src/pr.rs]
 [21:08:56] ACT: edited src/pr.rs
 [21:09:59] ACT: edited src/pr.rs
 [21:10:34] ACT: edited src/pr.rs
+
+
+---
+_[Checkpoint: 6a078bf7 — PR comment polish: reassurance + DAG compression]_
+---
+
