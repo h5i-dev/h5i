@@ -60,3 +60,4 @@ _[Checkpoint: 69fce8ed — Rewrote README for stronger GitHub star conversion an
 _[Checkpoint: 6a072d83 — deleted README.md; added README.md]_
 ---
 
+[14:35:41] OBSERVE: read src/lib.rs
