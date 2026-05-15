@@ -99,11 +99,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Production hardening pass
 - [x] edited Cargo.toml; edited src/main.rs; edited src/repository.rs
 - [x] Parser hardening tests + env-var docs
+- [x] edited src/repository.rs; edited MANUAL.md; edited MANUAL.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-15 20:42 UTC] `doc-cve`: edited src/repository.rs; edited MANUAL.md; edited MANUAL.md
 - [2026-05-15 20:42 UTC] `doc-cve`: Parser hardening tests + env-var docs
 - [2026-05-15 20:26 UTC] `doc-cve`: edited Cargo.toml; edited src/main.rs; edited src/repository.rs
 - [2026-05-15 20:26 UTC] `doc-cve`: Production hardening pass

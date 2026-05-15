@@ -398,3 +398,9 @@ _[Checkpoint: 6a078174 — edited Cargo.toml; edited src/main.rs; edited src/rep
 _[Checkpoint: 6a07852a — Parser hardening tests + env-var docs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a07853a — edited src/repository.rs; edited MANUAL.md; edited MANUAL.md]_
+---
+
