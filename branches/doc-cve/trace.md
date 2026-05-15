@@ -489,3 +489,9 @@ _[Checkpoint: 6a078c6f — edited src/pr.rs; edited src/pr.rs; edited src/pr.rs]
 _[Checkpoint: 6a078e6e — Secret scanner: keyword pre-filter + connection-string rules]_
 ---
 
+
+
+---
+_[Checkpoint: 6a078e86 — edited src/secrets.rs; edited src/secrets.rs; edited src/secrets.rs]_
+---
+
