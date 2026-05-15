@@ -1,17 +1,23 @@
-.TH H5I 1 "2026-03-28" "h5i 0.1.0" "h5i Manual"
+.TH H5I 1 "2026-05-15" "h5i 0.1.3" "h5i Manual"
 .
 .SH NAME
 h5i \- Advanced Git sidecar for the AI era
 .
 .SH SYNOPSIS
 .B h5i
+.I NOUN VERB
+.RI [ OPTIONS ]
+.RI [ ARGUMENTS ]
+.PP
+.B h5i
 .I COMMAND
 .RI [ OPTIONS ]
 .RI [ ARGUMENTS ]
+.RB "(legacy form, still supported with deprecation hint)"
 .
 .SH DESCRIPTION
 .B h5i
-(\"high-five\") extends Git with five semantic dimensions:
+(\"high-five\") extends Git with four semantic dimensions:
 .PP
 .RS 4
 .IP \(bu 2
@@ -26,24 +32,85 @@ h5i \- Advanced Git sidecar for the AI era
 .IP \(bu 2
 .B Empirical
 \(em test metrics attached to every commit
-.IP \(bu 2
-.B Associative
-\(em CRDT-based collaborative editing
 .RE
 .PP
 All metadata is stored as a Git sidecar under
 .I .git/.h5i/
-and two custom refs
-.RI ( refs/h5i/notes
-and
-.IR refs/h5i/memory ).
+and dedicated refs under
+.IR refs/h5i/* .
 These refs are
 .B not
 pushed by a plain
 .BR "git push" ;
 use
-.B h5i push
+.B h5i share push
 to share them.
+.
+.SH COMMAND GROUPS
+.
+.B h5i
+organises its verbs around four nouns. Run
+.BR "h5i \fINOUN\fR \-\-help"
+(or
+.BR "h5i help \fINOUN\fR )
+for the verb table with runnable examples and the corresponding MCP tool names.
+.PP
+.RS 4
+.IP \(bu 2
+.B h5i capture
+\(em record provenance:
+.BR commit ,
+.BR claim ,
+.BR memory .
+.IP \(bu 2
+.B h5i recall
+\(em read history:
+.BR log ,
+.BR blame ,
+.BR diff ,
+.BR context ,
+.BR claims ,
+.BR notes ,
+.BR memory ,
+.BR recap ,
+.BR resume ,
+.BR vibe .
+.IP \(bu 2
+.B h5i audit
+\(em assess risk:
+.BR review ,
+.BR scan ,
+.BR compliance ,
+.BR policy ,
+.BR vibe .
+.IP \(bu 2
+.B h5i share
+\(em publish:
+.BR push ,
+.BR pull ,
+.BR pr ,
+.BR memory .
+.RE
+.PP
+The legacy top-level verbs
+.RB ( "h5i commit" ,
+.BR "h5i log" ,
+.BR "h5i push" ,
+\&...) still work; running one prints a one-line
+.B h5i hint:
+line on stderr suggesting the canonical form, then proceeds normally. Pipes are
+unaffected because the hint goes to stderr.
+.PP
+Typos under a noun group are caught with a closest-match suggestion:
+.PP
+.RS 4
+.EX
+$ h5i audit revew
+error: `h5i audit revew` is not a known subcommand.
+       Did you mean `h5i audit review`?
+       Run `h5i audit --help` for the full list.
+.EE
+.RE
 .
 .SH COMMANDS
 .
@@ -54,8 +121,7 @@ Creates
 .I .git/.h5i/
 with subdirectories
 .BR ast/ ,
-.BR crdt/ ,
-.BR delta/ ,
+.BR claims/ ,
 .BR memory/ ,
 and
 .BR session_log/ .
@@ -200,9 +266,24 @@ Compare to this commit (default: working-tree file).
 .
 .\" ─── resolve ────────────────────────────────────────────────────────────────
 .SS h5i resolve \fIOURS\fR \fITHEIRS\fR \fIFILE\fR
-Resolve a branch conflict using CRDT-based semantic merging.
-Reconstructs the conflict-free state from Git Notes; no interactive
-merge editor required.
+Text-based 3-way merge for
+.I FILE
+between two commits, using their
+.B git merge-base
+as the ancestor. h5i materializes the three blobs and delegates to
+.BR "git merge-file -p" ,
+then prints the merged content to stdout.
+.PP
+When textual conflicts cannot be resolved, the output contains the usual
+.B <<<<<<< / ======= / >>>>>>>
+markers and the command exits with status 1; otherwise it exits 0.
+.PP
+.B Note:
+earlier versions of
+.B h5i resolve
+did a Yjs CRDT semantic merge; that dependency has been removed and
+.B h5i resolve
+now behaves like a deterministic, git-native 3-way merge.
 .PP
 .B Arguments
 .RS 4
@@ -289,18 +370,6 @@ Show the matched commit without reverting.
 Skip the confirmation prompt (useful in CI).
 .RE
 .
-.\" ─── session ────────────────────────────────────────────────────────────────
-.SS h5i session \-\-file \fIFILE\fR
-Start a real-time recording session for
-.IR FILE .
-Detects changes via the
-.B notify
-crate and syncs them into a per-file Yrs CRDT document stored in
-.IR .git/.h5i/crdt/ .
-Press
-.B Ctrl+C
-to stop.
-.
 .\" ─── serve ──────────────────────────────────────────────────────────────────
 .SS h5i serve [\fIOPTIONS\fR]
 Launch the embedded web dashboard.
@@ -336,12 +405,10 @@ and per-commit Audit buttons
 \(em exploration footprint, uncertainty heatmap, and churn for each commit
 .RE
 .
-.\" ─── push ───────────────────────────────────────────────────────────────────
-.SS h5i push [\fIOPTIONS\fR]
-Push all h5i refs
-.RI ( refs/h5i/notes
-and
-.IR refs/h5i/memory )
+.\" ─── share push ─────────────────────────────────────────────────────────────
+.SS h5i share push [\fIOPTIONS\fR] (alias: h5i push)
+Push all h5i refs (everything under
+.IR refs/h5i/* )
 to a remote in one shot.
 .PP
 .B Options
@@ -350,6 +417,79 @@ to a remote in one shot.
 .BI \-r,\ \-\-remote\  REMOTE
 Remote to push to (default:
 .BR origin ).
+.RE
+.
+.\" ─── share pr ───────────────────────────────────────────────────────────────
+.SS h5i share pr post [\fIOPTIONS\fR]
+Post (or upsert) a sticky GitHub pull-request comment summarising h5i
+provenance for every AI-authored commit on the current branch. Re-running
+edits the same comment in place via an HTML marker
+.RB ( "<!-- h5i:pr-comment v1 -->" )
+so the PR never accumulates duplicates.
+.PP
+The comment renders, per AI commit:
+.RS 4
+.IP \(bu 2
+the prompt that drove the change
+.IP \(bu 2
+model, agent, and token usage
+.IP \(bu 2
+test metrics (passed / failed / total, exit code)
+.IP \(bu 2
+structured
+.B \-\-decisions
+recorded at commit time
+.IP \(bu 2
+a 🚩 flag with
+.B h5i audit review
+triggers (uncertainty, blind edits, churn, scope) when the score crosses the
+review threshold
+.RE
+.PP
+.B Requirements:
+the
+.B gh
+CLI must be installed and authenticated
+.RB ( "gh auth status"
+clean) and the current branch must have an open pull request (or pass
+.BR \-\-number ).
+.PP
+.B Options
+.RS 4
+.TP
+.BI \-\-number\  N
+PR number (default: auto-detect from current branch).
+.TP
+.BI \-l,\ \-\-limit\  N
+Limit number of commits scanned (default: 25).
+.TP
+.B \-\-dry\-run
+Print the markdown body and exit without calling
+.BR gh .
+.RE
+.PP
+.B Examples
+.RS 4
+.nf
+h5i share pr post                  # upsert sticky comment
+h5i share pr body \-\-limit 25       # render markdown to stdout (for CI)
+h5i share pr post \-\-dry\-run        # preview without calling gh
+h5i share pr post \-\-number 42      # target a specific PR
+.fi
+.RE
+.
+.\" ─── share pr body ──────────────────────────────────────────────────────────
+.SS h5i share pr body [\fIOPTIONS\fR]
+Render the PR comment markdown to stdout. Useful for CI pipelines that prefer
+to call
+.B gh pr edit \-\-body\-file \-
+themselves, or to commit the body to a file for review.
+.PP
+.B Options
+.RS 4
+.TP
+.BI \-l,\ \-\-limit\  N
+Limit number of commits scanned (default: 25).
 .RE
 .
 .\" ─── hook ───────────────────────────────────────────────────────────────────
@@ -1130,13 +1270,6 @@ Sidecar root; all persistent metadata.
 .TP
 .I .git/.h5i/ast/
 SHA-256-keyed S-expression AST snapshots.
-.TP
-.I .git/.h5i/crdt/
-Yjs CRDT document state.
-.TP
-.I .git/.h5i/delta/
-Append-only CRDT update logs, one file per source path (keyed by sha256(path)).
-Format: [length: u32][update bytes].
 .TP
 .I .git/.h5i/memory/<commit-oid>/
 Claude memory snapshots.

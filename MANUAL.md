@@ -7,15 +7,22 @@ Command reference for all h5i subcommands and flags.
 ## Table of Contents
 
 - [Installation](#installation)
+- [Command Groups (capture / recall / audit / share)](#command-groups)
+- [Migration Cheat Sheet (legacy → new)](#migration-cheat-sheet)
 - [h5i init](#h5i-init)
 - [h5i hooks](#h5i-hooks)
 - [h5i codex](#h5i-codex)
   - [h5i codex prelude](#h5i-codex-prelude)
   - [h5i codex sync](#h5i-codex-sync)
   - [h5i codex finish](#h5i-codex-finish)
-- [h5i commit](#h5i-commit)
-- [h5i log](#h5i-log)
-- [h5i blame](#h5i-blame)
+- [h5i capture](#h5i-capture)
+- [h5i recall](#h5i-recall)
+- [h5i audit](#h5i-audit)
+- [h5i share](#h5i-share)
+  - [h5i share pr](#h5i-share-pr)
+- [h5i commit](#h5i-commit) — _alias of `h5i capture commit`_
+- [h5i log](#h5i-log) — _alias of `h5i recall log`_
+- [h5i blame](#h5i-blame) — _alias of `h5i recall blame`_
 - [h5i rollback](#h5i-rollback)
 - [h5i rewind](#h5i-rewind)
 - [h5i notes](#h5i-notes)
@@ -69,9 +76,8 @@ Command reference for all h5i subcommands and flags.
 - [h5i compliance](#h5i-compliance)
 - [h5i serve](#h5i-serve)
 - [h5i mcp](#h5i-mcp)
-- [h5i push](#h5i-push)
-- [h5i pull](#h5i-pull)
-- [h5i session](#h5i-session)
+- [h5i push](#h5i-push) — _alias of `h5i share push`_
+- [h5i pull](#h5i-pull) — _alias of `h5i share pull`_
 - [h5i resolve](#h5i-resolve)
 - [Appendix: Storage Layout](#appendix-storage-layout)
 - [Appendix: Integrity Rules](#appendix-integrity-rules)
@@ -94,13 +100,75 @@ cd h5i && cargo install --path .
 
 ---
 
+## Command Groups
+
+h5i organises verbs around four nouns. `h5i --help` shows them at the top; run
+`h5i <noun> --help` (or `h5i help <noun>`) for the verb table, runnable examples,
+legacy equivalents, and the corresponding MCP tool names.
+
+| Noun | Verbs | What it covers |
+|---|---|---|
+| `h5i capture` | `commit`, `claim`, `memory` | Record provenance, content-addressed claims, and memory snapshots. |
+| `h5i recall` | `log`, `blame`, `diff`, `context`, `claims`, `notes`, `memory`, `recap`, `resume`, `vibe` | Read history & context. |
+| `h5i audit` | `review`, `scan`, `compliance`, `policy`, `vibe` | Assess risk on AI-generated changes. |
+| `h5i share` | `push`, `pull`, `pr`, `memory` | Publish: push refs, pull refs, post a GitHub PR comment. |
+
+All four nouns route through a pre-clap argv rewriter into the legacy
+verbs — so the noun form and the legacy form are functionally identical;
+the noun form is just the canonical name and the only one shown in `--help`.
+
+### Legacy forms
+
+The original top-level verbs (`h5i commit`, `h5i log`, `h5i push`, …) keep
+working and are documented below for reference. Running one prints a one-line
+`h5i hint:` line on stderr suggesting the new form, then proceeds normally.
+Pipes are unaffected because the hint goes to stderr.
+
+---
+
+## Migration Cheat Sheet
+
+| Legacy (still works) | Canonical (shown in `--help`) |
+|---|---|
+| `h5i commit -m … --model …` | `h5i capture commit -m … --model …` |
+| `h5i claims add … --path …` | `h5i capture claim … --path …` |
+| `h5i memory snapshot` | `h5i capture memory` |
+| `h5i log --limit N` | `h5i recall log --limit N` |
+| `h5i blame <file>` | `h5i recall blame <file>` |
+| `h5i diff <file>` | `h5i recall diff <file>` |
+| `h5i context <sub>` | `h5i recall context <sub>` |
+| `h5i claims list` / `prune` | `h5i recall claims [--group-by-path]` / `h5i claims prune` |
+| `h5i notes show` / `footprint` / … | `h5i recall notes <sub>` |
+| `h5i memory log` / `diff` / `restore` | `h5i recall memory <sub>` |
+| `h5i recap` (was `h5i context recap`) | `h5i recall recap` |
+| `h5i resume` | `h5i recall resume` |
+| `h5i vibe` | `h5i recall vibe` _or_ `h5i audit vibe` |
+| `h5i notes review --limit N` | `h5i audit review --limit N` |
+| `h5i context scan` | `h5i audit scan` |
+| `h5i compliance …` | `h5i audit compliance …` |
+| `h5i policy <sub>` | `h5i audit policy <sub>` |
+| `h5i push` / `h5i pull` | `h5i share push` / `h5i share pull` |
+| `h5i memory push` / `pull` | `h5i share memory push` / `pull` |
+| _(new)_ | `h5i share pr post` / `body` |
+
+Typos under a noun group show a "Did you mean …?" suggestion:
+
+```text
+$ h5i audit revew
+error: `h5i audit revew` is not a known subcommand.
+       Did you mean `h5i audit review`?
+       Run `h5i audit --help` for the full list.
+```
+
+---
+
 ## h5i init
 
 ```
 h5i init
 ```
 
-Initialize h5i in the current Git repository. Creates `.git/.h5i/` with subdirectories for AST snapshots, CRDT state, session logs, and memory snapshots.
+Initialize h5i in the current Git repository. Creates `.git/.h5i/` with subdirectories for AST snapshots, session logs, claims, and memory snapshots.
 
 Also bootstraps agent-facing instructions:
 
@@ -210,6 +278,120 @@ h5i codex finish [--summary <text>]
 Run `h5i codex sync`, then auto-checkpoint the current context workspace.
 
 If `--summary` is omitted, h5i derives a short checkpoint summary from the most recent `ACT` entries.
+
+---
+
+## h5i capture
+
+Record provenance: commit code, pin claims, snapshot agent memory.
+
+| Verb | Equivalent legacy form | What it does |
+|---|---|---|
+| `h5i capture commit` | `h5i commit` | Git commit + AI provenance (prompt, model, agent, tokens, tests, decisions). See [h5i commit](#h5i-commit). |
+| `h5i capture claim` | `h5i claims add` | Pin a content-addressed fact backed by evidence files. See [h5i claims add](#h5i-claims-add). |
+| `h5i capture memory` | `h5i memory snapshot` | Snapshot the active agent's memory directory into `refs/h5i/memory`. See [h5i memory snapshot](#h5i-memory-snapshot). |
+
+```bash
+h5i capture commit -m "switch session store to Redis" \
+    --model claude-sonnet-4-6 --agent claude-code --prompt "sessions must survive restarts"
+
+h5i capture claim "HTTP only src/api/client.py: fetch_user, create_post" \
+    --path src/api/client.py
+
+h5i capture memory --agent claude
+```
+
+---
+
+## h5i recall
+
+Read AI history & context.
+
+| Verb | Equivalent legacy form | What it does |
+|---|---|---|
+| `h5i recall log` | `h5i log` | Commit history with AI provenance. |
+| `h5i recall blame` | `h5i blame` | Line- or AST-level blame annotated with AI prompts. |
+| `h5i recall diff` | `h5i diff` | Structural (AST) diff for a single file. |
+| `h5i recall context <sub>` | `h5i context <sub>` | The reasoning workspace (full subtree). |
+| `h5i recall claims` | `h5i claims list` | List live & stale content-addressed claims. |
+| `h5i recall notes <sub>` | `h5i notes <sub>` | Footprint, uncertainty, coverage, churn, omissions. |
+| `h5i recall memory <sub>` | `h5i memory <sub>` | Log / diff / restore agent memory snapshots. |
+| `h5i recall recap` | `h5i context recap` | Import Claude Code `away_summary` entries as milestones. |
+| `h5i recall resume` | `h5i resume` | Print a structured handoff briefing. |
+| `h5i recall vibe` | `h5i vibe` | Quick AI-footprint audit (also under `audit`). |
+
+---
+
+## h5i audit
+
+Assess risk on AI-generated changes.
+
+| Verb | Equivalent legacy form | What it does |
+|---|---|---|
+| `h5i audit review` | `h5i notes review` | Rank commits by uncertainty, blind edits, churn, scope. |
+| `h5i audit scan` | `h5i context scan` | Scan reasoning traces for prompt-injection patterns. |
+| `h5i audit compliance` | `h5i compliance` | Date-ranged audit report (text / json / html). |
+| `h5i audit policy <sub>` | `h5i policy <sub>` | Manage `.h5i/policy.toml` rules. |
+| `h5i audit vibe` | `h5i vibe` | Repo-wide AI footprint summary. |
+
+```bash
+h5i audit review --limit 50
+h5i audit compliance --since 2026-01-01 --until 2026-03-31 \
+    --format html --output audit.html
+h5i audit vibe --limit 1000 --json
+```
+
+---
+
+## h5i share
+
+Publish provenance to teammates and PRs.
+
+| Verb | Equivalent legacy form | What it does |
+|---|---|---|
+| `h5i share push` | `h5i push` | Push all refs/h5i/* (notes, context, memory, ast) to a remote. |
+| `h5i share pull` | `h5i pull` | Fetch & union-merge refs/h5i/* from a remote. |
+| `h5i share pr <sub>` | _(new)_ | Post / preview a GitHub PR comment with h5i provenance. |
+| `h5i share memory push|pull` | `h5i memory push|pull` | Push or pull only the agent-memory refs. |
+
+### h5i share pr
+
+```
+h5i share pr post [--number N] [--limit N] [--dry-run]
+h5i share pr body [--limit N]
+```
+
+Posts or previews a sticky GitHub PR comment summarising h5i provenance for
+every AI-authored commit on the current branch. Re-running upserts in place
+via an HTML marker (`<!-- h5i:pr-comment v1 -->`), so the PR never accumulates
+duplicate comments.
+
+The comment renders, for each AI commit:
+
+- the prompt that drove it
+- model, agent, and token usage
+- test metrics (passed / failed / total, exit code)
+- structured `--decisions` if recorded at commit time
+- a 🚩 flag with `h5i audit review` triggers (uncertainty, blind edits, churn, scope) when the commit crosses the review threshold
+
+```bash
+h5i share pr post              # upsert sticky comment (needs `gh auth login`)
+h5i share pr post --dry-run    # render to stdout without calling gh
+h5i share pr body --limit 25   # render markdown to stdout (for CI / `gh pr edit --body-file -`)
+h5i share pr post --number 42  # target a specific PR (default: auto-detect from current branch)
+```
+
+**Requirements**
+
+- The [`gh` CLI](https://cli.github.com/) must be installed and authenticated (`gh auth status` clean).
+- The current branch must have an open pull request (use `--number` to target a specific PR otherwise).
+
+**Sticky upsert behaviour**
+
+`h5i share pr post` finds the existing h5i comment by HTML marker prefix and
+issues a `PATCH /repos/<owner>/<repo>/issues/comments/<id>` via `gh api`. If no
+marked comment exists yet, it falls back to `gh pr comment --body-file -` for
+the first post.
 
 ---
 
@@ -790,10 +972,11 @@ refs/h5i/context tree:
 h5i context init --goal "implement retry-safe HTTP client" # once per Git branch
 h5i context branch retry-backoff --purpose "try exponential backoff with jitter"
 h5i context show --trace                                   # session start: restore state
-h5i context trace --kind OBSERVE "..."                     # during: durable observation
-h5i context trace --kind OBSERVE "quick scratch" --ephemeral  # during: throwaway note
-h5i context trace --kind THINK   "..."                     # during: log reasoning
-h5i context trace --kind ACT     "..."                     # during: log actions
+# ── while you work: trace entries are derived automatically ─────────────
+#   PostToolUse hook → OBSERVE for each Read, ACT for each Edit/Write
+#   Stop hook        → THINK / NOTE mined from the session transcript
+# You only need to type a trace by hand to flag something urgent for review:
+h5i context trace --kind NOTE "TODO: integration test for failover path"
 h5i context commit "Summary" --detail "..."                # after milestone: checkpoint + clear ephemeral
 h5i context cached-prefix                                  # check prompt-cache efficiency
 h5i context status                                         # session end: overview
@@ -2191,29 +2374,24 @@ Fetch both `refs/h5i/notes` and `refs/h5i/memory` from the remote (default: `ori
 
 ---
 
-## h5i session
-
-```
-h5i session --file <path>
-```
-
-Start a CRDT collaborative session for a file. Watches for local changes and syncs them to the Yjs document stored in `.git/.h5i/crdt/` and `.git/.h5i/delta/`. Multiple agents can edit concurrently; changes merge automatically. Press `Ctrl+C` to stop.
-
-**Options**
-
-| Option | Description |
-|--------|-------------|
-| `--file <path>` | File to watch (required) |
-
----
-
 ## h5i resolve
 
 ```
 h5i resolve <ours-oid> <theirs-oid> <file>
 ```
 
-Reconstruct the conflict-free merged state of a file from two CRDT session OIDs stored in Git Notes. No interactive merge editor required.
+Run a text-based 3-way merge for `<file>` between two commits. The ancestor
+is the `git merge-base` of the two OIDs; h5i materializes the three blobs and
+delegates to `git merge-file -p`, then prints the merged content to stdout.
+
+When textual conflicts cannot be resolved, the output contains the usual
+`<<<<<<< ours / ======= / >>>>>>> theirs` markers and the command exits with
+status 1; otherwise it exits 0.
+
+> **Note:** Earlier versions of `h5i resolve` did a Yjs CRDT semantic merge
+> reading from a per-commit `crdt_states` field. That dependency has been
+> removed; `resolve` now behaves like a deterministic, git-native 3-way
+> merge.
 
 ---
 

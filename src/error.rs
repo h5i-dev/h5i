@@ -19,17 +19,6 @@ pub enum H5iError {
     #[error("Quality tracking error: {0}")]
     Quality(String),
 
-    /// 5. Associative Dimension (Intelligence): Memory and CRDT sync
-    #[error("CRDT sync error: {0}")]
-    Crdt(String),
-
-    /// CRDT low-level read errors (Fixes the session.rs error)
-    #[error("CRDT read error: {0}")]
-    CrdtRead(#[from] yrs::encoding::read::Error),
-
-    #[error("CRDT update error: {0}")]
-    CrdtUpdate(#[from] yrs::error::UpdateError),
-
     /// Standard I/O error (Enables use of '?' on std::io::Result)
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

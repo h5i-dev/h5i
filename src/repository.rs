@@ -1,18 +1,13 @@
-use base64::prelude::*;
 use console::style;
 use git2::{Blob, Repository};
 use git2::{Commit, ObjectType, Oid, Signature};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use yrs::updates::decoder::Decode;
-use yrs::{GetString, Text, Transact};
 
 use crate::blame::{AncestryEntry, BlameMode, BlameResult};
 use crate::metadata::Decision;
-use crate::delta_store::{sha256_hash, DeltaStore};
 use crate::error::H5iError;
 use chrono::{TimeZone, Utc};
 
@@ -57,7 +52,6 @@ impl H5iRepository {
     ///
     /// - `ast/` – stores hashed AST representations for tracked files
     /// - `metadata/` – stores commit-related metadata (e.g., AI provenance)
-    /// - `crdt/` – stores CRDT state or collaboration data
     ///
     /// # Parameters
     ///
@@ -159,7 +153,6 @@ impl H5iRepository {
 
         // 1. Prepare optional features
         let mut ast_hashes = None;
-        let mut crdt_states = HashMap::new();
 
         // For ScanMarkers we look for the marker block in staged files (first hit wins).
         let mut scanned_metrics: Option<TestMetrics> = None;
@@ -182,11 +175,6 @@ impl H5iRepository {
                     let hash = self.save_ast_to_sidecar(path_str, &sexp)?;
                     hashes.insert(path_str.to_string(), hash);
                 }
-            }
-
-            // HARVEST: Read the latest local CRDT state managed by the Watcher
-            if let Ok(state_b64) = self.load_local_crdt_state_as_base64(path_str) {
-                crdt_states.insert(path_str.to_string(), state_b64);
             }
 
             // Scan for test markers only when requested and not yet found
@@ -238,11 +226,6 @@ impl H5iRepository {
             ai_metadata: ai_meta,
             test_metrics,
             ast_hashes,
-            crdt_states: if crdt_states.is_empty() {
-                None
-            } else {
-                Some(crdt_states)
-            },
             timestamp: chrono::Utc::now(),
             caused_by: resolved_caused_by,
             decisions,
@@ -252,23 +235,6 @@ impl H5iRepository {
             .note(author, committer, Some(H5I_NOTES_REF), commit_oid, &metadata_json, true)?;
 
         Ok(commit_oid)
-    }
-
-    /// Reads local binary deltas from .git/h5i/delta and encodes them for the Note.
-    fn load_local_crdt_state_as_base64(&self, file_path: &str) -> Result<String, H5iError> {
-        let file_hash = crate::delta_store::sha256_hash(file_path);
-        let delta_path = self
-            .h5i_root
-            .join("delta")
-            .join(format!("{}.bin", file_hash));
-
-        if !delta_path.exists() {
-            return Err(H5iError::RecordNotFound(file_path.to_string()));
-        }
-
-        let binary_data = fs::read(&delta_path)?;
-        // Use standard base64 encoding (requires base64 crate)
-        Ok(BASE64_STANDARD.encode(binary_data))
     }
 
 }
@@ -1064,227 +1030,93 @@ impl H5iRepository {
 // Resolve Conflict
 // ============================================================
 
+/// Outcome of a [`H5iRepository::merge_file_three_way`] call.
+pub struct MergeOutcome {
+    /// The merged file content. If `had_conflicts` is true, this is the
+    /// conflict-marked output (`<<<<<<<` / `=======` / `>>>>>>>`) produced
+    /// by `git merge-file`.
+    pub content: String,
+    /// True when textual conflicts could not be resolved automatically.
+    pub had_conflicts: bool,
+}
+
 impl H5iRepository {
-    /// Merges CRDT operations from two branches (or commits) and produces
-    /// a conflict-free text representation.
+    /// Performs a text-based 3-way merge for `file_path` between `our_oid`
+    /// and `their_oid`, using their `git merge-base` as the ancestor.
     ///
-    /// Unlike traditional Git merges that operate on text diffs, this method
-    /// reconstructs the document state using CRDT updates and merges the
-    /// operations from both branches.
+    /// Replaces the previous CRDT-based merge. The implementation shells out
+    /// to `git merge-file -p` after materializing the three blobs as temp
+    /// files, which keeps behaviour identical to standard Git merges.
     ///
-    /// # Algorithm
-    ///
-    /// 1. Identify the merge base between `our_oid` and `their_oid`.
-    /// 2. Reconstruct the base document state by replaying all CRDT updates
-    ///    up to the merge base.
-    /// 3. Apply updates from the `ours` branch.
-    /// 4. Apply updates from the `theirs` branch.
-    /// 5. Extract the resulting text from the merged CRDT state.
-    ///
-    /// Because CRDT operations are commutative and conflict-free,
-    /// the resulting document state does not require manual conflict resolution.
-    ///
-    /// # Parameters
-    ///
-    /// - `our_oid` – The commit OID representing the current branch.
-    /// - `their_oid` – The commit OID representing the incoming branch.
-    /// - `file_path` – Path of the file being merged.
-    ///
-    /// # Returns
-    ///
-    /// Returns the merged text content produced by the CRDT document.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    ///
-    /// - the merge base cannot be determined
-    /// - CRDT updates cannot be loaded or applied
-    /// - the repository history cannot be traversed
-    pub fn merge_h5i_logic(
+    /// Returns the merged content plus a flag indicating whether textual
+    /// conflicts remained. The caller is responsible for staging the result.
+    pub fn merge_file_three_way(
         &self,
         our_oid: Oid,
         their_oid: Oid,
         file_path: &str,
-    ) -> Result<String, H5iError> {
-        // 1. Load mathematical context from Git Notes
-        let our_record = self.load_h5i_record(our_oid)?;
-        let their_record = self.load_h5i_record(their_oid)?;
+    ) -> Result<MergeOutcome, H5iError> {
+        let base_oid = self.git_repo.merge_base(our_oid, their_oid)?;
 
-        // 2. Initialize a clean CRDT document
-        let doc = yrs::Doc::new();
-        let text_ref = doc.get_or_insert_text("code");
+        let ancestor = self
+            .get_content_at_oid(base_oid, Path::new(file_path))
+            .unwrap_or_default();
+        let ours = self
+            .get_content_at_oid(our_oid, Path::new(file_path))
+            .unwrap_or_default();
+        let theirs = self
+            .get_content_at_oid(their_oid, Path::new(file_path))
+            .unwrap_or_default();
 
-        // 3. Apply state from OURS
-        if let Some(states) = our_record.crdt_states {
-            if let Some(b64) = states.get(file_path) {
-                let data = BASE64_STANDARD
-                    .decode(b64)
-                    .map_err(|e| H5iError::Crdt(e.to_string()))?;
-                let mut txn = doc.transact_mut();
-                txn.apply_update(yrs::Update::decode_v1(&data)?)?;
-            }
+        let dir = tempdir_in_repo(&self.h5i_root)?;
+        let ours_path = dir.join("ours");
+        let base_path = dir.join("base");
+        let theirs_path = dir.join("theirs");
+        std::fs::write(&ours_path, &ours)?;
+        std::fs::write(&base_path, &ancestor)?;
+        std::fs::write(&theirs_path, &theirs)?;
+
+        let output = std::process::Command::new("git")
+            .arg("merge-file")
+            .arg("-p")
+            .arg("-L").arg("ours")
+            .arg("-L").arg("base")
+            .arg("-L").arg("theirs")
+            .arg(&ours_path)
+            .arg(&base_path)
+            .arg(&theirs_path)
+            .output()
+            .map_err(|e| H5iError::Internal(format!("failed to invoke `git merge-file`: {e}")))?;
+
+        // Best-effort temp cleanup; ignore errors.
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let content = String::from_utf8_lossy(&output.stdout).into_owned();
+        // `git merge-file` exit code: 0 clean, >0 number of conflicts, <0 error.
+        let code = output.status.code().unwrap_or(-1);
+        if code < 0 {
+            return Err(H5iError::Internal(format!(
+                "git merge-file failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
-
-        // 4. Apply state from THEIRS (The "Magic" automatic merge)
-        if let Some(states) = their_record.crdt_states {
-            if let Some(b64) = states.get(file_path) {
-                let data = BASE64_STANDARD
-                    .decode(b64)
-                    .map_err(|e| H5iError::Crdt(e.to_string()))?;
-                let mut txn = doc.transact_mut();
-                // CRDT math ensures this is conflict-free and commutative
-                txn.apply_update(yrs::Update::decode_v1(&data)?)?;
-            }
-        }
-
-        // 5. Extract and return the unified text
-        let txn = doc.transact();
-        Ok(text_ref.get_string(&txn))
+        Ok(MergeOutcome {
+            content,
+            had_conflicts: code > 0,
+        })
     }
+}
 
-    /// Reconstructs the document state by applying all updates from the
-    /// beginning of history up to `base_oid`.
-    ///
-    /// This function walks the commit history in chronological order
-    /// and sequentially applies all CRDT updates associated with the file.
-    ///
-    /// If a commit does not have a CRDT sidecar delta (e.g., a regular
-    /// human-created Git commit), the function falls back to ingesting
-    /// the full file content at that commit.
-    ///
-    /// # Parameters
-    ///
-    /// - `base_oid` – The commit up to which updates should be applied.
-    /// - `file_path` – The file being reconstructed.
-    /// - `doc` – The CRDT document being updated.
-    pub fn apply_all_updates_up_to(
-        &self,
-        base_oid: Oid,
-        file_path: &str,
-        doc: &mut yrs::Doc,
-    ) -> Result<(), H5iError> {
-        let mut revwalk = self.git_repo.revwalk()?;
-        revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)?; // Walk in chronological order
-        revwalk.push(base_oid)?;
-
-        for oid_res in revwalk {
-            let oid = oid_res?;
-            if let Ok(update_data) = self.load_specific_delta_for_commit(oid, file_path) {
-                let mut txn = doc.transact_mut();
-                txn.apply_update(yrs::Update::decode_v1(&update_data)?)?;
-            } else {
-                // Fallback for commits without CRDT sidecar data
-                // (e.g., normal Git commits created by humans).
-                // In this case, the entire file content is ingested
-                // as a full replacement.
-                self.fallback_ingest_content(oid, file_path, doc)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Loads the CRDT update binary associated with a specific commit and file.
-    ///
-    /// The implementation assumes the following storage layout:
-    ///
-    /// ```text
-    /// .h5i/
-    ///   deltas/
-    ///     <commit_oid>/
-    ///       <file_hash>.bin
-    /// ```
-    ///
-    /// # Parameters
-    ///
-    /// - `oid` – Commit OID.
-    /// - `file_path` – File path used to derive the hash identifier.
-    ///
-    /// # Returns
-    ///
-    /// Returns the raw CRDT update bytes for the given commit and file.
-    pub fn load_specific_delta_for_commit(
-        &self,
-        oid: Oid,
-        file_path: &str,
-    ) -> Result<Vec<u8>, H5iError> {
-        let git_common_dir = self.h5i_root.parent().ok_or_else(|| {
-            H5iError::InvalidPath(format!(
-                "h5i sidecar path has no parent: {}",
-                self.h5i_root.display()
-            ))
-        })?;
-        let delta_path = DeltaStore::committed_path(git_common_dir, &oid.to_string(), file_path);
-
-        if !delta_path.exists() {
-            return Err(H5iError::Internal("Delta not found for this commit".into()));
-        }
-
-        let mut file = std::fs::File::open(&delta_path)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        Ok(buffer)
-    }
-
-    /// Ingests file content from Git when CRDT sidecar data is unavailable.
-    ///
-    /// This fallback mechanism is used for commits that do not contain
-    /// CRDT deltas (e.g., regular Git commits).
-    ///
-    /// The current CRDT document content is cleared and replaced with
-    /// the file content retrieved from the specified commit.
-    fn fallback_ingest_content(
-        &self,
-        oid: Oid,
-        file_path: &str,
-        doc: &mut yrs::Doc,
-    ) -> Result<(), H5iError> {
-        let content = self.get_content_at_oid(oid, std::path::Path::new(file_path))?;
-        let text_ref = doc.get_or_insert_text("code");
-        let mut txn = doc.transact_mut();
-
-        // Remove the existing content and insert the new content
-        let len = text_ref.len(&txn);
-        text_ref.remove_range(&mut txn, 0, len);
-        text_ref.push(&mut txn, &content);
-        Ok(())
-    }
-
-    /// Persists a CRDT delta associated with a specific commit.
-    ///
-    /// Each delta represents the document update produced during
-    /// the commit and is stored in the `.h5i` sidecar directory.
-    ///
-    /// # Storage layout
-    ///
-    /// ```text
-    /// .h5i/delta/<commit_oid>/<file_hash>.bin
-    /// ```
-    ///
-    /// # Parameters
-    ///
-    /// - `oid` – Commit OID.
-    /// - `file_path` – File path used to derive the hash identifier.
-    /// - `update_data` – Binary CRDT update data.
-    pub fn persist_delta_for_commit(
-        &self,
-        oid: Oid,
-        file_path: &str,
-        update_data: &[u8],
-    ) -> Result<(), H5iError> {
-        let file_hash = sha256_hash(file_path);
-        let delta_dir = self.h5i_root.join("delta").join(oid.to_string());
-
-        // Create directory if necessary
-        std::fs::create_dir_all(&delta_dir).map_err(H5iError::Io)?;
-
-        let delta_path = delta_dir.join(format!("{}.bin", file_hash));
-
-        // Write the delta binary
-        std::fs::write(&delta_path, update_data).map_err(H5iError::Io)?;
-
-        Ok(())
-    }
+fn tempdir_in_repo(h5i_root: &Path) -> Result<PathBuf, H5iError> {
+    let base = h5i_root.join("tmp");
+    std::fs::create_dir_all(&base)?;
+    let dir = base.join(format!(
+        "merge-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
 // ============================================================
@@ -1306,7 +1138,6 @@ impl H5iRepository {
     /// such as:
     ///
     /// - AST sidecar files
-    /// - CRDT deltas
     /// - commit metadata
     pub fn h5i_path(&self) -> &Path {
         &self.h5i_root
@@ -2928,8 +2759,6 @@ mod tests {
     use git2::{Oid, Repository, Signature};
     use std::fs;
     use tempfile::tempdir;
-    use yrs::ReadTxn;
-    use yrs::{Text, Transact};
 
     fn setup_test_repo(root: &std::path::Path) -> H5iRepository {
         let _repo = Repository::init(root).unwrap();
@@ -2965,7 +2794,6 @@ mod tests {
 
         // Ensure .h5i subdirectories are created
         assert!(repo.h5i_root.join("metadata").exists());
-        assert!(repo.h5i_root.join("crdt").exists());
         assert_eq!(repo.h5i_path(), &repo.h5i_root);
     }
 
@@ -3070,25 +2898,6 @@ mod tests {
         assert_eq!(hash, hash2);
     }
 
-    // --- 4. Merge & CRDT Delta Logic ---
-
-    #[test]
-    fn test_persist_and_load_delta_for_commit() {
-        let dir = tempdir().unwrap();
-        let h5i_repo = setup_test_repo(dir.path());
-        let oid = Oid::from_str("0123456789abcdef0123456789abcdef01234567").unwrap();
-        let delta_data = vec![1, 2, 3, 4, 5];
-
-        h5i_repo
-            .persist_delta_for_commit(oid, "test.txt", &delta_data)
-            .unwrap();
-        let loaded = h5i_repo
-            .load_specific_delta_for_commit(oid, "test.txt")
-            .unwrap();
-
-        assert_eq!(loaded, delta_data);
-    }
-
     #[test]
     fn test_get_content_at_oid() {
         let dir = tempdir().unwrap();
@@ -3120,103 +2929,44 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_h5i_logic_with_proper_deltas() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_merge_file_three_way_clean() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir().unwrap();
         let h5i_repo = setup_test_repo(dir.path());
         let git_repo = &h5i_repo.git_repo;
         let file_path = "main.py";
-        let sig = Signature::now("test", "test@example.com")?;
 
-        // Helper to attach metadata to a commit via Git Notes
-        let attach_metadata =
-            |oid: Oid, update: Vec<u8>| -> Result<(), Box<dyn std::error::Error>> {
-                let mut crdt_states = std::collections::HashMap::new();
-                crdt_states.insert(file_path.to_string(), base64::encode(update));
+        let base_oid = create_commit(
+            git_repo,
+            "base",
+            file_path,
+            "def main():\n    pass\n",
+            &[],
+        );
+        let base = git_repo.find_commit(base_oid)?;
 
-                let record = H5iCommitRecord {
-                    git_oid: oid.to_string(),
-                    parent_oid: None, // Simplified for test
-                    ai_metadata: None,
-                    test_metrics: None,
-                    ast_hashes: None,
-                    crdt_states: Some(crdt_states),
-                    timestamp: chrono::Utc::now(),
-                    caused_by: vec![],
-                    decisions: vec![],
-                };
+        let our_oid = create_commit(
+            git_repo,
+            "ours",
+            file_path,
+            "# OURS\ndef main():\n    pass\n",
+            &[&base],
+        );
 
-                let json = serde_json::to_string(&record)?;
-                git_repo.note(&sig, &sig, Some(H5I_NOTES_REF), oid, &json, true)?;
-                Ok(())
-            };
-
-        // --- 1. BASE ---
-        let base_content = "def main():\n    pass";
-        let base_oid = create_commit(git_repo, "base", file_path, base_content, &[]);
-
-        let base_update = {
-            let doc = yrs::Doc::new();
-            let text = doc.get_or_insert_text("code");
-            let mut txn = doc.transact_mut();
-            text.push(&mut txn, base_content);
-            txn.encode_state_as_update_v1(&yrs::StateVector::default())
-        };
-        attach_metadata(base_oid, base_update.clone())?;
-
-        // --- 2. OURS ---
-        let (our_oid, _our_update) = {
-            let doc = yrs::Doc::new();
-            let text = doc.get_or_insert_text("code");
-            let mut txn = doc.transact_mut();
-            txn.apply_update(yrs::Update::decode_v1(&base_update)?)?;
-
-            text.insert(&mut txn, 0, "# OURS COMMENT\n");
-            let full_state = txn.encode_state_as_update_v1(&yrs::StateVector::default());
-
-            let base_commit = git_repo.find_commit(base_oid)?;
-            let oid = create_commit(
-                git_repo,
-                "ours",
-                file_path,
-                &text.get_string(&txn),
-                &[&base_commit],
-            );
-            (oid, full_state)
-        };
-        attach_metadata(our_oid, _our_update)?;
-
-        // --- 3. THEIRS ---
+        // Branch off base, add a non-conflicting trailing line.
         git_repo.set_head_detached(base_oid)?;
-        let (their_oid, _their_update) = {
-            let doc = yrs::Doc::new();
-            let text = doc.get_or_insert_text("code");
-            let mut txn = doc.transact_mut();
-            txn.apply_update(yrs::Update::decode_v1(&base_update)?)?;
+        let their_oid = create_commit(
+            git_repo,
+            "theirs",
+            file_path,
+            "def main():\n    pass\nprint('done')\n",
+            &[&base],
+        );
 
-            text.push(&mut txn, "\nprint('done')");
-            let full_state = txn.encode_state_as_update_v1(&yrs::StateVector::default());
-
-            let base_commit = git_repo.find_commit(base_oid)?;
-            let oid = create_commit(
-                git_repo,
-                "theirs",
-                file_path,
-                &text.get_string(&txn),
-                &[&base_commit],
-            );
-            (oid, full_state)
-        };
-        attach_metadata(their_oid, _their_update)?;
-
-        // --- 4. Merge ---
-        // The merge logic now pulls context from the Notes we attached above
-        let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
-
-        // --- 5. Verify ---
-        assert!(merged_text.contains("# OURS COMMENT"));
-        assert!(merged_text.contains("print('done')"));
-        assert!(merged_text.contains("def main():"));
-
+        let outcome = h5i_repo.merge_file_three_way(our_oid, their_oid, file_path)?;
+        assert!(!outcome.had_conflicts, "non-overlapping edits should merge cleanly");
+        assert!(outcome.content.contains("# OURS"));
+        assert!(outcome.content.contains("print('done')"));
+        assert!(outcome.content.contains("def main():"));
         Ok(())
     }
 
@@ -3293,200 +3043,5 @@ mod tests {
         let ref_name = shadow_ref.unwrap();
         assert!(ref_name.starts_with("refs/h5i/shadow/"));
         assert!(repo.find_reference(&ref_name).is_ok(), "shadow ref must exist in git");
-    }
-}
-
-#[cfg(test)]
-mod integration_tests {
-    use crate::metadata::TestSource;
-    use crate::repository::{H5iRepository, H5I_NOTES_REF};
-    use crate::session::LocalSession;
-    use git2::{Repository, Signature};
-    use std::fs;
-    use tempfile::tempdir;
-    use yrs::updates::decoder::Decode;
-    use yrs::ReadTxn;
-    use yrs::Transact;
-
-    /// Helper to setup both Git and H5i repositories in a temp directory.
-    fn setup_integration_context(root: &std::path::Path) -> H5iRepository {
-        // First, initialize a standard Git repository
-        Repository::init(root).expect("Failed to init git repo");
-        // Then, open it as an H5i repository (which creates .h5i/ folders)
-        H5iRepository::open(root).expect("Failed to open h5i repo")
-    }
-
-    #[test]
-    fn test_full_session_to_repository_commit_flow() -> crate::error::Result<()> {
-        let dir = tempdir().unwrap();
-        let repo_path = dir.path();
-
-        // 1. Initialize Context
-        let h5i_repo = setup_integration_context(repo_path);
-        let git_repo = h5i_repo.git();
-        let file_path = "logic.rs";
-        let full_file_path = repo_path.join(file_path);
-
-        // Initial physical file for Git tracking
-        fs::write(&full_file_path, "// Initial content\n")?;
-
-        // 2. Start a LocalSession (Simulation of 'h5i start')
-        let mut session = LocalSession::new(h5i_repo.h5i_root.clone(), full_file_path.clone(), 0)?;
-
-        // 3. Apply edits via Session
-        session.apply_local_edit(0, "// AI Optimized\n")?;
-        let session_text = session.get_current_text();
-
-        // 4. Prepare Git Commit
-        let sig = Signature::now("h5i-integration-test", "test@h5i.io")?;
-        let mut index = git_repo.index()?;
-        index.add_path(std::path::Path::new(file_path))?;
-        index.write()?;
-
-        let oid = h5i_repo.commit(
-            "Integrated commit with CRDT",
-            &sig,
-            &sig,
-            None, // ai_meta
-            TestSource::None,
-            None, // ast
-            vec![],
-            vec![],
-        )?;
-
-        // 5. BRIDGE: Transition Active Delta -> Committed Delta
-        // This simulates the 'h5i commit' logic where current session work is frozen.
-        let active_updates = session.delta_store.read_all_updates()?;
-        let merged_delta = yrs::merge_updates_v1(&active_updates)
-            .map_err(|e| crate::error::H5iError::Crdt(e.to_string()))?;
-
-        h5i_repo.persist_delta_for_commit(oid, file_path, &merged_delta)?;
-
-        // 6. VERIFICATION: Does the Repository OID match the Session State?
-        let content_from_git = h5i_repo.get_content_at_oid(oid, std::path::Path::new(file_path))?;
-        assert_eq!(
-            content_from_git, session_text,
-            "Content at OID must match the final CRDT session text"
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_cross_branch_merge_using_session_history() -> crate::error::Result<()> {
-        let dir = tempdir().unwrap();
-        let h5i_repo = setup_integration_context(dir.path());
-        let git_repo = h5i_repo.git();
-        let file_path = "app.py";
-        let full_path = dir.path().join(file_path);
-        let sig = git2::Signature::now("h5i-tester", "test@h5i.io")?;
-
-        // Helper to bundle and attach CRDT state to a commit via Git Notes
-        let attach_h5i_note = |oid: git2::Oid, doc: &yrs::Doc| -> crate::error::Result<()> {
-            let mut crdt_states = std::collections::HashMap::new();
-            // Capture the FULL state at the time of commit
-            let state = doc
-                .transact()
-                .encode_state_as_update_v1(&yrs::StateVector::default());
-            crdt_states.insert(file_path.to_string(), base64::encode(state));
-
-            let record = crate::metadata::H5iCommitRecord {
-                git_oid: oid.to_string(),
-                parent_oid: None,
-                ai_metadata: None,
-                test_metrics: None,
-                ast_hashes: None,
-                crdt_states: Some(crdt_states),
-                timestamp: chrono::Utc::now(),
-                caused_by: vec![],
-                decisions: vec![],
-            };
-
-            let metadata_json = serde_json::to_string(&record).unwrap();
-            git_repo.note(&sig, &sig, Some(H5I_NOTES_REF), oid, &metadata_json, true)?;
-            Ok(())
-        };
-
-        // --- PHASE 1: Base Commit ---
-        fs::write(&full_path, "")?;
-        let mut session_ours = LocalSession::new(h5i_repo.h5i_root.clone(), full_path.clone(), 1)?;
-
-        let base_content = "def main():\n    pass";
-        session_ours.apply_local_edit(0, base_content)?;
-
-        let mut index = git_repo.index()?;
-        index.add_path(std::path::Path::new(file_path))?;
-        let base_oid = h5i_repo.commit("base", &sig, &sig, None, TestSource::None, None, vec![], vec![])?;
-        let base_commit = git_repo.find_commit(base_oid)?;
-
-        // Attach mathematical state to the BASE commit note
-        attach_h5i_note(base_oid, &session_ours.doc)?;
-
-        // --- PHASE 2: Branch OURS ---
-        session_ours.apply_local_edit(0, "# Header\n")?;
-
-        let our_oid = h5i_repo.commit("ours", &sig, &sig, None, TestSource::None, None, vec![], vec![])?;
-        // Attach mathematical state to the OURS commit note
-        attach_h5i_note(our_oid, &session_ours.doc)?;
-
-        // --- PHASE 3: Branch THEIRS ---
-        // Move back to base and simulate a different user/client
-        git_repo.set_head_detached(base_oid)?;
-
-        let doc_theirs = yrs::Doc::with_options(yrs::Options {
-            client_id: 2,
-            ..Default::default()
-        });
-        let text_theirs = doc_theirs.get_or_insert_text("code");
-
-        // Initialize THEIRS with the BASE state to ensure ID continuity
-        {
-            let base_record = h5i_repo.load_h5i_record(base_oid)?;
-            let base_state_b64 = base_record
-                .crdt_states
-                .unwrap()
-                .get(file_path)
-                .unwrap()
-                .clone();
-            let base_state = base64::decode(base_state_b64).unwrap();
-            let mut txn = doc_theirs.transact_mut();
-            txn.apply_update(yrs::Update::decode_v1(&base_state)?)?;
-        }
-
-        let mut session_theirs = LocalSession {
-            doc: doc_theirs,
-            text_ref: text_theirs,
-            delta_store: crate::delta_store::DeltaStore::new(
-                dir.path().to_path_buf(),
-                "theirs_temp",
-            ),
-            target_fs_path: full_path.clone(),
-            update_count: 0,
-            last_read_offset: 0,
-        };
-
-        session_theirs.apply_local_edit(20, "\nprint('end')")?;
-
-        let tree = git_repo.find_tree(git_repo.index()?.write_tree()?)?;
-        let their_oid =
-            git_repo.commit(Some("HEAD"), &sig, &sig, "theirs", &tree, &[&base_commit])?;
-
-        // Attach mathematical state to the THEIRS commit note
-        attach_h5i_note(their_oid, &session_theirs.doc)?;
-
-        // --- PHASE 4: Semantic Merge ---
-        // merge_h5i_logic now fetches the notes for our_oid and their_oid
-        let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
-
-        // Final Assertions
-        assert!(merged_text.contains("# Header"), "OURS content missing");
-        assert!(
-            merged_text.contains("print('end')"),
-            "THEIRS content missing"
-        );
-        assert!(merged_text.contains("def main():"), "BASE content missing");
-        assert!(merged_text.contains("def main():\n    pass\nprint('end')"));
-
-        Ok(())
     }
 }

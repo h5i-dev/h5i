@@ -54,7 +54,6 @@ pub struct EnrichedCommit {
     pub test_is_passing: Option<bool>,
     // Structural / collaborative
     pub ast_file_count: usize,
-    pub has_crdt: bool,
     // Causal chain
     pub caused_by: Vec<String>,
 }
@@ -326,11 +325,6 @@ async fn api_commits(
             };
 
             let ast_file_count = record.ast_hashes.as_ref().map(|h| h.len()).unwrap_or(0);
-            let has_crdt = record
-                .crdt_states
-                .as_ref()
-                .map(|s| !s.is_empty())
-                .unwrap_or(false);
             let caused_by = record.caused_by.clone();
 
             enriched.push(EnrichedCommit {
@@ -354,7 +348,6 @@ async fn api_commits(
                 test_summary,
                 test_is_passing,
                 ast_file_count,
-                has_crdt,
                 caused_by,
             });
         }
@@ -1770,7 +1763,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helveti
 .b-tool{background:#21262d;color:#8b949e;border:1px solid #30363d}
 .b-dur{background:#21262d;color:#8b949e}
 .b-ast{background:#1a3a2a;color:#3fb950}
-.b-crdt{background:#1f3a5f;color:#58a6ff}
 .b-tok{background:#21262d;color:#8b949e}
 .b-cov{background:#2d1f4f;color:#bc8cff}
 .b-cause{background:#1f2d3d;color:#58a6ff;border:1px solid #1f4070}
@@ -2251,7 +2243,7 @@ body{background:var(--bp-bg);color:var(--bp-text);font-family:-apple-system,Blin
 .b-test-warn{background:var(--bp-orange-bg);color:var(--bp-orange)}
 .b-tool,.b-dur,.b-tok{background:var(--bp-elev);color:var(--bp-text-muted);border:1px solid var(--bp-border)}
 .b-ast{background:var(--bp-green-bg);color:var(--bp-green-hi)}
-.b-crdt,.b-cause{background:var(--bp-blue-bg);color:var(--bp-blue-hi);border:none}
+.b-cause{background:var(--bp-blue-bg);color:var(--bp-blue-hi);border:none}
 .b-cov{background:var(--bp-violet-bg);color:var(--bp-violet)}
 .commit-detail{border-top:1px solid var(--bp-border)}
 .dk{color:var(--bp-text-dim)}
@@ -2924,7 +2916,6 @@ function commitHTML(c, i) {
     c.test_duration_secs > 0 ? badge('b-dur', '⏱', c.test_duration_secs.toFixed(2) + 's') : '',
     c.test_coverage > 0 ? badge('b-cov', '📊', pct(c.test_coverage) + ' cov') : '',
     c.ast_file_count > 0 ? badge('b-ast', '🌳', c.ast_file_count + ' AST') : '',
-    c.has_crdt ? badge('b-crdt', '🔗', 'CRDT') : '',
     c.ai_tokens ? badge('b-tok', '◦', fmt(c.ai_tokens) + ' tok') : '',
     c.caused_by && c.caused_by.length > 0 ? badge('b-cause', '⛓', c.caused_by.length === 1 ? 'caused by 1' : `caused by ${c.caused_by.length}`) : '',
   ].filter(Boolean).join('');
