@@ -1318,18 +1318,30 @@ fn auto_derive_traces_from_claude_session(workdir: &Path) -> anyhow::Result<usiz
     }
 
     for omission in &analysis.omissions {
-        let body = if omission.context_file.is_empty() {
-            format!("{}: {}", omission.kind, omission.phrase.trim())
+        // Prefer the contextual snippet ("…I'll skip integration tests for
+        // now since the repo has no harness…") over the bare matched phrase
+        // ("for now"). The phrase alone makes NOTEs unreadable in the DAG.
+        let detail = omission.snippet.trim();
+        let detail = if detail.is_empty() {
+            omission.phrase.trim()
         } else {
-            format!(
-                "{} ({}): {}",
-                omission.kind,
-                omission.context_file,
-                omission.phrase.trim()
-            )
+            detail
+        };
+        let body = if omission.context_file.is_empty() {
+            format!("{}: {}", omission.kind, detail)
+        } else {
+            format!("{} ({}): {}", omission.kind, omission.context_file, detail)
         };
         let body = truncate(&body, 240);
-        if body.is_empty() || existing.contains(omission.phrase.trim()) {
+        // Dedup against the snippet when available (so the same passage
+        // ingested twice via different phrase matches collapses to one NOTE)
+        // and fall back to the phrase for legacy entries.
+        let dedup_key = if !omission.snippet.trim().is_empty() {
+            omission.snippet.trim()
+        } else {
+            omission.phrase.trim()
+        };
+        if body.is_empty() || existing.contains(dedup_key) {
             continue;
         }
         if ctx::append_log(workdir, "NOTE", &body, false).is_ok() {
