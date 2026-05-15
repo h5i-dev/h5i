@@ -96,11 +96,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited man/man1/h5i.1; edited src/secrets.rs; edited src/secrets.rs
 - [x] edited man/man1/h5i.1; edited src/secrets.rs; edited src/secrets.rs
 - [x] edited man/man1/h5i.1; edited src/secrets.rs; edited src/secrets.rs
+- [x] Production hardening pass
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-15 20:26 UTC] `doc-cve`: Production hardening pass
 - [2026-05-15 20:04 UTC] `doc-cve`: edited man/man1/h5i.1; edited src/secrets.rs; edited src/secrets.rs
 - [2026-05-15 16:33 UTC] `doc-cve`: edited man/man1/h5i.1; edited src/secrets.rs; edited src/secrets.rs
 - [2026-05-15 16:17 UTC] `doc-cve`: edited man/man1/h5i.1; edited src/secrets.rs; edited src/secrets.rs

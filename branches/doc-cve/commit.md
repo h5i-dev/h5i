@@ -225,3 +225,16 @@ write CVE blog posts on doc-cve git branch
 
 ---
 
+## Commit 6a078164 — 2026-05-15 20:26 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Eliminated 19 production unwrap/expect + reframed 1 panic; canonicalize input paths + validate H5I_PARSER_DIR + 30s timeout (configurable) + 64MiB output cap on python AST parser; added tracing+tracing-subscriber wired in main.rs behind H5I_LOG/RUST_LOG (off by default, stderr writer). Discovered library-module println! calls are CLI display, not debug — kept them; only the new subprocess helper uses tracing::warn for genuine diagnostics. All 448 tests pass.
+
+---
+
