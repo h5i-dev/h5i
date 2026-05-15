@@ -117,3 +117,9 @@ _[Checkpoint: 6a072d83 — deleted README.md; added README.md]_
 [14:47:27] ACT: edited src/server.rs
 [14:47:32] ACT: wrote src/pr.rs
 [14:48:47] ACT: Dropped Y-CRDT entirely. Removed yrs+notify deps, deleted src/{session,delta_store,watcher}.rs, stripped crdt_states field from H5iCommitRecord, replaced merge_h5i_logic with text-based 3-way merge via shell-out to git merge-file -p, removed integration_tests module from repository.rs. Build green, new merge_file_three_way_clean test passes.
+
+
+---
+_[Checkpoint: 6a07324f — Y-CRDT removed; resolve now does text 3-way merge]_
+---
+

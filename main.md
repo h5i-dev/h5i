@@ -83,11 +83,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited docs/blog/index.html; edited docs/sitemap.xml; Wrote docs/blog/cve-2025-59536-startup-trust-dialog.html and docs/…
 - [x] Rewrote README for stronger GitHub star conversion and clearer AI provenance positioning
 - [x] deleted README.md; added README.md
+- [x] Y-CRDT removed; resolve now does text 3-way merge
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-15 14:48 UTC] `doc-cve`: Y-CRDT removed; resolve now does text 3-way merge
 - [2026-05-15 14:28 UTC] `doc-cve`: deleted README.md; added README.md
 - [2026-05-07 19:33 UTC] `doc-cve`: Rewrote README for stronger GitHub star conversion and clearer AI provenance positioning
 - [2026-05-06 15:08 UTC] `doc-cve`: edited docs/blog/index.html; edited docs/sitemap.xml; Wrote docs/blog/cve-2025-59536-startup-trust-dialog.html and docs/…
