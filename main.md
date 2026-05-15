@@ -82,11 +82,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Added two CVE write-up blog posts
 - [x] edited docs/blog/index.html; edited docs/sitemap.xml; Wrote docs/blog/cve-2025-59536-startup-trust-dialog.html and docs/…
 - [x] Rewrote README for stronger GitHub star conversion and clearer AI provenance positioning
+- [x] deleted README.md; added README.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-15 14:28 UTC] `doc-cve`: deleted README.md; added README.md
 - [2026-05-07 19:33 UTC] `doc-cve`: Rewrote README for stronger GitHub star conversion and clearer AI provenance positioning
 - [2026-05-06 15:08 UTC] `doc-cve`: edited docs/blog/index.html; edited docs/sitemap.xml; Wrote docs/blog/cve-2025-59536-startup-trust-dialog.html and docs/…
 - [2026-05-06 15:07 UTC] `doc-cve`: Added two CVE write-up blog posts

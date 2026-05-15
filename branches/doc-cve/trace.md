@@ -54,3 +54,9 @@ _[Checkpoint: 69fb595b — edited docs/blog/index.html; edited docs/sitemap.xml;
 _[Checkpoint: 69fce8ed — Rewrote README for stronger GitHub star conversion and clearer AI provenance positioning]_
 ---
 
+
+
+---
+_[Checkpoint: 6a072d83 — deleted README.md; added README.md]_
+---
+
