@@ -277,3 +277,16 @@ Refactored find_parser_script + parser_timeout + run_parser_subprocess to take p
 
 ---
 
+## Commit 6a0788cb — 2026-05-15 20:57 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Restructured src/pr.rs::render_body: GitHub-native > [!CAUTION] alert + table for credential leaks (parses CREDENTIAL_LEAK trigger detail), > [!WARNING] alert + grouped-by-file table for duplicated code (parses DUPLICATED_CODE trigger detail), collapsible Mermaid graph TD of the reasoning DAG with OBSERVE/THINK/ACT/NOTE/MERGE color-coded classDefs (sanitizes labels, escapes Mermaid-unsafe chars, tail-truncates to 40 nodes with elision marker, suppresses dangling edges). Per-commit provenance now collapsible when >5 commits. Empty test_metrics no longer render as ❌0/0. Zero-token badge suppressed. Added 16 unit tests for parsers, section renderers, mermaid sanitization, aggregators, and badge formatting. Exposed new ctx::dag_for_branch public API. All 481 tests pass.
+
+---
+
