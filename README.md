@@ -37,12 +37,26 @@ cargo install --git https://github.com/Koukyosyumei/h5i h5i-core
 
 ## Why Developers Star h5i
 
-- **See the prompt behind a commit.** `h5i commit` attaches agent, model, prompt, token usage, test result, and reasoning notes to Git history.
-- **Resume long AI tasks without amnesia.** `h5i context` restores goals, milestones, OBSERVE / THINK / ACT traces, branch decisions, and open TODOs at the start of the next session.
-- **Stop re-reading the whole repo.** `h5i claims` records content-addressed facts that auto-invalidate when their evidence files change. In a controlled N=10 experiment, claims cut cache-read tokens by **68.6%**.
-- **Review AI code where risk is highest.** `h5i notes review` ranks commits by uncertainty, blind edits, churn, and scope.
-- **Audit inherited repos in seconds.** `h5i vibe` reports AI footprint, fully AI-written directories, leaked-token signals, and prompt-injection hits.
+- **See the prompt behind a commit.** `h5i capture commit` attaches agent, model, prompt, token usage, test result, and reasoning notes to Git history.
+- **Resume long AI tasks without amnesia.** `h5i recall context` restores goals, milestones, OBSERVE / THINK / ACT traces, branch decisions, and open TODOs at the start of the next session. **Hooks derive the trace from your transcript — the agent never types `h5i context trace --kind …` by hand.**
+- **Stop re-reading the whole repo.** `h5i capture claim` records content-addressed facts that auto-invalidate when their evidence files change. In a controlled N=10 experiment, claims cut cache-read tokens by **68.6%**.
+- **Review AI code where risk is highest — without alert fatigue.** `h5i audit review` separates **Quality** signals (credential leaks via a 10-rule regex pack inspired by gitleaks, code-execution sinks, blind edits, test regressions, duplicated code, …) from **Shape** signals (large diff, wide impact, polyglot) and only flags commits on a PR when a real Quality signal fires. Shape rules are surfaced as informational context, never the sole reason for a 🚩.
+- **Surface provenance on the PR.** `h5i share pr post` upserts a sticky GitHub PR comment with prompt + model + decisions + test metrics + review flags per AI commit — reviewers see the context exactly where they're already looking.
+- **Audit inherited repos in seconds.** `h5i audit vibe` reports AI footprint, fully AI-written directories, leaked-token signals, and prompt-injection hits.
 - **Stay in Git.** h5i metadata is stored as first-class Git objects under `refs/h5i/*`, not in a SaaS silo.
+
+## Command Groups
+
+`h5i` organises its verbs around four nouns. Run `h5i <noun> --help` for the verb table.
+
+| Noun | Use it for |
+|---|---|
+| `h5i capture` | Record provenance: `commit`, `claim`, `memory` snapshot. |
+| `h5i recall` | Read history: `log`, `blame`, `diff`, `context`, `claims`, `notes`, `memory`, `recap`, `resume`, `vibe`. |
+| `h5i audit` | Assess risk: `review`, `scan`, `compliance`, `policy`, `vibe`. |
+| `h5i share` | Publish: `push`, `pull`, `pr`, `memory`. |
+
+The legacy top-level forms (`h5i commit`, `h5i log`, `h5i push`, …) still work and emit a one-line deprecation hint pointing at the new form.
 
 ## The Problem
 
@@ -87,17 +101,24 @@ h5i codex finish --summary "..."   # checkpoint the session
 Commit with provenance:
 
 ```bash
-h5i commit -m "switch session store to Redis" \
+h5i capture commit -m "switch session store to Redis" \
   --model claude-sonnet-4-6 \
   --agent claude-code \
   --prompt "sessions need to survive process restarts"
 ```
 
+Surface provenance on the PR:
+
+```bash
+h5i share pr post              # upsert a sticky GitHub PR comment
+h5i share pr body --limit 25   # render the markdown to stdout for CI use
+```
+
 Sync h5i sidecar refs with teammates:
 
 ```bash
-h5i push
-h5i pull
+h5i share push
+h5i share pull
 ```
 
 ## What It Looks Like
@@ -134,25 +155,27 @@ h5i serve        # http://localhost:7150
 
 | Command | Use it for |
 |---|---|
-| `h5i context` | Versioned agent reasoning: goal, milestones, OBSERVE / THINK / ACT traces, branch context, TODOs, restore points. |
-| `h5i commit` | Git commit plus AI provenance: prompt, model, agent, token usage, tests, decisions, and policy metadata. |
-| `h5i claims` | Content-addressed reusable facts that future sessions can trust until evidence files change. |
-| `h5i notes` | Per-commit review signals: exploration footprint, uncertainty, blind edits, churn, omissions. |
-| `h5i vibe` | Fast audit of an inherited repo's AI footprint and risk signals. |
-| `h5i compliance` | Text, JSON, or HTML audit report across a date range. |
-| `h5i blame` | Line or AST-level blame annotated with AI provenance. |
-| `h5i memory` | Snapshot, diff, restore, push, and pull Claude or Codex memory state. |
-| `h5i serve` | Local web dashboard for commits, sessions, context, integrity, refs, and memory. |
+| `h5i recall context` | Versioned agent reasoning: goal, milestones, OBSERVE / THINK / ACT traces, branch context, TODOs, restore points. |
+| `h5i capture commit` | Git commit plus AI provenance: prompt, model, agent, token usage, tests, decisions, and policy metadata. |
+| `h5i capture claim` / `h5i recall claims` | Content-addressed reusable facts that future sessions can trust until evidence files change. |
+| `h5i recall notes` | Per-commit review signals: exploration footprint, uncertainty, blind edits, churn, omissions. |
+| `h5i audit review` | Rank commits by uncertainty, blind edits, churn, and scope — triage funnel before merging. |
+| `h5i audit vibe` | Fast audit of an inherited repo's AI footprint and risk signals. |
+| `h5i audit compliance` | Text, JSON, or HTML audit report across a date range. |
+| `h5i recall blame` | Line or AST-level blame annotated with AI provenance. |
+| `h5i recall memory` / `h5i share memory` | Snapshot, diff, restore, push, and pull Claude or Codex memory state. |
+| `h5i share pr post` | Sticky GitHub PR comment with h5i provenance per AI commit. |
+| `h5i serve` | Local web dashboard for commits, context, integrity, refs, and memory. |
 
 ## Token Savings With Claims
 
-Agents burn tokens rediscovering facts they already proved in earlier sessions. `h5i claims` records those facts with the exact evidence files that support them:
+Agents burn tokens rediscovering facts they already proved in earlier sessions. `h5i capture claim` records those facts with the exact evidence files that support them:
 
 ```bash
-h5i claims add "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
+h5i capture claim "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
   --path src/api/client.py
 
-h5i claims list --group-by-path
+h5i recall claims --group-by-path
 ```
 
 Each claim is hashed over `(path, blob_oid)` evidence. If an evidence file changes, the claim becomes stale and stops being injected into future context.
@@ -178,13 +201,18 @@ Full methodology and raw results: [scripts/experiment_claims_results.md](scripts
 Find commits that need human attention:
 
 ```bash
-h5i notes review --limit 50
+h5i audit review --limit 50
 ```
+
+Each commit gets two scores:
+
+- **Quality score** — high-precision rules: `CREDENTIAL_LEAK` (10-rule regex pack covering AWS, GCP, GitHub, Slack, Stripe, Anthropic, OpenAI, JWT, PEM keys, plus an entropy-gated generic catch-all with a global path allowlist for lockfiles/vendor/binaries/fixtures), `CODE_EXECUTION`, `BLIND_EDIT`, `CI_CD_MODIFIED`, `PERMISSION_CHANGE`, `SENSITIVE_FILE_MODIFIED`, `TEST_REGRESSION`, `DUPLICATED_CODE`, `MASS_DELETION`, `BINARY_FILE`, `AI_NO_PROMPT`. The PR comment 🚩 fires only on this score.
+- **Shape score** — informational: `LARGE_DIFF`, `WIDE_IMPACT`, `CROSS_CUTTING`, `BURST_AFTER_GAP`, `POLYGLOT_CHANGE`, `UNTESTED_CHANGE`. Shown as supporting context when a Quality signal fires; never the sole reason for a flag.
 
 Scan reasoning traces for prompt-injection patterns:
 
 ```bash
-h5i context scan
+h5i audit scan
 ```
 
 ```text
@@ -198,15 +226,27 @@ h5i context scan
 Generate an audit report:
 
 ```bash
-h5i compliance --since 2026-01-01 --until 2026-03-31 \
+h5i audit compliance --since 2026-01-01 --until 2026-03-31 \
   --format html --output audit.html
 ```
 
 Audit any repo you inherit:
 
 ```bash
-h5i vibe
+h5i audit vibe
 ```
+
+## Share Provenance on the PR
+
+`h5i share pr post` posts a sticky GitHub PR comment with prompt, model, decisions, test metrics, and review flags for every AI commit on the current branch. Re-runs upsert in place via an HTML marker — no comment spam.
+
+```bash
+h5i share pr post              # upsert (needs `gh auth login`)
+h5i share pr body --limit 25   # render markdown to stdout (for CI)
+h5i share pr post --dry-run    # preview without calling gh
+```
+
+Reviewers see the AI context where they already are — on the PR — instead of having to clone and run `h5i recall log`.
 
 ## How h5i Stores Data
 
@@ -232,26 +272,25 @@ git for-each-ref refs/h5i/
 | Hook | What it captures |
 |---|---|
 | `SessionStart` | Prior goal, milestones, decisions, TODOs, and live claims. |
-| `UserPromptSubmit` | The user prompt, so `h5i commit` can infer it. |
-| `PostToolUse` | Read/Edit/Write activity as OBSERVE and ACT trace entries. |
-| `Stop` | Final sync and context checkpoint. |
+| `UserPromptSubmit` | The user prompt, so `h5i capture commit` can infer it. |
+| `PostToolUse` | Reads → OBSERVE trace entries. Edits/Writes → ACT trace entries. |
+| `Stop` | **Mines the Claude session transcript for THINK / NOTE entries** (key decisions, deferrals, placeholders, unfulfilled promises), then auto-checkpoints the context milestone. |
 
-The MCP server exposes native tools such as `h5i_log`, `h5i_blame`, `h5i_context_trace`, `h5i_context_commit`, and `h5i_claims_add`.
+The agent never needs to call `h5i context trace --kind …` by hand — the trace is derived. The MCP server exposes native tools such as `h5i_log`, `h5i_blame`, `h5i_context_trace`, `h5i_context_commit`, and `h5i_claims_add`.
 
 ## Codex Integration
 
 `h5i init` appends the repo-local `AGENTS.md` instructions Codex needs. The explicit workflow is:
 
 ```bash
-h5i codex prelude
-h5i context init --goal "<one-line task summary>"
-h5i context relevant <file>
-h5i codex sync
-h5i context trace --kind THINK "<decision and reason>"
-h5i codex finish --summary "<milestone summary>"
+h5i codex prelude                  # restore prior context at session start
+h5i context init --goal "<one-line task summary>"   # once per Git branch
+h5i context relevant <file>        # before a non-trivial edit
+h5i codex sync                     # mid-session — auto-traces OBSERVE/ACT from the JSONL
+h5i codex finish --summary "..."   # at milestone — sync + checkpoint
 ```
 
-`h5i codex sync` reads the active Codex JSONL session and backfills file reads, searches, listings, and patch edits into the context DAG.
+`h5i codex sync` reads the active Codex JSONL session and derives file reads, searches, listings, and patch edits into the context DAG — no manual trace calls needed.
 
 ## When To Use h5i
 

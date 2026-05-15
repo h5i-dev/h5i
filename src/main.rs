@@ -2,7 +2,6 @@ use clap::{Parser, Subcommand, ValueEnum};
 use console::style;
 use git2::Oid;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use h5i_core::blame::BlameMode;
 use h5i_core::claims;
@@ -15,9 +14,7 @@ use h5i_core::session_log;
 use h5i_core::storage::{self, DoctorSeverity};
 use h5i_core::repository::H5iRepository;
 use h5i_core::review::REVIEW_THRESHOLD;
-use h5i_core::session::LocalSession;
 use h5i_core::ui::{ERROR, LOOKING, STEP, SUCCESS, WARN};
-use h5i_core::watcher::start_h5i_watcher;
 
 /// Truncate a string to at most `max_chars` characters, appending `…` if cut.
 fn truncate(s: &str, max_chars: usize) -> String {
@@ -63,14 +60,36 @@ enum Commands {
     /// Initialize the h5i sidecar in the current repository
     Init,
 
-    /// Start a real-time recording session for a specific file
-    Session {
-        /// The source file to watch and sync via CRDT
-        #[arg(short, long)]
-        file: PathBuf,
+    /// Record provenance — commit, claim, memory snapshot.
+    /// Run `h5i capture --help` for the verb table with runnable examples.
+    Capture {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<String>,
+    },
+
+    /// Read AI history — log, blame, diff, context, claims, notes, memory, recap, resume, vibe.
+    /// Run `h5i recall --help` for the verb table.
+    Recall {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<String>,
+    },
+
+    /// Assess risk — review-rank, prompt-injection scan, compliance, policy, vibe.
+    /// Run `h5i audit --help` for the verb table.
+    Audit {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<String>,
+    },
+
+    /// Publish — push, pull, and post a sticky GitHub PR comment with AI provenance.
+    /// Run `h5i share --help` for the verb table.
+    Share {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        rest: Vec<String>,
     },
 
     /// Commit staged changes with AI provenance and quality tracking
+    #[command(hide = true)]
     Commit {
         /// Standard Git commit message
         #[arg(short, long)]
@@ -138,6 +157,7 @@ enum Commands {
     },
 
     /// Display the enriched 5D commit history
+    #[command(hide = true)]
     Log {
         /// Number of recent commits to display
         #[arg(short, long, default_value_t = 10)]
@@ -152,6 +172,7 @@ enum Commands {
     },
 
     /// Analyze file ownership with optional structural (AST) logic
+    #[command(hide = true)]
     Blame {
         /// Path to the file to inspect
         file: PathBuf,
@@ -238,6 +259,7 @@ enum Commands {
     },
 
     /// Push all h5i refs (notes + memory) to a remote in one shot
+    #[command(hide = true)]
     Push {
         /// Remote to push to
         #[arg(short, long, default_value = "origin")]
@@ -250,6 +272,7 @@ enum Commands {
     /// `refs/h5i/notes` is auto-merged via `git notes merge -s union`, and other
     /// chain-style refs (memory / context / ast) are left alone with a warning
     /// when they have diverged. Pass `--force` to overwrite those local refs.
+    #[command(hide = true)]
     Pull {
         /// Remote to pull from
         #[arg(short, long, default_value = "origin")]
@@ -274,6 +297,7 @@ enum Commands {
     },
 
     /// Version-control agent memory state alongside your code
+    #[command(hide = true)]
     Memory {
         #[command(subcommand)]
         action: MemoryCommands,
@@ -282,6 +306,7 @@ enum Commands {
     /// Record and query content-addressed claims about the codebase.
     /// Each claim pins (path, blob_oid) evidence at HEAD; it stays "live"
     /// until any evidence blob changes, then auto-invalidates.
+    #[command(hide = true)]
     Claims {
         #[command(subcommand)]
         action: ClaimsCommands,
@@ -289,6 +314,7 @@ enum Commands {
 
     /// Inspect AI session activity: footprint, uncertainty, churn, and intent graph
     /// (analogous to `git notes` — structured annotations attached to commits)
+    #[command(hide = true)]
     Notes {
         #[command(subcommand)]
         action: NotesCommands,
@@ -296,6 +322,7 @@ enum Commands {
 
     /// Manage the agent reasoning workspace across sessions
     /// (git-style branching/committing applied to `.h5i-ctx/`, arXiv:2508.00031)
+    #[command(hide = true)]
     Context {
         #[command(subcommand)]
         action: ContextCommands,
@@ -332,6 +359,7 @@ enum Commands {
 
     /// Show an instant AI footprint audit: how much of this repo is AI-generated,
     /// which directories are fully AI-written, and where the riskiest files are
+    #[command(hide = true)]
     Vibe {
         /// Number of recent commits to scan
         #[arg(short, long, default_value_t = 500)]
@@ -349,6 +377,7 @@ enum Commands {
     },
 
     /// Generate a compliance audit report over a date range
+    #[command(hide = true)]
     Compliance {
         /// Start of date range (inclusive), format: YYYY-MM-DD
         #[arg(long)]
@@ -368,6 +397,40 @@ enum Commands {
 
         /// Maximum number of commits to scan
         #[arg(short, long, default_value_t = 500)]
+        limit: usize,
+    },
+
+    /// Post or preview a GitHub pull-request comment with h5i provenance
+    /// for every commit on the current branch vs. the PR's base branch.
+    #[command(hide = true)]
+    Pr {
+        #[command(subcommand)]
+        action: PrCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum PrCommands {
+    /// Post (or upsert) a sticky comment on the current branch's open PR.
+    /// Uses `gh` CLI under the hood.
+    Post {
+        /// PR number (default: auto-detect from current branch)
+        #[arg(long, value_name = "N")]
+        number: Option<u64>,
+
+        /// Limit number of commits included
+        #[arg(short, long, default_value_t = 25)]
+        limit: usize,
+
+        /// Print the markdown body and exit without calling `gh`
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Print the PR comment markdown to stdout (for piping into `gh pr edit --body-file -`)
+    Body {
+        /// Limit number of commits included
+        #[arg(short, long, default_value_t = 25)]
         limit: usize,
     },
 }
@@ -821,27 +884,18 @@ h5i context status
 h5i context init --goal "<one-line summary of what you are about to do>"
 ```
 
-**While working**, emit one trace entry per distinct insight or action.
-One OBSERVE per file read. One THINK per design decision. One ACT per file edited.
-A typical single-file task has 5–8 entries; multi-file tasks have more.
+**You do not need to call `h5i context trace` yourself.** h5i's hooks derive
+the trace automatically:
+
+- `PostToolUse` → OBSERVE for every `Read`, ACT for every `Edit` / `Write`.
+- `Stop` → THINK entries mined from your own reasoning in the session
+  transcript, plus NOTE entries for any deferrals / placeholders / unfulfilled
+  promises detected.
+
+The only trace entry worth emitting by hand is an explicit flag you want a
+future reviewer to see *immediately* (not at next Stop). For that, use:
 
 ```bash
-# One per file read — say what MATTERS, not just that you read it:
-h5i context trace --kind OBSERVE "<specific finding, constraint, or surprising detail>"
-
-# One per design decision — always include what you rejected and why:
-h5i context trace --kind THINK "<chosen approach> over <rejected alternative> because <reason>"
-# Bad:  "will add a mutex"   ← just a plan, no reasoning
-# Good: "inline mutex over OpenZeppelin — no external dep needed for a single guard"
-
-# One per file written or edited:
-h5i context trace --kind ACT "edited <file>: <what changed>"
-# If the implementation surprised you or diverged from THINK, note that here.
-
-# REQUIRED when any of these are true — do not skip:
-#   • you didn't handle an edge case you noticed
-#   • the approach has a known limitation
-#   • something is left for a follow-up
 h5i context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 ```
 
@@ -995,8 +1049,15 @@ h5i context init --goal "<one-line task summary>"
 **While working:**
 ```bash
 h5i context relevant <file>   # before editing — surfaces prior reasoning + claims that mention this file
-h5i codex sync                # after a burst of reads/edits — backfills OBSERVE/ACT traces
-h5i context trace --kind THINK "<chosen approach> over <rejected alternative> because <reason>"
+h5i codex sync                # after a burst of reads/edits — auto-traces OBSERVE/ACT and mines THINK/NOTE from your transcript
+```
+
+You do not need to emit OBSERVE / THINK / ACT trace entries by hand —
+`h5i codex sync` (and `h5i codex finish`) derives them from the Codex
+session JSONL. The only trace you should write directly is an explicit
+flag a reviewer must see immediately:
+
+```bash
 h5i context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 ```
 
@@ -1183,6 +1244,119 @@ fn print_shared_context_prelude(workdir: &Path) {
 
     println!();
     println!("[h5i] Use `h5i context show` for full details.");
+}
+
+/// Persisted cursor for [`auto_derive_traces_from_claude_session`].
+///
+/// Stored at `.git/.h5i/claude_autotrace_state.json`. We track which session
+/// has been processed so the Stop hook is idempotent across re-runs and
+/// re-attaches: re-running the hook on the same JSONL emits zero traces.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct ClaudeAutoTraceState {
+    /// The Claude session UUID (jsonl filename stem) last consumed.
+    session_id: String,
+    /// Number of JSONL lines we'd already mined. Reserved for future
+    /// incremental analysis; today we always re-analyze the whole file
+    /// and rely on textual dedup against the trace log.
+    processed_lines: usize,
+}
+
+/// Mine the active Claude Code session JSONL and emit derived trace entries.
+///
+/// PostToolUse already emits OBSERVE for `Read` and ACT for `Edit`/`Write`
+/// as the agent works. This function fills the remaining gap: turning the
+/// reasoning recorded in the transcript into trace entries the agent did
+/// not have to write itself.
+///
+/// Specifically:
+///   - `causal_chain.key_decisions` → THINK entries
+///   - `omissions` (Deferral / Placeholder / UnfulfilledPromise) → NOTE entries
+///
+/// Returns the number of new entries appended. Existing entries are deduped
+/// against the current branch's `trace.md` so re-running is idempotent.
+fn auto_derive_traces_from_claude_session(workdir: &Path) -> anyhow::Result<usize> {
+    // Only emit when h5i context is initialized — otherwise we have nowhere
+    // to write and shouldn't surprise users who haven't opted in.
+    let has_ctx = match git2::Repository::discover(workdir) {
+        Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
+        Err(_) => false,
+    };
+    if !has_ctx {
+        return Ok(0);
+    }
+
+    let Some(jsonl) = session_log::find_latest_session(workdir) else {
+        return Ok(0);
+    };
+
+    let session_id = jsonl
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    // Read the existing trace.md content for dedup.
+    let branch = ctx::current_branch(workdir);
+    let trace_path = format!("branches/{branch}/trace.md");
+    let existing = ctx::read_ctx_file(workdir, &trace_path).unwrap_or_default();
+
+    let analysis = session_log::analyze_session(&jsonl, None)?;
+    let mut emitted = 0usize;
+
+    for decision in &analysis.causal_chain.key_decisions {
+        let trimmed = truncate(decision.trim(), 240);
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Substring dedup against the existing trace log. Cheap and good
+        // enough — `key_decisions` is capped at 12 sentences per session.
+        if existing.contains(&trimmed) {
+            continue;
+        }
+        if ctx::append_log(workdir, "THINK", &trimmed, false).is_ok() {
+            emitted += 1;
+        }
+    }
+
+    for omission in &analysis.omissions {
+        let body = if omission.context_file.is_empty() {
+            format!("{}: {}", omission.kind, omission.phrase.trim())
+        } else {
+            format!(
+                "{} ({}): {}",
+                omission.kind,
+                omission.context_file,
+                omission.phrase.trim()
+            )
+        };
+        let body = truncate(&body, 240);
+        if body.is_empty() || existing.contains(omission.phrase.trim()) {
+            continue;
+        }
+        if ctx::append_log(workdir, "NOTE", &body, false).is_ok() {
+            emitted += 1;
+        }
+    }
+
+    // Persist cursor so a re-run on the same JSONL is a no-op even if the
+    // trace log gets manually truncated. (Strict idempotency belt-and-suspenders.)
+    if let Ok(state_path) = autotrace_state_path(workdir) {
+        let next = ClaudeAutoTraceState {
+            session_id,
+            processed_lines: std::fs::read_to_string(&jsonl)
+                .map(|raw| raw.lines().count())
+                .unwrap_or(0),
+        };
+        let _ = std::fs::write(&state_path, serde_json::to_string_pretty(&next).unwrap_or_default());
+    }
+
+    Ok(emitted)
+}
+
+fn autotrace_state_path(workdir: &Path) -> anyhow::Result<PathBuf> {
+    let repo = git2::Repository::discover(workdir)?;
+    let h5i_dir = repo.path().join(".h5i");
+    std::fs::create_dir_all(&h5i_dir)?;
+    Ok(h5i_dir.join("claude_autotrace_state.json"))
 }
 
 fn auto_checkpoint_context(workdir: &Path, explicit_summary: Option<&str>) -> anyhow::Result<()> {
@@ -1404,10 +1578,505 @@ fn print_doctor_report(report: &storage::DoctorReport) {
     }
 }
 
+/// Translate `h5i <noun> <verb> ...` into the legacy form before clap parses.
+///
+/// Returns the rewritten argv. When `argv[1]` is one of the four noun groups
+/// (`capture` / `recall` / `audit` / `share`), the noun + verb tokens are
+/// looked up in [`noun_alias`] and replaced with the legacy verb (possibly
+/// multiple tokens). When the verb is missing or `--help`/`-h`, a help block
+/// for that noun is printed and the process exits.
+fn rewrite_noun_argv(argv: Vec<String>) -> Vec<String> {
+    if argv.len() < 2 {
+        return argv;
+    }
+    // `h5i help <noun>` is a synonym for `h5i <noun> --help`.
+    if argv[1] == "help"
+        && argv
+            .get(2)
+            .map(|t| matches!(t.as_str(), "capture" | "recall" | "audit" | "share"))
+            .unwrap_or(false)
+    {
+        print_noun_help(&argv[2]);
+        std::process::exit(0);
+    }
+    let noun = match argv[1].as_str() {
+        "capture" | "recall" | "audit" | "share" => argv[1].clone(),
+        _ => return argv,
+    };
+
+    // No verb (or asking for help): print the noun's verb listing and exit.
+    if argv.len() < 3 || matches!(argv[2].as_str(), "--help" | "-h" | "help") {
+        print_noun_help(&noun);
+        std::process::exit(0);
+    }
+
+    let verb = argv[2].as_str();
+
+    // Allow `h5i <noun> help` as a synonym for `h5i <noun> --help`.
+    if matches!(verb, "help") {
+        print_noun_help(&noun);
+        std::process::exit(0);
+    }
+
+    let Some(mapped) = noun_alias(&noun, verb) else {
+        // Suggest the closest known verb under this noun.
+        let suggestion = nearest_verb(&noun, verb);
+        eprintln!(
+            "{} `h5i {} {}` is not a known subcommand.",
+            style("error:").red().bold(),
+            noun,
+            verb,
+        );
+        if let Some(sugg) = suggestion {
+            eprintln!(
+                "       Did you mean `{}`?",
+                style(format!("h5i {} {}", noun, sugg)).cyan().bold(),
+            );
+        }
+        eprintln!(
+            "       Run `{}` for the full list.",
+            style(format!("h5i {} --help", noun)).cyan(),
+        );
+        std::process::exit(2);
+    };
+
+    // Rebuild argv: [bin, ...mapped, ...rest]
+    let mut out = Vec::with_capacity(argv.len() + mapped.len());
+    out.push(argv[0].clone());
+    for tok in mapped {
+        out.push(tok.to_string());
+    }
+    out.extend(argv.into_iter().skip(3));
+    out
+}
+
+/// Return the verb under `noun` whose name is closest (Levenshtein ≤ 2) to `typo`.
+fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
+    let candidates: &[&'static str] = match noun {
+        "capture" => &["commit", "claim", "memory"],
+        "recall" => &[
+            "log", "blame", "diff", "context", "claims", "notes", "memory", "recap", "resume",
+            "vibe",
+        ],
+        "audit" => &["review", "scan", "compliance", "policy", "vibe"],
+        "share" => &["push", "pull", "pr", "memory"],
+        _ => return None,
+    };
+    let typo_l = typo.to_lowercase();
+    let mut best: Option<(usize, &'static str)> = None;
+    for &c in candidates {
+        let d = levenshtein(&typo_l, c);
+        if d <= 2 && best.map(|(bd, _)| d < bd).unwrap_or(true) {
+            best = Some((d, c));
+        }
+    }
+    best.map(|(_, v)| v)
+}
+
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur: Vec<usize> = vec![0; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            cur[j + 1] = (cur[j] + 1)
+                .min(prev[j + 1] + 1)
+                .min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// Map `(noun, verb)` to the legacy argv tokens that implement it.
+fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
+    Some(match (noun, verb) {
+        // ── capture ─────────────────────────────────────────────────────
+        ("capture", "commit")   => &["commit"],
+        ("capture", "claim")    => &["claims", "add"],
+        ("capture", "claims")   => &["claims", "add"],
+        ("capture", "memory")   => &["memory", "snapshot"],
+
+        // ── recall ──────────────────────────────────────────────────────
+        ("recall",  "log")      => &["log"],
+        ("recall",  "blame")    => &["blame"],
+        ("recall",  "diff")     => &["diff"],
+        ("recall",  "context")  => &["context"],
+        ("recall",  "claims")   => &["claims", "list"],
+        ("recall",  "claim")    => &["claims", "list"],
+        ("recall",  "notes")    => &["notes"],
+        ("recall",  "memory")   => &["memory"],
+        ("recall",  "recap")    => &["context", "recap"],
+        ("recall",  "resume")   => &["resume"],
+        ("recall",  "vibe")     => &["vibe"],
+
+        // ── audit ───────────────────────────────────────────────────────
+        ("audit",   "review")   => &["notes", "review"],
+        ("audit",   "scan")     => &["context", "scan"],
+        ("audit",   "compliance") => &["compliance"],
+        ("audit",   "policy")   => &["policy"],
+        ("audit",   "vibe")     => &["vibe"],
+        ("audit",   "notes")    => &["notes", "review"],
+
+        // ── share ───────────────────────────────────────────────────────
+        ("share",   "push")     => &["push"],
+        ("share",   "pull")     => &["pull"],
+        ("share",   "pr")       => &["pr"],
+        ("share",   "memory")   => &["memory"],
+
+        _ => return None,
+    })
+}
+
+/// One row in a noun-group help table.
+struct NounVerb {
+    verb: &'static str,
+    summary: &'static str,
+    legacy: &'static str,
+    example: &'static str,
+}
+
+fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'static str]) {
+    match noun {
+        "capture" => (
+            "record provenance as you make changes",
+            &[
+                NounVerb {
+                    verb: "commit",
+                    summary: "Git commit + AI provenance (prompt, model, tokens, tests, decisions).",
+                    legacy: "h5i commit",
+                    example: "h5i capture commit -m \"fix retry loop\" \\\n        --model claude-sonnet-4-6 --agent claude-code \\\n        --prompt \"add exponential backoff\" --tests",
+                },
+                NounVerb {
+                    verb: "claim",
+                    summary: "Pin a content-addressed fact backed by evidence files (auto-invalidates on edit).",
+                    legacy: "h5i claims add",
+                    example: "h5i capture claim \"HTTP only src/api/client.py: fetch_user, create_post\" \\\n        --path src/api/client.py",
+                },
+                NounVerb {
+                    verb: "memory",
+                    summary: "Snapshot agent (Claude/Codex) memory state into refs/h5i/memory.",
+                    legacy: "h5i memory snapshot",
+                    example: "h5i capture memory --agent claude",
+                },
+            ],
+            &[
+                "Tip: `h5i commit` and `h5i claims add` still work but emit a deprecation hint.",
+                "MCP equivalents: h5i_commit, h5i_claims_add, h5i_memory_snapshot.",
+            ],
+        ),
+        "recall" => (
+            "read AI history, context, and review signals",
+            &[
+                NounVerb {
+                    verb: "log",
+                    summary: "Commit history with AI provenance (model, prompt, tokens, tests).",
+                    legacy: "h5i log",
+                    example: "h5i recall log --limit 20",
+                },
+                NounVerb {
+                    verb: "blame",
+                    summary: "Line- or AST-level blame, annotated with AI prompts per commit boundary.",
+                    legacy: "h5i blame",
+                    example: "h5i recall blame src/api/client.py --mode ast --show-prompt",
+                },
+                NounVerb {
+                    verb: "diff",
+                    summary: "Structural (AST) diff for a single file between two commits.",
+                    legacy: "h5i diff",
+                    example: "h5i recall diff src/model.py --from HEAD~3",
+                },
+                NounVerb {
+                    verb: "context",
+                    summary: "Reasoning workspace: goal, milestones, OBSERVE/THINK/ACT trace, branches.",
+                    legacy: "h5i context",
+                    example: "h5i recall context show --trace --window 5",
+                },
+                NounVerb {
+                    verb: "claims",
+                    summary: "List live & stale content-addressed claims.",
+                    legacy: "h5i claims list",
+                    example: "h5i recall claims --group-by-path",
+                },
+                NounVerb {
+                    verb: "notes",
+                    summary: "Per-commit signals: footprint, uncertainty, omissions, churn, coverage.",
+                    legacy: "h5i notes",
+                    example: "h5i recall notes show",
+                },
+                NounVerb {
+                    verb: "memory",
+                    summary: "Log / diff / restore agent memory snapshots.",
+                    legacy: "h5i memory",
+                    example: "h5i recall memory log",
+                },
+                NounVerb {
+                    verb: "recap",
+                    summary: "Import Claude Code `away_summary` entries as context milestones.",
+                    legacy: "h5i context recap",
+                    example: "h5i recall recap",
+                },
+                NounVerb {
+                    verb: "resume",
+                    summary: "Print a structured handoff briefing to resume an AI session.",
+                    legacy: "h5i resume",
+                    example: "h5i recall resume",
+                },
+                NounVerb {
+                    verb: "vibe",
+                    summary: "Quick AI-footprint audit (also under `audit`).",
+                    legacy: "h5i vibe",
+                    example: "h5i recall vibe",
+                },
+            ],
+            &[
+                "Tip: legacy top-level forms (`h5i log`, `h5i blame`, …) still work — they print a one-line deprecation hint.",
+                "MCP equivalents: h5i_log, h5i_blame, h5i_context_show, h5i_claims_list, h5i_notes_show.",
+            ],
+        ),
+        "audit" => (
+            "assess risk on AI-generated changes",
+            &[
+                NounVerb {
+                    verb: "review",
+                    summary: "Rank commits by uncertainty, blind edits, churn, scope — surface the riskiest first.",
+                    legacy: "h5i notes review",
+                    example: "h5i audit review --limit 50",
+                },
+                NounVerb {
+                    verb: "scan",
+                    summary: "Scan reasoning traces for prompt-injection patterns and exfil attempts.",
+                    legacy: "h5i context scan",
+                    example: "h5i audit scan",
+                },
+                NounVerb {
+                    verb: "compliance",
+                    summary: "Date-ranged audit report — text, JSON, or HTML (regulated workflows).",
+                    legacy: "h5i compliance",
+                    example: "h5i audit compliance --since 2026-01-01 --until 2026-03-31 \\\n        --format html --output audit.html",
+                },
+                NounVerb {
+                    verb: "policy",
+                    summary: "Manage `.h5i/policy.toml` rules (block on credential leak, audit on auth, …).",
+                    legacy: "h5i policy",
+                    example: "h5i audit policy init",
+                },
+                NounVerb {
+                    verb: "vibe",
+                    summary: "Repo-wide AI footprint: % AI-generated, fully-AI directories, token leak signals.",
+                    legacy: "h5i vibe",
+                    example: "h5i audit vibe --limit 1000 --json",
+                },
+            ],
+            &[
+                "Use `h5i audit review` as a triage funnel before merging an AI-heavy branch.",
+                "Pair `h5i audit compliance` with `h5i share pr post` for an auditable PR trail.",
+            ],
+        ),
+        "share" => (
+            "publish provenance — push, pull, and surface on PRs",
+            &[
+                NounVerb {
+                    verb: "push",
+                    summary: "Push all refs/h5i/* (notes, context, memory, ast) to a remote in one shot.",
+                    legacy: "h5i push",
+                    example: "h5i share push",
+                },
+                NounVerb {
+                    verb: "pull",
+                    summary: "Fetch & union-merge refs/h5i/* from a remote (notes auto-merge, chain refs warn on divergence).",
+                    legacy: "h5i pull",
+                    example: "h5i share pull",
+                },
+                NounVerb {
+                    verb: "pr",
+                    summary: "Post or preview a sticky GitHub PR comment with h5i provenance per AI commit.",
+                    legacy: "(new)",
+                    example: "h5i share pr post              # upsert sticky comment\n      h5i share pr body --limit 25  # render markdown to stdout\n      h5i share pr post --dry-run   # preview without calling gh",
+                },
+                NounVerb {
+                    verb: "memory",
+                    summary: "Push or pull only the agent-memory refs (refs/h5i/memory/*).",
+                    legacy: "h5i memory push|pull",
+                    example: "h5i share memory push",
+                },
+            ],
+            &[
+                "`h5i share pr post` needs the `gh` CLI authenticated (`gh auth login`).",
+                "The PR comment is idempotent — re-running upserts in place via an HTML marker.",
+            ],
+        ),
+        _ => return ("", &[], &[]),
+    }
+}
+
+fn print_noun_help(noun: &str) {
+    let (tagline, rows, tips) = noun_table(noun);
+    if rows.is_empty() {
+        return;
+    }
+
+    println!(
+        "{}{}\n",
+        style(format!("h5i {noun} — ")).bold().cyan(),
+        style(tagline).dim(),
+    );
+
+    // Column-aligned table of verbs.
+    let verb_w = rows.iter().map(|r| r.verb.len()).max().unwrap_or(0);
+    let legacy_w = rows.iter().map(|r| r.legacy.len()).max().unwrap_or(0);
+
+    println!(
+        "  {:<vw$}  {:<lw$}  {}",
+        style("VERB").dim().bold(),
+        style("LEGACY").dim().bold(),
+        style("SUMMARY").dim().bold(),
+        vw = verb_w,
+        lw = legacy_w,
+    );
+    for r in rows {
+        println!(
+            "  {:<vw$}  {:<lw$}  {}",
+            style(r.verb).bold().green(),
+            style(r.legacy).dim(),
+            r.summary,
+            vw = verb_w,
+            lw = legacy_w,
+        );
+    }
+
+    println!("\n{}", style("Examples").bold());
+    // Width of the "  <verb>  $ " prefix used on the first line so continuation
+    // lines line up underneath the command, not under the verb column.
+    let cont_indent = 2 + verb_w + 2 + 2;
+    for r in rows {
+        let mut lines = r.example.lines();
+        if let Some(first) = lines.next() {
+            println!(
+                "  {}  $ {}",
+                style(format!("{:<vw$}", r.verb, vw = verb_w)).dim(),
+                style(first).cyan(),
+            );
+        }
+        for cont in lines {
+            // Trim leading whitespace from the embedded example so all
+            // continuations share the same column, regardless of how the
+            // string literal was indented.
+            let trimmed = cont.trim_start();
+            println!("{}{}", " ".repeat(cont_indent), style(trimmed).cyan());
+        }
+    }
+
+    if !tips.is_empty() {
+        println!("\n{}", style("Tips").bold());
+        for t in tips {
+            println!("  • {t}");
+        }
+    }
+    println!(
+        "\nFor flag-level help on any verb, run e.g. `{}`.",
+        style(format!("h5i {} <verb> --help", noun)).cyan()
+    );
+}
+
+/// One-line deprecation hint for the hidden legacy top-level verbs.
+///
+/// Goes to stderr so it never pollutes piped stdout (`h5i log | grep ...`).
+fn legacy_hint(legacy_verb: &str, new_form: &str) {
+    eprintln!(
+        "{} `{}` → use `{}` (see `{}`). Legacy form still works for now.",
+        style("h5i hint:").yellow().bold(),
+        style(format!("h5i {}", legacy_verb)).dim(),
+        style(new_form).cyan().bold(),
+        style(format!("h5i {} --help", new_form.split_whitespace().nth(1).unwrap_or(""))).dim(),
+    );
+}
+
+/// Check if argv[1] is a hidden legacy verb and emit the deprecation hint.
+fn maybe_legacy_hint(argv: &[String]) {
+    if argv.len() < 2 {
+        return;
+    }
+    let hint_for = |v: &str| -> Option<&'static str> {
+        match v {
+            "commit"     => Some("h5i capture commit"),
+            "log"        => Some("h5i recall log"),
+            "blame"      => Some("h5i recall blame"),
+            "push"       => Some("h5i share push"),
+            "pull"       => Some("h5i share pull"),
+            "memory"     => Some("h5i recall memory  (or `h5i capture memory` / `h5i share memory`)"),
+            "claims"     => Some("h5i recall claims  (or `h5i capture claim`)"),
+            "notes"      => Some("h5i recall notes   (or `h5i audit review`)"),
+            "context"    => Some("h5i recall context"),
+            "vibe"       => Some("h5i recall vibe    (or `h5i audit vibe`)"),
+            "compliance" => Some("h5i audit compliance"),
+            "pr"         => Some("h5i share pr"),
+            _ => None,
+        }
+    };
+    if let Some(new_form) = hint_for(argv[1].as_str()) {
+        legacy_hint(&argv[1], new_form);
+    }
+}
+
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let argv: Vec<String> = std::env::args().collect();
+    // `rewrote` is true when we translated a `capture/recall/audit/share`
+    // invocation — in that case the user did NOT type the legacy form, so we
+    // must NOT emit the "this has moved" hint.
+    let rewrote = matches!(argv.get(1).map(String::as_str), Some("capture" | "recall" | "audit" | "share"));
+    let argv = rewrite_noun_argv(argv);
+    if !rewrote {
+        maybe_legacy_hint(&argv);
+    }
+    let cli = Cli::parse_from(argv);
 
     match cli.command {
+        // These four arms only fire if the pre-clap rewriter missed (it shouldn't —
+        // it always rewrites or exits). Defensive fallback: print noun help.
+        Commands::Capture { .. } => {
+            print_noun_help("capture");
+            std::process::exit(0);
+        }
+        Commands::Recall { .. } => {
+            print_noun_help("recall");
+            std::process::exit(0);
+        }
+        Commands::Audit { .. } => {
+            print_noun_help("audit");
+            std::process::exit(0);
+        }
+        Commands::Share { .. } => {
+            print_noun_help("share");
+            std::process::exit(0);
+        }
+
+        Commands::Pr { action } => match action {
+            PrCommands::Post { number, limit, dry_run } => {
+                let workdir = std::env::current_dir()?;
+                let body = h5i_core::pr::render_body(&workdir, limit)?;
+                if dry_run {
+                    println!("{}", body);
+                    return Ok(());
+                }
+                h5i_core::pr::post_comment(&workdir, number, &body)?;
+            }
+            PrCommands::Body { limit } => {
+                let workdir = std::env::current_dir()?;
+                let body = h5i_core::pr::render_body(&workdir, limit)?;
+                println!("{}", body);
+            }
+        },
+
         Commands::Init => {
             let repo = H5iRepository::open(".")?;
             println!(
@@ -1475,29 +2144,6 @@ fn main() -> anyhow::Result<()> {
                 style("     ").dim(),
                 style("h5i push").bold()
             );
-        }
-
-        Commands::Session { file } => {
-            let repo = H5iRepository::open(".")?;
-            println!(
-                "{} {} for: {}",
-                STEP,
-                style("Initializing session").cyan().bold(),
-                style(file.display()).yellow()
-            );
-
-            let mut rng: fastrand::Rng = fastrand::Rng::new();
-            let client_id: u64 = rng.u64(0..u64::MAX);
-            let session = LocalSession::new(repo.h5i_root.clone(), file, client_id)?;
-            let session_arc = Arc::new(Mutex::new(session));
-
-            println!(
-                "{} {} (Press Ctrl+C to stop)",
-                LOOKING,
-                style("Watching for changes...").magenta().italic()
-            );
-
-            start_h5i_watcher(session_arc)?;
         }
 
         Commands::Commit {
@@ -2574,12 +3220,18 @@ jq -c '{
                 style("SessionStart").yellow()
             );
             println!(
-                "  {} — auto-traces every file Read/Edit/Write during the session",
+                "  {} — auto-traces OBSERVE for every Read, ACT for every Edit/Write",
                 style("PostToolUse").yellow()
             );
             println!(
-                "  {} — auto-checkpoints the context workspace when Claude stops",
+                "  {} — mines THINK / NOTE entries from your session transcript and",
                 style("Stop").yellow()
+            );
+            println!(
+                "         auto-checkpoints the context workspace milestone.",
+            );
+            println!(
+                "         You never have to call `h5i context trace` by hand."
             );
 
             println!("{}", style("── Step 3: Register the MCP server ──").bold());
@@ -2705,6 +3357,22 @@ jq -c '{
 
         Commands::Hook(HookCommands::Stop) => {
             let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            // 1. Mine the Claude session JSONL for key decisions + omissions and
+            //    emit them as THINK/NOTE trace entries. The agent never has to
+            //    call `h5i context trace --kind THINK …` itself.
+            match auto_derive_traces_from_claude_session(&workdir) {
+                Ok(0) => {}
+                Ok(n) => eprintln!(
+                    "{} Auto-traced {} reasoning entries from Claude session.",
+                    style("✔").green(),
+                    n
+                ),
+                Err(e) => eprintln!(
+                    "{} Auto-trace failed: {e}",
+                    style("warn:").yellow()
+                ),
+            }
+            // 2. Checkpoint the context workspace milestone.
             if let Err(e) = auto_checkpoint_context(&workdir, None) {
                 eprintln!("{} Context checkpoint failed: {e}", style("warn:").yellow());
             }
@@ -3857,22 +4525,26 @@ jq -c '{
             println!(
                 "{} {} for {}...",
                 STEP,
-                style("Performing CRDT automatic merge").cyan().bold(),
+                style("3-way text merge").cyan().bold(),
                 style(&file).yellow()
             );
-            let merged_text = repo.merge_h5i_logic(our_oid, their_oid, &file)?;
+            let outcome = repo.merge_file_three_way(our_oid, their_oid, &file)?;
 
-            println!("\n{}\n{}", style("--- Merge Result ---").dim(), merged_text);
-            println!(
-                "\n{} Tip: Use {} to stage the resolved content.",
-                style("💡").yellow(),
-                style(format!("git add {}", file)).bold()
-            );
-            println!(
-                "{} {}",
-                style("ℹ").blue(),
-                style("Note: Resolution was derived mathematically from Git Notes metadata.").dim()
-            );
+            println!("\n{}\n{}", style("--- Merge Result ---").dim(), outcome.content);
+            if outcome.had_conflicts {
+                eprintln!(
+                    "\n{} Conflict markers were left in the output. Resolve them and `git add {}`.",
+                    style("⚠").yellow(),
+                    style(&file).bold()
+                );
+                std::process::exit(1);
+            } else {
+                println!(
+                    "\n{} Tip: Use {} to stage the resolved content.",
+                    style("💡").yellow(),
+                    style(format!("git add {}", file)).bold()
+                );
+            }
         }
 
         Commands::Mcp => {

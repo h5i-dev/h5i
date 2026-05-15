@@ -21,8 +21,6 @@ pub const STORAGE_VERSION_FILE: &str = "storage-version";
 
 const REQUIRED_DIRS: &[&str] = &[
     "metadata",
-    "crdt",
-    "delta",
     "claims",
     "memory",
     "session_log",

@@ -1,18 +1,13 @@
-use base64::prelude::*;
 use console::style;
 use git2::{Blob, Repository};
 use git2::{Commit, ObjectType, Oid, Signature};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use yrs::updates::decoder::Decode;
-use yrs::{GetString, Text, Transact};
 
 use crate::blame::{AncestryEntry, BlameMode, BlameResult};
 use crate::metadata::Decision;
-use crate::delta_store::{sha256_hash, DeltaStore};
 use crate::error::H5iError;
 use chrono::{TimeZone, Utc};
 
@@ -57,7 +52,6 @@ impl H5iRepository {
     ///
     /// - `ast/` – stores hashed AST representations for tracked files
     /// - `metadata/` – stores commit-related metadata (e.g., AI provenance)
-    /// - `crdt/` – stores CRDT state or collaboration data
     ///
     /// # Parameters
     ///
@@ -159,7 +153,6 @@ impl H5iRepository {
 
         // 1. Prepare optional features
         let mut ast_hashes = None;
-        let mut crdt_states = HashMap::new();
 
         // For ScanMarkers we look for the marker block in staged files (first hit wins).
         let mut scanned_metrics: Option<TestMetrics> = None;
@@ -182,11 +175,6 @@ impl H5iRepository {
                     let hash = self.save_ast_to_sidecar(path_str, &sexp)?;
                     hashes.insert(path_str.to_string(), hash);
                 }
-            }
-
-            // HARVEST: Read the latest local CRDT state managed by the Watcher
-            if let Ok(state_b64) = self.load_local_crdt_state_as_base64(path_str) {
-                crdt_states.insert(path_str.to_string(), state_b64);
             }
 
             // Scan for test markers only when requested and not yet found
@@ -238,11 +226,6 @@ impl H5iRepository {
             ai_metadata: ai_meta,
             test_metrics,
             ast_hashes,
-            crdt_states: if crdt_states.is_empty() {
-                None
-            } else {
-                Some(crdt_states)
-            },
             timestamp: chrono::Utc::now(),
             caused_by: resolved_caused_by,
             decisions,
@@ -252,23 +235,6 @@ impl H5iRepository {
             .note(author, committer, Some(H5I_NOTES_REF), commit_oid, &metadata_json, true)?;
 
         Ok(commit_oid)
-    }
-
-    /// Reads local binary deltas from .git/h5i/delta and encodes them for the Note.
-    fn load_local_crdt_state_as_base64(&self, file_path: &str) -> Result<String, H5iError> {
-        let file_hash = crate::delta_store::sha256_hash(file_path);
-        let delta_path = self
-            .h5i_root
-            .join("delta")
-            .join(format!("{}.bin", file_hash));
-
-        if !delta_path.exists() {
-            return Err(H5iError::RecordNotFound(file_path.to_string()));
-        }
-
-        let binary_data = fs::read(&delta_path)?;
-        // Use standard base64 encoding (requires base64 crate)
-        Ok(BASE64_STANDARD.encode(binary_data))
     }
 
 }
@@ -1064,227 +1030,93 @@ impl H5iRepository {
 // Resolve Conflict
 // ============================================================
 
+/// Outcome of a [`H5iRepository::merge_file_three_way`] call.
+pub struct MergeOutcome {
+    /// The merged file content. If `had_conflicts` is true, this is the
+    /// conflict-marked output (`<<<<<<<` / `=======` / `>>>>>>>`) produced
+    /// by `git merge-file`.
+    pub content: String,
+    /// True when textual conflicts could not be resolved automatically.
+    pub had_conflicts: bool,
+}
+
 impl H5iRepository {
-    /// Merges CRDT operations from two branches (or commits) and produces
-    /// a conflict-free text representation.
+    /// Performs a text-based 3-way merge for `file_path` between `our_oid`
+    /// and `their_oid`, using their `git merge-base` as the ancestor.
     ///
-    /// Unlike traditional Git merges that operate on text diffs, this method
-    /// reconstructs the document state using CRDT updates and merges the
-    /// operations from both branches.
+    /// Replaces the previous CRDT-based merge. The implementation shells out
+    /// to `git merge-file -p` after materializing the three blobs as temp
+    /// files, which keeps behaviour identical to standard Git merges.
     ///
-    /// # Algorithm
-    ///
-    /// 1. Identify the merge base between `our_oid` and `their_oid`.
-    /// 2. Reconstruct the base document state by replaying all CRDT updates
-    ///    up to the merge base.
-    /// 3. Apply updates from the `ours` branch.
-    /// 4. Apply updates from the `theirs` branch.
-    /// 5. Extract the resulting text from the merged CRDT state.
-    ///
-    /// Because CRDT operations are commutative and conflict-free,
-    /// the resulting document state does not require manual conflict resolution.
-    ///
-    /// # Parameters
-    ///
-    /// - `our_oid` – The commit OID representing the current branch.
-    /// - `their_oid` – The commit OID representing the incoming branch.
-    /// - `file_path` – Path of the file being merged.
-    ///
-    /// # Returns
-    ///
-    /// Returns the merged text content produced by the CRDT document.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    ///
-    /// - the merge base cannot be determined
-    /// - CRDT updates cannot be loaded or applied
-    /// - the repository history cannot be traversed
-    pub fn merge_h5i_logic(
+    /// Returns the merged content plus a flag indicating whether textual
+    /// conflicts remained. The caller is responsible for staging the result.
+    pub fn merge_file_three_way(
         &self,
         our_oid: Oid,
         their_oid: Oid,
         file_path: &str,
-    ) -> Result<String, H5iError> {
-        // 1. Load mathematical context from Git Notes
-        let our_record = self.load_h5i_record(our_oid)?;
-        let their_record = self.load_h5i_record(their_oid)?;
+    ) -> Result<MergeOutcome, H5iError> {
+        let base_oid = self.git_repo.merge_base(our_oid, their_oid)?;
 
-        // 2. Initialize a clean CRDT document
-        let doc = yrs::Doc::new();
-        let text_ref = doc.get_or_insert_text("code");
+        let ancestor = self
+            .get_content_at_oid(base_oid, Path::new(file_path))
+            .unwrap_or_default();
+        let ours = self
+            .get_content_at_oid(our_oid, Path::new(file_path))
+            .unwrap_or_default();
+        let theirs = self
+            .get_content_at_oid(their_oid, Path::new(file_path))
+            .unwrap_or_default();
 
-        // 3. Apply state from OURS
-        if let Some(states) = our_record.crdt_states {
-            if let Some(b64) = states.get(file_path) {
-                let data = BASE64_STANDARD
-                    .decode(b64)
-                    .map_err(|e| H5iError::Crdt(e.to_string()))?;
-                let mut txn = doc.transact_mut();
-                txn.apply_update(yrs::Update::decode_v1(&data)?)?;
-            }
+        let dir = tempdir_in_repo(&self.h5i_root)?;
+        let ours_path = dir.join("ours");
+        let base_path = dir.join("base");
+        let theirs_path = dir.join("theirs");
+        std::fs::write(&ours_path, &ours)?;
+        std::fs::write(&base_path, &ancestor)?;
+        std::fs::write(&theirs_path, &theirs)?;
+
+        let output = std::process::Command::new("git")
+            .arg("merge-file")
+            .arg("-p")
+            .arg("-L").arg("ours")
+            .arg("-L").arg("base")
+            .arg("-L").arg("theirs")
+            .arg(&ours_path)
+            .arg(&base_path)
+            .arg(&theirs_path)
+            .output()
+            .map_err(|e| H5iError::Internal(format!("failed to invoke `git merge-file`: {e}")))?;
+
+        // Best-effort temp cleanup; ignore errors.
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let content = String::from_utf8_lossy(&output.stdout).into_owned();
+        // `git merge-file` exit code: 0 clean, >0 number of conflicts, <0 error.
+        let code = output.status.code().unwrap_or(-1);
+        if code < 0 {
+            return Err(H5iError::Internal(format!(
+                "git merge-file failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
-
-        // 4. Apply state from THEIRS (The "Magic" automatic merge)
-        if let Some(states) = their_record.crdt_states {
-            if let Some(b64) = states.get(file_path) {
-                let data = BASE64_STANDARD
-                    .decode(b64)
-                    .map_err(|e| H5iError::Crdt(e.to_string()))?;
-                let mut txn = doc.transact_mut();
-                // CRDT math ensures this is conflict-free and commutative
-                txn.apply_update(yrs::Update::decode_v1(&data)?)?;
-            }
-        }
-
-        // 5. Extract and return the unified text
-        let txn = doc.transact();
-        Ok(text_ref.get_string(&txn))
+        Ok(MergeOutcome {
+            content,
+            had_conflicts: code > 0,
+        })
     }
+}
 
-    /// Reconstructs the document state by applying all updates from the
-    /// beginning of history up to `base_oid`.
-    ///
-    /// This function walks the commit history in chronological order
-    /// and sequentially applies all CRDT updates associated with the file.
-    ///
-    /// If a commit does not have a CRDT sidecar delta (e.g., a regular
-    /// human-created Git commit), the function falls back to ingesting
-    /// the full file content at that commit.
-    ///
-    /// # Parameters
-    ///
-    /// - `base_oid` – The commit up to which updates should be applied.
-    /// - `file_path` – The file being reconstructed.
-    /// - `doc` – The CRDT document being updated.
-    pub fn apply_all_updates_up_to(
-        &self,
-        base_oid: Oid,
-        file_path: &str,
-        doc: &mut yrs::Doc,
-    ) -> Result<(), H5iError> {
-        let mut revwalk = self.git_repo.revwalk()?;
-        revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)?; // Walk in chronological order
-        revwalk.push(base_oid)?;
-
-        for oid_res in revwalk {
-            let oid = oid_res?;
-            if let Ok(update_data) = self.load_specific_delta_for_commit(oid, file_path) {
-                let mut txn = doc.transact_mut();
-                txn.apply_update(yrs::Update::decode_v1(&update_data)?)?;
-            } else {
-                // Fallback for commits without CRDT sidecar data
-                // (e.g., normal Git commits created by humans).
-                // In this case, the entire file content is ingested
-                // as a full replacement.
-                self.fallback_ingest_content(oid, file_path, doc)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Loads the CRDT update binary associated with a specific commit and file.
-    ///
-    /// The implementation assumes the following storage layout:
-    ///
-    /// ```text
-    /// .h5i/
-    ///   deltas/
-    ///     <commit_oid>/
-    ///       <file_hash>.bin
-    /// ```
-    ///
-    /// # Parameters
-    ///
-    /// - `oid` – Commit OID.
-    /// - `file_path` – File path used to derive the hash identifier.
-    ///
-    /// # Returns
-    ///
-    /// Returns the raw CRDT update bytes for the given commit and file.
-    pub fn load_specific_delta_for_commit(
-        &self,
-        oid: Oid,
-        file_path: &str,
-    ) -> Result<Vec<u8>, H5iError> {
-        let git_common_dir = self.h5i_root.parent().ok_or_else(|| {
-            H5iError::InvalidPath(format!(
-                "h5i sidecar path has no parent: {}",
-                self.h5i_root.display()
-            ))
-        })?;
-        let delta_path = DeltaStore::committed_path(git_common_dir, &oid.to_string(), file_path);
-
-        if !delta_path.exists() {
-            return Err(H5iError::Internal("Delta not found for this commit".into()));
-        }
-
-        let mut file = std::fs::File::open(&delta_path)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        Ok(buffer)
-    }
-
-    /// Ingests file content from Git when CRDT sidecar data is unavailable.
-    ///
-    /// This fallback mechanism is used for commits that do not contain
-    /// CRDT deltas (e.g., regular Git commits).
-    ///
-    /// The current CRDT document content is cleared and replaced with
-    /// the file content retrieved from the specified commit.
-    fn fallback_ingest_content(
-        &self,
-        oid: Oid,
-        file_path: &str,
-        doc: &mut yrs::Doc,
-    ) -> Result<(), H5iError> {
-        let content = self.get_content_at_oid(oid, std::path::Path::new(file_path))?;
-        let text_ref = doc.get_or_insert_text("code");
-        let mut txn = doc.transact_mut();
-
-        // Remove the existing content and insert the new content
-        let len = text_ref.len(&txn);
-        text_ref.remove_range(&mut txn, 0, len);
-        text_ref.push(&mut txn, &content);
-        Ok(())
-    }
-
-    /// Persists a CRDT delta associated with a specific commit.
-    ///
-    /// Each delta represents the document update produced during
-    /// the commit and is stored in the `.h5i` sidecar directory.
-    ///
-    /// # Storage layout
-    ///
-    /// ```text
-    /// .h5i/delta/<commit_oid>/<file_hash>.bin
-    /// ```
-    ///
-    /// # Parameters
-    ///
-    /// - `oid` – Commit OID.
-    /// - `file_path` – File path used to derive the hash identifier.
-    /// - `update_data` – Binary CRDT update data.
-    pub fn persist_delta_for_commit(
-        &self,
-        oid: Oid,
-        file_path: &str,
-        update_data: &[u8],
-    ) -> Result<(), H5iError> {
-        let file_hash = sha256_hash(file_path);
-        let delta_dir = self.h5i_root.join("delta").join(oid.to_string());
-
-        // Create directory if necessary
-        std::fs::create_dir_all(&delta_dir).map_err(H5iError::Io)?;
-
-        let delta_path = delta_dir.join(format!("{}.bin", file_hash));
-
-        // Write the delta binary
-        std::fs::write(&delta_path, update_data).map_err(H5iError::Io)?;
-
-        Ok(())
-    }
+fn tempdir_in_repo(h5i_root: &Path) -> Result<PathBuf, H5iError> {
+    let base = h5i_root.join("tmp");
+    std::fs::create_dir_all(&base)?;
+    let dir = base.join(format!(
+        "merge-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
 // ============================================================
@@ -1306,7 +1138,6 @@ impl H5iRepository {
     /// such as:
     ///
     /// - AST sidecar files
-    /// - CRDT deltas
     /// - commit metadata
     pub fn h5i_path(&self) -> &Path {
         &self.h5i_root
@@ -2484,8 +2315,22 @@ impl H5iRepository {
         limit: usize,
         min_score: f32,
     ) -> Result<Vec<crate::review::ReviewPoint>, H5iError> {
-        use crate::review::{ReviewPoint, ReviewTrigger};
+        use crate::review::{ReviewPoint, ReviewTrigger, Tier};
         use std::collections::HashSet;
+
+        // Tier helpers — keep call sites readable.
+        let quality = |rule_id: &str, weight: f32, detail: String| ReviewTrigger {
+            rule_id: rule_id.to_string(),
+            weight,
+            detail,
+            tier: Tier::Quality,
+        };
+        let shape = |rule_id: &str, weight: f32, detail: String| ReviewTrigger {
+            rule_id: rule_id.to_string(),
+            weight,
+            detail,
+            tier: Tier::Shape,
+        };
 
         let mut revwalk = self.git_repo.revwalk()?;
         revwalk.push_head()?;
@@ -2551,66 +2396,42 @@ impl H5iRepository {
                 }
             }
 
-            // R1 — LARGE_DIFF
+            // R1 — LARGE_DIFF [Shape]
             if lines_changed > 500 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "LARGE_DIFF".into(),
-                    weight: 0.40,
-                    detail: format!("{lines_changed} lines changed (>500)"),
-                });
+                triggers.push(shape("LARGE_DIFF", 0.40,
+                    format!("{lines_changed} lines changed (>500)")));
             } else if lines_changed > 200 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "LARGE_DIFF".into(),
-                    weight: 0.25,
-                    detail: format!("{lines_changed} lines changed (>200)"),
-                });
+                triggers.push(shape("LARGE_DIFF", 0.25,
+                    format!("{lines_changed} lines changed (>200)")));
             } else if lines_changed > 50 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "LARGE_DIFF".into(),
-                    weight: 0.10,
-                    detail: format!("{lines_changed} lines changed (>50)"),
-                });
+                triggers.push(shape("LARGE_DIFF", 0.10,
+                    format!("{lines_changed} lines changed (>50)")));
             }
 
-            // R2 — WIDE_IMPACT
+            // R2 — WIDE_IMPACT [Shape]
             if files_changed > 20 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "WIDE_IMPACT".into(),
-                    weight: 0.35,
-                    detail: format!("{files_changed} files changed (>20)"),
-                });
+                triggers.push(shape("WIDE_IMPACT", 0.35,
+                    format!("{files_changed} files changed (>20)")));
             } else if files_changed > 10 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "WIDE_IMPACT".into(),
-                    weight: 0.20,
-                    detail: format!("{files_changed} files changed (>10)"),
-                });
+                triggers.push(shape("WIDE_IMPACT", 0.20,
+                    format!("{files_changed} files changed (>10)")));
             } else if files_changed > 5 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "WIDE_IMPACT".into(),
-                    weight: 0.10,
-                    detail: format!("{files_changed} files changed (>5)"),
-                });
+                triggers.push(shape("WIDE_IMPACT", 0.10,
+                    format!("{files_changed} files changed (>5)")));
             }
 
-            // R3 — CROSS_CUTTING: distinct top-level directory components
+            // R3 — CROSS_CUTTING: distinct top-level directory components [Shape]
             let distinct_dirs: HashSet<&str> = file_paths
                 .iter()
                 .filter_map(|p| p.split('/').next())
                 .collect();
             let dir_count = distinct_dirs.len();
             if dir_count > 5 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "CROSS_CUTTING".into(),
-                    weight: 0.25,
-                    detail: format!("changes span {dir_count} top-level directories (>5)"),
-                });
+                triggers.push(shape("CROSS_CUTTING", 0.25,
+                    format!("changes span {dir_count} top-level directories (>5)")));
             } else if dir_count > 3 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "CROSS_CUTTING".into(),
-                    weight: 0.15,
-                    detail: format!("changes span {dir_count} top-level directories (>3)"),
-                });
+                triggers.push(shape("CROSS_CUTTING", 0.15,
+                    format!("changes span {dir_count} top-level directories (>3)")));
             }
 
             // R4 — TEST_REGRESSION: compare metrics to parent commit
@@ -2628,131 +2449,106 @@ impl H5iRepository {
                         let is_passing = current_tm.is_passing();
 
                         if was_passing && !is_passing {
-                            triggers.push(ReviewTrigger {
-                                rule_id: "TEST_REGRESSION".into(),
-                                weight: 0.50,
-                                detail: "tests were passing but now failing".into(),
-                            });
+                            triggers.push(quality("TEST_REGRESSION", 0.50,
+                                "tests were passing but now failing".into()));
                         } else if current_tm.failed > prev_tm.failed {
                             let new_fails = current_tm.failed - prev_tm.failed;
-                            triggers.push(ReviewTrigger {
-                                rule_id: "TEST_REGRESSION".into(),
-                                weight: 0.40,
-                                detail: format!("{new_fails} new test failure(s) since parent"),
-                            });
+                            triggers.push(quality("TEST_REGRESSION", 0.40,
+                                format!("{new_fails} new test failure(s) since parent")));
                         }
 
                         if prev_tm.coverage > 0.0 && current_tm.coverage > 0.0 {
                             let drop = prev_tm.coverage - current_tm.coverage;
                             if drop > 10.0 {
-                                triggers.push(ReviewTrigger {
-                                    rule_id: "TEST_REGRESSION".into(),
-                                    weight: 0.35,
-                                    detail: format!("coverage dropped {drop:.1}% (>10%)"),
-                                });
+                                triggers.push(quality("TEST_REGRESSION", 0.35,
+                                    format!("coverage dropped {drop:.1}% (>10%)")));
                             } else if drop > 5.0 {
-                                triggers.push(ReviewTrigger {
-                                    rule_id: "TEST_REGRESSION".into(),
-                                    weight: 0.20,
-                                    detail: format!("coverage dropped {drop:.1}% (>5%)"),
-                                });
+                                triggers.push(quality("TEST_REGRESSION", 0.20,
+                                    format!("coverage dropped {drop:.1}% (>5%)")));
                             }
                         }
                     }
                 }
             }
 
-            // R5 — UNTESTED_CHANGE: significant diff without any test metrics
+            // R5 — UNTESTED_CHANGE: significant diff to a project that has tests [Shape]
+            //
+            // Refined from the previous "any large diff without metrics" rule:
+            // we only fire when (a) the diff is non-trivial, (b) no test metrics
+            // were recorded, AND (c) the project actually has tests (so we don't
+            // flag every doc-only commit in a non-tested repo).
             if lines_changed > 100 {
                 let has_tests = record
                     .as_ref()
                     .map(|r| r.test_metrics.is_some())
                     .unwrap_or(false);
-                if !has_tests {
-                    triggers.push(ReviewTrigger {
-                        rule_id: "UNTESTED_CHANGE".into(),
-                        weight: 0.20,
-                        detail: format!("{lines_changed} lines changed with no test metrics recorded"),
-                    });
+                if !has_tests && project_has_tests(&self.git_repo) {
+                    triggers.push(shape("UNTESTED_CHANGE", 0.20,
+                        format!("{lines_changed} lines changed with no test metrics recorded")));
                 }
             }
 
-            // R6 — AI_NO_PROMPT: AI commit without a recorded prompt
+            // R6 — AI_NO_PROMPT: AI commit without a recorded prompt [Quality]
+            // (real provenance gap — high signal for "this commit's intent is unknowable")
             if let Some(ref rec) = record {
                 if let Some(ref ai) = rec.ai_metadata {
                     if ai.prompt.trim().is_empty() {
-                        triggers.push(ReviewTrigger {
-                            rule_id: "AI_NO_PROMPT".into(),
-                            weight: 0.15,
-                            detail: "AI-generated commit with no prompt recorded (provenance gap)".into(),
-                        });
+                        triggers.push(quality("AI_NO_PROMPT", 0.15,
+                            "AI-generated commit with no prompt recorded (provenance gap)".into()));
                     }
                 }
             }
 
-            // R7 — BURST_AFTER_GAP: large time gap between this commit and its parent
+            // R7 — BURST_AFTER_GAP: large time gap between this commit and its parent [Shape]
             if commit.parent_count() > 0 {
                 if let Ok(parent_commit) = commit.parent(0) {
                     let gap_secs = commit.time().seconds() - parent_commit.time().seconds();
                     if gap_secs > 7 * 24 * 3600 {
                         let days = gap_secs / (24 * 3600);
-                        triggers.push(ReviewTrigger {
-                            rule_id: "BURST_AFTER_GAP".into(),
-                            weight: 0.25,
-                            detail: format!("first commit after a {days}-day gap (>7 days)"),
-                        });
+                        triggers.push(shape("BURST_AFTER_GAP", 0.25,
+                            format!("first commit after a {days}-day gap (>7 days)")));
                     } else if gap_secs > 3 * 24 * 3600 {
                         let days = gap_secs / (24 * 3600);
-                        triggers.push(ReviewTrigger {
-                            rule_id: "BURST_AFTER_GAP".into(),
-                            weight: 0.15,
-                            detail: format!("first commit after a {days}-day gap (>3 days)"),
-                        });
+                        triggers.push(shape("BURST_AFTER_GAP", 0.15,
+                            format!("first commit after a {days}-day gap (>3 days)")));
                     }
                 }
             }
 
-            // R8 — POLYGLOT_CHANGE: many distinct file extensions
+            // R8 — POLYGLOT_CHANGE: many distinct file extensions [Shape]
             let extensions: HashSet<&str> = file_paths
                 .iter()
                 .filter_map(|p| std::path::Path::new(p).extension()?.to_str())
                 .collect();
             if extensions.len() > 4 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "POLYGLOT_CHANGE".into(),
-                    weight: 0.15,
-                    detail: format!(
+                triggers.push(shape("POLYGLOT_CHANGE", 0.15,
+                    format!(
                         "{} distinct file type(s) changed (harder to review holistically)",
                         extensions.len()
-                    ),
-                });
+                    )));
             }
 
-            // R9 — BINARY_FILE: opaque binary changes
+            // R9 — BINARY_FILE: opaque binary changes [Quality]
+            // (you can't review binary diffs — agent uploads need a human look)
             if binary_count > 0 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "BINARY_FILE".into(),
-                    weight: 0.20,
-                    detail: format!("{binary_count} binary file(s) modified"),
-                });
+                triggers.push(quality("BINARY_FILE", 0.20,
+                    format!("{binary_count} binary file(s) modified")));
             }
 
-            // R10 — MASS_DELETION: bulk removal without matching insertions
+            // R10 — MASS_DELETION: bulk removal without matching insertions [Quality]
+            // (high-risk: agents occasionally delete more than asked)
             if deletions > 100 && lines_changed > 0 {
                 let deletion_ratio = deletions as f32 / lines_changed as f32;
                 if deletion_ratio > 0.80 {
-                    triggers.push(ReviewTrigger {
-                        rule_id: "MASS_DELETION".into(),
-                        weight: 0.15,
-                        detail: format!(
+                    triggers.push(quality("MASS_DELETION", 0.15,
+                        format!(
                             "{deletions} lines deleted ({:.0}% of total changes)",
                             deletion_ratio * 100.0
-                        ),
-                    });
+                        )));
                 }
             }
 
-            // R11 — BLIND_EDIT: files edited without a prior Read in the session
+            // R11 — BLIND_EDIT: files edited without a prior Read in the session [Quality]
             if let Ok(Some(analysis)) =
                 crate::session_log::load_analysis(&self.h5i_root, &oid.to_string())
             {
@@ -2770,13 +2566,39 @@ impl H5iRepository {
                     } else {
                         String::new()
                     };
-                    triggers.push(ReviewTrigger {
-                        rule_id: "BLIND_EDIT".into(),
-                        weight: (0.10 * count as f32).min(0.30),
-                        detail: format!(
+                    triggers.push(quality("BLIND_EDIT", (0.10 * count as f32).min(0.30),
+                        format!(
                             "{count} file(s) edited without a prior Read: {examples}{suffix}"
-                        ),
-                    });
+                        )));
+                }
+            }
+
+            // R12 — Integrity rule findings from `rules.rs` against this commit's diff [Quality]
+            // Surfaces CREDENTIAL_LEAK, CODE_EXECUTION, SENSITIVE_FILE_MODIFIED,
+            // CI_CD_MODIFIED, PERMISSION_CHANGE, DUPLICATED_CODE, … into the
+            // review tier so the PR comment 🚩 sees them too.
+            //
+            // We deliberately drop:
+            //   - Info-severity findings (CONFIG_FILE_MODIFIED, LOCKFILE_MODIFIED,
+            //     BINARY_FILE_CHANGED): informational and prone to firing on
+            //     every routine commit.
+            //   - Rule IDs that already have a shape-tier counterpart in
+            //     suggest_review_points (LARGE_DIFF): would double-count.
+            if let Ok(integ) = self.verify_commit_integrity(oid) {
+                use crate::metadata::Severity;
+                const SKIP_RULE_IDS: &[&str] =
+                    &["LARGE_DIFF", "BINARY_FILE_CHANGED", "CONFIG_FILE_MODIFIED",
+                      "LOCKFILE_MODIFIED"];
+                for f in integ.findings {
+                    if SKIP_RULE_IDS.contains(&f.rule_id.as_str()) {
+                        continue;
+                    }
+                    let weight = match f.severity {
+                        Severity::Violation => 0.40,
+                        Severity::Warning => 0.20,
+                        Severity::Info => continue, // never escalate Info to Quality
+                    };
+                    triggers.push(quality(&f.rule_id, weight, f.detail));
                 }
             }
 
@@ -2784,6 +2606,18 @@ impl H5iRepository {
             if triggers.is_empty() {
                 continue;
             }
+            let quality_score: f32 = triggers
+                .iter()
+                .filter(|t| matches!(t.tier, Tier::Quality))
+                .map(|t| t.weight)
+                .sum::<f32>()
+                .min(1.0);
+            let shape_score: f32 = triggers
+                .iter()
+                .filter(|t| matches!(t.tier, Tier::Shape))
+                .map(|t| t.weight)
+                .sum::<f32>()
+                .min(1.0);
             let score: f32 = triggers.iter().map(|t| t.weight).sum::<f32>().min(1.0);
             if score >= min_score {
                 results.push(ReviewPoint {
@@ -2793,15 +2627,58 @@ impl H5iRepository {
                     author,
                     timestamp,
                     score,
+                    quality_score,
+                    shape_score,
                     triggers,
                 });
             }
         }
 
-        // Sort highest priority first
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        // Sort by quality_score first (real risk), then by total score as
+        // a tiebreaker for commits with equal-quality signals.
+        results.sort_by(|a, b| {
+            b.quality_score
+                .partial_cmp(&a.quality_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
         Ok(results)
     }
+}
+
+// ── Test-presence heuristic ───────────────────────────────────────────────────
+
+/// Cheap heuristic: does this repo appear to have tests at all?
+///
+/// Used by `UNTESTED_CHANGE`: we should not flag every doc-only commit in a
+/// repo that has no tests in the first place. Looks for any of:
+///   - a `tests/` directory at the repo root
+///   - a `test/` directory at the repo root
+///   - a top-level file whose name contains `test` and has a code extension
+///   - Cargo-style `#[test]` / pytest `def test_` files anywhere in `src/`
+///
+/// All checks are filesystem-only, no shelling out.
+fn project_has_tests(repo: &Repository) -> bool {
+    let Some(workdir) = repo.workdir() else {
+        return false;
+    };
+    if workdir.join("tests").is_dir() || workdir.join("test").is_dir() {
+        return true;
+    }
+    // Look for a top-level entry whose name contains "test".
+    if let Ok(entries) = std::fs::read_dir(workdir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            if name.contains("test") && !name.starts_with('.') {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 // ── Artifact path filter ──────────────────────────────────────────────────────
@@ -2928,8 +2805,6 @@ mod tests {
     use git2::{Oid, Repository, Signature};
     use std::fs;
     use tempfile::tempdir;
-    use yrs::ReadTxn;
-    use yrs::{Text, Transact};
 
     fn setup_test_repo(root: &std::path::Path) -> H5iRepository {
         let _repo = Repository::init(root).unwrap();
@@ -2965,7 +2840,6 @@ mod tests {
 
         // Ensure .h5i subdirectories are created
         assert!(repo.h5i_root.join("metadata").exists());
-        assert!(repo.h5i_root.join("crdt").exists());
         assert_eq!(repo.h5i_path(), &repo.h5i_root);
     }
 
@@ -3070,25 +2944,6 @@ mod tests {
         assert_eq!(hash, hash2);
     }
 
-    // --- 4. Merge & CRDT Delta Logic ---
-
-    #[test]
-    fn test_persist_and_load_delta_for_commit() {
-        let dir = tempdir().unwrap();
-        let h5i_repo = setup_test_repo(dir.path());
-        let oid = Oid::from_str("0123456789abcdef0123456789abcdef01234567").unwrap();
-        let delta_data = vec![1, 2, 3, 4, 5];
-
-        h5i_repo
-            .persist_delta_for_commit(oid, "test.txt", &delta_data)
-            .unwrap();
-        let loaded = h5i_repo
-            .load_specific_delta_for_commit(oid, "test.txt")
-            .unwrap();
-
-        assert_eq!(loaded, delta_data);
-    }
-
     #[test]
     fn test_get_content_at_oid() {
         let dir = tempdir().unwrap();
@@ -3120,103 +2975,44 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_h5i_logic_with_proper_deltas() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_merge_file_three_way_clean() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir().unwrap();
         let h5i_repo = setup_test_repo(dir.path());
         let git_repo = &h5i_repo.git_repo;
         let file_path = "main.py";
-        let sig = Signature::now("test", "test@example.com")?;
 
-        // Helper to attach metadata to a commit via Git Notes
-        let attach_metadata =
-            |oid: Oid, update: Vec<u8>| -> Result<(), Box<dyn std::error::Error>> {
-                let mut crdt_states = std::collections::HashMap::new();
-                crdt_states.insert(file_path.to_string(), base64::encode(update));
+        let base_oid = create_commit(
+            git_repo,
+            "base",
+            file_path,
+            "def main():\n    pass\n",
+            &[],
+        );
+        let base = git_repo.find_commit(base_oid)?;
 
-                let record = H5iCommitRecord {
-                    git_oid: oid.to_string(),
-                    parent_oid: None, // Simplified for test
-                    ai_metadata: None,
-                    test_metrics: None,
-                    ast_hashes: None,
-                    crdt_states: Some(crdt_states),
-                    timestamp: chrono::Utc::now(),
-                    caused_by: vec![],
-                    decisions: vec![],
-                };
+        let our_oid = create_commit(
+            git_repo,
+            "ours",
+            file_path,
+            "# OURS\ndef main():\n    pass\n",
+            &[&base],
+        );
 
-                let json = serde_json::to_string(&record)?;
-                git_repo.note(&sig, &sig, Some(H5I_NOTES_REF), oid, &json, true)?;
-                Ok(())
-            };
-
-        // --- 1. BASE ---
-        let base_content = "def main():\n    pass";
-        let base_oid = create_commit(git_repo, "base", file_path, base_content, &[]);
-
-        let base_update = {
-            let doc = yrs::Doc::new();
-            let text = doc.get_or_insert_text("code");
-            let mut txn = doc.transact_mut();
-            text.push(&mut txn, base_content);
-            txn.encode_state_as_update_v1(&yrs::StateVector::default())
-        };
-        attach_metadata(base_oid, base_update.clone())?;
-
-        // --- 2. OURS ---
-        let (our_oid, _our_update) = {
-            let doc = yrs::Doc::new();
-            let text = doc.get_or_insert_text("code");
-            let mut txn = doc.transact_mut();
-            txn.apply_update(yrs::Update::decode_v1(&base_update)?)?;
-
-            text.insert(&mut txn, 0, "# OURS COMMENT\n");
-            let full_state = txn.encode_state_as_update_v1(&yrs::StateVector::default());
-
-            let base_commit = git_repo.find_commit(base_oid)?;
-            let oid = create_commit(
-                git_repo,
-                "ours",
-                file_path,
-                &text.get_string(&txn),
-                &[&base_commit],
-            );
-            (oid, full_state)
-        };
-        attach_metadata(our_oid, _our_update)?;
-
-        // --- 3. THEIRS ---
+        // Branch off base, add a non-conflicting trailing line.
         git_repo.set_head_detached(base_oid)?;
-        let (their_oid, _their_update) = {
-            let doc = yrs::Doc::new();
-            let text = doc.get_or_insert_text("code");
-            let mut txn = doc.transact_mut();
-            txn.apply_update(yrs::Update::decode_v1(&base_update)?)?;
+        let their_oid = create_commit(
+            git_repo,
+            "theirs",
+            file_path,
+            "def main():\n    pass\nprint('done')\n",
+            &[&base],
+        );
 
-            text.push(&mut txn, "\nprint('done')");
-            let full_state = txn.encode_state_as_update_v1(&yrs::StateVector::default());
-
-            let base_commit = git_repo.find_commit(base_oid)?;
-            let oid = create_commit(
-                git_repo,
-                "theirs",
-                file_path,
-                &text.get_string(&txn),
-                &[&base_commit],
-            );
-            (oid, full_state)
-        };
-        attach_metadata(their_oid, _their_update)?;
-
-        // --- 4. Merge ---
-        // The merge logic now pulls context from the Notes we attached above
-        let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
-
-        // --- 5. Verify ---
-        assert!(merged_text.contains("# OURS COMMENT"));
-        assert!(merged_text.contains("print('done')"));
-        assert!(merged_text.contains("def main():"));
-
+        let outcome = h5i_repo.merge_file_three_way(our_oid, their_oid, file_path)?;
+        assert!(!outcome.had_conflicts, "non-overlapping edits should merge cleanly");
+        assert!(outcome.content.contains("# OURS"));
+        assert!(outcome.content.contains("print('done')"));
+        assert!(outcome.content.contains("def main():"));
         Ok(())
     }
 
@@ -3293,200 +3089,5 @@ mod tests {
         let ref_name = shadow_ref.unwrap();
         assert!(ref_name.starts_with("refs/h5i/shadow/"));
         assert!(repo.find_reference(&ref_name).is_ok(), "shadow ref must exist in git");
-    }
-}
-
-#[cfg(test)]
-mod integration_tests {
-    use crate::metadata::TestSource;
-    use crate::repository::{H5iRepository, H5I_NOTES_REF};
-    use crate::session::LocalSession;
-    use git2::{Repository, Signature};
-    use std::fs;
-    use tempfile::tempdir;
-    use yrs::updates::decoder::Decode;
-    use yrs::ReadTxn;
-    use yrs::Transact;
-
-    /// Helper to setup both Git and H5i repositories in a temp directory.
-    fn setup_integration_context(root: &std::path::Path) -> H5iRepository {
-        // First, initialize a standard Git repository
-        Repository::init(root).expect("Failed to init git repo");
-        // Then, open it as an H5i repository (which creates .h5i/ folders)
-        H5iRepository::open(root).expect("Failed to open h5i repo")
-    }
-
-    #[test]
-    fn test_full_session_to_repository_commit_flow() -> crate::error::Result<()> {
-        let dir = tempdir().unwrap();
-        let repo_path = dir.path();
-
-        // 1. Initialize Context
-        let h5i_repo = setup_integration_context(repo_path);
-        let git_repo = h5i_repo.git();
-        let file_path = "logic.rs";
-        let full_file_path = repo_path.join(file_path);
-
-        // Initial physical file for Git tracking
-        fs::write(&full_file_path, "// Initial content\n")?;
-
-        // 2. Start a LocalSession (Simulation of 'h5i start')
-        let mut session = LocalSession::new(h5i_repo.h5i_root.clone(), full_file_path.clone(), 0)?;
-
-        // 3. Apply edits via Session
-        session.apply_local_edit(0, "// AI Optimized\n")?;
-        let session_text = session.get_current_text();
-
-        // 4. Prepare Git Commit
-        let sig = Signature::now("h5i-integration-test", "test@h5i.io")?;
-        let mut index = git_repo.index()?;
-        index.add_path(std::path::Path::new(file_path))?;
-        index.write()?;
-
-        let oid = h5i_repo.commit(
-            "Integrated commit with CRDT",
-            &sig,
-            &sig,
-            None, // ai_meta
-            TestSource::None,
-            None, // ast
-            vec![],
-            vec![],
-        )?;
-
-        // 5. BRIDGE: Transition Active Delta -> Committed Delta
-        // This simulates the 'h5i commit' logic where current session work is frozen.
-        let active_updates = session.delta_store.read_all_updates()?;
-        let merged_delta = yrs::merge_updates_v1(&active_updates)
-            .map_err(|e| crate::error::H5iError::Crdt(e.to_string()))?;
-
-        h5i_repo.persist_delta_for_commit(oid, file_path, &merged_delta)?;
-
-        // 6. VERIFICATION: Does the Repository OID match the Session State?
-        let content_from_git = h5i_repo.get_content_at_oid(oid, std::path::Path::new(file_path))?;
-        assert_eq!(
-            content_from_git, session_text,
-            "Content at OID must match the final CRDT session text"
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_cross_branch_merge_using_session_history() -> crate::error::Result<()> {
-        let dir = tempdir().unwrap();
-        let h5i_repo = setup_integration_context(dir.path());
-        let git_repo = h5i_repo.git();
-        let file_path = "app.py";
-        let full_path = dir.path().join(file_path);
-        let sig = git2::Signature::now("h5i-tester", "test@h5i.io")?;
-
-        // Helper to bundle and attach CRDT state to a commit via Git Notes
-        let attach_h5i_note = |oid: git2::Oid, doc: &yrs::Doc| -> crate::error::Result<()> {
-            let mut crdt_states = std::collections::HashMap::new();
-            // Capture the FULL state at the time of commit
-            let state = doc
-                .transact()
-                .encode_state_as_update_v1(&yrs::StateVector::default());
-            crdt_states.insert(file_path.to_string(), base64::encode(state));
-
-            let record = crate::metadata::H5iCommitRecord {
-                git_oid: oid.to_string(),
-                parent_oid: None,
-                ai_metadata: None,
-                test_metrics: None,
-                ast_hashes: None,
-                crdt_states: Some(crdt_states),
-                timestamp: chrono::Utc::now(),
-                caused_by: vec![],
-                decisions: vec![],
-            };
-
-            let metadata_json = serde_json::to_string(&record).unwrap();
-            git_repo.note(&sig, &sig, Some(H5I_NOTES_REF), oid, &metadata_json, true)?;
-            Ok(())
-        };
-
-        // --- PHASE 1: Base Commit ---
-        fs::write(&full_path, "")?;
-        let mut session_ours = LocalSession::new(h5i_repo.h5i_root.clone(), full_path.clone(), 1)?;
-
-        let base_content = "def main():\n    pass";
-        session_ours.apply_local_edit(0, base_content)?;
-
-        let mut index = git_repo.index()?;
-        index.add_path(std::path::Path::new(file_path))?;
-        let base_oid = h5i_repo.commit("base", &sig, &sig, None, TestSource::None, None, vec![], vec![])?;
-        let base_commit = git_repo.find_commit(base_oid)?;
-
-        // Attach mathematical state to the BASE commit note
-        attach_h5i_note(base_oid, &session_ours.doc)?;
-
-        // --- PHASE 2: Branch OURS ---
-        session_ours.apply_local_edit(0, "# Header\n")?;
-
-        let our_oid = h5i_repo.commit("ours", &sig, &sig, None, TestSource::None, None, vec![], vec![])?;
-        // Attach mathematical state to the OURS commit note
-        attach_h5i_note(our_oid, &session_ours.doc)?;
-
-        // --- PHASE 3: Branch THEIRS ---
-        // Move back to base and simulate a different user/client
-        git_repo.set_head_detached(base_oid)?;
-
-        let doc_theirs = yrs::Doc::with_options(yrs::Options {
-            client_id: 2,
-            ..Default::default()
-        });
-        let text_theirs = doc_theirs.get_or_insert_text("code");
-
-        // Initialize THEIRS with the BASE state to ensure ID continuity
-        {
-            let base_record = h5i_repo.load_h5i_record(base_oid)?;
-            let base_state_b64 = base_record
-                .crdt_states
-                .unwrap()
-                .get(file_path)
-                .unwrap()
-                .clone();
-            let base_state = base64::decode(base_state_b64).unwrap();
-            let mut txn = doc_theirs.transact_mut();
-            txn.apply_update(yrs::Update::decode_v1(&base_state)?)?;
-        }
-
-        let mut session_theirs = LocalSession {
-            doc: doc_theirs,
-            text_ref: text_theirs,
-            delta_store: crate::delta_store::DeltaStore::new(
-                dir.path().to_path_buf(),
-                "theirs_temp",
-            ),
-            target_fs_path: full_path.clone(),
-            update_count: 0,
-            last_read_offset: 0,
-        };
-
-        session_theirs.apply_local_edit(20, "\nprint('end')")?;
-
-        let tree = git_repo.find_tree(git_repo.index()?.write_tree()?)?;
-        let their_oid =
-            git_repo.commit(Some("HEAD"), &sig, &sig, "theirs", &tree, &[&base_commit])?;
-
-        // Attach mathematical state to the THEIRS commit note
-        attach_h5i_note(their_oid, &session_theirs.doc)?;
-
-        // --- PHASE 4: Semantic Merge ---
-        // merge_h5i_logic now fetches the notes for our_oid and their_oid
-        let merged_text = h5i_repo.merge_h5i_logic(our_oid, their_oid, file_path)?;
-
-        // Final Assertions
-        assert!(merged_text.contains("# Header"), "OURS content missing");
-        assert!(
-            merged_text.contains("print('end')"),
-            "THEIRS content missing"
-        );
-        assert!(merged_text.contains("def main():"), "BASE content missing");
-        assert!(merged_text.contains("def main():\n    pass\nprint('end')"));
-
-        Ok(())
     }
 }

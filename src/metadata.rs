@@ -32,8 +32,6 @@ pub struct H5iCommitRecord {
     pub test_metrics: Option<TestMetrics>,
     /// File path -> hash of the externally provided AST (S-expression)
     pub ast_hashes: Option<HashMap<String, String>>,
-    /// Maps file path -> Base64 encoded CRDT state (v1 update)
-    pub crdt_states: Option<HashMap<String, String>>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
     /// OIDs of commits that causally triggered this commit.
     /// e.g. this commit fixes a bug introduced by `caused_by[0]`.
@@ -281,7 +279,6 @@ impl H5iCommitRecord {
             ai_metadata: None,  // Standard Git commits do not contain AI metadata
             test_metrics: None, // Standard Git commits do not contain testing metrics
             ast_hashes: None,   // Standard Git commits do not contain AST hashes
-            crdt_states: None,
             timestamp,
             caused_by: vec![],
             decisions: vec![],
