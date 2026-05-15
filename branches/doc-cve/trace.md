@@ -80,3 +80,4 @@ _[Checkpoint: 6a072d83 — deleted README.md; added README.md]_
 [14:38:02] ACT: edited Cargo.toml
 [14:38:15] ACT: wrote src/lib.rs
 [14:38:21] ACT: edited src/error.rs
+[14:38:26] ACT: edited src/metadata.rs
