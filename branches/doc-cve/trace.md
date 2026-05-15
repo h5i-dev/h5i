@@ -406,3 +406,4 @@ _[Checkpoint: 6a07853a — edited src/repository.rs; edited MANUAL.md; edited MA
 
 [20:45:41] OBSERVE: read src/pr.rs
 [20:45:55] OBSERVE: read src/review.rs
+[20:46:22] OBSERVE: read src/rules.rs
