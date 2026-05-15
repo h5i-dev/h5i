@@ -27,6 +27,8 @@ toml = { version = "0.8", features = ["parse", "display"] }
 regex = "1"
 rust-embed = "8.5"
 mime_guess = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # When targeting musl, vendor OpenSSL so the build doesn't require a musl-linked
 # system libssl (libgit2-sys → libssh2-sys → openssl-sys pulls this in).

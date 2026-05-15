@@ -90,7 +90,7 @@ fn rules() -> &'static Vec<Rule> {
                 severity: Severity::High,
                 pattern: Regex::new(
                     r"(?i)(ignore|disregard|forget)\s+(all\s+)?(previous|above|prior|earlier)?\s*(instructions?|rules?|context|constraints?|guidelines?)",
-                ).unwrap(),
+                ).expect("static injection rule 'override_instructions' must compile"),
             },
             Rule {
                 name: "role_hijack",
@@ -98,7 +98,7 @@ fn rules() -> &'static Vec<Rule> {
                 severity: Severity::High,
                 pattern: Regex::new(
                     r"(?i)(you\s+are|act\s+as|pretend\s+to\s+be|role\s*:\s*)(now\s+)?(system|developer|assistant|admin|dan|root|god\s*mode|jailbreak)",
-                ).unwrap(),
+                ).expect("static injection rule 'role_hijack' must compile"),
             },
             Rule {
                 name: "exfiltration_attempt",
@@ -106,7 +106,7 @@ fn rules() -> &'static Vec<Rule> {
                 severity: Severity::High,
                 pattern: Regex::new(
                     r"(?i)(show|reveal|print|dump|expose|output|display|repeat|echo)\s*.{0,30}(system\s*prompt|hidden\s*instructions?|secret|api[\s_-]?key|credentials?|password|token)",
-                ).unwrap(),
+                ).expect("static injection rule 'exfiltration_attempt' must compile"),
             },
             Rule {
                 name: "bypass_safety",
@@ -114,7 +114,7 @@ fn rules() -> &'static Vec<Rule> {
                 severity: Severity::High,
                 pattern: Regex::new(
                     r"(?i)(override|bypass|disable|ignore|circumvent|remove|turn\s+off)\s*.{0,20}(polic(y|ies)|safety|restriction|guardrail|filter|limit|moderation)",
-                ).unwrap(),
+                ).expect("static injection rule 'bypass_safety' must compile"),
             },
             Rule {
                 name: "indirect_injection_marker",
@@ -122,7 +122,7 @@ fn rules() -> &'static Vec<Rule> {
                 severity: Severity::Medium,
                 pattern: Regex::new(
                     r"(?i)(--\s*system\s*--|<\s*system\s*>|\[system\]|\[\[instructions?\]\]|###\s*new\s*instructions?|begin\s+new\s+prompt|end\s+of\s+user\s+input)",
-                ).unwrap(),
+                ).expect("static injection rule 'indirect_injection_marker' must compile"),
             },
             Rule {
                 name: "hidden_command",
@@ -130,7 +130,7 @@ fn rules() -> &'static Vec<Rule> {
                 severity: Severity::Medium,
                 pattern: Regex::new(
                     r"(?i)(this\s+(text|message|content)\s+is\s+(invisible|hidden|not\s+shown)|white\s+text\s+on\s+white|font.{0,10}color.{0,10}white|opacity\s*:\s*0)",
-                ).unwrap(),
+                ).expect("static injection rule 'hidden_command' must compile"),
             },
             Rule {
                 name: "prompt_delimiter_escape",
@@ -138,7 +138,7 @@ fn rules() -> &'static Vec<Rule> {
                 severity: Severity::Medium,
                 pattern: Regex::new(
                     r#"(?i)(human\s*:|assistant\s*:|<\|im_start\|>|<\|im_end\|>|\[/INST\]|\[INST\]|<<SYS>>|<</SYS>>)"#,
-                ).unwrap(),
+                ).expect("static injection rule 'prompt_delimiter_escape' must compile"),
             },
             Rule {
                 name: "credential_request",
@@ -146,7 +146,7 @@ fn rules() -> &'static Vec<Rule> {
                 severity: Severity::Low,
                 pattern: Regex::new(
                     r"(?i)(send|transmit|post|upload|curl|fetch|wget).{0,40}(api[\s_-]?key|secret|token|bearer|authorization|auth[\s_-]?header)",
-                ).unwrap(),
+                ).expect("static injection rule 'credential_request' must compile"),
             },
         ]
     })

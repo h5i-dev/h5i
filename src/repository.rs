@@ -1170,20 +1170,12 @@ impl H5iRepository {
 
             let script_path = find_parser_script(script_name, workdir.as_deref())?;
 
-            let output = std::process::Command::new("python3")
-                .arg(&script_path)
-                .arg(path)
-                .output()
-                .ok()?;
+            // Canonicalize the input path so symlinks resolve and we pass an
+            // absolute, normalized path to the parser. If the file does not
+            // exist on disk yet (e.g. virtual paths), fall back to the raw path.
+            let arg_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
 
-            if output.status.success() {
-                String::from_utf8(output.stdout)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-            } else {
-                None
-            }
+            run_parser_subprocess(&script_path, &arg_path)
         })
     }
 
@@ -2759,24 +2751,115 @@ fn is_artifact_path(path: &str) -> bool {
 
 // ── Parser script discovery ───────────────────────────────────────────────────
 
+/// Default timeout for the AST parser subprocess. Overridable via the
+/// `H5I_PARSER_TIMEOUT_SECS` environment variable.
+const PARSER_TIMEOUT_SECS_DEFAULT: u64 = 30;
+
+fn parser_timeout() -> std::time::Duration {
+    let secs = std::env::var("H5I_PARSER_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(PARSER_TIMEOUT_SECS_DEFAULT);
+    std::time::Duration::from_secs(secs)
+}
+
+/// Runs the parser script under `python3 <script> <path>` with a hard timeout
+/// and bounded stdio. Returns `None` on any failure (spawn, timeout, non-zero
+/// exit, non-UTF8 stdout, empty output).
+fn run_parser_subprocess(
+    script_path: &std::path::Path,
+    arg_path: &std::path::Path,
+) -> Option<String> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let mut child = std::process::Command::new("python3")
+        .arg(script_path)
+        .arg(arg_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let deadline = std::time::Instant::now() + parser_timeout();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut buf = String::new();
+                if let Some(out) = child.stdout.take() {
+                    // Cap output to 64 MiB to bound memory if the parser misbehaves.
+                    const MAX_OUTPUT: u64 = 64 * 1024 * 1024;
+                    let _ = out.take(MAX_OUTPUT).read_to_string(&mut buf);
+                }
+                let trimmed = buf.trim().to_string();
+                return (!trimmed.is_empty()).then_some(trimmed);
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    tracing::warn!(
+                        script = %script_path.display(),
+                        path = %arg_path.display(),
+                        "AST parser exceeded timeout; killed"
+                    );
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
 /// Searches for `script_name` in the standard locations and returns the first
-/// path that exists.
+/// path that exists. Each candidate location is validated to be a real
+/// directory (for `H5I_PARSER_DIR`) before joining, and the resulting file is
+/// required to be a regular file (not a directory or broken symlink).
 fn find_parser_script(
     script_name: &str,
     workdir: Option<&std::path::Path>,
 ) -> Option<std::path::PathBuf> {
-    // 1. Explicit override via environment variable.
+    fn pick(candidate: std::path::PathBuf) -> Option<std::path::PathBuf> {
+        // Reject anything that isn't a regular file accessible on disk.
+        let meta = std::fs::metadata(&candidate).ok()?;
+        if !meta.is_file() {
+            return None;
+        }
+        // Canonicalize so callers (and logs) see the resolved path.
+        std::fs::canonicalize(&candidate).ok().or(Some(candidate))
+    }
+
+    // 1. Explicit override via environment variable. The directory itself
+    //    must already exist and be a directory; we don't auto-create it.
     if let Ok(dir) = std::env::var("H5I_PARSER_DIR") {
-        let p = std::path::Path::new(&dir).join(script_name);
-        if p.exists() {
-            return Some(p);
+        let dir_path = std::path::Path::new(&dir);
+        match std::fs::metadata(dir_path) {
+            Ok(m) if m.is_dir() => {
+                if let Some(p) = pick(dir_path.join(script_name)) {
+                    return Some(p);
+                }
+            }
+            Ok(_) => {
+                tracing::warn!(
+                    path = %dir,
+                    "H5I_PARSER_DIR exists but is not a directory; ignoring"
+                );
+            }
+            Err(_) => {
+                tracing::warn!(path = %dir, "H5I_PARSER_DIR does not exist; ignoring");
+            }
         }
     }
 
     // 2. `script/` inside the repository working directory.
     if let Some(wd) = workdir {
-        let p = wd.join("script").join(script_name);
-        if p.exists() {
+        if let Some(p) = pick(wd.join("script").join(script_name)) {
             return Some(p);
         }
     }
@@ -2785,12 +2868,12 @@ fn find_parser_script(
     //    `<bin_dir>/script/` for flat installs).
     if let Ok(exe) = std::env::current_exe() {
         if let Some(bin_dir) = exe.parent() {
-            for candidate in &[
+            for candidate in [
                 bin_dir.join("script").join(script_name),
                 bin_dir.join("..").join("script").join(script_name),
             ] {
-                if candidate.exists() {
-                    return Some(candidate.clone());
+                if let Some(p) = pick(candidate) {
+                    return Some(p);
                 }
             }
         }

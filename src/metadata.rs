@@ -243,21 +243,21 @@ impl H5iCommitRecord {
     /// Fields related to AI generation, testing, and AST hashes are left as `None`
     /// because this information is not available in standard Git commits.
     ///
-    /// # Parameters
-    ///
-    /// * `repo` - The Git repository containing the commit.
-    /// * `oid` - The object ID of the commit to inspect.
-    ///
-    /// # Panics
-    ///
-    /// This function panics if the commit cannot be found in the repository.
-    /// In production environments, it is recommended to propagate errors
-    /// instead of panicking.
+    /// If the commit cannot be loaded (e.g. shallow clone, corrupted ref), a
+    /// degraded record containing only the OID is returned — never panics.
     pub fn minimal_from_git(repo: &Repository, oid: Oid) -> Self {
-        // Retrieve the commit object
-        // In practice, find_commit may fail (e.g., shallow clones).
-        // Ideally the caller should handle Result, but we simplify here.
-        let commit = repo.find_commit(oid).expect("Commit not found");
+        let Ok(commit) = repo.find_commit(oid) else {
+            return H5iCommitRecord {
+                git_oid: oid.to_string(),
+                parent_oid: None,
+                ai_metadata: None,
+                test_metrics: None,
+                ast_hashes: None,
+                timestamp: Utc::now(),
+                caused_by: Vec::new(),
+                decisions: Vec::new(),
+            };
+        };
 
         // Obtain the parent commit OID (only the first parent is considered)
         let parent_oid = if commit.parent_count() > 0 {

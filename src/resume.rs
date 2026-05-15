@@ -527,7 +527,11 @@ fn compute_risky_files(analysis: &session_log::SessionAnalysis) -> Vec<RiskyFile
         })
         .collect();
 
-    risky.sort_by(|a, b| b.risk_score.partial_cmp(&a.risk_score).unwrap());
+    risky.sort_by(|a, b| {
+        b.risk_score
+            .partial_cmp(&a.risk_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     risky
 }
 

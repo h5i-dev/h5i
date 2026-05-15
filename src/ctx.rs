@@ -318,7 +318,11 @@ fn node_id(kind: &str, timestamp: &str, content: &str) -> String {
     h.update(timestamp.as_bytes());
     h.update(b"|");
     h.update(content.as_bytes());
-    format!("{:08x}", u32::from_be_bytes(h.finalize()[..4].try_into().unwrap()))
+    let digest = h.finalize();
+    format!(
+        "{:08x}",
+        u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]])
+    )
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

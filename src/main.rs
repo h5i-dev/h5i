@@ -1524,9 +1524,10 @@ fn union_merge_notes_commits(
     let merged_tree_oid = union_merge_trees(repo, Some(&incoming_tree), Some(&local_tree))?;
     let merged_tree = repo.find_tree(merged_tree_oid)?;
 
-    let sig = repo
-        .signature()
-        .unwrap_or_else(|_| git2::Signature::now("h5i", "h5i@local").unwrap());
+    let sig = repo.signature().unwrap_or_else(|_| {
+        git2::Signature::now("h5i", "h5i@local")
+            .expect("static signature components 'h5i' / 'h5i@local' are always valid")
+    });
 
     let parents = [&local_commit, &incoming_commit];
     repo.commit(
@@ -2028,7 +2029,23 @@ fn maybe_legacy_hint(argv: &[String]) {
     }
 }
 
+fn init_tracing() {
+    // Off by default. Users opt in via RUST_LOG / H5I_LOG (e.g.
+    // `H5I_LOG=h5i_core=debug`). Writes to stderr so it doesn't poison stdout
+    // for piped/MCP consumers.
+    let filter = tracing_subscriber::EnvFilter::try_from_env("H5I_LOG")
+        .or_else(|_| tracing_subscriber::EnvFilter::try_from_default_env())
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("off"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_target(false)
+        .without_time()
+        .try_init();
+}
+
 fn main() -> anyhow::Result<()> {
+    init_tracing();
     let argv: Vec<String> = std::env::args().collect();
     // `rewrote` is true when we translated a `capture/recall/audit/share`
     // invocation — in that case the user did NOT type the legacy form, so we
@@ -3870,16 +3887,15 @@ jq -c '{
                         }
                         (None, None) => {
                             // from = second-to-last, to = live
-                            if snapshots.is_empty() {
+                            let Some(latest) = snapshots.last() else {
                                 println!(
                                     "{} No snapshots yet. Run {} first.",
                                     WARN,
                                     style("h5i memory snapshot").bold()
                                 );
                                 return Ok(());
-                            }
-                            let from = snapshots.last().unwrap().commit_oid.clone();
-                            (from, None) // to=None means live
+                            };
+                            (latest.commit_oid.clone(), None) // to=None means live
                         }
                     };
 

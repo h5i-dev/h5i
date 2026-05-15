@@ -1179,7 +1179,9 @@ pub(crate) fn group_annotations_by_file(
     let mut list: Vec<(String, Vec<f32>)> = map.into_iter().collect();
     list.sort_by(|a, b| {
         let avg = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
-        avg(&a.1).partial_cmp(&avg(&b.1)).unwrap()
+        avg(&a.1)
+            .partial_cmp(&avg(&b.1))
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     list
 }
@@ -1370,7 +1372,11 @@ pub fn print_uncertainty(analysis: &SessionAnalysis, file_filter: Option<&str>) 
 
     // Pointer row: ↑t:N labels under the top-4 riskiest signals
     let mut top_signals: Vec<&UncertaintyAnnotation> = annotations.clone();
-    top_signals.sort_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap());
+    top_signals.sort_by(|a, b| {
+        a.confidence
+            .partial_cmp(&b.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     top_signals.dedup_by_key(|a| a.turn);
     top_signals.truncate(4);
     top_signals.sort_by_key(|a| a.turn);
