@@ -173,6 +173,10 @@ const STOPLIST: &[&str] = &[
     "${",   // ${ENV_VAR} interpolation
     "{{",   // {{template_var}}
     "%(",   // %()s old-style python
+    // Explicit user-controlled escape hatches. Same convention as gitleaks.
+    "h5i:allow",
+    "gitleaks:allow",
+    "h5i-allow",
 ];
 
 /// Path allowlist — files that almost always contain false positives
@@ -221,7 +225,32 @@ fn compiled_rules() -> &'static [(Regex, &'static SecretRule)] {
     })
 }
 
-/// True when `path` should be skipped entirely (lockfiles, binaries, …).
+/// Test-file suffix allowlist. Test fixtures legitimately contain
+/// credential-shaped strings; treating them like production code generates
+/// nothing but noise. Matches case-insensitively against the basename.
+const TEST_FILE_SUFFIXES: &[&str] = &[
+    "_test.rs",
+    "_tests.rs",
+    "_test.go",
+    ".test.js",
+    ".test.ts",
+    ".test.tsx",
+    ".spec.js",
+    ".spec.ts",
+    "_spec.rb",
+    "_test.py",
+    "test_secrets.rs",
+];
+
+/// File basenames that define the rule pack itself — scanning them is a
+/// self-inflicted false positive. Add new detector-defining files here.
+const RULE_DEFINITION_FILES: &[&str] = &[
+    "secrets.rs",
+    "gitleaks.toml",
+];
+
+/// True when `path` should be skipped entirely (lockfiles, binaries, test
+/// fixtures, the rule pack itself, …).
 pub fn is_path_allowlisted(path: &str) -> bool {
     // Normalize so the same logic works for repo-relative and abs paths.
     let normalized = path.replace('\\', "/");
@@ -238,6 +267,16 @@ pub fn is_path_allowlisted(path: &str) -> bool {
     let lower = buf.to_ascii_lowercase();
     if ALLOWLISTED_EXTENSIONS.iter().any(|e| lower.ends_with(e)) {
         return true;
+    }
+    // Test files: match on basename so `src/foo_test.rs` and
+    // `crates/foo/src/bar_test.go` both skip.
+    if let Some(basename) = lower.rsplit('/').next() {
+        if TEST_FILE_SUFFIXES.iter().any(|s| basename.ends_with(s)) {
+            return true;
+        }
+        if RULE_DEFINITION_FILES.iter().any(|f| basename == *f) {
+            return true;
+        }
     }
     false
 }
