@@ -422,3 +422,9 @@ _[Checkpoint: 6a07853a — edited src/repository.rs; edited MANUAL.md; edited MA
 _[Checkpoint: 6a0788cb — Beautiful PR comment: callouts + Mermaid DAG]_
 ---
 
+
+
+---
+_[Checkpoint: 6a0788de — edited src/pr.rs; edited src/pr.rs; edited src/pr.rs]_
+---
+
