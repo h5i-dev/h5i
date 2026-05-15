@@ -467,3 +467,4 @@ _[Checkpoint: 6a078c6f — edited src/pr.rs; edited src/pr.rs; edited src/pr.rs]
 
 [21:14:48] OBSERVE: read src/secrets.rs
 [21:15:18] OBSERVE: read rule.go
+[21:15:18] OBSERVE: read allowlist.go
