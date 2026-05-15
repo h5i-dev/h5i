@@ -173,3 +173,9 @@ _[Checkpoint: 6a07324f — Y-CRDT removed; resolve now does text 3-way merge]_
 _[Checkpoint: 6a0735cf — Four-noun CLI + h5i pr post landed]_
 ---
 
+
+
+---
+_[Checkpoint: 6a0735e2 — wrote src/pr.rs; edited src/main.rs; Collapsed verb surface: added capture/recall/audit/share noun groups via pre-clap a…]_
+---
+

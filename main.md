@@ -85,11 +85,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] deleted README.md; added README.md
 - [x] Y-CRDT removed; resolve now does text 3-way merge
 - [x] Four-noun CLI + h5i pr post landed
+- [x] wrote src/pr.rs; edited src/main.rs; Collapsed verb surface: added capture/recall/audit/share noun groups via pre-clap a…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-15 15:04 UTC] `doc-cve`: wrote src/pr.rs; edited src/main.rs; Collapsed verb surface: added capture/recall/audit/share noun groups via pre-clap a…
 - [2026-05-15 15:03 UTC] `doc-cve`: Four-noun CLI + h5i pr post landed
 - [2026-05-15 14:48 UTC] `doc-cve`: Y-CRDT removed; resolve now does text 3-way merge
 - [2026-05-15 14:28 UTC] `doc-cve`: deleted README.md; added README.md
