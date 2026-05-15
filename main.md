@@ -111,11 +111,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Fix deferral NOTE bodies to use snippet
 - [x] edited src/secrets.rs; edited src/secrets.rs; edited src/main.rs
 - [x] edited src/main.rs
+- [x] Production hardening II
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-15 21:54 UTC] `doc-cve`: Production hardening II
 - [2026-05-15 21:35 UTC] `doc-cve`: edited src/main.rs
 - [2026-05-15 21:32 UTC] `doc-cve`: edited src/secrets.rs; edited src/secrets.rs; edited src/main.rs
 - [2026-05-15 21:31 UTC] `doc-cve`: Fix deferral NOTE bodies to use snippet
