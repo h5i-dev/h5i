@@ -82,3 +82,4 @@ _[Checkpoint: 6a072d83 — deleted README.md; added README.md]_
 [14:38:21] ACT: edited src/error.rs
 [14:38:26] ACT: edited src/metadata.rs
 [14:38:31] ACT: edited src/metadata.rs
+[14:38:37] ACT: edited src/repository.rs
