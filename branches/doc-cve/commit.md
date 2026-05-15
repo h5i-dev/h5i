@@ -251,3 +251,16 @@ Eliminated 19 production unwrap/expect + reframed 1 panic; canonicalize input pa
 
 ---
 
+## Commit 6a07852a — 2026-05-15 20:42 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Refactored find_parser_script + parser_timeout + run_parser_subprocess to take params instead of reading env globals, enabling 17 unit tests covering: parser_timeout default/zero/garbage/valid, find_parser_script override-wins/non-dir-rejected/missing/file-named-like-script-rejected/workdir-fallback/exe-fallback, run_parser stdout/non-zero-exit/empty-output/timeout-kill/missing-script. All 465 tests pass. AGENT.md/CLAUDE.md auto-generated templates require no update (agent workflow unchanged). MANUAL.md gained Environment Variables appendix covering 10 vars.
+
+---
+
