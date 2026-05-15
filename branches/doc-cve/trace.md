@@ -404,3 +404,4 @@ _[Checkpoint: 6a07852a — Parser hardening tests + env-var docs]_
 _[Checkpoint: 6a07853a — edited src/repository.rs; edited MANUAL.md; edited MANUAL.md]_
 ---
 
+[20:45:41] OBSERVE: read src/pr.rs
