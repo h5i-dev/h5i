@@ -87,11 +87,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Four-noun CLI + h5i pr post landed
 - [x] wrote src/pr.rs; edited src/main.rs; Collapsed verb surface: added capture/recall/audit/share noun groups via pre-clap a…
 - [x] Docs + helper polish landed
+- [x] edited man/man1/h5i.1; edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-15 15:19 UTC] `doc-cve`: edited man/man1/h5i.1; edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed…
 - [2026-05-15 15:19 UTC] `doc-cve`: Docs + helper polish landed
 - [2026-05-15 15:04 UTC] `doc-cve`: wrote src/pr.rs; edited src/main.rs; Collapsed verb surface: added capture/recall/audit/share noun groups via pre-clap a…
 - [2026-05-15 15:03 UTC] `doc-cve`: Four-noun CLI + h5i pr post landed

@@ -229,3 +229,9 @@ _[Checkpoint: 6a0735e2 — wrote src/pr.rs; edited src/main.rs; Collapsed verb s
 _[Checkpoint: 6a07397f — Docs + helper polish landed]_
 ---
 
+
+
+---
+_[Checkpoint: 6a07398e — edited man/man1/h5i.1; edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed…]_
+---
+
