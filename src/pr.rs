@@ -27,6 +27,16 @@ pub const MARKER: &str = "<!-- h5i:pr-comment v1 -->";
 /// readable on a PR.
 const DAG_NODE_LIMIT: usize = 40;
 
+/// Minimum length of a consecutive mechanical-kind run before we collapse it
+/// into a summary node. Two-in-a-row is just normal work; three or more is
+/// usually `read a; read b; read c` noise worth folding.
+const DAG_COMPRESS_RUN: usize = 3;
+
+/// Hard cap on the label-text portion of a DAG node (after the `KIND ·` prefix).
+/// Wide enough that THINK/NOTE reasoning is readable; narrow enough that the
+/// graph still fits in a GitHub PR comment.
+const DAG_LABEL_BUDGET: usize = 100;
+
 // ── Detail-string parsers ────────────────────────────────────────────────────
 
 /// Parsed `CREDENTIAL_LEAK` finding row, suitable for table rendering.
@@ -152,7 +162,7 @@ fn collect_duplicate_rows(
 
 // ── Section renderers ────────────────────────────────────────────────────────
 
-fn render_secret_section(rows: &[SecretRow]) -> String {
+fn render_secret_section(rows: &[SecretRow], dup_count: usize) -> String {
     if rows.is_empty() {
         return String::new();
     }
@@ -185,11 +195,17 @@ fn render_secret_section(rows: &[SecretRow]) -> String {
             r.short_oid,
         );
     }
+    // Reassurance footer when the *other* deterministic check came back clean.
+    // We only print it when the partner check actually has zero findings — if
+    // both fired, both alerts already speak for themselves.
+    if dup_count == 0 {
+        s.push_str("\n_Other checks: ✓ no duplicate code introduced._\n");
+    }
     s.push('\n');
     s
 }
 
-fn render_duplicate_section(rows: &[DupRow]) -> String {
+fn render_duplicate_section(rows: &[DupRow], secret_count: usize) -> String {
     if rows.is_empty() {
         return String::new();
     }
@@ -224,8 +240,128 @@ fn render_duplicate_section(rows: &[DupRow]) -> String {
             );
         }
     }
+    if secret_count == 0 {
+        s.push_str("\n_Other checks: ✓ no credential leaks detected._\n");
+    }
     s.push('\n');
     s
+}
+
+/// All-clear banner emitted when every deterministic check passed. Surfaces
+/// the negative result so reviewers know h5i actually looked — silently
+/// rendering nothing looks like "no scan ran".
+fn render_checks_pass_note() -> String {
+    "> [!NOTE]\n> **h5i checks pass** — ✓ no credential leaks · ✓ no duplicate code blocks\n\n"
+        .to_string()
+}
+
+/// One node-or-summary in the rendered DAG. A summary stands in for a run of
+/// consecutive mechanical OBSERVE/ACT calls that were collapsed for readability.
+#[derive(Debug, Clone)]
+struct DagUnit {
+    /// ID actually emitted into the Mermaid graph. For singletons this is the
+    /// original `TraceNode::id`; for summaries it's `sum_<last_node_id>`.
+    id: String,
+    kind: String,
+    /// Pre-rendered label text, *without* the kind prefix or sanitization
+    /// (those happen inside [`render_dag_section`] via [`mermaid_label`]).
+    content: String,
+    /// Parent IDs in the original DAG; remapped to render-IDs at draw time.
+    parent_ids: Vec<String>,
+}
+
+/// Compresses runs of consecutive mechanical same-kind nodes (OBSERVE or ACT)
+/// of length ≥ [`DAG_COMPRESS_RUN`] into one summary node, while passing
+/// THINK/NOTE/MERGE through unchanged. Also returns a remap table so callers
+/// can rewrite edges pointing into a compressed run.
+fn compress_dag_units(visible: &[&TraceNode]) -> (Vec<DagUnit>, HashMap<String, String>) {
+    let mut units: Vec<DagUnit> = Vec::new();
+    let mut remap: HashMap<String, String> = HashMap::new();
+
+    let is_mechanical = |k: &str| matches!(k, "OBSERVE" | "ACT");
+
+    let mut i = 0;
+    while i < visible.len() {
+        let n = visible[i];
+        if is_mechanical(&n.kind) {
+            // Greedily extend a run of same-kind mechanical nodes.
+            let mut j = i + 1;
+            while j < visible.len() && visible[j].kind == n.kind {
+                j += 1;
+            }
+            let run_len = j - i;
+            if run_len >= DAG_COMPRESS_RUN {
+                let synth = format!("sum_{}", visible[j - 1].id);
+                for k in i..j {
+                    remap.insert(visible[k].id.clone(), synth.clone());
+                }
+                units.push(DagUnit {
+                    id: synth,
+                    kind: n.kind.clone(),
+                    content: summarize_mechanical_run(visible, i, j),
+                    parent_ids: visible[i].parent_ids.clone(),
+                });
+                i = j;
+                continue;
+            }
+        }
+        remap.insert(n.id.clone(), n.id.clone());
+        units.push(DagUnit {
+            id: n.id.clone(),
+            kind: n.kind.clone(),
+            content: n.content.clone(),
+            parent_ids: n.parent_ids.clone(),
+        });
+        i += 1;
+    }
+
+    (units, remap)
+}
+
+/// Builds a human-readable summary line for a compressed mechanical run.
+/// Looks like `"read 5 files: a.rs, b.rs, c.rs (+2 more)"`.
+fn summarize_mechanical_run(visible: &[&TraceNode], start: usize, end: usize) -> String {
+    let kind = visible[start].kind.as_str();
+    let verb = match kind {
+        "OBSERVE" => "read",
+        "ACT" => "edited",
+        _ => "touched",
+    };
+    let total = end - start;
+    let mut files: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for k in start..end {
+        // Hook-generated content is `"<verb> <path>"`; take the trailing token
+        // as the path. For nonstandard content (e.g. multi-word notes), fall
+        // back to the whole content trimmed.
+        let c = visible[k].content.trim();
+        // Take the last whitespace-delimited token, which for hook-generated
+        // entries is the file path.
+        let token = c.split_whitespace().next_back().unwrap_or(c).to_string();
+        if !token.is_empty() && seen.insert(token.clone()) {
+            files.push(token);
+        }
+    }
+    let unique = files.len();
+    let preview: Vec<&str> = files.iter().take(3).map(String::as_str).collect();
+    let preview_str = if unique <= 3 {
+        preview.join(", ")
+    } else {
+        format!("{} (+{} more)", preview.join(", "), unique - 3)
+    };
+    let file_plural = if unique == 1 { "" } else { "s" };
+    if unique == total {
+        // Each call hit a distinct path — flat list.
+        format!("{verb} {unique} file{file_plural}: {preview_str}")
+    } else {
+        // Same paths revisited — be honest about it.
+        let op_label = match kind {
+            "OBSERVE" => "reads",
+            "ACT" => "edits",
+            _ => "ops",
+        };
+        format!("{total} {op_label} across {unique} file{file_plural}: {preview_str}")
+    }
 }
 
 fn render_dag_section(dag: &TraceDag) -> String {
@@ -238,18 +374,23 @@ fn render_dag_section(dag: &TraceDag) -> String {
     let total = dag.nodes.len();
     let start = total.saturating_sub(DAG_NODE_LIMIT);
     let visible: Vec<&TraceNode> = dag.nodes.iter().skip(start).collect();
-    let visible_ids: std::collections::HashSet<&str> =
-        visible.iter().map(|n| n.id.as_str()).collect();
     let elided = total - visible.len();
+
+    let (units, remap) = compress_dag_units(&visible);
+    let unit_ids: std::collections::HashSet<&str> =
+        units.iter().map(|u| u.id.as_str()).collect();
 
     let mut s = String::new();
     let _ = writeln!(
         s,
-        "<details><summary><b>🧠 Reasoning DAG</b> — {} node{}{}</summary>",
+        "<details><summary><b>🧠 Reasoning DAG</b> — {} node{} \
+         ({} block{} after compression{})</summary>",
         total,
         if total == 1 { "" } else { "s" },
+        units.len(),
+        if units.len() == 1 { "" } else { "s" },
         if elided > 0 {
-            format!(" (showing latest {})", visible.len())
+            format!(", latest {} only", visible.len())
         } else {
             String::new()
         },
@@ -264,23 +405,35 @@ fn render_dag_section(dag: &TraceDag) -> String {
             if elided == 1 { "" } else { "s" }
         );
     }
-    for n in &visible {
-        let label = mermaid_label(&n.kind, &n.content);
-        let class = mermaid_class(&n.kind);
-        let _ = writeln!(s, "  {id}[\"{label}\"]:::{class}", id = mermaid_id(&n.id));
+    for u in &units {
+        let label = mermaid_label(&u.kind, &u.content);
+        let class = mermaid_class(&u.kind);
+        let _ = writeln!(s, "  {id}[\"{label}\"]:::{class}", id = mermaid_id(&u.id));
     }
-    // Edges from parent to child; only render edges where both sides survive
-    // the truncation, so we don't reference an undeclared node.
-    for n in &visible {
-        for p in &n.parent_ids {
-            if visible_ids.contains(p.as_str()) {
-                let _ = writeln!(
-                    s,
-                    "  {p} --> {c}",
-                    p = mermaid_id(p),
-                    c = mermaid_id(&n.id)
-                );
+    // Edges: remap each parent through the compression table, then drop edges
+    // where parent or child fell off the visible window OR where a node points
+    // at its own summary (which would create a self-loop after collapse).
+    let mut seen_edges: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
+    for u in &units {
+        for p in &u.parent_ids {
+            let mapped = remap.get(p).cloned().unwrap_or_else(|| p.clone());
+            if mapped == u.id {
+                continue;
             }
+            if !unit_ids.contains(mapped.as_str()) {
+                continue;
+            }
+            let key = (mapped.clone(), u.id.clone());
+            if !seen_edges.insert(key) {
+                continue;
+            }
+            let _ = writeln!(
+                s,
+                "  {p} --> {c}",
+                p = mermaid_id(&mapped),
+                c = mermaid_id(&u.id)
+            );
         }
     }
     s.push_str(
@@ -323,10 +476,9 @@ fn mermaid_class(kind: &str) -> &'static str {
 
 fn mermaid_label(kind: &str, content: &str) -> String {
     // Mermaid double-quoted labels treat `"`, `\`, `<`, and `>` specially.
-    // Newlines must become `<br/>` to avoid breaking the line. The label
-    // text is also truncated so the node renders at a sane width.
+    // Newlines collapse to a single space so the node renders one row tall.
     let oneline = content.replace('\n', " ");
-    let trimmed = truncate(&oneline, 50);
+    let trimmed = truncate(&oneline, DAG_LABEL_BUDGET);
     let safe: String = trimmed
         .chars()
         .map(|c| match c {
@@ -418,8 +570,15 @@ pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
     ));
     body.push_str("\n\n");
 
-    body.push_str(&render_secret_section(&secret_rows));
-    body.push_str(&render_duplicate_section(&dup_rows));
+    // Empty-state reassurance: when BOTH deterministic checks came back
+    // clean, emit a single all-clear NOTE. When only one fired, the
+    // section-level renderer adds a tail line about the other.
+    if secret_rows.is_empty() && dup_rows.is_empty() {
+        body.push_str(&render_checks_pass_note());
+    }
+
+    body.push_str(&render_secret_section(&secret_rows, dup_rows.len()));
+    body.push_str(&render_duplicate_section(&dup_rows, secret_rows.len()));
     body.push_str(&render_dag_section(&dag));
     body.push_str(&render_per_commit_section(&records, &by_oid, &repo));
 
@@ -806,9 +965,61 @@ mod tests {
 
     #[test]
     fn empty_sections_render_to_empty_string() {
-        assert!(render_secret_section(&[]).is_empty());
-        assert!(render_duplicate_section(&[]).is_empty());
+        assert!(render_secret_section(&[], 0).is_empty());
+        assert!(render_duplicate_section(&[], 0).is_empty());
         assert!(render_dag_section(&TraceDag::default()).is_empty());
+    }
+
+    #[test]
+    fn checks_pass_note_uses_github_note_alert() {
+        let s = render_checks_pass_note();
+        assert!(s.starts_with("> [!NOTE]"), "must use GitHub NOTE alert: {s}");
+        assert!(s.contains("h5i checks pass"));
+        assert!(s.contains("no credential leaks"));
+        assert!(s.contains("no duplicate code"));
+    }
+
+    #[test]
+    fn secret_section_adds_passing_dup_footnote_when_alone() {
+        let rows = vec![SecretRow {
+            rule_id: "X".into(),
+            description: "d".into(),
+            file: None,
+            line: 1,
+            preview: "p".into(),
+            short_oid: "abc12345".into(),
+        }];
+        let with_dups = render_secret_section(&rows, 3);
+        assert!(
+            !with_dups.contains("no duplicate code"),
+            "must not claim duplicates passed when partner check fired: {with_dups}"
+        );
+        let without_dups = render_secret_section(&rows, 0);
+        assert!(
+            without_dups.contains("✓ no duplicate code"),
+            "must surface that dup check came back clean: {without_dups}"
+        );
+    }
+
+    #[test]
+    fn duplicate_section_adds_passing_secret_footnote_when_alone() {
+        let rows = vec![DupRow {
+            file: "src/a.rs".into(),
+            block_len: 8,
+            first_line: 1,
+            repeat_line: 50,
+            short_oid: "abc12345".into(),
+        }];
+        let with_secrets = render_duplicate_section(&rows, 2);
+        assert!(
+            !with_secrets.contains("no credential leaks"),
+            "must not claim secrets passed when partner check fired: {with_secrets}"
+        );
+        let without_secrets = render_duplicate_section(&rows, 0);
+        assert!(
+            without_secrets.contains("✓ no credential leaks"),
+            "must surface that secret check came back clean: {without_secrets}"
+        );
     }
 
     #[test]
@@ -821,7 +1032,7 @@ mod tests {
             preview: "AKIA…".into(),
             short_oid: "a3f8c12e".into(),
         }];
-        let s = render_secret_section(&rows);
+        let s = render_secret_section(&rows, 0);
         assert!(s.contains("> [!CAUTION]"), "must use GitHub CAUTION alert");
         assert!(s.contains("credential leak"));
         assert!(s.contains("| `AWS_ACCESS_KEY_ID` | `src/cfg.py` | 42 | `AKIA…` | `a3f8c12e` |"));
@@ -837,7 +1048,7 @@ mod tests {
             preview: "p".into(),
             short_oid: "abc12345".into(),
         }];
-        let s = render_secret_section(&one);
+        let s = render_secret_section(&one, 0);
         assert!(s.contains("1 credential leak across 1 commit"), "got: {s}");
 
         let two = vec![
@@ -858,7 +1069,7 @@ mod tests {
                 short_oid: "def67890".into(),
             },
         ];
-        let s = render_secret_section(&two);
+        let s = render_secret_section(&two, 0);
         assert!(s.contains("2 credential leaks across 2 commits"), "got: {s}");
     }
 
@@ -880,7 +1091,7 @@ mod tests {
                 short_oid: "bbbbbbbb".into(),
             },
         ];
-        let s = render_duplicate_section(&rows);
+        let s = render_duplicate_section(&rows, 0);
         assert!(s.contains("> [!WARNING]"));
         assert!(s.contains("Duplicate code introduced in 2 files"));
         assert!(s.contains("`src/a.rs`"));
@@ -899,6 +1110,68 @@ mod tests {
             content: content.to_string(),
             timestamp: "2026-05-15T10:00:00Z".to_string(),
         }
+    }
+
+    #[test]
+    fn compress_run_collapses_three_or_more_same_kind_mechanical() {
+        let n1 = make_node("aa", "OBSERVE", "read src/a.rs", &[]);
+        let n2 = make_node("bb", "OBSERVE", "read src/b.rs", &["aa"]);
+        let n3 = make_node("cc", "OBSERVE", "read src/c.rs", &["bb"]);
+        let n4 = make_node("dd", "THINK", "decide", &["cc"]);
+        let visible: Vec<&TraceNode> = vec![&n1, &n2, &n3, &n4];
+
+        let (units, remap) = compress_dag_units(&visible);
+        assert_eq!(units.len(), 2, "3 OBSERVE → 1 summary + 1 THINK");
+        assert!(units[0].id.starts_with("sum_"));
+        assert_eq!(units[0].kind, "OBSERVE");
+        assert!(units[0].content.contains("read 3 files"));
+        assert!(units[0].content.contains("src/a.rs"));
+        assert!(units[0].content.contains("src/b.rs"));
+        assert!(units[0].content.contains("src/c.rs"));
+        // THINK must survive as itself.
+        assert_eq!(units[1].id, "dd");
+        // Remap: every collapsed node's id now points at the summary so edges
+        // from THINK referring to "cc" get rewritten to the summary id.
+        assert_eq!(remap.get("aa"), remap.get("bb"));
+        assert_eq!(remap.get("bb"), remap.get("cc"));
+        assert!(remap.get("aa").unwrap().starts_with("sum_"));
+    }
+
+    #[test]
+    fn compress_run_keeps_runs_of_two_uncompressed() {
+        let n1 = make_node("aa", "OBSERVE", "read src/a.rs", &[]);
+        let n2 = make_node("bb", "OBSERVE", "read src/b.rs", &["aa"]);
+        let visible: Vec<&TraceNode> = vec![&n1, &n2];
+        let (units, _) = compress_dag_units(&visible);
+        assert_eq!(units.len(), 2, "2 < DAG_COMPRESS_RUN — both stay singular");
+    }
+
+    #[test]
+    fn compress_run_does_not_merge_across_kinds() {
+        let n1 = make_node("aa", "OBSERVE", "read src/a.rs", &[]);
+        let n2 = make_node("bb", "OBSERVE", "read src/b.rs", &["aa"]);
+        let n3 = make_node("cc", "ACT", "edited src/c.rs", &["bb"]);
+        let n4 = make_node("dd", "ACT", "edited src/d.rs", &["cc"]);
+        let visible: Vec<&TraceNode> = vec![&n1, &n2, &n3, &n4];
+        let (units, _) = compress_dag_units(&visible);
+        // Neither run reaches 3; nothing collapses.
+        assert_eq!(units.len(), 4);
+    }
+
+    #[test]
+    fn compress_run_summarizes_many_unique_files_as_plus_more() {
+        let nodes: Vec<TraceNode> = (0..7)
+            .map(|i| make_node(&format!("n{i}"), "ACT", &format!("edited f{i}.rs"), &[]))
+            .collect();
+        let visible: Vec<&TraceNode> = nodes.iter().collect();
+        let (units, _) = compress_dag_units(&visible);
+        assert_eq!(units.len(), 1);
+        assert!(
+            units[0].content.contains("edited 7 files"),
+            "got: {}",
+            units[0].content
+        );
+        assert!(units[0].content.contains("(+4 more)"));
     }
 
     #[test]
