@@ -334,3 +334,4 @@ _[Checkpoint: 6a077c60 — edited man/man1/h5i.1; edited src/secrets.rs; edited 
 [20:13:21] OBSERVE: read src/ctx.rs
 [20:13:22] OBSERVE: read src/injection.rs
 [20:13:22] OBSERVE: read src/secrets.rs
+[20:13:40] OBSERVE: read src/metadata.rs
