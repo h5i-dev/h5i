@@ -140,3 +140,4 @@ _[Checkpoint: 6a07324f — Y-CRDT removed; resolve now does text 3-way merge]_
 [14:52:03] ACT: edited src/main.rs
 [14:52:12] ACT: edited src/main.rs
 [14:52:23] ACT: edited src/main.rs
+[14:52:48] ACT: Stop hook now auto-derives THINK from key_decisions and NOTE from omissions in the Claude session JSONL, deduping against trace.md. PostToolUse already handles OBSERVE/ACT. Stripped manual h5i context trace --kind ... instructions from CLAUDE.md and AGENTS.md generators. Hook setup output updated. Build green.
