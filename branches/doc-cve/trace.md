@@ -512,3 +512,4 @@ _[Checkpoint: 6a0790a6 — Fix deferral NOTE bodies to use snippet]_
 ---
 
 [21:32:05] THINK: **What "DEFERRAL: for now" actually means:** when Claude said something like *"…I'll skip the integration tests for now…"* in its reasoning, h5i's session-log analyzer matched the `"for now"` phrase from a deferral table (`src/session_log.
+[21:32:05] THINK: ..repository.rs is huge but I'll skip the integration test for now since the test harness isn't wired up.
