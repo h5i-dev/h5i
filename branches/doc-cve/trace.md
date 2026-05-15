@@ -428,3 +428,4 @@ _[Checkpoint: 6a0788cb — Beautiful PR comment: callouts + Mermaid DAG]_
 _[Checkpoint: 6a0788de — edited src/pr.rs; edited src/pr.rs; edited src/pr.rs]_
 ---
 
+[21:04:47] OBSERVE: read src/pr.rs
