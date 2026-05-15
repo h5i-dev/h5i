@@ -584,3 +584,4 @@ _[Checkpoint: 6a07978d — wrote .github/workflows/test.yaml; edited .github/wor
 [23:30:38] NOTE: Assessment evidence: h5i cargo test passed; /home/koukyosyumei/Dev/cli go test ./... failed in cmd/entire/cli and cmd/entire/cli/review despite much broader CI/test surface.
 [23:30:44] OBSERVE: listed files under .
 [23:30:44] OBSERVE: listed files under ../cli
+[23:30:44] OBSERVE: listed files under .
