@@ -95,3 +95,16 @@ capture/recall/audit/share are first-class subcommands. Legacy verbs hidden + de
 
 ---
 
+## Commit 6a07397f — 2026-05-15 15:19 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+README/MANUAL/man reflect new noun-group CLI. Helper text shows aligned tables + examples + did-you-mean. Stop-hook auto-trace + drop-CRDT also documented.
+
+---
+
