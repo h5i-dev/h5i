@@ -566,3 +566,4 @@ _[Checkpoint: 6a0791a5 — edited src/main.rs]_
 _[Checkpoint: 6a07962f — Production hardening II]_
 ---
 
+[21:55:31] THINK: For this round I'll drop fmt enforcement and keep just clippy + build + test (which already gives us 80% of the polish value).
