@@ -342,3 +342,16 @@ write CVE blog posts on doc-cve git branch
 
 ---
 
+## Commit 6a078e6e — 2026-05-15 21:21 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Added keyword pre-filter (lowercased per-rule substring anchors) to SecretRule, mirroring gitleaks's Keywords field; scan_lines lowercases the line once and shares it with the stoplist. Empty keywords means catch-all (used by GENERIC_HIGH_ENTROPY). Backfilled keywords on all 10 existing prefix-anchored rules. Added 6 connection-string rules (POSTGRES, MYSQL, MONGODB, REDIS, JDBC, HTTP_BASIC_AUTH_URL) each capturing the password group with entropy gate >= 2.0 or 2.5. +15 unit tests (keyword pre-filter mechanics, 8 positive matches across new rules including mongodb+srv and redis-with-empty-user, entropy rejection, stoplist + path allowlist interaction). 432 lib tests pass.
+
+---
+
