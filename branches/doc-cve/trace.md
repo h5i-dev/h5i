@@ -518,3 +518,4 @@ _[Checkpoint: 6a0790a6 — Fix deferral NOTE bodies to use snippet]_
 [21:32:05] NOTE: DEFERRAL (~/Dev/h5i/src/secrets.rs): separate pr
 [21:32:05] NOTE: DEFERRAL (~/Dev/h5i/src/secrets.rs): future work
 [21:32:05] NOTE: DEFERRAL (~/Dev/h5i/src/secrets.rs): deferred
+[21:32:05] NOTE: DEFERRAL (~/Dev/h5i/src/main.rs): i'll skip
