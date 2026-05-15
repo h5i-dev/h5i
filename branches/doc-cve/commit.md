@@ -69,3 +69,16 @@ src/{session,delta_store,watcher}.rs deleted. yrs and notify removed from Cargo.
 
 ---
 
+## Commit 6a0735cf — 2026-05-15 15:03 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+src/{session,delta_store,watcher}.rs deleted. yrs and notify removed from Cargo.toml. H5iCommitRecord.crdt_states removed. server.rs has_crdt badge removed. cargo test --lib targeted tests pass.
+
+### This Commit's Contribution
+capture/recall/audit/share are first-class subcommands. Legacy verbs hidden + deprecation-hinted. src/pr.rs renders Markdown body with prompt/model/decisions/test/review-flag per AI commit. Upsert is sticky via HTML MARKER and gh api PATCH. Build + test green.
+
+---
+

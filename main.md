@@ -84,11 +84,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Rewrote README for stronger GitHub star conversion and clearer AI provenance positioning
 - [x] deleted README.md; added README.md
 - [x] Y-CRDT removed; resolve now does text 3-way merge
+- [x] Four-noun CLI + h5i pr post landed
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-15 15:03 UTC] `doc-cve`: Four-noun CLI + h5i pr post landed
 - [2026-05-15 14:48 UTC] `doc-cve`: Y-CRDT removed; resolve now does text 3-way merge
 - [2026-05-15 14:28 UTC] `doc-cve`: deleted README.md; added README.md
 - [2026-05-07 19:33 UTC] `doc-cve`: Rewrote README for stronger GitHub star conversion and clearer AI provenance positioning
