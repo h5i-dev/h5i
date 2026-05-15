@@ -394,3 +394,16 @@ main.rs:1320 swap omission.phrase for omission.snippet (with fallback). Future S
 
 ---
 
+## Commit 6a0790d5 — 2026-05-15 21:32 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+main.rs:1320 swap omission.phrase for omission.snippet (with fallback). Future Stop-hook runs write NOTEs like 'DEFERRAL: ...I'll skip integration tests for now since...' instead of 'DEFERRAL: for now'. Dedup key also uses snippet so the same passage hitting two phrase-matches collapses to one NOTE. Old DAG entries unaffected (cosmetic only).
+
+### This Commit's Contribution
+
+
+---
+
