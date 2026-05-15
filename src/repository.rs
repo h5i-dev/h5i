@@ -2315,8 +2315,22 @@ impl H5iRepository {
         limit: usize,
         min_score: f32,
     ) -> Result<Vec<crate::review::ReviewPoint>, H5iError> {
-        use crate::review::{ReviewPoint, ReviewTrigger};
+        use crate::review::{ReviewPoint, ReviewTrigger, Tier};
         use std::collections::HashSet;
+
+        // Tier helpers — keep call sites readable.
+        let quality = |rule_id: &str, weight: f32, detail: String| ReviewTrigger {
+            rule_id: rule_id.to_string(),
+            weight,
+            detail,
+            tier: Tier::Quality,
+        };
+        let shape = |rule_id: &str, weight: f32, detail: String| ReviewTrigger {
+            rule_id: rule_id.to_string(),
+            weight,
+            detail,
+            tier: Tier::Shape,
+        };
 
         let mut revwalk = self.git_repo.revwalk()?;
         revwalk.push_head()?;
@@ -2382,66 +2396,42 @@ impl H5iRepository {
                 }
             }
 
-            // R1 — LARGE_DIFF
+            // R1 — LARGE_DIFF [Shape]
             if lines_changed > 500 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "LARGE_DIFF".into(),
-                    weight: 0.40,
-                    detail: format!("{lines_changed} lines changed (>500)"),
-                });
+                triggers.push(shape("LARGE_DIFF", 0.40,
+                    format!("{lines_changed} lines changed (>500)")));
             } else if lines_changed > 200 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "LARGE_DIFF".into(),
-                    weight: 0.25,
-                    detail: format!("{lines_changed} lines changed (>200)"),
-                });
+                triggers.push(shape("LARGE_DIFF", 0.25,
+                    format!("{lines_changed} lines changed (>200)")));
             } else if lines_changed > 50 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "LARGE_DIFF".into(),
-                    weight: 0.10,
-                    detail: format!("{lines_changed} lines changed (>50)"),
-                });
+                triggers.push(shape("LARGE_DIFF", 0.10,
+                    format!("{lines_changed} lines changed (>50)")));
             }
 
-            // R2 — WIDE_IMPACT
+            // R2 — WIDE_IMPACT [Shape]
             if files_changed > 20 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "WIDE_IMPACT".into(),
-                    weight: 0.35,
-                    detail: format!("{files_changed} files changed (>20)"),
-                });
+                triggers.push(shape("WIDE_IMPACT", 0.35,
+                    format!("{files_changed} files changed (>20)")));
             } else if files_changed > 10 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "WIDE_IMPACT".into(),
-                    weight: 0.20,
-                    detail: format!("{files_changed} files changed (>10)"),
-                });
+                triggers.push(shape("WIDE_IMPACT", 0.20,
+                    format!("{files_changed} files changed (>10)")));
             } else if files_changed > 5 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "WIDE_IMPACT".into(),
-                    weight: 0.10,
-                    detail: format!("{files_changed} files changed (>5)"),
-                });
+                triggers.push(shape("WIDE_IMPACT", 0.10,
+                    format!("{files_changed} files changed (>5)")));
             }
 
-            // R3 — CROSS_CUTTING: distinct top-level directory components
+            // R3 — CROSS_CUTTING: distinct top-level directory components [Shape]
             let distinct_dirs: HashSet<&str> = file_paths
                 .iter()
                 .filter_map(|p| p.split('/').next())
                 .collect();
             let dir_count = distinct_dirs.len();
             if dir_count > 5 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "CROSS_CUTTING".into(),
-                    weight: 0.25,
-                    detail: format!("changes span {dir_count} top-level directories (>5)"),
-                });
+                triggers.push(shape("CROSS_CUTTING", 0.25,
+                    format!("changes span {dir_count} top-level directories (>5)")));
             } else if dir_count > 3 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "CROSS_CUTTING".into(),
-                    weight: 0.15,
-                    detail: format!("changes span {dir_count} top-level directories (>3)"),
-                });
+                triggers.push(shape("CROSS_CUTTING", 0.15,
+                    format!("changes span {dir_count} top-level directories (>3)")));
             }
 
             // R4 — TEST_REGRESSION: compare metrics to parent commit
@@ -2459,131 +2449,106 @@ impl H5iRepository {
                         let is_passing = current_tm.is_passing();
 
                         if was_passing && !is_passing {
-                            triggers.push(ReviewTrigger {
-                                rule_id: "TEST_REGRESSION".into(),
-                                weight: 0.50,
-                                detail: "tests were passing but now failing".into(),
-                            });
+                            triggers.push(quality("TEST_REGRESSION", 0.50,
+                                "tests were passing but now failing".into()));
                         } else if current_tm.failed > prev_tm.failed {
                             let new_fails = current_tm.failed - prev_tm.failed;
-                            triggers.push(ReviewTrigger {
-                                rule_id: "TEST_REGRESSION".into(),
-                                weight: 0.40,
-                                detail: format!("{new_fails} new test failure(s) since parent"),
-                            });
+                            triggers.push(quality("TEST_REGRESSION", 0.40,
+                                format!("{new_fails} new test failure(s) since parent")));
                         }
 
                         if prev_tm.coverage > 0.0 && current_tm.coverage > 0.0 {
                             let drop = prev_tm.coverage - current_tm.coverage;
                             if drop > 10.0 {
-                                triggers.push(ReviewTrigger {
-                                    rule_id: "TEST_REGRESSION".into(),
-                                    weight: 0.35,
-                                    detail: format!("coverage dropped {drop:.1}% (>10%)"),
-                                });
+                                triggers.push(quality("TEST_REGRESSION", 0.35,
+                                    format!("coverage dropped {drop:.1}% (>10%)")));
                             } else if drop > 5.0 {
-                                triggers.push(ReviewTrigger {
-                                    rule_id: "TEST_REGRESSION".into(),
-                                    weight: 0.20,
-                                    detail: format!("coverage dropped {drop:.1}% (>5%)"),
-                                });
+                                triggers.push(quality("TEST_REGRESSION", 0.20,
+                                    format!("coverage dropped {drop:.1}% (>5%)")));
                             }
                         }
                     }
                 }
             }
 
-            // R5 — UNTESTED_CHANGE: significant diff without any test metrics
+            // R5 — UNTESTED_CHANGE: significant diff to a project that has tests [Shape]
+            //
+            // Refined from the previous "any large diff without metrics" rule:
+            // we only fire when (a) the diff is non-trivial, (b) no test metrics
+            // were recorded, AND (c) the project actually has tests (so we don't
+            // flag every doc-only commit in a non-tested repo).
             if lines_changed > 100 {
                 let has_tests = record
                     .as_ref()
                     .map(|r| r.test_metrics.is_some())
                     .unwrap_or(false);
-                if !has_tests {
-                    triggers.push(ReviewTrigger {
-                        rule_id: "UNTESTED_CHANGE".into(),
-                        weight: 0.20,
-                        detail: format!("{lines_changed} lines changed with no test metrics recorded"),
-                    });
+                if !has_tests && project_has_tests(&self.git_repo) {
+                    triggers.push(shape("UNTESTED_CHANGE", 0.20,
+                        format!("{lines_changed} lines changed with no test metrics recorded")));
                 }
             }
 
-            // R6 — AI_NO_PROMPT: AI commit without a recorded prompt
+            // R6 — AI_NO_PROMPT: AI commit without a recorded prompt [Quality]
+            // (real provenance gap — high signal for "this commit's intent is unknowable")
             if let Some(ref rec) = record {
                 if let Some(ref ai) = rec.ai_metadata {
                     if ai.prompt.trim().is_empty() {
-                        triggers.push(ReviewTrigger {
-                            rule_id: "AI_NO_PROMPT".into(),
-                            weight: 0.15,
-                            detail: "AI-generated commit with no prompt recorded (provenance gap)".into(),
-                        });
+                        triggers.push(quality("AI_NO_PROMPT", 0.15,
+                            "AI-generated commit with no prompt recorded (provenance gap)".into()));
                     }
                 }
             }
 
-            // R7 — BURST_AFTER_GAP: large time gap between this commit and its parent
+            // R7 — BURST_AFTER_GAP: large time gap between this commit and its parent [Shape]
             if commit.parent_count() > 0 {
                 if let Ok(parent_commit) = commit.parent(0) {
                     let gap_secs = commit.time().seconds() - parent_commit.time().seconds();
                     if gap_secs > 7 * 24 * 3600 {
                         let days = gap_secs / (24 * 3600);
-                        triggers.push(ReviewTrigger {
-                            rule_id: "BURST_AFTER_GAP".into(),
-                            weight: 0.25,
-                            detail: format!("first commit after a {days}-day gap (>7 days)"),
-                        });
+                        triggers.push(shape("BURST_AFTER_GAP", 0.25,
+                            format!("first commit after a {days}-day gap (>7 days)")));
                     } else if gap_secs > 3 * 24 * 3600 {
                         let days = gap_secs / (24 * 3600);
-                        triggers.push(ReviewTrigger {
-                            rule_id: "BURST_AFTER_GAP".into(),
-                            weight: 0.15,
-                            detail: format!("first commit after a {days}-day gap (>3 days)"),
-                        });
+                        triggers.push(shape("BURST_AFTER_GAP", 0.15,
+                            format!("first commit after a {days}-day gap (>3 days)")));
                     }
                 }
             }
 
-            // R8 — POLYGLOT_CHANGE: many distinct file extensions
+            // R8 — POLYGLOT_CHANGE: many distinct file extensions [Shape]
             let extensions: HashSet<&str> = file_paths
                 .iter()
                 .filter_map(|p| std::path::Path::new(p).extension()?.to_str())
                 .collect();
             if extensions.len() > 4 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "POLYGLOT_CHANGE".into(),
-                    weight: 0.15,
-                    detail: format!(
+                triggers.push(shape("POLYGLOT_CHANGE", 0.15,
+                    format!(
                         "{} distinct file type(s) changed (harder to review holistically)",
                         extensions.len()
-                    ),
-                });
+                    )));
             }
 
-            // R9 — BINARY_FILE: opaque binary changes
+            // R9 — BINARY_FILE: opaque binary changes [Quality]
+            // (you can't review binary diffs — agent uploads need a human look)
             if binary_count > 0 {
-                triggers.push(ReviewTrigger {
-                    rule_id: "BINARY_FILE".into(),
-                    weight: 0.20,
-                    detail: format!("{binary_count} binary file(s) modified"),
-                });
+                triggers.push(quality("BINARY_FILE", 0.20,
+                    format!("{binary_count} binary file(s) modified")));
             }
 
-            // R10 — MASS_DELETION: bulk removal without matching insertions
+            // R10 — MASS_DELETION: bulk removal without matching insertions [Quality]
+            // (high-risk: agents occasionally delete more than asked)
             if deletions > 100 && lines_changed > 0 {
                 let deletion_ratio = deletions as f32 / lines_changed as f32;
                 if deletion_ratio > 0.80 {
-                    triggers.push(ReviewTrigger {
-                        rule_id: "MASS_DELETION".into(),
-                        weight: 0.15,
-                        detail: format!(
+                    triggers.push(quality("MASS_DELETION", 0.15,
+                        format!(
                             "{deletions} lines deleted ({:.0}% of total changes)",
                             deletion_ratio * 100.0
-                        ),
-                    });
+                        )));
                 }
             }
 
-            // R11 — BLIND_EDIT: files edited without a prior Read in the session
+            // R11 — BLIND_EDIT: files edited without a prior Read in the session [Quality]
             if let Ok(Some(analysis)) =
                 crate::session_log::load_analysis(&self.h5i_root, &oid.to_string())
             {
@@ -2601,13 +2566,39 @@ impl H5iRepository {
                     } else {
                         String::new()
                     };
-                    triggers.push(ReviewTrigger {
-                        rule_id: "BLIND_EDIT".into(),
-                        weight: (0.10 * count as f32).min(0.30),
-                        detail: format!(
+                    triggers.push(quality("BLIND_EDIT", (0.10 * count as f32).min(0.30),
+                        format!(
                             "{count} file(s) edited without a prior Read: {examples}{suffix}"
-                        ),
-                    });
+                        )));
+                }
+            }
+
+            // R12 — Integrity rule findings from `rules.rs` against this commit's diff [Quality]
+            // Surfaces CREDENTIAL_LEAK, CODE_EXECUTION, SENSITIVE_FILE_MODIFIED,
+            // CI_CD_MODIFIED, PERMISSION_CHANGE, DUPLICATED_CODE, … into the
+            // review tier so the PR comment 🚩 sees them too.
+            //
+            // We deliberately drop:
+            //   - Info-severity findings (CONFIG_FILE_MODIFIED, LOCKFILE_MODIFIED,
+            //     BINARY_FILE_CHANGED): informational and prone to firing on
+            //     every routine commit.
+            //   - Rule IDs that already have a shape-tier counterpart in
+            //     suggest_review_points (LARGE_DIFF): would double-count.
+            if let Ok(integ) = self.verify_commit_integrity(oid) {
+                use crate::metadata::Severity;
+                const SKIP_RULE_IDS: &[&str] =
+                    &["LARGE_DIFF", "BINARY_FILE_CHANGED", "CONFIG_FILE_MODIFIED",
+                      "LOCKFILE_MODIFIED"];
+                for f in integ.findings {
+                    if SKIP_RULE_IDS.contains(&f.rule_id.as_str()) {
+                        continue;
+                    }
+                    let weight = match f.severity {
+                        Severity::Violation => 0.40,
+                        Severity::Warning => 0.20,
+                        Severity::Info => continue, // never escalate Info to Quality
+                    };
+                    triggers.push(quality(&f.rule_id, weight, f.detail));
                 }
             }
 
@@ -2615,6 +2606,18 @@ impl H5iRepository {
             if triggers.is_empty() {
                 continue;
             }
+            let quality_score: f32 = triggers
+                .iter()
+                .filter(|t| matches!(t.tier, Tier::Quality))
+                .map(|t| t.weight)
+                .sum::<f32>()
+                .min(1.0);
+            let shape_score: f32 = triggers
+                .iter()
+                .filter(|t| matches!(t.tier, Tier::Shape))
+                .map(|t| t.weight)
+                .sum::<f32>()
+                .min(1.0);
             let score: f32 = triggers.iter().map(|t| t.weight).sum::<f32>().min(1.0);
             if score >= min_score {
                 results.push(ReviewPoint {
@@ -2624,15 +2627,58 @@ impl H5iRepository {
                     author,
                     timestamp,
                     score,
+                    quality_score,
+                    shape_score,
                     triggers,
                 });
             }
         }
 
-        // Sort highest priority first
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        // Sort by quality_score first (real risk), then by total score as
+        // a tiebreaker for commits with equal-quality signals.
+        results.sort_by(|a, b| {
+            b.quality_score
+                .partial_cmp(&a.quality_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
         Ok(results)
     }
+}
+
+// ── Test-presence heuristic ───────────────────────────────────────────────────
+
+/// Cheap heuristic: does this repo appear to have tests at all?
+///
+/// Used by `UNTESTED_CHANGE`: we should not flag every doc-only commit in a
+/// repo that has no tests in the first place. Looks for any of:
+///   - a `tests/` directory at the repo root
+///   - a `test/` directory at the repo root
+///   - a top-level file whose name contains `test` and has a code extension
+///   - Cargo-style `#[test]` / pytest `def test_` files anywhere in `src/`
+///
+/// All checks are filesystem-only, no shelling out.
+fn project_has_tests(repo: &Repository) -> bool {
+    let Some(workdir) = repo.workdir() else {
+        return false;
+    };
+    if workdir.join("tests").is_dir() || workdir.join("test").is_dir() {
+        return true;
+    }
+    // Look for a top-level entry whose name contains "test".
+    if let Ok(entries) = std::fs::read_dir(workdir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            if name.contains("test") && !name.starts_with('.') {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 // ── Artifact path filter ──────────────────────────────────────────────────────

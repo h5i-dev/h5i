@@ -83,6 +83,16 @@ for the verb table with runnable examples and the corresponding MCP tool names.
 .BR compliance ,
 .BR policy ,
 .BR vibe .
+.IP "" 4
+Rules split into
+.B Quality
+(high-precision: credential leak, code execution, blind edit, sensitive-file
+edit, CI/CD edit, permission change, test regression, duplicated code, mass
+deletion, binary file, missing AI prompt) and
+.B Shape
+(informational: large diff, wide impact, cross-cutting, polyglot, burst after
+gap, untested change). The PR-comment 🚩 fires only on Quality score; Shape
+signals appear as supplementary context.
 .IP \(bu 2
 .B h5i share
 \(em publish:

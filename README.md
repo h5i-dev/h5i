@@ -40,7 +40,7 @@ cargo install --git https://github.com/Koukyosyumei/h5i h5i-core
 - **See the prompt behind a commit.** `h5i capture commit` attaches agent, model, prompt, token usage, test result, and reasoning notes to Git history.
 - **Resume long AI tasks without amnesia.** `h5i recall context` restores goals, milestones, OBSERVE / THINK / ACT traces, branch decisions, and open TODOs at the start of the next session. **Hooks derive the trace from your transcript — the agent never types `h5i context trace --kind …` by hand.**
 - **Stop re-reading the whole repo.** `h5i capture claim` records content-addressed facts that auto-invalidate when their evidence files change. In a controlled N=10 experiment, claims cut cache-read tokens by **68.6%**.
-- **Review AI code where risk is highest.** `h5i audit review` ranks commits by uncertainty, blind edits, churn, and scope.
+- **Review AI code where risk is highest — without alert fatigue.** `h5i audit review` separates **Quality** signals (credential leaks via a 10-rule regex pack inspired by gitleaks, code-execution sinks, blind edits, test regressions, duplicated code, …) from **Shape** signals (large diff, wide impact, polyglot) and only flags commits on a PR when a real Quality signal fires. Shape rules are surfaced as informational context, never the sole reason for a 🚩.
 - **Surface provenance on the PR.** `h5i share pr post` upserts a sticky GitHub PR comment with prompt + model + decisions + test metrics + review flags per AI commit — reviewers see the context exactly where they're already looking.
 - **Audit inherited repos in seconds.** `h5i audit vibe` reports AI footprint, fully AI-written directories, leaked-token signals, and prompt-injection hits.
 - **Stay in Git.** h5i metadata is stored as first-class Git objects under `refs/h5i/*`, not in a SaaS silo.
@@ -203,6 +203,11 @@ Find commits that need human attention:
 ```bash
 h5i audit review --limit 50
 ```
+
+Each commit gets two scores:
+
+- **Quality score** — high-precision rules: `CREDENTIAL_LEAK` (10-rule regex pack covering AWS, GCP, GitHub, Slack, Stripe, Anthropic, OpenAI, JWT, PEM keys, plus an entropy-gated generic catch-all with a global path allowlist for lockfiles/vendor/binaries/fixtures), `CODE_EXECUTION`, `BLIND_EDIT`, `CI_CD_MODIFIED`, `PERMISSION_CHANGE`, `SENSITIVE_FILE_MODIFIED`, `TEST_REGRESSION`, `DUPLICATED_CODE`, `MASS_DELETION`, `BINARY_FILE`, `AI_NO_PROMPT`. The PR comment 🚩 fires only on this score.
+- **Shape score** — informational: `LARGE_DIFF`, `WIDE_IMPACT`, `CROSS_CUTTING`, `BURST_AFTER_GAP`, `POLYGLOT_CHANGE`, `UNTESTED_CHANGE`. Shown as supporting context when a Quality signal fires; never the sole reason for a flag.
 
 Scan reasoning traces for prompt-injection patterns:
 

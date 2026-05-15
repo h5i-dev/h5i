@@ -28,6 +28,7 @@ pub mod rule_id {
     pub const PERMISSION_CHANGE: &str = "PERMISSION_CHANGE";
     pub const BINARY_FILE_CHANGED: &str = "BINARY_FILE_CHANGED";
     pub const CONFIG_FILE_MODIFIED: &str = "CONFIG_FILE_MODIFIED";
+    pub const DUPLICATED_CODE: &str = "DUPLICATED_CODE";
 }
 
 // ── Diff context ──────────────────────────────────────────────────────────────
@@ -36,6 +37,9 @@ pub mod rule_id {
 pub struct ChangedFile {
     pub path: String,
     pub is_binary: bool,
+    /// Lines added to this specific file (the `+` lines, stripped of the
+    /// leading `+`). Populated by [`DiffContext::from_diff`].
+    pub added_lines: Vec<String>,
 }
 
 /// All data a rule needs about the staged diff, computed once and shared.
@@ -73,16 +77,38 @@ impl DiffContext {
             changed_files.push(ChangedFile {
                 path,
                 is_binary: delta.new_file().is_binary() || delta.old_file().is_binary(),
+                added_lines: Vec::new(),
             });
         }
 
-        diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        // Build a path → index map so we can attribute per-line content to
+        // the right ChangedFile during `diff.print`.
+        let mut path_to_idx: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::with_capacity(changed_files.len());
+        for (i, cf) in changed_files.iter().enumerate() {
+            path_to_idx.insert(cf.path.clone(), i);
+        }
+
+        diff.print(git2::DiffFormat::Patch, |delta, _hunk, line| {
             let content = std::str::from_utf8(line.content())
                 .unwrap_or("")
                 .trim_end_matches('\n')
                 .to_string();
             match line.origin() {
-                '+' => added_lines.push(content),
+                '+' => {
+                    // Attribute to the specific file when we can identify it.
+                    let path_opt = delta
+                        .new_file()
+                        .path()
+                        .or_else(|| delta.old_file().path())
+                        .and_then(|p| p.to_str());
+                    if let Some(path) = path_opt {
+                        if let Some(&idx) = path_to_idx.get(path) {
+                            changed_files[idx].added_lines.push(content.clone());
+                        }
+                    }
+                    added_lines.push(content);
+                }
                 '-' => removed_lines.push(content),
                 _ => {}
             }
@@ -118,6 +144,7 @@ pub fn run_all_rules(ctx: &DiffContext) -> Vec<RuleFinding> {
     findings.extend(check_permission_change(ctx));
     findings.extend(check_binary_file_changed(ctx));
     findings.extend(check_config_file_modified(ctx));
+    findings.extend(check_duplicated_code(ctx));
     findings
 }
 
@@ -125,71 +152,71 @@ pub fn run_all_rules(ctx: &DiffContext) -> Vec<RuleFinding> {
 
 /// CREDENTIAL_LEAK — Violation
 ///
-/// Fires when an added line contains a credential keyword (e.g. `api_key`,
-/// `password`) together with an assignment operator and a quoted string value.
-/// Also catches private-key PEM headers directly.
+/// Backed by [`crate::secrets`]: a regex pack covering AWS, GCP, GitHub,
+/// Slack, Stripe, Anthropic, OpenAI, JWT, and PEM-header credentials, plus
+/// an entropy-gated generic catch-all. Lockfiles, vendor trees, font /
+/// image binaries, and well-known test-fixture directories are skipped at
+/// the path level. Per-line placeholder text (`your-token-here`, `EXAMPLE`,
+/// `${ENV_VAR}`, …) is suppressed before regex matching.
 ///
-/// Logic: keyword ∧ assignment character ∧ quoted string ∧ line length > 20.
-/// Length threshold cuts false positives on short placeholder lines.
+/// One finding is emitted per matched line, with the matched value redacted
+/// to its first 4 characters so the report can be safely surfaced in a PR
+/// comment without leaking the secret itself.
 fn check_credential_leak(ctx: &DiffContext) -> Vec<RuleFinding> {
-    const CRED_KEYWORDS: &[&str] = &[
-        "api_key",
-        "apikey",
-        "api-key",
-        "secret_key",
-        "secretkey",
-        "secret-key",
-        "access_token",
-        "accesstoken",
-        "auth_token",
-        "authtoken",
-        "password",
-        "passwd",
-        "private_key",
-        "client_secret",
-    ];
-    const PEM_HEADERS: &[&str] = &[
-        "BEGIN RSA PRIVATE KEY",
-        "BEGIN PRIVATE KEY",
-        "BEGIN EC PRIVATE KEY",
-        "BEGIN OPENSSH PRIVATE KEY",
-        "BEGIN PGP PRIVATE KEY",
-    ];
-
     let mut findings = Vec::new();
-    for (i, line) in ctx.added_lines.iter().enumerate() {
-        let lower = line.to_lowercase();
 
-        // Check for private-key PEM headers regardless of other conditions.
-        if PEM_HEADERS.iter().any(|h| line.contains(h)) {
-            findings.push(RuleFinding {
-                rule_id: rule_id::CREDENTIAL_LEAK.to_string(),
-                severity: Severity::Violation,
-                detail: format!(
-                    "Private key PEM header detected in added content (line {}).",
-                    i + 1
-                ),
-            });
+    // Preferred path: scan per-file so the allowlist (lockfiles, vendor,
+    // binaries) applies correctly.
+    let mut scanned_any = false;
+    for cf in &ctx.changed_files {
+        if !cf.added_lines.is_empty() {
+            scanned_any = true;
+        }
+        if crate::secrets::is_path_allowlisted(&cf.path) {
             continue;
         }
-
-        let has_keyword = CRED_KEYWORDS.iter().any(|k| lower.contains(k));
-        let has_assign = lower.contains('=') || lower.contains(':');
-        let has_quoted_value = lower.contains('"') || lower.contains('\'');
-        // Ignore very short lines to reduce noise on struct field declarations
-        if has_keyword && has_assign && has_quoted_value && line.len() > 20 {
-            let kw = CRED_KEYWORDS.iter().find(|k| lower.contains(*k)).unwrap();
+        let matches = crate::secrets::scan_lines(
+            &cf.path,
+            cf.added_lines
+                .iter()
+                .enumerate()
+                .map(|(i, l)| (i + 1, l.as_str())),
+        );
+        for m in matches {
             findings.push(RuleFinding {
                 rule_id: rule_id::CREDENTIAL_LEAK.to_string(),
                 severity: Severity::Violation,
                 detail: format!(
-                    "Possible credential '{}' assigned to a string value (added line {}).",
-                    kw,
-                    i + 1
+                    "{} matched in {} (line {}, preview `{}`)",
+                    m.description, cf.path, m.line, m.preview,
                 ),
             });
         }
     }
+
+    // Fallback for callers that only populated the flat `added_lines` list
+    // (legacy synthetic test fixtures, ad-hoc commit-message scans). No
+    // path-based allowlist can run, so this is best-effort.
+    if !scanned_any {
+        let matches = crate::secrets::scan_lines(
+            "",
+            ctx.added_lines
+                .iter()
+                .enumerate()
+                .map(|(i, l)| (i + 1, l.as_str())),
+        );
+        for m in matches {
+            findings.push(RuleFinding {
+                rule_id: rule_id::CREDENTIAL_LEAK.to_string(),
+                severity: Severity::Violation,
+                detail: format!(
+                    "{} matched (line {}, preview `{}`)",
+                    m.description, m.line, m.preview,
+                ),
+            });
+        }
+    }
+
     findings
 }
 
@@ -718,6 +745,103 @@ fn check_config_file_modified(ctx: &DiffContext) -> Vec<RuleFinding> {
         .collect()
 }
 
+/// DUPLICATED_CODE — Warning
+///
+/// Flags chunks of identical code copy-pasted inside the same change. Targets
+/// the most common AI failure mode: an agent generates the same block twice
+/// (often in two different functions) instead of factoring it out.
+///
+/// Algorithm: normalize each added line (trim whitespace, drop empty / comment
+/// lines), slide a window of `MIN_BLOCK` lines across the added content, hash
+/// each window, and flag the first time two windows with identical content
+/// start at different positions. The window size is large enough to ignore
+/// boilerplate (imports, `pub use` re-exports) but small enough to catch a
+/// duplicated function body. One finding per distinct duplicated block.
+///
+/// Cost: O(N) where N is the count of significant added lines — a single
+/// pass with a HashMap of `Vec<&str>` → first-seen index.
+fn check_duplicated_code(ctx: &DiffContext) -> Vec<RuleFinding> {
+    const MIN_BLOCK: usize = 10; // lines per window
+    const MAX_BLOCKS_REPORTED: usize = 5; // cap report size for huge diffs
+
+    let mut findings = Vec::new();
+
+    for cf in &ctx.changed_files {
+        if cf.is_binary {
+            continue;
+        }
+        // Skip non-source files where duplication is normal (Cargo.lock,
+        // generated code, lockfiles, vendored). Reuse the secrets allowlist
+        // since it already covers these patterns precisely.
+        if crate::secrets::is_path_allowlisted(&cf.path) {
+            continue;
+        }
+
+        // Significant-line filter. We keep the original index so we can
+        // report the first-occurrence line number in the user-facing detail.
+        let sig: Vec<(usize, String)> = cf
+            .added_lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, l)| {
+                let trimmed = l.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                // Pure-comment lines vary by language; skip the most common
+                // single-line comment prefixes. Block comments are conservatively
+                // kept (rare in production code by AI).
+                let comment_prefixes: &[&str] =
+                    &["//", "#", "--", ";", "/*", "*"];
+                if comment_prefixes.iter().any(|p| trimmed.starts_with(p)) {
+                    return None;
+                }
+                Some((i + 1, trimmed.to_string()))
+            })
+            .collect();
+
+        if sig.len() < MIN_BLOCK * 2 {
+            continue;
+        }
+
+        // Walk sliding windows. Use a HashMap of Vec<&str> -> first-seen
+        // starting index in `sig`. When a window repeats with a different
+        // start, emit a finding and advance past it (so a 20-line duplicate
+        // doesn't emit 11 overlapping findings).
+        let mut first_seen: std::collections::HashMap<Vec<&str>, usize> =
+            std::collections::HashMap::new();
+        let mut i = 0;
+        while i + MIN_BLOCK <= sig.len() {
+            let window: Vec<&str> = sig[i..i + MIN_BLOCK]
+                .iter()
+                .map(|(_, s)| s.as_str())
+                .collect();
+            if let Some(&prev) = first_seen.get(&window) {
+                let first_line = sig[prev].0;
+                let dup_line = sig[i].0;
+                findings.push(RuleFinding {
+                    rule_id: rule_id::DUPLICATED_CODE.to_string(),
+                    severity: Severity::Warning,
+                    detail: format!(
+                        "{} duplicated lines in '{}': block first seen at line {}, repeated at line {}",
+                        MIN_BLOCK, cf.path, first_line, dup_line
+                    ),
+                });
+                if findings.len() >= MAX_BLOCKS_REPORTED {
+                    return findings;
+                }
+                // Skip past this duplicate so we don't re-flag overlapping windows.
+                i += MIN_BLOCK;
+                continue;
+            }
+            first_seen.insert(window, i);
+            i += 1;
+        }
+    }
+
+    findings
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -725,14 +849,20 @@ mod tests {
     use super::*;
 
     fn ctx(intent: &str, added: &[&str], files: &[&str]) -> DiffContext {
+        let added_vec: Vec<String> = added.iter().map(|s| s.to_string()).collect();
+        // For tests, attribute *all* added lines to every file so the
+        // legacy credential-leak test fixtures keep firing under the new
+        // per-file scanner. Real diffs go through `from_diff` which
+        // attributes correctly.
         DiffContext {
-            added_lines: added.iter().map(|s| s.to_string()).collect(),
+            added_lines: added_vec.clone(),
             removed_lines: vec![],
             changed_files: files
                 .iter()
                 .map(|p| ChangedFile {
                     path: p.to_string(),
                     is_binary: false,
+                    added_lines: added_vec.clone(),
                 })
                 .collect(),
             insertions: added.len(),
@@ -925,5 +1055,97 @@ mod tests {
         // Cargo.lock has .toml-like metadata but is a lock file, covered by LOCKFILE rule.
         let c = ctx("", &[], &["Cargo.lock"]);
         assert!(check_config_file_modified(&c).is_empty());
+    }
+
+    // ── DUPLICATED_CODE ───────────────────────────────────────────────────────
+
+    fn dup_ctx(added: Vec<&str>, files: &[&str]) -> DiffContext {
+        let added_vec: Vec<String> = added.iter().map(|s| s.to_string()).collect();
+        DiffContext {
+            added_lines: added_vec.clone(),
+            removed_lines: vec![],
+            changed_files: files
+                .iter()
+                .map(|p| ChangedFile {
+                    path: p.to_string(),
+                    is_binary: false,
+                    added_lines: added_vec.clone(),
+                })
+                .collect(),
+            insertions: added.len(),
+            deletions: 0,
+            primary_intent: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn duplicated_code_fires_on_repeated_block() {
+        // 10 distinct lines repeated twice within a single file's diff.
+        let block: Vec<&str> = vec![
+            "fn handle_request(req: Request) -> Response {",
+            "    let user = lookup_user(&req)?;",
+            "    let perms = load_perms(user.id)?;",
+            "    if !perms.can_read {",
+            "        return Response::forbidden();",
+            "    }",
+            "    let data = fetch_data(&req)?;",
+            "    let serialized = serde_json::to_string(&data)?;",
+            "    Response::ok(serialized)",
+            "}",
+        ];
+        let mut all = block.clone();
+        all.push("");
+        all.push("fn unrelated_helper() -> usize { 7 }");
+        all.push("");
+        all.extend(block.iter().copied()); // duplicate
+        let c = dup_ctx(all, &["src/handler.rs"]);
+        let f = check_duplicated_code(&c);
+        assert_eq!(f.len(), 1, "exactly one DUPLICATED_CODE finding");
+        assert_eq!(f[0].rule_id, "DUPLICATED_CODE");
+        assert!(f[0].detail.contains("duplicated"));
+    }
+
+    #[test]
+    fn duplicated_code_ignores_short_block() {
+        // Only 5 repeated lines — below MIN_BLOCK threshold of 10. Should not fire.
+        let block = vec!["a()", "b()", "c()", "d()", "e()"];
+        let mut all = block.clone();
+        all.extend(block.iter().copied());
+        let c = dup_ctx(all, &["src/lib.rs"]);
+        assert!(check_duplicated_code(&c).is_empty());
+    }
+
+    #[test]
+    fn duplicated_code_ignores_comments_and_whitespace() {
+        // Two "duplicated" 10-line blocks made only of comments and blanks.
+        // Significant-line filter should drop them → no finding.
+        let block: Vec<&str> = vec![
+            "// header",
+            "// header",
+            "//",
+            "",
+            "// section 1",
+            "//",
+            "// notes",
+            "",
+            "//",
+            "// end",
+        ];
+        let mut all = block.clone();
+        all.extend(block.iter().copied());
+        let c = dup_ctx(all, &["src/lib.rs"]);
+        assert!(check_duplicated_code(&c).is_empty());
+    }
+
+    #[test]
+    fn duplicated_code_skips_allowlisted_path() {
+        // Lockfiles legitimately contain repeated content. Don't fire.
+        let block: Vec<&str> = (0..12)
+            .map(|i| if i % 2 == 0 { "version = \"1.0.0\"" } else { "source = \"registry+https://github.com/rust-lang/crates.io-index\"" })
+            .collect();
+        let mut all = block.clone();
+        all.extend(block.iter().copied());
+        let c = dup_ctx(all, &["Cargo.lock"]);
+        assert!(check_duplicated_code(&c).is_empty());
     }
 }

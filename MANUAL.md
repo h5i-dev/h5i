@@ -328,7 +328,7 @@ Assess risk on AI-generated changes.
 
 | Verb | Equivalent legacy form | What it does |
 |---|---|---|
-| `h5i audit review` | `h5i notes review` | Rank commits by uncertainty, blind edits, churn, scope. |
+| `h5i audit review` | `h5i notes review` | Rank commits by Quality + Shape signals. |
 | `h5i audit scan` | `h5i context scan` | Scan reasoning traces for prompt-injection patterns. |
 | `h5i audit compliance` | `h5i compliance` | Date-ranged audit report (text / json / html). |
 | `h5i audit policy <sub>` | `h5i policy <sub>` | Manage `.h5i/policy.toml` rules. |
@@ -340,6 +340,46 @@ h5i audit compliance --since 2026-01-01 --until 2026-03-31 \
     --format html --output audit.html
 h5i audit vibe --limit 1000 --json
 ```
+
+### Quality vs Shape signals
+
+`h5i audit review` (and the PR-comment 🚩) split rules into two tiers so
+size-based noise stops drowning out real risk signals.
+
+**Quality** (high-precision — these alone can flag a commit):
+
+| Rule | Fires when |
+|---|---|
+| `CREDENTIAL_LEAK` | Added line matches the embedded regex pack (AWS / GCP / GitHub / Slack / Stripe / Anthropic / OpenAI / JWT / PEM private key) or an entropy-gated generic key=value assignment. Lockfiles, vendor dirs, fonts, binaries, and `testdata/` are allowlisted; lines containing placeholder substrings (`your-key-here`, `EXAMPLE`, `${ENV}`, …) are suppressed. Matched values redacted to first 4 chars. |
+| `CODE_EXECUTION` | Added line invokes `eval()`, `os.system()`, `subprocess.*`, `Runtime.exec()`, etc. |
+| `SENSITIVE_FILE_MODIFIED` | Touched a `.env`, `.pem`, `.key`, or similar high-value path. |
+| `CI_CD_MODIFIED` | Touched a CI/CD workflow file. |
+| `PERMISSION_CHANGE` | File mode bits changed (e.g. chmod +x). |
+| `TEST_REGRESSION` | Tests were passing on parent and now failing, OR coverage dropped >5%. |
+| `BLIND_EDIT` | Agent edited a file with no prior `Read` in the session. |
+| `DUPLICATED_CODE` | ≥10 identical significant lines repeated within the same file. |
+| `MASS_DELETION` | >100 lines deleted and >80% of the diff is deletions. |
+| `BINARY_FILE` | Opaque binary file modified. |
+| `AI_NO_PROMPT` | AI-tagged commit with empty `prompt` (provenance gap). |
+
+**Shape** (informational — never flag a commit alone):
+
+| Rule | Fires when |
+|---|---|
+| `LARGE_DIFF` | >50 / >200 / >500 lines changed. |
+| `WIDE_IMPACT` | >5 / >10 / >20 files changed. |
+| `CROSS_CUTTING` | Changes span >3 / >5 top-level directories. |
+| `BURST_AFTER_GAP` | First commit after a >3 / >7 day quiet period. |
+| `POLYGLOT_CHANGE` | >4 distinct file extensions changed. |
+| `UNTESTED_CHANGE` | >100 lines changed, no test metrics, and the project has tests elsewhere. |
+
+The PR-comment 🚩 fires when `quality_score >= 0.25`. Shape signals are
+listed in a secondary "shape signals (informational)" line — *only* when a
+Quality signal also fired. `LARGE_DIFF` alone is noise; `LARGE_DIFF + BLIND_EDIT`
+is a real review point.
+
+The credential scanner lives in `src/secrets.rs` as an embedded regex pack —
+there is no runtime dependency on the gitleaks binary.
 
 ---
 

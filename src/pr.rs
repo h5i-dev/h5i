@@ -13,6 +13,7 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::repository::H5iRepository;
 use crate::review::REVIEW_THRESHOLD;
+use crate::review::ReviewPoint;
 
 /// HTML marker we put at the top of the comment. `gh` returns comment bodies
 /// verbatim, so we can find ours by prefix-matching this string.
@@ -32,21 +33,16 @@ pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
         .h5i_log(limit)
         .context("failed to read h5i log for PR body")?;
 
-    // Build a lookup of review scores once so we can flag commits inline.
+    // Build a lookup of review points so we can flag commits inline.
+    // We pull every review point above the legacy threshold but only render
+    // the 🚩 when `should_flag_in_pr()` says so (Quality-tier score gates
+    // the flag; Shape signals are surfaced only as supporting context).
     let review_points = repo
         .suggest_review_points(limit, REVIEW_THRESHOLD)
         .unwrap_or_default();
-    let flagged: std::collections::HashMap<String, (f32, Vec<String>)> = review_points
+    let by_oid: std::collections::HashMap<String, &ReviewPoint> = review_points
         .iter()
-        .map(|p| {
-            (
-                p.commit_oid.clone(),
-                (
-                    p.score,
-                    p.triggers.iter().map(|t| t.rule_id.clone()).collect(),
-                ),
-            )
-        })
+        .map(|p| (p.commit_oid.clone(), p))
         .collect();
 
     let mut body = String::new();
@@ -81,8 +77,9 @@ pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
             }
         }
 
-        let flag = flagged.get(&r.git_oid);
-        if flag.is_some() {
+        let rp = by_oid.get(&r.git_oid).copied();
+        let should_flag = rp.map(|p| p.should_flag_in_pr()).unwrap_or(false);
+        if should_flag {
             flagged_count += 1;
         }
 
@@ -124,12 +121,31 @@ pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
                 ));
             }
         }
-        if let Some((score, rules)) = flag {
-            let rules_joined = rules.join(", ");
-            body.push_str(&format!(
-                "- 🚩 **review signals** — score {:.2}: {}\n",
-                score, escape_md(&rules_joined)
-            ));
+        // 🚩 only fires on Quality-tier score. Shape signals appear as a
+        // secondary "shape" line and ONLY when at least one Quality signal
+        // also fired — `LARGE_DIFF` on its own is noise.
+        if let Some(p) = rp {
+            if should_flag {
+                let quality_rules: Vec<String> = p
+                    .quality_triggers()
+                    .map(|t| t.rule_id.clone())
+                    .collect();
+                body.push_str(&format!(
+                    "- 🚩 **review signals** — score {:.2}: {}\n",
+                    p.quality_score,
+                    escape_md(&quality_rules.join(", "))
+                ));
+                let shape_rules: Vec<String> = p
+                    .shape_triggers()
+                    .map(|t| t.rule_id.clone())
+                    .collect();
+                if !shape_rules.is_empty() {
+                    body.push_str(&format!(
+                        "  - _shape signals (informational):_ {}\n",
+                        escape_md(&shape_rules.join(", "))
+                    ));
+                }
+            }
         }
         body.push_str("\n");
     }
