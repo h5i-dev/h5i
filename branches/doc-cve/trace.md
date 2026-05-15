@@ -451,3 +451,4 @@ _[Checkpoint: 6a0788de — edited src/pr.rs; edited src/pr.rs; edited src/pr.rs]
 _[Checkpoint: 6a078bf7 — PR comment polish: reassurance + DAG compression]_
 ---
 
+[21:11:37] NOTE: DEFERRAL: for now
