@@ -64,3 +64,4 @@ _[Checkpoint: 6a072d83 — deleted README.md; added README.md]_
 [14:35:44] OBSERVE: read src/error.rs
 [14:35:50] OBSERVE: read src/metadata.rs
 [14:35:54] OBSERVE: read Cargo.toml
+[14:35:59] OBSERVE: read src/repository.rs
