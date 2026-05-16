@@ -97,3 +97,4 @@
 [19:56:09] OBSERVE: read src/storage.rs
 [19:56:16] OBSERVE: read src/storage.rs
 [19:56:26] ACT: edited src/storage.rs
+[19:56:33] OBSERVE: read src/main.rs
