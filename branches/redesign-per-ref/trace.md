@@ -100,3 +100,9 @@
 [19:56:33] OBSERVE: read src/main.rs
 [19:56:38] ACT: edited src/main.rs
 [19:57:46] THINK: I'll batch-update the remaining CTX_REF usages to route to the main branch ref (where snapshots/main.
+
+
+---
+_[Checkpoint: 6a08cc3a — edited src/mcp.rs; edited src/storage.rs; edited src/main.rs]_
+---
+
