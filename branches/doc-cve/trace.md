@@ -672,3 +672,4 @@ _[Checkpoint: 6a089240 — Analyzed current context-branch architecture and iden
 _[Checkpoint: 6a089288 — session ended (auto-checkpoint)]_
 ---
 
+[15:54:07] THINK: Recommend branch-coupled context merging by default when a Git branch is merged, while keeping experiment/scope context branches explicit because context should follow code provenance without forcing all exploratory reasoning into main.
