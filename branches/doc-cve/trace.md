@@ -621,3 +621,4 @@ _[Checkpoint: 6a07978d — wrote .github/workflows/test.yaml; edited .github/wor
 _[Checkpoint: 6a07aca5 — Scored h5i against /home/koukyosyumei/Dev/cli using repository shape, test/CI evidence, docs, and maintainability signals.]_
 ---
 
+[15:50:09] THINK: Assess context-branch design as one linear refs/h5i/context workspace with directory-named branches over modeling each context branch as a first-class Git ref because the user asked for architecture critique rather than implementation.
