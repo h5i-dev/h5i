@@ -92,3 +92,4 @@
 [19:55:25] OBSERVE: read src/ctx.rs
 [19:55:36] ACT: edited src/server.rs
 [19:55:42] ACT: edited src/server.rs
+[19:55:49] OBSERVE: read src/mcp.rs
