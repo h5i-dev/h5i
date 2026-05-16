@@ -41,3 +41,4 @@
 [19:38:48] ACT: edited src/ctx.rs
 [19:38:56] ACT: edited src/ctx.rs
 [19:39:25] ACT: Slice 3 done: one ref per ctx branch (refs/h5i/context/<name>), per-worktree HEAD at .git/h5i/HEAD, snapshot anchors at refs/h5i/context-snapshots/<sha>, all 432 lib tests pass. ctx_read_file/ctx_write_files now route legacy paths (branches/X/, main.md, git-goals/, .current_branch) to the correct ref or to HEAD.
+[19:39:36] OBSERVE: read src/ctx.rs
