@@ -119,11 +119,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] session ended (auto-checkpoint)
 - [x] session ended (auto-checkpoint)
 - [x] edited src/mcp.rs; edited src/storage.rs; edited src/main.rs
+- [x] edited src/mcp.rs; edited src/storage.rs; edited src/main.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-16 20:00 UTC] `redesign-per-ref`: edited src/mcp.rs; edited src/storage.rs; edited src/main.rs
 - [2026-05-16 19:57 UTC] `redesign-per-ref`: edited src/mcp.rs; edited src/storage.rs; edited src/main.rs
 - [2026-05-16 15:54 UTC] `doc-cve`: session ended (auto-checkpoint)
 - [2026-05-16 15:51 UTC] `doc-cve`: session ended (auto-checkpoint)

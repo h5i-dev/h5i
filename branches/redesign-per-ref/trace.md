@@ -107,3 +107,9 @@ _[Checkpoint: 6a08cc3a — edited src/mcp.rs; edited src/storage.rs; edited src/
 ---
 
 [20:00:13] NOTE: DEFERRAL (~/Dev/h5i/src/main.rs): follow-up
+
+
+---
+_[Checkpoint: 6a08cccd — edited src/mcp.rs; edited src/storage.rs; edited src/main.rs]_
+---
+
