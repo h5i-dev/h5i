@@ -1445,12 +1445,11 @@ async fn api_context_promotion(
 // ── Context API helpers ───────────────────────────────────────────────────────
 
 fn read_ctx_file(repo: &git2::Repository, vpath: &str) -> Option<String> {
-    let reference = repo.find_reference(ctx::CTX_REF).ok()?;
-    let commit = reference.peel_to_commit().ok()?;
-    let tree = commit.tree().ok()?;
-    let entry = tree.get_path(std::path::Path::new(vpath)).ok()?;
-    let blob = repo.find_blob(entry.id()).ok()?;
-    std::str::from_utf8(blob.content()).ok().map(str::to_owned)
+    // Delegate to ctx::read_ctx_file so legacy `branches/<x>/...` vpaths,
+    // `main.md`, `git-goals/...`, and `snapshots/...` route correctly to
+    // per-branch refs under refs/h5i/context/<name>.
+    let workdir = repo.workdir()?;
+    ctx::read_ctx_file(workdir, vpath)
 }
 
 fn extract_ctx_section(text: &str, section: &str) -> String {
@@ -1464,8 +1463,10 @@ fn extract_ctx_section(text: &str, section: &str) -> String {
 }
 
 fn list_context_snapshots(repo: &git2::Repository) -> Vec<ContextSnapshotItem> {
+    // Snapshots live on refs/h5i/context/main (the main branch ref).
+    let main_ref = ctx::branch_ref(ctx::MAIN_BRANCH);
     let tree = repo
-        .find_reference(ctx::CTX_REF)
+        .find_reference(&main_ref)
         .ok()
         .and_then(|r| r.peel_to_commit().ok())
         .and_then(|c| c.tree().ok());

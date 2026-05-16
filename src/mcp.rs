@@ -1356,8 +1356,10 @@ fn resource_context_snapshots(workdir: &Path) -> serde_json::Value {
         Ok(r) => r,
         Err(_) => return json!([]),
     };
+    // Snapshots live on refs/h5i/context/main (the main branch ref).
+    let main_ref = ctx::branch_ref(ctx::MAIN_BRANCH);
     let tip = match repo
-        .find_reference(ctx::CTX_REF)
+        .find_reference(&main_ref)
         .ok()
         .and_then(|r| r.peel_to_commit().ok())
     {
