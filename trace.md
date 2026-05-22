@@ -159,3 +159,9 @@ _[Checkpoint: 6a10ccee — edited src/rules.rs; edited src/rules.rs; edited src/
 ---
 
 [21:39:56] NOTE: DEFERRAL (~/Dev/h5i/src/rules.rs): test modules). If that noise is also worth suppressing, two follow-ups would do it: 1. Treat `#[cfg(test)]` blocks inline in `src/*.rs` as a test regi…
+
+
+---
+_[Checkpoint: 6a10cd2c — edited src/rules.rs; edited src/rules.rs; edited src/rules.rs]_
+---
+
