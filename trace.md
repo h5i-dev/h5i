@@ -282,3 +282,4 @@ _[Checkpoint: 6a10d7bc — edited src/pr.rs; edited src/pr.rs; edited src/pr.rs]
 _[Checkpoint: 6a10dbc7 — edited MANUAL.md; edited man/man1/h5i.1; edited man/man1/h5i.1]_
 ---
 
+[22:51:27] OBSERVE: read src/pr.rs
