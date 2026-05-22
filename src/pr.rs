@@ -27,15 +27,20 @@ pub const MARKER: &str = "<!-- h5i:pr-comment v1 -->";
 /// readable on a PR.
 const DAG_NODE_LIMIT: usize = 40;
 
-/// Minimum length of a consecutive mechanical-kind run before we collapse it
-/// into a summary node. Two-in-a-row is just normal work; three or more is
-/// usually `read a; read b; read c` noise worth folding.
-const DAG_COMPRESS_RUN: usize = 3;
-
 /// Hard cap on the label-text portion of a DAG node (after the `KIND ·` prefix).
 /// Wide enough that THINK/NOTE reasoning is readable; narrow enough that the
 /// graph still fits in a GitHub PR comment.
 const DAG_LABEL_BUDGET: usize = 100;
+
+/// Maximum number of file lanes drawn in the swim-lane DAG before extras get
+/// folded into an "Other" lane. Picked empirically: 6 distinct files in a
+/// vertical stack is the most you can read at a glance on a PR screenshot.
+const SWIMLANE_MAX_FILES: usize = 6;
+
+/// Minimum run length before consecutive same-kind nodes within a single lane
+/// get compressed into `READ × N` / `EDIT × N`. More aggressive than the
+/// chain-DAG threshold because per-lane density matters more than per-graph.
+const SWIMLANE_COMPRESS_RUN: usize = 2;
 
 // ── Detail-string parsers ────────────────────────────────────────────────────
 
@@ -255,199 +260,6 @@ fn render_checks_pass_note() -> String {
         .to_string()
 }
 
-/// One node-or-summary in the rendered DAG. A summary stands in for a run of
-/// consecutive mechanical OBSERVE/ACT calls that were collapsed for readability.
-#[derive(Debug, Clone)]
-struct DagUnit {
-    /// ID actually emitted into the Mermaid graph. For singletons this is the
-    /// original `TraceNode::id`; for summaries it's `sum_<last_node_id>`.
-    id: String,
-    kind: String,
-    /// Pre-rendered label text, *without* the kind prefix or sanitization
-    /// (those happen inside [`render_dag_section`] via [`mermaid_label`]).
-    content: String,
-    /// Parent IDs in the original DAG; remapped to render-IDs at draw time.
-    parent_ids: Vec<String>,
-}
-
-/// Compresses runs of consecutive mechanical same-kind nodes (OBSERVE or ACT)
-/// of length ≥ [`DAG_COMPRESS_RUN`] into one summary node, while passing
-/// THINK/NOTE/MERGE through unchanged. Also returns a remap table so callers
-/// can rewrite edges pointing into a compressed run.
-fn compress_dag_units(visible: &[&TraceNode]) -> (Vec<DagUnit>, HashMap<String, String>) {
-    let mut units: Vec<DagUnit> = Vec::new();
-    let mut remap: HashMap<String, String> = HashMap::new();
-
-    let is_mechanical = |k: &str| matches!(k, "OBSERVE" | "ACT");
-
-    let mut i = 0;
-    while i < visible.len() {
-        let n = visible[i];
-        if is_mechanical(&n.kind) {
-            // Greedily extend a run of same-kind mechanical nodes.
-            let mut j = i + 1;
-            while j < visible.len() && visible[j].kind == n.kind {
-                j += 1;
-            }
-            let run_len = j - i;
-            if run_len >= DAG_COMPRESS_RUN {
-                let synth = format!("sum_{}", visible[j - 1].id);
-                for node in &visible[i..j] {
-                    remap.insert(node.id.clone(), synth.clone());
-                }
-                units.push(DagUnit {
-                    id: synth,
-                    kind: n.kind.clone(),
-                    content: summarize_mechanical_run(visible, i, j),
-                    parent_ids: visible[i].parent_ids.clone(),
-                });
-                i = j;
-                continue;
-            }
-        }
-        remap.insert(n.id.clone(), n.id.clone());
-        units.push(DagUnit {
-            id: n.id.clone(),
-            kind: n.kind.clone(),
-            content: n.content.clone(),
-            parent_ids: n.parent_ids.clone(),
-        });
-        i += 1;
-    }
-
-    (units, remap)
-}
-
-/// Builds a human-readable summary line for a compressed mechanical run.
-/// Looks like `"read 5 files: a.rs, b.rs, c.rs (+2 more)"`.
-fn summarize_mechanical_run(visible: &[&TraceNode], start: usize, end: usize) -> String {
-    let kind = visible[start].kind.as_str();
-    let verb = match kind {
-        "OBSERVE" => "read",
-        "ACT" => "edited",
-        _ => "touched",
-    };
-    let total = end - start;
-    let mut files: Vec<String> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for node in &visible[start..end] {
-        // Hook-generated content is `"<verb> <path>"`; take the trailing token
-        // as the path. For nonstandard content (e.g. multi-word notes), fall
-        // back to the whole content trimmed.
-        let c = node.content.trim();
-        // Take the last whitespace-delimited token, which for hook-generated
-        // entries is the file path.
-        let token = c.split_whitespace().next_back().unwrap_or(c).to_string();
-        if !token.is_empty() && seen.insert(token.clone()) {
-            files.push(token);
-        }
-    }
-    let unique = files.len();
-    let preview: Vec<&str> = files.iter().take(3).map(String::as_str).collect();
-    let preview_str = if unique <= 3 {
-        preview.join(", ")
-    } else {
-        format!("{} (+{} more)", preview.join(", "), unique - 3)
-    };
-    let file_plural = if unique == 1 { "" } else { "s" };
-    if unique == total {
-        // Each call hit a distinct path — flat list.
-        format!("{verb} {unique} file{file_plural}: {preview_str}")
-    } else {
-        // Same paths revisited — be honest about it.
-        let op_label = match kind {
-            "OBSERVE" => "reads",
-            "ACT" => "edits",
-            _ => "ops",
-        };
-        format!("{total} {op_label} across {unique} file{file_plural}: {preview_str}")
-    }
-}
-
-fn render_dag_section(dag: &TraceDag) -> String {
-    if dag.nodes.is_empty() {
-        return String::new();
-    }
-
-    // Tail-truncate: keep the most recent N nodes — they reflect the work
-    // most likely landing in this PR.
-    let total = dag.nodes.len();
-    let start = total.saturating_sub(DAG_NODE_LIMIT);
-    let visible: Vec<&TraceNode> = dag.nodes.iter().skip(start).collect();
-    let elided = total - visible.len();
-
-    let (units, remap) = compress_dag_units(&visible);
-    let unit_ids: std::collections::HashSet<&str> =
-        units.iter().map(|u| u.id.as_str()).collect();
-
-    let mut s = String::new();
-    let _ = writeln!(
-        s,
-        "<details><summary><b>🧠 Reasoning DAG</b> — {} node{} \
-         ({} block{} after compression{})</summary>",
-        total,
-        if total == 1 { "" } else { "s" },
-        units.len(),
-        if units.len() == 1 { "" } else { "s" },
-        if elided > 0 {
-            format!(", latest {} only", visible.len())
-        } else {
-            String::new()
-        },
-    );
-    s.push('\n');
-    s.push_str("\n```mermaid\ngraph TD\n");
-    if elided > 0 {
-        let _ = writeln!(
-            s,
-            "  elided[\"… {} earlier node{} elided …\"]:::elided",
-            elided,
-            if elided == 1 { "" } else { "s" }
-        );
-    }
-    for u in &units {
-        let label = mermaid_label(&u.kind, &u.content);
-        let class = mermaid_class(&u.kind);
-        let _ = writeln!(s, "  {id}[\"{label}\"]:::{class}", id = mermaid_id(&u.id));
-    }
-    // Edges: remap each parent through the compression table, then drop edges
-    // where parent or child fell off the visible window OR where a node points
-    // at its own summary (which would create a self-loop after collapse).
-    let mut seen_edges: std::collections::HashSet<(String, String)> =
-        std::collections::HashSet::new();
-    for u in &units {
-        for p in &u.parent_ids {
-            let mapped = remap.get(p).cloned().unwrap_or_else(|| p.clone());
-            if mapped == u.id {
-                continue;
-            }
-            if !unit_ids.contains(mapped.as_str()) {
-                continue;
-            }
-            let key = (mapped.clone(), u.id.clone());
-            if !seen_edges.insert(key) {
-                continue;
-            }
-            let _ = writeln!(
-                s,
-                "  {p} --> {c}",
-                p = mermaid_id(&mapped),
-                c = mermaid_id(&u.id)
-            );
-        }
-    }
-    s.push_str(
-        "  classDef o fill:#dbeafe,stroke:#1e3a8a,color:#0b1c4a;\n\
-         \x20\x20classDef t fill:#fef3c7,stroke:#92400e,color:#3f2d05;\n\
-         \x20\x20classDef a fill:#dcfce7,stroke:#166534,color:#0a2e16;\n\
-         \x20\x20classDef n fill:#ede9fe,stroke:#5b21b6,color:#221251;\n\
-         \x20\x20classDef m fill:#e5e7eb,stroke:#374151,color:#0b0f17;\n\
-         \x20\x20classDef elided fill:#f3f4f6,stroke:#9ca3af,color:#6b7280,stroke-dasharray: 3 3;\n",
-    );
-    s.push_str("```\n\n</details>\n\n");
-    s
-}
-
 fn mermaid_id(node_id: &str) -> String {
     // Mermaid node identifiers must be `[A-Za-z_][A-Za-z0-9_]*`. Our DAG IDs
     // are hex digests, so prefix with `n_` to guarantee a letter start.
@@ -472,24 +284,6 @@ fn mermaid_class(kind: &str) -> &'static str {
         "MERGE" => "m",
         _ => "n",
     }
-}
-
-fn mermaid_label(kind: &str, content: &str) -> String {
-    // Mermaid double-quoted labels treat `"`, `\`, `<`, and `>` specially.
-    // Newlines collapse to a single space so the node renders one row tall.
-    let oneline = content.replace('\n', " ");
-    let trimmed = truncate(&oneline, DAG_LABEL_BUDGET);
-    let safe: String = trimmed
-        .chars()
-        .map(|c| match c {
-            '"' => '\u{201D}', // right double quote
-            '\\' => '/',
-            '<' => '‹',
-            '>' => '›',
-            _ => c,
-        })
-        .collect();
-    format!("{kind} · {safe}")
 }
 
 // ── Top-level render ─────────────────────────────────────────────────────────
@@ -616,7 +410,7 @@ pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> R
     body.push_str(&render_duplicate_section(&dup_rows, secret_rows.len()));
     // Replay already drew the DAG above the fold; skip the collapsible copy.
     if !matches!(style, PrStyle::Replay) {
-        body.push_str(&render_dag_section(&dag));
+        body.push_str(&render_swimlane_section(&dag));
     }
     body.push_str(&render_per_commit_section(&records, &by_oid, &repo));
 
@@ -936,8 +730,8 @@ fn render_hero_replay(
     if dag.nodes.is_empty() {
         s.push_str("_No reasoning trace recorded on this branch yet. Run `h5i context trace ...` while working to populate the replay._\n\n");
     } else {
-        s.push_str("### 🧠 Reasoning replay\n\n");
-        s.push_str(&render_dag_section_expanded(dag));
+        s.push_str("### 🧠 Reasoning by file\n\n");
+        s.push_str(&render_swimlane_section_expanded(dag));
     }
 
     // Milestone trail beneath the graph, so reviewers can read the narrative
@@ -959,24 +753,332 @@ fn render_hero_replay(
     s
 }
 
-/// Same Mermaid output as [`render_dag_section`] but without the `<details>`
-/// wrapper — used by Replay style which wants the graph expanded by default.
-fn render_dag_section_expanded(dag: &TraceDag) -> String {
-    let collapsed = render_dag_section(dag);
-    // Cheap, robust unwrap: strip the leading `<details><summary>…</summary>`
-    // line and the trailing `</details>` so the same Mermaid block can be
-    // reused without a second implementation drifting out of sync.
-    let trimmed = collapsed
-        .lines()
-        .filter(|l| {
-            let t = l.trim();
-            !t.starts_with("<details>") && !t.starts_with("</details>")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let mut out = trimmed;
-    out.push('\n');
+// ── Swim-lane DAG renderer ───────────────────────────────────────────────────
+//
+// The previous chain renderer showed causal order — useful when you're
+// auditing why a particular decision happened, but visually it always collapsed
+// to a single vertical sausage since real reasoning is mostly linear. The
+// swim-lane renderer below trades causal edges for *file* density: one
+// horizontal lane per file the AI touched, plus a "Reasoning" lane for
+// THINK/NOTE/MERGE nodes that aren't bound to any file. The resulting
+// silhouette tells a different story at a glance — "the AI revisited
+// mcp.rs four times during the rewrite" — and it stays a DAG, so we keep the
+// technical credibility of the chain view.
+
+/// File-extension allowlist for path extraction from trace content. We can't
+/// rely on slashes alone (root-level files exist; `Cargo.toml` is real) and we
+/// can't rely on dots alone (numbers like `1.0` would false-positive). The
+/// union gets us the right answer for every language we ship support for.
+const SWIMLANE_FILE_EXTS: &[&str] = &[
+    ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".java", ".kt",
+    ".swift", ".c", ".h", ".cpp", ".cc", ".hpp", ".rb", ".php", ".css",
+    ".scss", ".sass", ".html", ".htm", ".json", ".toml", ".yaml", ".yml",
+    ".md", ".sh", ".sql", ".proto", ".graphql", ".lock", ".env",
+];
+
+/// Pulls a probable file path from a trace node's content. Returns `None` for
+/// THINK/NOTE/MERGE (no file binding) and for OBSERVE/ACT whose content
+/// doesn't end with something path-shaped. Heuristic mirrors how hook-emitted
+/// traces are formatted (`"<verb> <path>"`) without false-positiving on prose
+/// like `"Updated to 1.0"`.
+fn extract_swimlane_file(node: &TraceNode) -> Option<String> {
+    if !matches!(node.kind.as_str(), "OBSERVE" | "ACT") {
+        return None;
+    }
+    let token = node.content.trim().split_whitespace().next_back()?;
+    if token.contains('/') {
+        return Some(token.to_string());
+    }
+    let lower = token.to_ascii_lowercase();
+    if SWIMLANE_FILE_EXTS.iter().any(|e| lower.ends_with(e)) {
+        return Some(token.to_string());
+    }
+    None
+}
+
+#[derive(Debug, Clone)]
+struct SwimNode {
+    /// Either an original `TraceNode::id` or a synthetic `srun_<last_id>` for
+    /// a compressed run. Routed through [`mermaid_id`] before emission.
+    id: String,
+    /// Drives the mermaid `classDef` (`o`/`t`/`a`/`n`/`m`).
+    kind: String,
+    /// Pre-formatted label text. For file lanes this is just the verb
+    /// (`READ`, `EDIT × 3`); for the reasoning lane it includes the truncated
+    /// content so reviewers can see the actual thought.
+    label: String,
+}
+
+#[derive(Debug, Clone)]
+struct SwimLane {
+    /// Mermaid-safe subgraph id (e.g. `lane_0`, `lane_reasoning`).
+    key: String,
+    /// Human-readable lane title shown above the row.
+    title: String,
+    nodes: Vec<SwimNode>,
+}
+
+/// Group visible nodes into swim lanes (one per touched file + a reasoning
+/// lane + an overflow lane). Compresses consecutive same-kind nodes within
+/// each lane so a lane with 6 reads renders as a single `READ × 6` box. The
+/// reasoning lane is *not* compressed — every THINK / NOTE deserves its own
+/// box since the content text is what reviewers came to read.
+fn build_swimlanes(visible: &[&TraceNode]) -> Vec<SwimLane> {
+    // Phase 1 — bucket nodes by lane key, preserving chronological order
+    // within each bucket. We use a `Vec<(key, idx)>` so we can recover the
+    // first-touch order for stable file-lane sorting later (ties get broken
+    // by who appeared first, not by HashMap iteration order).
+    let mut buckets: BTreeMap<String, Vec<&TraceNode>> = BTreeMap::new();
+    let mut first_seen: HashMap<String, usize> = HashMap::new();
+    for (i, n) in visible.iter().enumerate() {
+        let key = if matches!(n.kind.as_str(), "OBSERVE" | "ACT") {
+            extract_swimlane_file(n).unwrap_or_else(|| "_other".to_string())
+        } else {
+            "_reasoning".to_string()
+        };
+        first_seen.entry(key.clone()).or_insert(i);
+        buckets.entry(key).or_default().push(*n);
+    }
+
+    // Phase 2 — pick the top N file lanes by node count. Reasoning + Other
+    // are special (always last/first respectively in the rendered output)
+    // and don't count against the file cap.
+    let mut file_lanes: Vec<(String, Vec<&TraceNode>)> = buckets
+        .iter()
+        .filter(|(k, _)| *k != "_reasoning" && *k != "_other")
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    file_lanes.sort_by(|a, b| {
+        // Primary: more touches first (heatmap effect — busy files lead).
+        // Secondary: stable first-seen order so equal-count lanes stay in
+        // the order they appeared in the trace.
+        b.1.len()
+            .cmp(&a.1.len())
+            .then_with(|| first_seen.get(&a.0).cmp(&first_seen.get(&b.0)))
+    });
+
+    // Overflow files fold into the _other bucket so we never silently drop
+    // trace nodes — the user wrote them, we render them somewhere.
+    let mut overflow_into_other: Vec<&TraceNode> = Vec::new();
+    if file_lanes.len() > SWIMLANE_MAX_FILES {
+        for (_, nodes) in file_lanes.drain(SWIMLANE_MAX_FILES..) {
+            overflow_into_other.extend(nodes);
+        }
+    }
+    let mut other_bucket = buckets.remove("_other").unwrap_or_default();
+    other_bucket.extend(overflow_into_other);
+
+    // Phase 3 — materialise lanes in display order: Reasoning, then files
+    // (count-desc), then Other. Skip any bucket that ended up empty.
+    let mut lanes: Vec<SwimLane> = Vec::new();
+    let mut lane_idx = 0usize;
+    let push_lane =
+        |lanes: &mut Vec<SwimLane>, lane_idx: &mut usize, title: String, raw: Vec<&TraceNode>, is_file_lane: bool| {
+            if raw.is_empty() {
+                return;
+            }
+            let nodes = compress_swim_run(&raw, is_file_lane);
+            lanes.push(SwimLane {
+                key: format!("lane_{}", *lane_idx),
+                title,
+                nodes,
+            });
+            *lane_idx += 1;
+        };
+
+    if let Some(r) = buckets.remove("_reasoning") {
+        let title = format!("💭 Reasoning · {} step{}", r.len(), plural_s(r.len()));
+        push_lane(&mut lanes, &mut lane_idx, title, r, false);
+    }
+    for (file, nodes) in file_lanes {
+        let title = format!("📄 {} · {} op{}", file, nodes.len(), plural_s(nodes.len()));
+        push_lane(&mut lanes, &mut lane_idx, title, nodes, true);
+    }
+    let other_title = format!("🗂 Other · {} node{}", other_bucket.len(), plural_s(other_bucket.len()));
+    push_lane(&mut lanes, &mut lane_idx, other_title, other_bucket, false);
+
+    lanes
+}
+
+fn plural_s(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
+/// Compresses consecutive same-kind nodes within a single lane. In a file lane
+/// (where the file is implicit from the lane title) the compressed label is
+/// just the verb plus a count, e.g. `READ × 3`. In the reasoning / other
+/// lanes the label keeps the content so the box stays informative.
+fn compress_swim_run(raw: &[&TraceNode], file_lane: bool) -> Vec<SwimNode> {
+    let mut out: Vec<SwimNode> = Vec::new();
+    let mut i = 0;
+    while i < raw.len() {
+        let kind = raw[i].kind.as_str();
+        let mut j = i + 1;
+        while j < raw.len() && raw[j].kind == kind {
+            j += 1;
+        }
+        let run = j - i;
+        if file_lane && run >= SWIMLANE_COMPRESS_RUN {
+            // Use the last node's id as the synthetic anchor so any edges
+            // pointing into the run from a future cross-lane renderer still
+            // resolve to *something* visible.
+            let id = format!("srun_{}", raw[j - 1].id);
+            let verb = verb_for_kind(kind);
+            let label = if run > 1 {
+                format!("{verb} × {run}")
+            } else {
+                verb.to_string()
+            };
+            out.push(SwimNode { id, kind: kind.to_string(), label });
+        } else {
+            for n in &raw[i..j] {
+                out.push(SwimNode {
+                    id: n.id.clone(),
+                    kind: n.kind.clone(),
+                    label: swim_label(n, file_lane),
+                });
+            }
+        }
+        i = j;
+    }
     out
+}
+
+fn verb_for_kind(kind: &str) -> &'static str {
+    match kind {
+        "OBSERVE" => "READ",
+        "ACT" => "EDIT",
+        "THINK" => "THINK",
+        "NOTE" => "NOTE",
+        "MERGE" => "MERGE",
+        _ => "STEP",
+    }
+}
+
+/// Build the label for an uncompressed swim-lane node. File lanes drop the
+/// content (it would just repeat the lane title); reasoning/other lanes show
+/// the content because that's the whole point of the lane.
+fn swim_label(n: &TraceNode, file_lane: bool) -> String {
+    let verb = verb_for_kind(&n.kind);
+    if file_lane {
+        return verb.to_string();
+    }
+    let oneline = n.content.replace('\n', " ");
+    let trimmed = truncate(&oneline, DAG_LABEL_BUDGET);
+    let safe: String = trimmed
+        .chars()
+        .map(sanitize_mermaid_char)
+        .collect();
+    format!("{verb} · {safe}")
+}
+
+/// Replace characters that break mermaid double-quoted labels with safe
+/// look-alikes. Centralised so the chain renderer and swim-lane renderer
+/// can't drift apart on what they consider dangerous.
+fn sanitize_mermaid_char(c: char) -> char {
+    match c {
+        '"' => '\u{201D}', // right double quote
+        '\\' => '/',
+        '<' => '‹',
+        '>' => '›',
+        _ => c,
+    }
+}
+
+/// Render the swim-lane DAG as a collapsible Mermaid block. Public surface
+/// matches [`render_dag_section`] so callers can swap one for the other.
+fn render_swimlane_section(dag: &TraceDag) -> String {
+    if dag.nodes.is_empty() {
+        return String::new();
+    }
+    let total = dag.nodes.len();
+    let start = total.saturating_sub(DAG_NODE_LIMIT);
+    let visible: Vec<&TraceNode> = dag.nodes.iter().skip(start).collect();
+    let elided = total - visible.len();
+    let lanes = build_swimlanes(&visible);
+    if lanes.is_empty() {
+        return String::new();
+    }
+
+    let mut s = String::new();
+    let _ = writeln!(
+        s,
+        "<details><summary><b>🧠 Reasoning by file</b> — {} node{} across {} lane{}{}</summary>",
+        total,
+        plural_s(total),
+        lanes.len(),
+        plural_s(lanes.len()),
+        if elided > 0 {
+            format!(", latest {} only", visible.len())
+        } else {
+            String::new()
+        },
+    );
+    s.push('\n');
+    s.push_str(&render_swimlane_mermaid(&lanes));
+    s.push_str("</details>\n\n");
+    s
+}
+
+/// Same content as [`render_swimlane_section`] but without the `<details>`
+/// wrapper — used by the Replay hero which wants the diagram open by default.
+fn render_swimlane_section_expanded(dag: &TraceDag) -> String {
+    if dag.nodes.is_empty() {
+        return String::new();
+    }
+    let total = dag.nodes.len();
+    let start = total.saturating_sub(DAG_NODE_LIMIT);
+    let visible: Vec<&TraceNode> = dag.nodes.iter().skip(start).collect();
+    let lanes = build_swimlanes(&visible);
+    if lanes.is_empty() {
+        return String::new();
+    }
+    render_swimlane_mermaid(&lanes)
+}
+
+/// Pure mermaid emitter shared by the collapsed and expanded variants. Outer
+/// graph direction is `TB` so lanes stack vertically; each subgraph forces
+/// `direction LR` so nodes within a lane flow left-to-right (the swim-lane
+/// shape). Edges are intra-lane only — cross-lane causal edges quickly turn
+/// the graph into spaghetti and the user's whole motivation for switching
+/// away from the chain view was visual clarity.
+fn render_swimlane_mermaid(lanes: &[SwimLane]) -> String {
+    let mut s = String::new();
+    s.push_str("\n```mermaid\nflowchart TB\n");
+    for lane in lanes {
+        let title: String = lane.title.chars().map(sanitize_mermaid_char).collect();
+        let _ = writeln!(s, "  subgraph {key}[\"{title}\"]", key = lane.key);
+        s.push_str("    direction LR\n");
+        for node in &lane.nodes {
+            let _ = writeln!(
+                s,
+                "    {id}[\"{label}\"]:::{class}",
+                id = mermaid_id(&node.id),
+                label = node.label,
+                class = mermaid_class(&node.kind),
+            );
+        }
+        // Intra-lane chronological arrows. Two or more nodes → one arrow per
+        // consecutive pair so the eye can read the flow left-to-right.
+        for w in lane.nodes.windows(2) {
+            let _ = writeln!(
+                s,
+                "    {a} --> {b}",
+                a = mermaid_id(&w[0].id),
+                b = mermaid_id(&w[1].id),
+            );
+        }
+        s.push_str("  end\n");
+    }
+    s.push_str(
+        "  classDef o fill:#dbeafe,stroke:#1e3a8a,color:#0b1c4a;\n\
+         \x20\x20classDef t fill:#fef3c7,stroke:#92400e,color:#3f2d05;\n\
+         \x20\x20classDef a fill:#dcfce7,stroke:#166534,color:#0a2e16;\n\
+         \x20\x20classDef n fill:#ede9fe,stroke:#5b21b6,color:#221251;\n\
+         \x20\x20classDef m fill:#e5e7eb,stroke:#374151,color:#0b0f17;\n",
+    );
+    s.push_str("```\n\n");
+    s
 }
 
 /// Human-friendly token count: 12345 → "12.3k". Below 1000 stays as integer.
@@ -1368,7 +1470,7 @@ mod tests {
     fn empty_sections_render_to_empty_string() {
         assert!(render_secret_section(&[], 0).is_empty());
         assert!(render_duplicate_section(&[], 0).is_empty());
-        assert!(render_dag_section(&TraceDag::default()).is_empty());
+        assert!(render_swimlane_section(&TraceDag::default()).is_empty());
     }
 
     #[test]
@@ -1513,144 +1615,171 @@ mod tests {
         }
     }
 
-    #[test]
-    fn compress_run_collapses_three_or_more_same_kind_mechanical() {
-        let n1 = make_node("aa", "OBSERVE", "read src/a.rs", &[]);
-        let n2 = make_node("bb", "OBSERVE", "read src/b.rs", &["aa"]);
-        let n3 = make_node("cc", "OBSERVE", "read src/c.rs", &["bb"]);
-        let n4 = make_node("dd", "THINK", "decide", &["cc"]);
-        let visible: Vec<&TraceNode> = vec![&n1, &n2, &n3, &n4];
+    // ── Swim-lane DAG ─────────────────────────────────────────────────────
 
-        let (units, remap) = compress_dag_units(&visible);
-        assert_eq!(units.len(), 2, "3 OBSERVE → 1 summary + 1 THINK");
-        assert!(units[0].id.starts_with("sum_"));
-        assert_eq!(units[0].kind, "OBSERVE");
-        assert!(units[0].content.contains("read 3 files"));
-        assert!(units[0].content.contains("src/a.rs"));
-        assert!(units[0].content.contains("src/b.rs"));
-        assert!(units[0].content.contains("src/c.rs"));
-        // THINK must survive as itself.
-        assert_eq!(units[1].id, "dd");
-        // Remap: every collapsed node's id now points at the summary so edges
-        // from THINK referring to "cc" get rewritten to the summary id.
-        assert_eq!(remap.get("aa"), remap.get("bb"));
-        assert_eq!(remap.get("bb"), remap.get("cc"));
-        assert!(remap.get("aa").unwrap().starts_with("sum_"));
+    #[test]
+    fn extract_file_pulls_path_from_observe_act() {
+        assert_eq!(
+            extract_swimlane_file(&make_node("a", "OBSERVE", "read src/foo.rs", &[])),
+            Some("src/foo.rs".into())
+        );
+        assert_eq!(
+            extract_swimlane_file(&make_node("b", "ACT", "edited Cargo.toml", &[])),
+            Some("Cargo.toml".into())
+        );
+        // Bare extension without slash still counts.
+        assert_eq!(
+            extract_swimlane_file(&make_node("c", "ACT", "edited foo.py", &[])),
+            Some("foo.py".into())
+        );
     }
 
     #[test]
-    fn compress_run_keeps_runs_of_two_uncompressed() {
-        let n1 = make_node("aa", "OBSERVE", "read src/a.rs", &[]);
-        let n2 = make_node("bb", "OBSERVE", "read src/b.rs", &["aa"]);
-        let visible: Vec<&TraceNode> = vec![&n1, &n2];
-        let (units, _) = compress_dag_units(&visible);
-        assert_eq!(units.len(), 2, "2 < DAG_COMPRESS_RUN — both stay singular");
+    fn extract_file_returns_none_for_non_file_traces() {
+        // THINK/NOTE never bind to a file even if content happens to mention one.
+        assert!(extract_swimlane_file(&make_node("a", "THINK", "src/foo.rs is buggy", &[])).is_none());
+        assert!(extract_swimlane_file(&make_node("b", "NOTE", "TODO: fix bar.rs", &[])).is_none());
+        // Prose with no path-shaped token.
+        assert!(extract_swimlane_file(&make_node("c", "OBSERVE", "thought about it", &[])).is_none());
+        // The "1.0" trap — a dot doesn't make something a path.
+        assert!(extract_swimlane_file(&make_node("d", "ACT", "bumped version to 1.0", &[])).is_none());
     }
 
     #[test]
-    fn compress_run_does_not_merge_across_kinds() {
-        let n1 = make_node("aa", "OBSERVE", "read src/a.rs", &[]);
-        let n2 = make_node("bb", "OBSERVE", "read src/b.rs", &["aa"]);
-        let n3 = make_node("cc", "ACT", "edited src/c.rs", &["bb"]);
-        let n4 = make_node("dd", "ACT", "edited src/d.rs", &["cc"]);
-        let visible: Vec<&TraceNode> = vec![&n1, &n2, &n3, &n4];
-        let (units, _) = compress_dag_units(&visible);
-        // Neither run reaches 3; nothing collapses.
-        assert_eq!(units.len(), 4);
+    fn swimlanes_bucket_by_file_with_reasoning_first() {
+        let nodes = vec![
+            make_node("a1", "OBSERVE", "read src/foo.rs", &[]),
+            make_node("a2", "THINK", "consider split", &["a1"]),
+            make_node("a3", "ACT", "edited src/foo.rs", &["a2"]),
+            make_node("a4", "OBSERVE", "read src/bar.rs", &["a3"]),
+            make_node("a5", "NOTE", "TODO: tests", &["a4"]),
+        ];
+        let visible: Vec<&TraceNode> = nodes.iter().collect();
+        let lanes = build_swimlanes(&visible);
+        // Reasoning lane is always first, then files by node count.
+        assert!(lanes[0].title.contains("Reasoning"));
+        assert_eq!(lanes[0].nodes.len(), 2, "THINK + NOTE land in reasoning");
+        // foo.rs has 2 ops (read + edit); bar.rs has 1.
+        assert!(lanes[1].title.contains("src/foo.rs"));
+        assert!(lanes[1].title.contains("2 op"));
+        assert!(lanes[2].title.contains("src/bar.rs"));
     }
 
     #[test]
-    fn compress_run_summarizes_many_unique_files_as_plus_more() {
-        let nodes: Vec<TraceNode> = (0..7)
-            .map(|i| make_node(&format!("n{i}"), "ACT", &format!("edited f{i}.rs"), &[]))
+    fn swimlanes_compress_consecutive_same_kind_in_file_lane() {
+        // 4 consecutive READs on the same file → one `READ × 4` node.
+        let nodes: Vec<TraceNode> = (0..4)
+            .map(|i| make_node(&format!("r{i}"), "OBSERVE", "read src/foo.rs", &[]))
             .collect();
         let visible: Vec<&TraceNode> = nodes.iter().collect();
-        let (units, _) = compress_dag_units(&visible);
-        assert_eq!(units.len(), 1);
-        assert!(
-            units[0].content.contains("edited 7 files"),
-            "got: {}",
-            units[0].content
-        );
-        assert!(units[0].content.contains("(+4 more)"));
+        let lanes = build_swimlanes(&visible);
+        assert_eq!(lanes.len(), 1, "only the foo.rs lane");
+        assert_eq!(lanes[0].nodes.len(), 1, "compressed into 1 node");
+        assert_eq!(lanes[0].nodes[0].label, "READ × 4");
     }
 
     #[test]
-    fn dag_section_renders_mermaid_with_classes() {
+    fn swimlanes_compress_keeps_distinct_kinds_separate() {
+        // READ → EDIT → READ on the same file must NOT collapse — kind alternates.
+        let nodes = vec![
+            make_node("r1", "OBSERVE", "read src/foo.rs", &[]),
+            make_node("e1", "ACT", "edited src/foo.rs", &["r1"]),
+            make_node("r2", "OBSERVE", "read src/foo.rs", &["e1"]),
+        ];
+        let visible: Vec<&TraceNode> = nodes.iter().collect();
+        let lanes = build_swimlanes(&visible);
+        assert_eq!(lanes[0].nodes.len(), 3, "kinds alternate; no compression");
+        let labels: Vec<&str> = lanes[0].nodes.iter().map(|n| n.label.as_str()).collect();
+        assert_eq!(labels, vec!["READ", "EDIT", "READ"]);
+    }
+
+    #[test]
+    fn swimlanes_overflow_into_other_lane() {
+        // SWIMLANE_MAX_FILES + 2 distinct files → top N file lanes + Other.
+        let mut nodes: Vec<TraceNode> = Vec::new();
+        for i in 0..(SWIMLANE_MAX_FILES + 2) {
+            // First file gets the most ops so file-count sort is unambiguous.
+            let count = if i == 0 { 5 } else { 1 };
+            for j in 0..count {
+                nodes.push(make_node(
+                    &format!("n{i}_{j}"),
+                    "ACT",
+                    &format!("edited src/f{i}.rs"),
+                    &[],
+                ));
+            }
+        }
+        let visible: Vec<&TraceNode> = nodes.iter().collect();
+        let lanes = build_swimlanes(&visible);
+        let titles: Vec<&str> = lanes.iter().map(|l| l.title.as_str()).collect();
+        // No reasoning lane (all ACT). MAX file lanes + Other.
+        assert_eq!(lanes.len(), SWIMLANE_MAX_FILES + 1);
+        assert!(titles.last().unwrap().contains("Other"));
+        // The first lane (most ops) must be f0.rs at the top of the heatmap.
+        assert!(lanes[0].title.contains("src/f0.rs"));
+    }
+
+    #[test]
+    fn swimlane_mermaid_emits_subgraphs_and_lane_arrows() {
         let dag = TraceDag {
             nodes: vec![
-                make_node("a1b2c3d4", "OBSERVE", "scanned secrets", &[]),
-                make_node("e5f6a7b8", "THINK", "which to rotate?", &["a1b2c3d4"]),
-                make_node("c9d0e1f2", "ACT", "rotated AWS key", &["e5f6a7b8"]),
+                make_node("a1", "OBSERVE", "read src/foo.rs", &[]),
+                make_node("a2", "ACT", "edited src/foo.rs", &["a1"]),
+                make_node("a3", "THINK", "key insight", &["a2"]),
             ],
         };
-        let s = render_dag_section(&dag);
+        let s = render_swimlane_section(&dag);
         assert!(s.starts_with("<details>"));
-        assert!(s.contains("```mermaid"));
-        assert!(s.contains("graph TD"));
-        assert!(s.contains("n_a1b2c3d4"), "node id must be Mermaid-safe");
-        assert!(s.contains("classDef o"), "OBSERVE class must be defined");
-        assert!(s.contains("OBSERVE · scanned secrets"));
-        assert!(s.contains("THINK · which to rotate?"));
-        assert!(s.contains("ACT · rotated AWS key"));
-        assert!(s.contains("n_a1b2c3d4 --> n_e5f6a7b8"));
-        assert!(s.contains("n_e5f6a7b8 --> n_c9d0e1f2"));
+        assert!(s.contains("flowchart TB"), "outer direction is top-bottom");
+        assert!(s.contains("subgraph lane_0"));
+        assert!(s.contains("direction LR"), "each lane forces internal LR");
+        assert!(s.contains("classDef o"), "OBSERVE class still defined");
+        // Reasoning lane comes first (THINK), then the file lane.
+        let reasoning_pos = s.find("💭 Reasoning").expect("reasoning lane title");
+        let file_pos = s.find("📄 src/foo.rs").expect("file lane title");
+        assert!(reasoning_pos < file_pos);
+        // Intra-lane arrow between the two foo.rs ops.
+        assert!(s.contains("n_a1 --> n_a2"));
         assert!(s.contains("</details>"));
     }
 
     #[test]
-    fn dag_section_elides_old_nodes_when_over_limit() {
-        let mut nodes = Vec::new();
-        for i in 0..(DAG_NODE_LIMIT + 5) {
-            // Each parents the previous, building a long linear chain.
-            let id = format!("n{i:08x}");
-            let parent_str: Vec<String> = if i == 0 {
-                vec![]
-            } else {
-                vec![format!("n{:08x}", i - 1)]
-            };
-            nodes.push(TraceNode {
-                id,
-                parent_ids: parent_str,
-                kind: "OBSERVE".into(),
-                content: format!("step {i}"),
-                timestamp: "t".into(),
-            });
-        }
-        let dag = TraceDag { nodes };
-        let s = render_dag_section(&dag);
-        assert!(
-            s.contains("earlier node"),
-            "elision marker must be present when over limit"
-        );
-        // Edges that reference an elided node must not appear, otherwise
-        // Mermaid declares an unstyled phantom node.
-        assert!(
-            !s.contains(&"n_n00000000 --> ".to_string()),
-            "edges from elided nodes must be suppressed"
-        );
+    fn swimlane_expanded_drops_details_wrapper() {
+        let dag = TraceDag {
+            nodes: vec![make_node("a1", "ACT", "edited src/foo.rs", &[])],
+        };
+        let s = render_swimlane_section_expanded(&dag);
+        assert!(!s.contains("<details>"), "expanded variant must not collapse: {s}");
+        assert!(s.contains("flowchart TB"));
     }
 
     #[test]
-    fn dag_section_sanitizes_dangerous_label_chars() {
+    fn swimlane_empty_dag_renders_nothing() {
+        assert!(render_swimlane_section(&TraceDag::default()).is_empty());
+        assert!(render_swimlane_section_expanded(&TraceDag::default()).is_empty());
+    }
+
+    #[test]
+    fn swimlane_sanitizes_dangerous_chars_in_labels_and_titles() {
+        // A "file" path with quotes/brackets must round-trip through the
+        // lane title and the node label without breaking Mermaid.
         let dag = TraceDag {
-            nodes: vec![make_node(
-                "a1b2c3d4",
-                "NOTE",
-                "weird \"quotes\" <html> and \\ backslashes",
-                &[],
-            )],
+            nodes: vec![
+                make_node("a1", "ACT", "edited weird\"path<x>.rs", &[]),
+                make_node("a2", "THINK", "weird \"thought\" <html>", &["a1"]),
+            ],
         };
-        let s = render_dag_section(&dag);
-        // No raw double-quotes inside the label, no raw `<` or `>` (would break Mermaid).
-        // The label is wrapped in double-quotes, so look at the label substring.
-        let label_start = s.find("NOTE ·").expect("label present");
-        let label_end = s[label_start..].find("\"]").unwrap() + label_start;
-        let label = &s[label_start..label_end];
-        assert!(!label.contains('"'), "raw quote leaked into label: {label}");
-        assert!(!label.contains('<'), "raw < leaked into label: {label}");
-        assert!(!label.contains('>'), "raw > leaked into label: {label}");
-        assert!(!label.contains('\\'), "raw \\ leaked into label: {label}");
+        let s = render_swimlane_section(&dag);
+        // No raw double-quotes inside subgraph titles (would close the title early).
+        for line in s.lines().filter(|l| l.contains("subgraph")) {
+            let after_bracket = line.find('[').unwrap();
+            let inner = &line[after_bracket + 1..line.rfind(']').unwrap()];
+            // The wrapping quotes are at the boundary; anything in between
+            // must be a smart quote, not a raw `"`.
+            assert!(!inner[1..inner.len() - 1].contains('"'), "raw quote in title: {line}");
+            assert!(!inner.contains('<'), "raw < in title: {line}");
+            assert!(!inner.contains('>'), "raw > in title: {line}");
+        }
     }
 
     // ── Aggregation ───────────────────────────────────────────────────────
@@ -1859,10 +1988,11 @@ mod tests {
         let body = render_hero_replay(&sample_aggregates(), &sample_hero(), &dag, &[], &[]);
         assert!(body.contains("🪙 h5i provenance · _the replay_"));
         assert!(body.contains("🎯 **Add retry logic"));
-        assert!(body.contains("### 🧠 Reasoning replay"));
+        assert!(body.contains("### 🧠 Reasoning by file"));
         assert!(body.contains("```mermaid"));
-        // The replay block must NOT be wrapped in <details>, so reviewers see
-        // the graph above the fold rather than a collapsed widget.
+        // Replay must promote the DAG above the fold: no <details>, and the
+        // swim-lane outer direction is TB (lanes stack) with internal LR.
+        assert!(body.contains("flowchart TB"));
         assert!(
             !body.contains("<details>"),
             "replay hero must render DAG expanded, got: {body}"
