@@ -1,0 +1,245 @@
+# Project Roadmap
+
+## Goal
+implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory,context,ast} from a remote)
+
+## Milestones
+- [x] Initial setup
+- [x] implemented h5i pull (top-level, mirrors h5i push)
+- [x] h5i pull is now safe-by-default with conflict handling
+- [x] Palantir/Blueprint visual refresh — first cut
+- [x] edited src/main.rs; edited src/server.rs; Appended Blueprint override CSS block (~155 lines) at end of <style> in src/se…
+- [x] Blueprint refresh — iteration 2 (typography, density, emoji strip)
+- [x] edited src/server.rs; edited src/server.rs; Iteration 2: removed emoji from tabs (8), pills (3), dim-rows (5), Run Integ…
+- [x] edited src/server.rs; edited src/server.rs; Iteration 2: removed emoji from tabs (8), pills (3), dim-rows (5), Run Integ…
+- [x] Structural rebuild: React+Blueprint workbench at /v2 (first slice)
+- [x] edited server.rs; edited server.rs; Bootstrapped /v2 React workbench. web/ created with Vite+React+TS+Blueprint.js (103 …
+- [x] edited server.rs; edited server.rs; Bootstrapped /v2 React workbench. web/ created with Vite+React+TS+Blueprint.js (103 …
+- [x] Workbench feature parity: right-pane tabs + mode switcher + build hook + flip /
+- [x] edited server.rs; edited server.rs; Stages B-E complete. New TS/TSX: api.ts (extended types), RefsTab, SessionsTab, Inte…
+- [x] Fix navbar overlap + promote Context to top-level mode
+- [x] edited Cargo.toml; edited server.rs; Fixed two navbar overlap bugs + Context UX. Replaced Blueprint Navbar absolute-cent…
+- [x] GitHub deep-links + branch switcher + context as first-class
+- [x] wrote src/Workbench.tsx; edited src/CommitDetail.tsx; edited src/theme.css
+- [x] Comprehensive Context dashboard
+- [x] edited src/Workbench.tsx; edited src/Workbench.tsx; edited src/theme.css
+- [x] Size pass: bump text closer to GitHub-comfortable
+- [x] edited ReviewView.tsx; edited ReviewView.tsx; edited ReviewView.tsx
+- [x] DAG visualization + full OBSERVE/THINK/ACT content
+- [x] edited ContextView.tsx; edited ContextView.tsx; edited theme.css
+- [x] Context as default + Palantir-grade tables
+- [x] edited ContextView.tsx; edited theme.css; edited ContextView.tsx
+- [x] edited ContextView.tsx; edited theme.css; edited ContextView.tsx
+- [x] Context view goes full-width with inner readability caps
+- [x] edited ContextView.tsx; edited theme.css; edited theme.css
+- [x] edited ContextView.tsx; edited theme.css; edited theme.css
+- [x] Layout rhythm: pair OTA with Milestones row
+- [x] edited theme.css; edited ContextView.tsx; edited theme.css
+- [x] Three-column Context layout with single-line clipping
+- [x] edited ContextView.tsx; edited DagViz.tsx; edited theme.css
+- [x] Resizable 3-pane Context (Explore visual style)
+- [x] edited ContextView.tsx; edited ContextView.tsx; edited theme.css
+- [x] Reorder Context: Hero -> 3-pane -> Tables -> Promotion + OTA at bottom
+- [x] edited theme.css; edited ContextView.tsx; edited ContextView.tsx
+- [x] edited theme.css; edited ContextView.tsx; edited ContextView.tsx
+- [x] edited theme.css; edited ContextView.tsx; edited ContextView.tsx
+- [x] Hyperliquid-style design pass: mint accent + near-black bg + borderless cards + KPI density
+- [x] edited theme.css; edited theme.css; edited theme.css
+- [x] edited theme.css; edited theme.css; edited theme.css
+- [x] Backend: unified /api/branches with git + context join
+- [x] edited theme.css; edited server.rs; edited server.rs
+- [x] UI: integrate /api/branches as the unified git+context branch view
+- [x] edited ContextView.tsx; edited BranchPicker.tsx; edited theme.css
+- [x] edited ContextView.tsx; edited BranchPicker.tsx; edited theme.css
+- [x] Snapshot diff drawer + expandable OBSERVE entries
+- [x] edited DagViz.tsx; edited theme.css; edited theme.css
+- [x] Recent milestones now show context-commit SHA + timestamp
+- [x] edited ContextView.tsx; edited ContextView.tsx; edited theme.css
+- [x] Assessed web UI improvement opportunities: hierarchy, actions, responsive layout, and mode utility.
+- [x] Improved web UI utility with quick search, actionable context commands, and command-copy affordances.
+- [x] CLI context writes now require a same-named current-git-branch context purpose before trace or milestone commands proceed.
+- [x] Narrowed branch-purpose enforcement patch and verified targeted CLI/context tests.
+- [x] Implemented git-branch goals plus independent context-branch purposes as CLI guards and UI metadata.
+- [x] Updated manual and man page for git-branch goals plus h5i context-branch purposes.
+- [x] edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei…
+- [x] edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/…
+- [x] edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/…
+- [x] edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/…
+- [x] edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/release.yaml
+- [x] edited .github/workflows/release.yaml
+- [x] edited .github/workflows/release.yaml
+- [x] session ended (auto-checkpoint)
+- [x] edited Cargo.toml
+- [x] edited Cargo.toml
+- [x] edited Cargo.toml
+- [x] edited Cargo.toml
+- [x] edited Cargo.toml
+- [x] edited Cargo.toml
+- [x] wrote docs/sitemap.xml; wrote docs/robots.txt; SEO pass on docs/: added OG/Twitter/canonical/JSON-LD to index.html and p…
+- [x] edited docs/index.html; wrote docs/sitemap.xml; Wrote 6 blog posts under docs/blog/ + listing index.html + shared blog.c…
+- [x] edited docs/index.html; wrote docs/sitemap.xml; Wrote 6 blog posts under docs/blog/ + listing index.html + shared blog.c…
+- [x] edited docs/blog/reduce-claude-token-costs.html; edited docs/blog/uncertainty-heatmap.html; edited docs/blog/uncertainty…
+- [x] Added two CVE write-up blog posts
+- [x] edited docs/blog/index.html; edited docs/sitemap.xml; Wrote docs/blog/cve-2025-59536-startup-trust-dialog.html and docs/…
+- [x] Rewrote README for stronger GitHub star conversion and clearer AI provenance positioning
+- [x] deleted README.md; added README.md
+- [x] Y-CRDT removed; resolve now does text 3-way merge
+- [x] Four-noun CLI + h5i pr post landed
+- [x] wrote src/pr.rs; edited src/main.rs; Collapsed verb surface: added capture/recall/audit/share noun groups via pre-clap a…
+- [x] Docs + helper polish landed
+- [x] edited man/man1/h5i.1; edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed…
+- [x] edited man/man1/h5i.1; edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed…
+- [x] edited man/man1/h5i.1; edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed…
+- [x] edited man/man1/h5i.1; edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed…
+- [x] edited man/man1/h5i.1; edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed…
+- [x] edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed manual trace instructi…
+- [x] edited man/man1/h5i.1; edited src/secrets.rs; edited src/secrets.rs
+- [x] edited man/man1/h5i.1; edited src/secrets.rs; edited src/secrets.rs
+- [x] edited man/man1/h5i.1; edited src/secrets.rs; edited src/secrets.rs
+- [x] Production hardening pass
+- [x] edited Cargo.toml; edited src/main.rs; edited src/repository.rs
+- [x] Parser hardening tests + env-var docs
+- [x] edited src/repository.rs; edited MANUAL.md; edited MANUAL.md
+- [x] Beautiful PR comment: callouts + Mermaid DAG
+- [x] edited src/pr.rs; edited src/pr.rs; edited src/pr.rs
+- [x] PR comment polish: reassurance + DAG compression
+- [x] edited src/pr.rs; edited src/pr.rs; edited src/pr.rs
+- [x] edited src/pr.rs; edited src/pr.rs; edited src/pr.rs
+- [x] Secret scanner: keyword pre-filter + connection-string rules
+- [x] edited src/secrets.rs; edited src/secrets.rs; edited src/secrets.rs
+- [x] edited src/secrets.rs; edited src/secrets.rs; edited src/secrets.rs
+- [x] Fix deferral NOTE bodies to use snippet
+- [x] edited src/secrets.rs; edited src/secrets.rs; edited src/main.rs
+- [x] edited src/main.rs
+- [x] Production hardening II
+- [x] wrote .github/workflows/test.yaml; edited .github/workflows/test.yaml; wrote tests/e2e_noun_workflow.rs
+- [x] wrote .github/workflows/test.yaml; edited .github/workflows/test.yaml; wrote tests/e2e_noun_workflow.rs
+- [x] Scored h5i against /home/koukyosyumei/Dev/cli using repository shape, test/CI evidence, docs, and maintainability signals.
+- [x] Analyzed current context-branch architecture and identified Git-compatibility problems plus a refs-based redesign direction.
+- [x] session ended (auto-checkpoint)
+- [x] session ended (auto-checkpoint)
+- [x] edited src/mcp.rs; edited src/storage.rs; edited src/main.rs
+- [x] edited src/mcp.rs; edited src/storage.rs; edited src/main.rs
+- [x] edited src/main.rs; edited tests/cli_integration.rs; edited tests/cli_integration.rs
+
+## Active Branches
+- main (primary)
+
+## Notes
+- [2026-05-22 21:03 UTC] `redesign-per-ref`: edited src/main.rs; edited tests/cli_integration.rs; edited tests/cli_integration.rs
+- [2026-05-16 20:00 UTC] `redesign-per-ref`: edited src/mcp.rs; edited src/storage.rs; edited src/main.rs
+- [2026-05-16 19:57 UTC] `redesign-per-ref`: edited src/mcp.rs; edited src/storage.rs; edited src/main.rs
+- [2026-05-16 15:54 UTC] `doc-cve`: session ended (auto-checkpoint)
+- [2026-05-16 15:51 UTC] `doc-cve`: session ended (auto-checkpoint)
+- [2026-05-16 15:50 UTC] `doc-cve`: Analyzed current context-branch architecture and identified Git-compatibility problems plus a refs-based redesign direction.
+- [2026-05-15 23:30 UTC] `doc-cve`: Scored h5i against /home/koukyosyumei/Dev/cli using repository shape, test/CI evidence, docs, and maintainability signals.
+- [2026-05-15 22:00 UTC] `doc-cve`: wrote .github/workflows/test.yaml; edited .github/workflows/test.yaml; wrote tests/e2e_noun_workflow.rs
+- [2026-05-15 21:55 UTC] `doc-cve`: wrote .github/workflows/test.yaml; edited .github/workflows/test.yaml; wrote tests/e2e_noun_workflow.rs
+- [2026-05-15 21:54 UTC] `doc-cve`: Production hardening II
+- [2026-05-15 21:35 UTC] `doc-cve`: edited src/main.rs
+- [2026-05-15 21:32 UTC] `doc-cve`: edited src/secrets.rs; edited src/secrets.rs; edited src/main.rs
+- [2026-05-15 21:31 UTC] `doc-cve`: Fix deferral NOTE bodies to use snippet
+- [2026-05-15 21:28 UTC] `doc-cve`: edited src/secrets.rs; edited src/secrets.rs; edited src/secrets.rs
+- [2026-05-15 21:22 UTC] `doc-cve`: edited src/secrets.rs; edited src/secrets.rs; edited src/secrets.rs
+- [2026-05-15 21:21 UTC] `doc-cve`: Secret scanner: keyword pre-filter + connection-string rules
+- [2026-05-15 21:13 UTC] `doc-cve`: edited src/pr.rs; edited src/pr.rs; edited src/pr.rs
+- [2026-05-15 21:11 UTC] `doc-cve`: edited src/pr.rs; edited src/pr.rs; edited src/pr.rs
+- [2026-05-15 21:11 UTC] `doc-cve`: PR comment polish: reassurance + DAG compression
+- [2026-05-15 20:58 UTC] `doc-cve`: edited src/pr.rs; edited src/pr.rs; edited src/pr.rs
+- [2026-05-15 20:57 UTC] `doc-cve`: Beautiful PR comment: callouts + Mermaid DAG
+- [2026-05-15 20:42 UTC] `doc-cve`: edited src/repository.rs; edited MANUAL.md; edited MANUAL.md
+- [2026-05-15 20:42 UTC] `doc-cve`: Parser hardening tests + env-var docs
+- [2026-05-15 20:26 UTC] `doc-cve`: edited Cargo.toml; edited src/main.rs; edited src/repository.rs
+- [2026-05-15 20:26 UTC] `doc-cve`: Production hardening pass
+- [2026-05-15 20:04 UTC] `doc-cve`: edited man/man1/h5i.1; edited src/secrets.rs; edited src/secrets.rs
+- [2026-05-15 16:33 UTC] `doc-cve`: edited man/man1/h5i.1; edited src/secrets.rs; edited src/secrets.rs
+- [2026-05-15 16:17 UTC] `doc-cve`: edited man/man1/h5i.1; edited src/secrets.rs; edited src/secrets.rs
+- [2026-05-15 15:49 UTC] `doc-cve`: edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed manual trace instructi…
+- [2026-05-15 15:45 UTC] `doc-cve`: edited man/man1/h5i.1; edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed…
+- [2026-05-15 15:43 UTC] `doc-cve`: edited man/man1/h5i.1; edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed…
+- [2026-05-15 15:39 UTC] `doc-cve`: edited man/man1/h5i.1; edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed…
+- [2026-05-15 15:25 UTC] `doc-cve`: edited man/man1/h5i.1; edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed…
+- [2026-05-15 15:19 UTC] `doc-cve`: edited man/man1/h5i.1; edited man/man1/h5i.1; Updated README.md (4-noun command groups, share pr post highlight, removed…
+- [2026-05-15 15:19 UTC] `doc-cve`: Docs + helper polish landed
+- [2026-05-15 15:04 UTC] `doc-cve`: wrote src/pr.rs; edited src/main.rs; Collapsed verb surface: added capture/recall/audit/share noun groups via pre-clap a…
+- [2026-05-15 15:03 UTC] `doc-cve`: Four-noun CLI + h5i pr post landed
+- [2026-05-15 14:48 UTC] `doc-cve`: Y-CRDT removed; resolve now does text 3-way merge
+- [2026-05-15 14:28 UTC] `doc-cve`: deleted README.md; added README.md
+- [2026-05-07 19:33 UTC] `doc-cve`: Rewrote README for stronger GitHub star conversion and clearer AI provenance positioning
+- [2026-05-06 15:08 UTC] `doc-cve`: edited docs/blog/index.html; edited docs/sitemap.xml; Wrote docs/blog/cve-2025-59536-startup-trust-dialog.html and docs/…
+- [2026-05-06 15:07 UTC] `doc-cve`: Added two CVE write-up blog posts
+- [2026-05-06 14:41 UTC] `improve-context`: edited docs/blog/reduce-claude-token-costs.html; edited docs/blog/uncertainty-heatmap.html; edited docs/blog/uncertainty…
+- [2026-05-06 14:37 UTC] `improve-context`: edited docs/index.html; wrote docs/sitemap.xml; Wrote 6 blog posts under docs/blog/ + listing index.html + shared blog.c…
+- [2026-05-06 14:36 UTC] `improve-context`: edited docs/index.html; wrote docs/sitemap.xml; Wrote 6 blog posts under docs/blog/ + listing index.html + shared blog.c…
+- [2026-05-06 14:20 UTC] `improve-context`: wrote docs/sitemap.xml; wrote docs/robots.txt; SEO pass on docs/: added OG/Twitter/canonical/JSON-LD to index.html and p…
+- [2026-05-06 14:17 UTC] `improve-context`: edited Cargo.toml
+- [2026-05-06 13:34 UTC] `improve-context`: edited Cargo.toml
+- [2026-05-06 13:34 UTC] `improve-context`: edited Cargo.toml
+- [2026-05-06 13:23 UTC] `improve-context`: edited Cargo.toml
+- [2026-05-06 13:21 UTC] `improve-context`: edited Cargo.toml
+- [2026-05-06 13:19 UTC] `improve-context`: edited Cargo.toml
+- [2026-05-06 13:18 UTC] `improve-context`: session ended (auto-checkpoint)
+- [2026-05-06 13:16 UTC] `improve-context`: edited .github/workflows/release.yaml
+- [2026-05-06 13:15 UTC] `improve-context`: edited .github/workflows/release.yaml
+- [2026-05-06 13:12 UTC] `improve-context`: edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/release.yaml
+- [2026-05-06 13:07 UTC] `improve-context`: edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/…
+- [2026-05-06 13:06 UTC] `improve-context`: edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/…
+- [2026-05-06 13:05 UTC] `improve-context`: edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited .github/workflows/…
+- [2026-05-06 13:03 UTC] `improve-context`: edited /home/koukyosyumei/Dev/h5i/MANUAL.md; edited /home/koukyosyumei/Dev/h5i/man/man1/h5i.1; edited /home/koukyosyumei…
+- [2026-05-06 04:06 UTC] `improve-context`: Updated manual and man page for git-branch goals plus h5i context-branch purposes.
+- [2026-05-06 04:03 UTC] `improve-context`: Implemented git-branch goals plus independent context-branch purposes as CLI guards and UI metadata.
+- [2026-05-06 03:46 UTC] `main`: Narrowed branch-purpose enforcement patch and verified targeted CLI/context tests.
+- [2026-05-06 03:41 UTC] `main`: CLI context writes now require a same-named current-git-branch context purpose before trace or milestone commands proceed.
+- [2026-05-06 03:33 UTC] `main`: Improved web UI utility with quick search, actionable context commands, and command-copy affordances.
+- [2026-05-06 03:25 UTC] `main`: Assessed web UI improvement opportunities: hierarchy, actions, responsive layout, and mode utility.
+- [2026-05-06 03:17 UTC] `main`: edited ContextView.tsx; edited ContextView.tsx; edited theme.css
+- [2026-05-06 03:16 UTC] `main`: Recent milestones now show context-commit SHA + timestamp
+- [2026-05-06 03:09 UTC] `main`: edited DagViz.tsx; edited theme.css; edited theme.css
+- [2026-05-06 03:09 UTC] `main`: Snapshot diff drawer + expandable OBSERVE entries
+- [2026-05-06 03:02 UTC] `main`: edited ContextView.tsx; edited BranchPicker.tsx; edited theme.css
+- [2026-05-06 03:00 UTC] `main`: edited ContextView.tsx; edited BranchPicker.tsx; edited theme.css
+- [2026-05-06 03:00 UTC] `main`: UI: integrate /api/branches as the unified git+context branch view
+- [2026-05-06 02:52 UTC] `main`: edited theme.css; edited server.rs; edited server.rs
+- [2026-05-06 02:52 UTC] `main`: Backend: unified /api/branches with git + context join
+- [2026-05-06 02:45 UTC] `main`: edited theme.css; edited theme.css; edited theme.css
+- [2026-05-06 02:33 UTC] `main`: edited theme.css; edited theme.css; edited theme.css
+- [2026-05-06 02:32 UTC] `main`: Hyperliquid-style design pass: mint accent + near-black bg + borderless cards + KPI density
+- [2026-05-06 02:27 UTC] `main`: edited theme.css; edited ContextView.tsx; edited ContextView.tsx
+- [2026-05-06 02:25 UTC] `main`: edited theme.css; edited ContextView.tsx; edited ContextView.tsx
+- [2026-05-06 02:22 UTC] `main`: edited theme.css; edited ContextView.tsx; edited ContextView.tsx
+- [2026-05-06 02:22 UTC] `main`: Reorder Context: Hero -> 3-pane -> Tables -> Promotion + OTA at bottom
+- [2026-05-05 23:07 UTC] `main`: edited ContextView.tsx; edited ContextView.tsx; edited theme.css
+- [2026-05-05 23:06 UTC] `main`: Resizable 3-pane Context (Explore visual style)
+- [2026-05-05 23:00 UTC] `main`: edited ContextView.tsx; edited DagViz.tsx; edited theme.css
+- [2026-05-05 23:00 UTC] `main`: Three-column Context layout with single-line clipping
+- [2026-05-05 22:56 UTC] `main`: edited theme.css; edited ContextView.tsx; edited theme.css
+- [2026-05-05 22:55 UTC] `main`: Layout rhythm: pair OTA with Milestones row
+- [2026-05-05 22:53 UTC] `main`: edited ContextView.tsx; edited theme.css; edited theme.css
+- [2026-05-05 22:50 UTC] `main`: edited ContextView.tsx; edited theme.css; edited theme.css
+- [2026-05-05 22:50 UTC] `main`: Context view goes full-width with inner readability caps
+- [2026-05-05 22:48 UTC] `main`: edited ContextView.tsx; edited theme.css; edited ContextView.tsx
+- [2026-05-05 22:47 UTC] `main`: edited ContextView.tsx; edited theme.css; edited ContextView.tsx
+- [2026-05-05 22:47 UTC] `main`: Context as default + Palantir-grade tables
+- [2026-05-05 22:42 UTC] `main`: edited ContextView.tsx; edited ContextView.tsx; edited theme.css
+- [2026-05-05 22:41 UTC] `main`: DAG visualization + full OBSERVE/THINK/ACT content
+- [2026-05-05 22:34 UTC] `main`: edited ReviewView.tsx; edited ReviewView.tsx; edited ReviewView.tsx
+- [2026-05-05 22:33 UTC] `main`: Size pass: bump text closer to GitHub-comfortable
+- [2026-05-05 22:28 UTC] `main`: edited src/Workbench.tsx; edited src/Workbench.tsx; edited src/theme.css
+- [2026-05-05 22:28 UTC] `main`: Comprehensive Context dashboard
+- [2026-05-05 22:22 UTC] `main`: wrote src/Workbench.tsx; edited src/CommitDetail.tsx; edited src/theme.css
+- [2026-05-05 22:21 UTC] `main`: GitHub deep-links + branch switcher + context as first-class
+- [2026-05-05 22:11 UTC] `main`: edited Cargo.toml; edited server.rs; Fixed two navbar overlap bugs + Context UX. Replaced Blueprint Navbar absolute-cent…
+- [2026-05-05 22:09 UTC] `main`: Fix navbar overlap + promote Context to top-level mode
+- [2026-05-05 21:58 UTC] `main`: edited server.rs; edited server.rs; Stages B-E complete. New TS/TSX: api.ts (extended types), RefsTab, SessionsTab, Inte…
+- [2026-05-05 21:58 UTC] `main`: Workbench feature parity: right-pane tabs + mode switcher + build hook + flip /
+- [2026-05-05 21:40 UTC] `main`: edited server.rs; edited server.rs; Bootstrapped /v2 React workbench. web/ created with Vite+React+TS+Blueprint.js (103 …
+- [2026-05-05 21:39 UTC] `main`: edited server.rs; edited server.rs; Bootstrapped /v2 React workbench. web/ created with Vite+React+TS+Blueprint.js (103 …
+- [2026-05-05 21:38 UTC] `main`: Structural rebuild: React+Blueprint workbench at /v2 (first slice)
+- [2026-05-05 21:29 UTC] `main`: edited src/server.rs; edited src/server.rs; Iteration 2: removed emoji from tabs (8), pills (3), dim-rows (5), Run Integ…
+- [2026-05-05 21:27 UTC] `main`: edited src/server.rs; edited src/server.rs; Iteration 2: removed emoji from tabs (8), pills (3), dim-rows (5), Run Integ…
+- [2026-05-05 21:27 UTC] `main`: Blueprint refresh — iteration 2 (typography, density, emoji strip)
+- [2026-05-05 21:21 UTC] `main`: edited src/main.rs; edited src/server.rs; Appended Blueprint override CSS block (~155 lines) at end of <style> in src/se…
+- [2026-05-05 21:20 UTC] `main`: Palantir/Blueprint visual refresh — first cut
+- [2026-05-05 20:28 UTC] `main`: h5i pull is now safe-by-default with conflict handling
+- [2026-05-05 20:09 UTC] `main`: implemented h5i pull (top-level, mirrors h5i push)
+_Add project-wide notes here._
