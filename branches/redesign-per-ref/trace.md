@@ -113,3 +113,4 @@ _[Checkpoint: 6a08cc3a — edited src/mcp.rs; edited src/storage.rs; edited src/
 _[Checkpoint: 6a08cccd — edited src/mcp.rs; edited src/storage.rs; edited src/main.rs]_
 ---
 
+[21:01:09] OBSERVE: read tests/cli_integration.rs
