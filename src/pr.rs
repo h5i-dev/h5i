@@ -311,13 +311,20 @@ fn mermaid_class(kind: &str) -> &'static str {
 /// the same across styles — only the first viewport changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrStyle {
-    /// Receipt — scannable summary block: goal, milestones, AI/human ratio,
-    /// tokens, top AI prompt. Optimised for the screenshot-able first viewport.
+    /// Receipt — H1 headline + Stripe-style stat card + prompt + milestones.
+    /// Default. Optimised for the screenshot-able first viewport and
+    /// social-share virality; uses `~$X` cost callouts and a centered HTML
+    /// table for the stat row. Pair with `Minimal` for terse internal PRs.
     Receipt,
     /// Detective — narrative: goal → considered/rejected → key insight → shipped.
     Detective,
     /// Replay — DAG promoted above the fold with milestone markers.
     Replay,
+    /// Minimal — quiet variant for internal PRs that want h5i provenance
+    /// without the marketing flourish: a single-line headline, the goal,
+    /// the swim-lane DAG, and the audit sections. No HTML tables, no
+    /// dollar figures, no IMPORTANT callout.
+    Minimal,
 }
 
 /// Pre-rolled aggregates derived from `h5i_log` + review points. All hero
@@ -326,6 +333,11 @@ struct Aggregates {
     ai_count: usize,
     human_count: usize,
     total_tokens: usize,
+    /// Best-effort sum of per-commit compute cost in USD, derived from each
+    /// `AiMetadata::usage` via the public-list-price table in [`model_price`].
+    /// `None` only when every AI commit on the branch lacked a recognised
+    /// `usage.model` — at that point we can't honestly attach a dollar figure.
+    estimated_cost_usd: Option<f64>,
     tests_passing: usize,
     tests_failing: usize,
     flagged_count: usize,
@@ -430,6 +442,7 @@ pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> R
         PrStyle::Receipt => body.push_str(&render_hero_receipt(&aggregates, &hero, &secret_rows, &dup_rows)),
         PrStyle::Detective => body.push_str(&render_hero_detective(&aggregates, &hero, &secret_rows, &dup_rows)),
         PrStyle::Replay => body.push_str(&render_hero_replay(&aggregates, &hero, &dag, &secret_rows, &dup_rows)),
+        PrStyle::Minimal => body.push_str(&render_hero_minimal(&aggregates, &hero, &secret_rows, &dup_rows)),
     }
 
     // Empty-state reassurance: when BOTH deterministic checks came back
@@ -464,18 +477,29 @@ fn compute_aggregates(
         ai_count: 0,
         human_count: 0,
         total_tokens: 0,
+        estimated_cost_usd: None,
         tests_passing: 0,
         tests_failing: 0,
         flagged_count: 0,
     };
+    // We accumulate cost into a separate variable rather than directly into
+    // `a.estimated_cost_usd` so we can distinguish "we never priced anything"
+    // (→ None, honest) from "we priced zero dollars of work" (→ Some(0.0),
+    // misleading: makes free-tier work look uncounted).
+    let mut cost_total: f64 = 0.0;
+    let mut cost_seen: bool = false;
     for r in records {
-        if r.ai_metadata.is_none() {
+        let Some(meta) = r.ai_metadata.as_ref() else {
             a.human_count += 1;
             continue;
-        }
+        };
         a.ai_count += 1;
-        if let Some(u) = r.ai_metadata.as_ref().and_then(|m| m.usage.as_ref()) {
+        if let Some(u) = meta.usage.as_ref() {
             a.total_tokens = a.total_tokens.saturating_add(u.total_tokens);
+            if let Some(c) = estimate_commit_cost(&meta.model_name, u) {
+                cost_total += c;
+                cost_seen = true;
+            }
         }
         if let Some(tm) = r.test_metrics.as_ref() {
             if tm.total > 0 || tm.passed + tm.failed > 0 {
@@ -494,7 +518,57 @@ fn compute_aggregates(
             a.flagged_count += 1;
         }
     }
+    if cost_seen {
+        a.estimated_cost_usd = Some(cost_total);
+    }
     a
+}
+
+/// Per-million-token list prices (USD) for the public Claude families. We
+/// store them as `(input, output)` pairs and keep the table small —
+/// estimating cost is a marketing flourish, not an accountancy guarantee,
+/// so an unknown model degrades to `None` rather than mis-attributing
+/// to an off-by-a-tier price.
+fn model_price(model: &str) -> Option<(f64, f64)> {
+    let m = model.to_ascii_lowercase();
+    // Order matters: most-specific tier first, then family fallback.
+    if m.contains("opus") {
+        Some((15.0, 75.0))
+    } else if m.contains("sonnet") {
+        Some((3.0, 15.0))
+    } else if m.contains("haiku") {
+        Some((0.8, 4.0))
+    } else {
+        None
+    }
+}
+
+/// Estimate the USD cost of a single commit's compute. Returns `None` if the
+/// model name doesn't map to a known price tier — we'd rather print no figure
+/// than a wrong one. The `TokenUsage` field names are misleading: `prompt`
+/// = input, `content` = output (we keep them as-is for serde compatibility).
+fn estimate_commit_cost(model: &str, usage: &crate::metadata::TokenUsage) -> Option<f64> {
+    let (in_rate, out_rate) = model_price(if usage.model.is_empty() { model } else { &usage.model })?;
+    let mtok = 1_000_000.0;
+    Some(usage.prompt_tokens as f64 * in_rate / mtok + usage.content_tokens as f64 * out_rate / mtok)
+}
+
+/// Render a USD figure with the right resolution for the magnitude: pennies
+/// get two decimals (`$0.04`), dollars get two decimals (`$1.32`), large
+/// figures get a leading tilde and rounded cents (`~$12.50`). Centralised
+/// so every style renders the same shape — consistency reads as polish.
+fn format_cost(usd: f64) -> String {
+    if usd < 0.01 {
+        // Sub-penny work is "free" in any practical sense. Show "<$0.01"
+        // rather than `$0.00` to make the smallness explicit.
+        "<$0.01".to_string()
+    } else if usd < 1.0 {
+        format!("${:.2}", usd)
+    } else if usd < 100.0 {
+        format!("~${:.2}", usd)
+    } else {
+        format!("~${:.0}", usd)
+    }
 }
 
 /// Pull together every soft-signal the narrative hero blocks reference.
@@ -569,12 +643,218 @@ fn collect_hero_inputs(
 }
 
 // ── Style: Receipt ───────────────────────────────────────────────────────────
+//
+// The default layout. Optimised for the *screenshot* — the part of the
+// comment a reviewer or social-share captures in one image. Three moves
+// distinguish it from a stock GitHub comment:
+//
+//   1. H1 headline collapses the punchline into one line ("60% AI-authored ·
+//      12.3k tokens · ~$0.04"). This is the only line guaranteed to be in any
+//      screenshot, so it has to carry the whole story.
+//   2. The goal lives in a native `> [!IMPORTANT]` callout (blue stripe on
+//      github.com) — visually distinct from the `> [!CAUTION]` (red) we use
+//      for leaks and `> [!NOTE]` (white) for checks-pass.
+//   3. Stats use an HTML <table> instead of bullet points. Tables render
+//      centred on github.com which gives the Stripe-receipt aesthetic;
+//      bullet points would just look like a status comment.
+//
+// Compare to `Minimal` (escape hatch for internal PRs) which keeps the same
+// data shape but rolls everything into a single blockquote with no big H1,
+// no cost callouts, and no <table>.
 
-/// Single dense block, scannable at a glance — built to be the screenshot
-/// people share. We use a single-row blockquote header so it stands out from
-/// the audit tables below, and put the badges on the first line for parity
-/// with the legacy layout (anyone screenshot-comparing won't see a regression).
 fn render_hero_receipt(
+    agg: &Aggregates,
+    hero: &HeroInputs,
+    secret_rows: &[SecretRow],
+    dup_rows: &[DupRow],
+) -> String {
+    let mut s = String::new();
+
+    // (1) Headline. Build only the parts that have data so a fresh PR with
+    // no AI commits still produces something coherent.
+    let mut headline_parts: Vec<String> = Vec::new();
+    let total_commits = agg.ai_count + agg.human_count;
+    if total_commits > 0 && agg.ai_count > 0 {
+        let pct = (agg.ai_count as f64 / total_commits as f64 * 100.0).round() as usize;
+        headline_parts.push(format!("{}% AI-authored", pct));
+    }
+    if agg.total_tokens > 0 {
+        headline_parts.push(format!("{} tokens", format_tokens(agg.total_tokens)));
+    }
+    if let Some(usd) = agg.estimated_cost_usd {
+        headline_parts.push(format_cost(usd));
+    }
+    if hero.dag_stats.files_touched > 0 {
+        headline_parts.push(format!(
+            "{} file{}",
+            hero.dag_stats.files_touched,
+            plural_s(hero.dag_stats.files_touched)
+        ));
+    }
+    if headline_parts.is_empty() {
+        // No AI commits at all — fall back to a neutral title so we never emit
+        // a bare `# 🪙` with nothing after it (looks broken).
+        s.push_str("# 🪙 h5i provenance\n\n");
+    } else {
+        let _ = writeln!(s, "# 🪙 {}", headline_parts.join(" · "));
+        s.push('\n');
+    }
+
+    // Existing badge row — kept so the chip-style readout stays for power
+    // users who want to scan secrets/tests/flagged counts at a glance.
+    s.push_str(&render_badges(
+        agg.ai_count,
+        agg.total_tokens,
+        secret_rows.len(),
+        dup_rows.len(),
+        agg.tests_passing,
+        agg.tests_failing,
+        agg.flagged_count,
+    ));
+    s.push_str("\n\n");
+
+    // (2) Goal as a GitHub [!IMPORTANT] callout — distinct color from leaks.
+    if !hero.branch_goal.is_empty() {
+        let _ = writeln!(
+            s,
+            "> [!IMPORTANT]\n> 🎯 **Goal:** {}\n",
+            escape_md(&truncate(&hero.branch_goal, 240)),
+        );
+    }
+
+    // (3) HTML stat card — six cells, fits one row at GitHub-comfortable width.
+    s.push_str(&render_stat_card(agg, hero));
+
+    // The prompt that triggered the work. Promoted out of the receipt blockquote
+    // (where it was buried at the bottom) into its own labelled section because
+    // it's the single most relatable artifact to a non-engineer reading the PR.
+    if let Some(prompt) = &hero.top_prompt {
+        s.push_str("### 💬 The ask\n\n");
+        let _ = writeln!(
+            s,
+            "> \"{}\"\n",
+            escape_md(&truncate(prompt, 240))
+        );
+    }
+
+    // What shipped. We pull clean milestones first (human-written checkpoints);
+    // if every milestone got filtered out as auto-trace noise, we leave the
+    // section out rather than printing a header with no body.
+    let clean = clean_milestones(&hero.milestones, 5);
+    if !clean.is_empty() {
+        s.push_str("### 📍 What shipped\n\n");
+        for m in &clean {
+            let _ = writeln!(s, "- ✓ {}", escape_md(&truncate(m, 140)));
+        }
+        s.push('\n');
+    }
+
+    s
+}
+
+/// Renders the centered six-cell stat card used by Receipt style. Pure HTML
+/// because GFM tables don't centre-align reliably and the receipt aesthetic
+/// depends on the symmetric grid. Cells are dropped if their underlying
+/// signal is zero; a sparse card with two cells still reads as intentional.
+fn render_stat_card(agg: &Aggregates, hero: &HeroInputs) -> String {
+    let total_commits = agg.ai_count + agg.human_count;
+    let mut cells: Vec<(String, &'static str)> = Vec::new();
+    if total_commits > 0 {
+        cells.push((format!("{} / {}", agg.ai_count, total_commits), "AI commits"));
+    }
+    if agg.total_tokens > 0 {
+        cells.push((format_tokens(agg.total_tokens).to_string(), "tokens"));
+    }
+    if let Some(usd) = agg.estimated_cost_usd {
+        cells.push((format_cost(usd), "est. cost"));
+    }
+    if hero.dag_stats.files_touched > 0 {
+        cells.push((hero.dag_stats.files_touched.to_string(), "files touched"));
+    }
+    if let Some(r) = hero.dag_stats.read_to_edit {
+        let cell = if r >= 1.0 {
+            format!("{:.1} : 1", r)
+        } else {
+            format!("1 : {:.1}", 1.0 / r)
+        };
+        cells.push((cell, "READ : EDIT"));
+    }
+    if let Some(opt) = hero.dag_stats.ops_per_think {
+        cells.push((
+            format!("1 / {}", opt.round() as usize),
+            "THINKs / ops",
+        ));
+    }
+    if cells.is_empty() {
+        return String::new();
+    }
+
+    let mut s = String::new();
+    s.push_str("<table align=\"center\"><tr>");
+    for (val, _) in &cells {
+        let _ = write!(s, "<td align=\"center\"><strong>{}</strong></td>", val);
+    }
+    s.push_str("</tr><tr>");
+    for (_, label) in &cells {
+        let _ = write!(s, "<td align=\"center\"><sub>{}</sub></td>", label);
+    }
+    s.push_str("</tr></table>\n\n");
+    s
+}
+
+/// Filters auto-trace noise out of the milestone list. The hook that writes
+/// `h5i context commit` from `ACT` events produces strings like
+/// `"edited src/pr.rs; edited src/pr.rs; edited src/pr.rs"` and
+/// `"session ended (auto-checkpoint)"` — useful in the full trace, but pure
+/// noise in a screenshot. We strip a leading `[x] ` (the rendered checkbox
+/// the `gcc_context` extractor leaves on each line) before pattern-matching
+/// so the filter sees the actual body text. Returns up to `take` cleaned
+/// entries in newest-first order, capping at the cleanest few.
+fn clean_milestones(raw: &[String], take: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    // Walk newest-first since reviewers care about the latest state of the
+    // branch; the auto-trace tends to dominate the tail, so going from the
+    // newest end lets us pick up human-written checkpoints early.
+    for m in raw.iter().rev() {
+        let body = m.trim().trim_start_matches("[x]").trim().trim_start_matches("[ ]").trim();
+        if body.is_empty() {
+            continue;
+        }
+        let lower = body.to_ascii_lowercase();
+        // Auto-checkpoint emitted on session-end by the hook.
+        if lower.starts_with("session ended") {
+            continue;
+        }
+        // `edited X; edited Y; …` pattern — N "edited "s separated by `; `.
+        // One "edited" is fine; two or more is the auto-trace concatenation.
+        if body.matches("edited ").count() >= 2 || body.matches("wrote ").count() >= 2 {
+            continue;
+        }
+        // Single-file mechanical entries: "edited src/foo.rs", "wrote a.py",
+        // "deleted README.md". One verb + one path-shaped token, nothing
+        // else. Prose like "edited authentication flow to use OAuth2"
+        // survives because it has > 2 tokens.
+        let tokens: Vec<&str> = body.split_whitespace().collect();
+        if tokens.len() == 2
+            && matches!(tokens[0].to_ascii_lowercase().as_str(), "edited" | "wrote" | "deleted")
+        {
+            continue;
+        }
+        out.push(body.to_string());
+        if out.len() >= take {
+            break;
+        }
+    }
+    out.reverse(); // Restore chronological order (oldest of the kept entries first).
+    out
+}
+
+// ── Style: Minimal ───────────────────────────────────────────────────────────
+
+/// Quiet escape hatch from Receipt's marketing flourish. Same data, no H1
+/// headline, no stat <table>, no IMPORTANT callout, no dollar figures.
+/// Use when h5i provenance is informational rather than the point of the PR.
+fn render_hero_minimal(
     agg: &Aggregates,
     hero: &HeroInputs,
     secret_rows: &[SecretRow],
@@ -593,49 +873,20 @@ fn render_hero_receipt(
     ));
     s.push_str("\n\n");
 
-    // The hero block proper — a single GFM blockquote so the whole receipt
-    // visually clusters as one card on github.com.
-    s.push_str("> **Receipt**\n");
     if !hero.branch_goal.is_empty() {
-        let _ = writeln!(s, "> 🎯 **Goal:** {}", escape_md(&truncate(&hero.branch_goal, 200)));
-    }
-    let total_commits = agg.ai_count + agg.human_count;
-    if total_commits > 0 {
-        let ratio = if total_commits > 0 {
-            (agg.ai_count as f64 / total_commits as f64 * 100.0).round() as usize
-        } else {
-            0
-        };
         let _ = writeln!(
             s,
-            "> 🤖 **{} AI** · 👤 **{} human** _( {}% AI )_",
-            agg.ai_count, agg.human_count, ratio
+            "**🎯 Goal:** {}\n",
+            escape_md(&truncate(&hero.branch_goal, 200)),
         );
-    }
-    if agg.total_tokens > 0 {
-        let _ = writeln!(s, "> 🧮 **{}** tokens consumed", format_tokens(agg.total_tokens));
     }
     let stats_line = format_dag_stats_inline(&hero.dag_stats);
     if !stats_line.is_empty() {
-        let _ = writeln!(s, "> 📊 {}", stats_line);
+        let _ = writeln!(s, "**📊 By the numbers:** {}\n", stats_line);
     }
-    if !hero.milestones.is_empty() {
-        s.push_str("> 📍 **Milestones reached:**\n");
-        // Latest 3, in original (oldest→newest) order so the trail reads forward.
-        let start = hero.milestones.len().saturating_sub(3);
-        for m in &hero.milestones[start..] {
-            let _ = writeln!(s, "> &nbsp;&nbsp;✓ {}", escape_md(&truncate(m, 120)));
-        }
-    }
-    if let Some(prompt) = &hero.top_prompt {
-        let _ = writeln!(
-            s,
-            "> 💬 _Triggering prompt:_ \"{}\"",
-            escape_md(&truncate(prompt, 180))
-        );
-    }
-    s.push_str(">\n");
-    s.push('\n');
+    // Minimal intentionally drops the prompt, milestones, and decisions —
+    // the swim-lane DAG below the hero already shows the work; anyone who
+    // wants narrative detail can switch to `--style detective`.
     s
 }
 
@@ -663,11 +914,15 @@ fn render_hero_detective(
     ));
     s.push_str("\n\n");
 
-    // Act I — the goal.
+    // Act I — the goal, in a native [!IMPORTANT] callout so it pops visually
+    // (blue stripe on github.com, distinct from the red [!CAUTION] and white
+    // [!NOTE] we use elsewhere).
     if !hero.branch_goal.is_empty() {
-        s.push_str("### 🎯 Goal\n\n");
-        let _ = writeln!(s, "> {}", escape_md(&truncate(&hero.branch_goal, 280)));
-        s.push('\n');
+        let _ = writeln!(
+            s,
+            "> [!IMPORTANT]\n> 🎯 **Goal:** {}\n",
+            escape_md(&truncate(&hero.branch_goal, 280)),
+        );
     }
 
     // Process-shape stats — a tight one-liner between the goal and the
@@ -726,12 +981,13 @@ fn render_hero_detective(
         s.push('\n');
     }
 
-    // Act IV — what shipped. Most-recent first because reviewers care about
-    // the latest state of the branch, not its archaeology.
-    if !hero.milestones.is_empty() {
+    // Act IV — what shipped. We use `clean_milestones` to drop auto-trace
+    // noise; if every entry got filtered out we skip the section entirely
+    // rather than emit an empty header.
+    let clean = clean_milestones(&hero.milestones, 5);
+    if !clean.is_empty() {
         s.push_str("### 🚢 What shipped\n\n");
-        let tail: Vec<&String> = hero.milestones.iter().rev().take(5).collect();
-        for m in &tail {
+        for m in &clean {
             let _ = writeln!(s, "- ✓ {}", escape_md(&truncate(m, 140)));
         }
         s.push('\n');
@@ -765,14 +1021,14 @@ fn render_hero_replay(
     ));
     s.push_str("\n\n");
 
-    // Goal as a one-line header above the DAG so the graph has context.
+    // Goal in a native [!IMPORTANT] callout, matching Receipt and Detective
+    // for visual consistency across styles.
     if !hero.branch_goal.is_empty() {
         let _ = writeln!(
             s,
-            "> 🎯 **Goal:** {}",
-            escape_md(&truncate(&hero.branch_goal, 220))
+            "> [!IMPORTANT]\n> 🎯 **Goal:** {}\n",
+            escape_md(&truncate(&hero.branch_goal, 220)),
         );
-        s.push('\n');
     }
 
     // Process-shape stats above the DAG so the screenshot leads with the
@@ -795,12 +1051,12 @@ fn render_hero_replay(
 
     // Milestone trail beneath the graph, so reviewers can read the narrative
     // in markdown if the Mermaid block doesn't render (some clients block it).
-    if !hero.milestones.is_empty() {
+    // We pull cleaned milestones so the arrow chain isn't dominated by
+    // auto-trace `edited X; edited Y;` concatenations.
+    let trail = clean_milestones(&hero.milestones, 6);
+    if !trail.is_empty() {
         s.push_str("**Milestone trail:**\n\n");
-        let tail: Vec<&String> = hero.milestones.iter().rev().take(6).collect();
-        // Print in chronological order so the arrow chain reads left-to-right.
-        let chrono: Vec<&&String> = tail.iter().rev().collect();
-        let line = chrono
+        let line = trail
             .iter()
             .map(|m| format!("`{}`", escape_md(&truncate(m, 60))))
             .collect::<Vec<_>>()
@@ -2038,6 +2294,7 @@ mod tests {
             ai_count: 4,
             human_count: 1,
             total_tokens: 12_345,
+            estimated_cost_usd: Some(0.0432),
             tests_passing: 2,
             tests_failing: 0,
             flagged_count: 0,
@@ -2074,16 +2331,27 @@ mod tests {
     }
 
     #[test]
-    fn receipt_hero_includes_goal_ratio_and_milestones() {
+    fn receipt_hero_headlines_and_card() {
         let body = render_hero_receipt(&sample_aggregates(), &sample_hero(), &[], &[]);
-        assert!(body.contains("> **Receipt**"), "got: {body}");
-        assert!(body.contains("🎯 **Goal:** Add retry logic"));
-        assert!(body.contains("🤖 **4 AI**"));
-        assert!(body.contains("👤 **1 human**"));
-        assert!(body.contains("80% AI"), "ratio rounding wrong: {body}");
-        assert!(body.contains("12.3k"), "tokens formatted: {body}");
+        // (1) H1 headline rolls up the punchline stats.
+        assert!(body.starts_with("# 🪙 "), "must lead with H1 headline: {body}");
+        assert!(body.contains("80% AI-authored"), "ratio: {body}");
+        assert!(body.contains("12.3k tokens"));
+        assert!(body.contains("$0.04"), "cost in headline: {body}");
+        assert!(body.contains("3 files"), "files in headline: {body}");
+        // (2) Goal in an IMPORTANT callout, not buried in the receipt blockquote.
+        assert!(body.contains("> [!IMPORTANT]\n> 🎯 **Goal:** Add retry logic"));
+        // (3) Stat card present and centred.
+        assert!(body.contains("<table align=\"center\">"));
+        assert!(body.contains("<strong>4 / 5</strong>"), "AI/total cell: {body}");
+        assert!(body.contains("<sub>est. cost</sub>"));
+        // (4) The ask now has its own section, prompt promoted out of the card.
+        assert!(body.contains("### 💬 The ask"));
+        assert!(body.contains("\"Add exponential backoff"));
+        // (5) Milestones section — cleaned, no auto-trace junk in the fixture
+        // so all three sample milestones survive.
+        assert!(body.contains("### 📍 What shipped"));
         assert!(body.contains("Add timeout parameter"));
-        assert!(body.contains("Triggering prompt"));
     }
 
     #[test]
@@ -2101,12 +2369,14 @@ mod tests {
             ai_count: 0,
             human_count: 0,
             total_tokens: 0,
+            estimated_cost_usd: None,
             tests_passing: 0,
             tests_failing: 0,
             flagged_count: 0,
         };
         let body = render_hero_receipt(&agg, &empty, &[], &[]);
-        assert!(body.contains("> **Receipt**"));
+        // Empty data → neutral H1 fallback so we never emit a bare emoji header.
+        assert!(body.contains("# 🪙 h5i provenance"));
         assert!(!body.contains("Goal:"));
         assert!(!body.contains("Milestones"));
         assert!(!body.contains("Triggering prompt"));
@@ -2115,7 +2385,8 @@ mod tests {
     #[test]
     fn detective_hero_lays_out_four_acts() {
         let body = render_hero_detective(&sample_aggregates(), &sample_hero(), &[], &[]);
-        assert!(body.contains("### 🎯 Goal"));
+        // Goal is now in an [!IMPORTANT] callout, not a section header.
+        assert!(body.contains("> [!IMPORTANT]\n> 🎯 **Goal:** Add retry logic"));
         assert!(body.contains("### 🧭 What we considered"));
         assert!(body.contains("### 💡 Key insight"));
         assert!(body.contains("### 🚢 What shipped"));
@@ -2285,20 +2556,28 @@ mod tests {
     // ── Hero integration ──────────────────────────────────────────────────
 
     #[test]
-    fn receipt_hero_emits_stats_line() {
+    fn receipt_hero_stat_card_carries_all_signals() {
         let body = render_hero_receipt(&sample_aggregates(), &sample_hero(), &[], &[]);
-        assert!(body.contains("📊"));
-        assert!(body.contains("**3** files touched"));
-        assert!(body.contains("READ:EDIT"));
-        assert!(body.contains("1 THINK per"));
+        // Six-cell stat card. We check that each label and its value reach
+        // the rendered output; exact placement is loosely coupled so we
+        // don't lock in a column order future designers might want to tweak.
+        assert!(body.contains("<sub>AI commits</sub>"));
+        assert!(body.contains("<sub>tokens</sub>"));
+        assert!(body.contains("<sub>est. cost</sub>"));
+        assert!(body.contains("<sub>files touched</sub>"));
+        assert!(body.contains("<sub>READ : EDIT</sub>"));
+        assert!(body.contains("<sub>THINKs / ops</sub>"));
+        assert!(body.contains("<strong>4 / 5</strong>"));
+        assert!(body.contains("<strong>$0.04</strong>"));
+        assert!(body.contains("<strong>2.0 : 1</strong>"));
     }
 
     #[test]
     fn detective_hero_has_dedicated_stats_section() {
         let body = render_hero_detective(&sample_aggregates(), &sample_hero(), &[], &[]);
         assert!(body.contains("### 📊 By the numbers"));
-        // The narrative ordering: Goal → By the numbers → Considered → Insight → Shipped.
-        let positions: Vec<usize> = ["### 🎯 Goal", "### 📊 By the numbers", "### 🧭", "### 💡", "### 🚢"]
+        // The narrative ordering: Goal callout → By the numbers → Considered → Insight → Shipped.
+        let positions: Vec<usize> = ["> [!IMPORTANT]", "### 📊 By the numbers", "### 🧭", "### 💡", "### 🚢"]
             .iter()
             .map(|h| body.find(h).unwrap_or_else(|| panic!("missing section {h} in:\n{body}")))
             .collect();
@@ -2313,7 +2592,153 @@ mod tests {
             nodes: vec![make_node("a1", "ACT", "edited src/foo.rs", &[])],
         };
         let body = render_hero_replay(&sample_aggregates(), &sample_hero(), &dag, &[], &[]);
-        assert!(body.contains("🎯 **Goal:**"), "goal must be labelled: {body}");
+        // Goal in [!IMPORTANT] callout, same as Receipt/Detective.
+        assert!(body.contains("> [!IMPORTANT]\n> 🎯 **Goal:**"), "goal callout: {body}");
         assert!(body.contains("**📊 By the numbers:**"));
+    }
+
+    // ── Cost estimation ───────────────────────────────────────────────────
+
+    #[test]
+    fn model_price_picks_tier_by_family_substring() {
+        assert_eq!(model_price("claude-opus-4-7"), Some((15.0, 75.0)));
+        assert_eq!(model_price("claude-sonnet-4-6"), Some((3.0, 15.0)));
+        assert_eq!(model_price("claude-haiku-4-5-20251001"), Some((0.8, 4.0)));
+        // Unknown / nonsense → None so we never mis-attribute a price tier.
+        assert_eq!(model_price("gpt-4o"), None);
+        assert_eq!(model_price(""), None);
+    }
+
+    #[test]
+    fn estimate_commit_cost_uses_input_and_output_rates() {
+        use crate::metadata::TokenUsage;
+        let usage = TokenUsage {
+            prompt_tokens: 1_000_000,
+            content_tokens: 1_000_000,
+            total_tokens: 2_000_000,
+            model: String::new(),
+        };
+        // Opus: $15 + $75 = $90 for a clean 1M-in / 1M-out commit.
+        let c = estimate_commit_cost("claude-opus-4-7", &usage).unwrap();
+        assert!((c - 90.0).abs() < 0.01, "got: {c}");
+        // Sonnet: $3 + $15 = $18.
+        let c = estimate_commit_cost("claude-sonnet-4-6", &usage).unwrap();
+        assert!((c - 18.0).abs() < 0.01, "got: {c}");
+        // Unknown family → None.
+        assert!(estimate_commit_cost("mystery-model", &usage).is_none());
+    }
+
+    #[test]
+    fn estimate_commit_cost_prefers_usage_model_over_outer_name() {
+        use crate::metadata::TokenUsage;
+        // The Anthropic SDK reports `model` on the usage block; fall back to
+        // the outer `AiMetadata.model_name` only when usage.model is empty.
+        let usage = TokenUsage {
+            prompt_tokens: 1_000_000,
+            content_tokens: 0,
+            total_tokens: 1_000_000,
+            model: "claude-opus-4-7".to_string(),
+        };
+        let c = estimate_commit_cost("claude-sonnet-4-6", &usage).unwrap();
+        assert!((c - 15.0).abs() < 0.01, "usage.model wins: {c}");
+    }
+
+    #[test]
+    fn format_cost_scales_resolution_with_magnitude() {
+        assert_eq!(format_cost(0.0), "<$0.01");
+        assert_eq!(format_cost(0.001), "<$0.01");
+        assert_eq!(format_cost(0.04), "$0.04");
+        assert_eq!(format_cost(0.99), "$0.99");
+        assert_eq!(format_cost(1.0), "~$1.00");
+        assert_eq!(format_cost(12.5), "~$12.50");
+        assert_eq!(format_cost(150.0), "~$150");
+    }
+
+    // ── Milestone cleaning ────────────────────────────────────────────────
+
+    #[test]
+    fn clean_milestones_drops_autotrace_and_session_end() {
+        let raw = vec![
+            "[x] Production hardening pass".to_string(),
+            "[x] edited src/pr.rs; edited src/pr.rs; edited src/pr.rs".to_string(),
+            "[x] session ended (auto-checkpoint)".to_string(),
+            "[x] wrote .github/workflows/test.yaml; wrote src/foo.rs".to_string(),
+            "[x] Implement retry loop".to_string(),
+        ];
+        let out = clean_milestones(&raw, 5);
+        // Cleaned output preserves chronological order of the *kept* entries.
+        assert_eq!(
+            out,
+            vec![
+                "Production hardening pass".to_string(),
+                "Implement retry loop".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn clean_milestones_caps_at_take_and_walks_newest_first() {
+        // 7 valid checkpoints. We ask for 3, expect the 3 newest (last 3
+        // in input) in chronological order.
+        let raw: Vec<String> = (0..7).map(|i| format!("[x] checkpoint {i}")).collect();
+        let out = clean_milestones(&raw, 3);
+        assert_eq!(
+            out,
+            vec![
+                "checkpoint 4".to_string(),
+                "checkpoint 5".to_string(),
+                "checkpoint 6".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn clean_milestones_drops_single_file_mechanical_entries() {
+        // Single-verb-plus-path is auto-trace noise; multi-word prose that
+        // happens to start with the same verb must survive.
+        let raw = vec![
+            "[x] edited src/main.rs".to_string(),
+            "[x] wrote tests/foo.rs".to_string(),
+            "[x] deleted README.md".to_string(),
+            "[x] edited authentication flow to use OAuth2".to_string(),
+            "[x] Production hardening pass".to_string(),
+        ];
+        let out = clean_milestones(&raw, 5);
+        assert_eq!(
+            out,
+            vec![
+                "edited authentication flow to use OAuth2".to_string(),
+                "Production hardening pass".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn clean_milestones_handles_unchecked_boxes_and_blanks() {
+        let raw = vec![
+            "[ ] not yet done".to_string(),
+            "".to_string(),
+            "[x]   ".to_string(),
+            "[x] a real one".to_string(),
+        ];
+        let out = clean_milestones(&raw, 5);
+        assert_eq!(out, vec!["not yet done".to_string(), "a real one".to_string()]);
+    }
+
+    // ── Minimal style ─────────────────────────────────────────────────────
+
+    #[test]
+    fn minimal_hero_omits_marketing_flourish() {
+        let body = render_hero_minimal(&sample_aggregates(), &sample_hero(), &[], &[]);
+        // Has the data:
+        assert!(body.contains("## 🪙 h5i provenance"));
+        assert!(body.contains("**🎯 Goal:** Add retry logic"));
+        assert!(body.contains("**📊 By the numbers:**"));
+        // Drops the marketing flourish:
+        assert!(!body.starts_with("# 🪙 "), "no H1 headline: {body}");
+        assert!(!body.contains("<table"), "no HTML stat card: {body}");
+        assert!(!body.contains("[!IMPORTANT]"), "no IMPORTANT callout: {body}");
+        assert!(!body.contains("$0.04"), "no dollar figures: {body}");
+        assert!(!body.contains("The ask"), "no prompt section: {body}");
     }
 }

@@ -474,15 +474,27 @@ PR number (default: auto-detect from current branch).
 Limit number of commits scanned (default: 25).
 .TP
 .BI \-\-style\  STYLE
-Hero-block layout for the comment's first viewport:
+Hero-block layout for the comment's first viewport. One of:
+.RS
+.IP \(bu 2
 .B receipt
-(default — single dense card with goal, AI/human ratio, tokens, milestones,
-triggering prompt),
+(default) — punchline H1 headline, goal in IMPORTANT callout, centered HTML
+stat card, the triggering prompt promoted to its own section, cleaned
+milestone list. Optimised for screenshot / social share.
+.IP \(bu 2
 .B detective
-(narrative: goal → considered → key insight → shipped), or
+— narrative arc: goal → by the numbers → considered → key insight → shipped.
+.IP \(bu 2
 .B replay
-(Mermaid reasoning DAG promoted above the fold, with milestone trail). The
-audit sections below the fold are identical across styles.
+— Mermaid reasoning swim-lane DAG promoted above the fold (expanded), with
+goal + stats above and milestone trail below.
+.IP \(bu 2
+.B minimal
+— quiet variant for internal PRs. Same data, no H1 headline, no stat table,
+no dollar figures, no IMPORTANT callout.
+.RE
+The audit sections below the fold (secrets, duplicates, per-commit
+provenance) are identical across styles.
 .TP
 .B \-\-dry\-run
 Print the markdown body and exit without calling
@@ -519,8 +531,9 @@ Hero-block layout —
 .B receipt
 (default),
 .BR detective ,
+.BR replay ,
 or
-.BR replay .
+.BR minimal .
 See
 .B h5i share pr post
 above for descriptions.

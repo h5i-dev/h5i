@@ -423,9 +423,10 @@ per-commit provenance) are identical across styles.
 
 | Style | When to use |
 |-------|-------------|
-| `receipt` (default) | Single dense card: goal, AI/human ratio, tokens, latest milestones, triggering prompt. Scannable in one screenshot. |
-| `detective` | Narrative arc: 🎯 goal → 🧭 considered (from `--decisions`) → 💡 key insight (latest THINK) → 🚢 shipped (milestones). Reads like a mini blog post. |
-| `replay` | Mermaid reasoning DAG promoted above the fold (expanded), with a goal banner above and an arrow-separated milestone trail below. |
+| `receipt` (default) | Punchline H1 headline (`# 🪙 60% AI-authored · 12.3k tokens · ~$0.04 · 8 files`), goal in a native `[!IMPORTANT]` callout, centered HTML stat card (6 cells), the triggering prompt promoted to its own section, then cleaned milestone list. Optimised for screenshot / social share. |
+| `detective` | Narrative arc: 🎯 goal callout → 📊 by the numbers → 🧭 considered (from `--decisions`) → 💡 key insight (latest THINK) → 🚢 shipped (cleaned milestones). Reads like a mini blog post. |
+| `replay` | Mermaid reasoning swim-lane DAG promoted above the fold (expanded), with a goal callout and stats line above and an arrow-separated milestone trail below. |
+| `minimal` | Quiet variant for routine internal PRs that want h5i provenance without the marketing flourish. Same data, no H1 headline, no stat table, no dollar figures, no callouts beyond audit alerts. |
 
 ```bash
 h5i share pr post                          # upsert sticky comment (needs `gh auth login`)

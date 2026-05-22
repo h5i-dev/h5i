@@ -450,6 +450,7 @@ enum PrStyleArg {
     Receipt,
     Detective,
     Replay,
+    Minimal,
 }
 
 impl From<PrStyleArg> for h5i_core::pr::PrStyle {
@@ -458,6 +459,7 @@ impl From<PrStyleArg> for h5i_core::pr::PrStyle {
             PrStyleArg::Receipt => h5i_core::pr::PrStyle::Receipt,
             PrStyleArg::Detective => h5i_core::pr::PrStyle::Detective,
             PrStyleArg::Replay => h5i_core::pr::PrStyle::Replay,
+            PrStyleArg::Minimal => h5i_core::pr::PrStyle::Minimal,
         }
     }
 }
