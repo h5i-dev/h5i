@@ -121,11 +121,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/mcp.rs; edited src/storage.rs; edited src/main.rs
 - [x] edited src/mcp.rs; edited src/storage.rs; edited src/main.rs
 - [x] edited src/main.rs; edited tests/cli_integration.rs; edited tests/cli_integration.rs
+- [x] PR body --style flag with three hero layouts (Receipt/Detective/Replay)
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-22 21:25 UTC] `improve-pr-style`: PR body --style flag with three hero layouts (Receipt/Detective/Replay)
 - [2026-05-22 21:03 UTC] `redesign-per-ref`: edited src/main.rs; edited tests/cli_integration.rs; edited tests/cli_integration.rs
 - [2026-05-16 20:00 UTC] `redesign-per-ref`: edited src/mcp.rs; edited src/storage.rs; edited src/main.rs
 - [2026-05-16 19:57 UTC] `redesign-per-ref`: edited src/mcp.rs; edited src/storage.rs; edited src/main.rs
