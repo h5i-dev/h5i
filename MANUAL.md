@@ -398,8 +398,8 @@ Publish provenance to teammates and PRs.
 ### h5i share pr
 
 ```
-h5i share pr post [--number N] [--limit N] [--dry-run]
-h5i share pr body [--limit N]
+h5i share pr post [--number N] [--limit N] [--style STYLE] [--dry-run]
+h5i share pr body [--limit N] [--style STYLE]
 ```
 
 Posts or previews a sticky GitHub PR comment summarising h5i provenance for
@@ -415,11 +415,25 @@ The comment renders, for each AI commit:
 - structured `--decisions` if recorded at commit time
 - a 🚩 flag with `h5i audit review` triggers (uncertainty, blind edits, churn, scope) when the commit crosses the review threshold
 
+**Hero block styles (`--style`)**
+
+The top of the comment — the part that fits in a screenshot — switches between
+three layouts. The audit sections below the fold (secrets, duplicates,
+per-commit provenance) are identical across styles.
+
+| Style | When to use |
+|-------|-------------|
+| `receipt` (default) | Single dense card: goal, AI/human ratio, tokens, latest milestones, triggering prompt. Scannable in one screenshot. |
+| `detective` | Narrative arc: 🎯 goal → 🧭 considered (from `--decisions`) → 💡 key insight (latest THINK) → 🚢 shipped (milestones). Reads like a mini blog post. |
+| `replay` | Mermaid reasoning DAG promoted above the fold (expanded), with a goal banner above and an arrow-separated milestone trail below. |
+
 ```bash
-h5i share pr post              # upsert sticky comment (needs `gh auth login`)
-h5i share pr post --dry-run    # render to stdout without calling gh
-h5i share pr body --limit 25   # render markdown to stdout (for CI / `gh pr edit --body-file -`)
-h5i share pr post --number 42  # target a specific PR (default: auto-detect from current branch)
+h5i share pr post                          # upsert sticky comment (needs `gh auth login`)
+h5i share pr post --dry-run                # render to stdout without calling gh
+h5i share pr body --limit 25               # render markdown to stdout (for CI / `gh pr edit --body-file -`)
+h5i share pr post --number 42              # target a specific PR (default: auto-detect from current branch)
+h5i share pr body --style detective        # preview the narrative layout
+h5i share pr post --style replay --dry-run # preview the DAG-as-hero layout
 ```
 
 **Requirements**

@@ -473,6 +473,17 @@ PR number (default: auto-detect from current branch).
 .BI \-l,\ \-\-limit\  N
 Limit number of commits scanned (default: 25).
 .TP
+.BI \-\-style\  STYLE
+Hero-block layout for the comment's first viewport:
+.B receipt
+(default — single dense card with goal, AI/human ratio, tokens, milestones,
+triggering prompt),
+.B detective
+(narrative: goal → considered → key insight → shipped), or
+.B replay
+(Mermaid reasoning DAG promoted above the fold, with milestone trail). The
+audit sections below the fold are identical across styles.
+.TP
 .B \-\-dry\-run
 Print the markdown body and exit without calling
 .BR gh .
@@ -481,10 +492,12 @@ Print the markdown body and exit without calling
 .B Examples
 .RS 4
 .nf
-h5i share pr post                  # upsert sticky comment
-h5i share pr body \-\-limit 25       # render markdown to stdout (for CI)
-h5i share pr post \-\-dry\-run        # preview without calling gh
-h5i share pr post \-\-number 42      # target a specific PR
+h5i share pr post                          # upsert sticky comment
+h5i share pr body \-\-limit 25               # render markdown to stdout (for CI)
+h5i share pr post \-\-dry\-run                # preview without calling gh
+h5i share pr post \-\-number 42              # target a specific PR
+h5i share pr body \-\-style detective        # preview the narrative layout
+h5i share pr post \-\-style replay \-\-dry\-run # preview the DAG-as-hero layout
 .fi
 .RE
 .
@@ -500,6 +513,17 @@ themselves, or to commit the body to a file for review.
 .TP
 .BI \-l,\ \-\-limit\  N
 Limit number of commits scanned (default: 25).
+.TP
+.BI \-\-style\  STYLE
+Hero-block layout —
+.B receipt
+(default),
+.BR detective ,
+or
+.BR replay .
+See
+.B h5i share pr post
+above for descriptions.
 .RE
 .
 .\" ─── hook ───────────────────────────────────────────────────────────────────

@@ -494,17 +494,77 @@ fn mermaid_label(kind: &str, content: &str) -> String {
 
 // ── Top-level render ─────────────────────────────────────────────────────────
 
+/// Layout for the hero block at the top of the comment.
+///
+/// The audit sections below the fold (secrets, duplicates, per-commit) stay
+/// the same across styles — only the first viewport changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrStyle {
+    /// Receipt — scannable summary block: goal, milestones, AI/human ratio,
+    /// tokens, top AI prompt. Optimised for the screenshot-able first viewport.
+    Receipt,
+    /// Detective — narrative: goal → considered/rejected → key insight → shipped.
+    Detective,
+    /// Replay — DAG promoted above the fold with milestone markers.
+    Replay,
+}
+
+/// Pre-rolled aggregates derived from `h5i_log` + review points. All hero
+/// renderers consume this so they never re-walk the records list.
+struct Aggregates {
+    ai_count: usize,
+    human_count: usize,
+    total_tokens: usize,
+    tests_passing: usize,
+    tests_failing: usize,
+    flagged_count: usize,
+}
+
+/// Strings extracted from the context workspace + commit decisions to feed
+/// the narrative-style renderers. Each field may be empty if the underlying
+/// signal is missing (no ctx workspace, no decisions recorded, …).
+struct HeroInputs {
+    branch_goal: String,
+    milestones: Vec<String>,
+    /// Most-recent THINK trace entry — the "key insight" for Detective style.
+    top_think: Option<String>,
+    /// Most-recent OBSERVE trace entry — context backdrop for Receipt style.
+    top_observe: Option<String>,
+    /// All Decision records flattened across the branch's AI commits.
+    decisions: Vec<DecisionEntry>,
+    /// First non-empty AI prompt on the branch — the "trigger" for Receipt.
+    top_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct DecisionEntry {
+    location: String,
+    choice: String,
+    alternatives: Vec<String>,
+    reason: String,
+    short_oid: String,
+}
+
+/// Backward-compatible entry point — keeps the old `render_body(workdir, limit)`
+/// signature for callers (and our test suite) that don't pass a style. Equivalent
+/// to `render_body_with_style(..., PrStyle::Receipt)`.
+pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
+    render_body_with_style(workdir, limit, PrStyle::Receipt)
+}
+
 /// Render the full Markdown body for the PR comment.
 ///
 /// Layout (sections omit themselves when empty):
-///   1. Header + badge row
+///   1. Hero block (style-dependent)
 ///   2. 🔒 Credential-leak alert + table
 ///   3. 🔁 Duplicate-code alert + table
-///   4. 🧠 Reasoning DAG (collapsible Mermaid)
+///   4. 🧠 Reasoning DAG — placement depends on style:
+///        Receipt/Detective: collapsible, below the fold
+///        Replay:           rendered inside the hero, expanded
 ///   5. 📜 Per-commit provenance (collapsible if >5 AI commits)
 ///   6. Footer
-pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
-    let _span = tracing::info_span!("pr_render_body", limit).entered();
+pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> Result<String> {
+    let _span = tracing::info_span!("pr_render_body", limit, ?style).entered();
     let repo = H5iRepository::open(workdir)?;
     let records = repo
         .h5i_log(limit)
@@ -522,62 +582,28 @@ pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
     let secret_rows = collect_secret_rows(&records, &by_oid);
     let dup_rows = collect_duplicate_rows(&records, &by_oid);
     let dag = ctx::dag_for_branch(workdir, None).unwrap_or_default();
+    let aggregates = compute_aggregates(&records, &by_oid);
+    let hero = collect_hero_inputs(workdir, &records, &dag);
     tracing::debug!(
         records = records.len(),
         review_points = review_points.len(),
         secrets = secret_rows.len(),
         duplicates = dup_rows.len(),
         dag_nodes = dag.nodes.len(),
+        milestones = hero.milestones.len(),
+        decisions = hero.decisions.len(),
         "pr_render_body aggregates",
     );
-
-    let mut ai_count = 0usize;
-    let mut total_tokens = 0usize;
-    let mut tests_passing = 0usize;
-    let mut tests_failing = 0usize;
-    let mut flagged_count = 0usize;
-    for r in &records {
-        if r.ai_metadata.is_none() {
-            continue;
-        }
-        ai_count += 1;
-        if let Some(u) = r.ai_metadata.as_ref().and_then(|a| a.usage.as_ref()) {
-            total_tokens = total_tokens.saturating_add(u.total_tokens);
-        }
-        if let Some(tm) = r.test_metrics.as_ref() {
-            // Skip empty/placeholder metrics so the header badge doesn't
-            // claim a failure for commits where no adapter actually ran.
-            if tm.total > 0 || tm.passed + tm.failed > 0 {
-                if tm.is_passing() {
-                    tests_passing += 1;
-                } else {
-                    tests_failing += 1;
-                }
-            }
-        }
-        if by_oid
-            .get(&r.git_oid)
-            .map(|p| p.should_flag_in_pr())
-            .unwrap_or(false)
-        {
-            flagged_count += 1;
-        }
-    }
 
     let mut body = String::new();
     body.push_str(MARKER);
     body.push('\n');
-    body.push_str("## 🪙 h5i provenance\n\n");
-    body.push_str(&render_badges(
-        ai_count,
-        total_tokens,
-        secret_rows.len(),
-        dup_rows.len(),
-        tests_passing,
-        tests_failing,
-        flagged_count,
-    ));
-    body.push_str("\n\n");
+
+    match style {
+        PrStyle::Receipt => body.push_str(&render_hero_receipt(&aggregates, &hero, &secret_rows, &dup_rows)),
+        PrStyle::Detective => body.push_str(&render_hero_detective(&aggregates, &hero, &secret_rows, &dup_rows)),
+        PrStyle::Replay => body.push_str(&render_hero_replay(&aggregates, &hero, &dag, &secret_rows, &dup_rows)),
+    }
 
     // Empty-state reassurance: when BOTH deterministic checks came back
     // clean, emit a single all-clear NOTE. When only one fired, the
@@ -588,12 +614,378 @@ pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
 
     body.push_str(&render_secret_section(&secret_rows, dup_rows.len()));
     body.push_str(&render_duplicate_section(&dup_rows, secret_rows.len()));
-    body.push_str(&render_dag_section(&dag));
+    // Replay already drew the DAG above the fold; skip the collapsible copy.
+    if !matches!(style, PrStyle::Replay) {
+        body.push_str(&render_dag_section(&dag));
+    }
     body.push_str(&render_per_commit_section(&records, &by_oid, &repo));
 
     body.push_str("---\n\n");
     body.push_str("<sub>Generated by <a href=\"https://github.com/Koukyosyumei/h5i\">h5i</a> · re-run <code>h5i share pr post</code> to refresh.</sub>\n");
     Ok(body)
+}
+
+/// Walk the records once to derive every counter the hero blocks need.
+fn compute_aggregates(
+    records: &[H5iCommitRecord],
+    by_oid: &HashMap<String, &ReviewPoint>,
+) -> Aggregates {
+    let mut a = Aggregates {
+        ai_count: 0,
+        human_count: 0,
+        total_tokens: 0,
+        tests_passing: 0,
+        tests_failing: 0,
+        flagged_count: 0,
+    };
+    for r in records {
+        if r.ai_metadata.is_none() {
+            a.human_count += 1;
+            continue;
+        }
+        a.ai_count += 1;
+        if let Some(u) = r.ai_metadata.as_ref().and_then(|m| m.usage.as_ref()) {
+            a.total_tokens = a.total_tokens.saturating_add(u.total_tokens);
+        }
+        if let Some(tm) = r.test_metrics.as_ref() {
+            if tm.total > 0 || tm.passed + tm.failed > 0 {
+                if tm.is_passing() {
+                    a.tests_passing += 1;
+                } else {
+                    a.tests_failing += 1;
+                }
+            }
+        }
+        if by_oid
+            .get(&r.git_oid)
+            .map(|p| p.should_flag_in_pr())
+            .unwrap_or(false)
+        {
+            a.flagged_count += 1;
+        }
+    }
+    a
+}
+
+/// Pull together every soft-signal the narrative hero blocks reference.
+/// Each field degrades gracefully — missing ctx workspace = empty milestones,
+/// no decisions recorded = empty list, etc.
+fn collect_hero_inputs(
+    workdir: &Path,
+    records: &[H5iCommitRecord],
+    dag: &TraceDag,
+) -> HeroInputs {
+    let branch = ctx::current_git_branch(workdir);
+    let branch_goal = ctx::git_branch_goal(workdir, &branch).unwrap_or_default();
+
+    // Milestones from the cross-branch project context. Most recent last; the
+    // hero renderers reverse-slice so the freshest line shows on top.
+    let milestones = ctx::gcc_context(workdir, &ctx::ContextOpts::default())
+        .map(|c| c.milestones)
+        .unwrap_or_default();
+
+    // Walk the DAG from newest to oldest for the THINK / OBSERVE picks. We use
+    // the *latest* meaningful entry rather than scoring by length because
+    // "most recent" is the strongest proxy for "what the PR is actually about".
+    let top_think = dag
+        .nodes
+        .iter()
+        .rev()
+        .find(|n| n.kind == "THINK" && !n.content.trim().is_empty())
+        .map(|n| n.content.clone());
+    let top_observe = dag
+        .nodes
+        .iter()
+        .rev()
+        .find(|n| n.kind == "OBSERVE" && !n.content.trim().is_empty())
+        .map(|n| n.content.clone());
+
+    // Flatten decisions across all AI commits. Annotate each entry with the
+    // commit it came from so the Detective renderer can deep-link.
+    let mut decisions: Vec<DecisionEntry> = Vec::new();
+    for r in records {
+        if r.ai_metadata.is_none() {
+            continue;
+        }
+        let short = r.git_oid[..r.git_oid.len().min(8)].to_string();
+        for d in &r.decisions {
+            decisions.push(DecisionEntry {
+                location: d.location.clone(),
+                choice: d.choice.clone(),
+                alternatives: d.alternatives.clone(),
+                reason: d.reason.clone(),
+                short_oid: short.clone(),
+            });
+        }
+    }
+
+    // First non-empty prompt — records come back newest-first, so reverse to
+    // pick the *earliest* prompt, which best captures the trigger of the work.
+    let top_prompt = records
+        .iter()
+        .rev()
+        .filter_map(|r| r.ai_metadata.as_ref().map(|m| m.prompt.trim().to_string()))
+        .find(|p| !p.is_empty());
+
+    HeroInputs {
+        branch_goal,
+        milestones,
+        top_think,
+        top_observe,
+        decisions,
+        top_prompt,
+    }
+}
+
+// ── Style: Receipt ───────────────────────────────────────────────────────────
+
+/// Single dense block, scannable at a glance — built to be the screenshot
+/// people share. We use a single-row blockquote header so it stands out from
+/// the audit tables below, and put the badges on the first line for parity
+/// with the legacy layout (anyone screenshot-comparing won't see a regression).
+fn render_hero_receipt(
+    agg: &Aggregates,
+    hero: &HeroInputs,
+    secret_rows: &[SecretRow],
+    dup_rows: &[DupRow],
+) -> String {
+    let mut s = String::new();
+    s.push_str("## 🪙 h5i provenance\n\n");
+    s.push_str(&render_badges(
+        agg.ai_count,
+        agg.total_tokens,
+        secret_rows.len(),
+        dup_rows.len(),
+        agg.tests_passing,
+        agg.tests_failing,
+        agg.flagged_count,
+    ));
+    s.push_str("\n\n");
+
+    // The hero block proper — a single GFM blockquote so the whole receipt
+    // visually clusters as one card on github.com.
+    s.push_str("> **Receipt**\n");
+    if !hero.branch_goal.is_empty() {
+        let _ = writeln!(s, "> 🎯 _Goal:_ {}", escape_md(&truncate(&hero.branch_goal, 200)));
+    }
+    let total_commits = agg.ai_count + agg.human_count;
+    if total_commits > 0 {
+        let ratio = if total_commits > 0 {
+            (agg.ai_count as f64 / total_commits as f64 * 100.0).round() as usize
+        } else {
+            0
+        };
+        let _ = writeln!(
+            s,
+            "> 🤖 **{} AI** · 👤 **{} human** _( {}% AI )_",
+            agg.ai_count, agg.human_count, ratio
+        );
+    }
+    if agg.total_tokens > 0 {
+        let _ = writeln!(s, "> 🧮 **{}** tokens consumed", format_tokens(agg.total_tokens));
+    }
+    if !hero.milestones.is_empty() {
+        s.push_str("> 📍 _Milestones reached:_\n");
+        // Latest 3, in original (oldest→newest) order so the trail reads forward.
+        let start = hero.milestones.len().saturating_sub(3);
+        for m in &hero.milestones[start..] {
+            let _ = writeln!(s, "> &nbsp;&nbsp;✓ {}", escape_md(&truncate(m, 120)));
+        }
+    }
+    if let Some(prompt) = &hero.top_prompt {
+        let _ = writeln!(
+            s,
+            "> 💬 _Triggering prompt:_ \"{}\"",
+            escape_md(&truncate(prompt, 180))
+        );
+    }
+    s.push_str(">\n");
+    s.push('\n');
+    s
+}
+
+// ── Style: Detective ─────────────────────────────────────────────────────────
+
+/// Narrative arc — reads like a mini blog post. Goal → considered → key
+/// insight → shipped. Each section omits itself when its data is empty so a
+/// fresh branch with no decisions/milestones still produces a coherent block.
+fn render_hero_detective(
+    agg: &Aggregates,
+    hero: &HeroInputs,
+    secret_rows: &[SecretRow],
+    dup_rows: &[DupRow],
+) -> String {
+    let mut s = String::new();
+    s.push_str("## 🪙 h5i provenance · _the story_\n\n");
+    s.push_str(&render_badges(
+        agg.ai_count,
+        agg.total_tokens,
+        secret_rows.len(),
+        dup_rows.len(),
+        agg.tests_passing,
+        agg.tests_failing,
+        agg.flagged_count,
+    ));
+    s.push_str("\n\n");
+
+    // Act I — the goal.
+    if !hero.branch_goal.is_empty() {
+        s.push_str("### 🎯 The goal\n\n");
+        let _ = writeln!(s, "> {}", escape_md(&truncate(&hero.branch_goal, 280)));
+        s.push('\n');
+    }
+
+    // Act II — what was considered. We surface up to 3 decisions; recording
+    // every alternative would drown the screenshot, but the deep-link to each
+    // commit lets reviewers expand on demand.
+    if !hero.decisions.is_empty() {
+        s.push_str("### 🧭 What we considered\n\n");
+        for d in hero.decisions.iter().take(3) {
+            let alts = if d.alternatives.is_empty() {
+                "none recorded".to_string()
+            } else {
+                d.alternatives
+                    .iter()
+                    .map(|a| escape_md(a))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            };
+            let _ = writeln!(
+                s,
+                "- **{}** at `{}` (vs. {}){}  — `{}`",
+                escape_md(&d.choice),
+                escape_md(&d.location),
+                alts,
+                if d.reason.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("\n  - _Why:_ {}", escape_md(&truncate(&d.reason, 200)))
+                },
+                d.short_oid,
+            );
+        }
+        if hero.decisions.len() > 3 {
+            let _ = writeln!(s, "- _… and {} more — see per-commit section._", hero.decisions.len() - 3);
+        }
+        s.push('\n');
+    }
+
+    // Act III — the insight that unlocked the work.
+    if let Some(think) = &hero.top_think {
+        s.push_str("### 💡 Key insight\n\n");
+        let _ = writeln!(s, "> {}", escape_md(&truncate(think, 320)));
+        s.push('\n');
+    } else if let Some(observe) = &hero.top_observe {
+        s.push_str("### 💡 What we found\n\n");
+        let _ = writeln!(s, "> {}", escape_md(&truncate(observe, 320)));
+        s.push('\n');
+    }
+
+    // Act IV — what shipped. Most-recent first because reviewers care about
+    // the latest state of the branch, not its archaeology.
+    if !hero.milestones.is_empty() {
+        s.push_str("### 🚢 What shipped\n\n");
+        let tail: Vec<&String> = hero.milestones.iter().rev().take(5).collect();
+        for m in &tail {
+            let _ = writeln!(s, "- ✓ {}", escape_md(&truncate(m, 140)));
+        }
+        s.push('\n');
+    }
+
+    s
+}
+
+// ── Style: Replay ────────────────────────────────────────────────────────────
+
+/// DAG-as-hero. We promote the existing reasoning-DAG renderer above the fold
+/// (expanded, not collapsed) and annotate it with the goal + milestone trail
+/// so the screenshot leads with the visually distinctive Mermaid graph.
+fn render_hero_replay(
+    agg: &Aggregates,
+    hero: &HeroInputs,
+    dag: &TraceDag,
+    secret_rows: &[SecretRow],
+    dup_rows: &[DupRow],
+) -> String {
+    let mut s = String::new();
+    s.push_str("## 🪙 h5i provenance · _the replay_\n\n");
+    s.push_str(&render_badges(
+        agg.ai_count,
+        agg.total_tokens,
+        secret_rows.len(),
+        dup_rows.len(),
+        agg.tests_passing,
+        agg.tests_failing,
+        agg.flagged_count,
+    ));
+    s.push_str("\n\n");
+
+    // Goal as a one-line header above the DAG so the graph has context.
+    if !hero.branch_goal.is_empty() {
+        let _ = writeln!(
+            s,
+            "> 🎯 **{}**",
+            escape_md(&truncate(&hero.branch_goal, 220))
+        );
+        s.push('\n');
+    }
+
+    // The DAG itself — rendered expanded (no <details> wrapper) so it lands
+    // above the fold. Empty DAG → fallback note so the section never looks
+    // like a render bug.
+    if dag.nodes.is_empty() {
+        s.push_str("_No reasoning trace recorded on this branch yet. Run `h5i context trace ...` while working to populate the replay._\n\n");
+    } else {
+        s.push_str("### 🧠 Reasoning replay\n\n");
+        s.push_str(&render_dag_section_expanded(dag));
+    }
+
+    // Milestone trail beneath the graph, so reviewers can read the narrative
+    // in markdown if the Mermaid block doesn't render (some clients block it).
+    if !hero.milestones.is_empty() {
+        s.push_str("**Milestone trail:**\n\n");
+        let tail: Vec<&String> = hero.milestones.iter().rev().take(6).collect();
+        // Print in chronological order so the arrow chain reads left-to-right.
+        let chrono: Vec<&&String> = tail.iter().rev().collect();
+        let line = chrono
+            .iter()
+            .map(|m| format!("`{}`", escape_md(&truncate(m, 60))))
+            .collect::<Vec<_>>()
+            .join(" → ");
+        s.push_str(&line);
+        s.push_str("\n\n");
+    }
+
+    s
+}
+
+/// Same Mermaid output as [`render_dag_section`] but without the `<details>`
+/// wrapper — used by Replay style which wants the graph expanded by default.
+fn render_dag_section_expanded(dag: &TraceDag) -> String {
+    let collapsed = render_dag_section(dag);
+    // Cheap, robust unwrap: strip the leading `<details><summary>…</summary>`
+    // line and the trailing `</details>` so the same Mermaid block can be
+    // reused without a second implementation drifting out of sync.
+    let trimmed = collapsed
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            !t.starts_with("<details>") && !t.starts_with("</details>")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut out = trimmed;
+    out.push('\n');
+    out
+}
+
+/// Human-friendly token count: 12345 → "12.3k". Below 1000 stays as integer.
+fn format_tokens(n: usize) -> String {
+    if n >= 1000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        n.to_string()
+    }
 }
 
 fn render_badges(
@@ -1354,5 +1746,150 @@ mod tests {
         assert!(s.contains("`🔁 2 duplicates`"));
         assert!(s.contains("`tests 5✅ / 1❌`"));
         assert!(s.contains("`🚩 1 flagged`"));
+    }
+
+    // ── hero renderers ────────────────────────────────────────────────────
+
+    fn sample_aggregates() -> Aggregates {
+        Aggregates {
+            ai_count: 4,
+            human_count: 1,
+            total_tokens: 12_345,
+            tests_passing: 2,
+            tests_failing: 0,
+            flagged_count: 0,
+        }
+    }
+
+    fn sample_hero() -> HeroInputs {
+        HeroInputs {
+            branch_goal: "Add retry logic to the HTTP client".into(),
+            milestones: vec![
+                "Read existing client".into(),
+                "Implement retry loop".into(),
+                "Add timeout parameter".into(),
+            ],
+            top_think: Some("Exponential backoff with jitter is safest".into()),
+            top_observe: Some("HttpClient::send has no retry logic".into()),
+            decisions: vec![DecisionEntry {
+                location: "src/http.rs:88".into(),
+                choice: "exponential backoff with jitter".into(),
+                alternatives: vec!["fixed delay".into(), "linear backoff".into()],
+                reason: "reduces thundering herd under high load".into(),
+                short_oid: "a3f8c12e".into(),
+            }],
+            top_prompt: Some("Add exponential backoff to the HTTP client".into()),
+        }
+    }
+
+    #[test]
+    fn receipt_hero_includes_goal_ratio_and_milestones() {
+        let body = render_hero_receipt(&sample_aggregates(), &sample_hero(), &[], &[]);
+        assert!(body.contains("> **Receipt**"), "got: {body}");
+        assert!(body.contains("🎯 _Goal:_ Add retry logic"));
+        assert!(body.contains("🤖 **4 AI**"));
+        assert!(body.contains("👤 **1 human**"));
+        assert!(body.contains("80% AI"), "ratio rounding wrong: {body}");
+        assert!(body.contains("12.3k"), "tokens formatted: {body}");
+        assert!(body.contains("Add timeout parameter"));
+        assert!(body.contains("Triggering prompt"));
+    }
+
+    #[test]
+    fn receipt_hero_omits_blank_signals_gracefully() {
+        let empty = HeroInputs {
+            branch_goal: String::new(),
+            milestones: vec![],
+            top_think: None,
+            top_observe: None,
+            decisions: vec![],
+            top_prompt: None,
+        };
+        let agg = Aggregates {
+            ai_count: 0,
+            human_count: 0,
+            total_tokens: 0,
+            tests_passing: 0,
+            tests_failing: 0,
+            flagged_count: 0,
+        };
+        let body = render_hero_receipt(&agg, &empty, &[], &[]);
+        assert!(body.contains("> **Receipt**"));
+        assert!(!body.contains("Goal:"));
+        assert!(!body.contains("Milestones"));
+        assert!(!body.contains("Triggering prompt"));
+    }
+
+    #[test]
+    fn detective_hero_lays_out_four_acts() {
+        let body = render_hero_detective(&sample_aggregates(), &sample_hero(), &[], &[]);
+        assert!(body.contains("### 🎯 The goal"));
+        assert!(body.contains("### 🧭 What we considered"));
+        assert!(body.contains("### 💡 Key insight"));
+        assert!(body.contains("### 🚢 What shipped"));
+        // Decision payload reaches the rendered output.
+        assert!(body.contains("exponential backoff with jitter"));
+        assert!(body.contains("fixed delay"));
+        assert!(body.contains("`a3f8c12e`"));
+        // Key insight quotes the THINK, not the OBSERVE.
+        assert!(body.contains("Exponential backoff with jitter is safest"));
+        assert!(!body.contains("has no retry logic"));
+    }
+
+    #[test]
+    fn detective_hero_falls_back_to_observe_when_no_think() {
+        let mut hero = sample_hero();
+        hero.top_think = None;
+        let body = render_hero_detective(&sample_aggregates(), &hero, &[], &[]);
+        assert!(body.contains("### 💡 What we found"));
+        assert!(body.contains("HttpClient::send has no retry logic"));
+    }
+
+    #[test]
+    fn replay_hero_renders_goal_then_dag_then_trail() {
+        let dag = TraceDag {
+            nodes: vec![TraceNode {
+                id: "abc12345".into(),
+                parent_ids: vec![],
+                kind: "THINK".into(),
+                content: "use exponential backoff".into(),
+                timestamp: "2026-05-22T00:00:00Z".into(),
+            }],
+        };
+        let body = render_hero_replay(&sample_aggregates(), &sample_hero(), &dag, &[], &[]);
+        assert!(body.contains("🪙 h5i provenance · _the replay_"));
+        assert!(body.contains("🎯 **Add retry logic"));
+        assert!(body.contains("### 🧠 Reasoning replay"));
+        assert!(body.contains("```mermaid"));
+        // The replay block must NOT be wrapped in <details>, so reviewers see
+        // the graph above the fold rather than a collapsed widget.
+        assert!(
+            !body.contains("<details>"),
+            "replay hero must render DAG expanded, got: {body}"
+        );
+        assert!(body.contains("**Milestone trail:**"));
+        // Trail uses arrow separators between backticked items.
+        assert!(body.contains("→"));
+    }
+
+    #[test]
+    fn replay_hero_emits_fallback_when_dag_empty() {
+        let body = render_hero_replay(
+            &sample_aggregates(),
+            &sample_hero(),
+            &TraceDag::default(),
+            &[],
+            &[],
+        );
+        assert!(body.contains("No reasoning trace recorded"));
+        assert!(!body.contains("```mermaid"));
+    }
+
+    #[test]
+    fn format_tokens_thousands_breakpoint() {
+        assert_eq!(format_tokens(0), "0");
+        assert_eq!(format_tokens(999), "999");
+        assert_eq!(format_tokens(1000), "1.0k");
+        assert_eq!(format_tokens(12_345), "12.3k");
     }
 }
