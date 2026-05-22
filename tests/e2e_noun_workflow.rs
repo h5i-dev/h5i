@@ -264,9 +264,16 @@ fn share_pr_body_emits_checks_pass_when_clean() {
 
     let out = repo.h5i_ok(&["share", "pr", "body", "--limit", "5"]);
     let s = stdout(&out);
+    // Each check now gets its own callout when clean. Security is the
+    // marquee positive signal (TIP, green) and gets an h3 heading;
+    // duplicate-code pass is a quieter NOTE.
     assert!(
-        s.contains("h5i checks pass"),
-        "clean branch must surface the empty-state reassurance; got: {s}",
+        s.contains("✅ Security scan clean"),
+        "clean branch must surface the security pass callout; got: {s}",
+    );
+    assert!(
+        s.contains("Duplicate-code scan clean"),
+        "clean branch must surface the duplicate pass note; got: {s}",
     );
 }
 

@@ -167,7 +167,7 @@ fn collect_duplicate_rows(
 
 // ── Section renderers ────────────────────────────────────────────────────────
 
-fn render_secret_section(rows: &[SecretRow], dup_count: usize) -> String {
+fn render_secret_section(rows: &[SecretRow]) -> String {
     if rows.is_empty() {
         return String::new();
     }
@@ -200,17 +200,11 @@ fn render_secret_section(rows: &[SecretRow], dup_count: usize) -> String {
             r.short_oid,
         );
     }
-    // Reassurance footer when the *other* deterministic check came back clean.
-    // We only print it when the partner check actually has zero findings — if
-    // both fired, both alerts already speak for themselves.
-    if dup_count == 0 {
-        s.push_str("\n_Other checks: ✓ no duplicate code introduced._\n");
-    }
     s.push('\n');
     s
 }
 
-fn render_duplicate_section(rows: &[DupRow], secret_count: usize) -> String {
+fn render_duplicate_section(rows: &[DupRow]) -> String {
     if rows.is_empty() {
         return String::new();
     }
@@ -245,18 +239,34 @@ fn render_duplicate_section(rows: &[DupRow], secret_count: usize) -> String {
             );
         }
     }
-    if secret_count == 0 {
-        s.push_str("\n_Other checks: ✓ no credential leaks detected._\n");
-    }
     s.push('\n');
     s
 }
 
-/// All-clear banner emitted when every deterministic check passed. Surfaces
-/// the negative result so reviewers know h5i actually looked — silently
-/// rendering nothing looks like "no scan ran".
-fn render_checks_pass_note() -> String {
-    "> [!NOTE]\n> **h5i checks pass** — ✓ no credential leaks · ✓ no duplicate code blocks\n\n"
+/// Standalone `> [!TIP]` callout (green stripe on github.com) emitted whenever
+/// the credential scan came back clean. Promoted out of the inline `_Other
+/// checks: …_` footer so the security-pass signal is *louder* than the
+/// duplicate alert sitting next to it — a clean scan is a positive trust
+/// signal and deserves its own visual lane.
+///
+/// Composition note: when paired with the duplicate-pass note (both checks
+/// clean), the two callouts stack visually. We don't collapse them into a
+/// single "h5i checks pass" line anymore because doing so demoted the
+/// security signal to a bullet — and security findings (positive or
+/// negative) should always read as the marquee result.
+fn render_secret_pass_callout() -> String {
+    "> [!TIP]\n\
+     > ### ✅ Security scan clean\n\
+     > **No credentials leaked** in this branch's diff. h5i scanned every \
+     added line against the secret rule pack and found nothing to rotate.\n\n"
+        .to_string()
+}
+
+/// Smaller note for the duplicate-code-pass result. Uses `> [!NOTE]` (white,
+/// neutral) rather than `[!TIP]` because duplicate code is a craft signal,
+/// not a security signal — visually subordinate to the security callout.
+fn render_duplicate_pass_note() -> String {
+    "> [!NOTE]\n> **Duplicate-code scan clean** — no copy-paste blocks introduced.\n\n"
         .to_string()
 }
 
@@ -435,7 +445,7 @@ pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> R
     let secrets_present = !secret_rows.is_empty();
     if secrets_present {
         body.push_str(&render_secret_alert_banner(secret_rows.len()));
-        body.push_str(&render_secret_section(&secret_rows, dup_rows.len()));
+        body.push_str(&render_secret_section(&secret_rows));
     }
 
     match style {
@@ -445,18 +455,24 @@ pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> R
         PrStyle::Minimal => body.push_str(&render_hero_minimal(&aggregates, &hero, &secret_rows, &dup_rows)),
     }
 
-    // Empty-state reassurance: when BOTH deterministic checks came back
-    // clean, emit a single all-clear NOTE. When only one fired, the
-    // section-level renderer adds a tail line about the other.
-    if secret_rows.is_empty() && dup_rows.is_empty() {
-        body.push_str(&render_checks_pass_note());
+    // Pass callouts. Security gets its own prominent `[!TIP]` callout
+    // whenever the scan was clean — this is the marquee positive signal in
+    // the comment and must be loud enough to be screenshot-able. Duplicate-
+    // code pass gets a quieter `[!NOTE]` line for symmetry without competing
+    // for attention. Either callout fires whether or not the *other* check
+    // fired — they're independent signals.
+    if secret_rows.is_empty() {
+        body.push_str(&render_secret_pass_callout());
+    }
+    if dup_rows.is_empty() {
+        body.push_str(&render_duplicate_pass_note());
     }
 
     // When secrets WEREN'T promoted to the top, emit the table here as before.
     if !secrets_present {
-        body.push_str(&render_secret_section(&secret_rows, dup_rows.len()));
+        body.push_str(&render_secret_section(&secret_rows));
     }
-    body.push_str(&render_duplicate_section(&dup_rows, secret_rows.len()));
+    body.push_str(&render_duplicate_section(&dup_rows));
     // Replay already drew the DAG above the fold; skip the collapsible copy.
     if !matches!(style, PrStyle::Replay) {
         body.push_str(&render_swimlane_section(&dag));
@@ -1878,61 +1894,30 @@ mod tests {
 
     #[test]
     fn empty_sections_render_to_empty_string() {
-        assert!(render_secret_section(&[], 0).is_empty());
-        assert!(render_duplicate_section(&[], 0).is_empty());
+        assert!(render_secret_section(&[]).is_empty());
+        assert!(render_duplicate_section(&[]).is_empty());
         assert!(render_swimlane_section(&TraceDag::default()).is_empty());
     }
 
     #[test]
-    fn checks_pass_note_uses_github_note_alert() {
-        let s = render_checks_pass_note();
+    fn secret_pass_callout_uses_tip_alert_and_shouts_about_security() {
+        let s = render_secret_pass_callout();
+        assert!(s.starts_with("> [!TIP]"), "must use GitHub TIP (green) alert: {s}");
+        // The h3 heading inside the callout gives it visual weight — the
+        // signal must read as a marquee result, not a footnote.
+        assert!(s.contains("### ✅ Security scan clean"), "got: {s}");
+        assert!(s.contains("No credentials leaked"));
+    }
+
+    #[test]
+    fn duplicate_pass_note_is_quieter_than_security_pass() {
+        let s = render_duplicate_pass_note();
+        // Duplicate-code pass is a craft signal, not a security signal —
+        // [!NOTE] (white) is intentionally less prominent than [!TIP] (green).
         assert!(s.starts_with("> [!NOTE]"), "must use GitHub NOTE alert: {s}");
-        assert!(s.contains("h5i checks pass"));
-        assert!(s.contains("no credential leaks"));
-        assert!(s.contains("no duplicate code"));
-    }
-
-    #[test]
-    fn secret_section_adds_passing_dup_footnote_when_alone() {
-        let rows = vec![SecretRow {
-            rule_id: "X".into(),
-            description: "d".into(),
-            file: None,
-            line: 1,
-            preview: "p".into(),
-            short_oid: "abc12345".into(),
-        }];
-        let with_dups = render_secret_section(&rows, 3);
-        assert!(
-            !with_dups.contains("no duplicate code"),
-            "must not claim duplicates passed when partner check fired: {with_dups}"
-        );
-        let without_dups = render_secret_section(&rows, 0);
-        assert!(
-            without_dups.contains("✓ no duplicate code"),
-            "must surface that dup check came back clean: {without_dups}"
-        );
-    }
-
-    #[test]
-    fn duplicate_section_adds_passing_secret_footnote_when_alone() {
-        let rows = vec![DupRow {
-            file: "src/a.rs".into(),
-            block_len: 8,
-            first_line: 1,
-            repeat_line: 50,
-            short_oid: "abc12345".into(),
-        }];
-        let with_secrets = render_duplicate_section(&rows, 2);
-        assert!(
-            !with_secrets.contains("no credential leaks"),
-            "must not claim secrets passed when partner check fired: {with_secrets}"
-        );
-        let without_secrets = render_duplicate_section(&rows, 0);
-        assert!(
-            without_secrets.contains("✓ no credential leaks"),
-            "must surface that secret check came back clean: {without_secrets}"
-        );
+        assert!(s.contains("Duplicate-code scan clean"));
+        // No h3 — heading would put it on visual par with the security callout.
+        assert!(!s.contains("###"), "must not use h3 heading: {s}");
     }
 
     #[test]
@@ -1945,7 +1930,7 @@ mod tests {
             preview: "AKIA…".into(),
             short_oid: "a3f8c12e".into(),
         }];
-        let s = render_secret_section(&rows, 0);
+        let s = render_secret_section(&rows);
         assert!(s.contains("> [!CAUTION]"), "must use GitHub CAUTION alert");
         assert!(s.contains("credential leak"));
         assert!(s.contains("| `AWS_ACCESS_KEY_ID` | `src/cfg.py` | 42 | `AKIA…` | `a3f8c12e` |"));
@@ -1961,7 +1946,7 @@ mod tests {
             preview: "p".into(),
             short_oid: "abc12345".into(),
         }];
-        let s = render_secret_section(&one, 0);
+        let s = render_secret_section(&one);
         assert!(s.contains("1 credential leak across 1 commit"), "got: {s}");
 
         let two = vec![
@@ -1982,7 +1967,7 @@ mod tests {
                 short_oid: "def67890".into(),
             },
         ];
-        let s = render_secret_section(&two, 0);
+        let s = render_secret_section(&two);
         assert!(s.contains("2 credential leaks across 2 commits"), "got: {s}");
     }
 
@@ -2004,7 +1989,7 @@ mod tests {
                 short_oid: "bbbbbbbb".into(),
             },
         ];
-        let s = render_duplicate_section(&rows, 0);
+        let s = render_duplicate_section(&rows);
         assert!(s.contains("> [!WARNING]"));
         assert!(s.contains("Duplicate code introduced in 2 files"));
         assert!(s.contains("`src/a.rs`"));
