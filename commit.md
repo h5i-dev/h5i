@@ -43,3 +43,16 @@ Redesign context-branch storage to one git ref per ctx branch, real libgit2 merg
 
 ---
 
+## Commit 6a10c9cc — 2026-05-22 21:25 UTC
+
+### Branch Purpose
+Redesign context-branch storage to one git ref per ctx branch, real libgit2 merges, auto-follow git checkout, reconciliation in status
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Added PrStyle enum, render_body_with_style entry, shared Aggregates+HeroInputs collectors, three hero renderers, 7 unit tests, MANUAL + man page updates. render_body kept as backward-compat wrapper (defaults to Receipt).
+
+---
+

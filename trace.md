@@ -127,3 +127,9 @@ _[Checkpoint: 6a10c4a9 — edited src/main.rs; edited tests/cli_integration.rs; 
 ---
 
 [21:18:28] THINK: Three styles: Receipt (top hero with goal+milestones+ratios+top uncertainty), Detective (goal → considered/rejected from decisions → key insight → shipped), Replay (DAG promoted above the fold with milestone markers). Share renderers via a Hero contract; keep secret/dup/per-commit sections common.
+
+
+---
+_[Checkpoint: 6a10c9cc — PR body --style flag with three hero layouts (Receipt/Detective/Replay)]_
+---
+

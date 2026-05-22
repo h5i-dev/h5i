@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: redesign-per-ref
+# Ephemeral traces — Branch: improve-pr-style
 
