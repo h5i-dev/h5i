@@ -1,0 +1,513 @@
+# Branch: doc-cve
+
+**Purpose:** write CVE blog posts on doc-cve git branch
+
+_Commits will be appended below._
+
+## Commit 69fb594f — 2026-05-06 15:07 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Wrote docs/blog/cve-2025-59536-startup-trust-dialog.html (CWE-94 startup trust dialog code injection, fixed in 1.0.111) and docs/blog/cve-2026-33068-bypass-permissions-settings.html (CWE-807 bypassPermissions via committed .claude/settings.json, fixed in 2.1.53). Both posts are technical write-ups with NVD/GHSA citations, severity tables, mitigation steps, and an h5i-as-incident-response framing. Wired both into docs/blog/index.html (cards + JSON-LD) and docs/sitemap.xml.
+
+---
+
+## Commit 69fb595b — 2026-05-06 15:08 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+Wrote docs/blog/cve-2025-59536-startup-trust-dialog.html (CWE-94 startup trust dialog code injection, fixed in 1.0.111) and docs/blog/cve-2026-33068-bypass-permissions-settings.html (CWE-807 bypassPermissions via committed .claude/settings.json, fixed in 2.1.53). Both posts are technical write-ups with NVD/GHSA citations, severity tables, mitigation steps, and an h5i-as-incident-response framing. Wired both into docs/blog/index.html (cards + JSON-LD) and docs/sitemap.xml.
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 69fce8ed — 2026-05-07 19:33 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a072d83 — 2026-05-15 14:28 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a07324f — 2026-05-15 14:48 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+src/{session,delta_store,watcher}.rs deleted. yrs and notify removed from Cargo.toml. H5iCommitRecord.crdt_states removed. server.rs has_crdt badge removed. cargo test --lib targeted tests pass.
+
+---
+
+## Commit 6a0735cf — 2026-05-15 15:03 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+src/{session,delta_store,watcher}.rs deleted. yrs and notify removed from Cargo.toml. H5iCommitRecord.crdt_states removed. server.rs has_crdt badge removed. cargo test --lib targeted tests pass.
+
+### This Commit's Contribution
+capture/recall/audit/share are first-class subcommands. Legacy verbs hidden + deprecation-hinted. src/pr.rs renders Markdown body with prompt/model/decisions/test/review-flag per AI commit. Upsert is sticky via HTML MARKER and gh api PATCH. Build + test green.
+
+---
+
+## Commit 6a0735e2 — 2026-05-15 15:04 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+capture/recall/audit/share are first-class subcommands. Legacy verbs hidden + deprecation-hinted. src/pr.rs renders Markdown body with prompt/model/decisions/test/review-flag per AI commit. Upsert is sticky via HTML MARKER and gh api PATCH. Build + test green.
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a07397f — 2026-05-15 15:19 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+README/MANUAL/man reflect new noun-group CLI. Helper text shows aligned tables + examples + did-you-mean. Stop-hook auto-trace + drop-CRDT also documented.
+
+---
+
+## Commit 6a07398e — 2026-05-15 15:19 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+README/MANUAL/man reflect new noun-group CLI. Helper text shows aligned tables + examples + did-you-mean. Stop-hook auto-trace + drop-CRDT also documented.
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a073af9 — 2026-05-15 15:25 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a073e37 — 2026-05-15 15:39 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a073f0f — 2026-05-15 15:43 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a073f85 — 2026-05-15 15:45 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a07406d — 2026-05-15 15:49 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a074718 — 2026-05-15 16:17 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a074aeb — 2026-05-15 16:33 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a077c60 — 2026-05-15 20:04 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a078164 — 2026-05-15 20:26 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Eliminated 19 production unwrap/expect + reframed 1 panic; canonicalize input paths + validate H5I_PARSER_DIR + 30s timeout (configurable) + 64MiB output cap on python AST parser; added tracing+tracing-subscriber wired in main.rs behind H5I_LOG/RUST_LOG (off by default, stderr writer). Discovered library-module println! calls are CLI display, not debug — kept them; only the new subprocess helper uses tracing::warn for genuine diagnostics. All 448 tests pass.
+
+---
+
+## Commit 6a078174 — 2026-05-15 20:26 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+Eliminated 19 production unwrap/expect + reframed 1 panic; canonicalize input paths + validate H5I_PARSER_DIR + 30s timeout (configurable) + 64MiB output cap on python AST parser; added tracing+tracing-subscriber wired in main.rs behind H5I_LOG/RUST_LOG (off by default, stderr writer). Discovered library-module println! calls are CLI display, not debug — kept them; only the new subprocess helper uses tracing::warn for genuine diagnostics. All 448 tests pass.
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a07852a — 2026-05-15 20:42 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Refactored find_parser_script + parser_timeout + run_parser_subprocess to take params instead of reading env globals, enabling 17 unit tests covering: parser_timeout default/zero/garbage/valid, find_parser_script override-wins/non-dir-rejected/missing/file-named-like-script-rejected/workdir-fallback/exe-fallback, run_parser stdout/non-zero-exit/empty-output/timeout-kill/missing-script. All 465 tests pass. AGENT.md/CLAUDE.md auto-generated templates require no update (agent workflow unchanged). MANUAL.md gained Environment Variables appendix covering 10 vars.
+
+---
+
+## Commit 6a07853a — 2026-05-15 20:42 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+Refactored find_parser_script + parser_timeout + run_parser_subprocess to take params instead of reading env globals, enabling 17 unit tests covering: parser_timeout default/zero/garbage/valid, find_parser_script override-wins/non-dir-rejected/missing/file-named-like-script-rejected/workdir-fallback/exe-fallback, run_parser stdout/non-zero-exit/empty-output/timeout-kill/missing-script. All 465 tests pass. AGENT.md/CLAUDE.md auto-generated templates require no update (agent workflow unchanged). MANUAL.md gained Environment Variables appendix covering 10 vars.
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a0788cb — 2026-05-15 20:57 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Restructured src/pr.rs::render_body: GitHub-native > [!CAUTION] alert + table for credential leaks (parses CREDENTIAL_LEAK trigger detail), > [!WARNING] alert + grouped-by-file table for duplicated code (parses DUPLICATED_CODE trigger detail), collapsible Mermaid graph TD of the reasoning DAG with OBSERVE/THINK/ACT/NOTE/MERGE color-coded classDefs (sanitizes labels, escapes Mermaid-unsafe chars, tail-truncates to 40 nodes with elision marker, suppresses dangling edges). Per-commit provenance now collapsible when >5 commits. Empty test_metrics no longer render as ❌0/0. Zero-token badge suppressed. Added 16 unit tests for parsers, section renderers, mermaid sanitization, aggregators, and badge formatting. Exposed new ctx::dag_for_branch public API. All 481 tests pass.
+
+---
+
+## Commit 6a0788de — 2026-05-15 20:58 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+Restructured src/pr.rs::render_body: GitHub-native > [!CAUTION] alert + table for credential leaks (parses CREDENTIAL_LEAK trigger detail), > [!WARNING] alert + grouped-by-file table for duplicated code (parses DUPLICATED_CODE trigger detail), collapsible Mermaid graph TD of the reasoning DAG with OBSERVE/THINK/ACT/NOTE/MERGE color-coded classDefs (sanitizes labels, escapes Mermaid-unsafe chars, tail-truncates to 40 nodes with elision marker, suppresses dangling edges). Per-commit provenance now collapsible when >5 commits. Empty test_metrics no longer render as ❌0/0. Zero-token badge suppressed. Added 16 unit tests for parsers, section renderers, mermaid sanitization, aggregators, and badge formatting. Exposed new ctx::dag_for_branch public API. All 481 tests pass.
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a078bf7 — 2026-05-15 21:11 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Added > [!NOTE] all-clear banner when both deterministic checks (CREDENTIAL_LEAK + DUPLICATED_CODE) pass; firing sections now footnote the partner check when it came back clean. Compressed consecutive same-kind OBSERVE/ACT runs of >=3 nodes into one summary node ('3 edits across 1 file: src/pr.rs') with synthetic IDs and edge rewiring; THINK/NOTE/MERGE pass through verbatim. Widened mermaid label budget from 50 to 100 chars so THINK reasoning is readable. Live preview: 290 raw nodes -> 15 readable blocks. Added 7 unit tests for compression, run-extension, kind-boundary, dedup, and edge rewiring. 484 tests passing.
+
+---
+
+## Commit 6a078c09 — 2026-05-15 21:11 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+Added > [!NOTE] all-clear banner when both deterministic checks (CREDENTIAL_LEAK + DUPLICATED_CODE) pass; firing sections now footnote the partner check when it came back clean. Compressed consecutive same-kind OBSERVE/ACT runs of >=3 nodes into one summary node ('3 edits across 1 file: src/pr.rs') with synthetic IDs and edge rewiring; THINK/NOTE/MERGE pass through verbatim. Widened mermaid label budget from 50 to 100 chars so THINK reasoning is readable. Live preview: 290 raw nodes -> 15 readable blocks. Added 7 unit tests for compression, run-extension, kind-boundary, dedup, and edge rewiring. 484 tests passing.
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a078c6f — 2026-05-15 21:13 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a078e6e — 2026-05-15 21:21 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Added keyword pre-filter (lowercased per-rule substring anchors) to SecretRule, mirroring gitleaks's Keywords field; scan_lines lowercases the line once and shares it with the stoplist. Empty keywords means catch-all (used by GENERIC_HIGH_ENTROPY). Backfilled keywords on all 10 existing prefix-anchored rules. Added 6 connection-string rules (POSTGRES, MYSQL, MONGODB, REDIS, JDBC, HTTP_BASIC_AUTH_URL) each capturing the password group with entropy gate >= 2.0 or 2.5. +15 unit tests (keyword pre-filter mechanics, 8 positive matches across new rules including mongodb+srv and redis-with-empty-user, entropy rejection, stoplist + path allowlist interaction). 432 lib tests pass.
+
+---
+
+## Commit 6a078e86 — 2026-05-15 21:22 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+Added keyword pre-filter (lowercased per-rule substring anchors) to SecretRule, mirroring gitleaks's Keywords field; scan_lines lowercases the line once and shares it with the stoplist. Empty keywords means catch-all (used by GENERIC_HIGH_ENTROPY). Backfilled keywords on all 10 existing prefix-anchored rules. Added 6 connection-string rules (POSTGRES, MYSQL, MONGODB, REDIS, JDBC, HTTP_BASIC_AUTH_URL) each capturing the password group with entropy gate >= 2.0 or 2.5. +15 unit tests (keyword pre-filter mechanics, 8 positive matches across new rules including mongodb+srv and redis-with-empty-user, entropy rejection, stoplist + path allowlist interaction). 432 lib tests pass.
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a078fec — 2026-05-15 21:28 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a0790a6 — 2026-05-15 21:31 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+main.rs:1320 swap omission.phrase for omission.snippet (with fallback). Future Stop-hook runs write NOTEs like 'DEFERRAL: ...I'll skip integration tests for now since...' instead of 'DEFERRAL: for now'. Dedup key also uses snippet so the same passage hitting two phrase-matches collapses to one NOTE. Old DAG entries unaffected (cosmetic only).
+
+---
+
+## Commit 6a0790d5 — 2026-05-15 21:32 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+main.rs:1320 swap omission.phrase for omission.snippet (with fallback). Future Stop-hook runs write NOTEs like 'DEFERRAL: ...I'll skip integration tests for now since...' instead of 'DEFERRAL: for now'. Dedup key also uses snippet so the same passage hitting two phrase-matches collapses to one NOTE. Old DAG entries unaffected (cosmetic only).
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a0791a5 — 2026-05-15 21:35 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a07962f — 2026-05-15 21:54 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Tracing: info_span on H5iRepository::commit (with_ai/with_tests/with_ast/decisions fields), pr::render_body (limit + aggregates debug log), mcp::handle_request (method, id), secrets::scan_lines (trace level). Clippy: 28 warnings → 0 (sort_by_key on 7 descending sorts, vec! cleanup x8, useless format! x3, slice-iter instead of indexed loops x2, range-over-pr-tests fix). CI: clippy --all-targets -- -D warnings now enforced on every PR; added Swatinem/rust-cache for cold-start speed; rustfmt enforcement deferred (codebase has 364KB of fmt diff = separate cleanup PR). E2E: new tests/e2e_noun_workflow.rs covers capture/commit, recall/log+context show+context status, audit/review, share/pr body (including checks-pass-clean assertion), and legacy commit/log verbs both work AND emit deprecation hints. 513 tests pass (was 484, +29). RUSTFLAGS=-D warnings env in CI catches future warnings as errors.
+
+---
+
+## Commit 6a079653 — 2026-05-15 21:55 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+Tracing: info_span on H5iRepository::commit (with_ai/with_tests/with_ast/decisions fields), pr::render_body (limit + aggregates debug log), mcp::handle_request (method, id), secrets::scan_lines (trace level). Clippy: 28 warnings → 0 (sort_by_key on 7 descending sorts, vec! cleanup x8, useless format! x3, slice-iter instead of indexed loops x2, range-over-pr-tests fix). CI: clippy --all-targets -- -D warnings now enforced on every PR; added Swatinem/rust-cache for cold-start speed; rustfmt enforcement deferred (codebase has 364KB of fmt diff = separate cleanup PR). E2E: new tests/e2e_noun_workflow.rs covers capture/commit, recall/log+context show+context status, audit/review, share/pr body (including checks-pass-clean assertion), and legacy commit/log verbs both work AND emit deprecation hints. 513 tests pass (was 484, +29). RUSTFLAGS=-D warnings env in CI catches future warnings as errors.
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a07978d — 2026-05-15 22:00 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a07aca5 — 2026-05-15 23:30 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a089240 — 2026-05-16 15:50 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a089288 — 2026-05-16 15:51 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
+## Commit 6a08932e — 2026-05-16 15:54 UTC
+
+### Branch Purpose
+write CVE blog posts on doc-cve git branch
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
