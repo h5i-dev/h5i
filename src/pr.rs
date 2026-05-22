@@ -260,6 +260,23 @@ fn render_checks_pass_note() -> String {
         .to_string()
 }
 
+/// Top-of-comment banner emitted when a credential leak was detected. Lives
+/// **above** the hero block so it lands in the first screenshot a reviewer
+/// or social-share takes — leaks must be impossible to miss. The full
+/// finding table (rule, file, line, preview) renders immediately after
+/// via [`render_secret_section`].
+fn render_secret_alert_banner(n: usize) -> String {
+    format!(
+        "> [!CAUTION]\n\
+         > # 🚨 BLOCK MERGE — {n} credential leak{plural} detected\n\
+         > **Rotate the exposed secrets and remove them from history before merging.** \
+         The h5i audit found {n} finding{plural} in this branch's diff. \
+         Full details in the table below.\n\n",
+        n = n,
+        plural = if n == 1 { "" } else { "s" },
+    )
+}
+
 fn mermaid_id(node_id: &str) -> String {
     // Mermaid node identifiers must be `[A-Za-z_][A-Za-z0-9_]*`. Our DAG IDs
     // are hex digests, so prefix with `n_` to guarantee a letter start.
@@ -328,6 +345,12 @@ struct HeroInputs {
     decisions: Vec<DecisionEntry>,
     /// First non-empty AI prompt on the branch — the "trigger" for Receipt.
     top_prompt: Option<String>,
+    /// Process-shape stats derived from the DAG (files, READ:EDIT, THINK
+    /// density). Always present — degenerate cases (empty DAG) yield a
+    /// stats struct whose [`format_dag_stats_inline`] returns an empty
+    /// string, so heroes can render unconditionally and skip the line
+    /// when there's nothing useful to say.
+    dag_stats: DagStats,
 }
 
 #[derive(Debug, Clone)]
@@ -393,6 +416,16 @@ pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> R
     body.push_str(MARKER);
     body.push('\n');
 
+    // When secrets are present, promote the alert above the hero so the
+    // screenshot-able first viewport is the security finding, not the goal
+    // card. Reviewers can't miss a leak, and the dedicated banner is louder
+    // than a chip in the badge row.
+    let secrets_present = !secret_rows.is_empty();
+    if secrets_present {
+        body.push_str(&render_secret_alert_banner(secret_rows.len()));
+        body.push_str(&render_secret_section(&secret_rows, dup_rows.len()));
+    }
+
     match style {
         PrStyle::Receipt => body.push_str(&render_hero_receipt(&aggregates, &hero, &secret_rows, &dup_rows)),
         PrStyle::Detective => body.push_str(&render_hero_detective(&aggregates, &hero, &secret_rows, &dup_rows)),
@@ -406,7 +439,10 @@ pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> R
         body.push_str(&render_checks_pass_note());
     }
 
-    body.push_str(&render_secret_section(&secret_rows, dup_rows.len()));
+    // When secrets WEREN'T promoted to the top, emit the table here as before.
+    if !secrets_present {
+        body.push_str(&render_secret_section(&secret_rows, dup_rows.len()));
+    }
     body.push_str(&render_duplicate_section(&dup_rows, secret_rows.len()));
     // Replay already drew the DAG above the fold; skip the collapsible copy.
     if !matches!(style, PrStyle::Replay) {
@@ -528,6 +564,7 @@ fn collect_hero_inputs(
         top_observe,
         decisions,
         top_prompt,
+        dag_stats: compute_dag_stats(dag),
     }
 }
 
@@ -560,7 +597,7 @@ fn render_hero_receipt(
     // visually clusters as one card on github.com.
     s.push_str("> **Receipt**\n");
     if !hero.branch_goal.is_empty() {
-        let _ = writeln!(s, "> 🎯 _Goal:_ {}", escape_md(&truncate(&hero.branch_goal, 200)));
+        let _ = writeln!(s, "> 🎯 **Goal:** {}", escape_md(&truncate(&hero.branch_goal, 200)));
     }
     let total_commits = agg.ai_count + agg.human_count;
     if total_commits > 0 {
@@ -578,8 +615,12 @@ fn render_hero_receipt(
     if agg.total_tokens > 0 {
         let _ = writeln!(s, "> 🧮 **{}** tokens consumed", format_tokens(agg.total_tokens));
     }
+    let stats_line = format_dag_stats_inline(&hero.dag_stats);
+    if !stats_line.is_empty() {
+        let _ = writeln!(s, "> 📊 {}", stats_line);
+    }
     if !hero.milestones.is_empty() {
-        s.push_str("> 📍 _Milestones reached:_\n");
+        s.push_str("> 📍 **Milestones reached:**\n");
         // Latest 3, in original (oldest→newest) order so the trail reads forward.
         let start = hero.milestones.len().saturating_sub(3);
         for m in &hero.milestones[start..] {
@@ -624,8 +665,18 @@ fn render_hero_detective(
 
     // Act I — the goal.
     if !hero.branch_goal.is_empty() {
-        s.push_str("### 🎯 The goal\n\n");
+        s.push_str("### 🎯 Goal\n\n");
         let _ = writeln!(s, "> {}", escape_md(&truncate(&hero.branch_goal, 280)));
+        s.push('\n');
+    }
+
+    // Process-shape stats — a tight one-liner between the goal and the
+    // narrative so reviewers can scan the AI's working style without
+    // scrolling to the DAG.
+    let stats_line = format_dag_stats_inline(&hero.dag_stats);
+    if !stats_line.is_empty() {
+        s.push_str("### 📊 By the numbers\n\n");
+        let _ = writeln!(s, "{}", stats_line);
         s.push('\n');
     }
 
@@ -718,9 +769,17 @@ fn render_hero_replay(
     if !hero.branch_goal.is_empty() {
         let _ = writeln!(
             s,
-            "> 🎯 **{}**",
+            "> 🎯 **Goal:** {}",
             escape_md(&truncate(&hero.branch_goal, 220))
         );
+        s.push('\n');
+    }
+
+    // Process-shape stats above the DAG so the screenshot leads with the
+    // graph plus a one-liner of context, before any narrative chrome.
+    let stats_line = format_dag_stats_inline(&hero.dag_stats);
+    if !stats_line.is_empty() {
+        let _ = writeln!(s, "**📊 By the numbers:** {}", stats_line);
         s.push('\n');
     }
 
@@ -794,6 +853,101 @@ fn extract_swimlane_file(node: &TraceNode) -> Option<String> {
         return Some(token.to_string());
     }
     None
+}
+
+/// Process-shape stats derived from a `TraceDag`. Used by the hero renderers
+/// to surface "the AI's working style" in a single line of pull-quote facts:
+/// did it read before editing? did it stop to think? how broad was the scope?
+///
+/// All counts cap at the visible window applied by [`DAG_NODE_LIMIT`]; this
+/// matches what reviewers actually see in the rendered diagram so the
+/// "📊 By the numbers" line never contradicts the swim-lane shape above it.
+#[derive(Debug, Clone, Default)]
+struct DagStats {
+    /// Distinct files touched by an OBSERVE or ACT. THINK/NOTE never
+    /// contribute (they're file-agnostic).
+    files_touched: usize,
+    observe_count: usize,
+    act_count: usize,
+    think_count: usize,
+    /// `OBSERVE` count divided by `ACT` count. `None` when either side is
+    /// zero (degenerate ratio); rendered as `"all read"` / `"all edit"` in
+    /// that case.
+    read_to_edit: Option<f64>,
+    /// Number of ops (OBSERVE+ACT) per THINK. `None` when no THINK fired —
+    /// "no reasoning recorded" is more honest than "∞ ops per THINK".
+    ops_per_think: Option<f64>,
+}
+
+fn compute_dag_stats(dag: &TraceDag) -> DagStats {
+    let total = dag.nodes.len();
+    if total == 0 {
+        return DagStats::default();
+    }
+    let start = total.saturating_sub(DAG_NODE_LIMIT);
+    let visible: Vec<&TraceNode> = dag.nodes.iter().skip(start).collect();
+
+    let mut stats = DagStats::default();
+    let mut files: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for n in &visible {
+        match n.kind.as_str() {
+            "OBSERVE" => {
+                stats.observe_count += 1;
+                if let Some(f) = extract_swimlane_file(n) {
+                    files.insert(f);
+                }
+            }
+            "ACT" => {
+                stats.act_count += 1;
+                if let Some(f) = extract_swimlane_file(n) {
+                    files.insert(f);
+                }
+            }
+            "THINK" => stats.think_count += 1,
+            _ => {}
+        }
+    }
+    stats.files_touched = files.len();
+    stats.read_to_edit = if stats.observe_count > 0 && stats.act_count > 0 {
+        Some(stats.observe_count as f64 / stats.act_count as f64)
+    } else {
+        None
+    };
+    let total_ops = stats.observe_count + stats.act_count;
+    stats.ops_per_think = if stats.think_count > 0 && total_ops > 0 {
+        Some(total_ops as f64 / stats.think_count as f64)
+    } else {
+        None
+    };
+    stats
+}
+
+/// Format the stats as a compact one-line pull-quote, dropping any individual
+/// signal whose underlying data was zero so the line never reads as a
+/// rendering glitch (e.g. "0 files touched · 0 ops per THINK").
+fn format_dag_stats_inline(stats: &DagStats) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if stats.files_touched > 0 {
+        parts.push(format!(
+            "**{}** file{} touched",
+            stats.files_touched,
+            plural_s(stats.files_touched)
+        ));
+    }
+    match stats.read_to_edit {
+        Some(r) if r >= 1.0 => parts.push(format!("READ:EDIT **{:.1}:1**", r)),
+        Some(r) => parts.push(format!("READ:EDIT **1:{:.1}**", 1.0 / r)),
+        None if stats.observe_count > 0 => parts.push("**read-only** (no edits)".into()),
+        None if stats.act_count > 0 => parts.push("**all edits** (no reads first)".into()),
+        _ => {}
+    }
+    if let Some(opt) = stats.ops_per_think {
+        // Round to nearest integer for the "1 THINK per N ops" reading; high
+        // density (N small) reads as careful work, low density (N large) as
+        // execution-mode.
+        parts.push(format!("1 THINK per **{}** ops", opt.round() as usize));
+    }
+    parts.join(" · ")
 }
 
 #[derive(Debug, Clone)]
@@ -1908,6 +2062,14 @@ mod tests {
                 short_oid: "a3f8c12e".into(),
             }],
             top_prompt: Some("Add exponential backoff to the HTTP client".into()),
+            dag_stats: DagStats {
+                files_touched: 3,
+                observe_count: 6,
+                act_count: 3,
+                think_count: 1,
+                read_to_edit: Some(2.0),
+                ops_per_think: Some(9.0),
+            },
         }
     }
 
@@ -1915,7 +2077,7 @@ mod tests {
     fn receipt_hero_includes_goal_ratio_and_milestones() {
         let body = render_hero_receipt(&sample_aggregates(), &sample_hero(), &[], &[]);
         assert!(body.contains("> **Receipt**"), "got: {body}");
-        assert!(body.contains("🎯 _Goal:_ Add retry logic"));
+        assert!(body.contains("🎯 **Goal:** Add retry logic"));
         assert!(body.contains("🤖 **4 AI**"));
         assert!(body.contains("👤 **1 human**"));
         assert!(body.contains("80% AI"), "ratio rounding wrong: {body}");
@@ -1933,6 +2095,7 @@ mod tests {
             top_observe: None,
             decisions: vec![],
             top_prompt: None,
+            dag_stats: DagStats::default(),
         };
         let agg = Aggregates {
             ai_count: 0,
@@ -1952,7 +2115,7 @@ mod tests {
     #[test]
     fn detective_hero_lays_out_four_acts() {
         let body = render_hero_detective(&sample_aggregates(), &sample_hero(), &[], &[]);
-        assert!(body.contains("### 🎯 The goal"));
+        assert!(body.contains("### 🎯 Goal"));
         assert!(body.contains("### 🧭 What we considered"));
         assert!(body.contains("### 💡 Key insight"));
         assert!(body.contains("### 🚢 What shipped"));
@@ -1987,7 +2150,7 @@ mod tests {
         };
         let body = render_hero_replay(&sample_aggregates(), &sample_hero(), &dag, &[], &[]);
         assert!(body.contains("🪙 h5i provenance · _the replay_"));
-        assert!(body.contains("🎯 **Add retry logic"));
+        assert!(body.contains("🎯 **Goal:** Add retry logic"));
         assert!(body.contains("### 🧠 Reasoning by file"));
         assert!(body.contains("```mermaid"));
         // Replay must promote the DAG above the fold: no <details>, and the
@@ -2021,5 +2184,136 @@ mod tests {
         assert_eq!(format_tokens(999), "999");
         assert_eq!(format_tokens(1000), "1.0k");
         assert_eq!(format_tokens(12_345), "12.3k");
+    }
+
+    // ── DAG stats ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn dag_stats_count_files_kinds_and_ratios() {
+        let dag = TraceDag {
+            nodes: vec![
+                make_node("a", "OBSERVE", "read src/foo.rs", &[]),
+                make_node("b", "OBSERVE", "read src/foo.rs", &["a"]),
+                make_node("c", "OBSERVE", "read src/bar.rs", &["b"]),
+                make_node("d", "ACT", "edited src/foo.rs", &["c"]),
+                make_node("e", "THINK", "consider split", &["d"]),
+                make_node("f", "ACT", "edited src/bar.rs", &["e"]),
+            ],
+        };
+        let s = compute_dag_stats(&dag);
+        assert_eq!(s.files_touched, 2, "foo.rs + bar.rs");
+        assert_eq!(s.observe_count, 3);
+        assert_eq!(s.act_count, 2);
+        assert_eq!(s.think_count, 1);
+        assert_eq!(s.read_to_edit, Some(1.5));
+        assert_eq!(s.ops_per_think, Some(5.0));
+    }
+
+    #[test]
+    fn dag_stats_handle_zero_divisions() {
+        // All ACT, no OBSERVE → ratio is None ("all edits").
+        let dag = TraceDag {
+            nodes: vec![make_node("a", "ACT", "edited src/foo.rs", &[])],
+        };
+        let s = compute_dag_stats(&dag);
+        assert_eq!(s.read_to_edit, None);
+        assert_eq!(s.ops_per_think, None, "no THINK → no density");
+
+        // All OBSERVE.
+        let dag = TraceDag {
+            nodes: vec![make_node("a", "OBSERVE", "read src/foo.rs", &[])],
+        };
+        let s = compute_dag_stats(&dag);
+        assert_eq!(s.read_to_edit, None);
+    }
+
+    #[test]
+    fn dag_stats_inline_omits_empty_signals() {
+        let s = DagStats::default();
+        assert_eq!(format_dag_stats_inline(&s), "");
+
+        let s = DagStats {
+            files_touched: 4,
+            observe_count: 10,
+            act_count: 5,
+            think_count: 1,
+            read_to_edit: Some(2.0),
+            ops_per_think: Some(15.0),
+        };
+        let line = format_dag_stats_inline(&s);
+        assert!(line.contains("**4** files touched"));
+        assert!(line.contains("READ:EDIT **2.0:1**"));
+        assert!(line.contains("1 THINK per **15** ops"));
+    }
+
+    #[test]
+    fn dag_stats_inline_inverts_ratio_when_edits_dominate() {
+        // 3 reads, 9 edits → ratio 0.33 → render as "1:3.0"
+        let s = DagStats {
+            files_touched: 2,
+            observe_count: 3,
+            act_count: 9,
+            think_count: 0,
+            read_to_edit: Some(3.0 / 9.0),
+            ops_per_think: None,
+        };
+        let line = format_dag_stats_inline(&s);
+        assert!(line.contains("READ:EDIT **1:3.0**"), "got: {line}");
+        // No THINK density line when none recorded.
+        assert!(!line.contains("THINK per"));
+    }
+
+    // ── Security banner ───────────────────────────────────────────────────
+
+    #[test]
+    fn secret_banner_screams_block_merge() {
+        let s = render_secret_alert_banner(3);
+        assert!(s.starts_with("> [!CAUTION]"), "must be a CAUTION alert: {s}");
+        assert!(s.contains("🚨"));
+        assert!(s.contains("BLOCK MERGE"));
+        assert!(s.contains("3 credential leaks"));
+        assert!(s.contains("Rotate the exposed secrets"));
+    }
+
+    #[test]
+    fn secret_banner_pluralizes_for_single_leak() {
+        let s = render_secret_alert_banner(1);
+        assert!(s.contains("1 credential leak detected"));
+        assert!(!s.contains("leaks "), "got plural for one leak: {s}");
+    }
+
+    // ── Hero integration ──────────────────────────────────────────────────
+
+    #[test]
+    fn receipt_hero_emits_stats_line() {
+        let body = render_hero_receipt(&sample_aggregates(), &sample_hero(), &[], &[]);
+        assert!(body.contains("📊"));
+        assert!(body.contains("**3** files touched"));
+        assert!(body.contains("READ:EDIT"));
+        assert!(body.contains("1 THINK per"));
+    }
+
+    #[test]
+    fn detective_hero_has_dedicated_stats_section() {
+        let body = render_hero_detective(&sample_aggregates(), &sample_hero(), &[], &[]);
+        assert!(body.contains("### 📊 By the numbers"));
+        // The narrative ordering: Goal → By the numbers → Considered → Insight → Shipped.
+        let positions: Vec<usize> = ["### 🎯 Goal", "### 📊 By the numbers", "### 🧭", "### 💡", "### 🚢"]
+            .iter()
+            .map(|h| body.find(h).unwrap_or_else(|| panic!("missing section {h} in:\n{body}")))
+            .collect();
+        for w in positions.windows(2) {
+            assert!(w[0] < w[1], "sections out of order: {positions:?}");
+        }
+    }
+
+    #[test]
+    fn replay_hero_emits_goal_label_and_stats() {
+        let dag = TraceDag {
+            nodes: vec![make_node("a1", "ACT", "edited src/foo.rs", &[])],
+        };
+        let body = render_hero_replay(&sample_aggregates(), &sample_hero(), &dag, &[], &[]);
+        assert!(body.contains("🎯 **Goal:**"), "goal must be labelled: {body}");
+        assert!(body.contains("**📊 By the numbers:**"));
     }
 }
