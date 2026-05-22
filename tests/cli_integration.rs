@@ -1280,8 +1280,8 @@ fn pull_keeps_local_on_diverged_context_without_force() {
     // Receiver initialises a *different* context workspace.
     let receiver = repo_wired_to(&remote_url);
     receiver.h5i_ok(&["context", "init", "--goal", "receiver goal"]);
-    let receiver_ctx_before = resolve_ref_in(&receiver, "refs/h5i/context").unwrap();
-    let sender_ctx = resolve_ref_in(&sender, "refs/h5i/context").unwrap();
+    let receiver_ctx_before = resolve_ref_in(&receiver, "refs/h5i/context/main").unwrap();
+    let sender_ctx = resolve_ref_in(&sender, "refs/h5i/context/main").unwrap();
     assert_ne!(
         receiver_ctx_before, sender_ctx,
         "context refs must differ for this test to mean anything"
@@ -1293,7 +1293,7 @@ fn pull_keeps_local_on_diverged_context_without_force() {
         "pull should report kept-local and mention --force:\n{pull_out}"
     );
 
-    let receiver_ctx_after = resolve_ref_in(&receiver, "refs/h5i/context").unwrap();
+    let receiver_ctx_after = resolve_ref_in(&receiver, "refs/h5i/context/main").unwrap();
     assert_eq!(
         receiver_ctx_before, receiver_ctx_after,
         "receiver's context ref must be unchanged when pulled without --force"
@@ -1321,11 +1321,11 @@ fn pull_force_overwrites_diverged_context() {
     );
     sender.h5i_ok(&["context", "init", "--goal", "sender goal"]);
     sender.h5i_ok(&["push", "--remote", "origin"]);
-    let sender_ctx = resolve_ref_in(&sender, "refs/h5i/context").unwrap();
+    let sender_ctx = resolve_ref_in(&sender, "refs/h5i/context/main").unwrap();
 
     let receiver = repo_wired_to(&remote_url);
     receiver.h5i_ok(&["context", "init", "--goal", "receiver goal"]);
-    let receiver_ctx_before = resolve_ref_in(&receiver, "refs/h5i/context").unwrap();
+    let receiver_ctx_before = resolve_ref_in(&receiver, "refs/h5i/context/main").unwrap();
     assert_ne!(receiver_ctx_before, sender_ctx);
 
     let pull_out = stdout(&receiver.h5i_ok(&["pull", "--remote", "origin", "--force"]));
@@ -1334,7 +1334,7 @@ fn pull_force_overwrites_diverged_context() {
         "pull --force should report a forced update:\n{pull_out}"
     );
     assert_eq!(
-        resolve_ref_in(&receiver, "refs/h5i/context").unwrap(),
+        resolve_ref_in(&receiver, "refs/h5i/context/main").unwrap(),
         sender_ctx,
         "after --force, receiver's context ref should match sender's",
     );

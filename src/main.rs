@@ -1162,7 +1162,7 @@ fn write_codex_instructions(workdir: &Path) -> anyhow::Result<()> {
 
 fn print_shared_context_prelude(workdir: &Path) {
     let has_ctx = match git2::Repository::discover(workdir) {
-        Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
+        Ok(r) => r.find_reference("refs/h5i/context/main").is_ok(),
         Err(_) => false,
     };
     if !has_ctx {
@@ -1278,7 +1278,7 @@ fn auto_derive_traces_from_claude_session(workdir: &Path) -> anyhow::Result<usiz
     // Only emit when h5i context is initialized — otherwise we have nowhere
     // to write and shouldn't surprise users who haven't opted in.
     let has_ctx = match git2::Repository::discover(workdir) {
-        Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
+        Ok(r) => r.find_reference("refs/h5i/context/main").is_ok(),
         Err(_) => false,
     };
     if !has_ctx {
@@ -1373,7 +1373,7 @@ fn autotrace_state_path(workdir: &Path) -> anyhow::Result<PathBuf> {
 
 fn auto_checkpoint_context(workdir: &Path, explicit_summary: Option<&str>) -> anyhow::Result<()> {
     let has_ctx = match git2::Repository::discover(workdir) {
-        Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
+        Ok(r) => r.find_reference("refs/h5i/context/main").is_ok(),
         Err(_) => false,
     };
     if !has_ctx {
@@ -3328,7 +3328,7 @@ jq -c '{
 
             // Only emit traces when inside a git repo that has h5i context initialized.
             let has_ctx = match git2::Repository::discover(&workdir) {
-                Ok(r) => r.find_reference("refs/h5i/context").is_ok(),
+                Ok(r) => r.find_reference("refs/h5i/context/main").is_ok(),
                 Err(_) => false,
             };
             if !has_ctx {
@@ -3547,12 +3547,73 @@ jq -c '{
                 "no memory snapshots yet",
             )?;
 
-            // Push context workspace (refs/h5i/context)
-            try_push(
-                "refs/h5i/context",
-                style("h5i context init").bold(),
-                "no context workspace yet",
-            )?;
+            // Push context workspace.
+            //
+            // Post-redesign: one ref per context branch under
+            // `refs/h5i/context/<name>`. Use a wildcard refspec so every
+            // branch syncs in a single git invocation. For backward compat,
+            // also push the legacy single ref (`refs/h5i/context`) if it
+            // still exists locally — older clients on the receiving side may
+            // still expect it. Migration aside-name (`refs/h5i/context-legacy`)
+            // is pushed too as a safety net for diagnosing rollbacks.
+            let any_per_branch_ctx = std::process::Command::new("git")
+                .args([
+                    "for-each-ref",
+                    "--count=1",
+                    "--format=%(refname)",
+                    "refs/h5i/context/",
+                ])
+                .current_dir(&workdir)
+                .output()
+                .map(|o| !o.stdout.is_empty())
+                .unwrap_or(false);
+            if any_per_branch_ctx {
+                print!(
+                    "  {} {} … ",
+                    style("→").dim(),
+                    style("refs/h5i/context/*").yellow()
+                );
+                std::io::stdout().flush()?;
+                let status = std::process::Command::new("git")
+                    .args([
+                        "push",
+                        &remote,
+                        "+refs/h5i/context/*:refs/h5i/context/*",
+                    ])
+                    .current_dir(&workdir)
+                    .status()
+                    .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+                println!(
+                    "{}",
+                    if status.success() {
+                        style("ok").green()
+                    } else {
+                        style("failed").red()
+                    }
+                );
+            } else {
+                println!(
+                    "  {} {} … {} (no context workspace yet — run {})",
+                    style("→").dim(),
+                    style("refs/h5i/context/*").yellow(),
+                    style("skipped").yellow(),
+                    style("h5i context init").bold(),
+                );
+            }
+            if ref_exists("refs/h5i/context") {
+                try_push(
+                    "refs/h5i/context",
+                    style("(legacy)").dim(),
+                    "(no legacy ref)",
+                )?;
+            }
+            if ref_exists("refs/h5i/context-legacy") {
+                try_push(
+                    "refs/h5i/context-legacy",
+                    style("(migration backup)").dim(),
+                    "(no migration backup)",
+                )?;
+            }
 
             // Push AST blobs (refs/h5i/ast)
             try_push(
@@ -3570,7 +3631,7 @@ jq -c '{
                     "\n{} To receive these refs on another machine:\n\
                     \n    git fetch {} refs/h5i/notes:refs/h5i/notes\
                     \n    git fetch {} refs/h5i/memory:refs/h5i/memory\
-                    \n    git fetch {} refs/h5i/context:refs/h5i/context\
+                    \n    git fetch {} 'refs/h5i/context/*:refs/h5i/context/*'\
                     \n    git fetch {} refs/h5i/ast:refs/h5i/ast\
                     \n\n  Or add fetch refspecs to .git/config (see README §9) so {} picks them up automatically.",
                     style("Tip:").bold(),
@@ -3792,7 +3853,63 @@ jq -c '{
 
             let notes_changed = sync_one("refs/h5i/notes")?;
             sync_one(memory::MEMORY_REF)?;
-            sync_one("refs/h5i/context")?;
+
+            // Context refs: per-branch. Fetch the whole namespace into a temp
+            // tree first, then sync each branch through the same safe-merge
+            // logic. Legacy single ref (`refs/h5i/context`) is also tried for
+            // backward compat with pre-redesign remotes.
+            {
+                let fetch = git(&[
+                    "fetch",
+                    "--no-write-fetch-head",
+                    &remote,
+                    "+refs/h5i/context/*:refs/h5i/_incoming/context/*",
+                ])?;
+                if !fetch.status.success() {
+                    let stderr = String::from_utf8_lossy(&fetch.stderr);
+                    if !stderr.contains("couldn't find remote ref")
+                        && !stderr.contains("does not exist")
+                    {
+                        eprint!("{}", stderr);
+                    }
+                }
+                // Enumerate fetched per-branch refs and sync each.
+                if let Ok(out) = std::process::Command::new("git")
+                    .args([
+                        "for-each-ref",
+                        "--format=%(refname)",
+                        "refs/h5i/_incoming/context/",
+                    ])
+                    .current_dir(&workdir)
+                    .output()
+                {
+                    let listing = String::from_utf8_lossy(&out.stdout).into_owned();
+                    let mut branch_names: Vec<String> = listing
+                        .lines()
+                        .filter_map(|l| {
+                            l.strip_prefix("refs/h5i/_incoming/context/")
+                                .map(str::to_owned)
+                        })
+                        .collect();
+                    branch_names.sort();
+                    for branch in &branch_names {
+                        let live = format!("refs/h5i/context/{branch}");
+                        // sync_one re-fetches into refs/h5i/_incoming/<basename>
+                        // and uses the safe compare-and-install dance. Reusing
+                        // it keeps semantics identical to other h5i refs.
+                        let _ = sync_one(&live);
+                    }
+                    // Clean up the namespace temp refs.
+                    for branch in &branch_names {
+                        let incoming = format!("refs/h5i/_incoming/context/{branch}");
+                        let _ = git(&["update-ref", "-d", &incoming]);
+                    }
+                }
+                // Also try the legacy single ref (older remotes that pre-date
+                // the per-branch redesign).
+                let _ = sync_one("refs/h5i/context");
+            }
+
             sync_one("refs/h5i/ast")?;
 
             if notes_changed {

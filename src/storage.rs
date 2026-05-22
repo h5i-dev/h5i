@@ -28,7 +28,9 @@ const REQUIRED_DIRS: &[&str] = &[
 
 const H5I_REFS: &[&str] = &[
     "refs/h5i/notes",
-    "refs/h5i/context",
+    // Context now lives at one ref per branch; the main branch ref is the
+    // canonical "context workspace exists" signal.
+    "refs/h5i/context/main",
     "refs/h5i/ast",
     "refs/h5i/memory",
 ];

@@ -11,20 +11,48 @@
 ///   4. Stable-prefix / dynamic-suffix serialisation (prompt-caching-aware)
 ///   5. Subagent-scoped sub-contexts (`scope/<name>` branches)
 ///
-/// Storage layout in `refs/h5i/context`:
+/// Storage layout — one git ref per context branch.
+///
+/// Each context branch is its own git ref under `refs/h5i/context/<name>`,
+/// mirroring how regular git branches live under `refs/heads/<name>`. The
+/// tree of each ref contains the branch's content at root:
 ///
 /// ```text
-/// refs/h5i/context tree:
-/// ├── main.md                        # global roadmap: goals, milestones, notes
-/// ├── .current_branch                # active branch name
-/// └── branches/
-///     └── <branch-name>/
-///         ├── commit.md              # milestone summaries (append-only)
-///         ├── trace.md              # human-readable OTA log (rendered view)
-///         ├── dag.json              # DAG of trace nodes with parent links
-///         ├── ephemeral.md          # scratch traces cleared on context commit
-///         └── metadata.yaml         # file structure, deps, env config
+/// refs/h5i/context/<name> tree:
+/// ├── commit.md          # milestone summaries (append-only)
+/// ├── trace.md           # human-readable OTA log (rendered view)
+/// ├── ephemeral.md       # scratch traces cleared on context commit
+/// ├── metadata.yaml      # file structure, deps, env config
+/// └── dag.json           # trace-node DAG (derivable from git log; kept for fast reads)
 /// ```
+///
+/// Project-wide state (cross-branch) lives on `refs/h5i/context/main`:
+///
+/// ```text
+/// refs/h5i/context/main tree (additionally):
+/// ├── main.md                       # roadmap: goals, milestones, notes
+/// └── git-goals/<git-branch>.md    # per-git-branch goal
+/// ```
+///
+/// HEAD — which context branch is active — is a per-worktree pointer at
+/// `.git/h5i/HEAD` (format: `ref: refs/h5i/context/<name>\n`), mirroring
+/// git's own HEAD. Switching context branches no longer creates a commit.
+///
+/// Auto-follow: when no `.git/h5i/PINNED` marker exists (the default),
+/// every ctx command syncs HEAD to `refs/h5i/context/<current-git-branch>`,
+/// auto-creating the ref (forked from `refs/h5i/context/main`) on first
+/// write. `h5i context checkout <name>` writes PINNED to stay on the
+/// explicit branch; `h5i context unpin` removes it.
+///
+/// Merging uses libgit2's real three-way merge — `gcc_merge` produces an
+/// actual 2-parent commit on the target ref, with conflicts surfaced
+/// via standard conflict markers in the text files.
+///
+/// Migration from the legacy single-ref layout (`refs/h5i/context` with
+/// internal `branches/<name>/` subtrees) runs lazily on first command:
+/// each subtree becomes its own ref, `main.md` and `git-goals/` land on
+/// `refs/h5i/context/main`, and the original ref is renamed to
+/// `refs/h5i/context-legacy` for safety.
 ///
 /// Exposed via `h5i context` subcommands.
 use std::fmt::Write as FmtWrite;
@@ -39,8 +67,22 @@ use crate::error::H5iError;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-/// Git ref that stores the context workspace as a commit chain.
-pub const CTX_REF: &str = "refs/h5i/context";
+/// Ref-name prefix. Every context branch lives at `{CTX_REF_PREFIX}<name>`.
+pub const CTX_REF_PREFIX: &str = "refs/h5i/context/";
+
+/// Legacy single-ref name (pre-redesign). Migration renames this to
+/// [`CTX_LEGACY_BACKUP_REF`] before creating any per-branch refs, because
+/// git refuses to host both `refs/h5i/context` and `refs/h5i/context/...`
+/// at the same time (file-vs-directory collision under `.git/refs/`).
+pub const CTX_LEGACY_REF: &str = "refs/h5i/context";
+
+/// Where the legacy ref is preserved after migration.
+pub const CTX_LEGACY_BACKUP_REF: &str = "refs/h5i/context-legacy";
+
+/// Back-compat re-export of the legacy ref name (external callers still
+/// reference `ctx::CTX_REF`). New code should use [`branch_ref`] instead.
+#[deprecated(note = "use branch_ref(name) — context is now per-ref")]
+pub const CTX_REF: &str = CTX_LEGACY_REF;
 
 /// Legacy directory name kept for display / migration messages only.
 pub const CTX_DIR: &str = ".h5i-ctx";
@@ -48,6 +90,18 @@ pub const CTX_DIR: &str = ".h5i-ctx";
 pub const GCC_DIR: &str = CTX_DIR;
 
 pub const MAIN_BRANCH: &str = "main";
+
+/// Build the full git ref name for a context branch.
+pub fn branch_ref(name: &str) -> String {
+    format!("{CTX_REF_PREFIX}{name}")
+}
+
+/// Per-worktree pointer at `<git-dir>/h5i/HEAD`, format `ref: refs/h5i/context/<name>\n`.
+const HEAD_FILE: &str = "h5i/HEAD";
+
+/// Optional marker at `<git-dir>/h5i/PINNED`. When present, auto-follow is disabled
+/// and HEAD stays on whatever branch the user explicitly checked out.
+const PIN_FILE: &str = "h5i/PINNED";
 
 // ── Data types ────────────────────────────────────────────────────────────────
 
@@ -159,20 +213,113 @@ fn ctx_git_repo(workdir: &Path) -> Result<Repository, H5iError> {
     Repository::discover(workdir).map_err(H5iError::Git)
 }
 
-/// Read a single virtual file from the tip of `refs/h5i/context`.
-fn ctx_read_file(repo: &Repository, vpath: &str) -> Option<String> {
-    let reference = repo.find_reference(CTX_REF).ok()?;
+/// Path-translation: which ref + tree-path does a legacy `vpath` route to?
+///
+/// Returns `None` for the special HEAD pseudo-path `.current_branch`, whose
+/// reads/writes go to the filesystem (`<git-dir>/h5i/HEAD`), not a git ref.
+fn route_vpath(vpath: &str) -> Option<(String, String)> {
+    if vpath == ".current_branch" {
+        return None;
+    }
+    if let Some(rest) = vpath.strip_prefix("branches/") {
+        // `branches/<name>/<rel>` — split at the LAST `/` so branch names may
+        // contain `/` (e.g. `scope/foo`, `experiment/alt`). The last segment
+        // is always the file under the branch's tree.
+        if let Some((branch, rel)) = rest.rsplit_once('/') {
+            return Some((branch_ref(branch), rel.to_owned()));
+        }
+        // `branches/<name>` with no file part — degenerate, route to main.
+    }
+    // Everything else (main.md, git-goals/*) lives on the main branch ref.
+    Some((branch_ref(MAIN_BRANCH), vpath.to_owned()))
+}
+
+/// Read a single file from a branch's tree.
+fn read_ref_file(repo: &Repository, ref_name: &str, rel_path: &str) -> Option<String> {
+    let reference = repo.find_reference(ref_name).ok()?;
     let commit = reference.peel_to_commit().ok()?;
     let tree = commit.tree().ok()?;
-    let entry = tree.get_path(Path::new(vpath)).ok()?;
+    let entry = tree.get_path(Path::new(rel_path)).ok()?;
     let blob = repo.find_blob(entry.id()).ok()?;
     std::str::from_utf8(blob.content()).ok().map(str::to_owned)
 }
 
-/// Create a new commit on `refs/h5i/context` applying the given (path, content) changes
-/// to the current tree. Handles arbitrarily nested paths (e.g. `branches/main/trace.md`).
+/// Per-worktree HEAD path: `<git-dir>/h5i/HEAD`.
+fn head_file_path(repo: &Repository) -> std::path::PathBuf {
+    repo.path().join(HEAD_FILE)
+}
+
+/// Read the active context branch from `<git-dir>/h5i/HEAD`.
+/// Returns `None` if HEAD is absent or malformed (callers default to `main`).
+fn read_head(repo: &Repository) -> Option<String> {
+    let raw = std::fs::read_to_string(head_file_path(repo)).ok()?;
+    let line = raw.trim();
+    line.strip_prefix("ref: ")
+        .and_then(|r| r.strip_prefix(CTX_REF_PREFIX))
+        .map(str::to_owned)
+        .filter(|s| !s.is_empty())
+}
+
+/// Write the HEAD pointer to a context branch name.
+fn write_head(repo: &Repository, branch: &str) -> Result<(), H5iError> {
+    let path = head_file_path(repo);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(H5iError::Io)?;
+    }
+    std::fs::write(&path, format!("ref: {CTX_REF_PREFIX}{branch}\n"))
+        .map_err(H5iError::Io)
+}
+
+/// Read a virtual path through the legacy addressing scheme. Backward-compatible
+/// with `branches/<name>/<file>`, `main.md`, `git-goals/<x>.md`, and the special
+/// `.current_branch` (which now resolves through the on-disk HEAD file).
+fn ctx_read_file(repo: &Repository, vpath: &str) -> Option<String> {
+    match route_vpath(vpath) {
+        None => read_head(repo),
+        Some((ref_name, rel)) => read_ref_file(repo, &ref_name, &rel),
+    }
+}
+
+/// Apply `(vpath, content)` changes by grouping them per destination ref and
+/// committing each group atomically on its ref. The special `.current_branch`
+/// path is diverted to the on-disk HEAD pointer.
 fn ctx_write_files(
     repo: &Repository,
+    changes: &[(&str, &str)],
+    message: &str,
+) -> Result<(), H5iError> {
+    use std::collections::BTreeMap;
+
+    let mut grouped: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    let mut head_target: Option<String> = None;
+
+    for &(vpath, content) in changes {
+        match route_vpath(vpath) {
+            None => head_target = Some(content.to_owned()),
+            Some((ref_name, rel)) => {
+                grouped.entry(ref_name).or_default().push((rel, content.to_owned()));
+            }
+        }
+    }
+
+    for (ref_name, group) in &grouped {
+        let borrowed: Vec<(&str, &str)> =
+            group.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+        write_ref_files(repo, ref_name, &borrowed, message)?;
+    }
+
+    if let Some(branch) = head_target {
+        write_head(repo, &branch)?;
+    }
+    Ok(())
+}
+
+/// Commit `(rel_path, content)` changes onto a single ref. The ref is created
+/// (orphan branch) if it does not yet exist; otherwise this appends one
+/// commit whose parent is the current tip.
+fn write_ref_files(
+    repo: &Repository,
+    ref_name: &str,
     changes: &[(&str, &str)],
     message: &str,
 ) -> Result<(), H5iError> {
@@ -182,7 +329,7 @@ fn ctx_write_files(
         .map_err(H5iError::Git)?;
 
     let parent = repo
-        .find_reference(CTX_REF)
+        .find_reference(ref_name)
         .ok()
         .and_then(|r| r.peel_to_commit().ok());
     let current_tree = parent.as_ref().and_then(|c| c.tree().ok());
@@ -191,7 +338,7 @@ fn ctx_write_files(
     let new_tree = repo.find_tree(new_tree_oid).map_err(H5iError::Git)?;
 
     let parents: Vec<&git2::Commit> = parent.iter().collect();
-    repo.commit(Some(CTX_REF), &sig, &sig, message, &new_tree, &parents)
+    repo.commit(Some(ref_name), &sig, &sig, message, &new_tree, &parents)
         .map_err(H5iError::Git)?;
 
     Ok(())
@@ -238,57 +385,179 @@ fn apply_changes_to_tree(
     builder.write().map_err(H5iError::Git)
 }
 
-/// List branch names stored under `branches/` in the context tree.
-fn ctx_list_branches_git(repo: &Repository) -> Vec<String> {
-    let tree = repo
-        .find_reference(CTX_REF)
+/// Context files that are conceptually append-only — both sides extending the
+/// same ancestor in non-overlapping ways. When libgit2's line-based three-way
+/// merge produces a conflict on these, we union-merge instead of failing.
+const APPEND_ONLY_FILES: &[&str] = &["trace.md", "commit.md", "ephemeral.md"];
+
+/// Union-merge an append-only file: keep the common ancestor, then concatenate
+/// each side's tail. If one side already contains the other's tail (e.g. due
+/// to a previous merge), avoid duplicating it.
+fn union_append_only(ancestor: &str, ours: &str, theirs: &str) -> String {
+    let ours_tail = ours.strip_prefix(ancestor).unwrap_or("");
+    let theirs_tail = theirs.strip_prefix(ancestor).unwrap_or("");
+    if ours_tail.is_empty() && theirs_tail.is_empty() {
+        return ancestor.to_string();
+    }
+    // Tails do not share a prefix → safe to concatenate.
+    let mut out = String::from(ancestor);
+    out.push_str(ours_tail);
+    if !theirs_tail.is_empty() && !out.ends_with(theirs_tail) {
+        out.push_str(theirs_tail);
+    }
+    out
+}
+
+/// Walk index conflicts; for each conflicted entry whose path is in
+/// [`APPEND_ONLY_FILES`], replace the conflict with a union-merged blob.
+fn resolve_append_only_conflicts(
+    repo: &Repository,
+    index: &mut git2::Index,
+) -> Result<(), H5iError> {
+    let entries: Vec<(Option<git2::IndexEntry>, Option<git2::IndexEntry>, Option<git2::IndexEntry>)> = {
+        let conflicts = index.conflicts().map_err(H5iError::Git)?;
+        conflicts
+            .filter_map(|c| c.ok())
+            .map(|c| (c.ancestor, c.our, c.their))
+            .collect()
+    };
+    for (ancestor, our, their) in entries {
+        let path_bytes = our
+            .as_ref()
+            .or(their.as_ref())
+            .or(ancestor.as_ref())
+            .map(|e| e.path.clone());
+        let Some(path_bytes) = path_bytes else { continue };
+        let Ok(path_str) = std::str::from_utf8(&path_bytes) else { continue };
+        let filename = Path::new(path_str)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        if !APPEND_ONLY_FILES.contains(&filename) {
+            continue;
+        }
+        let read_blob = |entry: Option<&git2::IndexEntry>| -> String {
+            entry
+                .and_then(|e| repo.find_blob(e.id).ok())
+                .and_then(|b| std::str::from_utf8(b.content()).ok().map(str::to_owned))
+                .unwrap_or_default()
+        };
+        let ancestor_text = read_blob(ancestor.as_ref());
+        let our_text = read_blob(our.as_ref());
+        let their_text = read_blob(their.as_ref());
+        let merged = union_append_only(&ancestor_text, &our_text, &their_text);
+        let merged_oid = repo.blob(merged.as_bytes()).map_err(H5iError::Git)?;
+        let resolved = git2::IndexEntry {
+            ctime: git2::IndexTime::new(0, 0),
+            mtime: git2::IndexTime::new(0, 0),
+            dev: 0,
+            ino: 0,
+            mode: 0o100644,
+            uid: 0,
+            gid: 0,
+            file_size: merged.len() as u32,
+            id: merged_oid,
+            flags: 0,
+            flags_extended: 0,
+            path: path_bytes.clone(),
+        };
+        index.remove_path(Path::new(path_str)).map_err(H5iError::Git)?;
+        index.add(&resolved).map_err(H5iError::Git)?;
+    }
+    Ok(())
+}
+
+/// Insert a subtree OID at a (possibly nested) slash-separated path under `base`.
+///
+/// Used to compose `branches/<a>/<b>/...` paths in the aggregate snapshot tree
+/// when context branch names contain `/` (e.g. `scope/foo`, `experiment/alt`).
+fn insert_subtree_at_path(
+    repo: &Repository,
+    base: Option<&git2::Tree>,
+    path: &str,
+    subtree_oid: Oid,
+) -> Result<Oid, H5iError> {
+    let mut builder = repo.treebuilder(base).map_err(H5iError::Git)?;
+    match path.split_once('/') {
+        Some((first, rest)) => {
+            let sub_base = base.and_then(|t| {
+                t.get_name(first)
+                    .filter(|e| e.kind() == Some(ObjectType::Tree))
+                    .and_then(|e| repo.find_tree(e.id()).ok())
+            });
+            let sub_oid = insert_subtree_at_path(repo, sub_base.as_ref(), rest, subtree_oid)?;
+            builder.insert(first, sub_oid, 0o040000).map_err(H5iError::Git)?;
+        }
+        None => {
+            builder.insert(path, subtree_oid, 0o040000).map_err(H5iError::Git)?;
+        }
+    }
+    builder.write().map_err(H5iError::Git)
+}
+
+/// Build a synthetic tree that mirrors the legacy single-ref layout from the
+/// current per-branch refs:
+///
+///   * `main.md`, `git-goals/...` come from `refs/h5i/context/main`'s tree.
+///   * `branches/<name>/...` is one subtree per context branch (nested for
+///     slash-separated names).
+///
+/// Used by [`snapshot_for_commit`] so that `context_diff` / `restore` can read
+/// a self-contained tree without depending on the live per-branch refs.
+fn build_aggregate_tree(repo: &Repository) -> Result<Oid, H5iError> {
+    let main_tree = repo
+        .find_reference(&branch_ref(MAIN_BRANCH))
         .ok()
         .and_then(|r| r.peel_to_commit().ok())
         .and_then(|c| c.tree().ok());
-    let tree = match tree {
-        Some(t) => t,
-        None => return vec![],
-    };
-    let branches_oid = match tree
-        .get_name("branches")
-        .filter(|e| e.kind() == Some(ObjectType::Tree))
-        .map(|e| e.id())
-    {
-        Some(oid) => oid,
-        None => return vec![],
-    };
-    let branches_tree = match repo.find_tree(branches_oid) {
-        Ok(t) => t,
-        Err(_) => return vec![],
-    };
-    let mut names: Vec<String> = Vec::new();
-    collect_branch_names(repo, &branches_tree, "", &mut names);
-    names.sort();
-    names
+
+    // Compose the `branches/` subtree by inserting each branch's tree OID.
+    let mut branches_root: Option<Oid> = None;
+    for branch_name in ctx_list_branches_git(repo) {
+        let branch_tree_oid = match repo
+            .find_reference(&branch_ref(&branch_name))
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok())
+            .map(|c| c.tree_id())
+        {
+            Some(oid) => oid,
+            None => continue,
+        };
+        let current = branches_root.and_then(|oid| repo.find_tree(oid).ok());
+        branches_root = Some(insert_subtree_at_path(
+            repo,
+            current.as_ref(),
+            &branch_name,
+            branch_tree_oid,
+        )?);
+    }
+
+    // Build the root tree on top of main's tree, overlaying `branches/`.
+    let mut root_builder = repo.treebuilder(main_tree.as_ref()).map_err(H5iError::Git)?;
+    if let Some(b_oid) = branches_root {
+        root_builder
+            .insert("branches", b_oid, 0o040000)
+            .map_err(H5iError::Git)?;
+    }
+    root_builder.write().map_err(H5iError::Git)
 }
 
-/// Recursively walk a subtree under `branches/`. A tree entry is considered a
-/// branch if it contains a blob named `commit.md`; otherwise we recurse into
-/// nested trees (supporting slash-separated names like `experiment/alt`).
-fn collect_branch_names(repo: &Repository, tree: &git2::Tree, prefix: &str, out: &mut Vec<String>) {
-    for entry in tree.iter() {
-        let Some(entry_name) = entry.name() else { continue };
-        if entry.kind() != Some(ObjectType::Tree) {
-            continue;
-        }
-        let full_name = if prefix.is_empty() {
-            entry_name.to_owned()
-        } else {
-            format!("{prefix}/{entry_name}")
-        };
-        let Ok(subtree) = repo.find_tree(entry.id()) else { continue };
-        // A branch directory contains `commit.md`.
-        if subtree.get_name("commit.md").is_some() {
-            out.push(full_name);
-        } else {
-            collect_branch_names(repo, &subtree, &full_name, out);
+/// Enumerate context branch names by listing all refs under `refs/h5i/context/`.
+fn ctx_list_branches_git(repo: &Repository) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let glob = format!("{CTX_REF_PREFIX}*");
+    if let Ok(refs) = repo.references_glob(&glob) {
+        for r in refs.flatten() {
+            if let Some(full) = r.name() {
+                if let Some(short) = full.strip_prefix(CTX_REF_PREFIX) {
+                    names.push(short.to_owned());
+                }
+            }
         }
     }
+    names.sort();
+    names.dedup();
+    names
 }
 
 // ── DAG helpers (Feature 1) ───────────────────────────────────────────────────
@@ -348,11 +617,12 @@ fn node_id(kind: &str, timestamp: &str, content: &str) -> String {
 
 /// Initialize the context workspace in `refs/h5i/context`.
 pub fn init(workdir: &Path, goal: &str) -> Result<(), H5iError> {
+    let _ = migrate_legacy_if_needed(workdir);
     let repo = ctx_git_repo(workdir)?;
     let git_branch = current_git_branch(workdir);
 
-    // If the ref already exists, only ensure the main branch files are present.
-    if repo.find_reference(CTX_REF).is_ok() {
+    // If the main branch ref already exists, only ensure its files are present.
+    if repo.find_reference(&branch_ref(MAIN_BRANCH)).is_ok() {
         ensure_branch_git(&repo, MAIN_BRANCH, "Primary development branch")?;
         if !goal.trim().is_empty() {
             set_git_branch_goal(&repo, &git_branch, goal)?;
@@ -395,23 +665,32 @@ pub fn init(workdir: &Path, goal: &str) -> Result<(), H5iError> {
             (&git_goal_path(&git_branch), goal),
         ],
         "h5i context init",
-    )
+    )?;
+
+    // Ensure HEAD is initialized even if `.current_branch` write was a no-op
+    // (e.g. on a re-init where ctx_write_files routed it to the head file).
+    write_head(&repo, MAIN_BRANCH)
 }
 
-/// Return `true` if `refs/h5i/context` exists in this repository.
+/// Return `true` if the context workspace is initialized (the main branch ref exists).
+///
+/// Lazily migrates legacy single-ref workspaces on first call.
 pub fn is_initialized(workdir: &Path) -> bool {
+    let _ = migrate_legacy_if_needed(workdir);
     ctx_git_repo(workdir)
-        .map(|repo| repo.find_reference(CTX_REF).is_ok())
+        .map(|repo| repo.find_reference(&branch_ref(MAIN_BRANCH)).is_ok())
         .unwrap_or(false)
 }
 
-/// Return the current active branch name.
+/// Return the current active context branch name.
+///
+/// Resolution order: per-worktree HEAD file (`<git-dir>/h5i/HEAD`), then
+/// `MAIN_BRANCH` as a default. With auto-follow (see [`prepare_context_write`]),
+/// HEAD typically tracks the current git branch unless the user has pinned.
 pub fn current_branch(workdir: &Path) -> String {
     ctx_git_repo(workdir)
         .ok()
-        .and_then(|repo| ctx_read_file(&repo, ".current_branch"))
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        .and_then(|repo| read_head(&repo))
         .unwrap_or_else(|| MAIN_BRANCH.to_string())
 }
 
@@ -471,10 +750,236 @@ pub fn context_branch_purpose(workdir: &Path, branch: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// One-shot migration from the legacy single-ref layout (`refs/h5i/context` with
+/// internal `branches/<name>/` subtrees) to the per-branch-ref layout.
+///
+/// Triggered lazily: the first ctx command after upgrade detects the old ref
+/// and replays it. After migration, the legacy ref is renamed to
+/// `refs/h5i/context-legacy` so the original objects remain reachable for
+/// inspection or rollback. The new layout is then ready for use.
+pub fn migrate_legacy_if_needed(workdir: &Path) -> Result<bool, H5iError> {
+    let repo = match ctx_git_repo(workdir) {
+        Ok(r) => r,
+        Err(_) => return Ok(false),
+    };
+    let has_legacy = repo.find_reference(CTX_LEGACY_REF).is_ok();
+    let has_new = repo.find_reference(&branch_ref(MAIN_BRANCH)).is_ok();
+    if !has_legacy || has_new {
+        return Ok(false);
+    }
+
+    let legacy_commit = repo
+        .find_reference(CTX_LEGACY_REF)
+        .map_err(H5iError::Git)?
+        .peel_to_commit()
+        .map_err(H5iError::Git)?;
+    let legacy_tree = legacy_commit.tree().map_err(H5iError::Git)?;
+    let sig = repo
+        .signature()
+        .or_else(|_| Signature::now("h5i", "h5i@local"))
+        .map_err(H5iError::Git)?;
+
+    // 1. Discover branch names by walking branches/<...>/commit.md.
+    let mut branch_names: Vec<String> = Vec::new();
+    if let Some(branches_entry) = legacy_tree.get_name("branches") {
+        if branches_entry.kind() == Some(ObjectType::Tree) {
+            let branches_tree = repo.find_tree(branches_entry.id()).map_err(H5iError::Git)?;
+            collect_legacy_branch_names(&repo, &branches_tree, "", &mut branch_names);
+        }
+    }
+    branch_names.sort();
+
+    // 2. Recover the previously-active branch name from the in-tree pointer.
+    let active_branch = legacy_tree
+        .get_name(".current_branch")
+        .and_then(|e| repo.find_blob(e.id()).ok())
+        .and_then(|b| std::str::from_utf8(b.content()).ok().map(str::to_owned))
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| MAIN_BRANCH.to_string());
+
+    // 3. Rename the legacy ref aside BEFORE creating any `refs/h5i/context/...`
+    //    refs: git cannot host a ref at `refs/h5i/context` and refs under
+    //    `refs/h5i/context/` simultaneously (file-vs-directory collision under
+    //    `.git/refs/`).
+    let legacy_oid = legacy_commit.id();
+    repo.reference(
+        CTX_LEGACY_BACKUP_REF,
+        legacy_oid,
+        true,
+        "h5i context migrate: preserved legacy single-ref layout",
+    )
+    .map_err(H5iError::Git)?;
+    repo.find_reference(CTX_LEGACY_REF)
+        .map_err(H5iError::Git)?
+        .delete()
+        .map_err(H5iError::Git)?;
+
+    // 4. For each branch, create refs/h5i/context/<name> rooted at a single
+    //    commit whose tree is the per-branch content (formerly under branches/<name>/).
+    for branch in &branch_names {
+        let subtree_oid =
+            match find_nested_subtree_oid(&repo, &legacy_tree, &format!("branches/{branch}"))? {
+                Some(oid) => oid,
+                None => continue,
+            };
+        let subtree = repo.find_tree(subtree_oid).map_err(H5iError::Git)?;
+        let new_ref = branch_ref(branch);
+        let msg = format!("h5i context migrate: branch {branch}");
+        let parent: Vec<&git2::Commit> = Vec::new();
+        repo.commit(Some(&new_ref), &sig, &sig, &msg, &subtree, &parent)
+            .map_err(H5iError::Git)?;
+    }
+
+    // 4. Build the main branch's tree: strip `branches/` and `.current_branch`
+    //    from the legacy root (they're already migrated above / replaced by HEAD).
+    let mut main_tree_builder = repo.treebuilder(Some(&legacy_tree)).map_err(H5iError::Git)?;
+    main_tree_builder.remove("branches").ok();
+    main_tree_builder.remove(".current_branch").ok();
+    let main_tree_oid = main_tree_builder.write().map_err(H5iError::Git)?;
+    let main_tree = repo.find_tree(main_tree_oid).map_err(H5iError::Git)?;
+
+    // If the new main ref was already created via step 3 (a "main" branch existed),
+    // append onto it; otherwise create it.
+    let main_ref = branch_ref(MAIN_BRANCH);
+    let main_parent = repo
+        .find_reference(&main_ref)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok());
+    let main_parents: Vec<&git2::Commit> = main_parent.iter().collect();
+    repo.commit(
+        Some(&main_ref),
+        &sig,
+        &sig,
+        "h5i context migrate: project-wide state (main.md, git-goals/, snapshots/)",
+        &main_tree,
+        &main_parents,
+    )
+    .map_err(H5iError::Git)?;
+
+    // 6. Seed HEAD to the previously-active branch.
+    if branch_names.iter().any(|b| b == &active_branch) {
+        write_head(&repo, &active_branch)?;
+    } else {
+        write_head(&repo, MAIN_BRANCH)?;
+    }
+
+    Ok(true)
+}
+
+/// Walk the legacy `branches/` subtree, collecting names of every directory
+/// that contains a `commit.md` blob (matches the pre-redesign `is a branch dir`
+/// rule). Supports nested names like `scope/foo` and `experiment/alt`.
+fn collect_legacy_branch_names(
+    repo: &Repository,
+    tree: &git2::Tree,
+    prefix: &str,
+    out: &mut Vec<String>,
+) {
+    for entry in tree.iter() {
+        let Some(entry_name) = entry.name() else { continue };
+        if entry.kind() != Some(ObjectType::Tree) {
+            continue;
+        }
+        let full_name = if prefix.is_empty() {
+            entry_name.to_owned()
+        } else {
+            format!("{prefix}/{entry_name}")
+        };
+        let Ok(subtree) = repo.find_tree(entry.id()) else { continue };
+        if subtree.get_name("commit.md").is_some() {
+            out.push(full_name);
+        } else {
+            collect_legacy_branch_names(repo, &subtree, &full_name, out);
+        }
+    }
+}
+
+/// Walk a slash-separated path down a tree and return the OID of the final
+/// subtree, or `None` if any segment is missing or non-tree.
+fn find_nested_subtree_oid(
+    repo: &Repository,
+    root: &git2::Tree,
+    path: &str,
+) -> Result<Option<Oid>, H5iError> {
+    let mut cursor = root.clone();
+    for segment in path.split('/') {
+        let next_oid = match cursor.get_name(segment) {
+            Some(e) if e.kind() == Some(ObjectType::Tree) => e.id(),
+            _ => return Ok(None),
+        };
+        cursor = repo.find_tree(next_oid).map_err(H5iError::Git)?;
+    }
+    Ok(Some(cursor.id()))
+}
+
+/// Per-worktree pin marker path: `<git-dir>/h5i/PINNED`.
+fn pin_file_path(repo: &Repository) -> std::path::PathBuf {
+    repo.path().join(PIN_FILE)
+}
+
+/// `true` when the user has pinned the active context branch via
+/// [`gcc_checkout`] or [`gcc_branch`]; auto-follow is disabled while pinned.
+pub fn is_pinned(workdir: &Path) -> bool {
+    ctx_git_repo(workdir)
+        .ok()
+        .map(|repo| pin_file_path(&repo).exists())
+        .unwrap_or(false)
+}
+
+/// Pin the active context branch — subsequent ctx commands stop auto-following
+/// the current git branch and stay on whatever the HEAD file points at.
+fn set_pin(repo: &Repository) -> Result<(), H5iError> {
+    let path = pin_file_path(repo);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(H5iError::Io)?;
+    }
+    std::fs::write(&path, b"").map_err(H5iError::Io)?;
+    Ok(())
+}
+
+/// Remove the pin marker so auto-follow resumes on the next ctx command.
+pub fn unpin(workdir: &Path) -> Result<(), H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    let path = pin_file_path(&repo);
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(H5iError::Io)?;
+    }
+    Ok(())
+}
+
+/// Sync the active context branch to the current git branch.
+///
+/// Pre-redesign, the active context branch was a global setting unaffected by
+/// `git checkout`. Now (when not pinned) it shadows the git branch: `git
+/// checkout feature` implicitly switches the active context branch to
+/// `refs/h5i/context/feature`, auto-creating the ref by forking from main.
+fn auto_follow(workdir: &Path) -> Result<(), H5iError> {
+    if is_pinned(workdir) {
+        return Ok(());
+    }
+    let repo = ctx_git_repo(workdir)?;
+    let git_branch = current_git_branch(workdir);
+    if git_branch.is_empty() {
+        return Ok(());
+    }
+    let active = read_head(&repo).unwrap_or_else(|| MAIN_BRANCH.to_string());
+    if active == git_branch {
+        return Ok(());
+    }
+    // Ensure the shadow ref exists (fork from current active branch — usually main).
+    fork_branch_ref(&repo, &git_branch, &active)?;
+    write_head(&repo, &git_branch)?;
+    Ok(())
+}
+
 /// Ensure the current git branch has a goal and the active h5i context branch
-/// has a purpose. One git branch can have many h5i context branches; this guard
-/// intentionally validates both levels without requiring their names to match.
+/// has a purpose. Also runs [`auto_follow`] so the active context branch shadows
+/// the current git branch by default.
 pub fn prepare_context_write(workdir: &Path) -> Result<(), H5iError> {
+    let _ = migrate_legacy_if_needed(workdir);
+    auto_follow(workdir)?;
+
     let repo = ctx_git_repo(workdir)?;
     let git_branch = current_git_branch(workdir);
     if git_branch_goal(workdir, &git_branch).is_none() {
@@ -550,13 +1055,50 @@ pub fn gcc_commit(workdir: &Path, summary: &str, contribution: &str) -> Result<(
 }
 
 /// BRANCH — create a new isolated reasoning workspace and switch to it.
+///
+/// The new ref is forked from the currently-active branch (like `git branch`),
+/// so subsequent merges have a well-defined common ancestor and libgit2's
+/// three-way merge produces semantically correct results.
+///
+/// Explicitly switching pins the active branch — auto-follow does not override
+/// it on later ctx commands (use [`unpin`] to resume git-branch shadowing).
 pub fn gcc_branch(workdir: &Path, name: &str, purpose: &str) -> Result<(), H5iError> {
     let repo = ctx_git_repo(workdir)?;
+    let parent_branch = current_branch(workdir);
+    fork_branch_ref(&repo, name, &parent_branch)?;
     ensure_branch_git(&repo, name, purpose)?;
-    set_current_branch(&repo, name)
+    set_current_branch(&repo, name)?;
+    set_pin(&repo)
 }
 
-/// Switch the active branch without creating it.
+/// Point `refs/h5i/context/<new>` at the same commit as `refs/h5i/context/<parent>`,
+/// like `git branch <new> <parent>`. No-op if the new ref already exists or the
+/// parent ref has no commit yet (the next write becomes the orphan root).
+fn fork_branch_ref(repo: &Repository, new_branch: &str, parent_branch: &str) -> Result<(), H5iError> {
+    let new_ref_name = branch_ref(new_branch);
+    if repo.find_reference(&new_ref_name).is_ok() {
+        return Ok(());
+    }
+    let Some(parent_oid) = repo
+        .find_reference(&branch_ref(parent_branch))
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+        .map(|c| c.id())
+    else {
+        return Ok(());
+    };
+    repo.reference(
+        &new_ref_name,
+        parent_oid,
+        false,
+        &format!("h5i context branch: forked from {parent_branch}"),
+    )
+    .map_err(H5iError::Git)?;
+    Ok(())
+}
+
+/// Switch the active branch without creating it. Pins the selection so it
+/// survives subsequent `git checkout`s (use [`unpin`] to resume auto-follow).
 pub fn gcc_checkout(workdir: &Path, name: &str) -> Result<(), H5iError> {
     let repo = ctx_git_repo(workdir)?;
     if !ctx_list_branches_git(&repo).contains(&name.to_string()) {
@@ -564,10 +1106,20 @@ pub fn gcc_checkout(workdir: &Path, name: &str) -> Result<(), H5iError> {
             "Context branch '{name}' does not exist. Run `h5i context branch {name}` first."
         )));
     }
-    set_current_branch(&repo, name)
+    set_current_branch(&repo, name)?;
+    set_pin(&repo)
 }
 
-/// MERGE — synthesize a completed branch into the current branch.
+/// MERGE — three-way merge a context branch into the current one, producing
+/// a real two-parent commit on the target ref.
+///
+/// Strategy:
+///   1. Find the merge-base of target and source (the fork point).
+///   2. Let libgit2 merge the three trees — line-based for text files
+///      like `trace.md` / `commit.md`. Conflicts abort the merge.
+///   3. Layer a semantic DAG merge node and a MERGE milestone entry onto
+///      the merged tree, then commit with both branches as parents.
+///   4. Append a cross-branch note to `main.md` on the main ref.
 pub fn gcc_merge(workdir: &Path, source_branch: &str) -> Result<String, H5iError> {
     let repo = ctx_git_repo(workdir)?;
     let target = current_branch(workdir);
@@ -578,22 +1130,90 @@ pub fn gcc_merge(workdir: &Path, source_branch: &str) -> Result<String, H5iError
         )));
     }
 
-    let source_commit_path = format!("branches/{source_branch}/commit.md");
-    let source_trace_path = format!("branches/{source_branch}/trace.md");
-    let target_commit_path = format!("branches/{target}/commit.md");
-    let target_trace_path = format!("branches/{target}/trace.md");
+    let target_ref_name = branch_ref(&target);
+    let source_ref_name = branch_ref(source_branch);
 
-    let source_commit_text = ctx_read_file(&repo, &source_commit_path).unwrap_or_default();
-    let source_summary = extract_latest_summary(&source_commit_text);
-    let source_purpose = extract_branch_purpose(&source_commit_text)
+    let target_commit = repo
+        .find_reference(&target_ref_name)
+        .map_err(H5iError::Git)?
+        .peel_to_commit()
+        .map_err(H5iError::Git)?;
+    let source_commit = repo
+        .find_reference(&source_ref_name)
+        .map_err(H5iError::Git)?
+        .peel_to_commit()
+        .map_err(H5iError::Git)?;
+
+    let target_tree = target_commit.tree().map_err(H5iError::Git)?;
+    let source_tree = source_commit.tree().map_err(H5iError::Git)?;
+
+    // Find the merge-base; fall back to the target tree itself if there is
+    // none (orphan branches), which effectively treats the source's content
+    // as pure additions on top of the target.
+    let base_tree = repo
+        .merge_base(target_commit.id(), source_commit.id())
+        .ok()
+        .and_then(|oid| repo.find_commit(oid).ok())
+        .and_then(|c| c.tree().ok())
+        .unwrap_or_else(|| target_tree.clone());
+
+    let mut merge_opts = git2::MergeOptions::new();
+    merge_opts.fail_on_conflict(false);
+    let mut merged_index = repo
+        .merge_trees(&base_tree, &target_tree, &source_tree, Some(&merge_opts))
+        .map_err(H5iError::Git)?;
+
+    // Resolve conflicts on append-only context files by union-merging both
+    // sides' tails on top of the common ancestor. Real conflicts on any other
+    // file remain and abort the merge.
+    if merged_index.has_conflicts() {
+        resolve_append_only_conflicts(&repo, &mut merged_index)?;
+    }
+    if merged_index.has_conflicts() {
+        let paths: Vec<String> = merged_index
+            .conflicts()
+            .map_err(H5iError::Git)?
+            .filter_map(|c| c.ok())
+            .filter_map(|c| {
+                c.our
+                    .as_ref()
+                    .or(c.their.as_ref())
+                    .or(c.ancestor.as_ref())
+                    .and_then(|e| std::str::from_utf8(&e.path).ok().map(str::to_string))
+            })
+            .collect();
+        return Err(H5iError::InvalidPath(format!(
+            "Merge conflicts in: {}. Resolve manually and re-run `h5i context merge {source_branch}`.",
+            paths.join(", ")
+        )));
+    }
+
+    let merged_tree_oid = merged_index
+        .write_tree_to(&repo)
+        .map_err(H5iError::Git)?;
+    let merged_tree = repo.find_tree(merged_tree_oid).map_err(H5iError::Git)?;
+
+    // Read content from the merged tree for post-merge layering.
+    let read_from_tree = |tree: &git2::Tree, path: &str| -> String {
+        (|| -> Option<String> {
+            let entry = tree.get_path(Path::new(path)).ok()?;
+            let blob = repo.find_blob(entry.id()).ok()?;
+            std::str::from_utf8(blob.content()).ok().map(str::to_owned)
+        })()
+        .unwrap_or_default()
+    };
+
+    // Pull summaries from the ORIGINAL branch trees (not the merged result),
+    // because the merge could have interleaved entries from both sides.
+    let source_commit_text_orig = read_from_tree(&source_tree, "commit.md");
+    let target_commit_text_orig = read_from_tree(&target_tree, "commit.md");
+    let source_summary = extract_latest_summary(&source_commit_text_orig);
+    let target_summary = extract_latest_summary(&target_commit_text_orig);
+    let source_purpose = extract_branch_purpose(&source_commit_text_orig)
         .unwrap_or_else(|| source_branch.to_string());
-
-    let target_commit_text = ctx_read_file(&repo, &target_commit_path).unwrap_or_default();
-    let target_summary = extract_latest_summary(&target_commit_text);
 
     let ts = Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
     let short_id = short_timestamp_id();
-
     let merged_summary = format!(
         "Merged branch '{source_branch}' into '{target}'.\n\n\
          From {source_branch}: {source_summary}\n\n\
@@ -603,13 +1223,6 @@ pub fn gcc_merge(workdir: &Path, source_branch: &str) -> Result<String, H5iError
         "MERGE of '{source_branch}' (purpose: {source_purpose}) into '{target}'.\n\
          Combined reasoning and outcomes from both branches."
     );
-
-    let source_log = ctx_read_file(&repo, &source_trace_path).unwrap_or_default();
-    let target_log = ctx_read_file(&repo, &target_trace_path).unwrap_or_default();
-    let new_trace = format!(
-        "{target_log}\n\n---\n_[MERGE from '{source_branch}' at {ts}]_\n\n{source_log}\n---\n"
-    );
-
     let merge_entry = format!(
         "## Commit {short_id} — {ts} [MERGE: {source_branch} → {target}]\n\n\
          ### Branch Purpose\nMerge of branch '{source_branch}'\n\n\
@@ -617,27 +1230,33 @@ pub fn gcc_merge(workdir: &Path, source_branch: &str) -> Result<String, H5iError
          ### This Commit's Contribution\n{contribution}\n\n\
          ---\n\n"
     );
-    let new_commit = format!("{target_commit_text}{merge_entry}");
+    let merged_commit_md = read_from_tree(&merged_tree, "commit.md");
+    let new_commit_md = format!("{merged_commit_md}{merge_entry}");
 
-    let existing_main = ctx_read_file(&repo, "main.md").unwrap_or_default();
-    let new_main = append_main_note(
-        &existing_main,
-        &target,
-        &format!("Merged branch '{source_branch}'"),
-    );
-
-    // Update DAG: create a merge node with parents from both branches (Feature 1).
+    // Semantic DAG merge: union node IDs and add a 2-parent MERGE node.
     let source_dag = read_dag(&repo, source_branch);
-    let mut target_dag = read_dag(&repo, &target);
-    let source_head = source_dag.head_id();
-    let target_head = target_dag.head_id();
+    let mut merged_dag: TraceDag =
+        serde_json::from_str(&read_from_tree(&merged_tree, "dag.json")).unwrap_or_default();
+    let seen: std::collections::HashSet<String> =
+        merged_dag.nodes.iter().map(|n| n.id.clone()).collect();
+    for node in &source_dag.nodes {
+        if !seen.contains(&node.id) {
+            merged_dag.nodes.push(node.clone());
+        }
+    }
+    let target_head_id = read_dag(&repo, &target).head_id();
+    let source_head_id = source_dag.head_id();
     let merge_ts = Utc::now().format("%H:%M:%S").to_string();
     let merge_content = format!("merged '{source_branch}' into '{target}'");
     let mut merge_parent_ids = Vec::new();
-    if !target_head.is_empty() { merge_parent_ids.push(target_head); }
-    if !source_head.is_empty() { merge_parent_ids.push(source_head); }
+    if !target_head_id.is_empty() {
+        merge_parent_ids.push(target_head_id);
+    }
+    if !source_head_id.is_empty() {
+        merge_parent_ids.push(source_head_id);
+    }
     if !merge_parent_ids.is_empty() {
-        target_dag.nodes.push(TraceNode {
+        merged_dag.nodes.push(TraceNode {
             id: node_id("MERGE", &merge_ts, &merge_content),
             parent_ids: merge_parent_ids,
             kind: "MERGE".to_string(),
@@ -645,19 +1264,61 @@ pub fn gcc_merge(workdir: &Path, source_branch: &str) -> Result<String, H5iError
             timestamp: merge_ts,
         });
     }
-    let dag_json = serde_json::to_string(&target_dag)
+    let dag_json = serde_json::to_string(&merged_dag)
         .map_err(|e| H5iError::InvalidPath(format!("DAG serialisation failed: {e}")))?;
 
-    ctx_write_files(
-        &repo,
-        &[
-            (&target_trace_path, &new_trace),
-            (&target_commit_path, &new_commit),
-            (&dag_path(&target), &dag_json),
-            ("main.md", &new_main),
-        ],
-        &format!("h5i context merge: {source_branch} → {target}"),
-    )?;
+    // Layer the milestone entry, updated DAG, and (when target is main) the
+    // cross-branch main.md note directly onto the merged tree so the result
+    // is a single two-parent commit.
+    let mut layered: Vec<(String, String)> = vec![
+        ("commit.md".to_string(), new_commit_md),
+        ("dag.json".to_string(), dag_json),
+    ];
+    if target == MAIN_BRANCH {
+        let existing_main = read_from_tree(&merged_tree, "main.md");
+        let new_main = append_main_note(
+            &existing_main,
+            &target,
+            &format!("Merged branch '{source_branch}'"),
+        );
+        layered.push(("main.md".to_string(), new_main));
+    }
+    let layered_refs: Vec<(&str, &str)> =
+        layered.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+    let final_tree_oid = apply_changes_to_tree(&repo, Some(&merged_tree), &layered_refs)?;
+    let final_tree = repo.find_tree(final_tree_oid).map_err(H5iError::Git)?;
+
+    let sig = repo
+        .signature()
+        .or_else(|_| Signature::now("h5i", "h5i@local"))
+        .map_err(H5iError::Git)?;
+    let parents = [&target_commit, &source_commit];
+    repo.commit(
+        Some(&target_ref_name),
+        &sig,
+        &sig,
+        &format!("h5i context merge: {source_branch} \u{2192} {target}"),
+        &final_tree,
+        &parents,
+    )
+    .map_err(H5iError::Git)?;
+
+    // When target != main, record the cross-branch note in a separate commit on
+    // the main ref (target's merge commit is on a different ref and can't
+    // atomically touch main).
+    if target != MAIN_BRANCH {
+        let existing_main = ctx_read_file(&repo, "main.md").unwrap_or_default();
+        let new_main = append_main_note(
+            &existing_main,
+            &target,
+            &format!("Merged branch '{source_branch}'"),
+        );
+        ctx_write_files(
+            &repo,
+            &[("main.md", &new_main)],
+            &format!("h5i context merge note: {source_branch} \u{2192} {target}"),
+        )?;
+    }
 
     Ok(merged_summary)
 }
@@ -886,16 +1547,43 @@ pub fn read_trace(workdir: &Path, branch: Option<&str>) -> Result<String, H5iErr
 /// context workspace has not been initialised.
 pub fn snapshot_for_commit(workdir: &Path, git_sha: &str) -> Result<(), H5iError> {
     let repo = ctx_git_repo(workdir)?;
-    if repo.find_reference(CTX_REF).is_err() {
+    let main_ref = branch_ref(MAIN_BRANCH);
+    if repo.find_reference(&main_ref).is_err() {
         return Ok(());
     }
 
-    let ctx_oid = repo
-        .find_reference(CTX_REF)
+    // Capture main's tip OID (used by `pack` to gate squashing) before we
+    // build the synthetic aggregate that context_diff / restore will read.
+    let main_tip_oid = repo
+        .find_reference(&main_ref)
         .ok()
         .and_then(|r| r.peel_to_commit().ok())
         .map(|c| c.id().to_string())
         .unwrap_or_default();
+
+    // Build a synthetic aggregate tree mirroring the legacy single-ref layout
+    // (`main.md`, `git-goals/...`, `branches/<name>/...`) so that the recorded
+    // OID is self-contained — readable later by context_diff/restore without
+    // needing to traverse the live per-branch refs (which may have moved on).
+    let short_sha = &git_sha[..git_sha.len().min(8)];
+    let agg_tree_oid = build_aggregate_tree(&repo)?;
+    let agg_tree = repo.find_tree(agg_tree_oid).map_err(H5iError::Git)?;
+    let sig = repo
+        .signature()
+        .or_else(|_| Signature::now("h5i", "h5i@local"))
+        .map_err(H5iError::Git)?;
+    let anchor_ref = format!("refs/h5i/context-snapshots/{short_sha}");
+    let anchor_oid = repo
+        .commit(
+            Some(&anchor_ref),
+            &sig,
+            &sig,
+            &format!("h5i context snapshot anchor: {short_sha}"),
+            &agg_tree,
+            &[],
+        )
+        .map_err(H5iError::Git)?;
+    let ctx_oid = anchor_oid.to_string();
 
     let branch = current_branch(workdir);
     let goal = ctx_read_file(&repo, "main.md")
@@ -909,12 +1597,12 @@ pub fn snapshot_for_commit(workdir: &Path, git_sha: &str) -> Result<(), H5iError
     );
 
     let ts = Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
-    let short_sha = &git_sha[..git_sha.len().min(8)];
 
     let mut content = format!(
         "# Context Snapshot — {short_sha}\n\n\
          **Linked commit:** {git_sha}\n\
          **Context ref OID:** {ctx_oid}\n\
+         **Main tip OID:** {main_tip_oid}\n\
          **Timestamp:** {ts}\n\
          **Branch:** {branch}\n\
          **Goal:** {goal}\n\n\
@@ -971,15 +1659,16 @@ pub fn restore(workdir: &Path, git_sha: &str) -> Result<String, H5iError> {
         .map_err(H5iError::Git)?;
 
     let restore_tree = restore_commit.tree().map_err(H5iError::Git)?;
+    let main_ref = branch_ref(MAIN_BRANCH);
     let current_parent = repo
-        .find_reference(CTX_REF)
+        .find_reference(&main_ref)
         .ok()
         .and_then(|r| r.peel_to_commit().ok());
     let parents: Vec<&git2::Commit> = current_parent.iter().collect();
 
     let ts = Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
     repo.commit(
-        Some(CTX_REF),
+        Some(&main_ref),
         &sig,
         &sig,
         &format!("h5i context restore: {short_sha} (at {ts})"),
@@ -1368,10 +2057,11 @@ pub fn print_relevant(ctx: &RelevantContext, file_path: &str) {
 /// Returns the number of commits squashed.
 pub fn pack(workdir: &Path) -> Result<usize, H5iError> {
     let repo = ctx_git_repo(workdir)?;
+    let main_ref = branch_ref(MAIN_BRANCH);
 
     // Collect all snapshot short-SHAs so we know which context commits are still live.
     let tip = repo
-        .find_reference(CTX_REF)
+        .find_reference(&main_ref)
         .ok()
         .and_then(|r| r.peel_to_commit().ok());
     let tip = match tip {
@@ -1445,7 +2135,7 @@ pub fn pack(workdir: &Path) -> Result<usize, H5iError> {
     let new_tree = repo.find_tree(new_tree_oid).map_err(H5iError::Git)?;
     let parents = [&tip];
     repo.commit(
-        Some(CTX_REF),
+        Some(&main_ref),
         &sig,
         &sig,
         &format!("h5i context pack: squashed {squash_count} old commits"),
@@ -1474,14 +2164,34 @@ fn snapshots_oids_from_tree(
         }
         let blob = repo.find_blob(entry.id()).map_err(H5iError::Git)?;
         let content = std::str::from_utf8(blob.content()).unwrap_or("");
+        // Prefer the post-redesign `Main tip OID` (a real commit on
+        // refs/h5i/context/main) over the legacy `Context ref OID` (which
+        // now points at a synthetic anchor commit outside main's history).
+        let mut found = None;
         for line in content.lines() {
-            if line.starts_with("**Context ref OID:**") {
-                if let Some(oid_str) = line.split("**Context ref OID:**").nth(1) {
+            if line.starts_with("**Main tip OID:**") {
+                if let Some(oid_str) = line.split("**Main tip OID:**").nth(1) {
                     if let Ok(oid) = git2::Oid::from_str(oid_str.trim()) {
-                        oids.push(oid);
+                        found = Some(oid);
+                        break;
                     }
                 }
             }
+        }
+        if found.is_none() {
+            for line in content.lines() {
+                if line.starts_with("**Context ref OID:**") {
+                    if let Some(oid_str) = line.split("**Context ref OID:**").nth(1) {
+                        if let Ok(oid) = git2::Oid::from_str(oid_str.trim()) {
+                            found = Some(oid);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(oid) = found {
+            oids.push(oid);
         }
     }
     Ok(Some(oids))
@@ -1943,6 +2653,112 @@ pub fn print_context_depth(ctx: &GccContext, depth: u8) {
     }
 }
 
+/// Divergence between regular git branches and their shadow ctx branches.
+/// Used by [`print_status`] to flag situations that auto-follow alone cannot
+/// reconcile (e.g. an upstream merge that didn't carry the context with it).
+#[derive(Debug, Default)]
+pub struct ReconciliationReport {
+    /// Local git branches with no matching `refs/h5i/context/<name>`.
+    pub git_only: Vec<String>,
+    /// Context branches whose git counterpart was deleted.
+    pub ctx_only: Vec<String>,
+    /// Context branches whose git side was merged into `main` but whose ctx
+    /// side is NOT yet merged into the ctx main branch.
+    pub merged_in_git_only: Vec<String>,
+}
+
+/// Compute reconciliation between git branches and ctx branches in `workdir`.
+pub fn reconcile_git_vs_ctx(workdir: &Path) -> Result<ReconciliationReport, H5iError> {
+    let mut report = ReconciliationReport::default();
+    let repo = ctx_git_repo(workdir)?;
+
+    // Collect git local branches.
+    let mut git_branches: Vec<String> = Vec::new();
+    if let Ok(iter) = repo.branches(Some(git2::BranchType::Local)) {
+        for b in iter.flatten() {
+            if let Ok(Some(name)) = b.0.name() {
+                git_branches.push(name.to_string());
+            }
+        }
+    }
+    git_branches.sort();
+    git_branches.dedup();
+
+    let ctx_branches = ctx_list_branches_git(&repo);
+    let git_set: std::collections::HashSet<&String> = git_branches.iter().collect();
+    let ctx_set: std::collections::HashSet<&String> = ctx_branches.iter().collect();
+
+    for g in &git_branches {
+        if !ctx_set.contains(g) {
+            report.git_only.push(g.clone());
+        }
+    }
+    for c in &ctx_branches {
+        // Skip ctx branches that exist purely on the ctx side (no git
+        // counterpart was ever expected, e.g. exploratory reasoning branches
+        // named `option-a`, `scope/foo`). We only flag ones that LOOK like
+        // they should shadow a git branch — i.e. ones that match a known
+        // git-naming pattern. Cheap heuristic: contains a `/` like `feature/x`
+        // or matches a known git branch name once existed (we can't tell that
+        // easily). For now, flag *all* ctx branches whose git counterpart is
+        // absent; users can ignore the ones that are intentionally ctx-only.
+        if c != MAIN_BRANCH && !git_set.contains(c) {
+            report.ctx_only.push(c.clone());
+        }
+    }
+
+    // For each ctx branch with a live git counterpart, check whether the
+    // git side has been merged to `refs/heads/main` (or `master`) but the ctx
+    // side has NOT been merged to `refs/h5i/context/main`.
+    let git_main_oid = repo
+        .find_reference("refs/heads/main")
+        .or_else(|_| repo.find_reference("refs/heads/master"))
+        .ok()
+        .and_then(|r| r.target());
+    let ctx_main_oid = repo
+        .find_reference(&branch_ref(MAIN_BRANCH))
+        .ok()
+        .and_then(|r| r.target());
+
+    if let (Some(git_main), Some(ctx_main)) = (git_main_oid, ctx_main_oid) {
+        for name in &ctx_branches {
+            if name == MAIN_BRANCH {
+                continue;
+            }
+            if !git_set.contains(name) {
+                continue;
+            }
+            let git_oid = match repo
+                .find_reference(&format!("refs/heads/{name}"))
+                .ok()
+                .and_then(|r| r.target())
+            {
+                Some(o) => o,
+                None => continue,
+            };
+            let ctx_oid = match repo
+                .find_reference(&branch_ref(name))
+                .ok()
+                .and_then(|r| r.target())
+            {
+                Some(o) => o,
+                None => continue,
+            };
+            // "Merged" means: main is at or beyond branch tip. libgit2's
+            // graph_descendant_of returns false for the equal case, so check both.
+            let git_merged = git_main == git_oid
+                || repo.graph_descendant_of(git_main, git_oid).unwrap_or(false);
+            let ctx_merged = ctx_main == ctx_oid
+                || repo.graph_descendant_of(ctx_main, ctx_oid).unwrap_or(false);
+            if git_merged && !ctx_merged {
+                report.merged_in_git_only.push(name.clone());
+            }
+        }
+    }
+
+    Ok(report)
+}
+
 pub fn print_status(workdir: &Path) -> Result<(), H5iError> {
     use console::style;
 
@@ -1950,7 +2766,7 @@ pub fn print_status(workdir: &Path) -> Result<(), H5iError> {
         println!(
             "{} {} not initialized. Run {} to initialize.",
             style("ℹ").blue(),
-            style(CTX_REF).yellow(),
+            style(CTX_REF_PREFIX.trim_end_matches('/')).yellow(),
             style("h5i context init").bold()
         );
         return Ok(());
@@ -2038,6 +2854,46 @@ pub fn print_status(workdir: &Path) -> Result<(), H5iError> {
             style(stable).cyan(),
             style(dynamic).yellow(),
         );
+    }
+
+    // Reconciliation against git branches.
+    if let Ok(rep) = reconcile_git_vs_ctx(workdir) {
+        let any = !rep.git_only.is_empty()
+            || !rep.ctx_only.is_empty()
+            || !rep.merged_in_git_only.is_empty();
+        if any {
+            println!();
+            println!(
+                "{}",
+                style("── Sync with git ───────────────────────────────────────────────").dim()
+            );
+        }
+        for name in &rep.git_only {
+            println!(
+                "  {} git/{} has no ctx shadow → {}",
+                style("⊘").yellow(),
+                style(name).cyan(),
+                style(format!("h5i context branch {name} --purpose \"…\"")).dim(),
+            );
+        }
+        for name in &rep.merged_in_git_only {
+            println!(
+                "  {} git/{} merged → main, but ctx/{} not merged → {}",
+                style("⚠").yellow(),
+                style(name).cyan(),
+                style(name).magenta(),
+                style(format!("h5i context merge {name}")).dim(),
+            );
+        }
+        for name in &rep.ctx_only {
+            println!(
+                "  {} ctx/{} exists but git/{} is gone → {}",
+                style("✗").red(),
+                style(name).magenta(),
+                style(name).cyan(),
+                style("(intentional or stale — delete manually if stale)").dim(),
+            );
+        }
     }
 
     Ok(())
@@ -2677,7 +3533,7 @@ pub fn system_prompt(workdir: &Path) -> String {
         r#"# Git Context Controller (GCC)
 
 You are working within a GCC workspace that organizes your memory as a persistent,
-versioned Git ref (`{CTX_REF}`). Use the commands below to manage context across
+versioned set of Git refs under `{CTX_REF_PREFIX}*`. Use the commands below to manage context across
 long-horizon tasks. GCC prevents context-window overflow by externalizing reasoning
 into structured files that survive session boundaries.
 {status_block}
@@ -2787,8 +3643,22 @@ fn ensure_branch_git(repo: &Repository, name: &str, purpose: &str) -> Result<(),
     let meta_path = format!("branches/{name}/metadata.yaml");
 
     let existing_commit_text = ctx_read_file(repo, &commit_path);
-    let missing_commit = existing_commit_text.is_none();
-    let missing_trace = ctx_read_file(repo, &trace_path).is_none();
+    // After `gcc_branch` forks a new ref from its parent, commit.md / trace.md
+    // initially contain the parent branch's content (header `# Branch: <parent>`).
+    // Treat that as "missing" so the new branch gets its own header + purpose,
+    // and pass through the supplied `purpose` even when non-empty inheritance
+    // looked complete.
+    let header_matches = existing_commit_text
+        .as_deref()
+        .map(|t| t.lines().any(|l| l.trim() == format!("# Branch: {name}")))
+        .unwrap_or(false);
+    let missing_commit = existing_commit_text.is_none() || !header_matches;
+    let trace_text = ctx_read_file(repo, &trace_path);
+    let trace_header_matches = trace_text
+        .as_deref()
+        .map(|t| t.lines().any(|l| l.trim() == format!("# OTA Log — Branch: {name}")))
+        .unwrap_or(false);
+    let missing_trace = trace_text.is_none() || !trace_header_matches;
     let missing_meta = ctx_read_file(repo, &meta_path).is_none();
     let missing_purpose = existing_commit_text
         .as_deref()
@@ -3286,6 +4156,62 @@ mod tests {
         assert!(gcc_merge(dir.path(), "ghost_branch").is_err());
     }
 
+    #[test]
+    fn gcc_merge_produces_two_parent_commit_on_target_ref() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+
+        // Diverge: create an experimental branch, commit on each side.
+        gcc_branch(dir.path(), "experiment", "explore alternative").unwrap();
+        gcc_commit(dir.path(), "experiment milestone", "tried option A").unwrap();
+        gcc_checkout(dir.path(), MAIN_BRANCH).unwrap();
+        gcc_commit(dir.path(), "main milestone", "shipped option B").unwrap();
+
+        // Merge: target is main (current), source is experiment.
+        gcc_merge(dir.path(), "experiment").unwrap();
+
+        // The new tip of refs/h5i/context/main must have two parents — the
+        // pre-merge main tip and the experiment tip.
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let tip = repo
+            .find_reference(&branch_ref(MAIN_BRANCH))
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        assert_eq!(
+            tip.parent_count(),
+            2,
+            "merge commit on main should have two parents (real three-way merge)"
+        );
+    }
+
+    #[test]
+    fn gcc_merge_returns_error_on_conflicting_changes() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+
+        // Both branches replace metadata.yaml's contents incompatibly so that
+        // libgit2's three-way merge produces a conflict.
+        gcc_branch(dir.path(), "alt", "alternative").unwrap();
+        write_ctx_file(dir.path(), "branches/alt/metadata.yaml", "x: from-alt\n").unwrap();
+        gcc_checkout(dir.path(), MAIN_BRANCH).unwrap();
+        write_ctx_file(
+            dir.path(),
+            &format!("branches/{MAIN_BRANCH}/metadata.yaml"),
+            "x: from-main\n",
+        )
+        .unwrap();
+
+        let err = gcc_merge(dir.path(), "alt").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("conflict") || msg.contains("Conflict"),
+            "expected conflict error, got: {msg}"
+        );
+    }
+
     // ── internal helpers ──────────────────────────────────────────────────────
 
     #[test]
@@ -3384,9 +4310,9 @@ mod tests {
 
         restore(dir.path(), "snap0000").unwrap();
 
-        // The context ref should have advanced (new commit on top).
+        // The main branch ref should have advanced (new commit on top).
         let tip_after = repo
-            .find_reference(CTX_REF)
+            .find_reference(&branch_ref(MAIN_BRANCH))
             .unwrap()
             .peel_to_commit()
             .unwrap();
@@ -4017,6 +4943,247 @@ mod tests {
         assert!(prepare_context_write(dir.path()).is_ok());
         gcc_branch(dir.path(), "option-b", "try option b").unwrap();
         assert!(prepare_context_write(dir.path()).is_ok());
+    }
+
+    #[test]
+    fn reconcile_flags_merged_git_branch_with_unmerged_ctx_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+
+        // Create the git side: main + a feature branch, then merge feature → main.
+        let repo = Repository::open(dir.path()).unwrap();
+        let sig = Signature::now("h5i-test", "test@local").unwrap();
+        // git_init produces an unborn HEAD; make an initial commit on main.
+        let empty_tree_oid = repo.treebuilder(None).unwrap().write().unwrap();
+        let empty_tree = repo.find_tree(empty_tree_oid).unwrap();
+        let main_initial = repo
+            .commit(
+                Some("refs/heads/main"),
+                &sig,
+                &sig,
+                "initial",
+                &empty_tree,
+                &[],
+            )
+            .unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+        // Fork `feature` from main.
+        repo.reference("refs/heads/feature", main_initial, false, "branch feature")
+            .unwrap();
+        // Add a commit on feature.
+        let blob = repo.blob(b"feature content").unwrap();
+        let mut tb = repo.treebuilder(None).unwrap();
+        tb.insert("f.txt", blob, 0o100644).unwrap();
+        let ftree_oid = tb.write().unwrap();
+        let ftree = repo.find_tree(ftree_oid).unwrap();
+        let main_initial_commit = repo.find_commit(main_initial).unwrap();
+        let feature_commit_oid = repo
+            .commit(
+                Some("refs/heads/feature"),
+                &sig,
+                &sig,
+                "feature work",
+                &ftree,
+                &[&main_initial_commit],
+            )
+            .unwrap();
+        // Fast-forward main to feature (merged).
+        repo.reference(
+            "refs/heads/main",
+            feature_commit_oid,
+            true,
+            "merge feature",
+        )
+        .unwrap();
+
+        // Create the matching ctx branch but do NOT merge it back to ctx/main.
+        gcc_branch(dir.path(), "feature", "feature work").unwrap();
+
+        let report = reconcile_git_vs_ctx(dir.path()).unwrap();
+        assert!(
+            report.merged_in_git_only.iter().any(|n| n == "feature"),
+            "feature should be flagged as merged-in-git-only: {report:?}"
+        );
+    }
+
+    #[test]
+    fn migrate_legacy_creates_per_branch_refs() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+
+        // Build a synthetic legacy ref: refs/h5i/context with branches/main and
+        // branches/scope/foo subtrees, plus a top-level main.md.
+        let repo = Repository::open(dir.path()).unwrap();
+        let sig = Signature::now("h5i-test", "test@local").unwrap();
+        let blob_oid = |s: &str| repo.blob(s.as_bytes()).unwrap();
+
+        // branches/main/commit.md
+        let mut main_b = repo.treebuilder(None).unwrap();
+        main_b
+            .insert(
+                "commit.md",
+                blob_oid("# Branch: main\n\n**Purpose:** Primary\n"),
+                0o100644,
+            )
+            .unwrap();
+        main_b
+            .insert("trace.md", blob_oid("# OTA Log — Branch: main\n"), 0o100644)
+            .unwrap();
+        let main_subtree = main_b.write().unwrap();
+
+        // branches/scope/foo/commit.md
+        let mut foo_b = repo.treebuilder(None).unwrap();
+        foo_b
+            .insert(
+                "commit.md",
+                blob_oid("# Branch: scope/foo\n\n**Purpose:** Spike\n"),
+                0o100644,
+            )
+            .unwrap();
+        foo_b
+            .insert(
+                "trace.md",
+                blob_oid("# OTA Log — Branch: scope/foo\n"),
+                0o100644,
+            )
+            .unwrap();
+        let foo_subtree = foo_b.write().unwrap();
+        let mut scope_b = repo.treebuilder(None).unwrap();
+        scope_b.insert("foo", foo_subtree, 0o040000).unwrap();
+        let scope_subtree = scope_b.write().unwrap();
+
+        // branches/ root
+        let mut branches_b = repo.treebuilder(None).unwrap();
+        branches_b.insert("main", main_subtree, 0o040000).unwrap();
+        branches_b
+            .insert("scope", scope_subtree, 0o040000)
+            .unwrap();
+        let branches_oid = branches_b.write().unwrap();
+
+        // Root tree: branches/ + main.md + .current_branch
+        let mut root_b = repo.treebuilder(None).unwrap();
+        root_b.insert("branches", branches_oid, 0o040000).unwrap();
+        root_b
+            .insert("main.md", blob_oid("# Project\n## Goal\nlegacy\n"), 0o100644)
+            .unwrap();
+        root_b
+            .insert(".current_branch", blob_oid("scope/foo"), 0o100644)
+            .unwrap();
+        let root_oid = root_b.write().unwrap();
+        let root_tree = repo.find_tree(root_oid).unwrap();
+        repo.commit(
+            Some(CTX_LEGACY_REF),
+            &sig,
+            &sig,
+            "legacy seed",
+            &root_tree,
+            &[],
+        )
+        .unwrap();
+
+        // Run migration.
+        let migrated = migrate_legacy_if_needed(dir.path()).unwrap();
+        assert!(migrated, "migration should run when only the legacy ref exists");
+
+        // Per-branch refs exist with the correct content.
+        assert!(
+            repo.find_reference(&branch_ref("main")).is_ok(),
+            "main branch ref should exist"
+        );
+        assert!(
+            repo.find_reference(&branch_ref("scope/foo")).is_ok(),
+            "scope/foo branch ref should exist"
+        );
+
+        // The new main ref's tree carries the project-wide main.md (NOT branches/).
+        let new_main_tree = repo
+            .find_reference(&branch_ref("main"))
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .tree()
+            .unwrap();
+        assert!(
+            new_main_tree.get_name("main.md").is_some(),
+            "main.md should land on the new main ref"
+        );
+        assert!(
+            new_main_tree.get_name("branches").is_none(),
+            "stale branches/ tree should not appear on the new main ref"
+        );
+
+        // HEAD points at the previously-active branch.
+        assert_eq!(current_branch(dir.path()), "scope/foo");
+
+        // Legacy ref preserved at backup name; original deleted.
+        assert!(repo.find_reference(CTX_LEGACY_BACKUP_REF).is_ok());
+        assert!(repo.find_reference(CTX_LEGACY_REF).is_err());
+
+        // Idempotent: second call is a no-op.
+        let migrated_again = migrate_legacy_if_needed(dir.path()).unwrap();
+        assert!(!migrated_again, "migration should be a no-op after running once");
+    }
+
+    #[test]
+    fn auto_follow_switches_ctx_branch_to_match_git_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+
+        // Switch the underlying git branch — auto-follow should mirror it on
+        // the next write-gated ctx command.
+        {
+            let repo = Repository::open(dir.path()).unwrap();
+            repo.set_head("refs/heads/feature/x").unwrap();
+        }
+        // Record the git-branch goal so prepare_context_write validates.
+        init(dir.path(), "x goal").unwrap();
+
+        assert!(prepare_context_write(dir.path()).is_ok());
+        assert_eq!(
+            current_branch(dir.path()),
+            "feature/x",
+            "ctx HEAD should shadow the git branch when not pinned"
+        );
+        // The shadow ref must have been auto-created.
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        assert!(
+            repo.find_reference(&branch_ref("feature/x")).is_ok(),
+            "shadow ctx ref should exist after auto-follow"
+        );
+    }
+
+    #[test]
+    fn explicit_checkout_pins_against_auto_follow() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "pinned-spike", "explore an idea").unwrap();
+
+        // Now move the git branch sideways. Because gcc_branch set the pin,
+        // auto-follow must NOT override the pinned context branch.
+        {
+            let repo = Repository::open(dir.path()).unwrap();
+            repo.set_head("refs/heads/some-other-branch").unwrap();
+        }
+        init(dir.path(), "another goal").unwrap();
+
+        let _ = prepare_context_write(dir.path()); // may pass or fail; we only care about HEAD
+        assert_eq!(
+            current_branch(dir.path()),
+            "pinned-spike",
+            "pinned context branch should survive a git checkout"
+        );
+
+        // Unpin and the next prepare_context_write should auto-follow again.
+        unpin(dir.path()).unwrap();
+        let _ = prepare_context_write(dir.path());
+        assert_eq!(
+            current_branch(dir.path()),
+            "some-other-branch",
+            "after unpin, ctx should re-shadow the current git branch"
+        );
     }
 
     // ── gcc_commit edge cases ─────────────────────────────────────────────────
