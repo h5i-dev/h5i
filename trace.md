@@ -237,3 +237,4 @@ _[Checkpoint: 6a10d601 — edited src/pr.rs; edited src/pr.rs; edited src/pr.rs]
 _[Checkpoint: 6a10d7bc — edited src/pr.rs; edited src/pr.rs; edited src/pr.rs]_
 ---
 
+[22:25:37] OBSERVE: read src/metadata.rs
