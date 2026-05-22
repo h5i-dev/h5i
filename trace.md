@@ -194,3 +194,4 @@ _[Checkpoint: 6a10cdb3 — edited src/rules.rs; edited src/rules.rs; edited src/
 [21:51:12] OBSERVE: read src/pr.rs
 [21:51:20] ACT: edited src/pr.rs
 [21:53:10] THINK: Per the user's earlier preference (don't keep unused code as a shim), I'll delete it and its tests.
+[21:53:10] THINK: I'll delete the 7 chain-DAG tests (lines 1618-1756) and replace with new swim-lane tests:
