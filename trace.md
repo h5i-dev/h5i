@@ -146,3 +146,4 @@ _[Checkpoint: 6a10cc20 — edited src/main.rs; edited tests/cli_integration.rs; 
 [21:36:39] OBSERVE: read src/secrets.rs
 [21:36:49] OBSERVE: read src/secrets.rs
 [21:36:52] OBSERVE: read src/secrets.rs
+[21:37:14] OBSERVE: read src/rules.rs
