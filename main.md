@@ -129,11 +129,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/pr.rs; edited src/pr.rs; edited src/pr.rs
 - [x] edited src/pr.rs; edited src/pr.rs; edited src/pr.rs
 - [x] edited src/pr.rs; edited src/pr.rs; edited src/pr.rs
+- [x] edited MANUAL.md; edited man/man1/h5i.1; edited man/man1/h5i.1
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-22 22:42 UTC] `improve-pr-style`: edited MANUAL.md; edited man/man1/h5i.1; edited man/man1/h5i.1
 - [2026-05-22 22:25 UTC] `improve-pr-style`: edited src/pr.rs; edited src/pr.rs; edited src/pr.rs
 - [2026-05-22 22:17 UTC] `improve-pr-style`: edited src/pr.rs; edited src/pr.rs; edited src/pr.rs
 - [2026-05-22 21:53 UTC] `improve-pr-style`: edited src/pr.rs; edited src/pr.rs; edited src/pr.rs
