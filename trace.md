@@ -136,3 +136,4 @@ _[Checkpoint: 6a10c9cc — PR body --style flag with three hero layouts (Receipt
 [21:33:37] OBSERVE: read src/rules.rs
 [21:33:49] OBSERVE: read src/memory.rs
 [21:35:28] THINK: rs`. I'll restructure `render_body` and add the three style hero blocks.
+[21:35:28] THINK: All three render. Now let me add unit tests for the three hero blocks to lock in the structure.
