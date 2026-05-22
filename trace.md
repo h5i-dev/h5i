@@ -133,3 +133,4 @@ _[Checkpoint: 6a10c4a9 — edited src/main.rs; edited tests/cli_integration.rs; 
 _[Checkpoint: 6a10c9cc — PR body --style flag with three hero layouts (Receipt/Detective/Replay)]_
 ---
 
+[21:33:37] OBSERVE: read src/rules.rs
