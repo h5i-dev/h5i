@@ -318,3 +318,4 @@ _[Checkpoint: 6a10dfcf — edited src/pr.rs; edited src/pr.rs; edited tests/e2e_
 _[Checkpoint: 6a10fa1a — Reviewed current PR body styles and identified reviewer-triage stats/design improvements.]_
 ---
 
+[00:55:16] THINK: Implement review style as reviewer triage over another narrative variant because user wants better usability and explicitly skips failing-test/policy-integrity blockers.
