@@ -139,11 +139,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Committed reviewer-focused PR body style changes with h5i provenance.
 - [x] Rewrote README around PR review body as the star-conversion hook, with supporting features moved below.
 - [x] Committed README rewrite focused on PR review body star conversion.
+- [x] Made abstract-interpreter soundness proof sketch concrete for Lean 4 implementation.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-23 12:16 UTC] `improve-pr-style`: Made abstract-interpreter soundness proof sketch concrete for Lean 4 implementation.
 - [2026-05-23 02:36 UTC] `improve-pr-style`: Committed README rewrite focused on PR review body star conversion.
 - [2026-05-23 01:47 UTC] `improve-pr-style`: Rewrote README around PR review body as the star-conversion hook, with supporting features moved below.
 - [2026-05-23 01:30 UTC] `improve-pr-style`: Committed reviewer-focused PR body style changes with h5i provenance.
