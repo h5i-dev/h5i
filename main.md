@@ -140,11 +140,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Rewrote README around PR review body as the star-conversion hook, with supporting features moved below.
 - [x] Committed README rewrite focused on PR review body star conversion.
 - [x] Made abstract-interpreter soundness proof sketch concrete for Lean 4 implementation.
+- [x] Clarified that every abstract analyzer needs its own soundness theorem, with relative weakening proofs between analyzer domains.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-23 12:20 UTC] `improve-pr-style`: Clarified that every abstract analyzer needs its own soundness theorem, with relative weakening proofs between analyzer domains.
 - [2026-05-23 12:16 UTC] `improve-pr-style`: Made abstract-interpreter soundness proof sketch concrete for Lean 4 implementation.
 - [2026-05-23 02:36 UTC] `improve-pr-style`: Committed README rewrite focused on PR review body star conversion.
 - [2026-05-23 01:47 UTC] `improve-pr-style`: Rewrote README around PR review body as the star-conversion hook, with supporting features moved below.
