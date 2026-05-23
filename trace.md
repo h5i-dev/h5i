@@ -595,3 +595,4 @@ _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered rev
 [20:54:28] NOTE: Milestone: restructured README closer to git-ai style with artifact-first hero, terse PR output examples, install earlier, and explanation moved into Our Choices. h5i codex finish failed with current-tip-not-first-parent context error.
 [20:58:44] OBSERVE: read README.md
 [20:58:44] ACT: edited README.md
+[20:58:44] OBSERVE: read README.md
