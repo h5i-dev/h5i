@@ -458,3 +458,9 @@ _[Checkpoint: 6a1112b3 — Committed README rewrite focused on PR review body st
 [12:16:00] OBSERVE: read ../OxSan/ABSTRACT_INTERPRETER_IDEAS.md
 [12:16:00] OBSERVE: read ../OxSan/ABSTRACT_INTERPRETER_IDEAS.md
 [12:16:00] OBSERVE: searched Order|Concrete for "Proof"
+
+
+---
+_[Checkpoint: 6a119a83 — Made abstract-interpreter soundness proof sketch concrete for Lean 4 implementation.]_
+---
+
