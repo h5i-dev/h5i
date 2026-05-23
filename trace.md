@@ -534,3 +534,4 @@ _[Checkpoint: 6a11a46a — Reviewed OxSan implementation for soundness omissions
 ---
 
 [13:08:51] THINK: Keep soundness modules colocated with their subsystem rather than adding top-level Proof/, because each layer has local proofs and only shared proof interfaces belong in DSL/Soundness.
+[13:08:55] OBSERVE: searched to for "layer|folder|structure|TreeBorrows/Soundness|Files"
