@@ -132,11 +132,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited MANUAL.md; edited man/man1/h5i.1; edited man/man1/h5i.1
 - [x] edited src/pr.rs; edited src/pr.rs; edited tests/e2e_noun_workflow.rs
 - [x] Reviewed current PR body styles and identified reviewer-triage stats/design improvements.
+- [x] Added reviewer-first PR body style with merge status, review focus, evidence, checklist, CLI docs, and tests.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-23 01:01 UTC] `improve-pr-style`: Added reviewer-first PR body style with merge status, review focus, evidence, checklist, CLI docs, and tests.
 - [2026-05-23 00:51 UTC] `improve-pr-style`: Reviewed current PR body styles and identified reviewer-triage stats/design improvements.
 - [2026-05-22 22:59 UTC] `improve-pr-style`: edited src/pr.rs; edited src/pr.rs; edited tests/e2e_noun_workflow.rs
 - [2026-05-22 22:42 UTC] `improve-pr-style`: edited MANUAL.md; edited man/man1/h5i.1; edited man/man1/h5i.1
