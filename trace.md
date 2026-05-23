@@ -331,3 +331,4 @@ _[Checkpoint: 6a10fa1a — Reviewed current PR body styles and identified review
 [00:57:14] ACT: edited /home/koukyosyumei/Dev/h5i/src/main.rs
 [00:57:14] ACT: edited /home/koukyosyumei/Dev/h5i/src/pr.rs
 [00:57:14] OBSERVE: read MANUAL.md
+[00:57:14] OBSERVE: read man/man1/h5i.1
