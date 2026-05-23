@@ -627,3 +627,4 @@ _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered rev
 [23:10:17] THINK: Let me cross-check the current README bullets against what the `review` style actually renders, and what the screenshot shows:
 
 **Screenshot (`pr-demo.
+[23:10:17] THINK: Let me tighten the copy so the caption mirrors the screenshot's narrative arc (verdict → where → what-to-do → trail).
