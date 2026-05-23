@@ -397,3 +397,4 @@ _[Checkpoint: 6a10fe7f — Improved PR Mermaid DAG readability with smaller visi
 _[Checkpoint: 6a11006a — Changed review PR style to hide Mermaid DAG and show compact THINK/NOTE reasoning highlights by default.]_
 ---
 
+[01:20:56] THINK: Keep review style Mermaid DAG collapsed below audit sections and move THINK/NOTE highlights after checklist because triage should lead while provenance remains available on click.
