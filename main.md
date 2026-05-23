@@ -138,11 +138,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Adjusted review PR layout: checklist before reasoning highlights, collapsed Mermaid DAG restored for click-through.
 - [x] Committed reviewer-focused PR body style changes with h5i provenance.
 - [x] Rewrote README around PR review body as the star-conversion hook, with supporting features moved below.
+- [x] Committed README rewrite focused on PR review body star conversion.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-23 02:36 UTC] `improve-pr-style`: Committed README rewrite focused on PR review body star conversion.
 - [2026-05-23 01:47 UTC] `improve-pr-style`: Rewrote README around PR review body as the star-conversion hook, with supporting features moved below.
 - [2026-05-23 01:30 UTC] `improve-pr-style`: Committed reviewer-focused PR body style changes with h5i provenance.
 - [2026-05-23 01:23 UTC] `improve-pr-style`: Adjusted review PR layout: checklist before reasoning highlights, collapsed Mermaid DAG restored for click-through.
