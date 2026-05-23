@@ -142,11 +142,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Made abstract-interpreter soundness proof sketch concrete for Lean 4 implementation.
 - [x] Clarified that every abstract analyzer needs its own soundness theorem, with relative weakening proofs between analyzer domains.
 - [x] Updated OxSan DSL roadmap to match current source: generated axes, new carriers/examples, and analyzer-soundness proof plan.
+- [x] Reviewed OxSan implementation for soundness omissions and found no-op transfer arms, Chain possibly semantics, and tree proof/runtime mismatch risks.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-23 12:58 UTC] `improve-pr-style`: Reviewed OxSan implementation for soundness omissions and found no-op transfer arms, Chain possibly semantics, and tree proof/runtime mismatch risks.
 - [2026-05-23 12:33 UTC] `improve-pr-style`: Updated OxSan DSL roadmap to match current source: generated axes, new carriers/examples, and analyzer-soundness proof plan.
 - [2026-05-23 12:20 UTC] `improve-pr-style`: Clarified that every abstract analyzer needs its own soundness theorem, with relative weakening proofs between analyzer domains.
 - [2026-05-23 12:16 UTC] `improve-pr-style`: Made abstract-interpreter soundness proof sketch concrete for Lean 4 implementation.
