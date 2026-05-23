@@ -465,3 +465,4 @@ _[Checkpoint: 6a119a83 — Made abstract-interpreter soundness proof sketch conc
 ---
 
 [12:18:03] THINK: Document per-analyzer soundness theorem families over only full-tree proof because every abstract analyzer needs either direct concrete simulation or a certified weakening/refinement link.
+[12:20:22] OBSERVE: searched 4|Main for "Lean"
