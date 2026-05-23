@@ -414,3 +414,4 @@ _[Checkpoint: 6a11006a — Changed review PR style to hide Mermaid DAG and show 
 _[Checkpoint: 6a110187 — Adjusted review PR layout: checklist before reasoning highlights, collapsed Mermaid DAG restored for click-through.]_
 ---
 
+[01:29:54] OBSERVE: read Cargo.toml
