@@ -415,3 +415,4 @@ _[Checkpoint: 6a110187 — Adjusted review PR layout: checklist before reasoning
 ---
 
 [01:29:54] OBSERVE: read Cargo.toml
+[01:29:54] OBSERVE: searched lower|domain: for "to"
