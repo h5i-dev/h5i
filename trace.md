@@ -464,3 +464,4 @@ _[Checkpoint: 6a1112b3 — Committed README rewrite focused on PR review body st
 _[Checkpoint: 6a119a83 — Made abstract-interpreter soundness proof sketch concrete for Lean 4 implementation.]_
 ---
 
+[12:18:03] THINK: Document per-analyzer soundness theorem families over only full-tree proof because every abstract analyzer needs either direct concrete simulation or a certified weakening/refinement link.
