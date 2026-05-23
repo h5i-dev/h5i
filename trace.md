@@ -566,3 +566,4 @@ _[Checkpoint: 6a11a6eb — Adjusted Lean soundness file-structure recommendation
 _[Checkpoint: 6a11f817 — Added ABSTRACT_INTERPRETER_IDEAS_V2.md with risk-directed alias analyzer designs and DSL-shaped pseudocode.]_
 ---
 
+[20:48:31] THINK: Render README hero examples as native Markdown/HTML tables and screenshots over fenced PR markdown because GitHub readers should see the product without mentally executing a code block.
