@@ -616,3 +616,4 @@ _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered rev
 [22:46:28] NOTE: Restyled assets/pr-demo.svg to look like an actual GitHub dark-mode PR comment: timeline gutter, bot avatar, comment header strip, bordered body, GitHub markdown table/callout styling, compact DAG, and per-commit provenance rows.
 [23:00:56] NOTE: Filled left gutter of assets/pr-demo.svg with compact GitHub-style provenance rail: status, AI commits, trace count, secrets-clean signal, and tests-passed signal.
 [23:02:50] NOTE: Updated README left column beside pr-demo.svg with compact proof-point copy instead of editing the SVG: merge status, review focus, reasoning DAG, per-commit provenance, and why reviewers care.
+[23:06:07] OBSERVE: read README.md
