@@ -16,52 +16,42 @@ h5i is an open source Git sidecar that turns AI coding sessions into reviewable 
 
 It records what the agent was asked to do, which files it read and edited, what it decided, what it skipped, and which risks reviewers should inspect first.
 
-**AI review context on every PR:**
+
+<table>
+<tr>
+
+<td width="38%" valign="top">
+
+**A reviewer's brief on every AI pull request:**
 
 ```bash
 h5i share pr post --style review
 ```
 
-<p align="center">
-  <img src="./assets/pr-review-brief.svg" alt="h5i PR review brief preview: merge status, review focus, reviewer checklist, reasoning highlights, and compact DAG" width="95%">
-</p>
+One sticky comment that reads like a triage note — verdict up top, full trail below:
 
-**What reviewers get:**
+- 🧭 **Merge status** — ready, review-needed, or block-merge, from the branch's credential and duplicate-code scans
+- 🔎 **Review focus** — the files to open first, ranked by where the agent actually worked
+- ☑️ **Reviewer checklist** — concrete next steps for *this* diff, not boilerplate
+- 🧠 **Reasoning + provenance** — every OBSERVE / THINK / ACT step, plus per-commit prompt, model, agent, and tests — one expand away
 
-| Status | Files to inspect first | Evidence |
-|---|---|---|
-| review needed · security clean | `src/pr.rs`, `src/main.rs`, `src/mcp.rs` | 6 AI commits · 306 trace nodes |
+**Why it matters**
 
-**Reasoning survives the session:**
+Reviewers know where to spend their attention without leaving GitHub — and without trusting the diff to explain itself.
 
-| Signal | Example |
-|---|---|
-| `OBSERVE` | Read `src/pr.rs` before changing PR rendering. |
-| `THINK` | Put triage before provenance so reviewers see risks first. |
-| `ACT` | Edited CLI style selection and integration tests. |
+<sub>For AI-heavy repos, long-running agent work, security-sensitive changes, and agent-to-agent handoffs.</sub>
 
-<details>
-<summary><b>Reasoning by file</b> - compact DAG preview</summary>
+<td width="62%" align="center">
 
-```mermaid
-flowchart LR
-  goal["Goal: reviewer-first PR body"]
-  read_pr["OBSERVE src/pr.rs"]
-  read_cli["OBSERVE src/main.rs"]
-  think["THINK triage before provenance"]
-  edit_pr["ACT render review style"]
-  edit_tests["ACT update CLI tests"]
-  result["PR brief: status, checklist, evidence"]
+<img
+  src="assets/pr-demo.svg"
+  alt="h5i review brief"
+  width="100%"
+/>
+</td>
 
-  goal --> read_pr --> think
-  goal --> read_cli --> think
-  think --> edit_pr --> result
-  think --> edit_tests --> result
-```
-
-</details>
-
-If you want AI-generated code to be easier to trust, review, hand off, and audit, star h5i.
+</tr>
+</table>
 
 ## Install
 

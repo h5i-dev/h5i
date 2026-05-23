@@ -3050,9 +3050,9 @@ mod tests {
         let body = render_hero_review(&sample_aggregates(), &sample_hero(), &dag, &[], &dup_rows);
 
         assert!(body.starts_with("## h5i review brief"), "got: {body}");
-        assert!(body.contains("**🧭 Merge status:** 🟡 review needed · 🔐 security clean · 🧬 1 duplicate-code finding in 1 file"));
-        assert!(body.contains("**🔎 Review focus:** `src/retry.rs`, `src/http.rs`"));
-        assert!(body.contains("**📌 Evidence:** 4 AI commits · 3 files touched · 4 trace nodes · 1 decision recorded · 2 commits with passing test evidence"));
+        assert!(body.contains("**Merge status:** 🟡 review needed · 🔐 security clean · 🧬 1 duplicate-code finding in 1 file"));
+        assert!(body.contains("**Review focus:** `src/retry.rs`, `src/http.rs`"));
+        assert!(body.contains("**Evidence:** 4 AI commits · 3 files touched · 4 trace nodes · 1 decision recorded · 2 commits with passing test evidence"));
         assert!(body.contains("> 🎯 **Goal:** Add retry logic"));
         assert!(body.contains("### Reviewer checklist"));
         assert!(body.contains("### Reasoning highlights"));
