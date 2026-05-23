@@ -501,3 +501,4 @@ _[Checkpoint: 6a119b89 — Clarified that every abstract analyzer needs its own 
 [12:33:01] OBSERVE: read ../OxSan/lean4/OxSan/Library/Lattice/ReducedProduct.lean
 [12:33:01] OBSERVE: read ../OxSan/lean4/OxSan/Library.lean
 [12:33:01] OBSERVE: read ../OxSan/lean4/OxSan/Analysis/TreeBorrow/Core/Tree.lean
+[12:33:01] OBSERVE: read ../OxSan/lean4/OxSan/Analysis/TreeBorrow/Core/Perm.lean
