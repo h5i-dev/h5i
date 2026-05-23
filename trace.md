@@ -612,3 +612,4 @@ _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered rev
 [22:20:15] OBSERVE: searched assets/pr-demo.svg
 [22:20:15] OBSERVE: read assets/pr-demo.svg
 [22:27:28] NOTE: Updated assets/pr-demo.svg with dark-theme PR demo, compact reasoning DAG, and two per-commit provenance rows.
+[22:31:46] NOTE: Improved assets/pr-demo.svg compact DAG by replacing bare OBSERVE/THINK/ACT/PR labels with text-bearing nodes: read src/pr.rs, triage before DAG, render review style, status/focus/proof.
