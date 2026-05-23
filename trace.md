@@ -425,3 +425,4 @@ _[Checkpoint: 6a110323 — Committed reviewer-focused PR body style changes with
 
 [01:45:42] THINK: Optimize README for stars by leading with PR review body as the immediate visible payoff, then keeping context/claims/audit as supporting killer features.
 [01:47:05] OBSERVE: read README.md
+[01:47:05] OBSERVE: read README.md
