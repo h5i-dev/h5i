@@ -1,0 +1,85 @@
+<svg width="900" height="1120" viewBox="0 0 900 1120" xmlns="http://www.w3.org/2000/svg">
+  <rect width="900" height="1120" rx="22" fill="#071426" stroke="#38bdf8"/>
+  <rect x="14" y="14" width="872" height="1092" rx="18" fill="#0b1930" stroke="#1e3a5f"/>
+
+  <style>
+    .h { font: 700 24px Inter, Arial, sans-serif; fill:#f8fafc; }
+    .b { font: 400 16px Inter, Arial, sans-serif; fill:#dbeafe; }
+    .s { font: 400 14px Inter, Arial, sans-serif; fill:#93a4b8; }
+    .m { font: 500 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill:#bfdbfe; }
+    .mb { font: 700 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill:#7dd3fc; }
+    .bold { font: 700 16px Inter, Arial, sans-serif; fill:#f8fafc; }
+    .tiny { font: 400 13px Inter, Arial, sans-serif; fill:#93a4b8; }
+  </style>
+
+  <!-- Header -->
+  <rect x="28" y="24" width="844" height="64" rx="10" fill="#10233f" stroke="#29466f"/>
+  <circle cx="58" cy="56" r="16" fill="#38bdf8"/>
+  <text x="53" y="62" font-family="Arial" font-size="16" font-weight="700" fill="white">h</text>
+  <text x="86" y="52" class="bold">h5i-bot</text>
+  <text x="86" y="74" class="tiny">commented on this pull request</text>
+
+  <!-- Title -->
+  <text x="44" y="128" class="h">h5i review brief</text>
+
+  <!-- Merge status -->
+  <text x="44" y="166" class="bold">Merge status:</text>
+  <text x="168" y="166" class="b">🟡 review needed · 🔐 security clean · 🧬 3 duplicate-code findings in 3 files</text>
+
+  <text x="44" y="202" class="bold">Review focus:</text>
+  <text x="168" y="202" class="m">src/pr.rs, src/main.rs, web/src/theme.css</text>
+
+  <text x="44" y="238" class="bold">Evidence:</text>
+  <text x="128" y="238" class="b">9 AI commits · 4 files touched · 438 trace nodes</text>
+
+  <!-- Goal -->
+  <rect x="44" y="270" width="812" height="76" rx="10" fill="#0f2747" stroke="#2b5f96"/>
+  <text x="66" y="302" class="bold">🎯 Goal:</text>
+  <text x="150" y="302" class="b">Implement three PR body styles with a --style flag for</text>
+  <text x="150" y="327" class="m">h5i share pr post</text>
+
+  <!-- Checklist -->
+  <text x="44" y="390" class="bold">Reviewer checklist</text>
+  <text x="66" y="425" class="b">• Inspect duplicate-code findings in</text>
+  <text x="315" y="425" class="m">src/main.rs, src/pr.rs, web/src/theme.css</text>
+  <text x="66" y="455" class="b">• Start review with</text>
+  <text x="210" y="455" class="m">src/pr.rs, src/main.rs, web/src/theme.css</text>
+  <text x="66" y="485" class="b">• Confirm the implementation choices manually; no explicit decisions were recorded.</text>
+
+  <!-- Reasoning highlights -->
+  <text x="44" y="540" class="bold">Reasoning highlights</text>
+
+  <rect x="44" y="565" width="812" height="36" fill="#10233f" stroke="#29466f"/>
+  <text x="64" y="588" class="bold">Signal</text>
+  <text x="180" y="588" class="bold">Trace</text>
+
+  <rect x="44" y="601" width="812" height="72" fill="#0c1b33" stroke="#29466f"/>
+  <text x="64" y="630" class="mb">THINK</text>
+  <text x="180" y="630" class="b">Add sparse emoji to review PR body labels/status rather than every line</text>
+  <text x="180" y="655" class="s">because scanability should improve without making output noisy.</text>
+
+  <rect x="44" y="673" width="812" height="72" fill="#0c1b33" stroke="#29466f"/>
+  <text x="64" y="702" class="mb">THINK</text>
+  <text x="180" y="702" class="b">Mimic git-ai README by leading with concrete command/artifact pairs</text>
+  <text x="180" y="727" class="s">and moving rationale into choices because readers understand tools faster...</text>
+
+  <rect x="44" y="745" width="812" height="72" fill="#0c1b33" stroke="#29466f"/>
+  <text x="64" y="774" class="mb">THINK</text>
+  <text x="180" y="774" class="b">Render README hero examples as native Markdown/HTML tables</text>
+  <text x="180" y="799" class="s">and screenshots over fenced PR markdown...</text>
+
+  <!-- Tip -->
+  <rect x="44" y="845" width="812" height="94" rx="10" fill="#0b3b2e" stroke="#34d399"/>
+  <text x="66" y="877" class="bold">✅ Security scan clean</text>
+  <text x="66" y="907" class="b">No credentials leaked in this branch's diff.</text>
+  <text x="66" y="929" class="s">h5i scanned every added line against the secret rule pack and found nothing to rotate.</text>
+
+  <!-- Warning -->
+  <rect x="44" y="965" width="812" height="108" rx="10" fill="#3a1220" stroke="#fb7185"/>
+  <text x="66" y="998" class="bold">⚠️ Duplicate code introduced in 3 files</text>
+  <text x="66" y="1028" class="b">Consider extracting a helper before this lands.</text>
+  <text x="66" y="1058" class="m">src/main.rs  L46 → L64   557055cd</text>
+
+  <!-- Details collapsed -->
+  <rect x="44" y="1090" width="812" height="1" fill="#29466f"/>
+</svg>
