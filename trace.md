@@ -578,3 +578,9 @@ _[Checkpoint: 6a11f817 — Added ABSTRACT_INTERPRETER_IDEAS_V2.md with risk-dire
 [20:50:25] ACT: added assets/pr-review-brief.svg
 [20:50:25] ACT: edited README.md
 [20:50:25] OBSERVE: read README.md
+
+
+---
+_[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered review brief, visual SVG artifact, compact DAG, and clearer star-focused positioning.]_
+---
+
