@@ -606,3 +606,4 @@ _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered rev
 [21:46:29] OBSERVE: searched needed|security for "status|review"
 [21:46:29] ACT: edited README.md
 [21:46:29] ACT: edited assets/pr-review-brief.svg
+[22:19:33] THINK: Recolor pr-demo.svg to a self-contained dark navy card instead of relying on transparent/white surfaces because README assets must remain legible on both GitHub light and dark page backgrounds.
