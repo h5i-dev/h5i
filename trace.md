@@ -605,3 +605,4 @@ _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered rev
 [21:46:29] OBSERVE: searched focus:|\*\*Evidence:|> for "status:|\*\*Review"
 [21:46:29] OBSERVE: searched needed|security for "status|review"
 [21:46:29] ACT: edited README.md
+[21:46:29] ACT: edited assets/pr-review-brief.svg
