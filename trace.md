@@ -399,3 +399,4 @@ _[Checkpoint: 6a11006a — Changed review PR style to hide Mermaid DAG and show 
 
 [01:20:56] THINK: Keep review style Mermaid DAG collapsed below audit sections and move THINK/NOTE highlights after checklist because triage should lead while provenance remains available on click.
 [01:23:04] OBSERVE: read src/pr.rs
+[01:23:04] OBSERVE: read src/pr.rs
