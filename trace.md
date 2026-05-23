@@ -624,3 +624,6 @@ _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered rev
 [23:10:02] ACT: edited README.md
 [23:10:06] ACT: Rewrote README hero card (lines 23-54): sharper headline ('A reviewer's brief on every AI pull request'), added the missing Reviewer checklist bullet, merged DAG+provenance into one 'one expand away' bullet, and a stronger 'why it matters' line. Caption now mirrors the screenshot's verdict->focus->checklist->trail arc.
 [23:10:17] THINK: I'll start by understanding the current README structure and the actual `h5i share pr` functionality so my copy is accurate.
+[23:10:17] THINK: Let me cross-check the current README bullets against what the `review` style actually renders, and what the screenshot shows:
+
+**Screenshot (`pr-demo.
