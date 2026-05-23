@@ -525,3 +525,4 @@ _[Checkpoint: 6a119b89 — Clarified that every abstract analyzer needs its own 
 _[Checkpoint: 6a119e82 — Updated OxSan DSL roadmap to match current source: generated axes, new carriers/examples, and analyzer-soundness proof plan.]_
 ---
 
+[12:58:11] NOTE: REVIEW: current OxSan implementation has likely soundness risks in no-op Offset/CopyRef/Join transfers, Chain possibly semantics, and runtime/proof mismatch for DepthK/tree variants.
