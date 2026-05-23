@@ -486,3 +486,4 @@ _[Checkpoint: 6a119a83 — Made abstract-interpreter soundness proof sketch conc
 _[Checkpoint: 6a119b89 — Clarified that every abstract analyzer needs its own soundness theorem, with relative weakening proofs between analyzer domains.]_
 ---
 
+[12:30:42] THINK: Update DSL_ROADMAP from source state: generated axes and carrier/example scaffolds have advanced, but per-analyzer soundness proofs remain the central open work.
