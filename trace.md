@@ -526,3 +526,4 @@ _[Checkpoint: 6a119e82 — Updated OxSan DSL roadmap to match current source: ge
 ---
 
 [12:58:11] NOTE: REVIEW: current OxSan implementation has likely soundness risks in no-op Offset/CopyRef/Join transfers, Chain possibly semantics, and runtime/proof mismatch for DepthK/tree variants.
+[12:58:11] OBSERVE: searched ../OxSan/lean4/OxSan/Export/RustExport.lean for "../OxSan/src"
