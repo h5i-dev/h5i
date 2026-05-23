@@ -927,7 +927,11 @@ fn render_hero_review(
     let mut s = String::new();
     s.push_str("## h5i review brief\n\n");
 
-    let _ = writeln!(s, "**Merge status:** {}\n", review_merge_status(secret_rows, dup_rows));
+    let _ = writeln!(
+        s,
+        "**Merge status:** {}\n",
+        review_merge_status(secret_rows, dup_rows)
+    );
 
     let focus = review_focus_files(dag, dup_rows, 3);
     if !focus.is_empty() {
@@ -950,7 +954,7 @@ fn render_hero_review(
     if !hero.branch_goal.is_empty() {
         let _ = writeln!(
             s,
-            "> **Goal:** {}\n",
+            "> 🎯 **Goal:** {}\n",
             escape_md(&truncate(&hero.branch_goal, 240)),
         );
     }
@@ -1018,25 +1022,25 @@ fn review_reasoning_highlights(dag: &TraceDag, limit: usize) -> Vec<ReasoningHig
 fn review_merge_status(secret_rows: &[SecretRow], dup_rows: &[DupRow]) -> String {
     let mut parts: Vec<String> = Vec::new();
     if secret_rows.is_empty() && dup_rows.is_empty() {
-        parts.push("ready for normal review".to_string());
+        parts.push("✅ ready for normal review".to_string());
     } else if secret_rows.is_empty() {
-        parts.push("review needed".to_string());
+        parts.push("🟡 review needed".to_string());
     } else {
         parts.push(format!(
-            "block merge: {} credential leak{}",
+            "🛑 block merge: {} credential leak{}",
             secret_rows.len(),
             plural_s(secret_rows.len())
         ));
     }
 
     if secret_rows.is_empty() {
-        parts.push("security clean".to_string());
+        parts.push("🔐 security clean".to_string());
     }
     if !dup_rows.is_empty() {
         let files: std::collections::BTreeSet<&str> =
             dup_rows.iter().map(|r| r.file.as_str()).collect();
         parts.push(format!(
-            "{} duplicate-code finding{} in {} file{}",
+            "🧬 {} duplicate-code finding{} in {} file{}",
             dup_rows.len(),
             plural_s(dup_rows.len()),
             files.len(),
@@ -3046,10 +3050,10 @@ mod tests {
         let body = render_hero_review(&sample_aggregates(), &sample_hero(), &dag, &[], &dup_rows);
 
         assert!(body.starts_with("## h5i review brief"), "got: {body}");
-        assert!(body.contains("**Merge status:** review needed · security clean · 1 duplicate-code finding in 1 file"));
-        assert!(body.contains("**Review focus:** `src/retry.rs`, `src/http.rs`"));
-        assert!(body.contains("**Evidence:** 4 AI commits · 3 files touched · 4 trace nodes · 1 decision recorded · 2 commits with passing test evidence"));
-        assert!(body.contains("> **Goal:** Add retry logic"));
+        assert!(body.contains("**🧭 Merge status:** 🟡 review needed · 🔐 security clean · 🧬 1 duplicate-code finding in 1 file"));
+        assert!(body.contains("**🔎 Review focus:** `src/retry.rs`, `src/http.rs`"));
+        assert!(body.contains("**📌 Evidence:** 4 AI commits · 3 files touched · 4 trace nodes · 1 decision recorded · 2 commits with passing test evidence"));
+        assert!(body.contains("> 🎯 **Goal:** Add retry logic"));
         assert!(body.contains("### Reviewer checklist"));
         assert!(body.contains("### Reasoning highlights"));
         assert!(body.contains("| `THINK` | retry policy should avoid thundering herd |"));
