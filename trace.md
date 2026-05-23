@@ -488,3 +488,4 @@ _[Checkpoint: 6a119b89 — Clarified that every abstract analyzer needs its own 
 
 [12:30:42] THINK: Update DSL_ROADMAP from source state: generated axes and carrier/example scaffolds have advanced, but per-analyzer soundness proofs remain the central open work.
 [12:33:01] OBSERVE: listed files under ..
+[12:33:01] OBSERVE: read ../OxSan/DSL_ROADMAP.md
