@@ -493,3 +493,4 @@ _[Checkpoint: 6a119b89 — Clarified that every abstract analyzer needs its own 
 [12:33:01] OBSERVE: read ../OxSan/DSL_ROADMAP.md
 [12:33:01] OBSERVE: listed files under ../OxSan/lean4/OxSan
 [12:33:01] OBSERVE: listed files under ../OxSan/src/generated
+[12:33:01] OBSERVE: listed files under ../OxSan/tests
