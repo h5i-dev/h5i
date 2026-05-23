@@ -469,3 +469,4 @@ _[Checkpoint: 6a119a83 — Made abstract-interpreter soundness proof sketch conc
 [12:20:22] OBSERVE: read ../OxSan/ABSTRACT_INTERPRETER_IDEAS.md
 [12:20:22] OBSERVE: read ../OxSan/ABSTRACT_INTERPRETER_IDEAS.md
 [12:20:22] OBSERVE: read ../OxSan/ABSTRACT_INTERPRETER_IDEAS.md
+[12:20:22] ACT: edited /home/koukyosyumei/Dev/OxSan/ABSTRACT_INTERPRETER_IDEAS.md
