@@ -376,3 +376,4 @@ _[Checkpoint: 6a10fc58 — Added reviewer-first PR body style with merge status,
 _[Checkpoint: 6a10fe7f — Improved PR Mermaid DAG readability with smaller visible window, larger Mermaid spacing/font, shorter paths, and collision-free node IDs.]_
 ---
 
+[01:16:19] THINK: For review style, replace default DAG exposure with a compact THINK/NOTE highlights table because reviewers need intent signals, not a graph, in the first viewport.
