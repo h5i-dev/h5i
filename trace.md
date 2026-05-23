@@ -301,3 +301,4 @@ _[Checkpoint: 6a10dfcf — edited src/pr.rs; edited src/pr.rs; edited tests/e2e_
 ---
 
 [00:51:34] NOTE: PR body critique: keep security/duplicate findings high; demote raw AI %, tokens, and cost unless paired with risk, review coverage, test evidence, and file hot spots.
+[00:51:34] OBSERVE: searched request|pr for "body|pull"
