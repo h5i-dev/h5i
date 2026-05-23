@@ -1,16 +1,20 @@
 # h5i
 
-<img src="./assets/logo.svg" align="right" alt="h5i logo" width="190">
+<p align="center">
+  <a href="https://github.com/Koukyosyumei/h5i" target="_blank">
+    <img src="./assets/logo.svg" alt="h5i logo" height="126">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Koukyosyumei/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml/badge.svg"></a>
+  <a href="https://github.com/Koukyosyumei/h5i/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/github/license/h5i-dev/h5i?color=blue"></a>
+  <a href="https://github.com/Koukyosyumei/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Koukyosyumei/h5i?style=social"></a>
+</p>
 
 h5i is an open source Git sidecar that turns AI coding sessions into reviewable pull-request provenance.
 
 It records what the agent was asked to do, which files it read and edited, what it decided, what it skipped, and which risks reviewers should inspect first.
-
-<p align="center">
-  <a href="https://github.com/Koukyosyumei/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/Koukyosyumei/h5i/actions/workflows/test.yaml/badge.svg"></a>
-  <a href="https://github.com/Koukyosyumei/h5i/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/github/license/Koukyosyumei/h5i?color=blue"></a>
-  <a href="https://github.com/Koukyosyumei/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Koukyosyumei/h5i?style=social"></a>
-</p>
 
 **AI review context on every PR:**
 
