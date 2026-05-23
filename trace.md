@@ -468,3 +468,4 @@ _[Checkpoint: 6a119a83 — Made abstract-interpreter soundness proof sketch conc
 [12:20:22] OBSERVE: searched 4|Main for "Lean"
 [12:20:22] OBSERVE: read ../OxSan/ABSTRACT_INTERPRETER_IDEAS.md
 [12:20:22] OBSERVE: read ../OxSan/ABSTRACT_INTERPRETER_IDEAS.md
+[12:20:22] OBSERVE: read ../OxSan/ABSTRACT_INTERPRETER_IDEAS.md
