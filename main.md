@@ -134,11 +134,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Reviewed current PR body styles and identified reviewer-triage stats/design improvements.
 - [x] Added reviewer-first PR body style with merge status, review focus, evidence, checklist, CLI docs, and tests.
 - [x] Improved PR Mermaid DAG readability with smaller visible window, larger Mermaid spacing/font, shorter paths, and collision-free node IDs.
+- [x] Changed review PR style to hide Mermaid DAG and show compact THINK/NOTE reasoning highlights by default.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-23 01:18 UTC] `improve-pr-style`: Changed review PR style to hide Mermaid DAG and show compact THINK/NOTE reasoning highlights by default.
 - [2026-05-23 01:10 UTC] `improve-pr-style`: Improved PR Mermaid DAG readability with smaller visible window, larger Mermaid spacing/font, shorter paths, and collision-free node IDs.
 - [2026-05-23 01:01 UTC] `improve-pr-style`: Added reviewer-first PR body style with merge status, review focus, evidence, checklist, CLI docs, and tests.
 - [2026-05-23 00:51 UTC] `improve-pr-style`: Reviewed current PR body styles and identified reviewer-triage stats/design improvements.
