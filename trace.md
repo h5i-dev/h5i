@@ -620,3 +620,4 @@ _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered rev
 [23:06:14] OBSERVE: read src/pr.rs
 [23:06:23] OBSERVE: read src/pr.rs
 [23:06:23] OBSERVE: read src/pr.rs
+[23:09:25] OBSERVE: README hero card (lines 23-54) sits in a 38%/62% table beside pr-demo.svg. Current bullets: merge status, review focus, reasoning DAG, per-commit provenance. render_hero_review in src/pr.rs renders: merge status -> review focus -> evidence -> goal -> reviewer checklist -> reasoning highlights, with DAG + per-commit provenance collapsible below the fold. Screenshot surfaces the Reviewer checklist + Evidence line, which the README copy omits.
