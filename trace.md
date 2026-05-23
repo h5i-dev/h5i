@@ -551,3 +551,4 @@ _[Checkpoint: 6a11a6eb — Adjusted Lean soundness file-structure recommendation
 [18:55:16] OBSERVE: searched ../OxSan/lean4/Main.lean for "../OxSan/lean4/OxSan/Export/RustExport.lean"
 [18:55:16] OBSERVE: searched ../OxSan/lean4/OxSan/Analysis/TreeBorrow
 [18:55:16] OBSERVE: listed files under ..
+[18:55:16] OBSERVE: read ../OxSan/TRUST_BOUNDARY.md
