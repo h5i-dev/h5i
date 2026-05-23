@@ -1,12 +1,10 @@
 # h5i
 
-> Git-native provenance for AI-generated code, surfaced where reviewers already work: the pull request.
+<img src="./assets/logo.svg" align="right" alt="h5i logo" width="190">
 
-<p align="center">
-  <a href="https://github.com/Koukyosyumei/h5i" target="_blank">
-    <img src="./assets/logo.svg" alt="h5i logo" height="126">
-  </a>
-</p>
+h5i is an open source Git sidecar that turns AI coding sessions into reviewable pull-request provenance.
+
+It records what the agent was asked to do, which files it read and edited, what it decided, what it skipped, and which risks reviewers should inspect first.
 
 <p align="center">
   <a href="https://github.com/Koukyosyumei/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/Koukyosyumei/h5i/actions/workflows/test.yaml/badge.svg"></a>
@@ -14,50 +12,52 @@
   <a href="https://github.com/Koukyosyumei/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Koukyosyumei/h5i?style=social"></a>
 </p>
 
-<p align="center">
-  <strong>Claude Code and Codex can write the patch. h5i makes the patch reviewable.</strong>
-</p>
-
-AI agents are becoming normal contributors. Git still only tells reviewers what changed, not what the agent saw, why it made the change, what it skipped, or which commits need extra human attention.
-
-`h5i` is a Git sidecar that records that missing context and turns it into a sticky PR review brief.
+**AI review context on every PR:**
 
 ```bash
 h5i share pr post --style review
 ```
 
-```md
-## h5i review brief
+<p align="center">
+  <img src="./assets/pr-review-brief.svg" alt="h5i PR review brief preview: merge status, review focus, reviewer checklist, reasoning highlights, and compact DAG" width="95%">
+</p>
 
-**Merge status:** review needed · security clean · 4 duplicate-code findings in 4 files
-**Review focus:** `src/pr.rs`, `src/main.rs`, `src/mcp.rs`
-**Evidence:** 6 AI commits · 3 files touched · 306 trace nodes
+**What reviewers get:**
 
-### Reviewer checklist
-- Inspect duplicate-code findings in `src/main.rs`, `src/mcp.rs`, `src/pr.rs`, `web/src/theme.css`.
-- Start review with `src/pr.rs`, `src/main.rs`, `src/mcp.rs`.
+| Status | Files to inspect first | Evidence |
+|---|---|---|
+| review needed · security clean | `src/pr.rs`, `src/main.rs`, `src/mcp.rs` | 6 AI commits · 306 trace nodes |
 
-### Reasoning highlights
-| Signal | Trace |
+**Reasoning survives the session:**
+
+| Signal | Example |
 |---|---|
-| `THINK` | Keep review style Mermaid DAG collapsed below audit sections because triage should lead while provenance remains available on click. |
+| `OBSERVE` | Read `src/pr.rs` before changing PR rendering. |
+| `THINK` | Put triage before provenance so reviewers see risks first. |
+| `ACT` | Edited CLI style selection and integration tests. |
 
 <details>
-<summary><b>Reasoning by file</b> - click to expand the Mermaid DAG</summary>
-...
-</details>
+<summary><b>Reasoning by file</b> - compact DAG preview</summary>
+
+```mermaid
+flowchart LR
+  goal["Goal: reviewer-first PR body"]
+  read_pr["OBSERVE src/pr.rs"]
+  read_cli["OBSERVE src/main.rs"]
+  think["THINK triage before provenance"]
+  edit_pr["ACT render review style"]
+  edit_tests["ACT update CLI tests"]
+  result["PR brief: status, checklist, evidence"]
+
+  goal --> read_pr --> think
+  goal --> read_cli --> think
+  think --> edit_pr --> result
+  think --> edit_tests --> result
 ```
 
+</details>
+
 If you want AI-generated code to be easier to trust, review, hand off, and audit, star h5i.
-
-## Why Star This Repo
-
-- **Best first feature: PR review bodies for AI code.** `h5i share pr post` upserts a sticky GitHub PR comment with merge status, review-focus files, reasoning highlights, credential/duplicate findings, and per-commit AI provenance.
-- **Prompt-to-commit provenance.** `h5i capture commit` attaches prompt, model, agent, token usage, tests, decisions, and risk signals to the Git commit.
-- **Reasoning memory across sessions.** `h5i recall context` restores branch goals, milestones, OBSERVE / THINK / ACT traces, TODOs, and decisions so future agents do not start cold.
-- **Lower token waste with live claims.** `h5i capture claim` records content-addressed facts that auto-invalidate when evidence files change. In a controlled N=10 experiment, claims cut cache-read tokens by **68.6%**.
-- **Risk triage without alert fatigue.** `h5i audit review` separates real Quality signals from noisy Shape signals so PR flags fire for meaningful review risks.
-- **Git-native, not SaaS-native.** Metadata lives in `refs/h5i/*` beside your code and can be pushed, fetched, reviewed, and garbage-collected like Git data.
 
 ## Install
 
@@ -117,21 +117,15 @@ h5i share push
 h5i share pull
 ```
 
-## The Pull Request Is The Product
+### Our Choices
 
-Most AI coding tools stop at generation. h5i focuses on the moment that matters after generation: review.
+- **The pull request is the product** - reviewers should see AI risk, intent, and evidence where they already work.
+- **Recorded, not guessed** - h5i stores prompts, model metadata, file observations, decisions, tests, and risk signals instead of trying to infer intent from a diff.
+- **Git-native sidecar refs** - provenance lives in `refs/h5i/*`, separate from your working tree and pushable with your repo.
+- **Context survives handoff** - branch goals, milestones, TODOs, and OBSERVE / THINK / ACT traces can be restored by the next agent.
+- **Review signals should lead** - credential leaks, duplicate code, blind edits, and sensitive files are surfaced before the full audit trail.
 
-The PR body can show:
-
-- merge status: security clean, review needed, or block merge
-- review focus: the files a human should inspect first
-- evidence: AI commits, touched files, trace nodes, decisions, test evidence
-- reasoning highlights: curated THINK / NOTE entries
-- credential leaks and duplicate-code findings
-- a collapsed Mermaid DAG of what the agent read, thought, and edited
-- per-commit prompt, model, agent, decisions, tests, and review flags
-
-Styles:
+### PR Body Styles
 
 | Style | Best for |
 |---|---|
@@ -141,18 +135,17 @@ Styles:
 | `replay` | Mermaid reasoning DAG promoted above the fold. |
 | `minimal` | Quiet internal provenance with little presentation chrome. |
 
-## What h5i Captures
+## What h5i Records
 
-| Signal | Why it matters |
+| Signal | Example |
 |---|---|
-| Prompt | Reviewers see what the agent was asked to do. |
-| Model + agent | You know which tool produced the change. |
-| File reads and edits | Reviewers can tell whether the agent looked before editing. |
-| THINK / NOTE traces | Intent, risks, TODOs, and deferrals survive the session. |
-| Decisions | Alternatives and tradeoffs are attached to the commit. |
-| Tests | Test evidence travels with the commit. |
-| Claims | Verified facts are reused until their evidence files change. |
-| Review signals | Credential leaks, duplicate code, blind edits, sensitive files, and other risks become PR-visible. |
+| Prompt | `sessions need to survive process restarts` |
+| Model + agent | `claude-sonnet-4-6` via `claude-code` |
+| File observations | `OBSERVE src/pr.rs` before editing PR output |
+| Reasoning traces | `THINK`, `NOTE`, TODOs, risks, deferrals |
+| Test evidence | `cargo test`, `go test`, custom runner output |
+| Claims | Verified repo facts that auto-invalidate when files change |
+| Review signals | Credential leaks, duplicate code, blind edits, sensitive files |
 
 ## What It Looks Like Locally
 

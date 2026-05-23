@@ -1,0 +1,73 @@
+<svg width="1120" height="620" viewBox="0 0 1120 620" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">h5i PR review brief preview</title>
+  <desc id="desc">A GitHub-style pull request comment showing merge status, review focus, reviewer checklist, reasoning highlights, and a compact provenance DAG.</desc>
+  <rect width="1120" height="620" rx="28" fill="#F6F8FA"/>
+  <rect x="36" y="36" width="1048" height="548" rx="18" fill="#FFFFFF" stroke="#D0D7DE"/>
+
+  <rect x="36" y="36" width="1048" height="64" rx="18" fill="#F6F8FA" stroke="#D0D7DE"/>
+  <circle cx="76" cy="68" r="16" fill="#0969DA"/>
+  <path d="M70 68.5L74.5 73L83 63.5" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="106" y="74" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">h5i review brief</text>
+  <text x="914" y="73" fill="#57606A" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">sticky PR comment</text>
+
+  <g>
+    <rect x="72" y="132" width="300" height="96" rx="12" fill="#F6F8FA" stroke="#D0D7DE"/>
+    <text x="96" y="163" fill="#57606A" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="700" letter-spacing=".08em">MERGE STATUS</text>
+    <text x="96" y="194" fill="#1A7F37" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="800">review needed</text>
+    <text x="96" y="215" fill="#57606A" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">security clean · 4 duplicate findings</text>
+  </g>
+
+  <g>
+    <rect x="410" y="132" width="300" height="96" rx="12" fill="#F6F8FA" stroke="#D0D7DE"/>
+    <text x="434" y="163" fill="#57606A" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="700" letter-spacing=".08em">REVIEW FOCUS</text>
+    <text x="434" y="194" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="750">src/pr.rs</text>
+    <text x="434" y="216" fill="#57606A" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">src/main.rs · src/mcp.rs</text>
+  </g>
+
+  <g>
+    <rect x="748" y="132" width="300" height="96" rx="12" fill="#F6F8FA" stroke="#D0D7DE"/>
+    <text x="772" y="163" fill="#57606A" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="700" letter-spacing=".08em">EVIDENCE</text>
+    <text x="772" y="194" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="750">6 AI commits</text>
+    <text x="772" y="216" fill="#57606A" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">3 files touched · 306 trace nodes</text>
+  </g>
+
+  <g>
+    <text x="72" y="274" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="800">Reviewer checklist</text>
+    <rect x="72" y="296" width="470" height="134" rx="12" fill="#FFFFFF" stroke="#D0D7DE"/>
+    <circle cx="100" cy="331" r="7" fill="#0969DA"/>
+    <text x="122" y="337" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16">Inspect duplicate-code findings before merge.</text>
+    <circle cx="100" cy="372" r="7" fill="#0969DA"/>
+    <text x="122" y="378" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16">Start with files the agent read and edited most.</text>
+    <circle cx="100" cy="413" r="7" fill="#0969DA"/>
+    <text x="122" y="419" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16">Expand provenance only when audit detail is needed.</text>
+  </g>
+
+  <g>
+    <text x="578" y="274" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="800">Reasoning highlights</text>
+    <rect x="578" y="296" width="470" height="134" rx="12" fill="#FFFFFF" stroke="#D0D7DE"/>
+    <rect x="602" y="318" width="66" height="26" rx="13" fill="#DDF4FF"/>
+    <text x="617" y="337" fill="#0969DA" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">THINK</text>
+    <text x="686" y="337" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">Put triage before provenance.</text>
+    <rect x="602" y="360" width="66" height="26" rx="13" fill="#FFF8C5"/>
+    <text x="622" y="379" fill="#9A6700" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">NOTE</text>
+    <text x="686" y="379" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">Security clean; duplicates need review.</text>
+    <rect x="602" y="402" width="66" height="26" rx="13" fill="#DAFBE1"/>
+    <text x="622" y="421" fill="#1A7F37" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">ACT</text>
+    <text x="686" y="421" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">Rendered PR style and tests changed.</text>
+  </g>
+
+  <g>
+    <text x="72" y="476" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="800">Compact provenance DAG</text>
+    <path d="M274 524H380" stroke="#8C959F" stroke-width="2"/>
+    <path d="M496 524H602" stroke="#8C959F" stroke-width="2"/>
+    <path d="M718 524H824" stroke="#8C959F" stroke-width="2"/>
+    <rect x="72" y="498" width="202" height="52" rx="12" fill="#F6F8FA" stroke="#D0D7DE"/>
+    <text x="99" y="530" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="700">OBSERVE files</text>
+    <rect x="380" y="498" width="116" height="52" rx="12" fill="#F6F8FA" stroke="#D0D7DE"/>
+    <text x="412" y="530" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="700">THINK</text>
+    <rect x="602" y="498" width="116" height="52" rx="12" fill="#F6F8FA" stroke="#D0D7DE"/>
+    <text x="638" y="530" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="700">ACT</text>
+    <rect x="824" y="498" width="224" height="52" rx="12" fill="#F6F8FA" stroke="#D0D7DE"/>
+    <text x="856" y="530" fill="#24292F" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="700">Review-ready PR</text>
+  </g>
+</svg>
