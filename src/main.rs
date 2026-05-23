@@ -423,8 +423,9 @@ enum PrCommands {
         limit: usize,
 
         /// Hero block layout: `receipt` (default — scannable summary block),
-        /// `detective` (narrative: goal → considered → key insight → shipped),
-        /// or `replay` (DAG-as-hero with milestone markers).
+        /// `review` (reviewer-first triage brief), `detective` (narrative:
+        /// goal → considered → key insight → shipped), or `replay`
+        /// (DAG-as-hero with milestone markers).
         #[arg(long, value_enum, default_value_t = PrStyleArg::Receipt)]
         style: PrStyleArg,
 
@@ -448,6 +449,7 @@ enum PrCommands {
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
 enum PrStyleArg {
     Receipt,
+    Review,
     Detective,
     Replay,
     Minimal,
@@ -457,6 +459,7 @@ impl From<PrStyleArg> for h5i_core::pr::PrStyle {
     fn from(s: PrStyleArg) -> Self {
         match s {
             PrStyleArg::Receipt => h5i_core::pr::PrStyle::Receipt,
+            PrStyleArg::Review => h5i_core::pr::PrStyle::Review,
             PrStyleArg::Detective => h5i_core::pr::PrStyle::Detective,
             PrStyleArg::Replay => h5i_core::pr::PrStyle::Replay,
             PrStyleArg::Minimal => h5i_core::pr::PrStyle::Minimal,

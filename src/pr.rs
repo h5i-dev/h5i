@@ -22,20 +22,20 @@ use crate::review::{ReviewPoint, REVIEW_THRESHOLD};
 /// verbatim, so we can find ours by prefix-matching this string.
 pub const MARKER: &str = "<!-- h5i:pr-comment v1 -->";
 
-/// Maximum number of DAG nodes rendered in the Mermaid block. Anything older
-/// is dropped with a "…earlier nodes elided…" head note so the diagram stays
-/// readable on a PR.
-const DAG_NODE_LIMIT: usize = 40;
+/// Maximum number of DAG nodes rendered in the Mermaid block. GitHub scales
+/// large Mermaid diagrams down to fit the PR column, so a smaller visible
+/// window is more readable at normal zoom than a complete-but-tiny graph.
+const DAG_NODE_LIMIT: usize = 24;
 
 /// Hard cap on the label-text portion of a DAG node (after the `KIND ·` prefix).
-/// Wide enough that THINK/NOTE reasoning is readable; narrow enough that the
-/// graph still fits in a GitHub PR comment.
-const DAG_LABEL_BUDGET: usize = 100;
+/// Wide enough that THINK/NOTE reasoning is useful; narrow enough that the
+/// graph does not force GitHub to shrink every node.
+const DAG_LABEL_BUDGET: usize = 72;
 
 /// Maximum number of file lanes drawn in the swim-lane DAG before extras get
-/// folded into an "Other" lane. Picked empirically: 6 distinct files in a
-/// vertical stack is the most you can read at a glance on a PR screenshot.
-const SWIMLANE_MAX_FILES: usize = 6;
+/// folded into an "Other" lane. Four file lanes plus Reasoning/Other keeps
+/// the graph legible in GitHub's normal PR comment column.
+const SWIMLANE_MAX_FILES: usize = 4;
 
 /// Minimum run length before consecutive same-kind nodes within a single lane
 /// get compressed into `READ × N` / `EDIT × N`. More aggressive than the
@@ -335,6 +335,10 @@ pub enum PrStyle {
     /// the swim-lane DAG, and the audit sections. No HTML tables, no
     /// dollar figures, no IMPORTANT callout.
     Minimal,
+    /// Review — reviewer-first triage brief. Leads with merge status,
+    /// review focus, evidence, and a short checklist; keeps provenance
+    /// details below the fold.
+    Review,
 }
 
 /// Pre-rolled aggregates derived from `h5i_log` + review points. All hero
@@ -398,8 +402,8 @@ pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
 ///   2. 🔒 Credential-leak alert + table
 ///   3. 🔁 Duplicate-code alert + table
 ///   4. 🧠 Reasoning DAG — placement depends on style:
-///        Receipt/Detective: collapsible, below the fold
-///        Replay:           rendered inside the hero, expanded
+///        Receipt/Detective/Minimal/Review: collapsible, below the fold
+///        Replay:                           rendered inside the hero, expanded
 ///   5. 📜 Per-commit provenance (collapsible if >5 AI commits)
 ///   6. Footer
 pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> Result<String> {
@@ -453,6 +457,7 @@ pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> R
         PrStyle::Detective => body.push_str(&render_hero_detective(&aggregates, &hero, &secret_rows, &dup_rows)),
         PrStyle::Replay => body.push_str(&render_hero_replay(&aggregates, &hero, &dag, &secret_rows, &dup_rows)),
         PrStyle::Minimal => body.push_str(&render_hero_minimal(&aggregates, &hero, &secret_rows, &dup_rows)),
+        PrStyle::Review => body.push_str(&render_hero_review(&aggregates, &hero, &dag, &secret_rows, &dup_rows)),
     }
 
     // Pass callouts. Security gets its own prominent `[!TIP]` callout
@@ -473,7 +478,8 @@ pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> R
         body.push_str(&render_secret_section(&secret_rows));
     }
     body.push_str(&render_duplicate_section(&dup_rows));
-    // Replay already drew the DAG above the fold; skip the collapsible copy.
+    // Replay already drew the DAG above the fold; every other style keeps the
+    // same collapsed click-to-expand DAG below the audit sections.
     if !matches!(style, PrStyle::Replay) {
         body.push_str(&render_swimlane_section(&dag));
     }
@@ -906,6 +912,243 @@ fn render_hero_minimal(
     s
 }
 
+// ── Style: Review ───────────────────────────────────────────────────────────
+
+/// Reviewer-first triage brief. This intentionally avoids the marketing
+/// signals from Receipt (cost, token headline) and leads with what a maintainer
+/// needs to decide where to spend attention.
+fn render_hero_review(
+    agg: &Aggregates,
+    hero: &HeroInputs,
+    dag: &TraceDag,
+    secret_rows: &[SecretRow],
+    dup_rows: &[DupRow],
+) -> String {
+    let mut s = String::new();
+    s.push_str("## h5i review brief\n\n");
+
+    let _ = writeln!(s, "**Merge status:** {}\n", review_merge_status(secret_rows, dup_rows));
+
+    let focus = review_focus_files(dag, dup_rows, 3);
+    if !focus.is_empty() {
+        let _ = writeln!(
+            s,
+            "**Review focus:** {}\n",
+            focus
+                .iter()
+                .map(|f| format!("`{}`", escape_md(f)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
+    let evidence = review_evidence_line(agg, hero, dag);
+    if !evidence.is_empty() {
+        let _ = writeln!(s, "**Evidence:** {}\n", evidence);
+    }
+
+    if !hero.branch_goal.is_empty() {
+        let _ = writeln!(
+            s,
+            "> **Goal:** {}\n",
+            escape_md(&truncate(&hero.branch_goal, 240)),
+        );
+    }
+
+    let checklist = review_checklist(agg, hero, dag, secret_rows, dup_rows, &focus);
+    if !checklist.is_empty() {
+        s.push_str("### Reviewer checklist\n\n");
+        for item in checklist {
+            let _ = writeln!(s, "- {}", item);
+        }
+        s.push('\n');
+    }
+
+    let highlights = review_reasoning_highlights(dag, 3);
+    if !highlights.is_empty() {
+        s.push_str("### Reasoning highlights\n\n");
+        s.push_str("| Signal | Trace |\n");
+        s.push_str("|---|---|\n");
+        for h in highlights {
+            let _ = writeln!(
+                s,
+                "| `{}` | {} |",
+                h.kind,
+                escape_md(&truncate(&h.content, 180))
+            );
+        }
+        s.push('\n');
+    }
+
+    s
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReasoningHighlight {
+    kind: String,
+    content: String,
+}
+
+fn review_reasoning_highlights(dag: &TraceDag, limit: usize) -> Vec<ReasoningHighlight> {
+    let mut out = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for preferred_kind in ["THINK", "NOTE"] {
+        for n in dag.nodes.iter().rev() {
+            if n.kind != preferred_kind {
+                continue;
+            }
+            let content = n.content.trim().replace('\n', " ");
+            if content.is_empty() || !seen.insert(content.clone()) {
+                continue;
+            }
+            out.push(ReasoningHighlight {
+                kind: n.kind.clone(),
+                content,
+            });
+            if out.len() >= limit {
+                return out;
+            }
+        }
+    }
+
+    out
+}
+
+fn review_merge_status(secret_rows: &[SecretRow], dup_rows: &[DupRow]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if secret_rows.is_empty() && dup_rows.is_empty() {
+        parts.push("ready for normal review".to_string());
+    } else if secret_rows.is_empty() {
+        parts.push("review needed".to_string());
+    } else {
+        parts.push(format!(
+            "block merge: {} credential leak{}",
+            secret_rows.len(),
+            plural_s(secret_rows.len())
+        ));
+    }
+
+    if secret_rows.is_empty() {
+        parts.push("security clean".to_string());
+    }
+    if !dup_rows.is_empty() {
+        let files: std::collections::BTreeSet<&str> =
+            dup_rows.iter().map(|r| r.file.as_str()).collect();
+        parts.push(format!(
+            "{} duplicate-code finding{} in {} file{}",
+            dup_rows.len(),
+            plural_s(dup_rows.len()),
+            files.len(),
+            plural_s(files.len())
+        ));
+    }
+    parts.join(" · ")
+}
+
+fn review_focus_files(dag: &TraceDag, dup_rows: &[DupRow], limit: usize) -> Vec<String> {
+    let total = dag.nodes.len();
+    let start = total.saturating_sub(DAG_NODE_LIMIT);
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for n in dag.nodes.iter().skip(start) {
+        if let Some(file) = extract_swimlane_file(n) {
+            *counts.entry(file).or_default() += 1;
+        }
+    }
+    for r in dup_rows {
+        *counts.entry(r.file.clone()).or_default() += 1000;
+    }
+
+    let mut ranked: Vec<(String, usize)> = counts.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    ranked.into_iter().take(limit).map(|(f, _)| f).collect()
+}
+
+fn review_evidence_line(agg: &Aggregates, hero: &HeroInputs, dag: &TraceDag) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if agg.ai_count > 0 {
+        parts.push(format!("{} AI commit{}", agg.ai_count, plural_s(agg.ai_count)));
+    }
+    if hero.dag_stats.files_touched > 0 {
+        parts.push(format!(
+            "{} file{} touched",
+            hero.dag_stats.files_touched,
+            plural_s(hero.dag_stats.files_touched)
+        ));
+    }
+    if !dag.nodes.is_empty() {
+        parts.push(format!("{} trace node{}", dag.nodes.len(), plural_s(dag.nodes.len())));
+    }
+    if !hero.decisions.is_empty() {
+        parts.push(format!(
+            "{} decision{} recorded",
+            hero.decisions.len(),
+            plural_s(hero.decisions.len())
+        ));
+    }
+    if agg.tests_passing > 0 {
+        parts.push(format!(
+            "{} commit{} with passing test evidence",
+            agg.tests_passing,
+            plural_s(agg.tests_passing)
+        ));
+    }
+    parts.join(" · ")
+}
+
+fn review_checklist(
+    agg: &Aggregates,
+    hero: &HeroInputs,
+    dag: &TraceDag,
+    secret_rows: &[SecretRow],
+    dup_rows: &[DupRow],
+    focus: &[String],
+) -> Vec<String> {
+    let mut items: Vec<String> = Vec::new();
+    if !secret_rows.is_empty() {
+        items.push("Rotate exposed credentials and remove them from history before merge.".to_string());
+    }
+    if !dup_rows.is_empty() {
+        let files: std::collections::BTreeSet<&str> =
+            dup_rows.iter().map(|r| r.file.as_str()).collect();
+        items.push(format!(
+            "Inspect duplicate-code findings in {}.",
+            files
+                .iter()
+                .map(|f| format!("`{}`", escape_md(f)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !focus.is_empty() {
+        items.push(format!(
+            "Start review with {}.",
+            focus
+                .iter()
+                .map(|f| format!("`{}`", escape_md(f)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if agg.flagged_count > 0 {
+        items.push(format!(
+            "Open the per-commit provenance for {} flagged commit{}.",
+            agg.flagged_count,
+            plural_s(agg.flagged_count)
+        ));
+    }
+    if hero.decisions.is_empty() {
+        items.push("Confirm the implementation choices manually; no explicit decisions were recorded.".to_string());
+    } else {
+        items.push("Skim recorded decisions for rejected alternatives and reviewer intent.".to_string());
+    }
+    if dag.nodes.is_empty() {
+        items.push("No reasoning trace was recorded; rely on commit provenance and code review.".to_string());
+    }
+    items.truncate(5);
+    items
+}
+
 // ── Style: Detective ─────────────────────────────────────────────────────────
 
 /// Narrative arc — reads like a mini blog post. Goal → considered → key
@@ -1118,13 +1361,26 @@ fn extract_swimlane_file(node: &TraceNode) -> Option<String> {
     }
     let token = node.content.trim().split_whitespace().next_back()?;
     if token.contains('/') {
-        return Some(token.to_string());
+        return Some(shorten_swimlane_path(token));
     }
     let lower = token.to_ascii_lowercase();
     if SWIMLANE_FILE_EXTS.iter().any(|e| lower.ends_with(e)) {
         return Some(token.to_string());
     }
     None
+}
+
+fn shorten_swimlane_path(path: &str) -> String {
+    if !path.starts_with('/') {
+        return path.to_string();
+    }
+    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+    for anchor in ["src", "tests", "web", "docs", "man", "assets", "scripts", "examples", ".github"] {
+        if let Some(i) = parts.iter().position(|p| *p == anchor) {
+            return parts[i..].join("/");
+        }
+    }
+    parts.last().copied().unwrap_or(path).to_string()
 }
 
 /// Process-shape stats derived from a `TraceDag`. Used by the hero renderers
@@ -1224,9 +1480,6 @@ fn format_dag_stats_inline(stats: &DagStats) -> String {
 
 #[derive(Debug, Clone)]
 struct SwimNode {
-    /// Either an original `TraceNode::id` or a synthetic `srun_<last_id>` for
-    /// a compressed run. Routed through [`mermaid_id`] before emission.
-    id: String,
     /// Drives the mermaid `classDef` (`o`/`t`/`a`/`n`/`m`).
     kind: String,
     /// Pre-formatted label text. For file lanes this is just the verb
@@ -1345,21 +1598,16 @@ fn compress_swim_run(raw: &[&TraceNode], file_lane: bool) -> Vec<SwimNode> {
         }
         let run = j - i;
         if file_lane && run >= SWIMLANE_COMPRESS_RUN {
-            // Use the last node's id as the synthetic anchor so any edges
-            // pointing into the run from a future cross-lane renderer still
-            // resolve to *something* visible.
-            let id = format!("srun_{}", raw[j - 1].id);
             let verb = verb_for_kind(kind);
             let label = if run > 1 {
                 format!("{verb} × {run}")
             } else {
                 verb.to_string()
             };
-            out.push(SwimNode { id, kind: kind.to_string(), label });
+            out.push(SwimNode { kind: kind.to_string(), label });
         } else {
             for n in &raw[i..j] {
                 out.push(SwimNode {
-                    id: n.id.clone(),
                     kind: n.kind.clone(),
                     label: swim_label(n, file_lane),
                 });
@@ -1389,13 +1637,27 @@ fn swim_label(n: &TraceNode, file_lane: bool) -> String {
     if file_lane {
         return verb.to_string();
     }
-    let oneline = n.content.replace('\n', " ");
+    let oneline = shorten_paths_in_trace_content(&n.content.replace('\n', " "));
     let trimmed = truncate(&oneline, DAG_LABEL_BUDGET);
     let safe: String = trimmed
         .chars()
         .map(sanitize_mermaid_char)
         .collect();
     format!("{verb} · {safe}")
+}
+
+fn shorten_paths_in_trace_content(content: &str) -> String {
+    content
+        .split_whitespace()
+        .map(|part| {
+            if part.starts_with('/') && part.contains('/') {
+                shorten_swimlane_path(part)
+            } else {
+                part.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Replace characters that break mermaid double-quoted labels with safe
@@ -1470,28 +1732,32 @@ fn render_swimlane_section_expanded(dag: &TraceDag) -> String {
 /// away from the chain view was visual clarity.
 fn render_swimlane_mermaid(lanes: &[SwimLane]) -> String {
     let mut s = String::new();
-    s.push_str("\n```mermaid\nflowchart TB\n");
+    s.push_str(
+        "\n```mermaid\n\
+         %%{init: {\"flowchart\": {\"nodeSpacing\": 42, \"rankSpacing\": 48, \"diagramPadding\": 14}, \"themeVariables\": {\"fontSize\": \"18px\"}} }%%\n\
+         flowchart TB\n",
+    );
     for lane in lanes {
         let title: String = lane.title.chars().map(sanitize_mermaid_char).collect();
         let _ = writeln!(s, "  subgraph {key}[\"{title}\"]", key = lane.key);
         s.push_str("    direction LR\n");
-        for node in &lane.nodes {
+        for (idx, node) in lane.nodes.iter().enumerate() {
             let _ = writeln!(
                 s,
                 "    {id}[\"{label}\"]:::{class}",
-                id = mermaid_id(&node.id),
+                id = mermaid_id(&format!("{}_{}", lane.key, idx)),
                 label = node.label,
                 class = mermaid_class(&node.kind),
             );
         }
         // Intra-lane chronological arrows. Two or more nodes → one arrow per
         // consecutive pair so the eye can read the flow left-to-right.
-        for w in lane.nodes.windows(2) {
+        for i in 0..lane.nodes.len().saturating_sub(1) {
             let _ = writeln!(
                 s,
                 "    {a} --> {b}",
-                a = mermaid_id(&w[0].id),
-                b = mermaid_id(&w[1].id),
+                a = mermaid_id(&format!("{}_{}", lane.key, i)),
+                b = mermaid_id(&format!("{}_{}", lane.key, i + 1)),
             );
         }
         s.push_str("  end\n");
@@ -2019,6 +2285,24 @@ mod tests {
             Some("src/foo.rs".into())
         );
         assert_eq!(
+            extract_swimlane_file(&make_node(
+                "abs",
+                "ACT",
+                "edited /home/user/project/src/foo.rs",
+                &[]
+            )),
+            Some("src/foo.rs".into())
+        );
+        assert_eq!(
+            extract_swimlane_file(&make_node(
+                "root",
+                "ACT",
+                "edited /home/user/project/MANUAL.md",
+                &[]
+            )),
+            Some("MANUAL.md".into())
+        );
+        assert_eq!(
             extract_swimlane_file(&make_node("b", "ACT", "edited Cargo.toml", &[])),
             Some("Cargo.toml".into())
         );
@@ -2125,6 +2409,8 @@ mod tests {
         };
         let s = render_swimlane_section(&dag);
         assert!(s.starts_with("<details>"));
+        assert!(s.contains("fontSize"), "Mermaid readability config should stay present");
+        assert!(s.contains("nodeSpacing"), "Mermaid spacing config should stay present");
         assert!(s.contains("flowchart TB"), "outer direction is top-bottom");
         assert!(s.contains("subgraph lane_0"));
         assert!(s.contains("direction LR"), "each lane forces internal LR");
@@ -2133,9 +2419,20 @@ mod tests {
         let reasoning_pos = s.find("💭 Reasoning").expect("reasoning lane title");
         let file_pos = s.find("📄 src/foo.rs").expect("file lane title");
         assert!(reasoning_pos < file_pos);
-        // Intra-lane arrow between the two foo.rs ops.
-        assert!(s.contains("n_a1 --> n_a2"));
+        // Intra-lane arrow between the two foo.rs ops. Rendered IDs are
+        // lane-local so duplicate trace IDs cannot collide in Mermaid.
+        assert!(s.contains("n_lane_1_0 --> n_lane_1_1"));
         assert!(s.contains("</details>"));
+    }
+
+    #[test]
+    fn swimlane_labels_shorten_absolute_paths() {
+        let label = swim_label(
+            &make_node("a", "NOTE", "edited /home/user/project/src/foo.rs", &[]),
+            false,
+        );
+        assert!(label.contains("src/foo.rs"), "got: {label}");
+        assert!(!label.contains("/home/user/project"), "got: {label}");
     }
 
     #[test]
@@ -2725,5 +3022,94 @@ mod tests {
         assert!(!body.contains("[!IMPORTANT]"), "no IMPORTANT callout: {body}");
         assert!(!body.contains("$0.04"), "no dollar figures: {body}");
         assert!(!body.contains("The ask"), "no prompt section: {body}");
+    }
+
+    // ── Review style ──────────────────────────────────────────────────────
+
+    #[test]
+    fn review_hero_leads_with_reviewer_triage() {
+        let dag = TraceDag {
+            nodes: vec![
+                make_node("a", "OBSERVE", "read src/http.rs", &[]),
+                make_node("b", "ACT", "edited src/http.rs", &["a"]),
+                make_node("c", "ACT", "edited src/retry.rs", &["b"]),
+                make_node("d", "THINK", "retry policy should avoid thundering herd", &["c"]),
+            ],
+        };
+        let dup_rows = vec![DupRow {
+            file: "src/retry.rs".into(),
+            block_len: 12,
+            first_line: 10,
+            repeat_line: 88,
+            short_oid: "a3f8c12e".into(),
+        }];
+        let body = render_hero_review(&sample_aggregates(), &sample_hero(), &dag, &[], &dup_rows);
+
+        assert!(body.starts_with("## h5i review brief"), "got: {body}");
+        assert!(body.contains("**Merge status:** review needed · security clean · 1 duplicate-code finding in 1 file"));
+        assert!(body.contains("**Review focus:** `src/retry.rs`, `src/http.rs`"));
+        assert!(body.contains("**Evidence:** 4 AI commits · 3 files touched · 4 trace nodes · 1 decision recorded · 2 commits with passing test evidence"));
+        assert!(body.contains("> **Goal:** Add retry logic"));
+        assert!(body.contains("### Reviewer checklist"));
+        assert!(body.contains("### Reasoning highlights"));
+        assert!(body.contains("| `THINK` | retry policy should avoid thundering herd |"));
+        assert!(body.contains("Inspect duplicate-code findings in `src/retry.rs`."));
+        let checklist_pos = body.find("### Reviewer checklist").unwrap();
+        let reasoning_pos = body.find("### Reasoning highlights").unwrap();
+        assert!(checklist_pos < reasoning_pos, "reasoning highlights should come last: {body}");
+        assert!(!body.contains("est. cost"), "review style must not market cost: {body}");
+        assert!(!body.contains("tokens"), "review style should not foreground tokens: {body}");
+        assert!(!body.contains("```mermaid"), "review hero must stay text-first: {body}");
+    }
+
+    #[test]
+    fn review_focus_prioritizes_duplicate_files_before_hot_files() {
+        let dag = TraceDag {
+            nodes: vec![
+                make_node("a", "ACT", "edited src/hot.rs", &[]),
+                make_node("b", "ACT", "edited src/hot.rs", &["a"]),
+                make_node("c", "ACT", "edited src/hot.rs", &["b"]),
+                make_node("d", "ACT", "edited src/dup.rs", &["c"]),
+            ],
+        };
+        let dup_rows = vec![DupRow {
+            file: "src/dup.rs".into(),
+            block_len: 10,
+            first_line: 1,
+            repeat_line: 20,
+            short_oid: "deadbeef".into(),
+        }];
+        let focus = review_focus_files(&dag, &dup_rows, 2);
+        assert_eq!(focus, vec!["src/dup.rs".to_string(), "src/hot.rs".to_string()]);
+    }
+
+    #[test]
+    fn review_reasoning_highlights_prefer_think_then_note() {
+        let dag = TraceDag {
+            nodes: vec![
+                make_node("a", "NOTE", "TODO: revisit timeout defaults", &[]),
+                make_node("b", "THINK", "choose explicit review style over default receipt", &["a"]),
+                make_node("c", "NOTE", "RISK: Mermaid can shrink in GitHub comments", &["b"]),
+                make_node("d", "THINK", "choose compact table over exposing full DAG", &["c"]),
+            ],
+        };
+        let highlights = review_reasoning_highlights(&dag, 3);
+        assert_eq!(
+            highlights,
+            vec![
+                ReasoningHighlight {
+                    kind: "THINK".into(),
+                    content: "choose compact table over exposing full DAG".into(),
+                },
+                ReasoningHighlight {
+                    kind: "THINK".into(),
+                    content: "choose explicit review style over default receipt".into(),
+                },
+                ReasoningHighlight {
+                    kind: "NOTE".into(),
+                    content: "RISK: Mermaid can shrink in GitHub comments".into(),
+                },
+            ]
+        );
     }
 }

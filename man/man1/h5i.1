@@ -482,6 +482,11 @@ Hero-block layout for the comment's first viewport. One of:
 stat card, the triggering prompt promoted to its own section, cleaned
 milestone list. Optimised for screenshot / social share.
 .IP \(bu 2
+.B review
+— reviewer-first triage brief: merge status, review-focus files, evidence
+line, goal, a short reviewer checklist, then compact THINK/NOTE highlights.
+Keeps the Mermaid DAG collapsed below the audit sections.
+.IP \(bu 2
 .B detective
 — narrative arc: goal → by the numbers → considered → key insight → shipped.
 .IP \(bu 2
@@ -493,8 +498,10 @@ goal + stats above and milestone trail below.
 — quiet variant for internal PRs. Same data, no H1 headline, no stat table,
 no dollar figures, no IMPORTANT callout.
 .RE
-The audit sections below the fold (secrets, duplicates, per-commit
-provenance) are identical across styles.
+Secrets, duplicates, the collapsed reasoning DAG, and per-commit provenance
+are shared across styles, except
+.B replay
+, which promotes the DAG above the fold.
 .TP
 .B \-\-dry\-run
 Print the markdown body and exit without calling
@@ -508,6 +515,7 @@ h5i share pr post                          # upsert sticky comment
 h5i share pr body \-\-limit 25               # render markdown to stdout (for CI)
 h5i share pr post \-\-dry\-run                # preview without calling gh
 h5i share pr post \-\-number 42              # target a specific PR
+h5i share pr body \-\-style review           # preview the reviewer-triage layout
 h5i share pr body \-\-style detective        # preview the narrative layout
 h5i share pr post \-\-style replay \-\-dry\-run # preview the DAG-as-hero layout
 .fi
@@ -530,6 +538,7 @@ Limit number of commits scanned (default: 25).
 Hero-block layout —
 .B receipt
 (default),
+.BR review ,
 .BR detective ,
 .BR replay ,
 or
