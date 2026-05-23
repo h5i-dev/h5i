@@ -384,3 +384,4 @@ _[Checkpoint: 6a10fe7f — Improved PR Mermaid DAG readability with smaller visi
 [01:18:28] ACT: edited /home/koukyosyumei/Dev/h5i/src/pr.rs
 [01:18:28] ACT: edited /home/koukyosyumei/Dev/h5i/src/pr.rs
 [01:18:28] OBSERVE: read src/pr.rs
+[01:18:28] OBSERVE: read MANUAL.md
