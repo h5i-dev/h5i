@@ -618,3 +618,4 @@ _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered rev
 [23:02:50] NOTE: Updated README left column beside pr-demo.svg with compact proof-point copy instead of editing the SVG: merge status, review focus, reasoning DAG, per-commit provenance, and why reviewers care.
 [23:06:07] OBSERVE: read README.md
 [23:06:14] OBSERVE: read src/pr.rs
+[23:06:23] OBSERVE: read src/pr.rs
