@@ -547,3 +547,4 @@ _[Checkpoint: 6a11a46a — Reviewed OxSan implementation for soundness omissions
 _[Checkpoint: 6a11a6eb — Adjusted Lean soundness file-structure recommendation to colocate proofs under subsystem Soundness modules instead of top-level Proof/.]_
 ---
 
+[18:50:21] THINK: Create ABSTRACT_INTERPRETER_IDEAS_V2.md as improved alias-violation analyzer designs with DSL-shaped pseudocode and explicit soundness obligations.
