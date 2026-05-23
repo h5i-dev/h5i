@@ -353,3 +353,4 @@ _[Checkpoint: 6a10fa1a — Reviewed current PR body styles and identified review
 _[Checkpoint: 6a10fc58 — Added reviewer-first PR body style with merge status, review focus, evidence, checklist, CLI docs, and tests.]_
 ---
 
+[01:07:25] THINK: Improve PR DAG legibility by reducing visible graph density and adding Mermaid font/spacing config instead of changing the provenance data model.
