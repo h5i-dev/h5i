@@ -431,3 +431,9 @@ _[Checkpoint: 6a110323 — Committed reviewer-focused PR body style changes with
 [01:47:05] OBSERVE: read README.md
 [01:47:05] OBSERVE: read README.md
 [01:47:05] OBSERVE: searched README.md
+
+
+---
+_[Checkpoint: 6a110720 — Rewrote README around PR review body as the star-conversion hook, with supporting features moved below.]_
+---
+
