@@ -585,3 +585,4 @@ _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered rev
 ---
 
 [20:53:14] THINK: Mimic git-ai README by leading with concrete command/artifact pairs and moving rationale into choices because readers understand developer tools faster from recognizable output than from explanatory prose.
+[20:54:20] OBSERVE: read ../git-ai/README.md
