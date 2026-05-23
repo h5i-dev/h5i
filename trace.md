@@ -480,3 +480,9 @@ _[Checkpoint: 6a119a83 — Made abstract-interpreter soundness proof sketch conc
 [12:20:22] ACT: edited /home/koukyosyumei/Dev/OxSan/ABSTRACT_INTERPRETER_IDEAS.md
 [12:20:22] OBSERVE: searched betaAB|alphaA|leA|stepA|Lena" for "FullTreeState|def"
 [12:20:22] OBSERVE: read ../OxSan/ABSTRACT_INTERPRETER_IDEAS.md
+
+
+---
+_[Checkpoint: 6a119b89 — Clarified that every abstract analyzer needs its own soundness theorem, with relative weakening proofs between analyzer domains.]_
+---
+
