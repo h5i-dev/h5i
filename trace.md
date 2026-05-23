@@ -312,3 +312,9 @@ _[Checkpoint: 6a10dfcf — edited src/pr.rs; edited src/pr.rs; edited tests/e2e_
 [00:51:34] OBSERVE: read src/pr.rs
 [00:51:34] OBSERVE: read src/pr.rs
 [00:51:38] THINK: Prefer reviewer triage design over screenshot-first AI spectacle because PR bodies must help merge decisions before they market provenance.
+
+
+---
+_[Checkpoint: 6a10fa1a — Reviewed current PR body styles and identified reviewer-triage stats/design improvements.]_
+---
+
