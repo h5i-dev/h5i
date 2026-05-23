@@ -596,3 +596,4 @@ _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered rev
 [20:58:44] OBSERVE: read README.md
 [20:58:44] ACT: edited README.md
 [20:58:44] OBSERVE: read README.md
+[21:45:52] THINK: Add sparse emoji to review PR body labels/status rather than every line because scanability should improve without making reviewer-facing output noisy.
