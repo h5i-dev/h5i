@@ -584,3 +584,4 @@ _[Checkpoint: 6a11f817 — Added ABSTRACT_INTERPRETER_IDEAS_V2.md with risk-dire
 _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered review brief, visual SVG artifact, compact DAG, and clearer star-focused positioning.]_
 ---
 
+[20:53:14] THINK: Mimic git-ai README by leading with concrete command/artifact pairs and moving rationale into choices because readers understand developer tools faster from recognizable output than from explanatory prose.
