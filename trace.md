@@ -628,3 +628,9 @@ _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered rev
 
 **Screenshot (`pr-demo.
 [23:10:17] THINK: Let me tighten the copy so the caption mirrors the screenshot's narrative arc (verdict → where → what-to-do → trail).
+
+
+---
+_[Checkpoint: 6a1233d9 — edited assets/pr-demo.svg; edited README.md; Rewrote README hero card (lines 23-54): sharper headline ('A reviewer's bri…]_
+---
+
