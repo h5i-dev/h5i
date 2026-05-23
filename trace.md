@@ -300,3 +300,4 @@ _[Checkpoint: 6a10dbc7 — edited MANUAL.md; edited man/man1/h5i.1; edited man/m
 _[Checkpoint: 6a10dfcf — edited src/pr.rs; edited src/pr.rs; edited tests/e2e_noun_workflow.rs]_
 ---
 
+[00:51:34] NOTE: PR body critique: keep security/duplicate findings high; demote raw AI %, tokens, and cost unless paired with risk, review coverage, test evidence, and file hot spots.
