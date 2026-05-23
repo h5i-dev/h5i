@@ -533,3 +533,4 @@ _[Checkpoint: 6a119e82 — Updated OxSan DSL roadmap to match current source: ge
 _[Checkpoint: 6a11a46a — Reviewed OxSan implementation for soundness omissions and found no-op transfer arms, Chain possibly semantics, and tree proof/runtime mismatch risks.]_
 ---
 
+[13:08:51] THINK: Keep soundness modules colocated with their subsystem rather than adding top-level Proof/, because each layer has local proofs and only shared proof interfaces belong in DSL/Soundness.
