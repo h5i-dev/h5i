@@ -507,3 +507,4 @@ _[Checkpoint: 6a119b89 — Clarified that every abstract analyzer needs its own 
 [12:33:01] OBSERVE: read ../OxSan/tests/codegen_full_axes.rs
 [12:33:01] OBSERVE: read ../OxSan/src/main.rs
 [12:33:01] OBSERVE: read ../OxSan/src/main.rs
+[12:33:01] OBSERVE: read ../OxSan/src/generated/lean_exported.rs
