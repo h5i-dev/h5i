@@ -145,11 +145,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Reviewed OxSan implementation for soundness omissions and found no-op transfer arms, Chain possibly semantics, and tree proof/runtime mismatch risks.
 - [x] Adjusted Lean soundness file-structure recommendation to colocate proofs under subsystem Soundness modules instead of top-level Proof/.
 - [x] Added ABSTRACT_INTERPRETER_IDEAS_V2.md with risk-directed alias analyzer designs and DSL-shaped pseudocode.
+- [x] Improved README hero and PR preview with rendered review brief, visual SVG artifact, compact DAG, and clearer star-focused positioning.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-23 20:50 UTC] `improve-pr-style`: Improved README hero and PR preview with rendered review brief, visual SVG artifact, compact DAG, and clearer star-focused positioning.
 - [2026-05-23 18:55 UTC] `improve-pr-style`: Added ABSTRACT_INTERPRETER_IDEAS_V2.md with risk-directed alias analyzer designs and DSL-shaped pseudocode.
 - [2026-05-23 13:08 UTC] `improve-pr-style`: Adjusted Lean soundness file-structure recommendation to colocate proofs under subsystem Soundness modules instead of top-level Proof/.
 - [2026-05-23 12:58 UTC] `improve-pr-style`: Reviewed OxSan implementation for soundness omissions and found no-op transfer arms, Chain possibly semantics, and tree proof/runtime mismatch risks.
