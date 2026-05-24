@@ -729,3 +729,4 @@ _[Checkpoint: 6a128785 — edited assets/h5i-concept.svg; edited README.md; edit
 [15:13:42] THINK: Update public docs around the current four-noun CLI and reviewer-first PR brief over adding more legacy command examples because the homepage should convert new users quickly while remaining accurate.
 [15:14:03] OBSERVE: listed files under .
 [15:14:03] OBSERVE: read README.md
+[15:14:03] OBSERVE: read MANUAL.md
