@@ -832,3 +832,4 @@ _[Checkpoint: 6a131a54 — committed public docs refresh]_
 [15:39:26] OBSERVE: read docs/blog/index.html
 [15:39:26] OBSERVE: read docs/sitemap.xml
 [15:39:26] OBSERVE: searched docs/_static/blog.css
+[15:39:26] ACT: added docs/blog/context-dag-versioned-agent-reasoning.html
