@@ -829,3 +829,4 @@ _[Checkpoint: 6a131a54 — committed public docs refresh]_
 
 [15:35:45] THINK: Add feature blog posts as one-page-per-feature docs over one mega-post because targeted pages are better for search, sharing, and user comprehension.
 [15:39:26] OBSERVE: read docs/blog/persistent-memory-for-claude-code.html
+[15:39:26] OBSERVE: read docs/blog/index.html
