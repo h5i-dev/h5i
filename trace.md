@@ -664,3 +664,4 @@ _[Checkpoint: 6a125607 — Rewrote README hero card (lines 23-54): sharper headl
 _[Checkpoint: 6a125d62 — edited src/repository.rs; edited src/repository.rs; edited src/pr.rs]_
 ---
 
+[02:49:54] NOTE: DEFERRAL (~/Dev/h5i/src/pr.rs): ommit these clippy fixes (with the README/SVG work, or as a separate commit)
