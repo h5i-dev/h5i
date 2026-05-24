@@ -162,11 +162,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] added feature figures to PR body and claims blog posts
 - [x] added concept figure to context DAG blog post
 - [x] committed h5i feature blog posts
+- [x] documented gh requirement for README PR posting workflow
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-24 16:02 UTC] `update-doc`: documented gh requirement for README PR posting workflow
 - [2026-05-24 15:58 UTC] `update-doc`: committed h5i feature blog posts
 - [2026-05-24 15:53 UTC] `update-doc`: added concept figure to context DAG blog post
 - [2026-05-24 15:45 UTC] `update-doc`: added feature figures to PR body and claims blog posts
