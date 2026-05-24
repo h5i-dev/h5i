@@ -855,3 +855,4 @@ _[Checkpoint: 6a131bbe — added feature blog posts for h5i context DAG, PR body
 [15:44:58] ACT: edited docs/_static/blog.css
 [15:44:58] ACT: edited docs/blog/pr-body-ai-code-review.html
 [15:44:58] ACT: edited docs/blog/content-addressed-claims-agent-memory.html
+[15:44:58] OBSERVE: listed files under docs/_static/claims-merkle.svg
