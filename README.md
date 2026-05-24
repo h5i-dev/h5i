@@ -131,6 +131,10 @@ h5i share pr body --style review      # render markdown for CI
 h5i share pr post --style replay      # make the Mermaid DAG the hero
 ```
 
+`h5i share pr post` requires the GitHub CLI (`gh`) to be installed and authenticated
+(`gh auth status` clean). Use `h5i share pr body` when CI should render markdown
+without posting through `gh`.
+
 Sync h5i sidecar refs with teammates:
 
 ```bash
@@ -140,7 +144,7 @@ h5i share pull
 
 ### Our Choices
 
-- **The pull request is the product** - reviewers should see AI risk, intent, and evidence where they already work.
+- **Shared context is the product** - PR comments, the dashboard, and terminal preludes are views over the same versioned agent context.
 - **Recorded, not guessed** - h5i stores prompts, model metadata, file observations, decisions, tests, and risk signals instead of trying to infer intent from a diff.
 - **Git-native sidecar refs** - provenance lives in `refs/h5i/*`, separate from your working tree and pushable with your repo.
 - **Context survives handoff** - branch goals, milestones, TODOs, and OBSERVE / THINK / ACT traces can be restored by the next agent.
