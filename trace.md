@@ -638,3 +638,9 @@ _[Checkpoint: 6a1233d9 — edited assets/pr-demo.svg; edited README.md; Rewrote 
 [01:35:47] ACT: edited assets/pr-demo.svg
 [01:35:52] ACT: edited assets/pr-demo.svg
 [01:36:07] THINK: I'll edit the SVG. The "green circle with h" plus its line is the GitHub timeline gutter (lines 16–20), and the little triangle (line 23) is the speech-bubble tail pointing at that avatar — all of which become orphaned once the avatar is go…
+
+
+---
+_[Checkpoint: 6a125607 — Rewrote README hero card (lines 23-54): sharper headline ('A reviewer's brief on every AI pull request'), added the miss…]_
+---
+
