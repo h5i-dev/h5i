@@ -792,3 +792,4 @@ _[Checkpoint: 6a1317ae — updated public HTML docs for current h5i CLI workflow
 _[Checkpoint: 6a1317cc — polished docs command examples after CLI help verification]_
 ---
 
+[15:25:09] THINK: Recenter docs on shared version-controlled context over PR-first positioning because PR comments are one presentation surface for the context/provenance graph, not the main product.
