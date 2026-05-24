@@ -726,3 +726,4 @@ _[Checkpoint: 6a1282bd — edited assets/h5i-concept.svg; edited README.md; edit
 _[Checkpoint: 6a128785 — edited assets/h5i-concept.svg; edited README.md; edited README.md]_
 ---
 
+[15:13:42] THINK: Update public docs around the current four-noun CLI and reviewer-first PR brief over adding more legacy command examples because the homepage should convert new users quickly while remaining accurate.
