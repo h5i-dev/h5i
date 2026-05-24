@@ -777,3 +777,9 @@ _[Checkpoint: 6a128785 — edited assets/h5i-concept.svg; edited README.md; edit
 [15:22:12] NOTE: Updated docs homepage, pitch deck, blog index navigation, sitemap, and new workflows page around current capture/recall/audit/share usage.
 [15:22:22] OBSERVE: read docs/workflows.html
 [15:22:22] OBSERVE: read docs/index.html
+
+
+---
+_[Checkpoint: 6a1317ae — updated public HTML docs for current h5i CLI workflows and PR-review positioning]_
+---
+

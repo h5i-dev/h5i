@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: improve-pr-style
+# Ephemeral traces — Branch: update-doc
 
