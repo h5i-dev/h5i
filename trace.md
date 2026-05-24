@@ -811,3 +811,4 @@ _[Checkpoint: 6a1318e3 — recentered public docs on shared version-controlled c
 
 [15:32:48] OBSERVE: listed files under assets/h5i-concept.svg
 [15:32:48] OBSERVE: read assets/h5i-concept.svg
+[15:32:48] OBSERVE: searched docs/index.html
