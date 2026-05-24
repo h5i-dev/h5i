@@ -784,3 +784,4 @@ _[Checkpoint: 6a1317ae — updated public HTML docs for current h5i CLI workflow
 ---
 
 [15:22:52] OBSERVE: searched |<|$)" for "[a-z][a-z-]*("
+[15:22:52] ACT: edited docs/index.html
