@@ -1,0 +1,152 @@
+<svg width="1240" height="380" viewBox="0 0 1240 380" xmlns="http://www.w3.org/2000/svg" font-family="Inter, Arial, sans-serif">
+  <!--
+    h5i concept banner.
+    Story (left -> right): agents reason -> h5i versions their context alongside
+    git commits in a shared sidecar -> the same record drives security + the PR.
+    The four arrows map to h5i's four verbs: capture / recall / audit / share.
+    Self-contained dark card with border + soft shadow so it reads on light
+    (white-mode) and dark GitHub themes alike; corners are transparent so the
+    rounded card blends into whatever page background it sits on.
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#151b25"/>
+      <stop offset="1" stop-color="#0c1015"/>
+    </linearGradient>
+    <linearGradient id="frameFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0f151d"/>
+      <stop offset="1" stop-color="#0b1016"/>
+    </linearGradient>
+    <filter id="soft" x="-6%" y="-10%" width="112%" height="124%">
+      <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#01040a" flood-opacity="0.32"/>
+    </filter>
+    <marker id="ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#58a6ff"/>
+    </marker>
+    <marker id="arG" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#3fb950"/>
+    </marker>
+  </defs>
+
+  <style>
+    .phase  { font-weight:700; font-size:17px; fill:#c9d1d9; letter-spacing:2px; }
+    .title  { font-weight:700; font-size:16px; fill:#f0f6fc; }
+    .sub    { font-weight:400; font-size:12.5px; fill:#8b949e; }
+    .frameT { font-weight:700; font-size:16px; fill:#e6edf3; }
+    .note   { font-weight:400; font-size:11.5px; fill:#768390; }
+    .verb   { font-weight:700; font-size:14px; fill:#58a6ff; letter-spacing:.5px; }
+    .verbG  { font-weight:700; font-size:14px; fill:#3fb950; letter-spacing:.5px; }
+    .pill   { font-weight:600; font-size:11.5px; fill:#adbac7; }
+    .leg    { font-weight:600; font-size:11px; fill:#8b949e; }
+    .mono   { font-weight:700; font-size:16px; fill:#79c0ff; font-family:ui-monospace, Menlo, Consolas, monospace; }
+  </style>
+
+  <!-- card -->
+  <rect x="8" y="8" width="1224" height="364" rx="18" fill="url(#bg)" stroke="#30363d" stroke-width="1.5" filter="url(#soft)"/>
+
+  <!-- phase labels -->
+  <text x="146"  y="44" text-anchor="middle" class="phase">AGENTS</text>
+  <text x="605"  y="44" text-anchor="middle" class="phase">SHARED · VERSIONED CONTEXT</text>
+  <text x="1062" y="44" text-anchor="middle" class="phase">REVIEW</text>
+
+  <!-- ── Zone 1: agents ─────────────────────────────────────────── -->
+  <!-- Codex -->
+  <rect x="40" y="124" width="150" height="84" rx="12" fill="#161b22" stroke="#30363d"/>
+  <rect x="58" y="153" width="26" height="26" rx="7" fill="#1f6feb" fill-opacity="0.22" stroke="#58a6ff"/>
+  <rect x="64" y="159" width="14" height="6" rx="2" fill="#58a6ff"/>
+  <text x="98" y="172" class="title">Codex</text>
+  <!-- Claude -->
+  <rect x="40" y="224" width="150" height="84" rx="12" fill="#161b22" stroke="#30363d"/>
+  <rect x="58" y="253" width="26" height="26" rx="7" fill="#8957e5" fill-opacity="0.22" stroke="#a371f7"/>
+  <circle cx="71" cy="266" r="5" fill="#a371f7"/>
+  <text x="98" y="272" class="title">Claude</text>
+
+  <!-- capture (agents -> context) -->
+  <path d="M190,166 C 248,166 262,156 318,156" fill="none" stroke="#58a6ff" stroke-width="2" marker-end="url(#ar)"/>
+  <path d="M190,266 C 248,266 262,278 318,278" fill="none" stroke="#58a6ff" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="250" y="140" text-anchor="middle" class="verb">capture</text>
+  <!-- recall (context -> both agents): one fork to Codex, one to Claude -->
+  <path d="M322,206 C 285,202 245,190 192,190" fill="none" stroke="#3fb950" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arG)"/>
+  <path d="M322,226 C 285,230 245,242 192,242" fill="none" stroke="#3fb950" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arG)"/>
+  <text x="246" y="221" text-anchor="middle" class="verbG">recall</text>
+
+  <!-- ── Zone 2: shared, versioned context ──────────────────────── -->
+  <rect x="322" y="84" width="566" height="264" rx="14" fill="url(#frameFill)" stroke="#30363d"/>
+  <text x="340" y="122" class="mono">refs/h5i/*</text>
+  <text x="442" y="122" class="frameT">· git-native sidecar — versioned with every commit</text>
+
+  <!-- snapshot cards (top track) -->
+  <!-- c1 Codex -->
+  <rect x="364" y="146" width="104" height="46" rx="8" fill="#161b22" stroke="#30363d"/>
+  <rect x="365" y="147" width="4" height="44" fill="#58a6ff"/>
+  <rect x="380" y="159" width="62" height="3" rx="1.5" fill="#586069"/>
+  <rect x="380" y="169" width="50" height="3" rx="1.5" fill="#586069"/>
+  <rect x="380" y="179" width="40" height="3" rx="1.5" fill="#586069"/>
+  <!-- c2 Claude -->
+  <rect x="490" y="146" width="104" height="46" rx="8" fill="#161b22" stroke="#30363d"/>
+  <rect x="491" y="147" width="4" height="44" fill="#a371f7"/>
+  <rect x="506" y="159" width="62" height="3" rx="1.5" fill="#586069"/>
+  <rect x="506" y="169" width="50" height="3" rx="1.5" fill="#586069"/>
+  <rect x="506" y="179" width="40" height="3" rx="1.5" fill="#586069"/>
+  <!-- c3 Claude -->
+  <rect x="616" y="146" width="104" height="46" rx="8" fill="#161b22" stroke="#30363d"/>
+  <rect x="617" y="147" width="4" height="44" fill="#a371f7"/>
+  <rect x="632" y="159" width="62" height="3" rx="1.5" fill="#586069"/>
+  <rect x="632" y="169" width="50" height="3" rx="1.5" fill="#586069"/>
+  <rect x="632" y="179" width="40" height="3" rx="1.5" fill="#586069"/>
+  <!-- c4 Codex -->
+  <rect x="742" y="146" width="104" height="46" rx="8" fill="#161b22" stroke="#30363d"/>
+  <rect x="743" y="147" width="4" height="44" fill="#58a6ff"/>
+  <rect x="758" y="159" width="62" height="3" rx="1.5" fill="#586069"/>
+  <rect x="758" y="169" width="50" height="3" rx="1.5" fill="#586069"/>
+  <rect x="758" y="179" width="40" height="3" rx="1.5" fill="#586069"/>
+
+  <!-- connectors: each snapshot pinned 1:1 to its commit -->
+  <line x1="416" y1="192" x2="416" y2="269" stroke="#444c56" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <line x1="542" y1="192" x2="542" y2="269" stroke="#444c56" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <line x1="668" y1="192" x2="668" y2="269" stroke="#444c56" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <line x1="794" y1="192" x2="794" y2="269" stroke="#444c56" stroke-width="1.5" stroke-dasharray="4 4"/>
+
+  <!-- commit rail (bottom track) -->
+  <line x1="388" y1="276" x2="822" y2="276" stroke="#444c56" stroke-width="2"/>
+  <circle cx="416" cy="276" r="7" fill="#58a6ff" stroke="#0d1117" stroke-width="2"/>
+  <circle cx="542" cy="276" r="7" fill="#a371f7" stroke="#0d1117" stroke-width="2"/>
+  <circle cx="668" cy="276" r="7" fill="#a371f7" stroke="#0d1117" stroke-width="2"/>
+  <circle cx="794" cy="276" r="7" fill="#58a6ff" stroke="#0d1117" stroke-width="2"/>
+
+  <text x="340" y="300" class="note">git commits (your code) · authored by</text>
+  <circle cx="560" cy="296" r="5" fill="#58a6ff"/>
+  <text x="570" y="300" class="leg">Codex</text>
+  <circle cx="630" cy="296" r="5" fill="#a371f7"/>
+  <text x="640" y="300" class="leg">Claude</text>
+
+  <!-- version-control operations on context -->
+  <text x="340" y="332" class="note">version:</text>
+  <rect x="396" y="318" width="62" height="20" rx="10" fill="none" stroke="#3d444d"/>
+  <text x="427" y="332" text-anchor="middle" class="pill">restore</text>
+  <rect x="466" y="318" width="44" height="20" rx="10" fill="none" stroke="#3d444d"/>
+  <text x="488" y="332" text-anchor="middle" class="pill">diff</text>
+  <rect x="518" y="318" width="60" height="20" rx="10" fill="none" stroke="#3d444d"/>
+  <text x="548" y="332" text-anchor="middle" class="pill">branch</text>
+  <rect x="586" y="318" width="68" height="20" rx="10" fill="none" stroke="#3d444d"/>
+  <text x="620" y="332" text-anchor="middle" class="pill">handoff</text>
+
+  <!-- ── Zone 3: review ─────────────────────────────────────────── -->
+  <!-- frame -> review split -->
+  <path d="M888,216 L 904,216" fill="none" stroke="#58a6ff" stroke-width="2"/>
+  <path d="M904,216 C 912,216 914,170 922,164" fill="none" stroke="#58a6ff" stroke-width="2" marker-end="url(#ar)"/>
+  <path d="M904,216 C 912,216 914,262 922,268" fill="none" stroke="#58a6ff" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="903" y="150" text-anchor="middle" class="verb">audit</text>
+  <text x="903" y="296" text-anchor="middle" class="verb">share</text>
+
+  <!-- security audit -->
+  <rect x="924" y="124" width="276" height="84" rx="12" fill="#161b22" stroke="#30363d"/>
+  <text x="946" y="173" font-size="18">🔒</text>
+  <text x="982" y="164" class="title">Security audit</text>
+  <text x="982" y="184" class="sub">secrets · dup code · blind edits</text>
+  <!-- PR review brief -->
+  <rect x="924" y="224" width="276" height="84" rx="12" fill="#161b22" stroke="#30363d"/>
+  <text x="946" y="273" font-size="18">🔗</text>
+  <text x="982" y="264" class="title">PR review brief</text>
+  <text x="982" y="284" class="sub">verdict · focus · provenance</text>
+</svg>
