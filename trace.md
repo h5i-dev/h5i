@@ -731,3 +731,4 @@ _[Checkpoint: 6a128785 — edited assets/h5i-concept.svg; edited README.md; edit
 [15:14:03] OBSERVE: read README.md
 [15:14:03] OBSERVE: read MANUAL.md
 [15:14:03] OBSERVE: read src/main.rs
+[15:14:03] OBSERVE: listed files under docs
