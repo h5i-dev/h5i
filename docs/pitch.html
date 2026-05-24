@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>h5i Pitch Deck — AI-Aware Git for Claude Code &amp; Codex</title>
-<meta name="description" content="h5i pitch deck: 50 years of version control led to Git in 2005. The AI era needs a sidecar that captures prompts, reasoning, and session memory alongside code.">
+<title>h5i Pitch Deck — Shared Versioned Context for Claude Code &amp; Codex</title>
+<meta name="description" content="h5i pitch deck: the AI era needs a Git sidecar that versions agent reasoning, prompts, decisions, memory, risk signals, and shareable evidence alongside code.">
 <meta name="author" content="Koukyosyumei">
 <meta name="theme-color" content="#D21C1C">
 <meta name="robots" content="index, follow">
@@ -15,15 +15,15 @@
 <!-- Open Graph -->
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="h5i">
-<meta property="og:title" content="h5i Pitch Deck — AI-Aware Git for Claude Code &amp; Codex">
-<meta property="og:description" content="Why the AI era needs a Git sidecar: prompts, reasoning, and session memory captured alongside every commit.">
+<meta property="og:title" content="h5i Pitch Deck — Shared Versioned Context for Claude Code &amp; Codex">
+<meta property="og:description" content="Why the AI era needs a Git sidecar that versions agent reasoning, prompts, memory, and provenance alongside code.">
 <meta property="og:url" content="https://h5i.dev/pitch.html">
 <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="h5i Pitch Deck — AI-Aware Git for Claude Code &amp; Codex">
-<meta name="twitter:description" content="Why the AI era needs a Git sidecar: prompts, reasoning, and session memory captured alongside every commit.">
+<meta name="twitter:title" content="h5i Pitch Deck — Shared Versioned Context for Claude Code &amp; Codex">
+<meta name="twitter:description" content="Why the AI era needs versioned agent reasoning, prompts, memory, and provenance alongside code.">
 <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -492,7 +492,7 @@
           <div class="tl-h5i-node">h5i</div>
           <div class="tl-h5i-year">now</div>
           <div class="tl-h5i-name">h5i</div>
-          <div class="tl-h5i-desc">next-gen ai-aware git</div>
+          <div class="tl-h5i-desc">shared versioned context for AI agents</div>
         </div>
         <div class="tl-h5i-line right"></div>
       </div>
@@ -539,27 +539,27 @@
 <div class="slide" style="gap:32px;">
   <div style="width:100%;max-width:900px;">
     <div class="section-tag">The solution</div>
-    <h2>A Git sidecar that captures<br>everything Git can't</h2>
+    <h2>A Git sidecar that versions<br>the context behind AI work</h2>
     <p style="margin-top:12px;max-width:620px;font-size:1.15rem;">Stores structured metadata in <code>.git/.h5i/</code> — no new infrastructure, no lock-in, works with any git remote.</p>
 
     <div class="g2" style="margin-top:32px;gap:16px;">
       <div class="feat-card">
-        <span class="feat-cmd">h5i commit --prompt …</span>
+        <span class="feat-cmd">h5i capture commit --prompt …</span>
         <h3 style="margin-top:6px;">AI provenance</h3>
         <p class="feat-desc">Prompt, model, agent ID, and test results linked to every commit.</p>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd">h5i notes</span>
+        <span class="feat-cmd">h5i recall notes</span>
         <h3 style="margin-top:6px;">Session analysis</h3>
         <p class="feat-desc">Files read vs. edited, uncertainty heatmap, blind-edit detection.</p>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd">h5i context</span>
+        <span class="feat-cmd">h5i recall context</span>
         <h3 style="margin-top:6px;">Reasoning workspace</h3>
         <p class="feat-desc">Version-controlled OBSERVE / THINK / ACT trace that survives session resets.</p>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd">h5i compliance</span>
+        <span class="feat-cmd">h5i audit compliance</span>
         <h3 style="margin-top:6px;">Compliance &amp; policy</h3>
         <p class="feat-desc">Enforce AI commit rules and generate audit reports across date ranges.</p>
       </div>
@@ -568,29 +568,29 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 4 — h5i notes
+     SLIDE 4 — h5i shared context
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:1020px;">
-    <div class="section-tag">Feature · h5i notes</div>
-    <h2>Every Claude session becomes<br>a permanent audit trail</h2>
+    <div class="section-tag">Feature · shared context</div>
+    <h2>Every agent inherits<br>what the last agent learned</h2>
 
     <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
       <div style="display:flex;flex-direction:column;gap:14px;">
         <div class="feat-card">
-          <span class="feat-cmd">h5i notes show</span>
-          <h3 style="margin-top:4px;">Exploration footprint</h3>
-          <p class="feat-desc">Every file the AI read vs. edited, including implicit dependencies.</p>
+          <span class="feat-cmd">h5i codex prelude</span>
+          <h3 style="margin-top:4px;">Session prelude</h3>
+          <p class="feat-desc">A new agent starts with the branch goal, milestones, open TODOs, and the last useful decisions.</p>
         </div>
         <div class="feat-card">
-          <span class="feat-cmd">h5i notes coverage</span>
-          <h3 style="margin-top:4px;">Blind-edit detection</h3>
-          <p class="feat-desc">Files modified without reading first — the leading indicator of latent bugs.</p>
+          <span class="feat-cmd">h5i recall context show</span>
+          <h3 style="margin-top:4px;">Reasoning workspace</h3>
+          <p class="feat-desc">OBSERVE, THINK, ACT, NOTE, branch, merge, and checkpoint entries form a Git-native context DAG.</p>
         </div>
         <div class="feat-card">
-          <span class="feat-cmd">h5i notes review</span>
-          <h3 style="margin-top:4px;">Review surface</h3>
-          <p class="feat-desc">Composite risk score — tells you exactly which PRs need human eyes.</p>
+          <span class="feat-cmd">h5i share pr post</span>
+          <h3 style="margin-top:4px;">PR as one surface</h3>
+          <p class="feat-desc">When the branch reaches review, h5i renders the same context into a sticky GitHub PR comment.</p>
         </div>
       </div>
       <div class="terminal">
@@ -598,20 +598,20 @@
           <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
           <span class="terminal-path">~/my-project</span>
         </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i notes show</span>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i codex prelude</span>
 
-<span class="t-bold">── Exploration Footprint ──────────────────</span>
-  <span class="t-out">Session a3f8c12 · 89 msgs · 34 tool calls</span>
+<span class="t-bold">[h5i] Context workspace active</span>
+<span class="t-ai">goal:</span> <span class="t-out">ship OAuth login safely</span>
+<span class="t-out">milestones: provider integration done;</span>
+<span class="t-out">            token refresh in progress</span>
+<span class="t-warn">TODO:</span> <span class="t-out">integration test for failover path</span>
 
-  <span class="t-out">📖</span> <span class="t-ai">src/auth.rs</span>           <span class="t-out">×4  (Read, Grep)</span>
-  <span class="t-out">📖</span> <span class="t-ai">src/session.rs</span>        <span class="t-out">×3  (Read)</span>
-  <span class="t-warn">✏  src/billing/token.rs  ×2  ⚠ BLIND EDIT</span>
+<span class="t-ai">Last decisions:</span>
+<span class="t-out">  THINK Redis survives process restarts</span>
+<span class="t-out">  ACT   switched session store to Redis</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i notes review</span>
-
-<span class="t-warn">  #1  a3f8c12  score 0.81  ████████░░</span>
-      <span class="t-out">refactor billing token refresh</span>
-      <span class="t-red">⚠ blind edit · high uncertainty</span></pre></div>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post --style review</span>
+<span class="t-out"># same context, rendered for reviewers</span></pre></div>
       </div>
     </div>
   </div>
@@ -622,19 +622,19 @@
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:1020px;">
-    <div class="section-tag">Feature · h5i context</div>
+    <div class="section-tag">Feature · h5i recall context</div>
     <h2>Reasoning that survives<br>session resets</h2>
 
     <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
       <div style="display:flex;flex-direction:column;gap:14px;">
         <p style="font-size:1.15rem;">Version-controlled OBSERVE / THINK / ACT trace stored in <code>refs/h5i/context</code>. Snapshots on every commit. Branches like git.</p>
         <div class="feat-card">
-          <span class="feat-cmd">h5i context trace</span>
+          <span class="feat-cmd">h5i recall context trace</span>
           <h3 style="margin-top:4px;">Trace entries</h3>
           <p class="feat-desc">Log each reasoning step as OBSERVE, THINK, or ACT — persists across session resets.</p>
         </div>
         <div class="feat-card">
-          <span class="feat-cmd">h5i context search "…"</span>
+          <span class="feat-cmd">h5i recall context search "…"</span>
           <h3 style="margin-top:4px;">Targeted retrieval</h3>
           <p class="feat-desc">BM25 over traces + git co-change. Replaces exploratory Read chains with ranked candidates.</p>
         </div>
@@ -698,19 +698,19 @@
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:1020px;">
-    <div class="section-tag">Feature · h5i claims</div>
+    <div class="section-tag">Feature · h5i capture claim</div>
     <h2>6× fewer file reads.<br>Same answer.</h2>
 
     <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
       <div style="display:flex;flex-direction:column;gap:14px;">
-        <p style="font-size:1.15rem;">Agents burn tokens every session re-deriving what they already figured out last time. <code>h5i claims</code> records each conclusion with its evidence pinned as a Merkle hash over the files it depends on — stays <span class="green">live</span> until any evidence blob changes, then <span class="red">auto-invalidates</span>.</p>
+        <p style="font-size:1.15rem;">Agents burn tokens every session re-deriving what they already figured out last time. <code>h5i capture claim</code> records each conclusion with its evidence pinned as a Merkle hash over the files it depends on — stays <span class="green">live</span> until any evidence blob changes, then <span class="red">auto-invalidates</span>.</p>
         <div class="feat-card">
-          <span class="feat-cmd">h5i claims add "…" --path src/api.rs</span>
+          <span class="feat-cmd">h5i capture claim "…" --path src/api.rs</span>
           <h3 style="margin-top:4px;">Content-addressed facts</h3>
           <p class="feat-desc">Evidence = sha256 over (path, blob_oid) pairs at HEAD. Git tells you when they're stale — no TTL, no guessing.</p>
         </div>
         <div class="feat-card">
-          <span class="feat-cmd">h5i context prompt</span>
+          <span class="feat-cmd">h5i recall context prompt</span>
           <h3 style="margin-top:4px;">Preamble injection</h3>
           <p class="feat-desc">Live claims render as <code>## Known facts</code> at session start. Agent treats them as pre-verified — skips re-reading.</p>
         </div>
@@ -741,23 +741,23 @@
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:1020px;">
-    <div class="section-tag">Feature · h5i compliance</div>
+    <div class="section-tag">Feature · h5i audit</div>
     <h2>Enforce rules.<br>Generate audit reports.</h2>
 
     <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
       <div style="display:flex;flex-direction:column;gap:14px;">
         <div class="feat-card">
-          <span class="feat-cmd">h5i policy init</span>
+          <span class="feat-cmd">h5i audit policy init</span>
           <h3 style="margin-top:4px;">Policy rules</h3>
           <p class="feat-desc">Define TOML rules — require audit flag, minimum prompt length, model allowlist, test coverage threshold.</p>
         </div>
         <div class="feat-card">
-          <span class="feat-cmd">h5i policy check</span>
+          <span class="feat-cmd">h5i audit policy check</span>
           <h3 style="margin-top:4px;">Pre-commit enforcement</h3>
           <p class="feat-desc">Checks staged files against policy before every commit. Blocks on errors, warns on violations.</p>
         </div>
         <div class="feat-card">
-          <span class="feat-cmd">h5i compliance --since …</span>
+          <span class="feat-cmd">h5i audit compliance --since …</span>
           <h3 style="margin-top:4px;">Audit report</h3>
           <p class="feat-desc">AI contribution ratio, audit coverage, policy violations, and top-risk files over any date range.</p>
         </div>
@@ -767,7 +767,7 @@
           <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
           <span class="terminal-path">~/my-project</span>
         </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i policy check</span>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit policy check</span>
 
   <span class="t-pass">✔</span> <span class="t-out">model declared (claude-sonnet-4-6)</span>
   <span class="t-pass">✔</span> <span class="t-out">audit flag present</span>
@@ -776,7 +776,7 @@
 
   <span class="t-red">1 error · 1 warning — commit blocked</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i compliance --since 2026-04-01</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i audit compliance --since 2026-04-01</span>
 
 <span class="t-bold">── Compliance Report ──────────────────────</span>
   <span class="t-out">AI-generated:    </span><span class="t-pass">74%</span><span class="t-out"> of commits (30 days)</span>
@@ -798,12 +798,12 @@
 
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:28px;">
       <div class="feat-card">
-        <span class="feat-cmd">h5i commit --audit</span>
+        <span class="feat-cmd">h5i capture commit --audit</span>
         <h3 style="margin-top:4px;">Integrity audit</h3>
         <p class="feat-desc">12 deterministic rules — credential leaks, CI tampering, scope creep.</p>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd">h5i blame &lt;file&gt;</span>
+        <span class="feat-cmd">h5i recall blame &lt;file&gt;</span>
         <h3 style="margin-top:4px;">AI-aware blame</h3>
         <p class="feat-desc">Per-line authorship with agent name, model, and test badge.</p>
       </div>
@@ -813,12 +813,12 @@
         <p class="feat-desc">Non-destructive restore to any past commit. WIP auto-backed up.</p>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd">h5i context scan</span>
+        <span class="feat-cmd">h5i audit scan</span>
         <h3 style="margin-top:4px;">Injection detection</h3>
         <p class="feat-desc">Scans the reasoning trace for prompt-injection patterns.</p>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd">h5i memory snapshot</span>
+        <span class="feat-cmd">h5i capture memory</span>
         <h3 style="margin-top:4px;">Memory tracking</h3>
         <p class="feat-desc">Snapshots Claude's memory at every commit, diffs across versions.</p>
       </div>
