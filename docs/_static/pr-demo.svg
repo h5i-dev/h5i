@@ -1,0 +1,117 @@
+<svg width="774" height="1366" viewBox="88 28 774 1366" xmlns="http://www.w3.org/2000/svg">
+  <rect x="88" y="28" width="774" height="1366" fill="#0d1117"/>
+
+  <style>
+    .h1 { font: 700 24px Inter, Arial, sans-serif; fill:#f0f6fc; }
+    .h2 { font: 700 18px Inter, Arial, sans-serif; fill:#f0f6fc; }
+    .body { font: 400 15px Inter, Arial, sans-serif; fill:#c9d1d9; }
+    .muted { font: 400 13px Inter, Arial, sans-serif; fill:#8b949e; }
+    .small { font: 400 12px Inter, Arial, sans-serif; fill:#8b949e; }
+    .strong { font: 700 15px Inter, Arial, sans-serif; fill:#f0f6fc; }
+    .mono { font: 500 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill:#d2a8ff; }
+    .monoStrong { font: 700 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill:#79c0ff; }
+    .chip { font: 700 12px Inter, Arial, sans-serif; fill:#f0f6fc; }
+  </style>
+
+  <!-- Comment container -->
+  <rect x="102" y="42" width="746" height="1338" rx="8" fill="#0d1117" stroke="#30363d"/>
+  <rect x="102" y="42" width="746" height="58" rx="8" fill="#161b22" stroke="#30363d"/>
+  <rect x="103" y="88" width="744" height="14" fill="#161b22"/>
+
+  <text x="126" y="75" class="strong">h5i-bot</text>
+  <text x="184" y="75" class="muted">commented on this pull request</text>
+  <rect x="764" y="58" width="58" height="24" rx="12" fill="#1f6feb" opacity=".18" stroke="#388bfd"/>
+  <text x="779" y="75" class="chip">bot</text>
+
+  <!-- Body -->
+  <text x="126" y="140" class="h1">h5i review brief</text>
+
+  <text x="126" y="184" class="strong">🧭 Merge status:</text>
+  <text x="270" y="184" class="body">🟡 review needed · 🔐 security clean · 🧬 3 duplicate-code findings</text>
+  <text x="126" y="222" class="strong">🔎 Review focus:</text>
+  <text x="270" y="222" class="mono">src/pr.rs, src/main.rs, web/src/theme.css</text>
+  <text x="126" y="260" class="strong">📌 Evidence:</text>
+  <text x="238" y="260" class="body">9 AI commits · 4 files touched · 438 trace nodes</text>
+
+  <!-- GitHub quote/callout block -->
+  <rect x="126" y="292" width="688" height="78" rx="6" fill="#161b22" stroke="#30363d"/>
+  <rect x="126" y="292" width="4" height="78" rx="2" fill="#1f6feb"/>
+  <text x="148" y="324" class="strong">🎯 Goal:</text>
+  <text x="232" y="324" class="body">Implement three PR body styles with a --style flag for</text>
+  <text x="232" y="348" class="mono">h5i share pr post</text>
+
+  <!-- Checklist -->
+  <text x="126" y="418" class="h2">Reviewer checklist</text>
+  <rect x="126" y="438" width="688" height="118" rx="6" fill="#0d1117" stroke="#30363d"/>
+  <text x="148" y="470" class="body">• Inspect duplicate-code findings in</text>
+  <text x="386" y="470" class="mono">src/main.rs, src/pr.rs, web/src/theme.css</text>
+  <text x="148" y="504" class="body">• Start review with</text>
+  <text x="282" y="504" class="mono">src/pr.rs, src/main.rs, web/src/theme.css</text>
+  <text x="148" y="538" class="body">• Confirm implementation choices manually; no explicit decisions were recorded.</text>
+
+  <!-- Reasoning highlights table -->
+  <text x="126" y="604" class="h2">Reasoning highlights</text>
+  <rect x="126" y="628" width="688" height="34" fill="#161b22" stroke="#30363d"/>
+  <text x="146" y="650" class="strong">Signal</text>
+  <text x="246" y="650" class="strong">Trace</text>
+
+  <rect x="126" y="662" width="688" height="68" fill="#0d1117" stroke="#30363d"/>
+  <rect x="146" y="684" width="58" height="22" rx="11" fill="#1f6feb" opacity=".18" stroke="#388bfd"/>
+  <text x="156" y="700" class="monoStrong">THINK</text>
+  <text x="246" y="688" class="body">Add sparse emoji to review PR body labels/status rather than every line</text>
+  <text x="246" y="714" class="muted">because scanability should improve without making output noisy.</text>
+
+  <rect x="126" y="730" width="688" height="68" fill="#0d1117" stroke="#30363d"/>
+  <rect x="146" y="752" width="58" height="22" rx="11" fill="#1f6feb" opacity=".18" stroke="#388bfd"/>
+  <text x="156" y="768" class="monoStrong">THINK</text>
+  <text x="246" y="756" class="body">Mimic git-ai README by leading with concrete command/artifact pairs</text>
+  <text x="246" y="782" class="muted">and moving rationale into choices because readers understand tools faster.</text>
+
+  <rect x="126" y="798" width="688" height="68" fill="#0d1117" stroke="#30363d"/>
+  <rect x="146" y="820" width="58" height="22" rx="11" fill="#1f6feb" opacity=".18" stroke="#388bfd"/>
+  <text x="156" y="836" class="monoStrong">THINK</text>
+  <text x="246" y="824" class="body">Render README hero examples as native Markdown/HTML tables</text>
+  <text x="246" y="850" class="muted">and screenshots over fenced PR markdown.</text>
+
+  <!-- GitHub markdown alerts -->
+  <rect x="126" y="902" width="688" height="86" rx="6" fill="#12251a" stroke="#238636"/>
+  <rect x="126" y="902" width="4" height="86" rx="2" fill="#3fb950"/>
+  <text x="148" y="934" class="strong">✅ Security scan clean</text>
+  <text x="148" y="962" class="body">No credentials leaked in this branch's diff.</text>
+  <text x="148" y="982" class="muted">h5i scanned every added line against the secret rule pack.</text>
+
+  <rect x="126" y="1018" width="688" height="98" rx="6" fill="#2d1518" stroke="#da3633"/>
+  <rect x="126" y="1018" width="4" height="98" rx="2" fill="#f85149"/>
+  <text x="148" y="1050" class="strong">⚠️ Duplicate code introduced in 3 files</text>
+  <text x="148" y="1078" class="body">Consider extracting a helper before this lands.</text>
+  <text x="148" y="1104" class="mono">src/main.rs  L46 → L64   557055cd</text>
+
+  <!-- Compact DAG -->
+  <text x="126" y="1162" class="h2">🧠 Compact reasoning DAG</text>
+  <rect x="126" y="1184" width="688" height="78" rx="6" fill="#161b22" stroke="#30363d"/>
+  <line x1="260" y1="1223" x2="288" y2="1223" stroke="#58a6ff" stroke-width="2"/>
+  <line x1="442" y1="1223" x2="470" y2="1223" stroke="#58a6ff" stroke-width="2"/>
+  <line x1="594" y1="1223" x2="622" y2="1223" stroke="#58a6ff" stroke-width="2"/>
+  <rect x="146" y="1201" width="114" height="44" rx="6" fill="#0d1117" stroke="#30363d"/>
+  <text x="158" y="1219" class="monoStrong">OBSERVE</text>
+  <text x="158" y="1237" class="small">read src/pr.rs</text>
+  <rect x="288" y="1201" width="154" height="44" rx="6" fill="#0d1117" stroke="#30363d"/>
+  <text x="300" y="1219" class="monoStrong">THINK</text>
+  <text x="300" y="1237" class="small">triage before DAG</text>
+  <rect x="470" y="1201" width="124" height="44" rx="6" fill="#0d1117" stroke="#30363d"/>
+  <text x="482" y="1219" class="monoStrong">ACT</text>
+  <text x="482" y="1237" class="small">render review</text>
+  <rect x="622" y="1201" width="170" height="44" rx="6" fill="#0d1117" stroke="#30363d"/>
+  <text x="634" y="1219" class="monoStrong">PR COMMENT</text>
+  <text x="634" y="1237" class="small">status · focus · proof</text>
+
+  <!-- Per-commit provenance -->
+  <text x="126" y="1298" class="h2">🔗 Per-commit provenance</text>
+  <text x="350" y="1298" class="muted">prompt · model · agent · tests · review flags</text>
+  <text x="146" y="1330" class="monoStrong">69d5a53</text>
+  <text x="226" y="1330" class="body">Improve README PR preview</text>
+  <text x="500" y="1330" class="muted">codex · gpt-5 · XML parse passed</text>
+  <text x="146" y="1354" class="monoStrong">8c21f90</text>
+  <text x="226" y="1354" class="body">Render review style</text>
+  <text x="500" y="1354" class="muted">claude-code · sonnet · tests passed</text>
+</svg>

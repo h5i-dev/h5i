@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>The h5i Blog — Practical Workflows for Claude Code &amp; AI-Era Git</title>
-  <meta name="description" content="Engineering posts on Claude Code workflows, AI provenance, prompt-injection detection, token-cost reduction, and per-line AI blame — from the team behind h5i, the Git sidecar for AI-era version control.">
-  <meta name="keywords" content="claude code blog, ai engineering blog, ai code review, ai provenance, prompt caching, prompt injection detection, h5i blog">
+  <title>The h5i Blog — AI Agent Context, Provenance, and Review Workflows</title>
+  <meta name="description" content="Engineering posts on h5i features: context DAGs, AI pull request bodies, content-addressed claims, Claude Code workflows, AI provenance, prompt-injection detection, token-cost reduction, and AI blame.">
+  <meta name="keywords" content="claude code blog, ai engineering blog, ai code review, ai provenance, context DAG, AI pull request, content-addressed claims, prompt injection detection, h5i blog">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="robots" content="index, follow">
@@ -15,14 +15,14 @@
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="The h5i Blog — Practical Workflows for Claude Code &amp; AI-Era Git">
-  <meta property="og:description" content="Engineering posts on Claude Code workflows, AI provenance, prompt-injection detection, token-cost reduction, and per-line AI blame.">
+  <meta property="og:title" content="The h5i Blog — AI Agent Context, Provenance, and Review Workflows">
+  <meta property="og:description" content="Engineering posts on context DAGs, AI pull request bodies, claims, Claude Code workflows, AI provenance, and prompt-injection detection.">
   <meta property="og:url" content="https://h5i.dev/blog/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="The h5i Blog — Practical Workflows for Claude Code &amp; AI-Era Git">
-  <meta name="twitter:description" content="Engineering posts on Claude Code workflows, AI provenance, prompt injection, and per-line AI blame.">
+  <meta name="twitter:title" content="The h5i Blog — AI Agent Context, Provenance, and Review Workflows">
+  <meta name="twitter:description" content="Engineering posts on context DAGs, AI pull request bodies, claims, Claude Code workflows, AI provenance, and prompt injection.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
@@ -30,10 +30,13 @@
     "@context": "https://schema.org",
     "@type": "Blog",
     "name": "The h5i Blog",
-    "description": "Engineering posts on Claude Code workflows, AI provenance, prompt-injection detection, and per-line AI blame.",
+    "description": "Engineering posts on h5i context DAGs, AI pull request bodies, content-addressed claims, Claude Code workflows, AI provenance, prompt-injection detection, and per-line AI blame.",
     "url": "https://h5i.dev/blog/",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "blogPost": [
+      {"@type": "BlogPosting", "headline": "Context DAG: Version-Controlled Reasoning for AI Agents", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/context-dag-versioned-agent-reasoning.html"},
+      {"@type": "BlogPosting", "headline": "The AI Pull Request Body: h5i's Review Surface for Agent Work", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/pr-body-ai-code-review.html"},
+      {"@type": "BlogPosting", "headline": "Content-Addressed Claims: Reusable Facts for AI Coding Agents", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/content-addressed-claims-agent-memory.html"},
       {"@type": "BlogPosting", "headline": "CVE-2026-33068: When a Repo's settings.json Decides Trust", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/cve-2026-33068-bypass-permissions-settings.html"},
       {"@type": "BlogPosting", "headline": "CVE-2025-59536: Code Execution Before the Claude Code Trust Dialog", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/cve-2025-59536-startup-trust-dialog.html"},
       {"@type": "BlogPosting", "headline": "Giving Claude Code Persistent Memory Across Sessions", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/persistent-memory-for-claude-code.html"},
@@ -67,14 +70,44 @@
 
 <section class="index-hero">
   <div class="post-eyebrow">The h5i Blog</div>
-  <h1>Practical workflows for Claude Code &amp; AI-era Git</h1>
+  <h1>AI agent context, provenance, and review workflows</h1>
   <p>
-    Engineering posts on AI provenance, agent memory, prompt-injection detection, token-cost
-    reduction, and per-line blame for AI-touched code.
+    Engineering posts on h5i features: context DAGs, PR surfaces, content-addressed
+    claims, AI provenance, agent memory, prompt-injection detection, and AI blame.
   </p>
 </section>
 
 <section class="post-list">
+
+  <a class="post-card" href="context-dag-versioned-agent-reasoning.html">
+    <div class="card-meta">
+      <span>Feature · Context</span>
+      <span>2026-05-24</span>
+      <span>7 min read</span>
+    </div>
+    <h2>Context DAG: Version-Controlled Reasoning for AI Agents</h2>
+    <p>Code has Git. Agent reasoning usually has a disappearing chat window. h5i stores OBSERVE, THINK, ACT, NOTE, branches, merges, and checkpoints as shared context.</p>
+  </a>
+
+  <a class="post-card" href="pr-body-ai-code-review.html">
+    <div class="card-meta">
+      <span>Feature · Review</span>
+      <span>2026-05-24</span>
+      <span>6 min read</span>
+    </div>
+    <h2>The AI Pull Request Body: h5i's Review Surface for Agent Work</h2>
+    <p>The PR body is one view of h5i's shared context: review focus, risk signals, reasoning highlights, tests, and provenance where reviewers already work.</p>
+  </a>
+
+  <a class="post-card" href="content-addressed-claims-agent-memory.html">
+    <div class="card-meta">
+      <span>Feature · Claims</span>
+      <span>2026-05-24</span>
+      <span>6 min read</span>
+    </div>
+    <h2>Content-Addressed Claims: Reusable Facts for AI Coding Agents</h2>
+    <p>Claims let agents reuse verified codebase facts without re-reading the same files every session. Facts stay live until their evidence changes.</p>
+  </a>
 
   <a class="post-card" href="cve-2026-33068-bypass-permissions-settings.html">
     <div class="card-meta">
