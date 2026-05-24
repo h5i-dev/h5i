@@ -147,11 +147,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Added ABSTRACT_INTERPRETER_IDEAS_V2.md with risk-directed alias analyzer designs and DSL-shaped pseudocode.
 - [x] Improved README hero and PR preview with rendered review brief, visual SVG artifact, compact DAG, and clearer star-focused positioning.
 - [x] edited assets/pr-demo.svg; edited README.md; Rewrote README hero card (lines 23-54): sharper headline ('A reviewer's bri…
+- [x] Rewrote README hero card (lines 23-54): sharper headline ('A reviewer's brief on every AI pull request'), added the miss…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-24 01:36 UTC] `improve-pr-style`: Rewrote README hero card (lines 23-54): sharper headline ('A reviewer's brief on every AI pull request'), added the miss…
 - [2026-05-23 23:10 UTC] `improve-pr-style`: edited assets/pr-demo.svg; edited README.md; Rewrote README hero card (lines 23-54): sharper headline ('A reviewer's bri…
 - [2026-05-23 20:50 UTC] `improve-pr-style`: Improved README hero and PR preview with rendered review brief, visual SVG artifact, compact DAG, and clearer star-focused positioning.
 - [2026-05-23 18:55 UTC] `improve-pr-style`: Added ABSTRACT_INTERPRETER_IDEAS_V2.md with risk-directed alias analyzer designs and DSL-shaped pseudocode.
