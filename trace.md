@@ -711,3 +711,4 @@ _[Checkpoint: 6a126752 — edited src/repository.rs; edited src/repository.rs; e
 _[Checkpoint: 6a127f88 — edited assets/h5i-concept.svg; edited assets/h5i-concept.svg; edited assets/h5i-concept.svg]_
 ---
 
+[04:45:24] OBSERVE: read README.md
