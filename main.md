@@ -155,11 +155,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited assets/h5i-concept.svg; edited README.md; edited README.md
 - [x] updated public HTML docs for current h5i CLI workflows and PR-review positioning
 - [x] polished docs command examples after CLI help verification
+- [x] recentered public docs on shared version-controlled context with PR as one presentation surface
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-24 15:27 UTC] `update-doc`: recentered public docs on shared version-controlled context with PR as one presentation surface
 - [2026-05-24 15:22 UTC] `update-doc`: polished docs command examples after CLI help verification
 - [2026-05-24 15:22 UTC] `update-doc`: updated public HTML docs for current h5i CLI workflows and PR-review positioning
 - [2026-05-24 05:07 UTC] `improve-pr-style`: edited assets/h5i-concept.svg; edited README.md; edited README.md
