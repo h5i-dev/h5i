@@ -76,6 +76,8 @@ Track the prompt, model names, and commit lineage.
 
 </br>
 
+---
+
 ## Install
 
 ```bash
@@ -87,6 +89,8 @@ Or build from source:
 ```bash
 cargo install --git https://github.com/Koukyosyumei/h5i h5i-core
 ```
+
+---
 
 ## 60-Second Flow
 
@@ -152,6 +156,8 @@ h5i share pull
 | `replay` | Mermaid reasoning DAG promoted above the fold. |
 | `minimal` | Quiet internal provenance with little presentation chrome. |
 
+---
+
 ## What h5i Records
 
 | Signal | Example |
@@ -163,6 +169,8 @@ h5i share pull
 | Test evidence | `cargo test`, `go test`, custom runner output |
 | Claims | Verified repo facts that auto-invalidate when files change |
 | Review signals | Credential leaks, duplicate code, blind edits, sensitive files |
+
+---
 
 ## What It Looks Like Locally
 
@@ -186,6 +194,8 @@ h5i serve        # http://localhost:7150
   <img src="./assets/screenshot_h5i_server.png" alt="h5i web dashboard showing AI commit timeline and context details" width="95%">
 </p>
 
+---
+
 ## Commands That Matter
 
 | Command | Use it for |
@@ -206,6 +216,8 @@ h5i serve        # http://localhost:7150
 | `h5i recall` | Read history: logs, blame, context, notes, claims, memory. |
 | `h5i audit` | Assess risk: review, scan, compliance, policy, vibe. |
 | `h5i share` | Publish: push, pull, PR comments, memory. |
+
+---
 
 ## Token Savings With Claims
 
@@ -230,6 +242,8 @@ Controlled experiment at N=10 trials per arm (`./scripts/experiment_claims.sh`),
 
 Full methodology and raw results: [scripts/experiment_claims_results.md](scripts/experiment_claims_results.md).
 
+---
+
 ## Storage Model
 
 h5i is a pure Git sidecar. It uses dedicated refs, so it does not pollute your working tree or normal branch graph.
@@ -242,6 +256,8 @@ h5i is a pure Git sidecar. It uses dedicated refs, so it does not pollute your w
 | `refs/h5i/checkpoints/<agent>` | Per-agent memory snapshots. |
 
 Because these are Git objects, they are content-addressed, deduplicated, pushable, fetchable, and survive `git gc`.
+
+---
 
 ## When To Use h5i
 
@@ -256,12 +272,16 @@ Use h5i when:
 
 You probably do not need h5i for tiny throwaway scripts.
 
+---
+
 ## Documentation
 
 - [Manual](MANUAL.md) - full command reference
 - [Tutorials](tutorials/) - guided workflows
 - [Blog](https://h5i.dev/blog/index.html) - design notes, audits, and case studies
 - [Website](https://h5i.dev/) - project overview
+
+---
 
 ## Contributing
 
@@ -274,6 +294,8 @@ High-impact contributions:
 - improve dashboard workflows for reviewers
 
 If the idea matters to you, starring the repo is the fastest way to help more AI-heavy teams find it.
+
+---
 
 ## License
 
