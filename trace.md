@@ -815,3 +815,9 @@ _[Checkpoint: 6a1318e3 — recentered public docs on shared version-controlled c
 [15:32:48] ACT: edited docs/index.html
 [15:32:48] OBSERVE: listed files under docs/_static/h5i-concept.svg
 [15:32:48] OBSERVE: searched docs/index.html
+
+
+---
+_[Checkpoint: 6a131a23 — swapped homepage hero visual to h5i concept diagram]_
+---
+
