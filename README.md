@@ -76,16 +76,6 @@ Track the prompt, model names, and commit lineage.
 
 </br>
 
-The context DAG shows how the work unfolded:
-
-```bash
-h5i recall context show
-```
-
-<p align="center">
-  <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
-</p>
-
 ## Install
 
 ```bash
@@ -175,6 +165,16 @@ h5i share pull
 | Review signals | Credential leaks, duplicate code, blind edits, sensitive files |
 
 ## What It Looks Like Locally
+
+The context DAG shows how the work unfolded:
+
+```bash
+h5i recall context show
+```
+
+<p align="center">
+  <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
+</p>
 
 The dashboard makes AI provenance browsable:
 
