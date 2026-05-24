@@ -20,7 +20,7 @@ It records what the agent was asked to do, which files it read and edited, what 
 <table>
 <tr>
 
-<td width="30%" valign="top">
+<td width="38%" valign="top">
 
 **A reviewer's brief on every AI pull request:**
 
@@ -30,10 +30,10 @@ h5i share pr post
 
 One sticky comment that reads like a triage note — verdict up top, full trail below:
 
-- 🧭 **Merge status** — ready, review-needed, or block-merge, from the branch's credential and duplicate-code scans
-- 🔎 **Review focus** — the files to open first, ranked by where the agent actually worked
-- ☑️ **Reviewer checklist** — concrete next steps for *this* diff, not boilerplate
-- 🧠 **Reasoning + provenance** — every OBSERVE / THINK / ACT step, plus per-commit prompt, model, agent, and tests — one expand away
+- **Merge status** — ready, review-needed, or block-merge, from the branch's credential and duplicate-code scans
+- **Review focus** — the files to open first, ranked by where the agent actually worked
+- **Reviewer checklist** — concrete next steps for *this* diff, not boilerplate
+- **Reasoning + provenance** — every OBSERVE / THINK / ACT step, plus per-commit prompt, model, agent, and tests — one expand away
 
 **Why it matters**
 
