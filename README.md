@@ -35,12 +35,6 @@ A single sticky comment acting as your team's triage note and context management
 - **Reviewer checklist** — concrete next steps for *this* diff, not boilerplate
 - **Reasoning + provenance** — every OBSERVE / THINK / ACT step, plus per-commit prompt, model, agent, and tests — one expand away
 
-**Why it matters**
-
-Reviewers know where to spend their attention without leaving GitHub — and without trusting the diff to explain itself.
-
-<sub>For AI-heavy repos, long-running agent work, security-sensitive changes, and agent-to-agent handoffs.</sub>
-
 <td width="62%" align="center">
 
 <img
