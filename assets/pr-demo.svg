@@ -1,5 +1,5 @@
-<svg width="900" height="1400" viewBox="0 0 900 1400" xmlns="http://www.w3.org/2000/svg">
-  <rect width="900" height="1400" fill="#0d1117"/>
+<svg width="774" height="1366" viewBox="88 28 774 1366" xmlns="http://www.w3.org/2000/svg">
+  <rect x="88" y="28" width="774" height="1366" fill="#0d1117"/>
 
   <style>
     .h1 { font: 700 24px Inter, Arial, sans-serif; fill:#f0f6fc; }
@@ -13,14 +13,7 @@
     .chip { font: 700 12px Inter, Arial, sans-serif; fill:#f0f6fc; }
   </style>
 
-  <!-- GitHub timeline gutter -->
-  <line x1="62" y1="86" x2="62" y2="1368" stroke="#30363d" stroke-width="2"/>
-  <circle cx="62" cy="64" r="28" fill="#161b22" stroke="#30363d"/>
-  <circle cx="62" cy="64" r="18" fill="#238636"/>
-  <text x="55" y="71" font-family="Arial" font-size="19" font-weight="700" fill="#ffffff">h</text>
-
   <!-- Comment container -->
-  <path d="M102 62 L88 72 L102 82 Z" fill="#161b22" stroke="#30363d"/>
   <rect x="102" y="42" width="746" height="1338" rx="8" fill="#0d1117" stroke="#30363d"/>
   <rect x="102" y="42" width="746" height="58" rx="8" fill="#161b22" stroke="#30363d"/>
   <rect x="103" y="88" width="744" height="14" fill="#161b22"/>

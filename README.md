@@ -20,12 +20,12 @@ It records what the agent was asked to do, which files it read and edited, what 
 <table>
 <tr>
 
-<td width="38%" valign="top">
+<td width="30%" valign="top">
 
 **A reviewer's brief on every AI pull request:**
 
 ```bash
-h5i share pr post --style review
+h5i share pr post
 ```
 
 One sticky comment that reads like a triage note — verdict up top, full trail below:
