@@ -53,6 +53,11 @@ The OBSERVE / THINK / ACT steps.
 
 Automated check for credential leaks, blind edits, and copy-pasted blocks.
 
+---
+**🤖 AI Provenance**
+
+Track the prompt, model names, and commit lineage.
+
 <td width="62%" align="center">
 
 <img
