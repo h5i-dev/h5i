@@ -821,3 +821,9 @@ _[Checkpoint: 6a1318e3 — recentered public docs on shared version-controlled c
 _[Checkpoint: 6a131a23 — swapped homepage hero visual to h5i concept diagram]_
 ---
 
+
+
+---
+_[Checkpoint: 6a131a54 — committed public docs refresh]_
+---
+
