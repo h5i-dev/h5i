@@ -28,21 +28,21 @@ It records what the agent was asked to do, which files it read and edited, what 
 h5i share pr post
 ```
 
-A single sticky comment acting as your team's triage note and context management:
+---
 
-**Merge status**
+**🧭 Merge status**
 
 ready, review-needed, or block-merge, from the branch's credential and duplicate-code scans
 
 ---
 
-**Review focus**
+**🔎 Review focus**
 
 the files to open first, ranked by where the agent actually worked
 
 ---
 
-**Reviewer checklist** 
+**📌 Reviewer checklist** 
 
 concrete next steps for *this* diff, not boilerplate
 
