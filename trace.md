@@ -634,3 +634,4 @@ _[Checkpoint: 6a121319 — Improved README hero and PR preview with rendered rev
 _[Checkpoint: 6a1233d9 — edited assets/pr-demo.svg; edited README.md; Rewrote README hero card (lines 23-54): sharper headline ('A reviewer's bri…]_
 ---
 
+[01:34:48] OBSERVE: read assets/pr-demo.svg
