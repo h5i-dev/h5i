@@ -158,11 +158,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] recentered public docs on shared version-controlled context with PR as one presentation surface
 - [x] swapped homepage hero visual to h5i concept diagram
 - [x] committed public docs refresh
+- [x] added feature blog posts for h5i context DAG, PR body, and content-addressed claims
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-24 15:39 UTC] `update-doc`: added feature blog posts for h5i context DAG, PR body, and content-addressed claims
 - [2026-05-24 15:33 UTC] `update-doc`: committed public docs refresh
 - [2026-05-24 15:32 UTC] `update-doc`: swapped homepage hero visual to h5i concept diagram
 - [2026-05-24 15:27 UTC] `update-doc`: recentered public docs on shared version-controlled context with PR as one presentation surface
