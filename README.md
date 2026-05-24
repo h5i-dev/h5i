@@ -53,6 +53,12 @@ Reviewers know where to spend their attention without leaving GitHub — and wit
 </tr>
 </table>
 
+The context DAG shows how the work unfolded:
+
+<p align="center">
+  <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
+</p>
+
 ## Install
 
 ```bash
@@ -151,12 +157,6 @@ h5i serve        # http://localhost:7150
 
 <p align="center">
   <img src="./assets/screenshot_h5i_server.png" alt="h5i web dashboard showing AI commit timeline and context details" width="95%">
-</p>
-
-The context DAG shows how the work unfolded:
-
-<p align="center">
-  <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
 </p>
 
 ## Commands That Matter
