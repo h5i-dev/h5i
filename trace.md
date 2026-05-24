@@ -796,3 +796,4 @@ _[Checkpoint: 6a1317cc — polished docs command examples after CLI help verific
 [15:27:27] OBSERVE: searched code for "AI"
 [15:27:27] ACT: edited docs/index.html
 [15:27:27] ACT: edited docs/workflows.html
+[15:27:27] ACT: edited docs/pitch.html
