@@ -839,3 +839,4 @@ _[Checkpoint: 6a131a54 — committed public docs refresh]_
 [15:39:26] ACT: edited docs/sitemap.xml
 [15:39:26] ACT: edited docs/blog/index.html
 [15:39:26] OBSERVE: searched docs/sitemap.xml for "docs/blog/index.html"
+[15:39:26] OBSERVE: searched context for "recall"
