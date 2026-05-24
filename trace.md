@@ -759,3 +759,4 @@ _[Checkpoint: 6a128785 — edited assets/h5i-concept.svg; edited README.md; edit
 [15:21:37] ACT: added docs/workflows.html
 [15:21:37] ACT: edited docs/blog/index.html
 [15:21:37] OBSERVE: searched docs/blog/*.html for "class=\"blog-nav\"|nav-links|Home</a>|Blog</a>|Manual""
+[15:21:37] ACT: edited docs/pitch.html
