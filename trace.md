@@ -837,3 +837,4 @@ _[Checkpoint: 6a131a54 — committed public docs refresh]_
 [15:39:26] ACT: added docs/blog/content-addressed-claims-agent-memory.html
 [15:39:26] ACT: edited docs/blog/index.html
 [15:39:26] ACT: edited docs/sitemap.xml
+[15:39:26] ACT: edited docs/blog/index.html
