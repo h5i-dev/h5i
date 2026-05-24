@@ -776,3 +776,4 @@ _[Checkpoint: 6a128785 — edited assets/h5i-concept.svg; edited README.md; edit
 [15:21:38] OBSERVE: searched docs/workflows.html for "docs/index.html"
 [15:22:12] NOTE: Updated docs homepage, pitch deck, blog index navigation, sitemap, and new workflows page around current capture/recall/audit/share usage.
 [15:22:22] OBSERVE: read docs/workflows.html
+[15:22:22] OBSERVE: read docs/index.html
