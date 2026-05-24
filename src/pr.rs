@@ -402,8 +402,8 @@ pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
 ///   2. 🔒 Credential-leak alert + table
 ///   3. 🔁 Duplicate-code alert + table
 ///   4. 🧠 Reasoning DAG — placement depends on style:
-///        Receipt/Detective/Minimal/Review: collapsible, below the fold
-///        Replay:                           rendered inside the hero, expanded
+///      Receipt/Detective/Minimal/Review: collapsible, below the fold
+///      Replay:                           rendered inside the hero, expanded
 ///   5. 📜 Per-commit provenance (collapsible if >5 AI commits)
 ///   6. Footer
 pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> Result<String> {
@@ -1363,7 +1363,7 @@ fn extract_swimlane_file(node: &TraceNode) -> Option<String> {
     if !matches!(node.kind.as_str(), "OBSERVE" | "ACT") {
         return None;
     }
-    let token = node.content.trim().split_whitespace().next_back()?;
+    let token = node.content.split_whitespace().next_back()?;
     if token.contains('/') {
         return Some(shorten_swimlane_path(token));
     }
@@ -2330,7 +2330,7 @@ mod tests {
 
     #[test]
     fn swimlanes_bucket_by_file_with_reasoning_first() {
-        let nodes = vec![
+        let nodes = [
             make_node("a1", "OBSERVE", "read src/foo.rs", &[]),
             make_node("a2", "THINK", "consider split", &["a1"]),
             make_node("a3", "ACT", "edited src/foo.rs", &["a2"]),
@@ -2364,7 +2364,7 @@ mod tests {
     #[test]
     fn swimlanes_compress_keeps_distinct_kinds_separate() {
         // READ → EDIT → READ on the same file must NOT collapse — kind alternates.
-        let nodes = vec![
+        let nodes = [
             make_node("r1", "OBSERVE", "read src/foo.rs", &[]),
             make_node("e1", "ACT", "edited src/foo.rs", &["r1"]),
             make_node("r2", "OBSERVE", "read src/foo.rs", &["e1"]),

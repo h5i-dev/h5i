@@ -1422,7 +1422,7 @@ impl H5iRepository {
                             Err(e) => {
                                 eprintln!(
                                     "  [intent-graph] Claude call failed for {}: {e}",
-                                    &short_oid
+                                    short_oid
                                 );
                                 let fallback = stored_prompt
                                     .clone()
@@ -1539,9 +1539,9 @@ impl H5iRepository {
                 style(&node.short_oid).blue().bold()
             };
             let intent_s = match node.intent_source.as_str() {
-                "analyzed" => style(format!("\"{}\"", &node.intent)).green().italic(),
-                "prompt"   => style(format!("\"{}\"", &node.intent)).cyan().italic(),
-                _          => style(format!("\"{}\"", &node.intent)).dim().italic(),
+                "analyzed" => style(format!("\"{}\"", node.intent)).green().italic(),
+                "prompt"   => style(format!("\"{}\"", node.intent)).cyan().italic(),
+                _          => style(format!("\"{}\"", node.intent)).dim().italic(),
             };
             let src_tag = match node.intent_source.as_str() {
                 "analyzed" => style("[Claude]").green().dim(),
