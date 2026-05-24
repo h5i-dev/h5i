@@ -809,3 +809,4 @@ _[Checkpoint: 6a1317cc — polished docs command examples after CLI help verific
 _[Checkpoint: 6a1318e3 — recentered public docs on shared version-controlled context with PR as one presentation surface]_
 ---
 
+[15:32:48] OBSERVE: listed files under assets/h5i-concept.svg
