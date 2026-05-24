@@ -53,6 +53,8 @@ Reviewers know where to spend their attention without leaving GitHub — and wit
 </tr>
 </table>
 
+</br>
+
 The context DAG shows how the work unfolded:
 
 <p align="center">
