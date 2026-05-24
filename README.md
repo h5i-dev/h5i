@@ -57,6 +57,10 @@ Reviewers know where to spend their attention without leaving GitHub — and wit
 
 The context DAG shows how the work unfolded:
 
+```bash
+h5i recall context show
+```
+
 <p align="center">
   <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
 </p>
