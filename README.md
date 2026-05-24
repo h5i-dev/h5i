@@ -12,13 +12,13 @@
   <a href="https://github.com/Koukyosyumei/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Koukyosyumei/h5i?style=social"></a>
 </p>
 
-h5i is an open source Git sidecar that turns AI coding sessions into reviewable pull-request provenance.
+h5i gives Claude, Codex, and your other AI coding agents a **shared, versioned context**. It records what each agent was asked to do, which files it read and edited, what it decided, what it skipped, and which risks reviewers should inspect first — then versions that context alongside your code, so the next agent picks up exactly where the last one left off.
 
 <p align="center">
   <img src="./assets/h5i-concept.svg" alt="h5i context DAG view" width="95%">
 </p>
 
-It records what the agent was asked to do, which files it read and edited, what it decided, what it skipped, and which risks reviewers should inspect first.
+When a branch is ready for review, h5i surfaces all of it where reviewers already work — on the pull request.
 
 
 <table>
