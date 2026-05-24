@@ -846,3 +846,4 @@ _[Checkpoint: 6a131a54 — committed public docs refresh]_
 _[Checkpoint: 6a131bbe — added feature blog posts for h5i context DAG, PR body, and content-addressed claims]_
 ---
 
+[15:44:58] OBSERVE: listed files under assets/claims-merkle.svg
