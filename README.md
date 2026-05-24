@@ -29,37 +29,29 @@ h5i share pr post
 ```
 
 ---
-**🧭 Merge status**
-
-ready, review-needed, or block-merge
-
----
 **🔎 Review focus**
 
-the files to open first, ranked by where the agent actually worked
+The exact files to open first, ranked by where the agent spent its actual compute.
 
 ---
-** Evidence**
+**🎯 Goal & Intent**
 
-TODOs
-
----
-** Goal**
-
-TODOs
+The core objective the agent was tasked to solve, plus its active milestones.
 
 ---
-**📌 Reviewer checklist** 
+**📌 Reviewer checklist**
 
-concrete next steps for *this* diff
-
----
-** Reasoning**
-
-TODO
+Actionable verification steps tailored for this specific diff, not boilerplate.
 
 ---
-** Security and Duplicated Code**
+**🧠 Reasoning**
+
+The chronological trail of OBSERVE / THINK / ACT steps and test evidence.
+
+---
+**🛡️ Security & Duplicated Code**
+
+Automated screening for credential leaks, blind edits, and copy-pasted blocks.
 
 TODO
 
