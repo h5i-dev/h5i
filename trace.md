@@ -783,3 +783,4 @@ _[Checkpoint: 6a128785 — edited assets/h5i-concept.svg; edited README.md; edit
 _[Checkpoint: 6a1317ae — updated public HTML docs for current h5i CLI workflows and PR-review positioning]_
 ---
 
+[15:22:52] OBSERVE: searched |<|$)" for "[a-z][a-z-]*("
