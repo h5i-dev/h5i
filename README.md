@@ -29,7 +29,7 @@ h5i share pr post
 ```
 
 ---
-**🔎 Review focus**
+**🔎 Review focus** 
 
 The exact files to open first, ranked by where the agent spent its actual compute.
 
@@ -52,8 +52,6 @@ The chronological trail of OBSERVE / THINK / ACT steps and test evidence.
 **🛡️ Security & Duplicated Code**
 
 Automated screening for credential leaks, blind edits, and copy-pasted blocks.
-
-TODO
 
 <td width="62%" align="center">
 
