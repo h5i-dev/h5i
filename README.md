@@ -29,28 +29,39 @@ h5i share pr post
 ```
 
 ---
-
 **🧭 Merge status**
 
-ready, review-needed, or block-merge, from the branch's credential and duplicate-code scans
+ready, review-needed, or block-merge
 
 ---
-
 **🔎 Review focus**
 
 the files to open first, ranked by where the agent actually worked
 
 ---
+** Evidence**
 
-**📌 Reviewer checklist** 
-
-concrete next steps for *this* diff, not boilerplate
+TODOs
 
 ---
+** Goal**
 
-**Reasoning + provenance**
+TODOs
 
-every OBSERVE / THINK / ACT step, plus per-commit prompt, model, agent
+---
+**📌 Reviewer checklist** 
+
+concrete next steps for *this* diff
+
+---
+** Reasoning**
+
+TODO
+
+---
+** Security and Duplicated Code**
+
+TODO
 
 <td width="62%" align="center">
 
