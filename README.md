@@ -36,7 +36,7 @@ The exact files to open first, ranked by where the agent spent its compute.
 ---
 **🎯 Goal & Intent**
 
-The core objective the agent was tasked to solve.
+The goal agents were tasked to solve.
 
 ---
 **📌 Reviewer checklist**
