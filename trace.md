@@ -886,3 +886,9 @@ _[Checkpoint: 6a13202a — committed h5i feature blog posts]_
 _[Checkpoint: 6a132115 — documented gh requirement for README PR posting workflow]_
 ---
 
+
+
+---
+_[Checkpoint: 6a1321b6 — committed README gh requirement update]_
+---
+
