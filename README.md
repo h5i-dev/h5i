@@ -14,6 +14,10 @@
 
 h5i is an open source Git sidecar that turns AI coding sessions into reviewable pull-request provenance.
 
+<p align="center">
+  <img src="./assets/h5i-concept.svg" alt="h5i context DAG view" width="95%">
+</p>
+
 It records what the agent was asked to do, which files it read and edited, what it decided, what it skipped, and which risks reviewers should inspect first.
 
 
