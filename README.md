@@ -46,12 +46,12 @@ Actionable verification steps tailored for this specific diff.
 ---
 **🧠 Reasoning**
 
-The trail of OBSERVE / THINK / ACT steps.
+The OBSERVE / THINK / ACT steps.
 
 ---
 **🛡️ Security & Duplicated Code**
 
-Automated screening for credential leaks, blind edits, and copy-pasted blocks.
+Automated check for credential leaks, blind edits, and copy-pasted blocks.
 
 <td width="62%" align="center">
 
