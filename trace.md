@@ -835,3 +835,4 @@ _[Checkpoint: 6a131a54 — committed public docs refresh]_
 [15:39:26] ACT: added docs/blog/context-dag-versioned-agent-reasoning.html
 [15:39:26] ACT: added docs/blog/pr-body-ai-code-review.html
 [15:39:26] ACT: added docs/blog/content-addressed-claims-agent-memory.html
+[15:39:26] ACT: edited docs/blog/index.html
