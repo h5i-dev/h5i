@@ -31,22 +31,22 @@ h5i share pr post
 ---
 **🔎 Review focus** 
 
-The exact files to open first, ranked by where the agent spent its actual compute.
+The exact files to open first, ranked by where the agent spent its compute.
 
 ---
 **🎯 Goal & Intent**
 
-The core objective the agent was tasked to solve, plus its active milestones.
+The core objective the agent was tasked to solve.
 
 ---
 **📌 Reviewer checklist**
 
-Actionable verification steps tailored for this specific diff, not boilerplate.
+Actionable verification steps tailored for this specific diff.
 
 ---
 **🧠 Reasoning**
 
-The chronological trail of OBSERVE / THINK / ACT steps and test evidence.
+The trail of OBSERVE / THINK / ACT steps.
 
 ---
 **🛡️ Security & Duplicated Code**
