@@ -865,3 +865,9 @@ _[Checkpoint: 6a131cfd — added feature figures to PR body and claims blog post
 
 [15:53:21] ACT: edited docs/blog/context-dag-versioned-agent-reasoning.html
 [15:53:21] OBSERVE: searched docs/blog/context-dag-versioned-agent-reasoning.html
+
+
+---
+_[Checkpoint: 6a131ef5 — added concept figure to context DAG blog post]_
+---
+
