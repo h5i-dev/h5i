@@ -665,3 +665,9 @@ _[Checkpoint: 6a125d62 — edited src/repository.rs; edited src/repository.rs; e
 ---
 
 [02:49:54] NOTE: DEFERRAL (~/Dev/h5i/src/pr.rs): ommit these clippy fixes (with the README/SVG work, or as a separate commit)
+
+
+---
+_[Checkpoint: 6a126752 — edited src/repository.rs; edited src/repository.rs; edited src/pr.rs]_
+---
+
