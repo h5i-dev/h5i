@@ -422,6 +422,13 @@ enum PrCommands {
         #[arg(short, long, default_value_t = 25)]
         limit: usize,
 
+        /// Hero block layout: `receipt` (default — scannable summary block),
+        /// `review` (reviewer-first triage brief), `detective` (narrative:
+        /// goal → considered → key insight → shipped), or `replay`
+        /// (DAG-as-hero with milestone markers).
+        #[arg(long, value_enum, default_value_t = PrStyleArg::Receipt)]
+        style: PrStyleArg,
+
         /// Print the markdown body and exit without calling `gh`
         #[arg(long)]
         dry_run: bool,
@@ -432,7 +439,32 @@ enum PrCommands {
         /// Limit number of commits included
         #[arg(short, long, default_value_t = 25)]
         limit: usize,
+
+        /// Hero block layout — see `h5i share pr post --help` for options.
+        #[arg(long, value_enum, default_value_t = PrStyleArg::Receipt)]
+        style: PrStyleArg,
     },
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum PrStyleArg {
+    Receipt,
+    Review,
+    Detective,
+    Replay,
+    Minimal,
+}
+
+impl From<PrStyleArg> for h5i_core::pr::PrStyle {
+    fn from(s: PrStyleArg) -> Self {
+        match s {
+            PrStyleArg::Receipt => h5i_core::pr::PrStyle::Receipt,
+            PrStyleArg::Review => h5i_core::pr::PrStyle::Review,
+            PrStyleArg::Detective => h5i_core::pr::PrStyle::Detective,
+            PrStyleArg::Replay => h5i_core::pr::PrStyle::Replay,
+            PrStyleArg::Minimal => h5i_core::pr::PrStyle::Minimal,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -2090,18 +2122,18 @@ fn main() -> anyhow::Result<()> {
         }
 
         Commands::Pr { action } => match action {
-            PrCommands::Post { number, limit, dry_run } => {
+            PrCommands::Post { number, limit, style, dry_run } => {
                 let workdir = std::env::current_dir()?;
-                let body = h5i_core::pr::render_body(&workdir, limit)?;
+                let body = h5i_core::pr::render_body_with_style(&workdir, limit, style.into())?;
                 if dry_run {
                     println!("{}", body);
                     return Ok(());
                 }
                 h5i_core::pr::post_comment(&workdir, number, &body)?;
             }
-            PrCommands::Body { limit } => {
+            PrCommands::Body { limit, style } => {
                 let workdir = std::env::current_dir()?;
-                let body = h5i_core::pr::render_body(&workdir, limit)?;
+                let body = h5i_core::pr::render_body_with_style(&workdir, limit, style.into())?;
                 println!("{}", body);
             }
         },

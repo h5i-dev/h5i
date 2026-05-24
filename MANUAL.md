@@ -398,8 +398,8 @@ Publish provenance to teammates and PRs.
 ### h5i share pr
 
 ```
-h5i share pr post [--number N] [--limit N] [--dry-run]
-h5i share pr body [--limit N]
+h5i share pr post [--number N] [--limit N] [--style STYLE] [--dry-run]
+h5i share pr body [--limit N] [--style STYLE]
 ```
 
 Posts or previews a sticky GitHub PR comment summarising h5i provenance for
@@ -415,11 +415,29 @@ The comment renders, for each AI commit:
 - structured `--decisions` if recorded at commit time
 - a 🚩 flag with `h5i audit review` triggers (uncertainty, blind edits, churn, scope) when the commit crosses the review threshold
 
+**Hero block styles (`--style`)**
+
+The top of the comment — the part that fits in a screenshot — switches between
+the layouts below. The audit sections below the fold (secrets, duplicates,
+reasoning DAG, per-commit provenance) stay shared across styles, except
+`replay`, which promotes the DAG above the fold.
+
+| Style | When to use |
+|-------|-------------|
+| `receipt` (default) | Punchline H1 headline (`# 🪙 60% AI-authored · 12.3k tokens · ~$0.04 · 8 files`), goal in a native `[!IMPORTANT]` callout, centered HTML stat card (6 cells), the triggering prompt promoted to its own section, then cleaned milestone list. Optimised for screenshot / social share. |
+| `review` | Reviewer-first triage brief: merge status, review-focus files, evidence line, goal, a short reviewer checklist, then compact THINK/NOTE highlights. Keeps the Mermaid DAG collapsed below the audit sections. |
+| `detective` | Narrative arc: 🎯 goal callout → 📊 by the numbers → 🧭 considered (from `--decisions`) → 💡 key insight (latest THINK) → 🚢 shipped (cleaned milestones). Reads like a mini blog post. |
+| `replay` | Mermaid reasoning swim-lane DAG promoted above the fold (expanded), with a goal callout and stats line above and an arrow-separated milestone trail below. |
+| `minimal` | Quiet variant for routine internal PRs that want h5i provenance without the marketing flourish. Same data, no H1 headline, no stat table, no dollar figures, no callouts beyond audit alerts. |
+
 ```bash
-h5i share pr post              # upsert sticky comment (needs `gh auth login`)
-h5i share pr post --dry-run    # render to stdout without calling gh
-h5i share pr body --limit 25   # render markdown to stdout (for CI / `gh pr edit --body-file -`)
-h5i share pr post --number 42  # target a specific PR (default: auto-detect from current branch)
+h5i share pr post                          # upsert sticky comment (needs `gh auth login`)
+h5i share pr post --dry-run                # render to stdout without calling gh
+h5i share pr body --limit 25               # render markdown to stdout (for CI / `gh pr edit --body-file -`)
+h5i share pr post --number 42              # target a specific PR (default: auto-detect from current branch)
+h5i share pr body --style review           # preview the reviewer-triage layout
+h5i share pr body --style detective        # preview the narrative layout
+h5i share pr post --style replay --dry-run # preview the DAG-as-hero layout
 ```
 
 **Requirements**

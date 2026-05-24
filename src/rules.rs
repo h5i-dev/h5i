@@ -745,6 +745,61 @@ fn check_config_file_modified(ctx: &DiffContext) -> Vec<RuleFinding> {
         .collect()
 }
 
+/// True when `path` points at a test or spec file across the languages we
+/// commonly see in h5i-tracked repos. Used exclusively by
+/// [`check_duplicated_code`] to suppress its findings on test scaffolding.
+///
+/// Why not extend the secrets allowlist instead? Secret scanning *must* still
+/// run on test files because tests routinely leak real credentials by accident
+/// (hard-coded API keys, `.env` files committed under `tests/fixtures/`, …).
+/// Duplicate-code suppression is a UX preference, not a security stance.
+fn is_test_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    // Prepend "/" so a contains() check matches both repo-relative and
+    // absolute paths uniformly (`tests/foo.rs` and `/abs/tests/foo.rs`).
+    let buf = if normalized.starts_with('/') {
+        normalized
+    } else {
+        format!("/{normalized}")
+    };
+    let lower = buf.to_ascii_lowercase();
+
+    // Test directory layouts across languages. Anchored with leading and
+    // trailing `/` so a file or dir literally named `test` (without a parent)
+    // doesn't false-match.
+    const TEST_DIRS: &[&str] = &[
+        "/tests/",
+        "/test/",
+        "/__tests__/",
+        "/spec/",
+        "/specs/",
+        "/e2e/",
+    ];
+    if TEST_DIRS.iter().any(|d| lower.contains(d)) {
+        return true;
+    }
+
+    // Test file conventions. Basename-only so `crates/foo/src/bar_test.rs`
+    // matches the same way as `src/bar_test.rs`.
+    let basename = lower.rsplit('/').next().unwrap_or(&lower);
+    const TEST_FILE_SUFFIXES: &[&str] = &[
+        "_test.rs", "_tests.rs",
+        "_test.go",
+        ".test.js", ".test.ts", ".test.tsx", ".test.jsx",
+        ".spec.js", ".spec.ts", ".spec.tsx", ".spec.jsx",
+        "_spec.rb",
+        "_test.py",
+    ];
+    if TEST_FILE_SUFFIXES.iter().any(|s| basename.ends_with(s)) {
+        return true;
+    }
+    // Python pytest convention: `test_<name>.py`.
+    if basename.starts_with("test_") && basename.ends_with(".py") {
+        return true;
+    }
+    false
+}
+
 /// DUPLICATED_CODE — Warning
 ///
 /// Flags chunks of identical code copy-pasted inside the same change. Targets
@@ -774,6 +829,15 @@ fn check_duplicated_code(ctx: &DiffContext) -> Vec<RuleFinding> {
         // generated code, lockfiles, vendored). Reuse the secrets allowlist
         // since it already covers these patterns precisely.
         if crate::secrets::is_path_allowlisted(&cf.path) {
+            continue;
+        }
+        // Skip test files. Repeating identical setup blocks
+        // (`Repo::new(); git init; …` or `take_snapshot(h5i, workdir, …)`) is
+        // idiomatic in unit/integration tests across every language we care
+        // about; flagging them generates noise rather than actionable signal.
+        // Distinct from the secrets allowlist: real tests can still leak
+        // credentials, so secret scanning still runs against them.
+        if is_test_path(&cf.path) {
             continue;
         }
 
@@ -1147,5 +1211,112 @@ mod tests {
         all.extend(block.iter().copied());
         let c = dup_ctx(all, &["Cargo.lock"]);
         assert!(check_duplicated_code(&c).is_empty());
+    }
+
+    #[test]
+    fn duplicated_code_skips_test_files() {
+        // A 10-line block repeated twice — would normally fire — but lives
+        // in a test path, so the rule must stay quiet. Covers each test
+        // layout we claim to support: Rust integration `tests/`, Rust unit
+        // `_test.rs` suffix, Python `test_*.py`, JS `.test.ts`, and the
+        // `__tests__/` directory convention.
+        let block: Vec<&str> = vec![
+            "fn handle_request(req: Request) -> Response {",
+            "    let user = lookup_user(&req)?;",
+            "    let perms = load_perms(user.id)?;",
+            "    if !perms.can_read {",
+            "        return Response::forbidden();",
+            "    }",
+            "    let data = fetch_data(&req)?;",
+            "    let serialized = serde_json::to_string(&data)?;",
+            "    Response::ok(serialized)",
+            "}",
+        ];
+        let make_lines = || {
+            let mut all = block.clone();
+            all.extend(block.iter().copied());
+            all
+        };
+        for path in [
+            "tests/cli_integration.rs",
+            "crates/foo/tests/runner.rs",
+            "src/handler_test.rs",
+            "pkg/api/handler_test.go",
+            "tests/test_handler.py",
+            "src/foo/test_handler.py",
+            "web/src/handler.test.ts",
+            "web/src/handler.test.tsx",
+            "src/handler.spec.js",
+            "web/src/__tests__/handler.ts",
+            "spec/handler_spec.rb",
+        ] {
+            let c = dup_ctx(make_lines(), &[path]);
+            assert!(
+                check_duplicated_code(&c).is_empty(),
+                "duplicate rule must skip test path: {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn duplicated_code_still_fires_on_non_test_paths() {
+        // Sanity: the test-path skip must not over-match. `src/server.rs`,
+        // `src/test_utils.rs` (a production helper, not a test), and a path
+        // whose name merely contains `test` as a substring must still scan.
+        let block: Vec<&str> = vec![
+            "fn handle_request(req: Request) -> Response {",
+            "    let user = lookup_user(&req)?;",
+            "    let perms = load_perms(user.id)?;",
+            "    if !perms.can_read {",
+            "        return Response::forbidden();",
+            "    }",
+            "    let data = fetch_data(&req)?;",
+            "    let serialized = serde_json::to_string(&data)?;",
+            "    Response::ok(serialized)",
+            "}",
+        ];
+        let make_lines = || {
+            let mut all = block.clone();
+            all.extend(block.iter().copied());
+            all
+        };
+        for path in [
+            "src/server.rs",
+            "src/test_utils.rs",       // a `test_utils` module IS production code
+            "src/contest_runner.rs",   // substring "test" inside a normal name
+        ] {
+            let c = dup_ctx(make_lines(), &[path]);
+            assert!(
+                !check_duplicated_code(&c).is_empty(),
+                "duplicate rule must still flag non-test path: {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_test_path_recognises_layouts_we_claim() {
+        for p in [
+            "tests/foo.rs",
+            "/repo/tests/foo.rs",
+            "src/foo_test.rs",
+            "src/foo_tests.rs",
+            "pkg/foo_test.go",
+            "web/src/foo.test.ts",
+            "web/src/__tests__/foo.ts",
+            "spec/foo_spec.rb",
+            "tests/test_foo.py",
+            "e2e/scenario.spec.ts",
+        ] {
+            assert!(is_test_path(p), "expected test path: {p}");
+        }
+        for p in [
+            "src/server.rs",
+            "src/test_utils.rs",
+            "src/contest_runner.rs",
+            "Cargo.toml",
+            "README.md",
+        ] {
+            assert!(!is_test_path(p), "expected non-test path: {p}");
+        }
     }
 }

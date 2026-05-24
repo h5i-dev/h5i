@@ -1,7 +1,5 @@
 # h5i
 
-> Git provenance, memory, and audit trails for AI-generated code.
-
 <p align="center">
   <a href="https://github.com/Koukyosyumei/h5i" target="_blank">
     <img src="./assets/logo.svg" alt="h5i logo" height="126">
@@ -14,75 +12,93 @@
   <a href="https://github.com/Koukyosyumei/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Koukyosyumei/h5i?style=social"></a>
 </p>
 
+h5i gives Claude, Codex, and your other AI coding agents a **shared, versioned context**. It records what each agent was asked to do, which files it read and edited, what it decided, what it skipped, and which risks reviewers should inspect first — then versions that context alongside your code, so the next agent picks up exactly where the last one left off.
+
 <p align="center">
-  <strong>Claude Code and Codex can write code. h5i remembers why they wrote it.</strong>
+  <img src="./assets/h5i-concept.svg" alt="h5i context DAG view" width="95%">
 </p>
 
-`h5i` (pronounced "high-five") is a Git sidecar for AI-era development. It captures the prompt, model, file reads, edits, decisions, TODOs, and context behind each change, then stores that context in dedicated Git refs next to your code.
+When a branch is ready for review, h5i surfaces all of it where reviewers already work — on the pull request.
 
-If you use coding agents, star this repo to track the tool that makes their work reviewable, resumable, and auditable.
+
+<table>
+<tr>
+
+<td width="38%" valign="top">
+
+**The AI Pull Request Brief:**
+
+```bash
+h5i share pr post
+```
+
+---
+**🔎 Review focus** 
+
+The exact files to open first, ranked by where the agent spent its compute.
+
+---
+**🎯 Goal & Intent**
+
+The goal agents were tasked to solve.
+
+---
+**📌 Reviewer checklist**
+
+Actionable verification steps tailored for this specific diff.
+
+---
+**🧠 Reasoning**
+
+The OBSERVE / THINK / ACT steps.
+
+---
+**🛡️ Security & Duplicated Code**
+
+Automated check for credential leaks, blind edits, and copy-pasted blocks.
+
+---
+**🤖 AI Provenance**
+
+Track the prompt, model names, and commit lineage.
+
+<td width="62%" align="center">
+
+<img
+  src="assets/pr-demo.svg"
+  alt="h5i review brief"
+  width="100%"
+/>
+</td>
+
+</tr>
+</table>
+
+</br>
+
+---
+
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh | sh
 ```
 
+Or build from source:
+
 ```bash
-# Or build from source
 cargo install --git https://github.com/Koukyosyumei/h5i h5i-core
 ```
 
-<p align="center">
-  <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
-</p>
+---
 
-## Why Developers Star h5i
+## 60-Second Flow
 
-- **See the prompt behind a commit.** `h5i capture commit` attaches agent, model, prompt, token usage, test result, and reasoning notes to Git history.
-- **Resume long AI tasks without amnesia.** `h5i recall context` restores goals, milestones, OBSERVE / THINK / ACT traces, branch decisions, and open TODOs at the start of the next session. **Hooks derive the trace from your transcript — the agent never types `h5i context trace --kind …` by hand.**
-- **Stop re-reading the whole repo.** `h5i capture claim` records content-addressed facts that auto-invalidate when their evidence files change. In a controlled N=10 experiment, claims cut cache-read tokens by **68.6%**.
-- **Review AI code where risk is highest — without alert fatigue.** `h5i audit review` separates **Quality** signals (credential leaks via a 10-rule regex pack inspired by gitleaks, code-execution sinks, blind edits, test regressions, duplicated code, …) from **Shape** signals (large diff, wide impact, polyglot) and only flags commits on a PR when a real Quality signal fires. Shape rules are surfaced as informational context, never the sole reason for a 🚩.
-- **Surface provenance on the PR.** `h5i share pr post` upserts a sticky GitHub PR comment with prompt + model + decisions + test metrics + review flags per AI commit — reviewers see the context exactly where they're already looking.
-- **Audit inherited repos in seconds.** `h5i audit vibe` reports AI footprint, fully AI-written directories, leaked-token signals, and prompt-injection hits.
-- **Stay in Git.** h5i metadata is stored as first-class Git objects under `refs/h5i/*`, not in a SaaS silo.
-
-## Command Groups
-
-`h5i` organises its verbs around four nouns. Run `h5i <noun> --help` for the verb table.
-
-| Noun | Use it for |
-|---|---|
-| `h5i capture` | Record provenance: `commit`, `claim`, `memory` snapshot. |
-| `h5i recall` | Read history: `log`, `blame`, `diff`, `context`, `claims`, `notes`, `memory`, `recap`, `resume`, `vibe`. |
-| `h5i audit` | Assess risk: `review`, `scan`, `compliance`, `policy`, `vibe`. |
-| `h5i share` | Publish: `push`, `pull`, `pr`, `memory`. |
-
-The legacy top-level forms (`h5i commit`, `h5i log`, `h5i push`, …) still work and emit a one-line deprecation hint pointing at the new form.
-
-## The Problem
-
-Git tells you what changed. It does not tell you:
-
-- who prompted the AI to make the change
-- what files the agent read before editing
-- what assumptions it made
-- what it skipped, deferred, or felt uncertain about
-- whether a future agent can safely continue the work
-- which AI-generated commits deserve the most human review
-
-h5i adds that missing layer without replacing Git.
-
-## 60-Second Start
-
-Run this inside an existing Git repository:
+Initialize h5i in an existing Git repo:
 
 ```bash
 h5i init
 ```
-
-That creates `.git/.h5i/` and appends h5i usage instructions to the agent files your tools already read:
-
-- `CLAUDE.md` plus `.claude/h5i.md` for Claude Code
-- `AGENTS.md` for Codex
 
 For Claude Code hooks and MCP tools:
 
@@ -90,15 +106,15 @@ For Claude Code hooks and MCP tools:
 h5i hook setup
 ```
 
-For Codex:
+For Codex sessions:
 
 ```bash
-h5i codex prelude                  # restore shared context at session start
-h5i codex sync                     # backfill file reads and edits while working
-h5i codex finish --summary "..."   # checkpoint the session
+h5i codex prelude
+h5i codex sync
+h5i codex finish --summary "implemented retry-aware API client"
 ```
 
-Commit with provenance:
+Commit with AI provenance:
 
 ```bash
 h5i capture commit -m "switch session store to Redis" \
@@ -107,11 +123,12 @@ h5i capture commit -m "switch session store to Redis" \
   --prompt "sessions need to survive process restarts"
 ```
 
-Surface provenance on the PR:
+Post the PR review brief:
 
 ```bash
-h5i share pr post              # upsert a sticky GitHub PR comment
-h5i share pr body --limit 25   # render the markdown to stdout for CI use
+h5i share pr post --style review      # upsert sticky PR comment
+h5i share pr body --style review      # render markdown for CI
+h5i share pr post --style replay      # make the Mermaid DAG the hero
 ```
 
 Sync h5i sidecar refs with teammates:
@@ -121,27 +138,53 @@ h5i share push
 h5i share pull
 ```
 
-## What It Looks Like
+### Our Choices
 
-When a new session starts, h5i gives the agent a compact handoff instead of a blank slate:
+- **The pull request is the product** - reviewers should see AI risk, intent, and evidence where they already work.
+- **Recorded, not guessed** - h5i stores prompts, model metadata, file observations, decisions, tests, and risk signals instead of trying to infer intent from a diff.
+- **Git-native sidecar refs** - provenance lives in `refs/h5i/*`, separate from your working tree and pushable with your repo.
+- **Context survives handoff** - branch goals, milestones, TODOs, and OBSERVE / THINK / ACT traces can be restored by the next agent.
+- **Review signals should lead** - credential leaks, duplicate code, blind edits, and sensitive files are surfaced before the full audit trail.
 
-```text
-[h5i] Context workspace active - prior reasoning follows.
+### PR Body Styles
 
-  branch=main  goal=Build an OAuth2 login system
-  milestones=3  commits=7  trace_lines=142+12
+| Style | Best for |
+|---|---|
+| `review` | Default reviewer-friendly brief: triage first, reasoning highlights last, DAG collapsed. |
+| `receipt` | Screenshot-friendly provenance card with punchline stats. |
+| `detective` | Narrative: goal, numbers, considered alternatives, key insight, shipped work. |
+| `replay` | Mermaid reasoning DAG promoted above the fold. |
+| `minimal` | Quiet internal provenance with little presentation chrome. |
 
-  m0: [x] Initial setup
-  m1: [x] GitHub provider integration
-  m2: [ ] Token refresh flow
+---
 
-[h5i] Last decisions & actions:
-  [14:02] THINK: 40 MB overhead acceptable; Redis survives process restarts
-  [14:03] ACT:   switched session store to Redis in src/session.rs
-  [14:05] NOTE:  TODO: integration test for failover path
+## What h5i Records
+
+| Signal | Example |
+|---|---|
+| Prompt | `sessions need to survive process restarts` |
+| Model + agent | `claude-sonnet-4-6` via `claude-code` |
+| File observations | `OBSERVE src/pr.rs` before editing PR output |
+| Reasoning traces | `THINK`, `NOTE`, TODOs, risks, deferrals |
+| Test evidence | `cargo test`, `go test`, custom runner output |
+| Claims | Verified repo facts that auto-invalidate when files change |
+| Review signals | Credential leaks, duplicate code, blind edits, sensitive files |
+
+---
+
+## What It Looks Like Locally
+
+The context DAG shows how the work unfolded:
+
+```bash
+h5i recall context show
 ```
 
-The dashboard makes that provenance browsable:
+<p align="center">
+  <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
+</p>
+
+The dashboard makes AI provenance browsable:
 
 ```bash
 h5i serve        # http://localhost:7150
@@ -151,38 +194,41 @@ h5i serve        # http://localhost:7150
   <img src="./assets/screenshot_h5i_server.png" alt="h5i web dashboard showing AI commit timeline and context details" width="95%">
 </p>
 
-## Core Commands
+---
+
+## Commands That Matter
 
 | Command | Use it for |
 |---|---|
-| `h5i recall context` | Versioned agent reasoning: goal, milestones, OBSERVE / THINK / ACT traces, branch context, TODOs, restore points. |
-| `h5i capture commit` | Git commit plus AI provenance: prompt, model, agent, token usage, tests, decisions, and policy metadata. |
-| `h5i capture claim` / `h5i recall claims` | Content-addressed reusable facts that future sessions can trust until evidence files change. |
-| `h5i recall notes` | Per-commit review signals: exploration footprint, uncertainty, blind edits, churn, omissions. |
-| `h5i audit review` | Rank commits by uncertainty, blind edits, churn, and scope — triage funnel before merging. |
-| `h5i audit vibe` | Fast audit of an inherited repo's AI footprint and risk signals. |
-| `h5i audit compliance` | Text, JSON, or HTML audit report across a date range. |
-| `h5i recall blame` | Line or AST-level blame annotated with AI provenance. |
-| `h5i recall memory` / `h5i share memory` | Snapshot, diff, restore, push, and pull Claude or Codex memory state. |
-| `h5i share pr post` | Sticky GitHub PR comment with h5i provenance per AI commit. |
-| `h5i serve` | Local web dashboard for commits, context, integrity, refs, and memory. |
+| `h5i share pr post --style review` | Post the sticky reviewer-first PR body. |
+| `h5i capture commit` | Commit code with prompt, model, tests, decisions, and provenance. |
+| `h5i recall context` | Restore branch goals, milestones, reasoning traces, and TODOs. |
+| `h5i capture claim` | Save verified repo facts that auto-invalidate when evidence changes. |
+| `h5i audit review` | Find commits that deserve extra human attention. |
+| `h5i audit vibe` | Audit an inherited repo's AI footprint and risk signals. |
+| `h5i serve` | Open the local provenance dashboard. |
+
+`h5i` organizes commands around four nouns:
+
+| Noun | Use it for |
+|---|---|
+| `h5i capture` | Record provenance: commits, claims, memory snapshots. |
+| `h5i recall` | Read history: logs, blame, context, notes, claims, memory. |
+| `h5i audit` | Assess risk: review, scan, compliance, policy, vibe. |
+| `h5i share` | Publish: push, pull, PR comments, memory. |
+
+---
 
 ## Token Savings With Claims
 
-Agents burn tokens rediscovering facts they already proved in earlier sessions. `h5i capture claim` records those facts with the exact evidence files that support them:
+Agents waste tokens rediscovering facts they already proved. `h5i capture claim` records a fact with the exact evidence files that support it:
 
 ```bash
 h5i capture claim "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
   --path src/api/client.py
-
-h5i recall claims --group-by-path
 ```
 
-Each claim is hashed over `(path, blob_oid)` evidence. If an evidence file changes, the claim becomes stale and stops being injected into future context.
-
-<p align="center">
-  <img src="./assets/claims-merkle.svg" alt="A claim is backed by evidence paths and git blob OIDs, so edits auto-invalidate stale facts" width="95%">
-</p>
+If an evidence file changes, the claim becomes stale and stops being injected into future context.
 
 Controlled experiment at N=10 trials per arm (`./scripts/experiment_claims.sh`), single model `claude-opus-4-7`, MCP server mounted, fidelity 10/10 in every arm:
 
@@ -196,114 +242,37 @@ Controlled experiment at N=10 trials per arm (`./scripts/experiment_claims.sh`),
 
 Full methodology and raw results: [scripts/experiment_claims_results.md](scripts/experiment_claims_results.md).
 
-## AI Review And Audit
+---
 
-Find commits that need human attention:
-
-```bash
-h5i audit review --limit 50
-```
-
-Each commit gets two scores:
-
-- **Quality score** — high-precision rules: `CREDENTIAL_LEAK` (10-rule regex pack covering AWS, GCP, GitHub, Slack, Stripe, Anthropic, OpenAI, JWT, PEM keys, plus an entropy-gated generic catch-all with a global path allowlist for lockfiles/vendor/binaries/fixtures), `CODE_EXECUTION`, `BLIND_EDIT`, `CI_CD_MODIFIED`, `PERMISSION_CHANGE`, `SENSITIVE_FILE_MODIFIED`, `TEST_REGRESSION`, `DUPLICATED_CODE`, `MASS_DELETION`, `BINARY_FILE`, `AI_NO_PROMPT`. The PR comment 🚩 fires only on this score.
-- **Shape score** — informational: `LARGE_DIFF`, `WIDE_IMPACT`, `CROSS_CUTTING`, `BURST_AFTER_GAP`, `POLYGLOT_CHANGE`, `UNTESTED_CHANGE`. Shown as supporting context when a Quality signal fires; never the sole reason for a flag.
-
-Scan reasoning traces for prompt-injection patterns:
-
-```bash
-h5i audit scan
-```
-
-```text
--- h5i context scan -------------------------------- main
-  risk score  1.00  (48 lines scanned, 2 hit(s))
-
-  HIGH line 31  [override_instructions]  ignore all previous instructions
-  HIGH line 31  [exfiltration_attempt]   reveal the system prompt
-```
-
-Generate an audit report:
-
-```bash
-h5i audit compliance --since 2026-01-01 --until 2026-03-31 \
-  --format html --output audit.html
-```
-
-Audit any repo you inherit:
-
-```bash
-h5i audit vibe
-```
-
-## Share Provenance on the PR
-
-`h5i share pr post` posts a sticky GitHub PR comment with prompt, model, decisions, test metrics, and review flags for every AI commit on the current branch. Re-runs upsert in place via an HTML marker — no comment spam.
-
-```bash
-h5i share pr post              # upsert (needs `gh auth login`)
-h5i share pr body --limit 25   # render markdown to stdout (for CI)
-h5i share pr post --dry-run    # preview without calling gh
-```
-
-Reviewers see the AI context where they already are — on the PR — instead of having to clone and run `h5i recall log`.
-
-## How h5i Stores Data
+## Storage Model
 
 h5i is a pure Git sidecar. It uses dedicated refs, so it does not pollute your working tree or normal branch graph.
 
 | Ref | What lives there |
 |---|---|
 | `refs/h5i/notes` | Per-commit metadata: model, agent, prompt, tokens, tests, decisions, risk signals. |
-| `refs/h5i/context` | The reasoning workspace as a DAG: goal, milestones, trace, branches, restores. |
+| `refs/h5i/context` | The reasoning workspace as a DAG: goal, milestones, traces, branches, restores. |
 | `refs/h5i/ast` | AST snapshots for structural blame and semantic diffs. |
 | `refs/h5i/checkpoints/<agent>` | Per-agent memory snapshots. |
 
 Because these are Git objects, they are content-addressed, deduplicated, pushable, fetchable, and survive `git gc`.
 
-```bash
-git for-each-ref refs/h5i/
-```
-
-## Claude Code Integration
-
-`h5i hook setup` prints the configuration for:
-
-| Hook | What it captures |
-|---|---|
-| `SessionStart` | Prior goal, milestones, decisions, TODOs, and live claims. |
-| `UserPromptSubmit` | The user prompt, so `h5i capture commit` can infer it. |
-| `PostToolUse` | Reads → OBSERVE trace entries. Edits/Writes → ACT trace entries. |
-| `Stop` | **Mines the Claude session transcript for THINK / NOTE entries** (key decisions, deferrals, placeholders, unfulfilled promises), then auto-checkpoints the context milestone. |
-
-The agent never needs to call `h5i context trace --kind …` by hand — the trace is derived. The MCP server exposes native tools such as `h5i_log`, `h5i_blame`, `h5i_context_trace`, `h5i_context_commit`, and `h5i_claims_add`.
-
-## Codex Integration
-
-`h5i init` appends the repo-local `AGENTS.md` instructions Codex needs. The explicit workflow is:
-
-```bash
-h5i codex prelude                  # restore prior context at session start
-h5i context init --goal "<one-line task summary>"   # once per Git branch
-h5i context relevant <file>        # before a non-trivial edit
-h5i codex sync                     # mid-session — auto-traces OBSERVE/ACT from the JSONL
-h5i codex finish --summary "..."   # at milestone — sync + checkpoint
-```
-
-`h5i codex sync` reads the active Codex JSONL session and derives file reads, searches, listings, and patch edits into the context DAG — no manual trace calls needed.
+---
 
 ## When To Use h5i
 
 Use h5i when:
 
 - AI agents write production code in your repo
-- code review needs to know what the agent saw before editing
+- reviewers need to know what the agent saw before editing
 - long tasks span multiple sessions or multiple agents
-- regulated or security-sensitive work needs provenance
-- you want future agents to reuse verified facts instead of rediscovering them
+- security-sensitive work needs provenance
+- future agents should reuse verified facts instead of rediscovering them
 - you inherit a repo and need a fast AI-risk map
 
 You probably do not need h5i for tiny throwaway scripts.
+
+---
 
 ## Documentation
 
@@ -312,17 +281,21 @@ You probably do not need h5i for tiny throwaway scripts.
 - [Blog](https://h5i.dev/blog/index.html) - design notes, audits, and case studies
 - [Website](https://h5i.dev/) - project overview
 
+---
+
 ## Contributing
 
 High-impact contributions:
 
 - try h5i on a real AI-assisted repo and file issues with confusing moments
-- improve Claude Code and Codex integrations
+- improve PR-body presentation and GitHub reviewer workflows
 - add adapters for more test runners and agent tools
 - harden prompt-injection and compliance rules
 - improve dashboard workflows for reviewers
 
 If the idea matters to you, starring the repo is the fastest way to help more AI-heavy teams find it.
+
+---
 
 ## License
 
