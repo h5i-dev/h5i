@@ -644,3 +644,4 @@ _[Checkpoint: 6a1233d9 — edited assets/pr-demo.svg; edited README.md; Rewrote 
 _[Checkpoint: 6a125607 — Rewrote README hero card (lines 23-54): sharper headline ('A reviewer's brief on every AI pull request'), added the miss…]_
 ---
 
+[02:05:34] OBSERVE: read src/pr.rs
