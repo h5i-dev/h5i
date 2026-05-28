@@ -171,11 +171,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Compared agmsg architecture and identified portable ideas for h5i: delivery modes, team identity, inbox-style handoffs, script/skill packaging, and no-daemon local operation.
 - [x] wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…
 - [x] wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…
+- [x] Reviewed h5i msg prototype; verified cargo check and unit tests pass, msg integration test currently fails on --as/--as-agent mismatch; identified cursor and concurrent-send risks.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-28 22:09 UTC] `communication`: Reviewed h5i msg prototype; verified cargo check and unit tests pass, msg integration test currently fails on --as/--as-agent mismatch; identified cursor and concurrent-send risks.
 - [2026-05-28 21:56 UTC] `communication`: wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…
 - [2026-05-28 21:52 UTC] `communication`: wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…
 - [2026-05-28 21:51 UTC] `communication`: Compared agmsg architecture and identified portable ideas for h5i: delivery modes, team identity, inbox-style handoffs, script/skill packaging, and no-daemon local operation.
