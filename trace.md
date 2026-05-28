@@ -959,3 +959,9 @@ _[Checkpoint: 6a18a528 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 _[Checkpoint: 6a18b8e1 — Compared agmsg architecture and identified portable ideas for h5i: delivery modes, team identity, inbox-style handoffs, script/skill packaging, and no-daemon local operation.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a18b90f — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…]_
+---
+
