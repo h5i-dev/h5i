@@ -951,3 +951,4 @@ _[Checkpoint: 6a18a528 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 [21:51:14] OBSERVE: read scripts/check-inbox.sh
 [21:51:14] OBSERVE: searched web/src for "src"
 [21:51:25] THINK: Borrow agmsg's lightweight delivery-mode and identity UX ideas over embedding its SQLite inbox wholesale because h5i's durable surface is git-versioned context, not ephemeral chat.
+[21:51:25] OBSERVE: read src/codex.rs
