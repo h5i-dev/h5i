@@ -73,6 +73,10 @@ pub struct Message {
     pub to: String,
     /// Message body (free text).
     pub body: String,
+    /// Optional classification (e.g. `review`, `risk`, `reply`) used for
+    /// colour and grouping in the UI. Absent on older messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
 }
 
 impl Message {
@@ -128,6 +132,7 @@ pub fn send(
     from: &str,
     to: &str,
     body: &str,
+    tag: Option<&str>,
 ) -> Result<Message, H5iError> {
     validate_name(from)?;
     validate_name(to)?;
@@ -140,6 +145,7 @@ pub fn send(
         from: from.to_string(),
         to: to.to_string(),
         body: body.to_string(),
+        tag: tag.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
     };
 
     // Append one line to the log. Read the current blob fresh so we extend the
@@ -241,6 +247,76 @@ pub fn team(repo: &Repository) -> Vec<(String, String)> {
 /// Count messages currently unread by `me` (does not advance the cursor).
 pub fn unread_count(repo: &Repository, h5i_root: &Path, me: &str) -> Result<usize, H5iError> {
     Ok(inbox(repo, h5i_root, me, false)?.len())
+}
+
+/// Look up a single message by id.
+pub fn get_message(repo: &Repository, id: &str) -> Option<Message> {
+    read_messages(repo).into_iter().find(|m| m.id == id)
+}
+
+/// Snapshot of the message ref for the dashboard's "GIT PROOF" band.
+#[derive(Debug, Clone)]
+pub struct Stats {
+    /// Total messages in the log.
+    pub total: usize,
+    /// Short OID of the ref tip, if the ref exists.
+    pub tip: Option<String>,
+    /// Unix seconds of the tip commit time, if the ref exists.
+    pub tip_time: Option<i64>,
+}
+
+/// Read the message-ref tip stats without loading message bodies twice.
+pub fn stats(repo: &Repository) -> Stats {
+    let total = read_messages(repo).len();
+    let (tip, tip_time) = match repo
+        .find_reference(MSG_REF)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+    {
+        Some(commit) => {
+            let oid = commit.id().to_string();
+            (Some(oid[..7.min(oid.len())].to_string()), Some(commit.time().seconds()))
+        }
+        None => (None, None),
+    };
+    Stats { total, tip, tip_time }
+}
+
+/// Persist the ordered ids shown in the most recent numbered view, so
+/// `h5i msg reply <n>` can resolve a number back to a message. Scoped to the
+/// viewing agent so a reply can't accidentally target another agent's view.
+pub fn write_last_view(h5i_root: &Path, agent: &str, ids: &[String]) -> Result<(), H5iError> {
+    let dir = msg_dir(h5i_root);
+    std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+    let view = LastView {
+        agent: agent.to_string(),
+        ids: ids.to_vec(),
+    };
+    let json = serde_json::to_string_pretty(&view)?;
+    let path = last_view_path(h5i_root);
+    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, path))
+}
+
+/// Resolve a 1-based number from the last numbered view into a message id,
+/// verifying it belongs to `agent`'s view. Returns `None` when there is no
+/// view, the agent differs, or `n` is out of range.
+pub fn resolve_view_number(h5i_root: &Path, agent: &str, n: usize) -> Option<String> {
+    let view = read_last_view(h5i_root)?;
+    if view.agent != agent || n == 0 || n > view.ids.len() {
+        return None;
+    }
+    Some(view.ids[n - 1].clone())
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LastView {
+    agent: String,
+    ids: Vec<String>,
+}
+
+fn read_last_view(h5i_root: &Path) -> Option<LastView> {
+    let raw = std::fs::read_to_string(last_view_path(h5i_root)).ok()?;
+    serde_json::from_str(&raw).ok()
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -366,6 +442,10 @@ fn identity_path(h5i_root: &Path) -> PathBuf {
 
 fn cursor_path(h5i_root: &Path) -> PathBuf {
     msg_dir(h5i_root).join("cursor.json")
+}
+
+fn last_view_path(h5i_root: &Path) -> PathBuf {
+    msg_dir(h5i_root).join("last_view.json")
 }
 
 fn read_cursors(h5i_root: &Path) -> Result<CursorStore, H5iError> {
@@ -552,8 +632,8 @@ mod tests {
     fn send_then_inbox_delivers_and_advances_cursor() {
         let (_d, repo, root) = fixture();
 
-        send(&repo, &root, "alice", "bob", "hello bob").unwrap();
-        send(&repo, &root, "alice", "bob", "second").unwrap();
+        send(&repo, &root, "alice", "bob", "hello bob", None).unwrap();
+        send(&repo, &root, "alice", "bob", "second", None).unwrap();
 
         let first = inbox(&repo, &root, "bob", true).unwrap();
         assert_eq!(first.len(), 2);
@@ -565,7 +645,7 @@ mod tests {
         assert!(second.is_empty());
 
         // A new message after the watermark shows up.
-        send(&repo, &root, "alice", "bob", "third").unwrap();
+        send(&repo, &root, "alice", "bob", "third", None).unwrap();
         let third = inbox(&repo, &root, "bob", true).unwrap();
         assert_eq!(third.len(), 1);
         assert_eq!(third[0].body, "third");
@@ -574,7 +654,7 @@ mod tests {
     #[test]
     fn peek_does_not_advance_cursor() {
         let (_d, repo, root) = fixture();
-        send(&repo, &root, "alice", "bob", "ping").unwrap();
+        send(&repo, &root, "alice", "bob", "ping", None).unwrap();
 
         let peek = inbox(&repo, &root, "bob", false).unwrap();
         assert_eq!(peek.len(), 1);
@@ -587,8 +667,8 @@ mod tests {
     #[test]
     fn inbox_only_shows_messages_addressed_to_me() {
         let (_d, repo, root) = fixture();
-        send(&repo, &root, "alice", "bob", "for bob").unwrap();
-        send(&repo, &root, "alice", "carol", "for carol").unwrap();
+        send(&repo, &root, "alice", "bob", "for bob", None).unwrap();
+        send(&repo, &root, "alice", "carol", "for carol", None).unwrap();
 
         let bob = inbox(&repo, &root, "bob", false).unwrap();
         assert_eq!(bob.len(), 1);
@@ -598,7 +678,7 @@ mod tests {
     #[test]
     fn broadcast_reaches_everyone_but_sender() {
         let (_d, repo, root) = fixture();
-        send(&repo, &root, "alice", BROADCAST, "standup in 5").unwrap();
+        send(&repo, &root, "alice", BROADCAST, "standup in 5", None).unwrap();
 
         assert_eq!(inbox(&repo, &root, "bob", false).unwrap().len(), 1);
         assert_eq!(inbox(&repo, &root, "carol", false).unwrap().len(), 1);
@@ -609,9 +689,9 @@ mod tests {
     #[test]
     fn history_filters_by_participant_and_limit() {
         let (_d, repo, root) = fixture();
-        send(&repo, &root, "alice", "bob", "1").unwrap();
-        send(&repo, &root, "bob", "alice", "2").unwrap();
-        send(&repo, &root, "carol", "dave", "3").unwrap();
+        send(&repo, &root, "alice", "bob", "1", None).unwrap();
+        send(&repo, &root, "bob", "alice", "2", None).unwrap();
+        send(&repo, &root, "carol", "dave", "3", None).unwrap();
 
         let all = history(&repo, None, 10).unwrap();
         assert_eq!(all.len(), 3);
@@ -627,7 +707,7 @@ mod tests {
     #[test]
     fn roster_records_participants() {
         let (_d, repo, root) = fixture();
-        send(&repo, &root, "alice", "bob", "hi").unwrap();
+        send(&repo, &root, "alice", "bob", "hi", None).unwrap();
         let names: Vec<String> = team(&repo).into_iter().map(|(n, _)| n).collect();
         assert!(names.contains(&"alice".to_string()));
         assert!(names.contains(&"bob".to_string()));
@@ -658,6 +738,58 @@ mod tests {
     }
 
     #[test]
+    fn tag_is_persisted_and_round_trips() {
+        let (_d, repo, root) = fixture();
+        send(&repo, &root, "alice", "bob", "look here", Some("review")).unwrap();
+        let m = &inbox(&repo, &root, "bob", false).unwrap()[0];
+        assert_eq!(m.tag.as_deref(), Some("review"));
+    }
+
+    #[test]
+    fn empty_tag_is_normalised_to_none() {
+        let (_d, repo, root) = fixture();
+        send(&repo, &root, "alice", "bob", "x", Some("  ")).unwrap();
+        let m = &inbox(&repo, &root, "bob", false).unwrap()[0];
+        assert_eq!(m.tag, None);
+    }
+
+    #[test]
+    fn last_view_resolves_numbers_for_the_right_agent() {
+        let (_d, repo, root) = fixture();
+        let m1 = send(&repo, &root, "alice", "bob", "first", None).unwrap();
+        let m2 = send(&repo, &root, "alice", "bob", "second", None).unwrap();
+
+        write_last_view(&root, "bob", &[m1.id.clone(), m2.id.clone()]).unwrap();
+        assert_eq!(resolve_view_number(&root, "bob", 1).as_deref(), Some(m1.id.as_str()));
+        assert_eq!(resolve_view_number(&root, "bob", 2).as_deref(), Some(m2.id.as_str()));
+        // Out of range and wrong-agent both yield None.
+        assert_eq!(resolve_view_number(&root, "bob", 3), None);
+        assert_eq!(resolve_view_number(&root, "carol", 1), None);
+        assert_eq!(resolve_view_number(&root, "bob", 0), None);
+    }
+
+    #[test]
+    fn get_message_finds_by_id() {
+        let (_d, repo, root) = fixture();
+        let m = send(&repo, &root, "alice", "bob", "find me", None).unwrap();
+        assert_eq!(get_message(&repo, &m.id).unwrap().body, "find me");
+        assert!(get_message(&repo, "nope").is_none());
+    }
+
+    #[test]
+    fn stats_report_total_and_tip() {
+        let (_d, repo, root) = fixture();
+        assert_eq!(stats(&repo).total, 0);
+        assert!(stats(&repo).tip.is_none());
+        send(&repo, &root, "alice", "bob", "one", None).unwrap();
+        send(&repo, &root, "alice", "bob", "two", None).unwrap();
+        let st = stats(&repo);
+        assert_eq!(st.total, 2);
+        assert!(st.tip.is_some());
+        assert!(st.tip_time.is_some());
+    }
+
+    #[test]
     fn union_merge_deduplicates_and_orders() {
         let shared = Message {
             id: "shared00".into(),
@@ -665,6 +797,7 @@ mod tests {
             from: "alice".into(),
             to: "bob".into(),
             body: "shared".into(),
+            tag: None,
         };
         let only_a = Message {
             id: "aaaa0001".into(),
@@ -672,6 +805,7 @@ mod tests {
             from: "alice".into(),
             to: "bob".into(),
             body: "from-a".into(),
+            tag: None,
         };
         let only_b = Message {
             id: "bbbb0001".into(),
@@ -679,6 +813,7 @@ mod tests {
             from: "carol".into(),
             to: "bob".into(),
             body: "from-b".into(),
+            tag: None,
         };
 
         let merged = merge_message_sets(
@@ -699,11 +834,11 @@ mod tests {
         let (_d, repo, root) = fixture();
 
         // Common base.
-        send(&repo, &root, "alice", "bob", "base").unwrap();
+        send(&repo, &root, "alice", "bob", "base", None).unwrap();
         let base = repo.refname_to_id(MSG_REF).unwrap();
 
         // Local tip: append one message.
-        send(&repo, &root, "alice", "bob", "local-only").unwrap();
+        send(&repo, &root, "alice", "bob", "local-only", None).unwrap();
         let local = repo.refname_to_id(MSG_REF).unwrap();
 
         // Build a divergent "incoming" tip from the base by committing a
@@ -716,6 +851,7 @@ mod tests {
             from: "carol".into(),
             to: "bob".into(),
             body: "incoming-only".into(),
+            tag: None,
         };
         let incoming_log =
             format!("{}{}\n", base_log, serde_json::to_string(&incoming_msg).unwrap());

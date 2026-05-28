@@ -223,6 +223,62 @@ h5i serve        # http://localhost:7150
 
 ---
 
+## Agent Radio — messaging that survives clones
+
+`h5i msg` is a cross-agent message channel stored **in Git**, not in a local
+database. Because the log lives in `refs/h5i/msg`, a conversation survives
+clones, machines, and branches — it travels with `h5i share push` / `pull`,
+and divergent sends from two machines **union-merge** with no message lost.
+
+Bare `h5i msg` opens the inbox dashboard:
+
+```text
+┌─ H5I AGENT RADIO ──────────────────────────────────────────────────────┐
+│ repo h5i   branch communication   agent codex   unread 2               │
+├─ INBOX — 2 unread ─────────────────────────────────────────────────────┤
+│  1 22:14  claude → codex  [review] #25d2d86b3944ad9a                   │
+│      Please review the auth refactor before I open the PR              │
+│  2 22:16  reviewer → codex  [risk] #3a8f63268e9f3d44                   │
+│      Check token refresh behavior after h5i pull                       │
+├─ GIT PROOF ────────────────────────────────────────────────────────────┤
+│ ref refs/h5i/msg · 34 messages · tip #c6d2c03 · last activity 14s ago  │
+└────────────────────────────────────────────────────────────────────────┘
+  actions:  reply <n> "…"   send <agent> "…"   watch   history
+```
+
+The two-terminal demo:
+
+```bash
+# Terminal 1 — Claude requests a review
+h5i msg as claude
+h5i msg send --tag review codex Review branch auth-refactor before I open the PR
+h5i share push
+
+# Terminal 2 — Codex is listening
+h5i msg as codex
+h5i share pull
+h5i msg watch            # live "agent radio" — new messages stream in
+h5i msg reply 1 Found a stale refresh-token cache in src/auth.rs:88
+h5i share push
+```
+
+| Command | Use it for |
+|---|---|
+| `h5i msg` | Inbox dashboard (header · inbox · Git proof). |
+| `h5i msg as <name>` | Set this repo's agent identity. |
+| `h5i msg send <agent> <text>` | Send a message (`--tag review\|risk`, `all` to broadcast). |
+| `h5i msg reply <n> <text>` | Reply to a numbered message from your last view. |
+| `h5i msg watch` | Live stream of incoming messages. |
+| `h5i msg history` / `team` | Full log / known agents. |
+
+Add `--plain` to any read command for greppable, uncoloured output (hooks and
+scripts). For turn-by-turn delivery inside Claude Code, register
+`h5i msg hook --as <name>` as a Stop hook (`h5i hook setup` prints the snippet).
+
+> Agent messaging that survives clones, machines, and branches — because it is stored in Git.
+
+---
+
 ## Token Savings With Claims
 
 Agents waste tokens rediscovering facts they already proved. `h5i capture claim` records a fact with the exact evidence files that support it:
@@ -258,6 +314,7 @@ h5i is a pure Git sidecar. It uses dedicated refs, so it does not pollute your w
 | `refs/h5i/context` | The reasoning workspace as a DAG: goal, milestones, traces, branches, restores. |
 | `refs/h5i/ast` | AST snapshots for structural blame and semantic diffs. |
 | `refs/h5i/checkpoints/<agent>` | Per-agent memory snapshots. |
+| `refs/h5i/msg` | Cross-agent message log (append-only, union-merged on pull). |
 
 Because these are Git objects, they are content-addressed, deduplicated, pushable, fetchable, and survive `git gc`.
 

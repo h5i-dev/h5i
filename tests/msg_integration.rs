@@ -191,6 +191,72 @@ fn divergent_sends_union_merge_on_pull_without_loss() {
 }
 
 #[test]
+fn as_sets_identity_so_later_commands_need_no_flag() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "as", "codex"]);
+    // whoami reflects it
+    let who = out_str(&a.h5i_ok(&["msg", "whoami"]));
+    assert!(who.contains("codex"), "whoami: {who}");
+    // send without --from uses the stored identity
+    a.h5i_ok(&["msg", "send", "claude", "ready"]);
+    let hist = out_str(&a.h5i_ok(&["msg", "history", "--plain"]));
+    assert!(hist.contains("codex -> claude"), "history: {hist}");
+}
+
+#[test]
+fn bare_msg_renders_dashboard_with_git_proof() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "as", "codex"]);
+    a.h5i_ok(&["msg", "send", "--from", "claude", "codex", "review the PR"]);
+
+    let dash = out_str(&a.h5i_ok(&["msg"]));
+    assert!(dash.contains("AGENT RADIO"), "no header band: {dash}");
+    assert!(dash.contains("GIT PROOF"), "no git-proof band: {dash}");
+    assert!(dash.contains("refs/h5i/msg"), "no ref in proof: {dash}");
+    assert!(dash.contains("review the PR"), "message missing: {dash}");
+
+    // The dashboard is a glance — it must NOT consume unread.
+    let inbox = out_str(&a.h5i_ok(&["msg", "inbox", "--as", "codex"]));
+    assert!(inbox.contains("review the PR"), "dashboard consumed unread: {inbox}");
+}
+
+#[test]
+fn reply_targets_the_numbered_senders() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "as", "codex"]);
+    a.h5i_ok(&["msg", "send", "--from", "claude", "codex", "ping one"]);
+    a.h5i_ok(&["msg", "send", "--from", "reviewer", "codex", "ping two"]);
+
+    // Populate the numbered view, then reply to #2 (from "reviewer").
+    a.h5i_ok(&["msg", "inbox", "--as", "codex"]);
+    a.h5i_ok(&["msg", "reply", "2", "answering reviewer"]);
+
+    let conv = out_str(&a.h5i_ok(&["msg", "history", "--with", "reviewer", "--plain"]));
+    assert!(
+        conv.contains("codex -> reviewer\t\tanswering reviewer"),
+        "reply did not target reviewer: {conv}"
+    );
+}
+
+#[test]
+fn reply_without_a_view_fails_clearly() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "as", "codex"]);
+    let out = a.h5i(&["msg", "reply", "1", "nothing to reply to"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("last view"));
+}
+
+#[test]
+fn tag_survives_the_round_trip() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "send", "--from", "lead", "--tag", "risk", "dev", "token cache is stale"]);
+    let plain = out_str(&a.h5i_ok(&["msg", "history", "--plain"]));
+    // plain history column 4 is the tag.
+    assert!(plain.contains("\trisk\t"), "tag missing in plain output: {plain}");
+}
+
+#[test]
 fn hook_emits_unread_then_clears() {
     let (_root, a, _b) = two_clones();
     a.h5i_ok(&["msg", "send", "--from", "lead", "dev", "review", "the", "PR"]);

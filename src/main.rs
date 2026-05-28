@@ -17,25 +17,271 @@ use h5i_core::repository::H5iRepository;
 use h5i_core::review::REVIEW_THRESHOLD;
 use h5i_core::ui::{ERROR, LOOKING, STEP, SUCCESS, WARN};
 
-/// Render a list of messages for `h5i msg inbox` / `history`. When `viewer`
-/// is non-empty, messages sent by the viewer are tagged so a conversation is
-/// easy to follow; pass `""` for a neutral history view.
-fn print_messages(msgs: &[msg::Message], viewer: &str) {
-    for m in msgs {
-        let when = m.ts.split('.').next().unwrap_or(&m.ts).replace('T', " ");
-        let arrow = if !viewer.is_empty() && m.from == viewer {
-            style(format!("{} → {}", m.from, m.to)).dim()
+/// Interior width of the agent-radio box.
+const RADIO_W: usize = 74;
+
+/// Colour an agent → agent arrow by direction relative to `viewer`:
+/// green when the viewer sent it, cyan when it is incoming. An empty
+/// `viewer` (history view) renders everything neutral-cyan.
+fn arrow(from: &str, to: &str, viewer: &str) -> String {
+    let pair = format!("{from} → {to}");
+    if !viewer.is_empty() && from == viewer {
+        style(pair).green().to_string()
+    } else {
+        style(pair).cyan().to_string()
+    }
+}
+
+/// Colour a message tag: review/risk requests are yellow (attention), other
+/// tags purple. Returns an empty string when there is no tag.
+fn tag_badge(tag: &Option<String>) -> String {
+    match tag.as_deref() {
+        None | Some("") => String::new(),
+        Some(t) => {
+            let styled = if matches!(t, "review" | "risk" | "review-request") {
+                style(format!("[{t}]")).yellow().bold()
+            } else {
+                style(format!("[{t}]")).magenta()
+            };
+            format!("{styled} ")
+        }
+    }
+}
+
+/// `HH:MM` portion of an RFC3339 timestamp (falls back to the raw value).
+fn hhmm(ts: &str) -> String {
+    ts.split('T')
+        .nth(1)
+        .and_then(|t| t.get(0..5))
+        .unwrap_or(ts)
+        .to_string()
+}
+
+/// Compact "14s" / "3m" / "2h" / "5d" relative age from a unix timestamp.
+fn rel_age(unix_secs: i64) -> String {
+    let now = chrono::Utc::now().timestamp();
+    let d = (now - unix_secs).max(0);
+    if d < 60 {
+        format!("{d}s")
+    } else if d < 3600 {
+        format!("{}m", d / 60)
+    } else if d < 86_400 {
+        format!("{}h", d / 3600)
+    } else {
+        format!("{}d", d / 86_400)
+    }
+}
+
+/// Print numbered messages (oldest-first) for inbox / history / dashboard.
+/// `viewer` colours direction; `plain` emits tab-separated, uncoloured lines
+/// for scripts and hooks. Numbers are 1-based and line up with the ids the
+/// caller persists for `h5i msg reply`.
+fn print_messages_numbered(msgs: &[msg::Message], viewer: &str, plain: bool) {
+    for (i, m) in msgs.iter().enumerate() {
+        let n = i + 1;
+        if plain {
+            let tag = m.tag.as_deref().unwrap_or("");
+            println!("{n}\t{}\t{} -> {}\t{}\t{}", m.ts, m.from, m.to, tag, m.body);
+            continue;
+        }
+        let bcast = if m.to == msg::BROADCAST {
+            style(" BROADCAST").yellow().bold().to_string()
         } else {
-            style(format!("{} → {}", m.from, m.to)).cyan()
+            String::new()
         };
         println!(
-            "  {} {}  {}",
-            arrow,
-            style(format!("[{}]", &m.id)).dim(),
-            style(when).dim()
+            "  {} {}  {}{}  {}{}",
+            style(format!("{n:>2}")).bold(),
+            style(hhmm(&m.ts)).dim(),
+            arrow(&m.from, &m.to, viewer),
+            bcast,
+            tag_badge(&m.tag),
+            style(format!("#{}", &m.id)).dim(),
         );
-        println!("    {}", m.body);
+        println!("       {}", m.body);
     }
+}
+
+// ── agent-radio box drawing ────────────────────────────────────────────────
+
+/// Draw a band border with an embedded title (`l`/`r` are the corner glyphs).
+fn radio_border(l: char, r: char, title: &str) {
+    let tw = console::measure_text_width(title);
+    let fill = RADIO_W.saturating_sub(tw + 5); // l + "─ " + title + " " + r
+    println!(
+        "{}─ {} {}{}",
+        style(l).dim(),
+        style(title).cyan().bold(),
+        style("─".repeat(fill)).dim(),
+        style(r).dim(),
+    );
+}
+
+/// One content row inside the box, padded to the right border. Content may be
+/// coloured; visible width is measured so the border stays aligned.
+fn radio_row(content: &str) {
+    let inner = RADIO_W - 4;
+    let w = console::measure_text_width(content);
+    let pad = inner.saturating_sub(w);
+    println!(
+        "{} {}{} {}",
+        style('│').dim(),
+        content,
+        " ".repeat(pad),
+        style('│').dim()
+    );
+}
+
+fn radio_bottom() {
+    println!("{}", style(format!("└{}┘", "─".repeat(RADIO_W - 2))).dim());
+}
+
+/// Render the bare `h5i msg` dashboard: HEADER / INBOX / GIT PROOF bands plus
+/// an ACTIONS footer. `me` is the resolved identity, or `None` when unset.
+fn render_dashboard(
+    repo: &H5iRepository,
+    branch: &str,
+    me: Option<&str>,
+    plain: bool,
+) -> anyhow::Result<()> {
+    let git = repo.git();
+    let h5i_root = &repo.h5i_root;
+    let st = msg::stats(git);
+
+    // The view we number for `reply`: unread first, else the recent tail.
+    let (band_title, view): (String, Vec<msg::Message>) = match me {
+        Some(m) => {
+            let unread = msg::inbox(git, h5i_root, m, false)?; // peek — glancing never consumes
+            if unread.is_empty() {
+                let recent = msg::history(git, None, 5)?;
+                ("RECENT".to_string(), recent)
+            } else {
+                (format!("INBOX — {} unread", unread.len()), unread)
+            }
+        }
+        None => ("INBOX".to_string(), Vec::new()),
+    };
+    if let Some(m) = me {
+        let ids: Vec<String> = view.iter().map(|x| x.id.clone()).collect();
+        msg::write_last_view(h5i_root, m, &ids)?;
+    }
+
+    if plain {
+        println!(
+            "agent {} branch {} unread {}",
+            me.unwrap_or("-"),
+            branch,
+            if matches!(band_title.as_str(), "RECENT" | "INBOX") { 0 } else { view.len() }
+        );
+        print_messages_numbered(&view, me.unwrap_or(""), true);
+        println!(
+            "git {} total={} tip={}",
+            msg::MSG_REF,
+            st.total,
+            st.tip.as_deref().unwrap_or("-")
+        );
+        return Ok(());
+    }
+
+    let agent_disp = match me {
+        Some(m) => style(m).green().bold().to_string(),
+        None => style("unset").yellow().to_string(),
+    };
+    let unread_n = if band_title.starts_with("INBOX —") { view.len() } else { 0 };
+
+    // HEADER band
+    radio_border('┌', '┐', "H5I AGENT RADIO");
+    radio_row(&format!(
+        "{} {}   {} {}   {} {}   {} {}",
+        style("repo").dim(),
+        truncate(repo_name(repo), 22),
+        style("branch").dim(),
+        style(truncate(branch, 20)).cyan(),
+        style("agent").dim(),
+        agent_disp,
+        style("unread").dim(),
+        style(unread_n).yellow().bold(),
+    ));
+
+    // INBOX / RECENT band
+    radio_border('├', '┤', &band_title);
+    if me.is_none() {
+        radio_row(&format!(
+            "{} run {} to join the channel",
+            style("identity not set —").dim(),
+            style("h5i msg as <name>").bold()
+        ));
+    } else if view.is_empty() {
+        radio_row(&style("no messages yet").dim().to_string());
+    } else {
+        for (i, m) in view.iter().enumerate() {
+            let bcast = if m.to == msg::BROADCAST {
+                style(" BROADCAST").yellow().bold().to_string()
+            } else {
+                String::new()
+            };
+            let head = format!(
+                "{} {}  {}{}  {}{}",
+                style(format!("{:>2}", i + 1)).bold(),
+                style(hhmm(&m.ts)).dim(),
+                arrow(&m.from, &m.to, me.unwrap_or("")),
+                bcast,
+                tag_badge(&m.tag),
+                style(format!("#{}", &m.id)).dim(),
+            );
+            radio_row(&head);
+            // Body indented; truncated to fit the box interior.
+            let body = truncate(&m.body, RADIO_W - 8);
+            radio_row(&format!("     {}", style(body).dim()));
+        }
+    }
+
+    // GIT PROOF band — the receipt that sets h5i apart from a local chat store.
+    radio_border('├', '┤', "GIT PROOF");
+    let age = match st.tip_time {
+        Some(t) => format!("· last activity {} ago", rel_age(t)),
+        None => String::new(),
+    };
+    radio_row(&format!(
+        "{} {} · {} messages · tip {} {}",
+        style("ref").dim(),
+        style(msg::MSG_REF).magenta(),
+        style(st.total).bold(),
+        style(format!("#{}", st.tip.as_deref().unwrap_or("none"))).magenta(),
+        style(age).dim(),
+    ));
+    radio_bottom();
+
+    // ACTIONS footer (open, not boxed).
+    if me.is_some() {
+        println!(
+            "  {}  {}   {}   {}   {}",
+            style("actions:").dim(),
+            style("reply <n> \"…\"").bold(),
+            style("send <agent> \"…\"").bold(),
+            style("watch").bold(),
+            style("history").bold(),
+        );
+    }
+    Ok(())
+}
+
+/// Best-effort human name for the repo (the working-dir folder name).
+fn repo_name(repo: &H5iRepository) -> &str {
+    repo.git()
+        .workdir()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("repo")
+}
+
+/// Resolve the current git branch shorthand, defaulting to "HEAD".
+fn current_branch(repo: &H5iRepository) -> String {
+    repo.git()
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().map(str::to_owned))
+        .unwrap_or_else(|| "HEAD".to_string())
 }
 
 /// Truncate a string to at most `max_chars` characters, appending `…` if cut.
@@ -430,14 +676,18 @@ enum Commands {
         action: PrCommands,
     },
 
-    /// Cross-agent messaging over a shareable Git ref (refs/h5i/msg).
+    /// Agent radio — cross-agent messaging over a shareable Git ref.
     ///
-    /// Send and receive messages between agents working in the same repo.
-    /// Unlike a machine-local message store, the log lives in a Git ref and
-    /// travels with `h5i share push` / `h5i share pull`.
+    /// Bare `h5i msg` opens the inbox dashboard. Messages live in
+    /// `refs/h5i/msg` and travel with `h5i share push` / `h5i share pull`,
+    /// so a conversation survives clones, machines, and branches.
     Msg {
         #[command(subcommand)]
-        action: MsgCommands,
+        action: Option<MsgCommands>,
+
+        /// Plain, uncoloured output for the bare dashboard (scripts / hooks).
+        #[arg(long, global = true)]
+        plain: bool,
     },
 }
 
@@ -445,8 +695,8 @@ enum Commands {
 enum MsgCommands {
     /// Send a message to another agent (or `all` to broadcast).
     ///
-    /// The body is variadic, so `--from` must appear BEFORE the recipient:
-    ///   h5i msg send --from alice bob deploy is done
+    /// The body is variadic, so options must appear BEFORE the recipient:
+    ///   h5i msg send --from alice --tag review bob look at the auth refactor
     Send {
         /// Recipient agent name, or `all` to broadcast to everyone else.
         to: String,
@@ -458,6 +708,28 @@ enum MsgCommands {
         /// Must be placed before the recipient (the body consumes trailing args).
         #[arg(long)]
         from: Option<String>,
+        /// Optional classification, e.g. `review` or `risk` (coloured in the UI).
+        #[arg(long)]
+        tag: Option<String>,
+    },
+
+    /// Reply to a numbered message from your last inbox / dashboard view.
+    ///   h5i msg reply 1 on it, reviewing now
+    Reply {
+        /// The message number shown in the most recent view.
+        number: usize,
+        /// Reply body. Multiple words are joined with spaces.
+        #[arg(trailing_var_arg = true, required = true)]
+        body: Vec<String>,
+        /// Reply as this identity (defaults to your stored identity).
+        #[arg(long)]
+        from: Option<String>,
+    },
+
+    /// Set this repo's default agent identity (e.g. `h5i msg as codex`).
+    As {
+        /// The agent name to act as.
+        name: String,
     },
 
     /// Show messages addressed to you that arrived since you last checked,
@@ -2242,70 +2514,122 @@ fn main() -> anyhow::Result<()> {
             }
         },
 
-        Commands::Msg { action } => {
+        Commands::Msg { action, plain } => {
             let repo = H5iRepository::open(".")?;
             let h5i_root = repo.h5i_root.clone();
             let git = repo.git();
 
             match action {
-                MsgCommands::Send { to, body, from } => {
+                // Bare `h5i msg` → the inbox dashboard.
+                None => {
+                    let me = msg::read_identity(&h5i_root);
+                    let branch = current_branch(&repo);
+                    render_dashboard(&repo, &branch, me.as_deref(), plain)?;
+                }
+
+                Some(MsgCommands::Send { to, body, from, tag }) => {
                     let sender = msg::resolve_identity(&h5i_root, from.as_deref())?;
                     let body = body.join(" ");
-                    let m = msg::send(git, &h5i_root, &sender, &to, &body)?;
+                    let m = msg::send(git, &h5i_root, &sender, &to, &body, tag.as_deref())?;
                     let label = if to == msg::BROADCAST {
-                        style("📢 broadcast").yellow().to_string()
+                        style("→ BROADCAST").yellow().bold().to_string()
                     } else {
-                        style(format!("→ {to}")).cyan().to_string()
+                        arrow(&m.from, &m.to, &m.from)
                     };
                     println!(
-                        "{} {} {}  {}",
+                        "{} {} {} {}",
                         SUCCESS,
-                        style(&m.from).green().bold(),
                         label,
-                        style(format!("[{}]", &m.id)).dim()
+                        tag_badge(&m.tag),
+                        style(format!("#{}", &m.id)).dim()
                     );
                     println!("   {}", truncate(&m.body, 80));
                 }
 
-                MsgCommands::Inbox { as_agent, peek } => {
+                Some(MsgCommands::Reply { number, body, from }) => {
+                    let me = msg::resolve_identity(&h5i_root, from.as_deref())?;
+                    let target_id = msg::resolve_view_number(&h5i_root, &me, number)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "no message #{number} in your last view — run `h5i msg` or `h5i msg inbox` first"
+                            )
+                        })?;
+                    let original = msg::get_message(git, &target_id)
+                        .ok_or_else(|| anyhow::anyhow!("message #{number} no longer exists"))?;
+                    // Reply to the other party: the sender, unless I was the
+                    // sender (replying to my own line) — then the recipient.
+                    let to = if original.from == me { &original.to } else { &original.from };
+                    let body = body.join(" ");
+                    let m = msg::send(git, &h5i_root, &me, to, &body, None)?;
+                    println!(
+                        "{} {} (re #{}) {}",
+                        SUCCESS,
+                        arrow(&m.from, &m.to, &m.from),
+                        &target_id,
+                        style(format!("#{}", &m.id)).dim()
+                    );
+                    println!("   {}", truncate(&m.body, 80));
+                }
+
+                Some(MsgCommands::As { name }) => {
+                    msg::write_identity(&h5i_root, name.trim())?;
+                    println!(
+                        "{} You are now {} on {}.",
+                        SUCCESS,
+                        style(name.trim()).green().bold(),
+                        style(msg::MSG_REF).magenta()
+                    );
+                }
+
+                Some(MsgCommands::Inbox { as_agent, peek }) => {
                     let me = msg::resolve_identity(&h5i_root, as_agent.as_deref())?;
                     let unread = msg::inbox(git, &h5i_root, &me, !peek)?;
+                    // Persist the numbered view so `reply <n>` works afterwards.
+                    let ids: Vec<String> = unread.iter().map(|m| m.id.clone()).collect();
+                    msg::write_last_view(&h5i_root, &me, &ids)?;
                     if unread.is_empty() {
-                        println!(
-                            "{} No new messages for {}.",
-                            SUCCESS,
-                            style(&me).green().bold()
-                        );
+                        if !plain {
+                            println!(
+                                "{} No new messages for {}.",
+                                SUCCESS,
+                                style(&me).green().bold()
+                            );
+                        }
                     } else {
-                        println!(
-                            "{} {} new message{} for {}{}\n",
-                            STEP,
-                            style(unread.len()).cyan().bold(),
-                            if unread.len() == 1 { "" } else { "s" },
-                            style(&me).green().bold(),
-                            if peek { style(" (peek)").dim().to_string() } else { String::new() },
-                        );
-                        print_messages(&unread, &me);
+                        if !plain {
+                            println!(
+                                "{} {} new message{} for {}{}\n",
+                                STEP,
+                                style(unread.len()).cyan().bold(),
+                                if unread.len() == 1 { "" } else { "s" },
+                                style(&me).green().bold(),
+                                if peek { style(" (peek)").dim().to_string() } else { String::new() },
+                            );
+                        }
+                        print_messages_numbered(&unread, &me, plain);
                     }
                 }
 
-                MsgCommands::History { limit, with } => {
+                Some(MsgCommands::History { limit, with }) => {
                     let msgs = msg::history(git, with.as_deref(), limit)?;
                     if msgs.is_empty() {
-                        println!("{} No messages yet.", WARN);
+                        if !plain {
+                            println!("{} No messages yet.", WARN);
+                        }
                     } else {
-                        let header = match &with {
-                            Some(w) => format!("Conversation with {w}"),
-                            None => "Message history".to_string(),
-                        };
-                        println!("{}\n", style(header).bold().underlined());
-                        // History has no single "me"; pass an empty viewer so
-                        // both sides of each message are shown verbatim.
-                        print_messages(&msgs, "");
+                        if !plain {
+                            let header = match &with {
+                                Some(w) => format!("Conversation with {w}"),
+                                None => "Message history".to_string(),
+                            };
+                            println!("{}\n", style(header).bold().underlined());
+                        }
+                        // Neutral viewer: show both sides verbatim.
+                        print_messages_numbered(&msgs, "", plain);
                     }
                 }
 
-                MsgCommands::Team => {
+                Some(MsgCommands::Team) => {
                     let roster = msg::team(git);
                     if roster.is_empty() {
                         println!(
@@ -2313,7 +2637,7 @@ fn main() -> anyhow::Result<()> {
                             WARN
                         );
                     } else {
-                        println!("{}\n", style("Agents on this repo").bold().underlined());
+                        println!("{}\n", style("Agents on this channel").bold().underlined());
                         let me = msg::read_identity(&h5i_root);
                         for (name, last_seen) in roster {
                             let you = if Some(&name) == me.as_ref() {
@@ -2332,7 +2656,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                MsgCommands::Whoami { name } => match name {
+                Some(MsgCommands::Whoami { name }) => match name {
                     Some(n) => {
                         msg::write_identity(&h5i_root, n.trim())?;
                         println!(
@@ -2346,13 +2670,13 @@ fn main() -> anyhow::Result<()> {
                         None => println!(
                             "{} No identity set. Run {} or send with {}.",
                             WARN,
-                            style("h5i msg whoami <name>").bold(),
+                            style("h5i msg as <name>").bold(),
                             style("--from <name>").bold()
                         ),
                     },
                 },
 
-                MsgCommands::Hook { as_agent } => {
+                Some(MsgCommands::Hook { as_agent }) => {
                     // Turn-delivery: meant to run from a Stop hook. Resolve the
                     // identity quietly; if none is configured there is nothing
                     // to deliver, so exit cleanly rather than erroring out.
@@ -2361,6 +2685,8 @@ fn main() -> anyhow::Result<()> {
                     };
                     let unread = msg::inbox(git, &h5i_root, &me, true)?;
                     if !unread.is_empty() {
+                        let ids: Vec<String> = unread.iter().map(|m| m.id.clone()).collect();
+                        msg::write_last_view(&h5i_root, &me, &ids)?;
                         println!(
                             "📬 h5i: {} new message{} for {}",
                             unread.len(),
@@ -2368,20 +2694,26 @@ fn main() -> anyhow::Result<()> {
                             me
                         );
                         for m in &unread {
-                            println!("  {} → {}: {}", m.from, m.to, m.body);
+                            let tag = m.tag.as_deref().map(|t| format!("[{t}] ")).unwrap_or_default();
+                            println!("  {} → {}: {}{}", m.from, m.to, tag, m.body);
                         }
                     }
                 }
 
-                MsgCommands::Watch { as_agent, interval, once } => {
+                Some(MsgCommands::Watch { as_agent, interval, once }) => {
                     let me = msg::resolve_identity(&h5i_root, as_agent.as_deref())?;
                     if !once {
-                        println!(
-                            "{} Watching inbox for {} (every {}s) — Ctrl+C to stop",
-                            STEP,
+                        radio_border('┌', '┐', "H5I AGENT RADIO · LIVE");
+                        radio_row(&format!(
+                            "{} {} {} listening on {} {} every {}s · Ctrl+C to stop",
+                            style("agent").dim(),
                             style(&me).green().bold(),
-                            interval
-                        );
+                            style("·").dim(),
+                            style(msg::MSG_REF).magenta(),
+                            style("·").dim(),
+                            interval,
+                        ));
+                        radio_bottom();
                     }
                     loop {
                         // Reopen the repo each tick so messages committed to the
@@ -2389,7 +2721,14 @@ fn main() -> anyhow::Result<()> {
                         let repo = H5iRepository::open(".")?;
                         let unread = msg::inbox(repo.git(), &repo.h5i_root, &me, true)?;
                         if !unread.is_empty() {
-                            print_messages(&unread, &me);
+                            print_messages_numbered(&unread, &me, false);
+                            let st = msg::stats(repo.git());
+                            println!(
+                                "  {} {} · {} messages total",
+                                style("sync:").dim(),
+                                style(msg::MSG_REF).magenta(),
+                                style(st.total).bold(),
+                            );
                         }
                         if once {
                             break;
