@@ -173,11 +173,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…
 - [x] Reviewed h5i msg prototype; verified cargo check and unit tests pass, msg integration test currently fails on --as/--as-agent mismatch; identified cursor and concurrent-send risks.
 - [x] wrote tests/msg_integration.rs; edited src/main.rs; edited src/main.rs
+- [x] edited src/main.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-28 22:12 UTC] `communication`: edited src/main.rs
 - [2026-05-28 22:10 UTC] `communication`: wrote tests/msg_integration.rs; edited src/main.rs; edited src/main.rs
 - [2026-05-28 22:09 UTC] `communication`: Reviewed h5i msg prototype; verified cargo check and unit tests pass, msg integration test currently fails on --as/--as-agent mismatch; identified cursor and concurrent-send risks.
 - [2026-05-28 21:56 UTC] `communication`: wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…
