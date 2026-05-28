@@ -1099,3 +1099,9 @@ _[Checkpoint: 6a18c244 — Documented the High5 protocol for h5i msg in docs/hig
 [22:34:58] THINK: Let me replace the `print_messages` helper with a richer rendering toolkit (numbered, tag-aware, box bands, relative time):
 [22:34:58] THINK: Let me do a final smoke test of edge cases (unset identity, broadcast, watch --once) and run the full suite:
 [22:34:58] NOTE: PLACEHOLDER (~/Dev/h5i/src/main.rs): Format-string placeholders throw off naive counting. Let me strip strings/comments and find the real imbalance poin
+
+
+---
+_[Checkpoint: 6a18c312 — edited README.md; added docs/high5-protocol.md; edited docs/high5-protocol.md]_
+---
+
