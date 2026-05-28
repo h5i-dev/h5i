@@ -1250,3 +1250,9 @@ _[Checkpoint: 6a18d01b — edited .claude/settings.json; edited src/main.rs; edi
 ---
 
 [23:32:01] NOTE: DEFERRAL (~/Dev/h5i/tests/msg_integration.rs): ks` once or restart (settings-watcher quirk). Two optional follow-ups still open from earlier: `h5i msg --json` (the last unchecked item on the i5h ch…
+
+
+---
+_[Checkpoint: 6a18d071 — edited .claude/settings.json; edited src/main.rs; edited tests/msg_integration.rs]_
+---
+
