@@ -1039,3 +1039,4 @@ _[Checkpoint: 6a18bd72 — wrote tests/msg_integration.rs; edited src/main.rs; e
 ---
 
 [22:11:22] THINK: For msg UI, prioritize a screenshotable split-screen agent coordination view over generic chat because Git-native cross-clone handoff is h5i's differentiator and reads in one glance.
+[22:12:17] THINK: Say the word and I'll commit with provenance (`--agent claude-code`, `--prompt`, `--decisions` for the cursor/merge choices) and run `h5i notes analyze`.
