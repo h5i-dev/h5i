@@ -1236,3 +1236,4 @@ _[Checkpoint: 6a18cc55 — edited tests/msg_integration.rs; edited tests/msg_int
 [23:23:18] ACT: edited src/main.rs
 [23:23:57] ACT: edited tests/msg_integration.rs
 [23:28:19] THINK: I'll add a Messaging section before "Sharing h5i Data" in the Claude instructions:
+[23:28:19] THINK: Now let me build to confirm the generator change compiles, then register the Stop hook via the update-config skill (the prescribed path for settings.
