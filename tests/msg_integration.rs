@@ -43,6 +43,10 @@ impl Clone {
     fn h5i(&self, args: &[&str]) -> Output {
         Command::new(H5I)
             .args(args)
+            // Hermetic: never inherit an ambient identity from the developer's
+            // shell (a repo using h5i sets H5I_AGENT in .claude/settings.json,
+            // which would otherwise leak in and break identity-resolution tests).
+            .env_remove("H5I_AGENT")
             .current_dir(&self.dir)
             .output()
             .expect("failed to run h5i")

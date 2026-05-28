@@ -16,11 +16,14 @@
         "hooks": [
           {
             "type": "command",
-            "command": "h5i msg hook"
+            "command": "h5i msg hook --as claude"
           }
         ]
       }
     ]
+  },
+  "env": {
+    "H5I_AGENT": "claude"
   },
   "enabledPlugins": {}
 }

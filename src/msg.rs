@@ -975,6 +975,9 @@ mod tests {
     #[test]
     fn identity_resolution_prefers_explicit_then_stored() {
         let (_d, _repo, root) = fixture();
+        // Don't let an ambient $H5I_AGENT (set by a repo's settings) win over
+        // the stored value this test is exercising.
+        std::env::remove_var(AGENT_ENV);
         // Explicit persists it.
         assert_eq!(resolve_identity(&root, Some("alice")).unwrap(), "alice");
         // Now stored is used when no explicit value is given.
