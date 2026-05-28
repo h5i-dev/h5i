@@ -972,3 +972,4 @@ _[Checkpoint: 6a18b90f — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 _[Checkpoint: 6a18ba09 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…]_
 ---
 
+[21:57:23] OBSERVE: read src/main.rs
