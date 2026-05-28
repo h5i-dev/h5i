@@ -981,3 +981,4 @@ _[Checkpoint: 6a18ba09 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 [21:58:17] OBSERVE: read src/ctx.rs
 [21:58:22] OBSERVE: read src/ctx.rs
 [21:58:24] OBSERVE: read src/lib.rs
+[21:58:26] OBSERVE: read src/main.rs
