@@ -1089,3 +1089,9 @@ _[Checkpoint: 6a18be9c — edited src/main.rs]_
 [22:31:28] OBSERVE: searched docs/high5-protocol.md
 [22:31:28] ACT: edited docs/high5-protocol.md
 [22:31:28] OBSERVE: searched docs/high5-protocol.md
+
+
+---
+_[Checkpoint: 6a18c244 — Documented the High5 protocol for h5i msg in docs/high5-protocol.md, covering wire format, message kinds, CLI mapping, terminal rendering, hook safety, storage semantics, identity, compatibility, and implementation checklist.]_
+---
+
