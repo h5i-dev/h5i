@@ -386,6 +386,25 @@ fn hook_output_frames_messages_as_untrusted() {
 }
 
 #[test]
+fn hook_emits_systemmessage_json_by_default_plain_with_flag() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "as", "dev"]);
+    a.h5i_ok(&["msg", "send", "--from", "lead", "dev", "ping one"]);
+
+    // Default: a Claude Code `systemMessage` JSON object.
+    let json = out_str(&a.h5i_ok(&["msg", "hook", "--as", "dev"]));
+    assert!(json.trim_start().starts_with('{'), "expected JSON: {json}");
+    assert!(json.contains("\"systemMessage\""), "no systemMessage: {json}");
+    assert!(json.contains("ping one"));
+
+    // --plain: raw text for Codex / other hosts.
+    a.h5i_ok(&["msg", "send", "--from", "lead", "dev", "ping two"]);
+    let plain = out_str(&a.h5i_ok(&["msg", "hook", "--as", "dev", "--plain"]));
+    assert!(!plain.trim_start().starts_with('{'), "plain must not be JSON: {plain}");
+    assert!(plain.contains("ping two"));
+}
+
+#[test]
 fn hook_emits_unread_then_clears() {
     let (_root, a, _b) = two_clones();
     a.h5i_ok(&["msg", "send", "--from", "lead", "dev", "review", "the", "PR"]);

@@ -10,6 +10,16 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "h5i msg hook"
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {}
