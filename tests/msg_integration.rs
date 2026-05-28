@@ -409,6 +409,32 @@ fn hook_emits_systemmessage_json_by_default_plain_with_flag() {
 }
 
 #[test]
+fn codex_sync_auto_delivers_inbox_then_clears() {
+    let (_root, a, _b) = two_clones();
+    // A claude send (also writes "claude" to the shared stored identity).
+    a.h5i_ok(&["msg", "send", "--from", "claude", "codex", "review the parser"]);
+
+    // `h5i codex sync` has no Codex session in tests, but still delivers the
+    // codex inbox. Identity defaults to "codex" (ignores the stored "claude").
+    let out = out_str(&a.h5i_ok(&["codex", "sync"]));
+    assert!(out.contains("review the parser"), "codex sync didn't deliver: {out}");
+    assert!(out.contains("untrusted collaborator input"), "no framing: {out}");
+
+    // Marked read → a second sync doesn't repeat it.
+    let out2 = out_str(&a.h5i_ok(&["codex", "sync"]));
+    assert!(!out2.contains("review the parser"), "redelivered: {out2}");
+
+    // And the numbered view is usable for a reply.
+    a.h5i_ok(&["msg", "send", "--from", "claude", "codex", "second item"]);
+    a.h5i_ok(&["codex", "prelude"]); // delivers + numbers
+    let log_before = a.msg_log();
+    a.h5i_ok(&["msg", "reply", "--from", "codex", "1", "on it"]);
+    let log = a.msg_log();
+    assert!(log.len() > log_before.len());
+    assert!(log.contains("codex -> claude") || log.contains(r#""from":"codex""#), "reply not from codex: {log}");
+}
+
+#[test]
 fn hook_emits_unread_then_clears() {
     let (_root, a, _b) = two_clones();
     a.h5i_ok(&["msg", "send", "--from", "lead", "dev", "review", "the", "PR"]);
