@@ -1158,3 +1158,4 @@ _[Checkpoint: 6a18c41c — edited docs/i5h-protocol.md; edited docs/i5h-protocol
 [22:43:39] ACT: edited src/main.rs
 [22:44:29] ACT: edited tests/msg_integration.rs
 [22:45:38] THINK: If it's yours and should be committed, say so and I'll add it (or tell me what it is and I'll handle it appropriately).
+[22:45:38] NOTE: DEFERRAL (~/Dev/h5i/README.md): me what it is and I'll handle it appropriately). Two open follow-ups from before still stand if you want them: folding the `msg` summary into the gene…
