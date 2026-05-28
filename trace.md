@@ -1206,3 +1206,9 @@ _[Checkpoint: 6a18c79f — edited src/msg.rs; edited src/msg.rs; edited src/msg.
 [23:06:45] THINK: Score h5i msg higher on Git-native durability and structured protocol, agmsg higher on proven real-time local delivery and existing demo maturity.
 [23:06:53] THINK: I'll replace `write_ref_files` with `read_blob_from_tree` (needed by the CAS path):
 [23:06:53] THINK: I'll replace the `Send` and `Reply` arms (using the new helpers) and insert the typed verbs:
+
+
+---
+_[Checkpoint: 6a18ca8d — edited tests/msg_integration.rs; edited tests/msg_integration.rs; edited README.md]_
+---
+
