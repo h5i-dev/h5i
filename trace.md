@@ -1019,3 +1019,4 @@ _[Checkpoint: 6a18ba09 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 [22:09:16] OBSERVE: read src/storage.rs
 [22:09:16] OBSERVE: read src/main.rs
 [22:09:16] OBSERVE: searched src/storage.rs for "refs|MissingRef|refs/h5i/msg|doctor""
+[22:09:16] OBSERVE: read src/storage.rs
