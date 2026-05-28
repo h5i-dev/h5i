@@ -924,3 +924,4 @@ _[Checkpoint: 6a18a239 — edited README.md]_
 _[Checkpoint: 6a18a378 — edited README.md]_
 ---
 
+[20:24:56] OBSERVE: read .claude/skills/h5i-workflow/SKILL.md
