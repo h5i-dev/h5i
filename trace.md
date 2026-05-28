@@ -1069,3 +1069,4 @@ _[Checkpoint: 6a18be9c — edited src/main.rs]_
 [22:24:26] OBSERVE: read src/hooks/README.md
 [22:24:26] OBSERVE: read skills/cavecrew/SKILL.md
 [22:24:26] OBSERVE: read src/hooks/caveman-statusline.sh
+[22:24:26] OBSERVE: searched src/msg.rs for "Message|enum|kind|type|focus|branch|risk|reply|body|from|to""
