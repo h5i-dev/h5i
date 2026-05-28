@@ -1071,3 +1071,4 @@ _[Checkpoint: 6a18be9c — edited src/main.rs]_
 [22:24:26] OBSERVE: read src/hooks/caveman-statusline.sh
 [22:24:26] OBSERVE: searched src/msg.rs for "Message|enum|kind|type|focus|branch|risk|reply|body|from|to""
 [22:24:54] NOTE: Current msg PoC has a light envelope (id/ts/from/to/body/tag) and reply UI, but not a full handoff protocol with typed kind, branch/focus/risk, parent IDs, status, or validation.
+[22:25:32] OBSERVE: read src/main.rs
