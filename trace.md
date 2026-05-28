@@ -1038,3 +1038,4 @@ _[Checkpoint: 6a18bd0c — Reviewed h5i msg prototype; verified cargo check and 
 _[Checkpoint: 6a18bd72 — wrote tests/msg_integration.rs; edited src/main.rs; edited src/main.rs]_
 ---
 
+[22:11:22] THINK: For msg UI, prioritize a screenshotable split-screen agent coordination view over generic chat because Git-native cross-clone handoff is h5i's differentiator and reads in one glance.
