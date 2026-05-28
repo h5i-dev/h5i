@@ -966,3 +966,9 @@ _[Checkpoint: 6a18b90f — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 ---
 
 [21:53:52] THINK: Validate other agent's agmsg proposal against repository reality before adopting CRDT/delta-store claims.
+
+
+---
+_[Checkpoint: 6a18ba09 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…]_
+---
+
