@@ -32,7 +32,7 @@
 //! is a deliberate v1 tradeoff: it keeps the cursor O(1) and the shared log
 //! append-only.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use git2::{Oid, Repository, Signature};
@@ -155,6 +155,12 @@ impl Message {
             _ => infer_kind(self.tag.as_deref(), &self.to),
         }
     }
+
+    /// Stable thread-root id: the explicit `thread_id`, else this message's own
+    /// id (a message with no thread is the root of its own thread).
+    pub fn thread_root(&self) -> String {
+        self.thread_id.clone().unwrap_or_else(|| self.id.clone())
+    }
 }
 
 /// Map a legacy tag (or absence of one) onto an i5h kind.
@@ -197,7 +203,8 @@ struct Roster {
     agents: BTreeMap<String, String>,
 }
 
-/// A read watermark: the `(ts, id)` of the last message an agent consumed.
+/// A legacy `(ts, id)` watermark. Kept only so an older `cursor.json` can be
+/// read and lazily migrated into the seen-id model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Watermark {
     ts: String,
@@ -211,9 +218,18 @@ impl Watermark {
 }
 
 /// Local, per-machine read state. Persisted to `.git/.h5i/msg/cursor.json`.
+///
+/// Read-state is a **set of seen message ids per agent**, not a `(ts, id)`
+/// watermark. This is what the i5h protocol requires: a message pulled from
+/// another clone can have an *older* timestamp than the newest message already
+/// seen, so a single watermark would silently hide it. A seen-id set never
+/// does. The legacy `cursors` watermark is read once and migrated.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct CursorStore {
     #[serde(default)]
+    seen: BTreeMap<String, BTreeSet<String>>,
+    /// Legacy watermark map (pre-seen-id). Migrated lazily, then cleared.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     cursors: BTreeMap<String, Watermark>,
 }
 
@@ -221,8 +237,31 @@ struct CursorStore {
 // Public API
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Append a message from `from` to `to` and update the roster. Persists
-/// `from` as the local default identity so later `inbox` calls can omit it.
+/// Optional i5h fields for a structured send. All default to empty/None, so
+/// `SendOpts::default()` plus a `tag` reproduces the simple v0 send.
+#[derive(Debug, Clone, Default)]
+pub struct SendOpts {
+    /// Explicit i5h kind. When `None`, it is inferred from `tag` / recipient.
+    pub kind: Option<String>,
+    /// Legacy classification badge (kept for back-compat / display).
+    pub tag: Option<String>,
+    pub priority: Option<String>,
+    pub status: Option<String>,
+    pub branch: Option<String>,
+    pub context_branch: Option<String>,
+    pub focus: Vec<String>,
+    pub risk: Option<String>,
+    pub deadline: Option<String>,
+    pub links: Option<serde_json::Value>,
+    /// Id of the message being replied to (sets `reply_to` + threads).
+    pub reply_to: Option<String>,
+    /// Explicit thread root; defaults to `reply_to` when replying.
+    pub thread_id: Option<String>,
+}
+
+/// Append a simple message from `from` to `to` (optionally tagged) and update
+/// the roster. Thin wrapper over [`send_msg`]; persists `from` as the local
+/// default identity.
 pub fn send(
     repo: &Repository,
     h5i_root: &Path,
@@ -231,62 +270,146 @@ pub fn send(
     body: &str,
     tag: Option<&str>,
 ) -> Result<Message, H5iError> {
+    send_msg(
+        repo,
+        h5i_root,
+        from,
+        to,
+        body,
+        SendOpts {
+            tag: tag.map(str::to_string),
+            ..Default::default()
+        },
+    )
+}
+
+/// Append a structured i5h message. Resolves the kind (explicit, else inferred
+/// from tag/recipient), threads replies (`thread_id` defaults to `reply_to`),
+/// stamps the protocol version, appends via CAS, and stores the sender as the
+/// local identity.
+pub fn send_msg(
+    repo: &Repository,
+    h5i_root: &Path,
+    from: &str,
+    to: &str,
+    body: &str,
+    opts: SendOpts,
+) -> Result<Message, H5iError> {
     validate_name(from)?;
     validate_name(to)?;
 
     let ts = now_ts();
     let id = gen_id(&ts, from, to, body);
-    let tag = tag.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let tag = opts.tag.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let kind = opts
+        .kind
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+        .unwrap_or_else(|| infer_kind(tag.as_deref(), to));
+    let thread_id = opts.thread_id.or_else(|| opts.reply_to.clone());
+
     let msg = Message {
         id,
         ts,
         from: from.to_string(),
         to: to.to_string(),
         body: body.to_string(),
-        // i5h v1: stamp the version and a resolved kind (derived from the
-        // legacy --tag for now; typed verbs will set it directly in a later
-        // phase). Threading / priority / focus stay empty until those phases.
-        kind: Some(infer_kind(tag.as_deref(), to)),
-        version: PROTOCOL_VERSION,
         tag,
-        ..Default::default()
+        version: PROTOCOL_VERSION,
+        kind: Some(kind),
+        reply_to: opts.reply_to,
+        thread_id,
+        priority: opts.priority.map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty()),
+        status: opts.status.map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty()),
+        branch: opts.branch.filter(|s| !s.is_empty()),
+        context_branch: opts.context_branch.filter(|s| !s.is_empty()),
+        focus: opts.focus.into_iter().filter(|s| !s.is_empty()).collect(),
+        risk: opts.risk.filter(|s| !s.is_empty()),
+        deadline: opts.deadline.filter(|s| !s.is_empty()),
+        links: opts.links,
+        meta: None,
     };
 
-    // Append one line to the log. Read the current blob fresh so we extend the
-    // latest tip rather than clobbering it.
-    let mut log = read_blob(repo, MESSAGES_FILE).unwrap_or_default();
-    if !log.is_empty() && !log.ends_with('\n') {
-        log.push('\n');
-    }
-    log.push_str(&serde_json::to_string(&msg)?);
-    log.push('\n');
-
-    // Update the roster: sender is definitely active now; a non-broadcast
-    // recipient is recorded too (but never overwrites a later last-seen).
-    let mut roster = read_roster(repo);
-    roster.agents.insert(from.to_string(), msg.ts.clone());
-    if to != BROADCAST {
-        roster
-            .agents
-            .entry(to.to_string())
-            .or_insert_with(|| msg.ts.clone());
-    }
-    let roster_json = serde_json::to_string_pretty(&roster)?;
-
-    write_ref_files(
-        repo,
-        &[(MESSAGES_FILE, &log), (AGENTS_FILE, &roster_json)],
-        &format!("h5i msg: {from} → {to}"),
-    )?;
-
+    append_message_cas(repo, &msg)?;
     write_identity(h5i_root, from)?;
     Ok(msg)
 }
 
-/// Return the messages addressed to `me` that are newer than `me`'s watermark,
-/// sorted oldest-first. When `advance` is true the watermark is moved past the
-/// returned set (so the next call won't repeat them); pass `false` to peek
-/// without consuming.
+/// Append `msg` to `refs/h5i/msg` with compare-and-swap semantics: build the
+/// commit off the current tip, then move the ref only if it still points where
+/// we read it. If a concurrent writer moved the tip first, re-read and retry so
+/// no append is silently lost (the i5h send contract).
+fn append_message_cas(repo: &Repository, msg: &Message) -> Result<(), H5iError> {
+    const MAX_ATTEMPTS: usize = 8;
+    let line = serde_json::to_string(msg)?;
+    let message = format!("h5i msg: {} → {}", msg.from, msg.to);
+
+    for _ in 0..MAX_ATTEMPTS {
+        let tip = repo.refname_to_id(MSG_REF).ok();
+        let parent = match tip {
+            Some(oid) => Some(repo.find_commit(oid)?),
+            None => None,
+        };
+        let base_tree = parent.as_ref().and_then(|c| c.tree().ok());
+
+        // Append our line to the current log.
+        let mut log = read_blob_from_tree(repo, base_tree.as_ref(), MESSAGES_FILE)
+            .unwrap_or_default();
+        if !log.is_empty() && !log.ends_with('\n') {
+            log.push('\n');
+        }
+        log.push_str(&line);
+        log.push('\n');
+
+        // Update the roster off the same base.
+        let mut roster: Roster = read_blob_from_tree(repo, base_tree.as_ref(), AGENTS_FILE)
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default();
+        roster.agents.insert(msg.from.clone(), msg.ts.clone());
+        if msg.to != BROADCAST {
+            roster.agents.entry(msg.to.clone()).or_insert_with(|| msg.ts.clone());
+        }
+        let roster_json = serde_json::to_string_pretty(&roster)?;
+
+        let tree_oid = build_tree(
+            repo,
+            base_tree.as_ref(),
+            &[(MESSAGES_FILE, &log), (AGENTS_FILE, &roster_json)],
+        )?;
+        let tree = repo.find_tree(tree_oid)?;
+        let sig = signature(repo)?;
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+        // Create the commit object WITHOUT moving the ref.
+        let new_oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
+
+        // Compare-and-swap the ref.
+        let cas_ok = match tip {
+            // No tip yet: create only if still absent (force=false fails if a
+            // racing writer created it first).
+            None => repo.reference(MSG_REF, new_oid, false, &message).is_ok(),
+            // Tip existed: overwrite only if it still equals what we read.
+            Some(old) => repo
+                .reference_matching(MSG_REF, new_oid, true, old, &message)
+                .is_ok(),
+        };
+        if cas_ok {
+            return Ok(());
+        }
+        // Lost the race — loop, re-read the new tip, and re-append.
+    }
+    Err(H5iError::Internal(format!(
+        "h5i msg: {} → {} could not be appended after {MAX_ATTEMPTS} attempts (ref kept moving)",
+        msg.from, msg.to
+    )))
+}
+
+/// Return the messages addressed to `me` that it has not yet seen, sorted
+/// oldest-first. When `advance` is true the returned ids are added to `me`'s
+/// seen-set (so the next call won't repeat them); pass `false` to peek.
+///
+/// Unread is decided by **id membership**, not a timestamp watermark, so a
+/// late-arriving message (older `ts` than something already read, e.g. pulled
+/// from another clone) is still delivered exactly once.
 pub fn inbox(
     repo: &Repository,
     h5i_root: &Path,
@@ -294,29 +417,41 @@ pub fn inbox(
     advance: bool,
 ) -> Result<Vec<Message>, H5iError> {
     let mut store = read_cursors(h5i_root)?;
-    let watermark = store.cursors.get(me).map(Watermark::key).map(|(t, i)| (t.to_string(), i.to_string()));
 
-    let mut unread: Vec<Message> = read_messages(repo)
+    let mut addressed: Vec<Message> = read_messages(repo)
         .into_iter()
         .filter(|m| m.addressed_to(me))
-        .filter(|m| match &watermark {
-            Some((wt, wi)) => m.key() > (wt.as_str(), wi.as_str()),
-            None => true,
-        })
         .collect();
-    unread.sort_by(|a, b| a.key().cmp(&b.key()));
+    addressed.sort_by(|a, b| a.key().cmp(&b.key()));
 
-    if advance {
-        if let Some(last) = unread.last() {
-            store.cursors.insert(
-                me.to_string(),
-                Watermark {
-                    ts: last.ts.clone(),
-                    id: last.id.clone(),
-                },
-            );
-            write_cursors(h5i_root, &store)?;
+    // Lazily migrate a legacy watermark: everything at or below it was already
+    // read, so seed the seen-set with those ids and drop the watermark.
+    let mut dirty = false;
+    if let Some(wm) = store.cursors.remove(me) {
+        let seen = store.seen.entry(me.to_string()).or_default();
+        for m in &addressed {
+            if m.key() <= wm.key() {
+                seen.insert(m.id.clone());
+            }
         }
+        dirty = true;
+    }
+
+    let seen = store.seen.get(me).cloned().unwrap_or_default();
+    let unread: Vec<Message> = addressed
+        .into_iter()
+        .filter(|m| !seen.contains(&m.id))
+        .collect();
+
+    if advance && !unread.is_empty() {
+        let set = store.seen.entry(me.to_string()).or_default();
+        for m in &unread {
+            set.insert(m.id.clone());
+        }
+        dirty = true;
+    }
+    if dirty {
+        write_cursors(h5i_root, &store)?;
     }
     Ok(unread)
 }
@@ -676,26 +811,12 @@ fn build_tree(
     Ok(builder.write()?)
 }
 
-/// Commit `files` onto `refs/h5i/msg`, creating the orphan branch on first use
-/// and otherwise appending a commit whose parent is the current tip.
-fn write_ref_files(
-    repo: &Repository,
-    files: &[(&str, &str)],
-    message: &str,
-) -> Result<(), H5iError> {
-    let sig = signature(repo)?;
-    let parent = repo
-        .find_reference(MSG_REF)
-        .ok()
-        .and_then(|r| r.peel_to_commit().ok());
-    let base_tree = parent.as_ref().and_then(|c| c.tree().ok());
-
-    let tree_oid = build_tree(repo, base_tree.as_ref(), files)?;
-    let tree = repo.find_tree(tree_oid)?;
-
-    let parents: Vec<&git2::Commit> = parent.iter().collect();
-    repo.commit(Some(MSG_REF), &sig, &sig, message, &tree, &parents)?;
-    Ok(())
+/// Read a top-level file from an arbitrary tree (the CAS append path reads the
+/// candidate parent's tree directly rather than the live ref).
+fn read_blob_from_tree(repo: &Repository, tree: Option<&git2::Tree>, path: &str) -> Option<String> {
+    let entry = tree?.get_path(Path::new(path)).ok()?;
+    let blob = repo.find_blob(entry.id()).ok()?;
+    std::str::from_utf8(blob.content()).ok().map(str::to_owned)
 }
 
 fn signature(repo: &Repository) -> Result<Signature<'static>, H5iError> {
@@ -914,6 +1035,58 @@ mod tests {
         assert!(!osc.contains('\x1b') && !osc.contains('\x07'));
         // Ordinary text is untouched.
         assert_eq!(sanitize_display("hello world"), "hello world");
+    }
+
+    #[test]
+    fn late_arriving_older_message_is_still_delivered() {
+        let (_d, repo, root) = fixture();
+        // Read a current message → its id is now in bob's seen-set.
+        send(&repo, &root, "alice", "bob", "newest", None).unwrap();
+        assert_eq!(inbox(&repo, &root, "bob", true).unwrap().len(), 1);
+
+        // A message pulled from another clone with an OLDER timestamp than what
+        // bob already read. A watermark would hide it; the seen-id set must not.
+        let late = Message {
+            id: "late0001".into(),
+            ts: "2020-01-01T00:00:00.000000Z".into(),
+            from: "carol".into(),
+            to: "bob".into(),
+            body: "late but unseen".into(),
+            ..Default::default()
+        };
+        append_message_cas(&repo, &late).unwrap();
+
+        let got = inbox(&repo, &root, "bob", true).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].body, "late but unseen");
+        // And it is not re-delivered.
+        assert!(inbox(&repo, &root, "bob", true).unwrap().is_empty());
+    }
+
+    #[test]
+    fn legacy_watermark_cursor_migrates_to_seen_ids() {
+        let (_d, repo, root) = fixture();
+        let m1 = send(&repo, &root, "alice", "bob", "one", None).unwrap();
+        let _m2 = send(&repo, &root, "alice", "bob", "two", None).unwrap();
+
+        // Hand-write a pre-seen-id cursor.json with a watermark at m1.
+        let dir = msg_dir(&root);
+        std::fs::create_dir_all(&dir).unwrap();
+        let legacy = format!(
+            r#"{{"cursors":{{"bob":{{"ts":"{}","id":"{}"}}}}}}"#,
+            m1.ts, m1.id
+        );
+        std::fs::write(cursor_path(&root), legacy).unwrap();
+
+        // Migration: m1 (≤ watermark) counts as read; only m2 is unread.
+        let unread = inbox(&repo, &root, "bob", true).unwrap();
+        assert_eq!(unread.len(), 1);
+        assert_eq!(unread[0].body, "two");
+
+        // The legacy watermark is gone and a seen-set persisted.
+        let raw = std::fs::read_to_string(cursor_path(&root)).unwrap();
+        assert!(raw.contains("seen"));
+        assert!(!raw.contains("cursors"));
     }
 
     #[test]

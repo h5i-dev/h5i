@@ -59,6 +59,12 @@ impl Clone {
         );
         out
     }
+
+    /// The raw on-disk message log (the JSONL blob in refs/h5i/msg).
+    fn msg_log(&self) -> String {
+        let out = git(&self.dir, &["show", "refs/h5i/msg:messages.jsonl"]);
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
 }
 
 fn out_str(out: &Output) -> String {
@@ -297,6 +303,86 @@ fn invalid_identities_are_rejected() {
     assert!(!a.h5i(&["msg", "send", "--from", "a b", "bob", "hi"]).status.success());
     // A valid one still works.
     assert!(a.h5i(&["msg", "as", "good-name.1"]).status.success());
+}
+
+#[test]
+fn typed_review_carries_kind_and_structured_fields() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "as", "claude"]);
+    a.h5i_ok(&[
+        "msg", "review",
+        "--branch", "auth-refactor",
+        "--focus", "src/auth.rs",
+        "--focus", "src/session.rs",
+        "--risk", "token refresh edge cases",
+        "--pr", "42",
+        "codex", "review token refresh before PR",
+    ]);
+
+    // On the wire: kind + structured fields, not a tag.
+    let log = a.msg_log();
+    assert!(log.contains(r#""kind":"REVIEW_REQUEST""#), "log: {log}");
+    assert!(log.contains(r#""branch":"auth-refactor""#));
+    assert!(log.contains("src/session.rs"));
+    assert!(log.contains(r#""risk":"token refresh edge cases""#));
+    assert!(log.contains(r#""links":{"pr":42}"#));
+
+    // In the rich view (colour off on a pipe): kind badge + detail rows.
+    let hist = out_str(&a.h5i_ok(&["msg", "history"]));
+    assert!(hist.contains("REVIEW_REQUEST"), "hist: {hist}");
+    assert!(hist.contains("branch auth-refactor"));
+    assert!(hist.contains("risk: token refresh edge cases"));
+}
+
+#[test]
+fn ack_done_decline_are_typed_threaded_replies() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "as", "codex"]);
+    a.h5i_ok(&["msg", "ask", "--from", "claude", "codex", "inspect failing auth test"]);
+
+    // Populate the numbered view, then DONE the request.
+    a.h5i_ok(&["msg", "inbox", "--as", "codex"]);
+    a.h5i_ok(&["msg", "done", "1", "fixed in 1a2b3c4"]);
+
+    let log = a.msg_log();
+    // The original ASK and the threaded DONE reply.
+    assert!(log.contains(r#""kind":"ASK""#), "log: {log}");
+    assert!(log.contains(r#""kind":"DONE""#));
+    // The DONE carries reply_to + thread_id pointing at the ASK.
+    let ask_id = log
+        .lines()
+        .find(|l| l.contains(r#""kind":"ASK""#))
+        .and_then(|l| l.split(r#""id":""#).nth(1))
+        .and_then(|s| s.split('"').next())
+        .expect("ask id")
+        .to_string();
+    assert!(log.contains(&format!(r#""reply_to":"{ask_id}""#)), "no reply_to: {log}");
+    assert!(log.contains(&format!(r#""thread_id":"{ask_id}""#)), "no thread_id: {log}");
+}
+
+#[test]
+fn risk_broadcast_carries_priority_and_focus() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&[
+        "msg", "risk", "--from", "lead", "--priority", "high", "--focus", "src/auth.rs",
+        "all", "auth cache crosses request boundaries",
+    ]);
+    let log = a.msg_log();
+    assert!(log.contains(r#""kind":"RISK""#), "log: {log}");
+    assert!(log.contains(r#""priority":"high""#));
+    assert!(log.contains(r#""to":"all""#));
+}
+
+#[test]
+fn hook_output_frames_messages_as_untrusted() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "as", "dev"]);
+    a.h5i_ok(&["msg", "review", "--from", "lead", "dev", "please review"]);
+    let hook = out_str(&a.h5i_ok(&["msg", "hook", "--as", "dev"]));
+    assert!(hook.contains("untrusted collaborator input"), "hook: {hook}");
+    assert!(hook.contains("REVIEW_REQUEST"));
+    // No imperative "New instruction:" framing.
+    assert!(!hook.contains("New instruction"));
 }
 
 #[test]

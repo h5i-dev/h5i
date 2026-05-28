@@ -266,14 +266,27 @@ h5i share push
 |---|---|
 | `h5i msg` | Inbox dashboard (header · inbox · Git proof). |
 | `h5i msg as <name>` | Set this repo's agent identity. |
-| `h5i msg send <agent> <text>` | Send a message (`--tag review\|risk`, `all` to broadcast). |
-| `h5i msg reply <n> <text>` | Reply to a numbered message from your last view. |
+| `h5i msg send <agent> <text>` | Send a message (`all` to broadcast). |
+| `h5i msg reply <n> <text>` | Reply to a numbered message (threaded). |
 | `h5i msg watch` | Live stream of incoming messages. |
 | `h5i msg history` / `team` | Full log / known agents. |
 
+Messages follow the **i5h protocol** ([docs/i5h-protocol.md](docs/i5h-protocol.md)) —
+typed, operational handoffs rather than chat. Typed verbs set the message kind
+and structured fields:
+
+| Verb | Kind | Notable flags |
+|---|---|---|
+| `h5i msg ask <agent> <text>` | `ASK` | — |
+| `h5i msg review <agent> <text>` | `REVIEW_REQUEST` | `--branch --focus --risk --pr` |
+| `h5i msg risk <agent> <text>` | `RISK` | `--focus --priority` |
+| `h5i msg handoff <agent> <text>` | `HANDOFF` | `--branch --context --focus` |
+| `h5i msg ack\|done\|decline <n> [text]` | `ACK` / `DONE` / `DECLINE` | threaded reply to message `<n>` |
+
 Add `--plain` to any read command for greppable, uncoloured output (hooks and
 scripts). For turn-by-turn delivery inside Claude Code, register
-`h5i msg hook --as <name>` as a Stop hook (`h5i hook setup` prints the snippet).
+`h5i msg hook --as <name>` as a Stop hook (`h5i hook setup` prints the snippet);
+hook output is framed as untrusted collaborator input, never as instructions.
 
 > Agent messaging that survives clones, machines, and branches — because it is stored in Git.
 
