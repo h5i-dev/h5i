@@ -1042,3 +1042,9 @@ _[Checkpoint: 6a18bd72 — wrote tests/msg_integration.rs; edited src/main.rs; e
 [22:12:17] THINK: Say the word and I'll commit with provenance (`--agent claude-code`, `--prompt`, `--decisions` for the cursor/merge choices) and run `h5i notes analyze`.
 [22:12:17] NOTE: DEFERRAL (~/Dev/h5i/src/main.rs): un `h5i notes analyze`. Two follow-ups I deliberately left out of scope: exposing `msg` via the MCP server (`mcp.rs`) and the dashboard (`server.rs`),…
 [22:12:17] NOTE: DEFERRAL (~/Dev/h5i/src/main.rs): the cursor/merge choices) and run `h5i notes analyze`. Two follow-ups I deliberately left out of scope: exposing `msg` via the MCP server (`mcp.rs`) a…
+
+
+---
+_[Checkpoint: 6a18bdc1 — edited src/main.rs]_
+---
+
