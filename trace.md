@@ -1073,3 +1073,4 @@ _[Checkpoint: 6a18be9c — edited src/main.rs]_
 [22:24:54] NOTE: Current msg PoC has a light envelope (id/ts/from/to/body/tag) and reply UI, but not a full handoff protocol with typed kind, branch/focus/risk, parent IDs, status, or validation.
 [22:25:32] OBSERVE: read src/main.rs
 [22:25:39] ACT: edited src/main.rs
+[22:29:05] ACT: edited src/msg.rs
