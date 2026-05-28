@@ -1003,3 +1003,4 @@ _[Checkpoint: 6a18ba09 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 [22:08:25] NOTE: Review finding candidate: msg send commits directly to refs/h5i/msg without compare-and-swap/retry, so concurrent local sends can overwrite the ref tip and temporarily lose one message.
 [22:08:50] ACT: edited src/main.rs
 [22:09:16] OBSERVE: searched src for "LocalSession|refs/h5i/msg|msg""
+[22:09:16] OBSERVE: listed files under src
