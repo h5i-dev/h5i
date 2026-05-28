@@ -1235,3 +1235,4 @@ _[Checkpoint: 6a18cc55 — edited tests/msg_integration.rs; edited tests/msg_int
 [23:22:52] OBSERVE: read src/main.rs
 [23:23:18] ACT: edited src/main.rs
 [23:23:57] ACT: edited tests/msg_integration.rs
+[23:28:19] THINK: I'll add a Messaging section before "Sharing h5i Data" in the Claude instructions:
