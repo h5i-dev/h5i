@@ -10,11 +10,33 @@ use h5i_core::codex;
 use h5i_core::ctx;
 use h5i_core::memory;
 use h5i_core::metadata::{AiMetadata, Decision, IntegrityLevel, Severity, TestSource};
+use h5i_core::msg;
 use h5i_core::session_log;
 use h5i_core::storage::{self, DoctorSeverity};
 use h5i_core::repository::H5iRepository;
 use h5i_core::review::REVIEW_THRESHOLD;
 use h5i_core::ui::{ERROR, LOOKING, STEP, SUCCESS, WARN};
+
+/// Render a list of messages for `h5i msg inbox` / `history`. When `viewer`
+/// is non-empty, messages sent by the viewer are tagged so a conversation is
+/// easy to follow; pass `""` for a neutral history view.
+fn print_messages(msgs: &[msg::Message], viewer: &str) {
+    for m in msgs {
+        let when = m.ts.split('.').next().unwrap_or(&m.ts).replace('T', " ");
+        let arrow = if !viewer.is_empty() && m.from == viewer {
+            style(format!("{} → {}", m.from, m.to)).dim()
+        } else {
+            style(format!("{} → {}", m.from, m.to)).cyan()
+        };
+        println!(
+            "  {} {}  {}",
+            arrow,
+            style(format!("[{}]", &m.id)).dim(),
+            style(when).dim()
+        );
+        println!("    {}", m.body);
+    }
+}
 
 /// Truncate a string to at most `max_chars` characters, appending `…` if cut.
 fn truncate(s: &str, max_chars: usize) -> String {
@@ -406,6 +428,88 @@ enum Commands {
     Pr {
         #[command(subcommand)]
         action: PrCommands,
+    },
+
+    /// Cross-agent messaging over a shareable Git ref (refs/h5i/msg).
+    ///
+    /// Send and receive messages between agents working in the same repo.
+    /// Unlike a machine-local message store, the log lives in a Git ref and
+    /// travels with `h5i share push` / `h5i share pull`.
+    Msg {
+        #[command(subcommand)]
+        action: MsgCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum MsgCommands {
+    /// Send a message to another agent (or `all` to broadcast).
+    ///
+    /// The body is variadic, so `--from` must appear BEFORE the recipient:
+    ///   h5i msg send --from alice bob deploy is done
+    Send {
+        /// Recipient agent name, or `all` to broadcast to everyone else.
+        to: String,
+        /// Message body. Multiple words are joined with spaces.
+        #[arg(trailing_var_arg = true, required = true)]
+        body: Vec<String>,
+        /// Sender identity. Defaults to $H5I_AGENT or the stored identity;
+        /// when given, it is remembered as this repo's default identity.
+        /// Must be placed before the recipient (the body consumes trailing args).
+        #[arg(long)]
+        from: Option<String>,
+    },
+
+    /// Show messages addressed to you that arrived since you last checked,
+    /// then mark them read (advance your local cursor).
+    Inbox {
+        /// Whose inbox to read. Defaults to $H5I_AGENT or the stored identity.
+        #[arg(long = "as")]
+        as_agent: Option<String>,
+        /// Show unread without advancing the cursor (don't mark as read).
+        #[arg(long)]
+        peek: bool,
+    },
+
+    /// Show the full message history (oldest-first within the window).
+    History {
+        /// Maximum number of messages to show.
+        #[arg(short, long, default_value_t = 30)]
+        limit: usize,
+        /// Restrict to a conversation with this agent (sender or recipient).
+        #[arg(long)]
+        with: Option<String>,
+    },
+
+    /// List the known agents on this repo's message roster.
+    Team,
+
+    /// Show or set this repo's stored default agent identity.
+    Whoami {
+        /// If given, set the stored identity to this name.
+        name: Option<String>,
+    },
+
+    /// Turn-delivery hook: print unread messages (for use as a Stop hook),
+    /// then mark them read. Silent and exit 0 when there is nothing new.
+    Hook {
+        /// Whose inbox to check. Defaults to $H5I_AGENT or the stored identity.
+        #[arg(long = "as")]
+        as_agent: Option<String>,
+    },
+
+    /// Monitor-delivery primitive: poll the message ref and print new messages
+    /// as they arrive. Foreground loop; Ctrl+C to stop.
+    Watch {
+        /// Whose inbox to watch. Defaults to $H5I_AGENT or the stored identity.
+        #[arg(long = "as")]
+        as_agent: Option<String>,
+        /// Seconds between polls.
+        #[arg(short, long, default_value_t = 5)]
+        interval: u64,
+        /// Check once and exit (don't loop) — useful for testing.
+        #[arg(long)]
+        once: bool,
     },
 }
 
@@ -1932,7 +2036,7 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
             &[
                 NounVerb {
                     verb: "push",
-                    summary: "Push all refs/h5i/* (notes, context, memory, ast) to a remote in one shot.",
+                    summary: "Push all refs/h5i/* (notes, context, memory, ast, msg) to a remote in one shot.",
                     legacy: "h5i push",
                     example: "h5i share push",
                 },
@@ -2135,6 +2239,164 @@ fn main() -> anyhow::Result<()> {
                 let workdir = std::env::current_dir()?;
                 let body = h5i_core::pr::render_body_with_style(&workdir, limit, style.into())?;
                 println!("{}", body);
+            }
+        },
+
+        Commands::Msg { action } => {
+            let repo = H5iRepository::open(".")?;
+            let h5i_root = repo.h5i_root.clone();
+            let git = repo.git();
+
+            match action {
+                MsgCommands::Send { to, body, from } => {
+                    let sender = msg::resolve_identity(&h5i_root, from.as_deref())?;
+                    let body = body.join(" ");
+                    let m = msg::send(git, &h5i_root, &sender, &to, &body)?;
+                    let label = if to == msg::BROADCAST {
+                        style("📢 broadcast").yellow().to_string()
+                    } else {
+                        style(format!("→ {to}")).cyan().to_string()
+                    };
+                    println!(
+                        "{} {} {}  {}",
+                        SUCCESS,
+                        style(&m.from).green().bold(),
+                        label,
+                        style(format!("[{}]", &m.id)).dim()
+                    );
+                    println!("   {}", truncate(&m.body, 80));
+                }
+
+                MsgCommands::Inbox { as_agent, peek } => {
+                    let me = msg::resolve_identity(&h5i_root, as_agent.as_deref())?;
+                    let unread = msg::inbox(git, &h5i_root, &me, !peek)?;
+                    if unread.is_empty() {
+                        println!(
+                            "{} No new messages for {}.",
+                            SUCCESS,
+                            style(&me).green().bold()
+                        );
+                    } else {
+                        println!(
+                            "{} {} new message{} for {}{}\n",
+                            STEP,
+                            style(unread.len()).cyan().bold(),
+                            if unread.len() == 1 { "" } else { "s" },
+                            style(&me).green().bold(),
+                            if peek { style(" (peek)").dim().to_string() } else { String::new() },
+                        );
+                        print_messages(&unread, &me);
+                    }
+                }
+
+                MsgCommands::History { limit, with } => {
+                    let msgs = msg::history(git, with.as_deref(), limit)?;
+                    if msgs.is_empty() {
+                        println!("{} No messages yet.", WARN);
+                    } else {
+                        let header = match &with {
+                            Some(w) => format!("Conversation with {w}"),
+                            None => "Message history".to_string(),
+                        };
+                        println!("{}\n", style(header).bold().underlined());
+                        // History has no single "me"; pass an empty viewer so
+                        // both sides of each message are shown verbatim.
+                        print_messages(&msgs, "");
+                    }
+                }
+
+                MsgCommands::Team => {
+                    let roster = msg::team(git);
+                    if roster.is_empty() {
+                        println!(
+                            "{} No agents yet — send a message to populate the roster.",
+                            WARN
+                        );
+                    } else {
+                        println!("{}\n", style("Agents on this repo").bold().underlined());
+                        let me = msg::read_identity(&h5i_root);
+                        for (name, last_seen) in roster {
+                            let you = if Some(&name) == me.as_ref() {
+                                style(" (you)").green().to_string()
+                            } else {
+                                String::new()
+                            };
+                            println!(
+                                "  {} {}{}   {}",
+                                style("●").cyan(),
+                                style(&name).bold(),
+                                you,
+                                style(format!("last seen {last_seen}")).dim()
+                            );
+                        }
+                    }
+                }
+
+                MsgCommands::Whoami { name } => match name {
+                    Some(n) => {
+                        msg::write_identity(&h5i_root, n.trim())?;
+                        println!(
+                            "{} Identity for this repo set to {}.",
+                            SUCCESS,
+                            style(n.trim()).green().bold()
+                        );
+                    }
+                    None => match msg::read_identity(&h5i_root) {
+                        Some(id) => println!("{}", style(id).green().bold()),
+                        None => println!(
+                            "{} No identity set. Run {} or send with {}.",
+                            WARN,
+                            style("h5i msg whoami <name>").bold(),
+                            style("--from <name>").bold()
+                        ),
+                    },
+                },
+
+                MsgCommands::Hook { as_agent } => {
+                    // Turn-delivery: meant to run from a Stop hook. Resolve the
+                    // identity quietly; if none is configured there is nothing
+                    // to deliver, so exit cleanly rather than erroring out.
+                    let Ok(me) = msg::resolve_identity(&h5i_root, as_agent.as_deref()) else {
+                        return Ok(());
+                    };
+                    let unread = msg::inbox(git, &h5i_root, &me, true)?;
+                    if !unread.is_empty() {
+                        println!(
+                            "📬 h5i: {} new message{} for {}",
+                            unread.len(),
+                            if unread.len() == 1 { "" } else { "s" },
+                            me
+                        );
+                        for m in &unread {
+                            println!("  {} → {}: {}", m.from, m.to, m.body);
+                        }
+                    }
+                }
+
+                MsgCommands::Watch { as_agent, interval, once } => {
+                    let me = msg::resolve_identity(&h5i_root, as_agent.as_deref())?;
+                    if !once {
+                        println!(
+                            "{} Watching inbox for {} (every {}s) — Ctrl+C to stop",
+                            STEP,
+                            style(&me).green().bold(),
+                            interval
+                        );
+                    }
+                    loop {
+                        // Reopen the repo each tick so messages committed to the
+                        // ref by other processes become visible.
+                        let repo = H5iRepository::open(".")?;
+                        let unread = msg::inbox(repo.git(), &repo.h5i_root, &me, true)?;
+                        if !unread.is_empty() {
+                            print_messages(&unread, &me);
+                        }
+                        if once {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(interval.max(1)));
+                    }
+                }
             }
         },
 
@@ -3295,6 +3557,30 @@ jq -c '{
                 "         You never have to call `h5i context trace` by hand."
             );
 
+            println!();
+            println!(
+                "{} For cross-agent messaging ({}), add a turn-delivery hook that",
+                style("Messaging:").bold(),
+                style("h5i msg").yellow(),
+            );
+            println!(
+                "  surfaces new messages between assistant turns. Append to the {} array:",
+                style("Stop").yellow(),
+            );
+            println!(
+                "{}",
+                style(
+                    r#"          { "type": "command", "command": "h5i msg hook --as <your-agent-name>" }"#
+                )
+                .dim()
+            );
+            println!(
+                "  It prints any unread messages addressed to you (and marks them read), or is\n\
+                 silent when there are none. For real-time push instead, run {} in a\n\
+                 side terminal.",
+                style("h5i msg watch --as <name>").bold(),
+            );
+
             println!("{}", style("── Step 3: Register the MCP server ──").bold());
             println!(
                 "Add the {} block to {} so Claude Code can call h5i tools natively:\n",
@@ -3654,6 +3940,13 @@ jq -c '{
                 "no AST snapshots yet",
             )?;
 
+            // Push the cross-agent message log (refs/h5i/msg)
+            try_push(
+                msg::MSG_REF,
+                style("h5i msg send").bold(),
+                "no messages yet",
+            )?;
+
             // Bind to the original variable name so the existing "Tip:" footer
             // (gated on notes_status.success()) keeps working unchanged.
             let notes_status_success = notes_pushed;
@@ -3665,8 +3958,10 @@ jq -c '{
                     \n    git fetch {} refs/h5i/memory:refs/h5i/memory\
                     \n    git fetch {} 'refs/h5i/context/*:refs/h5i/context/*'\
                     \n    git fetch {} refs/h5i/ast:refs/h5i/ast\
+                    \n    git fetch {} refs/h5i/msg:refs/h5i/msg\
                     \n\n  Or add fetch refspecs to .git/config (see README §9) so {} picks them up automatically.",
                     style("Tip:").bold(),
+                    style(&remote).yellow(),
                     style(&remote).yellow(),
                     style(&remote).yellow(),
                     style(&remote).yellow(),
@@ -3860,6 +4155,45 @@ jq -c '{
                                     false
                                 }
                             }
+                        } else if refname == msg::MSG_REF {
+                            // The message log is strictly append-only, so a
+                            // divergence is just two disjoint sets of appended
+                            // messages. Union-merge them by id (analogous to
+                            // notes) so no message is ever lost on pull.
+                            let g2 = git2::Repository::open(&workdir)
+                                .map_err(|e| anyhow::anyhow!("open git2 repo: {e}"))?;
+                            let local_git2 = git2::Oid::from_str(local_oid_str)
+                                .map_err(|e| anyhow::anyhow!("parse local oid: {e}"))?;
+                            let incoming_git2 = git2::Oid::from_str(&incoming_oid)
+                                .map_err(|e| anyhow::anyhow!("parse incoming oid: {e}"))?;
+                            match msg::union_merge_commits(&g2, local_git2, incoming_git2) {
+                                Ok(new_oid) => {
+                                    let new_oid_str = new_oid.to_string();
+                                    let st = git(&[
+                                        "update-ref",
+                                        refname,
+                                        &new_oid_str,
+                                        local_oid_str,
+                                    ])?;
+                                    if st.status.success() {
+                                        println!(
+                                            "{} ({})",
+                                            style("ok").green(),
+                                            style("merged (union)").dim()
+                                        );
+                                        true
+                                    } else {
+                                        println!("{}", style("failed").red());
+                                        eprint!("{}", String::from_utf8_lossy(&st.stderr));
+                                        false
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("{}", style("failed").red());
+                                    eprintln!("union-merge of msg refs failed: {e}");
+                                    false
+                                }
+                            }
                         } else if force {
                             install("forced over divergent local")?
                         } else {
@@ -3943,6 +4277,7 @@ jq -c '{
             }
 
             sync_one("refs/h5i/ast")?;
+            sync_one(msg::MSG_REF)?;
 
             if notes_changed {
                 println!(

@@ -33,6 +33,7 @@ const H5I_REFS: &[&str] = &[
     "refs/h5i/context/main",
     "refs/h5i/ast",
     "refs/h5i/memory",
+    "refs/h5i/msg",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
