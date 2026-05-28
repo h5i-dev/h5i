@@ -174,11 +174,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Reviewed h5i msg prototype; verified cargo check and unit tests pass, msg integration test currently fails on --as/--as-agent mismatch; identified cursor and concurrent-send risks.
 - [x] wrote tests/msg_integration.rs; edited src/main.rs; edited src/main.rs
 - [x] edited src/main.rs
+- [x] edited src/main.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-28 22:15 UTC] `communication`: edited src/main.rs
 - [2026-05-28 22:12 UTC] `communication`: edited src/main.rs
 - [2026-05-28 22:10 UTC] `communication`: wrote tests/msg_integration.rs; edited src/main.rs; edited src/main.rs
 - [2026-05-28 22:09 UTC] `communication`: Reviewed h5i msg prototype; verified cargo check and unit tests pass, msg integration test currently fails on --as/--as-agent mismatch; identified cursor and concurrent-send risks.
