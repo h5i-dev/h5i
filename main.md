@@ -164,11 +164,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] committed h5i feature blog posts
 - [x] documented gh requirement for README PR posting workflow
 - [x] committed README gh requirement update
+- [x] edited README.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-28 20:14 UTC] `update-doc`: edited README.md
 - [2026-05-24 16:05 UTC] `update-doc`: committed README gh requirement update
 - [2026-05-24 16:02 UTC] `update-doc`: documented gh requirement for README PR posting workflow
 - [2026-05-24 15:58 UTC] `update-doc`: committed h5i feature blog posts
