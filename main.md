@@ -176,11 +176,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/main.rs
 - [x] edited src/main.rs
 - [x] Documented the High5 protocol for h5i msg in docs/high5-protocol.md, covering wire format, message kinds, CLI mapping, terminal rendering, hook safety, storage semantics, identity, compatibility, and implementation checklist.
+- [x] edited README.md; added docs/high5-protocol.md; edited docs/high5-protocol.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-28 22:34 UTC] `communication`: edited README.md; added docs/high5-protocol.md; edited docs/high5-protocol.md
 - [2026-05-28 22:31 UTC] `communication`: Documented the High5 protocol for h5i msg in docs/high5-protocol.md, covering wire format, message kinds, CLI mapping, terminal rendering, hook safety, storage semantics, identity, compatibility, and implementation checklist.
 - [2026-05-28 22:15 UTC] `communication`: edited src/main.rs
 - [2026-05-28 22:12 UTC] `communication`: edited src/main.rs
