@@ -1287,3 +1287,9 @@ _[Checkpoint: 6a18d3c6 — edited src/main.rs; edited tests/msg_integration.rs; 
 [23:50:29] ACT: edited AGENTS.md
 [23:50:40] ACT: edited tests/msg_integration.rs
 [23:53:30] NOTE: DEFERRAL (~/Dev/h5i/src/msg.rs): ., folding an inbox check into `h5i codex sync`) is a clean follow-up if you want true parity. Want that, or `h5i msg --json`, or to push the branch
+
+
+---
+_[Checkpoint: 6a18d57a — edited src/main.rs; edited AGENTS.md; edited tests/msg_integration.rs]_
+---
+
