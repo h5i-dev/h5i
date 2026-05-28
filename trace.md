@@ -892,3 +892,4 @@ _[Checkpoint: 6a132115 — documented gh requirement for README PR posting workf
 _[Checkpoint: 6a1321b6 — committed README gh requirement update]_
 ---
 
+[20:11:42] OBSERVE: read src/metadata.rs
