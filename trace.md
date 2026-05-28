@@ -925,3 +925,4 @@ _[Checkpoint: 6a18a378 — edited README.md]_
 ---
 
 [20:24:56] OBSERVE: read .claude/skills/h5i-workflow/SKILL.md
+[20:26:06] OBSERVE: CLI is now verb-based: capture/recall/audit/share + init/resolve/diff/rollback/rewind/serve/hook/codex/resume/mcp/doctor/policy. Legacy forms (h5i commit, h5i context, h5i notes) still work but emit deprecation hints. PostToolUse hook 'h5i hook run' auto-traces Edit/Write/Read; SessionStart + Stop hooks also exist.
