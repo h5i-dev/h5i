@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: update-skill
+# Ephemeral traces — Branch: communication
 

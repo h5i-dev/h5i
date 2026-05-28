@@ -953,3 +953,9 @@ _[Checkpoint: 6a18a528 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 [21:51:25] THINK: Borrow agmsg's lightweight delivery-mode and identity UX ideas over embedding its SQLite inbox wholesale because h5i's durable surface is git-versioned context, not ephemeral chat.
 [21:51:25] OBSERVE: read src/codex.rs
 [21:51:25] OBSERVE: read src/session_log.rs
+
+
+---
+_[Checkpoint: 6a18b8e1 — Compared agmsg architecture and identified portable ideas for h5i: delivery modes, team identity, inbox-style handoffs, script/skill packaging, and no-daemon local operation.]_
+---
+
