@@ -166,11 +166,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] committed README gh requirement update
 - [x] edited README.md
 - [x] edited README.md
+- [x] Update h5i-workflow SKILL to verb-based CLI
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-28 20:27 UTC] `update-skill`: Update h5i-workflow SKILL to verb-based CLI
 - [2026-05-28 20:20 UTC] `update-doc`: edited README.md
 - [2026-05-28 20:14 UTC] `update-doc`: edited README.md
 - [2026-05-24 16:05 UTC] `update-doc`: committed README gh requirement update
