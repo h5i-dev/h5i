@@ -1004,3 +1004,4 @@ _[Checkpoint: 6a18ba09 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 [22:08:50] ACT: edited src/main.rs
 [22:09:16] OBSERVE: searched src for "LocalSession|refs/h5i/msg|msg""
 [22:09:16] OBSERVE: listed files under src
+[22:09:16] OBSERVE: read src/ctx.rs
