@@ -54,13 +54,23 @@ pub const AGENT_ENV: &str = "H5I_AGENT";
 const MESSAGES_FILE: &str = "messages.jsonl";
 const AGENTS_FILE: &str = "agents.json";
 
+/// Current i5h wire-format version written by this build.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 /// One message in the shared log. Lines in `messages.jsonl` are exactly the
 /// JSON serialization of this struct.
 ///
 /// The total order over messages is `(ts, id)`: `ts` is a fixed-width RFC3339
 /// UTC timestamp (microsecond precision) so it sorts lexicographically, and
 /// `id` breaks ties deterministically.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+///
+/// ## i5h compatibility
+///
+/// Every added field is `#[serde(default)]` and skipped when empty, so a v0
+/// PoC line (`{id,ts,from,to,body[,tag]}`) still deserializes — `version`
+/// reads back as `0`. Use [`Message::effective_kind`] rather than reading
+/// `kind` directly, so legacy messages map onto an i5h kind.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Message {
     /// Stable unique id (16 hex chars). Used for dedup on merge and as the
     /// tie-breaker in the total order.
@@ -71,12 +81,57 @@ pub struct Message {
     pub from: String,
     /// Recipient agent identity, or [`BROADCAST`] for a fan-out message.
     pub to: String,
-    /// Message body (free text).
+    /// Message body (free text). Stored verbatim; sanitized only at render.
     pub body: String,
-    /// Optional classification (e.g. `review`, `risk`, `reply`) used for
-    /// colour and grouping in the UI. Absent on older messages.
+    /// Legacy v0 classification (`review` / `risk` / …). Retained for back-compat
+    /// and surfaced as a UI badge; new messages also carry [`Message::kind`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
+
+    // ── i5h v1 fields ──────────────────────────────────────────────────────
+    /// Protocol version. `0` for a legacy v0 line; [`PROTOCOL_VERSION`] for new.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub version: u32,
+    /// i5h message kind (e.g. `ASK`, `REVIEW_REQUEST`, `RISK`, `DONE`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Id of the message this one replies to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    /// Stable thread-root id (defaults to the reply_to root, or self).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    /// `low` / `normal` / `high` / `urgent`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    /// `open` / `acked` / `done` / `declined` / `stale`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Git branch relevant to the message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// h5i context branch relevant to the message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_branch: Option<String>,
+    /// Files, symbols, tests, or scopes to inspect first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub focus: Vec<String>,
+    /// Concise risk statement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk: Option<String>,
+    /// Optional UTC RFC3339 deadline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<String>,
+    /// Related PRs, commits, context nodes, claims, or URLs (open object).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<serde_json::Value>,
+    /// Forward-compatible extension area.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<serde_json::Value>,
+}
+
+fn is_zero(v: &u32) -> bool {
+    *v == 0
 }
 
 impl Message {
@@ -89,6 +144,48 @@ impl Message {
     /// directly to them, or a broadcast from someone else.
     fn addressed_to(&self, who: &str) -> bool {
         self.to == who || (self.to == BROADCAST && self.from != who)
+    }
+
+    /// The effective i5h kind: the explicit `kind` when present, otherwise
+    /// inferred from a legacy `tag` / the recipient (so v0 messages render as
+    /// a kind too).
+    pub fn effective_kind(&self) -> String {
+        match &self.kind {
+            Some(k) if !k.is_empty() => k.clone(),
+            _ => infer_kind(self.tag.as_deref(), &self.to),
+        }
+    }
+}
+
+/// Map a legacy tag (or absence of one) onto an i5h kind.
+///
+/// - known tag → its kind (`review`/`review-request` → `REVIEW_REQUEST`,
+///   `risk` → `RISK`); a tag that is already a kind name is upper-cased through;
+/// - otherwise the recipient decides the default: `FYI` for a broadcast,
+///   `ASK` for a directed message.
+pub fn infer_kind(tag: Option<&str>, to: &str) -> String {
+    if let Some(t) = tag {
+        let t = t.trim();
+        match t.to_ascii_lowercase().as_str() {
+            "" => {}
+            "review" | "review-request" | "review_request" => return "REVIEW_REQUEST".into(),
+            "risk" => return "RISK".into(),
+            other => {
+                const KINDS: &[&str] = &[
+                    "fyi", "ask", "review_request", "risk", "blocked", "handoff", "ack",
+                    "done", "decline", "broadcast",
+                ];
+                if KINDS.contains(&other) {
+                    return other.to_ascii_uppercase();
+                }
+                // Unknown tag: fall through to the recipient-based default.
+            }
+        }
+    }
+    if to == BROADCAST {
+        "FYI".into()
+    } else {
+        "ASK".into()
     }
 }
 
@@ -139,13 +236,20 @@ pub fn send(
 
     let ts = now_ts();
     let id = gen_id(&ts, from, to, body);
+    let tag = tag.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
     let msg = Message {
         id,
         ts,
         from: from.to_string(),
         to: to.to_string(),
         body: body.to_string(),
-        tag: tag.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
+        // i5h v1: stamp the version and a resolved kind (derived from the
+        // legacy --tag for now; typed verbs will set it directly in a later
+        // phase). Threading / priority / focus stay empty until those phases.
+        kind: Some(infer_kind(tag.as_deref(), to)),
+        version: PROTOCOL_VERSION,
+        tag,
+        ..Default::default()
     };
 
     // Append one line to the log. Read the current blob fresh so we extend the
@@ -813,6 +917,71 @@ mod tests {
     }
 
     #[test]
+    fn new_sends_carry_version_and_inferred_kind() {
+        let (_d, repo, root) = fixture();
+        let ask = send(&repo, &root, "alice", "bob", "hi", None).unwrap();
+        assert_eq!(ask.version, PROTOCOL_VERSION);
+        assert_eq!(ask.kind.as_deref(), Some("ASK"));
+
+        let review = send(&repo, &root, "alice", "bob", "look", Some("review")).unwrap();
+        assert_eq!(review.kind.as_deref(), Some("REVIEW_REQUEST"));
+
+        let bcast = send(&repo, &root, "alice", BROADCAST, "fyi", None).unwrap();
+        assert_eq!(bcast.kind.as_deref(), Some("FYI"));
+    }
+
+    #[test]
+    fn legacy_v0_line_deserializes_and_maps_to_a_kind() {
+        // A v0 PoC line: no version, no kind, a legacy tag.
+        let v0 = r#"{"id":"abc123","ts":"2026-05-28T10:00:00.000000Z","from":"alice","to":"bob","body":"hello","tag":"risk"}"#;
+        let msgs = parse_messages(v0);
+        assert_eq!(msgs.len(), 1);
+        let m = &msgs[0];
+        assert_eq!(m.version, 0); // legacy
+        assert_eq!(m.kind, None); // not stored
+        assert_eq!(m.effective_kind(), "RISK"); // inferred from tag
+        assert_eq!(m.body, "hello");
+
+        // v0 with no tag, directed → ASK; broadcast → FYI.
+        let bare = r#"{"id":"d1","ts":"2026-05-28T10:00:00.000000Z","from":"a","to":"b","body":"x"}"#;
+        assert_eq!(parse_messages(bare)[0].effective_kind(), "ASK");
+        let bc = r#"{"id":"d2","ts":"2026-05-28T10:00:00.000000Z","from":"a","to":"all","body":"x"}"#;
+        assert_eq!(parse_messages(bc)[0].effective_kind(), "FYI");
+    }
+
+    #[test]
+    fn v1_message_round_trips_through_jsonl() {
+        let m = Message {
+            id: "id1".into(),
+            ts: "2026-05-28T10:00:00.000000Z".into(),
+            from: "claude".into(),
+            to: "codex".into(),
+            body: "review please".into(),
+            kind: Some("REVIEW_REQUEST".into()),
+            version: PROTOCOL_VERSION,
+            branch: Some("auth-refactor".into()),
+            focus: vec!["src/auth.rs".into()],
+            priority: Some("high".into()),
+            ..Default::default()
+        };
+        let line = serde_json::to_string(&m).unwrap();
+        // Empty optionals are omitted from the wire form.
+        assert!(!line.contains("reply_to"));
+        assert!(!line.contains("\"tag\""));
+        let back: Message = serde_json::from_str(&line).unwrap();
+        assert_eq!(back, m);
+    }
+
+    #[test]
+    fn infer_kind_passes_through_explicit_kind_names() {
+        assert_eq!(infer_kind(Some("done"), "bob"), "DONE");
+        assert_eq!(infer_kind(Some("HANDOFF"), "bob"), "HANDOFF");
+        // Unknown tag falls back to the recipient default.
+        assert_eq!(infer_kind(Some("deploy"), "bob"), "ASK");
+        assert_eq!(infer_kind(Some("deploy"), BROADCAST), "FYI");
+    }
+
+    #[test]
     fn tag_is_persisted_and_round_trips() {
         let (_d, repo, root) = fixture();
         send(&repo, &root, "alice", "bob", "look here", Some("review")).unwrap();
@@ -873,6 +1042,7 @@ mod tests {
             to: "bob".into(),
             body: "shared".into(),
             tag: None,
+            ..Default::default()
         };
         let only_a = Message {
             id: "aaaa0001".into(),
@@ -881,6 +1051,7 @@ mod tests {
             to: "bob".into(),
             body: "from-a".into(),
             tag: None,
+            ..Default::default()
         };
         let only_b = Message {
             id: "bbbb0001".into(),
@@ -889,6 +1060,7 @@ mod tests {
             to: "bob".into(),
             body: "from-b".into(),
             tag: None,
+            ..Default::default()
         };
 
         let merged = merge_message_sets(
@@ -927,6 +1099,7 @@ mod tests {
             to: "bob".into(),
             body: "incoming-only".into(),
             tag: None,
+            ..Default::default()
         };
         let incoming_log =
             format!("{}{}\n", base_log, serde_json::to_string(&incoming_msg).unwrap());
