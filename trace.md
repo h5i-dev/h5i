@@ -1096,3 +1096,4 @@ _[Checkpoint: 6a18c244 — Documented the High5 protocol for h5i msg in docs/hig
 ---
 
 [22:34:40] THINK: Rename High5 to i5h (Inter-Agent Information & Interaction Handshake) to make the protocol feel less playful and more standards-like while retaining the agent-radio handoff model.
+[22:34:58] THINK: Let me replace the `print_messages` helper with a richer rendering toolkit (numbered, tag-aware, box bands, relative time):
