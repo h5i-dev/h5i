@@ -1021,3 +1021,9 @@ _[Checkpoint: 6a18ba09 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 [22:09:16] OBSERVE: searched src/storage.rs for "refs|MissingRef|refs/h5i/msg|doctor""
 [22:09:16] OBSERVE: read src/storage.rs
 [22:09:16] OBSERVE: read tests/msg_integration.rs
+
+
+---
+_[Checkpoint: 6a18bd0c — Reviewed h5i msg prototype; verified cargo check and unit tests pass, msg integration test currently fails on --as/--as-agent mismatch; identified cursor and concurrent-send risks.]_
+---
+
