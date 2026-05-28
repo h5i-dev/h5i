@@ -257,6 +257,49 @@ fn tag_survives_the_round_trip() {
 }
 
 #[test]
+fn pulled_message_cannot_inject_terminal_escapes() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "as", "bob"]);
+    // A hostile body: clear-screen escape + a newline that would forge a row.
+    a.h5i_ok(&[
+        "msg",
+        "send",
+        "--from",
+        "mallory",
+        "bob",
+        "\x1b[2Jwiped\nFAKE  9 lines injected",
+    ]);
+
+    // Color is auto-disabled on a pipe, so any ESC byte would be injected.
+    for view in [vec!["msg"], vec!["msg", "inbox", "--as", "bob"], vec!["msg", "history"]] {
+        let out = a.h5i_ok(&view);
+        assert!(
+            !out.stdout.contains(&0x1b),
+            "ESC leaked into `{}` output",
+            view.join(" ")
+        );
+    }
+
+    // The newline must not forge an extra row in line-per-message --plain output.
+    let plain = a.h5i_ok(&["msg", "history", "--plain"]);
+    let lines = plain.stdout.iter().filter(|&&b| b == b'\n').count();
+    assert_eq!(lines, 1, "newline in body forged extra plain rows");
+    assert!(!plain.stdout.contains(&0x1b));
+}
+
+#[test]
+fn invalid_identities_are_rejected() {
+    let (_root, a, _b) = two_clones();
+    // `as` with a space / control char / path separator must fail.
+    assert!(!a.h5i(&["msg", "as", "bad name"]).status.success());
+    assert!(!a.h5i(&["msg", "as", "ev/il"]).status.success());
+    // `send --from` with a bad sender must fail before anything is written.
+    assert!(!a.h5i(&["msg", "send", "--from", "a b", "bob", "hi"]).status.success());
+    // A valid one still works.
+    assert!(a.h5i(&["msg", "as", "good-name.1"]).status.success());
+}
+
+#[test]
 fn hook_emits_unread_then_clears() {
     let (_root, a, _b) = two_clones();
     a.h5i_ok(&["msg", "send", "--from", "lead", "dev", "review", "the", "PR"]);

@@ -336,10 +336,12 @@ pub fn resolve_identity(h5i_root: &Path, explicit: Option<&str>) -> Result<Strin
     if let Ok(env) = std::env::var(AGENT_ENV) {
         let env = env.trim();
         if !env.is_empty() {
+            validate_name(env)?;
             return Ok(env.to_string());
         }
     }
     if let Some(stored) = read_identity(h5i_root) {
+        validate_name(&stored)?;
         return Ok(stored);
     }
     Err(H5iError::Metadata(format!(
@@ -358,12 +360,37 @@ pub fn read_identity(h5i_root: &Path) -> Option<String> {
     }
 }
 
-/// Persist the local default identity.
+/// Persist the local default identity. Validates the name first, so a bad
+/// identity can never be stored (and later trusted by `send` / dashboard /
+/// hook) — `as` and `whoami <name>` reach this directly.
 pub fn write_identity(h5i_root: &Path, name: &str) -> Result<(), H5iError> {
+    validate_name(name)?;
     let dir = msg_dir(h5i_root);
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
     let path = identity_path(h5i_root);
     std::fs::write(&path, format!("{name}\n")).map_err(|e| H5iError::with_path(e, path))
+}
+
+/// Make an untrusted string safe to print to a terminal.
+///
+/// Message fields (`from` / `to` / `tag` / `body`) arrive from other clones
+/// via `h5i share pull`, so they are untrusted input. A hostile sender could
+/// embed ANSI/OSC escape sequences (cursor moves, colour resets, clickable
+/// hyperlinks) or newlines to spoof the dashboard, the turn-delivery hook, or
+/// the line-per-message `--plain` contract. We drop control characters
+/// entirely (neutralising the `ESC` that begins every escape sequence) and
+/// fold tab/newline/CR into single spaces. Storage keeps the exact bytes; only
+/// rendering is sanitised, per the i5h protocol.
+pub fn sanitize_display(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\t' | '\n' | '\r' => out.push(' '),
+            c if c.is_control() => {} // drop ESC and other C0/C1/DEL controls
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -596,15 +623,22 @@ fn gen_id(ts: &str, from: &str, to: &str, body: &str) -> String {
     digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
-/// Reject names that would break the `from → to` model or the roster keys.
+/// Validate an agent identity against the conservative i5h charset
+/// `[A-Za-z0-9._-]+`. This rejects whitespace, path separators (`/`, `\`),
+/// and terminal control characters — names flow into roster keys, the
+/// `from → to` model, file-free local state, and (untrusted on pull) terminal
+/// output, so the same rule applies on every resolution path.
 fn validate_name(name: &str) -> Result<(), H5iError> {
-    let n = name.trim();
-    if n.is_empty() {
+    if name.is_empty() {
         return Err(H5iError::Metadata("agent name must not be empty".into()));
     }
-    if n.contains(char::is_whitespace) {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
         return Err(H5iError::Metadata(format!(
-            "agent name must not contain whitespace: {name:?}"
+            "invalid agent name {name:?}: use letters, digits, '.', '_', '-' only \
+             (no spaces, path separators, or control characters)"
         )));
     }
     Ok(())
@@ -731,10 +765,51 @@ mod tests {
     }
 
     #[test]
-    fn validate_name_rejects_empty_and_whitespace() {
-        assert!(validate_name("").is_err());
-        assert!(validate_name("a b").is_err());
+    fn validate_name_enforces_i5h_charset() {
         assert!(validate_name("alice").is_ok());
+        assert!(validate_name("claude-code").is_ok());
+        assert!(validate_name("agent.1_x").is_ok());
+        assert!(validate_name(BROADCAST).is_ok()); // "all"
+        assert!(validate_name("").is_err());
+        assert!(validate_name("a b").is_err()); // whitespace
+        assert!(validate_name("../etc").is_err()); // path traversal
+        assert!(validate_name("a/b").is_err()); // path separator
+        assert!(validate_name("a\x1b[31m").is_err()); // ANSI escape
+        assert!(validate_name("a\nb").is_err()); // newline
+    }
+
+    #[test]
+    fn write_identity_rejects_invalid_names() {
+        let (_d, _repo, root) = fixture();
+        assert!(write_identity(&root, "ok-name").is_ok());
+        assert!(write_identity(&root, "bad name").is_err());
+        assert!(write_identity(&root, "evil\x1b[2J").is_err());
+    }
+
+    #[test]
+    fn resolve_identity_rejects_poisoned_stored_value() {
+        let (_d, _repo, root) = fixture();
+        std::env::remove_var(AGENT_ENV);
+        // Simulate a tampered identity file (bypassing write_identity).
+        let dir = msg_dir(&root);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(identity_path(&root), "evil\x1b[31mname\n").unwrap();
+        assert!(resolve_identity(&root, None).is_err());
+    }
+
+    #[test]
+    fn sanitize_display_neutralises_escapes_and_newlines() {
+        // ESC dropped → the sequence can no longer move the cursor or set colour.
+        let s = sanitize_display("\x1b[31mred\x1b[0m");
+        assert!(!s.contains('\x1b'));
+        assert_eq!(s, "[31mred[0m");
+        // Newlines fold to spaces → cannot forge extra dashboard/plain lines.
+        assert_eq!(sanitize_display("line1\nline2"), "line1 line2");
+        // OSC-8 hyperlink escape is neutralised.
+        let osc = sanitize_display("\x1b]8;;http://evil\x07click\x1b]8;;\x07");
+        assert!(!osc.contains('\x1b') && !osc.contains('\x07'));
+        // Ordinary text is untouched.
+        assert_eq!(sanitize_display("hello world"), "hello world");
     }
 
     #[test]

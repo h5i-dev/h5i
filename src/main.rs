@@ -24,7 +24,8 @@ const RADIO_W: usize = 74;
 /// green when the viewer sent it, cyan when it is incoming. An empty
 /// `viewer` (history view) renders everything neutral-cyan.
 fn arrow(from: &str, to: &str, viewer: &str) -> String {
-    let pair = format!("{from} → {to}");
+    // from/to are untrusted (pulled from other clones) — sanitise before display.
+    let pair = format!("{} → {}", msg::sanitize_display(from), msg::sanitize_display(to));
     if !viewer.is_empty() && from == viewer {
         style(pair).green().to_string()
     } else {
@@ -37,8 +38,11 @@ fn arrow(from: &str, to: &str, viewer: &str) -> String {
 fn tag_badge(tag: &Option<String>) -> String {
     match tag.as_deref() {
         None | Some("") => String::new(),
-        Some(t) => {
-            let styled = if matches!(t, "review" | "risk" | "review-request") {
+        Some(raw) => {
+            // tag is untrusted (pulled) — sanitise, and match on the raw value
+            // so escapes can't smuggle a "known" tag past the colour rule.
+            let t = msg::sanitize_display(raw);
+            let styled = if matches!(raw, "review" | "risk" | "review-request") {
                 style(format!("[{t}]")).yellow().bold()
             } else {
                 style(format!("[{t}]")).magenta()
@@ -80,8 +84,17 @@ fn print_messages_numbered(msgs: &[msg::Message], viewer: &str, plain: bool) {
     for (i, m) in msgs.iter().enumerate() {
         let n = i + 1;
         if plain {
-            let tag = m.tag.as_deref().unwrap_or("");
-            println!("{n}\t{}\t{} -> {}\t{}\t{}", m.ts, m.from, m.to, tag, m.body);
+            // Untrusted fields are sanitised so a pulled message can't inject
+            // tabs/newlines and forge extra rows in this line-per-message format.
+            let tag = msg::sanitize_display(m.tag.as_deref().unwrap_or(""));
+            println!(
+                "{n}\t{}\t{} -> {}\t{}\t{}",
+                m.ts,
+                msg::sanitize_display(&m.from),
+                msg::sanitize_display(&m.to),
+                tag,
+                msg::sanitize_display(&m.body),
+            );
             continue;
         }
         let bcast = if m.to == msg::BROADCAST {
@@ -98,7 +111,7 @@ fn print_messages_numbered(msgs: &[msg::Message], viewer: &str, plain: bool) {
             tag_badge(&m.tag),
             style(format!("#{}", &m.id)).dim(),
         );
-        println!("       {}", m.body);
+        println!("       {}", msg::sanitize_display(&m.body));
     }
 }
 
@@ -230,8 +243,8 @@ fn render_dashboard(
                 style(format!("#{}", &m.id)).dim(),
             );
             radio_row(&head);
-            // Body indented; truncated to fit the box interior.
-            let body = truncate(&m.body, RADIO_W - 8);
+            // Body indented; sanitised (untrusted) then truncated to fit the box.
+            let body = truncate(&msg::sanitize_display(&m.body), RADIO_W - 8);
             radio_row(&format!("     {}", style(body).dim()));
         }
     }
@@ -2543,7 +2556,7 @@ fn main() -> anyhow::Result<()> {
                         tag_badge(&m.tag),
                         style(format!("#{}", &m.id)).dim()
                     );
-                    println!("   {}", truncate(&m.body, 80));
+                    println!("   {}", truncate(&msg::sanitize_display(&m.body), 80));
                 }
 
                 Some(MsgCommands::Reply { number, body, from }) => {
@@ -2568,7 +2581,7 @@ fn main() -> anyhow::Result<()> {
                         &target_id,
                         style(format!("#{}", &m.id)).dim()
                     );
-                    println!("   {}", truncate(&m.body, 80));
+                    println!("   {}", truncate(&msg::sanitize_display(&m.body), 80));
                 }
 
                 Some(MsgCommands::As { name }) => {
@@ -2645,12 +2658,13 @@ fn main() -> anyhow::Result<()> {
                             } else {
                                 String::new()
                             };
+                            // Roster name + timestamp are pulled — sanitise.
                             println!(
                                 "  {} {}{}   {}",
                                 style("●").cyan(),
-                                style(&name).bold(),
+                                style(msg::sanitize_display(&name)).bold(),
                                 you,
-                                style(format!("last seen {last_seen}")).dim()
+                                style(format!("last seen {}", msg::sanitize_display(&last_seen))).dim()
                             );
                         }
                     }
@@ -2694,8 +2708,20 @@ fn main() -> anyhow::Result<()> {
                             me
                         );
                         for m in &unread {
-                            let tag = m.tag.as_deref().map(|t| format!("[{t}] ")).unwrap_or_default();
-                            println!("  {} → {}: {}{}", m.from, m.to, tag, m.body);
+                            // Untrusted, hook output goes straight into an agent's
+                            // context — sanitise every field.
+                            let tag = m
+                                .tag
+                                .as_deref()
+                                .map(|t| format!("[{}] ", msg::sanitize_display(t)))
+                                .unwrap_or_default();
+                            println!(
+                                "  {} → {}: {}{}",
+                                msg::sanitize_display(&m.from),
+                                msg::sanitize_display(&m.to),
+                                tag,
+                                msg::sanitize_display(&m.body),
+                            );
                         }
                     }
                 }
