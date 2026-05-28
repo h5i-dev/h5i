@@ -948,3 +948,4 @@ _[Checkpoint: 6a18a528 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 [21:51:14] OBSERVE: read README.md
 [21:51:14] OBSERVE: read README.md
 [21:51:14] OBSERVE: read scripts/send.sh
+[21:51:14] OBSERVE: read scripts/check-inbox.sh
