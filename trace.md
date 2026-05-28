@@ -1031,3 +1031,4 @@ _[Checkpoint: 6a18bd0c — Reviewed h5i msg prototype; verified cargo check and 
 [22:10:03] OBSERVE: read src/main.rs
 [22:10:13] ACT: edited src/main.rs
 [22:10:58] THINK: rs writes files into a git ref (the pattern I'll reuse for `refs/h5i/msg`).
+[22:10:58] THINK: I need to fix a `trailing_var_arg` footgun: `--from` must precede the body (otherwise it's swallowed into `body`).
