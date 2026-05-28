@@ -1027,3 +1027,4 @@ _[Checkpoint: 6a18ba09 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 _[Checkpoint: 6a18bd0c — Reviewed h5i msg prototype; verified cargo check and unit tests pass, msg integration test currently fails on --as/--as-agent mismatch; identified cursor and concurrent-send risks.]_
 ---
 
+[22:09:55] OBSERVE: read src/main.rs
