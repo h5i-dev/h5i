@@ -1001,3 +1001,4 @@ _[Checkpoint: 6a18ba09 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 [22:08:10] ACT: wrote tests/msg_integration.rs
 [22:08:25] NOTE: Review finding candidate: msg cursor as a single timestamp/id watermark can skip older messages that arrive later via pull, which is common with cross-machine clock skew.
 [22:08:25] NOTE: Review finding candidate: msg send commits directly to refs/h5i/msg without compare-and-swap/retry, so concurrent local sends can overwrite the ref tip and temporarily lose one message.
+[22:08:50] ACT: edited src/main.rs
