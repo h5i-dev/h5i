@@ -1135,3 +1135,4 @@ _[Checkpoint: 6a18c351 — Renamed the agent messaging protocol documentation fr
 _[Checkpoint: 6a18c3e0 — Reviewed updated h5i msg terminal UI; cargo check, msg unit tests, msg integration tests, and diff check pass; identified terminal-sanitization and identity-validation risks.]_
 ---
 
+[22:39:24] NOTE: DEFERRAL (~/Dev/h5i/README.md): e's an untracked `docs/i5h-protocol.md` I didn't create — I'll leave it out of this commit. Let me record decisions and stage only the radio-UI file…
