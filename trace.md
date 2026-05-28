@@ -934,3 +934,9 @@ _[Checkpoint: 6a18a378 — edited README.md]_
 _[Checkpoint: 6a18a51a — Update h5i-workflow SKILL to verb-based CLI]_
 ---
 
+
+
+---
+_[Checkpoint: 6a18a528 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…]_
+---
+
