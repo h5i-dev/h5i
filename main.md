@@ -179,11 +179,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited README.md; added docs/high5-protocol.md; edited docs/high5-protocol.md
 - [x] Renamed the agent messaging protocol documentation from High5 to i5h (Inter-Agent Information & Interaction Handshake) and moved it to docs/i5h-protocol.md.
 - [x] Reviewed updated h5i msg terminal UI; cargo check, msg unit tests, msg integration tests, and diff check pass; identified terminal-sanitization and identity-validation risks.
+- [x] edited docs/i5h-protocol.md; edited docs/i5h-protocol.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-28 22:39 UTC] `communication`: edited docs/i5h-protocol.md; edited docs/i5h-protocol.md
 - [2026-05-28 22:38 UTC] `communication`: Reviewed updated h5i msg terminal UI; cargo check, msg unit tests, msg integration tests, and diff check pass; identified terminal-sanitization and identity-validation risks.
 - [2026-05-28 22:36 UTC] `communication`: Renamed the agent messaging protocol documentation from High5 to i5h (Inter-Agent Information & Interaction Handshake) and moved it to docs/i5h-protocol.md.
 - [2026-05-28 22:34 UTC] `communication`: edited README.md; added docs/high5-protocol.md; edited docs/high5-protocol.md
