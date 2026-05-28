@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: update-doc
+# Ephemeral traces — Branch: update-skill
 
