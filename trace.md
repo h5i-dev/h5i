@@ -895,3 +895,4 @@ _[Checkpoint: 6a1321b6 — committed README gh requirement update]_
 [20:11:42] OBSERVE: read src/metadata.rs
 [20:11:44] OBSERVE: read src/mcp.rs
 [20:11:47] OBSERVE: read src/mcp.rs
+[20:11:54] OBSERVE: read src/ctx.rs
