@@ -169,11 +169,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Update h5i-workflow SKILL to verb-based CLI
 - [x] wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…
 - [x] Compared agmsg architecture and identified portable ideas for h5i: delivery modes, team identity, inbox-style handoffs, script/skill packaging, and no-daemon local operation.
+- [x] wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-28 21:52 UTC] `communication`: wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…
 - [2026-05-28 21:51 UTC] `communication`: Compared agmsg architecture and identified portable ideas for h5i: delivery modes, team identity, inbox-style handoffs, script/skill packaging, and no-daemon local operation.
 - [2026-05-28 20:27 UTC] `update-skill`: wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .claude/skills/h5i-workflow/SKILL.md to verb-based CLI: capture/reca…
 - [2026-05-28 20:27 UTC] `update-skill`: Update h5i-workflow SKILL to verb-based CLI
