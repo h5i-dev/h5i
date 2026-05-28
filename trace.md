@@ -999,3 +999,4 @@ _[Checkpoint: 6a18ba09 — wrote .claude/skills/h5i-workflow/SKILL.md; Rewrote .
 [22:05:57] ACT: edited src/main.rs
 [22:06:04] ACT: edited src/storage.rs
 [22:08:10] ACT: wrote tests/msg_integration.rs
+[22:08:25] NOTE: Review finding candidate: msg cursor as a single timestamp/id watermark can skip older messages that arrive later via pull, which is common with cross-machine clock skew.
