@@ -69,6 +69,28 @@ impl Clone {
         let out = git(&self.dir, &["show", "refs/h5i/msg:messages.jsonl"]);
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
+
+    /// Run h5i with `input` piped to stdin (for hook stop_hook_active tests).
+    fn h5i_stdin(&self, args: &[&str], input: &str) -> Output {
+        use std::io::Write;
+        use std::process::Stdio;
+        let mut child = Command::new(H5I)
+            .args(args)
+            .env_remove("H5I_AGENT")
+            .current_dir(&self.dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn h5i");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        child.wait_with_output().expect("wait h5i")
+    }
 }
 
 fn out_str(out: &Output) -> String {
@@ -432,6 +454,50 @@ fn codex_sync_auto_delivers_inbox_then_clears() {
     let log = a.msg_log();
     assert!(log.len() > log_before.len());
     assert!(log.contains("codex -> claude") || log.contains(r#""from":"codex""#), "reply not from codex: {log}");
+}
+
+#[test]
+fn watch_plain_emits_one_stream_line_per_message() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "send", "--from", "claude", "codex", "review the parser"]);
+
+    let out = out_str(&a.h5i_ok(&["msg", "watch", "--as", "codex", "--plain", "--once"]));
+    assert!(out.contains("claude → codex"), "stream line missing: {out}");
+    assert!(out.contains("review the parser"));
+    // No box-drawing banner in the Monitor stream.
+    assert!(!out.contains('┌') && !out.contains('│'), "box leaked into stream: {out}");
+    assert_eq!(out.lines().filter(|l| !l.trim().is_empty()).count(), 1);
+}
+
+#[test]
+fn hook_block_emits_decision_block_and_honors_guard() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "send", "--from", "claude", "codex", "ping"]);
+
+    // No stop_hook_active → block (force-continue) carrying the message.
+    let blocked = out_str(&a.h5i_ok(&["msg", "hook", "--as", "codex", "--block"]));
+    assert!(blocked.contains("\"decision\""), "no decision field: {blocked}");
+    assert!(blocked.contains("block") && blocked.contains("ping"), "block payload: {blocked}");
+
+    // A new message, but stop_hook_active=true → guard suppresses (no loop).
+    a.h5i_ok(&["msg", "send", "--from", "claude", "codex", "ping2"]);
+    let guarded = out_str(&a.h5i_stdin(
+        &["msg", "hook", "--as", "codex", "--block"],
+        r#"{"stop_hook_active":true}"#,
+    ));
+    assert!(guarded.trim().is_empty(), "guard did not suppress: {guarded}");
+}
+
+#[test]
+fn session_start_emits_monitor_directive_when_identity_set() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "as", "claude"]);
+    let out = out_str(&a.h5i_ok(&["hook", "session-start"]));
+    assert!(out.contains("monitor mode"), "no monitor directive: {out}");
+    assert!(
+        out.contains("h5i msg watch --as claude --plain"),
+        "directive missing watch command: {out}"
+    );
 }
 
 #[test]
