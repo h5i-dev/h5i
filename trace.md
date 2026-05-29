@@ -1522,3 +1522,4 @@ _[Checkpoint: 6a18f709 — edited src/msg.rs; edited tests/msg_integration.rs; e
 [02:21:19] ACT: edited CLAUDE.md
 [02:21:25] ACT: edited CLAUDE.md
 [02:22:29] OBSERVE: read MANUAL.md
+[02:22:34] ACT: edited MANUAL.md
