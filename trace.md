@@ -1511,3 +1511,4 @@ _[Checkpoint: 6a18f44d — edited src/msg.rs; edited src/msg.rs; edited src/msg.
 [02:06:27] ACT: edited src/msg.rs
 [02:06:34] ACT: edited tests/msg_integration.rs
 [02:06:51] ACT: edited tests/msg_integration.rs
+[02:16:41] NOTE: DEFERRAL (~/Dev/h5i/src/msg.rs): t-dependent (we saw it produce 0 bytes); now deprecated, so not worth testing. ## Recommendation Add the **concurrency CAS test** (#1) and the **cross…
