@@ -221,11 +221,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Analyzed NN two-agent message race and compared h5i turn/watch semantics with agmsg monitor delivery; no code changes.
 - [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited README.md
 - [x] session ended (auto-checkpoint)
+- [x] edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-29 03:01 UTC] `communication`: edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1
 - [2026-05-29 02:51 UTC] `communication`: session ended (auto-checkpoint)
 - [2026-05-29 02:47 UTC] `communication`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited README.md
 - [2026-05-29 02:42 UTC] `communication`: Analyzed NN two-agent message race and compared h5i turn/watch semantics with agmsg monitor delivery; no code changes.
