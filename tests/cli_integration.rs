@@ -1399,3 +1399,310 @@ fn pull_force_still_union_merges_notes() {
     assert!(tree_s.contains(&sender_code_oid));
     assert!(tree_s.contains(&receiver_code_oid));
 }
+
+// ─── h5i share setup-remote / migrate-remote ─────────────────────────────────
+//
+// These exercise the two remote-management verbs added to fix the
+// directory/file conflict that bit per-branch context refs (`refs/h5i/context`
+// single ref on the remote vs. `refs/h5i/context/*` directory locally).
+
+/// Spin up a bare remote and return `(handle, url)`. Keep the handle alive for
+/// the duration of the test so the temp dir isn't reaped.
+fn bare_remote() -> (TempDir, String) {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let url = remote.path().to_string_lossy().into_owned();
+    (remote, url)
+}
+
+/// Run `git <args>` in `dir`, returning the raw Output (no success assertion).
+fn git_in(dir: &Path, args: &[&str]) -> Output {
+    Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("failed to spawn git")
+}
+
+/// Ref names visible on `remote` (as seen from `workdir`) matching `pattern`.
+fn ls_remote_names(workdir: &Path, remote: &str, pattern: &str) -> Vec<String> {
+    let out = git_in(workdir, &["ls-remote", remote, pattern]);
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split_whitespace().nth(1).map(str::to_string))
+        .collect()
+}
+
+/// Fresh repo wired to `remote_url` as `origin`, with one commit pushed to
+/// `main`. h5i is initialised. Returns the repo. (Distinct from the lighter
+/// `repo_wired_to`, which neither commits nor pushes `main`.)
+fn repo_pushed_to(remote_url: &str) -> Repo {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+    repo.make_commit("a.rs", "fn main() {}", "seed");
+    run_ok(
+        Command::new("git")
+            .args(["remote", "add", "origin", remote_url])
+            .current_dir(repo.path()),
+    );
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(repo.path()),
+    );
+    repo
+}
+
+/// Put the remote into the "legacy" state: a single `refs/h5i/context` ref,
+/// and locally migrate it aside so per-branch `refs/h5i/context/<name>` refs
+/// exist (mirrors what a post-redesign client looks like). `branches` are the
+/// per-branch context refs to create locally.
+fn seed_legacy_context_conflict(repo: &Repo, branches: &[&str]) {
+    // Remote gets the legacy single ref.
+    run_ok(
+        Command::new("git")
+            .args(["update-ref", "refs/h5i/context", "HEAD"])
+            .current_dir(repo.path()),
+    );
+    run_ok(
+        Command::new("git")
+            .args(["push", "origin", "refs/h5i/context:refs/h5i/context"])
+            .current_dir(repo.path()),
+    );
+    // Local side completes its migration: legacy → backup, then per-branch refs.
+    run_ok(
+        Command::new("git")
+            .args(["update-ref", "refs/h5i/context-legacy", "refs/h5i/context"])
+            .current_dir(repo.path()),
+    );
+    run_ok(
+        Command::new("git")
+            .args(["update-ref", "-d", "refs/h5i/context"])
+            .current_dir(repo.path()),
+    );
+    for b in branches {
+        run_ok(
+            Command::new("git")
+                .args(["update-ref", &format!("refs/h5i/context/{b}"), "HEAD"])
+                .current_dir(repo.path()),
+        );
+    }
+}
+
+#[test]
+fn setup_remote_writes_all_fetch_refspecs() {
+    let (_remote, url) = bare_remote();
+    let repo = repo_pushed_to(&url);
+
+    let out = repo.h5i_ok(&["share", "setup-remote"]);
+    let s = stdout(&out);
+    assert!(s.contains("Configuring h5i fetch refspecs"), "banner missing:\n{s}");
+    assert!(s.contains("5 refspec(s) added"), "should add 5 refspecs:\n{s}");
+
+    let fetch = git_in(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
+    let fetch_s = String::from_utf8_lossy(&fetch.stdout);
+    for pat in [
+        "+refs/h5i/notes:refs/h5i/notes",
+        "+refs/h5i/memory:refs/h5i/memory",
+        "+refs/h5i/context/*:refs/h5i/context/*",
+        "+refs/h5i/ast:refs/h5i/ast",
+        "+refs/h5i/msg:refs/h5i/msg",
+    ] {
+        assert!(fetch_s.contains(pat), "missing fetch refspec {pat}:\n{fetch_s}");
+    }
+    // The default branch refspec must survive untouched.
+    assert!(
+        fetch_s.contains("+refs/heads/*:refs/remotes/origin/*"),
+        "default branch fetch refspec was clobbered:\n{fetch_s}"
+    );
+}
+
+#[test]
+fn setup_remote_does_not_configure_push_refspec() {
+    // Writing remote.<r>.push would silently change `git push` behaviour — we
+    // must never do that. Pushing h5i refs stays the job of `h5i share push`.
+    let (_remote, url) = bare_remote();
+    let repo = repo_pushed_to(&url);
+    repo.h5i_ok(&["share", "setup-remote"]);
+
+    let push = git_in(repo.path(), &["config", "--get-all", "remote.origin.push"]);
+    assert!(
+        String::from_utf8_lossy(&push.stdout).trim().is_empty(),
+        "setup-remote must not write any push refspec"
+    );
+}
+
+#[test]
+fn setup_remote_is_idempotent() {
+    let (_remote, url) = bare_remote();
+    let repo = repo_pushed_to(&url);
+
+    repo.h5i_ok(&["share", "setup-remote"]);
+    let second = stdout(&repo.h5i_ok(&["share", "setup-remote"]));
+    assert!(
+        second.contains("already configured"),
+        "second run should be a no-op:\n{second}"
+    );
+
+    // Exactly one copy of each refspec — no duplicates.
+    let fetch = git_in(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
+    let fetch_s = String::from_utf8_lossy(&fetch.stdout);
+    let count = fetch_s.matches("+refs/h5i/notes:refs/h5i/notes").count();
+    assert_eq!(count, 1, "notes refspec duplicated:\n{fetch_s}");
+}
+
+#[test]
+fn setup_remote_dry_run_writes_nothing() {
+    let (_remote, url) = bare_remote();
+    let repo = repo_pushed_to(&url);
+
+    let out = stdout(&repo.h5i_ok(&["share", "setup-remote", "--dry-run"]));
+    assert!(out.contains("would add"), "dry run should preview:\n{out}");
+    assert!(out.contains("dry run"), "dry run banner missing:\n{out}");
+
+    let fetch = git_in(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
+    let fetch_s = String::from_utf8_lossy(&fetch.stdout);
+    assert!(
+        !fetch_s.contains("refs/h5i/notes"),
+        "dry run must not modify config:\n{fetch_s}"
+    );
+}
+
+#[test]
+fn setup_remote_errors_without_a_remote() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+    let out = repo.h5i(&["share", "setup-remote"]);
+    assert!(!out.status.success(), "should fail when remote is absent");
+    let err = stderr(&out);
+    assert!(
+        err.contains("not configured") && err.contains("git remote add"),
+        "error should guide the user:\n{err}"
+    );
+}
+
+#[test]
+fn migrate_remote_moves_legacy_context_to_per_branch_layout() {
+    let (_remote, url) = bare_remote();
+    let repo = repo_pushed_to(&url);
+    seed_legacy_context_conflict(&repo, &["main", "feature"]);
+
+    // Precondition: remote has the single legacy ref, no per-branch refs.
+    assert_eq!(
+        ls_remote_names(repo.path(), "origin", "refs/h5i/context"),
+        vec!["refs/h5i/context".to_string()],
+    );
+
+    let out = stdout(&repo.h5i_ok(&["share", "migrate-remote"]));
+    assert!(out.contains("migration complete"), "expected success:\n{out}");
+
+    // Legacy ref is gone; the per-branch refs and a backup now exist.
+    let names = ls_remote_names(repo.path(), "origin", "refs/h5i/*");
+    assert!(
+        !names.iter().any(|n| n == "refs/h5i/context"),
+        "legacy ref should be deleted:\n{names:?}"
+    );
+    assert!(names.iter().any(|n| n == "refs/h5i/context/main"), "{names:?}");
+    assert!(names.iter().any(|n| n == "refs/h5i/context/feature"), "{names:?}");
+    assert!(
+        names.iter().any(|n| n == "refs/h5i/context-legacy"),
+        "backup ref should be created:\n{names:?}"
+    );
+
+    // And the whole point: `share push` now works without conflict.
+    let push = repo.h5i_ok(&["share", "push"]);
+    assert!(push.status.success());
+}
+
+#[test]
+fn migrate_remote_is_a_noop_when_already_migrated() {
+    let (_remote, url) = bare_remote();
+    let repo = repo_pushed_to(&url);
+    // No legacy ref anywhere — just a clean per-branch setup.
+    run_ok(
+        Command::new("git")
+            .args(["update-ref", "refs/h5i/context/main", "HEAD"])
+            .current_dir(repo.path()),
+    );
+
+    let out = stdout(&repo.h5i_ok(&["share", "migrate-remote"]));
+    assert!(
+        out.contains("already migrated") && out.contains("nothing to do"),
+        "should detect nothing to migrate:\n{out}"
+    );
+}
+
+#[test]
+fn migrate_remote_dry_run_leaves_remote_untouched() {
+    let (_remote, url) = bare_remote();
+    let repo = repo_pushed_to(&url);
+    seed_legacy_context_conflict(&repo, &["main"]);
+
+    let out = stdout(&repo.h5i_ok(&["share", "migrate-remote", "--dry-run"]));
+    assert!(out.contains("dry run"), "expected dry-run banner:\n{out}");
+    assert!(out.contains("would"), "expected planned steps:\n{out}");
+
+    // Remote is unchanged: legacy still present, no per-branch refs, no backup.
+    let names = ls_remote_names(repo.path(), "origin", "refs/h5i/*");
+    assert!(names.iter().any(|n| n == "refs/h5i/context"), "{names:?}");
+    assert!(!names.iter().any(|n| n == "refs/h5i/context/main"), "{names:?}");
+    assert!(!names.iter().any(|n| n == "refs/h5i/context-legacy"), "{names:?}");
+}
+
+#[test]
+fn migrate_remote_preserves_an_existing_backup() {
+    // create-only backup: if the remote already has refs/h5i/context-legacy
+    // (from a prior partial migration), migrate must not clobber it.
+    let (_remote, url) = bare_remote();
+    let repo = repo_pushed_to(&url);
+    seed_legacy_context_conflict(&repo, &["main"]);
+
+    // Plant a DISTINCT backup commit on the remote first.
+    repo.make_commit("b.rs", "fn other() {}", "second commit");
+    let other_oid = String::from_utf8_lossy(
+        &run_ok(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(repo.path()),
+        )
+        .stdout,
+    )
+    .trim()
+    .to_string();
+    run_ok(
+        Command::new("git")
+            .args(["push", "origin", &format!("{other_oid}:refs/h5i/context-legacy")])
+            .current_dir(repo.path()),
+    );
+
+    repo.h5i_ok(&["share", "migrate-remote"]);
+
+    // The pre-existing backup must be intact (still the distinct commit).
+    let out = git_in(repo.path(), &["ls-remote", "origin", "refs/h5i/context-legacy"]);
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        s.contains(&other_oid),
+        "existing backup was overwritten — expected {other_oid}:\n{s}"
+    );
+}
+
+#[test]
+fn share_push_detects_legacy_conflict_and_advises_migrate() {
+    let (_remote, url) = bare_remote();
+    let repo = repo_pushed_to(&url);
+    seed_legacy_context_conflict(&repo, &["main"]);
+
+    // `share push` will fail to push context/* against the legacy remote, but
+    // it should diagnose the cause and point at the fix rather than leaving a
+    // bare git error. (Push as a whole may exit non-zero; we inspect output.)
+    let out = repo.h5i(&["share", "push"]);
+    let combined = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(
+        combined.contains("legacy") && combined.contains("h5i share migrate-remote"),
+        "expected remediation pointing at migrate-remote:\n{combined}"
+    );
+}
