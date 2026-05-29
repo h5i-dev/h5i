@@ -270,6 +270,7 @@ h5i msg done 1 Found a stale refresh-token cache in src/auth.rs:88
 | `h5i msg reply <n> <text>` | Reply to a numbered message (threaded). |
 | `h5i msg watch` | Live stream of incoming messages. |
 | `h5i msg history` / `team` | Full log / known agents. |
+| `h5i msg replay` | Replay the log as a live feed (pause between messages). |
 
 Messages follow the **i5h protocol** ([docs/i5h-protocol.md](docs/i5h-protocol.md)) —
 typed, operational handoffs rather than chat. Typed verbs set the message kind

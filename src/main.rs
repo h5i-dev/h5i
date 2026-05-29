@@ -78,35 +78,41 @@ fn rel_age(unix_secs: i64) -> String {
 /// caller persists for `h5i msg reply`.
 fn print_messages_numbered(msgs: &[msg::Message], viewer: &str, plain: bool) {
     for (i, m) in msgs.iter().enumerate() {
-        let n = i + 1;
-        if plain {
-            // Untrusted fields are sanitised so a pulled message can't inject
-            // tabs/newlines and forge extra rows in this line-per-message format.
-            let tag = msg::sanitize_display(m.tag.as_deref().unwrap_or(""));
-            println!(
-                "{n}\t{}\t{} -> {}\t{}\t{}",
-                m.ts,
-                msg::sanitize_display(&m.from),
-                msg::sanitize_display(&m.to),
-                tag,
-                msg::sanitize_display(&m.body),
-            );
-            continue;
-        }
+        print_one_message(i + 1, m, viewer, plain);
+    }
+}
+
+/// Render a single message at 1-based number `n`. Shared by the numbered
+/// list above and `h5i msg replay`, which prints one message at a time but
+/// needs numbers to keep climbing across the whole thread.
+fn print_one_message(n: usize, m: &msg::Message, viewer: &str, plain: bool) {
+    if plain {
+        // Untrusted fields are sanitised so a pulled message can't inject
+        // tabs/newlines and forge extra rows in this line-per-message format.
+        let tag = msg::sanitize_display(m.tag.as_deref().unwrap_or(""));
         println!(
-            "  {} {}  {}  {}{}  {}{}",
-            style(format!("{n:>2}")).bold(),
-            style(hhmm(&m.ts)).dim(),
-            arrow(&m.from, &m.to, viewer),
-            kind_badge(&m.effective_kind()),
-            priority_badge(&m.priority),
-            style(format!("#{}", &m.id)).dim(),
-            reply_marker(m),
+            "{n}\t{}\t{} -> {}\t{}\t{}",
+            m.ts,
+            msg::sanitize_display(&m.from),
+            msg::sanitize_display(&m.to),
+            tag,
+            msg::sanitize_display(&m.body),
         );
-        println!("       {}", msg::sanitize_display(&m.body));
-        for detail in message_details(m) {
-            println!("       {}", style(detail).dim());
-        }
+        return;
+    }
+    println!(
+        "  {} {}  {}  {}{}  {}{}",
+        style(format!("{n:>2}")).bold(),
+        style(hhmm(&m.ts)).dim(),
+        arrow(&m.from, &m.to, viewer),
+        kind_badge(&m.effective_kind()),
+        priority_badge(&m.priority),
+        style(format!("#{}", &m.id)).dim(),
+        reply_marker(m),
+    );
+    println!("       {}", msg::sanitize_display(&m.body));
+    for detail in message_details(m) {
+        println!("       {}", style(detail).dim());
     }
 }
 
@@ -434,12 +440,13 @@ fn render_dashboard(
     // ACTIONS footer (open, not boxed).
     if me.is_some() {
         println!(
-            "  {}  {}   {}   {}   {}",
+            "  {}  {}   {}   {}   {}   {}",
             style("actions:").dim(),
             style("reply <n> \"…\"").bold(),
             style("send <agent> \"…\"").bold(),
             style("watch").bold(),
             style("history").bold(),
+            style("replay").bold(),
         );
     }
     Ok(())
@@ -1141,6 +1148,21 @@ enum MsgCommands {
         /// Restrict to a conversation with this agent (sender or recipient).
         #[arg(long)]
         with: Option<String>,
+    },
+
+    /// Replay the conversation like a live feed — print each message in turn
+    /// with a pause between them, so the thread unfolds as if it were happening
+    /// now. Same selection as `history`; oldest-first.
+    Replay {
+        /// Maximum number of messages to replay.
+        #[arg(short, long, default_value_t = 30)]
+        limit: usize,
+        /// Restrict to a conversation with this agent (sender or recipient).
+        #[arg(long)]
+        with: Option<String>,
+        /// Seconds to pause between messages (fractional allowed, e.g. 0.5).
+        #[arg(short, long, default_value_t = 1.0)]
+        interval: f64,
     },
 
     /// List the known agents on this repo's message roster.
@@ -3564,6 +3586,46 @@ fn main() -> anyhow::Result<()> {
                         }
                         // Neutral viewer: show both sides verbatim.
                         print_messages_numbered(&msgs, "", plain);
+                    }
+                }
+
+                Some(MsgCommands::Replay { limit, with, interval }) => {
+                    use std::io::Write as _;
+                    let msgs = msg::history(git, with.as_deref(), limit)?;
+                    if msgs.is_empty() {
+                        if !plain {
+                            println!("{} No messages yet.", WARN);
+                        }
+                    } else {
+                        if !plain {
+                            radio_border('┌', '┐', "H5I AGENT RADIO · REPLAY");
+                            let scope = match &with {
+                                Some(w) => format!("conversation with {w}"),
+                                None => "message history".to_string(),
+                            };
+                            radio_row(&format!(
+                                "replaying {} {} {} message{} {} {:.3}s between",
+                                scope,
+                                style("·").dim(),
+                                msgs.len(),
+                                if msgs.len() == 1 { "" } else { "s" },
+                                style("·").dim(),
+                                interval,
+                            ));
+                            radio_bottom();
+                            println!();
+                        }
+                        // Fractional seconds; clamp negatives to 0 (no pause).
+                        let delay =
+                            std::time::Duration::from_secs_f64(interval.max(0.0));
+                        let last = msgs.len() - 1;
+                        for (i, m) in msgs.iter().enumerate() {
+                            print_one_message(i + 1, m, "", plain);
+                            let _ = std::io::stdout().flush();
+                            if i != last && !delay.is_zero() {
+                                std::thread::sleep(delay);
+                            }
+                        }
                     }
                 }
 
