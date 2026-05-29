@@ -790,6 +790,41 @@ enum Commands {
         force: bool,
     },
 
+    /// Configure git so `refs/h5i/*` fetch automatically. (use `h5i share setup-remote`)
+    ///
+    /// Adds `fetch` refspecs for the h5i ref families to `remote.<remote>.fetch`
+    /// in `.git/config`, so a plain `git fetch` / `git pull` brings h5i data
+    /// alongside your branches. Idempotent — re-running never duplicates lines.
+    #[command(hide = true)]
+    SetupRemote {
+        /// Remote to configure.
+        #[arg(short, long, default_value = "origin")]
+        remote: String,
+
+        /// Print the refspecs that would be written without modifying config.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Migrate a remote's legacy `refs/h5i/context` to the per-branch layout.
+    /// (use `h5i share migrate-remote`)
+    ///
+    /// Older clients stored the context workspace in a single ref,
+    /// `refs/h5i/context`. The current layout is one ref per branch under
+    /// `refs/h5i/context/<name>`, which git cannot host while the single ref
+    /// still exists (file-vs-directory collision). This backs the old ref up to
+    /// `refs/h5i/context-legacy`, deletes it, and pushes the per-branch refs.
+    #[command(hide = true)]
+    MigrateRemote {
+        /// Remote to migrate.
+        #[arg(short, long, default_value = "origin")]
+        remote: String,
+
+        /// Print the actions that would be taken without performing them.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Manage Claude Code hooks for automatic prompt capture and context tracing.
     /// Run `h5i hook setup` to print install instructions.
     /// Run `h5i hook run` (or just `h5i hook`) as the PostToolUse handler in .claude/settings.json.
@@ -2424,6 +2459,348 @@ fn union_merge_notes_commits(
     )
 }
 
+/// The h5i ref families that `share push`/`pull` move, as glob-able ref
+/// patterns. Order matches the push order so help/diagnostics read the same.
+/// `refs/h5i/context/*` is the per-branch layout (see [`ctx::CTX_REF_PREFIX`]);
+/// the rest are single refs.
+const H5I_REF_PATTERNS: &[&str] = &[
+    "refs/h5i/notes",
+    "refs/h5i/memory",
+    "refs/h5i/context/*",
+    "refs/h5i/ast",
+    "refs/h5i/msg",
+];
+
+/// Whether `remote` still hosts the pre-redesign single context ref
+/// `refs/h5i/context` (as opposed to the per-branch `refs/h5i/context/*`).
+///
+/// Its presence is what makes `git push '+refs/h5i/context/*:...'` fail with a
+/// "directory/file conflict": git cannot keep a ref *file* at
+/// `refs/h5i/context` and a ref *directory* at `refs/h5i/context/` at once.
+/// Detecting it lets `share push` point the user at `share migrate-remote`
+/// instead of leaving them with a raw git error.
+fn remote_has_legacy_context_ref(remote: &str, workdir: &Path) -> bool {
+    std::process::Command::new("git")
+        .args(["ls-remote", "--exit-code", remote, ctx::CTX_LEGACY_REF])
+        .current_dir(workdir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map(|o| {
+            // `ls-remote <pattern>` matches the exact ref AND anything under
+            // `<pattern>/`. We only care about an *exact* `refs/h5i/context`
+            // hit, so scan the ref-name column rather than trusting the count.
+            o.status.success()
+                && String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter_map(|l| l.split_whitespace().nth(1))
+                    .any(|name| name == ctx::CTX_LEGACY_REF)
+        })
+        .unwrap_or(false)
+}
+
+/// Single source of truth for the remediation banner shown whenever the legacy
+/// context ref is detected on a remote. Printed to stderr so it never pollutes
+/// piped stdout.
+fn print_legacy_context_remediation(remote: &str) {
+    eprintln!(
+        "\n{} Remote {} still has the legacy {} ref, which blocks the\n   \
+         per-branch {} layout (git can't host a ref file and a ref\n   \
+         directory at the same name). Migrate it once with:\n\n       {}\n",
+        style("note:").yellow().bold(),
+        style(remote).yellow(),
+        style(ctx::CTX_LEGACY_REF).cyan(),
+        style(format!("{}*", ctx::CTX_REF_PREFIX)).cyan(),
+        style(format!("h5i share migrate-remote --remote {remote}")).cyan().bold(),
+    );
+}
+
+/// `h5i share setup-remote` — persist h5i `fetch` refspecs into `.git/config`.
+///
+/// After this, a plain `git fetch <remote>` (and therefore `git pull`) brings
+/// `refs/h5i/*` down alongside ordinary branches, so collaborators don't have
+/// to memorise the per-family `git fetch` incantations.
+///
+/// We deliberately write only **fetch** refspecs, not `remote.<remote>.push`:
+/// setting a push refspec would silently change what a bare `git push` does
+/// (it would stop pushing the current branch), a surprising footgun. Pushing
+/// h5i refs stays the explicit job of `h5i share push`.
+///
+/// Idempotent: each refspec is added only if an equivalent line is not already
+/// present, so re-running never duplicates entries.
+fn cmd_setup_remote(remote: &str, dry_run: bool, workdir: &Path) -> anyhow::Result<()> {
+    let key = format!("remote.{remote}.fetch");
+
+    // Verify the remote exists so we fail with a clear message rather than
+    // silently configuring fetch refspecs for a remote that isn't there.
+    let remote_known = std::process::Command::new("git")
+        .args(["remote", "get-url", remote])
+        .current_dir(workdir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !remote_known {
+        anyhow::bail!(
+            "remote '{remote}' is not configured — add it first with `git remote add {remote} <url>`"
+        );
+    }
+
+    // Existing fetch refspecs for this remote (one per line; empty if none).
+    let existing = std::process::Command::new("git")
+        .args(["config", "--get-all", &key])
+        .current_dir(workdir)
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|l| l.trim().to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let desired: Vec<String> = H5I_REF_PATTERNS
+        .iter()
+        .map(|p| format!("+{p}:{p}"))
+        .collect();
+
+    println!(
+        "{} {} for {}",
+        STEP,
+        style("Configuring h5i fetch refspecs").cyan().bold(),
+        style(remote).yellow(),
+    );
+
+    let mut added = 0usize;
+    for spec in &desired {
+        if existing.iter().any(|e| e == spec) {
+            println!("  {} {} … {}", style("→").dim(), style(spec).yellow(), style("already set").dim());
+            continue;
+        }
+        if dry_run {
+            println!("  {} {} … {}", style("→").dim(), style(spec).yellow(), style("would add").green());
+            added += 1;
+            continue;
+        }
+        let status = std::process::Command::new("git")
+            .args(["config", "--add", &key, spec])
+            .current_dir(workdir)
+            .status()
+            .map_err(|e| anyhow::anyhow!("failed to invoke git config: {e}"))?;
+        if status.success() {
+            println!("  {} {} … {}", style("→").dim(), style(spec).yellow(), style("added").green());
+            added += 1;
+        } else {
+            println!("  {} {} … {}", style("→").dim(), style(spec).yellow(), style("failed").red());
+        }
+    }
+
+    if dry_run {
+        println!(
+            "\n{} dry run — {} refspec(s) would be added to {}",
+            style("✓").green(),
+            added,
+            style(&key).dim(),
+        );
+    } else if added == 0 {
+        println!("\n{} already configured — nothing to do", SUCCESS);
+    } else {
+        println!(
+            "\n{} {} refspec(s) added. {} now brings h5i refs automatically.",
+            SUCCESS,
+            added,
+            style(format!("git fetch {remote}")).cyan(),
+        );
+    }
+    Ok(())
+}
+
+/// `h5i share migrate-remote` — bring a remote's context refs to the
+/// per-branch layout so `share push` stops failing with a directory/file
+/// conflict.
+///
+/// Mirrors the local migration documented in [`ctx`]: the remote's single
+/// `refs/h5i/context` is preserved as `refs/h5i/context-legacy` (create-only —
+/// never clobbering an existing backup), then deleted, then the local
+/// per-branch `refs/h5i/context/*` are pushed in its place.
+fn cmd_migrate_remote(remote: &str, dry_run: bool, workdir: &Path) -> anyhow::Result<()> {
+    println!(
+        "{} {} on {}",
+        STEP,
+        style("Migrating remote context refs").cyan().bold(),
+        style(remote).yellow(),
+    );
+
+    let git = |args: &[&str]| -> std::io::Result<std::process::Output> {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(workdir)
+            .output()
+    };
+
+    // 1. Does the remote actually have the legacy single ref?
+    if !remote_has_legacy_context_ref(remote, workdir) {
+        println!(
+            "  {} no legacy {} on {} — already migrated, nothing to do.",
+            SUCCESS,
+            style(ctx::CTX_LEGACY_REF).cyan(),
+            style(remote).yellow(),
+        );
+        return Ok(());
+    }
+
+    // Resolve the remote legacy OID (for the backup + diagnostics).
+    let legacy_oid = {
+        let out = git(&["ls-remote", remote, ctx::CTX_LEGACY_REF])?;
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find_map(|l| {
+                let mut it = l.split_whitespace();
+                let oid = it.next()?;
+                let name = it.next()?;
+                (name == ctx::CTX_LEGACY_REF).then(|| oid.to_string())
+            })
+            .ok_or_else(|| anyhow::anyhow!("could not resolve {} on {remote}", ctx::CTX_LEGACY_REF))?
+    };
+
+    // Does a backup already exist remotely? (create-only semantics)
+    let backup_exists = git(&["ls-remote", "--exit-code", remote, ctx::CTX_LEGACY_BACKUP_REF])
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    // How many per-branch context refs do we have locally to push?
+    let local_per_branch = git(&[
+        "for-each-ref",
+        "--format=%(refname)",
+        ctx::CTX_REF_PREFIX,
+    ])
+    .map(|o| String::from_utf8_lossy(&o.stdout).lines().count())
+    .unwrap_or(0);
+
+    println!(
+        "  remote {} → {}",
+        style(ctx::CTX_LEGACY_REF).cyan(),
+        style(&legacy_oid[..legacy_oid.len().min(12)]).dim(),
+    );
+    if local_per_branch == 0 {
+        println!(
+            "  {} no local {} refs to push — the backup will be your only copy.",
+            style("⚠").yellow(),
+            style(format!("{}*", ctx::CTX_REF_PREFIX)).cyan(),
+        );
+    }
+
+    let backup_plan = if backup_exists {
+        format!(
+            "{} already exists on {remote} — leaving it untouched",
+            ctx::CTX_LEGACY_BACKUP_REF
+        )
+    } else {
+        format!("back up {} → {}", ctx::CTX_LEGACY_REF, ctx::CTX_LEGACY_BACKUP_REF)
+    };
+
+    if dry_run {
+        println!("\n{} dry run — would:", style("✓").green());
+        println!("  1. {backup_plan}");
+        println!("  2. delete {} on {remote}", ctx::CTX_LEGACY_REF);
+        println!(
+            "  3. push {} local ref(s) {}",
+            local_per_branch,
+            style(format!("{}*", ctx::CTX_REF_PREFIX)).cyan(),
+        );
+        return Ok(());
+    }
+
+    // 2. Preserve the remote's legacy OID under the backup name (create-only).
+    //    We fetch it locally first so we can push it by OID without needing the
+    //    object to already exist in our object DB.
+    if backup_exists {
+        println!("  {} {}", style("→").dim(), backup_plan);
+    } else {
+        print!("  {} {} … ", style("→").dim(), backup_plan);
+        use std::io::Write as _;
+        std::io::stdout().flush().ok();
+        // Fetch the legacy commit object into the local DB (detached, no ref).
+        let fetched = git(&["fetch", remote, &legacy_oid])
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        // Some servers refuse fetch-by-sha; fall back to fetching the named ref.
+        if !fetched {
+            git(&[
+                "fetch",
+                remote,
+                &format!("+{}:{}", ctx::CTX_LEGACY_REF, "refs/h5i/.migrate-tmp"),
+            ])
+            .ok();
+        }
+        let pushed = git(&[
+            "push",
+            remote,
+            &format!("{legacy_oid}:{}", ctx::CTX_LEGACY_BACKUP_REF),
+        ])?;
+        // Best-effort cleanup of the temp ref if we created one.
+        git(&["update-ref", "-d", "refs/h5i/.migrate-tmp"]).ok();
+        if pushed.status.success() {
+            println!("{}", style("ok").green());
+        } else {
+            println!("{}", style("failed").red());
+            eprint!("{}", String::from_utf8_lossy(&pushed.stderr));
+            anyhow::bail!(
+                "could not back up {} on {remote}; aborting before deletion so nothing is lost",
+                ctx::CTX_LEGACY_REF
+            );
+        }
+    }
+
+    // 3. Delete the remote legacy ref (now safely backed up).
+    {
+        print!(
+            "  {} delete {} on {} … ",
+            style("→").dim(),
+            style(ctx::CTX_LEGACY_REF).cyan(),
+            style(remote).yellow(),
+        );
+        use std::io::Write as _;
+        std::io::stdout().flush().ok();
+        let deleted = git(&["push", remote, &format!(":{}", ctx::CTX_LEGACY_REF)])?;
+        if deleted.status.success() {
+            println!("{}", style("ok").green());
+        } else {
+            println!("{}", style("failed").red());
+            eprint!("{}", String::from_utf8_lossy(&deleted.stderr));
+            anyhow::bail!("could not delete {} on {remote}", ctx::CTX_LEGACY_REF);
+        }
+    }
+
+    // 4. Push the per-branch layout into the now-free namespace.
+    if local_per_branch > 0 {
+        print!(
+            "  {} push {} … ",
+            style("→").dim(),
+            style(format!("{}*", ctx::CTX_REF_PREFIX)).cyan(),
+        );
+        use std::io::Write as _;
+        std::io::stdout().flush().ok();
+        let spec = format!("+{0}*:{0}*", ctx::CTX_REF_PREFIX);
+        let pushed = git(&["push", remote, &spec])?;
+        if pushed.status.success() {
+            println!("{}", style("ok").green());
+        } else {
+            println!("{}", style("failed").red());
+            eprint!("{}", String::from_utf8_lossy(&pushed.stderr));
+            anyhow::bail!("pushed backup + deleted legacy ref, but failed to push {}*", ctx::CTX_REF_PREFIX);
+        }
+    }
+
+    println!(
+        "\n{} migration complete — {} is now safe to run.",
+        SUCCESS,
+        style(format!("h5i share push --remote {remote}")).cyan(),
+    );
+    Ok(())
+}
+
 fn print_doctor_report(report: &storage::DoctorReport) {
     let status = if report.ok { SUCCESS } else { ERROR };
     let label = if report.ok {
@@ -2544,7 +2921,7 @@ fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
             "vibe",
         ],
         "audit" => &["review", "scan", "compliance", "policy", "vibe"],
-        "share" => &["push", "pull", "pr", "memory"],
+        "share" => &["push", "pull", "pr", "memory", "setup-remote", "migrate-remote"],
         _ => return None,
     };
     let typo_l = typo.to_lowercase();
@@ -2617,6 +2994,8 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("share",   "pull")     => &["pull"],
         ("share",   "pr")       => &["pr"],
         ("share",   "memory")   => &["memory"],
+        ("share",   "setup-remote")   => &["setup-remote"],
+        ("share",   "migrate-remote") => &["migrate-remote"],
 
         _ => return None,
     })
@@ -2794,10 +3173,24 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     legacy: "h5i memory push|pull",
                     example: "h5i share memory push",
                 },
+                NounVerb {
+                    verb: "setup-remote",
+                    summary: "Add refs/h5i/* fetch refspecs to .git/config so `git fetch` pulls them automatically.",
+                    legacy: "(new)",
+                    example: "h5i share setup-remote\n      h5i share setup-remote --dry-run   # preview the refspecs",
+                },
+                NounVerb {
+                    verb: "migrate-remote",
+                    summary: "One-time: move a remote's legacy refs/h5i/context to the per-branch layout.",
+                    legacy: "(new)",
+                    example: "h5i share migrate-remote\n      h5i share migrate-remote --dry-run   # preview the steps",
+                },
             ],
             &[
                 "`h5i share pr post` needs the `gh` CLI authenticated (`gh auth login`).",
                 "The PR comment is idempotent — re-running upserts in place via an HTML marker.",
+                "Run `h5i share setup-remote` once after cloning so `git fetch` brings h5i refs for free.",
+                "Hit a `directory/file conflict` pushing context? Run `h5i share migrate-remote` once.",
             ],
         ),
         _ => ("", &[], &[]),
@@ -4940,6 +5333,13 @@ jq -c '{
                         style("failed").red()
                     }
                 );
+                // The single most common cause of this failure is a remote that
+                // still hosts the pre-redesign single `refs/h5i/context` ref,
+                // which collides with the per-branch directory. Detect it and
+                // point at the one-shot fix instead of leaving a raw git error.
+                if !status.success() && remote_has_legacy_context_ref(&remote, &workdir) {
+                    print_legacy_context_remediation(&remote);
+                }
             } else {
                 println!(
                     "  {} {} … {} (no context workspace yet — run {})",
@@ -5000,6 +5400,16 @@ jq -c '{
                     style("git pull").bold()
                 );
             }
+        }
+
+        Commands::SetupRemote { remote, dry_run } => {
+            let workdir = std::env::current_dir()?;
+            cmd_setup_remote(&remote, dry_run, &workdir)?;
+        }
+
+        Commands::MigrateRemote { remote, dry_run } => {
+            let workdir = std::env::current_dir()?;
+            cmd_migrate_remote(&remote, dry_run, &workdir)?;
         }
 
         Commands::Pull { remote, force } => {
