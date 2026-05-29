@@ -81,6 +81,19 @@ impl Clone {
             .expect("failed to run h5i")
     }
 
+    /// Spawn h5i without waiting — for launching many sends concurrently.
+    fn h5i_spawn(&self, args: &[&str]) -> std::process::Child {
+        use std::process::Stdio;
+        Command::new(H5I)
+            .args(args)
+            .env_remove("H5I_AGENT")
+            .current_dir(&self.dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn h5i")
+    }
+
     /// Run h5i with `input` piped to stdin (for hook stop_hook_active tests).
     fn h5i_stdin(&self, args: &[&str], input: &str) -> Output {
         use std::io::Write;
@@ -568,6 +581,80 @@ fn msg_setup_writes_project_settings_idempotently() {
         serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
     assert_eq!(v3["hooks"]["Stop"][0]["hooks"][0]["command"], "h5i msg hook");
     assert_eq!(v3["hooks"]["Stop"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn concurrent_sends_all_land_via_cas() {
+    // Fire many sends at the SAME clone at once. The compare-and-swap retry in
+    // append_message_cas must let every one land — no lost appends, no clobber.
+    let (_root, a, _b) = two_clones();
+    const N: usize = 8;
+    let bodies: Vec<String> = (0..N).map(|i| format!("concurrent-{i}")).collect();
+
+    let mut kids = Vec::new();
+    for b in &bodies {
+        kids.push(a.h5i_spawn(&["msg", "send", "--from", "alice", "bob", b.as_str()]));
+    }
+    for k in kids {
+        let out = k.wait_with_output().expect("wait send");
+        assert!(out.status.success(), "a send failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    // Every distinct message is present exactly once.
+    let log = a.msg_log();
+    let to_bob = log.lines().filter(|l| l.contains(r#""to":"bob""#)).count();
+    assert_eq!(to_bob, N, "lost or duplicated appends under contention:\n{log}");
+    for b in &bodies {
+        assert_eq!(log.matches(b.as_str()).count(), 1, "missing/dup body {b}");
+    }
+}
+
+#[test]
+fn cross_clone_review_done_thread_roundtrip() {
+    // The headline workflow end-to-end across two clones:
+    //   A(claude) review → push → B(codex) pull + codex sync → done → push → A pull
+    let (_root, a, b) = two_clones();
+
+    a.h5i_ok(&[
+        "msg", "review", "--from", "claude",
+        "--branch", "auth", "--focus", "src/auth.rs", "--pr", "42",
+        "codex", "review token refresh",
+    ]);
+    a.h5i_ok(&["share", "push"]);
+
+    // B pulls and Codex auto-delivery surfaces it (and numbers it for reply).
+    b.h5i_ok(&["share", "pull"]);
+    let delivered = out_str(&b.h5i_ok(&["codex", "sync"]));
+    assert!(delivered.contains("review token refresh"), "codex didn't get it: {delivered}");
+
+    b.h5i_ok(&["msg", "done", "--from", "codex", "1", "fixed in 1a2b3c4"]);
+    b.h5i_ok(&["share", "push"]);
+
+    // A pulls the merged log and sees the threaded DONE with the structured
+    // review fields intact.
+    a.h5i_ok(&["share", "pull"]);
+    let msgs: Vec<serde_json::Value> = a
+        .msg_log()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("valid jsonl"))
+        .collect();
+
+    let review = msgs.iter().find(|m| m["kind"] == "REVIEW_REQUEST").expect("review on A");
+    let done = msgs.iter().find(|m| m["kind"] == "DONE").expect("DONE on A");
+    let rid = review["id"].as_str().unwrap();
+
+    // Structured review fields survived the push/pull round-trip.
+    assert_eq!(review["from"], "claude");
+    assert_eq!(review["branch"], "auth");
+    assert_eq!(review["focus"][0], "src/auth.rs");
+    assert_eq!(review["links"]["pr"], 42);
+
+    // The DONE is a threaded reply from codex back to claude.
+    assert_eq!(done["from"], "codex");
+    assert_eq!(done["to"], "claude");
+    assert_eq!(done["reply_to"], rid, "DONE not threaded to the review");
+    assert_eq!(done["thread_id"], rid, "DONE thread root wrong");
 }
 
 #[test]

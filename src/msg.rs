@@ -340,7 +340,10 @@ pub fn send_msg(
 /// we read it. If a concurrent writer moved the tip first, re-read and retry so
 /// no append is silently lost (the i5h send contract).
 fn append_message_cas(repo: &Repository, msg: &Message) -> Result<(), H5iError> {
-    const MAX_ATTEMPTS: usize = 8;
+    // Each retry is a cheap object write + ref CAS; cap high so bursty
+    // concurrency (many agents sending at once into one clone) never spuriously
+    // fails. A writer would have to lose this many consecutive races to error.
+    const MAX_ATTEMPTS: usize = 64;
     let line = serde_json::to_string(msg)?;
     let message = format!("h5i msg: {} → {}", msg.from, msg.to);
 
