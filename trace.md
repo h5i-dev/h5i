@@ -1744,3 +1744,4 @@ _[Checkpoint: 6a19c48d — edited MANUAL.md; edited README.md; edited tests/msg_
 _[Checkpoint: 6a19c4c2 — edited README.md; edited tests/msg_integration.rs; edited make.py]_
 ---
 
+[16:59:54] THINK: Let me grab the helper glyphs/colors (arrow, kind_badge, RADIO_W, SUCCESS) to match exactly.
