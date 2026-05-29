@@ -291,10 +291,11 @@ h5i msg setup claude          # Claude Code: sets env H5I_AGENT + turn-delivery 
 H5I_AGENT=codex codex         # Codex: just launch with the identity in its env
 ```
 
-`h5i msg setup` writes `~/.claude/settings.json` by default (all projects), or
-`--scope project` for one repo; it's idempotent. Per-project setup is otherwise
-unnecessary. Add `--plain` to any read command for greppable output; hook output
-is framed as untrusted collaborator input, never as instructions.
+`h5i msg setup` writes `./.claude/settings.json` by default (per-project) with an
+autonomous turn hook (the agent handles incoming messages); pass `--scope user`
+for all projects, or `--no-block` for a notify-only hook. It's idempotent. Add
+`--plain` to any read command for greppable output; hook output is framed as
+untrusted collaborator input, never as instructions.
 
 > Agent messaging that survives clones, machines, and branches — because it is stored in Git.
 

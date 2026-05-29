@@ -984,12 +984,13 @@ enum MsgCommands {
         /// Identity this Claude Code uses (written to env.H5I_AGENT).
         #[arg(default_value = "claude")]
         name: String,
-        /// `user` → ~/.claude/settings.json (all projects); `project` → ./.claude/settings.json.
-        #[arg(long, value_enum, default_value_t = SetupScope::User)]
+        /// `project` (default) → ./.claude/settings.json; `user` → ~/.claude/settings.json (all projects).
+        #[arg(long, value_enum, default_value_t = SetupScope::Project)]
         scope: SetupScope,
-        /// Use the autonomous turn hook (`h5i msg hook --block`) instead of the default.
-        #[arg(long)]
-        block: bool,
+        /// Notify-only hook (`systemMessage`) instead of the default autonomous
+        /// `--block` hook that makes the agent handle incoming messages.
+        #[arg(long = "no-block")]
+        no_block: bool,
     },
 
     /// i5h ASK: a general request that expects a response.
@@ -3032,7 +3033,8 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
 
-                Some(MsgCommands::Setup { name, scope, block }) => {
+                Some(MsgCommands::Setup { name, scope, no_block }) => {
+                    let block = !no_block; // autonomous turn mode is the default
                     let name = name.trim();
                     let path = match scope {
                         SetupScope::User => {
@@ -4442,13 +4444,15 @@ jq -c '{
             );
             println!("        {}", style("h5i msg setup claude").cyan().bold());
             println!(
-                "  Identity is {} (no {} on commands). {} writes ~/.claude/settings.json\n\
-                 (all projects); {} writes ./.claude/settings.json. For {}, just launch it\n\
-                 with {} — it doesn't read .claude/settings.json.",
+                "  Identity is {} (no {} on commands). Default writes {} and an\n\
+                 autonomous {} hook; pass {} for all projects, or {} for a notify-only hook.\n\
+                 For {}, just launch it with {} — it doesn't read .claude/settings.json.",
                 style("per-agent").bold(),
                 style("--as").dim(),
-                style("(default)").dim(),
-                style("--scope project").bold(),
+                style("./.claude/settings.json").bold(),
+                style("--block").bold(),
+                style("--scope user").bold(),
+                style("--no-block").bold(),
                 style("Codex").yellow(),
                 style("H5I_AGENT=codex").bold(),
             );
