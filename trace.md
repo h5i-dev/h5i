@@ -1764,3 +1764,9 @@ _[Checkpoint: 6a19c60a — edited README.md; edited tests/msg_integration.rs; ed
 [17:33:54] THINK: Let me confirm how a broadcast (`to: all`) and a plain reply render, so a longer conversation stays faithful.
 [17:33:54] THINK: Let me quickly confirm how `RISK` and a `send all` (FYI) actually render in the watch stream, then I'll hardcode faithfully.
 [17:33:54] THINK: Let me extend the conversation to 9 messages and slow the inter-message cadence (closer to the advertised poll interval).
+
+
+---
+_[Checkpoint: 6a19ce02 — edited make.py; edited make.py; edited make.py]_
+---
+
