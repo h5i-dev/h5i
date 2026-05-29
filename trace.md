@@ -1539,3 +1539,4 @@ _[Checkpoint: 6a18f709 — edited src/msg.rs; edited tests/msg_integration.rs; e
 _[Checkpoint: 6a18fa1b — edited man/man1/h5i.1; edited man/man1/h5i.1; edited README.md]_
 ---
 
+[02:32:29] NOTE: DEFERRAL (~/Dev/h5i/README.md): e msg-adjacent parts; the full CRDT-architecture cleanup is out of scope for this task. Want me to do that cleanup as a separate commit? It'd make CLA…
