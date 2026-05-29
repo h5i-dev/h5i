@@ -1650,3 +1650,9 @@ _[Checkpoint: 6a19096d — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 [03:45:22] THINK: I'll insert the two match arms right after the `Commands::Push` arm closes (line 5403).
 [03:45:22] THINK: Now let me test setup-remote (no remote → error), then with a remote, dry-run, and idempotency.
 [03:45:22] THINK: Let me rename mine to `repo_pushed_to` (it does more — commits and pushes main).
+
+
+---
+_[Checkpoint: 6a190bd2 — edited src/main.rs; edited tests/cli_integration.rs; Added cmd_setup_remote + cmd_migrate_remote + remote_has_legacy_con…]_
+---
+
