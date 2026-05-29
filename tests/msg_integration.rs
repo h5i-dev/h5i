@@ -177,6 +177,33 @@ fn send_inbox_history_roundtrip_in_one_repo() {
 }
 
 #[test]
+fn replay_streams_messages_oldest_first() {
+    let (_root, a, _b) = two_clones();
+
+    a.h5i_ok(&["msg", "send", "--from", "alice", "bob", "first"]);
+    a.h5i_ok(&["msg", "send", "--from", "bob", "alice", "second"]);
+    a.h5i_ok(&["msg", "send", "--from", "alice", "bob", "third"]);
+
+    // --interval 0 keeps the test instant; --plain gives greppable rows that
+    // are numbered 1..N (each message printed as its own batch must still climb).
+    let out = out_str(&a.h5i_ok(&["msg", "replay", "--plain", "--interval", "0"]));
+    let p1 = out.find("first").expect("missing first");
+    let p2 = out.find("second").expect("missing second");
+    let p3 = out.find("third").expect("missing third");
+    assert!(p1 < p2 && p2 < p3, "replay not oldest-first: {out}");
+
+    // Numbers climb across the whole thread, not reset per message.
+    assert!(out.contains("1\t") && out.contains("2\t") && out.contains("3\t"),
+        "replay numbering wrong: {out}");
+
+    // --with restricts to one conversation partner.
+    let conv = out_str(&a.h5i_ok(&[
+        "msg", "replay", "--plain", "--interval", "0", "--with", "alice",
+    ]));
+    assert!(conv.contains("first") && conv.contains("third"), "conv: {conv}");
+}
+
+#[test]
 fn inbox_without_identity_errors_cleanly() {
     let (_root, a, _b) = two_clones();
     // No identity stored, no --as, no env → actionable error, non-zero exit.

@@ -291,7 +291,7 @@ h5i msg setup [<name>] [--scope project|user] [--no-block]
 h5i msg send <agent> <text>               # `all` = broadcast
 h5i msg ask|review|risk|handoff <agent> <text> [flags]
 h5i msg reply|ack|done|decline <n> [text]
-h5i msg inbox [--peek] | history [--with <agent>] | team
+h5i msg inbox [--peek] | history [--with <agent>] | replay [--with <agent>] [--interval S] | team
 h5i msg wait [--all] [--timeout N] | watch [--all] | hook [--block] | as <name> | whoami
 ```
 
@@ -345,6 +345,7 @@ h5i msg reply 1 on it            # threaded reply to message #1 of your last vie
 h5i msg ack 1                    # ACK / DONE / DECLINE are typed threaded replies
 h5i msg done 1 fixed in 1a2b3c4
 h5i msg history --with codex     # full conversation log
+h5i msg replay --with codex      # replay the log as a live feed (1s between messages)
 h5i msg team                     # known agents
 ```
 
