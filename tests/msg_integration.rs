@@ -481,6 +481,23 @@ fn watch_plain_emits_one_stream_line_per_message() {
 }
 
 #[test]
+fn watch_all_streams_channel_without_identity() {
+    let (_root, a, _b) = two_clones();
+    // A pre-existing message: firehose should NOT replay it (only new arrivals).
+    a.h5i_ok(&["msg", "send", "--from", "claude", "codex", "old one"]);
+
+    // No --as, no H5I_AGENT (harness removes it), but --all → no identity error.
+    // --once with nothing new after start → exits cleanly, empty.
+    let out = a.h5i(&["msg", "watch", "--all", "--once", "--plain"]);
+    assert!(out.status.success(), "watch --all errored: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("no agent identity"), "should not need identity");
+
+    // And plain `watch` with no identity at all also must not error on identity.
+    let bare = a.h5i(&["msg", "watch", "--once", "--plain"]);
+    assert!(bare.status.success(), "bare watch errored: {}", String::from_utf8_lossy(&bare.stderr));
+}
+
+#[test]
 fn hook_block_emits_decision_block_and_honors_guard() {
     let (_root, a, _b) = two_clones();
     a.h5i_ok(&["msg", "send", "--from", "claude", "codex", "ping"]);

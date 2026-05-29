@@ -1131,12 +1131,17 @@ enum MsgCommands {
         block: bool,
     },
 
-    /// Monitor-delivery primitive: poll the message ref and print new messages
-    /// as they arrive. Foreground loop; Ctrl+C to stop.
+    /// Stream messages as they arrive. Foreground loop; Ctrl+C to stop.
+    /// With an identity (`--as` / $H5I_AGENT) it streams your inbox; with `--all`
+    /// or no identity it streams the whole channel (no identity needed).
     Watch {
         /// Whose inbox to watch. Defaults to $H5I_AGENT or the stored identity.
         #[arg(long = "as")]
         as_agent: Option<String>,
+        /// Watch the whole channel (all messages), not just one inbox. Implied
+        /// when no identity is set — so plain monitoring needs no identity.
+        #[arg(long)]
+        all: bool,
         /// Seconds between polls.
         #[arg(short, long, default_value_t = 5)]
         interval: u64,
@@ -3222,17 +3227,26 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                Some(MsgCommands::Watch { as_agent, interval, once }) => {
+                Some(MsgCommands::Watch { as_agent, all, interval, once }) => {
+                    use std::collections::HashSet;
                     use std::io::Write as _;
-                    let me = msg::resolve_identity(&h5i_root, as_agent.as_deref())?;
-                    // `--plain` is the Monitor-tool stream: no banner, one line
-                    // per message. Rich mode keeps the human "radio" header.
+                    // Identity-scoped inbox stream, unless `--all` or no identity
+                    // is resolvable → watch the whole channel (no identity needed).
+                    let me: Option<String> = if all {
+                        None
+                    } else {
+                        msg::resolve_identity(&h5i_root, as_agent.as_deref()).ok()
+                    };
+
                     if !once && !plain {
                         radio_border('┌', '┐', "H5I AGENT RADIO · LIVE");
+                        let who = match &me {
+                            Some(name) => style(name.clone()).green().bold().to_string(),
+                            None => style("all messages").yellow().to_string(),
+                        };
                         radio_row(&format!(
-                            "{} {} {} listening on {} {} every {}s · Ctrl+C to stop",
-                            style("agent").dim(),
-                            style(&me).green().bold(),
+                            "{} {} listening on {} {} every {}s · Ctrl+C to stop",
+                            who,
                             style("·").dim(),
                             style(msg::MSG_REF).magenta(),
                             style("·").dim(),
@@ -3240,30 +3254,50 @@ fn main() -> anyhow::Result<()> {
                         ));
                         radio_bottom();
                     }
+
+                    // Firehose: only stream messages that arrive AFTER launch, so
+                    // seed `seen` with the current log (no identity, no cursor).
+                    let mut seen: HashSet<String> = if me.is_none() {
+                        msg::history(git, None, usize::MAX)?
+                            .into_iter()
+                            .map(|m| m.id)
+                            .collect()
+                    } else {
+                        HashSet::new()
+                    };
+
                     loop {
-                        // Reopen the repo each tick so messages committed to the
-                        // ref by other processes become visible.
+                        // Reopen the repo each tick so messages committed by other
+                        // processes become visible.
                         let repo = H5iRepository::open(".")?;
-                        let unread = msg::inbox(repo.git(), &repo.h5i_root, &me, true)?;
-                        if !unread.is_empty() {
-                            // Persist the batch so `h5i msg reply <n>` works.
-                            let ids: Vec<String> = unread.iter().map(|m| m.id.clone()).collect();
-                            let _ = msg::write_last_view(&repo.h5i_root, &me, &ids);
+                        let batch: Vec<msg::Message> = match &me {
+                            Some(name) => msg::inbox(repo.git(), &repo.h5i_root, name, true)?,
+                            None => {
+                                let fresh: Vec<msg::Message> =
+                                    msg::history(repo.git(), None, usize::MAX)?
+                                        .into_iter()
+                                        .filter(|m| !seen.contains(&m.id))
+                                        .collect();
+                                for m in &fresh {
+                                    seen.insert(m.id.clone());
+                                }
+                                fresh
+                            }
+                        };
+                        if !batch.is_empty() {
+                            if let Some(name) = &me {
+                                // Persist the batch so `h5i msg reply <n>` works.
+                                let ids: Vec<String> = batch.iter().map(|m| m.id.clone()).collect();
+                                let _ = msg::write_last_view(&repo.h5i_root, name, &ids);
+                            }
                             if plain {
-                                for m in &unread {
+                                for m in &batch {
                                     println!("{}", stream_line(m));
                                 }
                                 // Flush so the Monitor tool sees lines promptly.
                                 let _ = std::io::stdout().flush();
                             } else {
-                                print_messages_numbered(&unread, &me, false);
-                                let st = msg::stats(repo.git());
-                                println!(
-                                    "  {} {} · {} messages total",
-                                    style("sync:").dim(),
-                                    style(msg::MSG_REF).magenta(),
-                                    style(st.total).bold(),
-                                );
+                                print_messages_numbered(&batch, me.as_deref().unwrap_or(""), false);
                             }
                         }
                         if once {
