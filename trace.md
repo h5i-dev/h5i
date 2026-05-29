@@ -1685,3 +1685,9 @@ _[Checkpoint: 6a19a6e9 — edited src/main.rs; edited tests/cli_integration.rs; 
 
 - **`h5i msg wait` returns on the *first* new message of *any* kind** (`src/main.
 [14:49:49] NOTE: DEFERRAL: essage isn't *lost* (peek-only + SessionStart redelivers it next time), but the **autonomous flow breaks**: A stopped while the collaboration was stil…
+
+
+---
+_[Checkpoint: 6a19a78d — session ended (auto-checkpoint)]_
+---
+
