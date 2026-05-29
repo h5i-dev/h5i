@@ -223,11 +223,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] session ended (auto-checkpoint)
 - [x] edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1
 - [x] edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1
+- [x] Assessed h5i share push design: immediate remote legacy ref conflict, need fetch-merge-push/lease semantics and remote setup ergonomics.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-29 03:33 UTC] `fix-push`: Assessed h5i share push design: immediate remote legacy ref conflict, need fetch-merge-push/lease semantics and remote setup ergonomics.
 - [2026-05-29 03:32 UTC] `communication`: edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1
 - [2026-05-29 03:01 UTC] `communication`: edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1
 - [2026-05-29 02:51 UTC] `communication`: session ended (auto-checkpoint)
