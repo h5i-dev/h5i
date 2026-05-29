@@ -231,11 +231,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] session ended (auto-checkpoint)
 - [x] session ended (auto-checkpoint)
 - [x] session ended (auto-checkpoint)
+- [x] edited MANUAL.md; edited README.md; edited tests/msg_integration.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-29 16:53 UTC] `fix-push`: edited MANUAL.md; edited README.md; edited tests/msg_integration.rs
 - [2026-05-29 14:53 UTC] `fix-push`: session ended (auto-checkpoint)
 - [2026-05-29 14:51 UTC] `fix-push`: session ended (auto-checkpoint)
 - [2026-05-29 14:49 UTC] `fix-push`: session ended (auto-checkpoint)
