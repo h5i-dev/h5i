@@ -1668,3 +1668,4 @@ _[Checkpoint: 6a190bd2 — edited src/main.rs; edited tests/cli_integration.rs; 
 _[Checkpoint: 6a19a625 — edited src/main.rs; edited tests/cli_integration.rs; Added cmd_setup_remote + cmd_migrate_remote + remote_has_legacy_con…]_
 ---
 
+[14:45:28] OBSERVE: read src/msg.rs
