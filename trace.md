@@ -1761,3 +1761,4 @@ _[Checkpoint: 6a19c60a — edited README.md; edited tests/msg_integration.rs; ed
 [17:24:37] ACT: edited make.py
 [17:24:50] ACT: edited make.py
 [17:33:54] THINK: Let me build the binary and capture the **real** `h5i msg watch` output in a throwaway repo so I replicate the exact style (spacing, colors, glyphs) rather than guessing.
+[17:33:54] THINK: Let me confirm how a broadcast (`to: all`) and a plain reply render, so a longer conversation stays faithful.
