@@ -1553,3 +1553,4 @@ _[Checkpoint: 6a18fabd — edited man/man1/h5i.1; edited man/man1/h5i.1; edited 
 _[Checkpoint: 6a18fc51 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited README.md]_
 ---
 
+[02:42:22] THINK: For the NN two-agent race, diagnose delivery semantics before changing code: h5i currently has turn delivery plus human watch, while agmsg solves idle-agent wakeups with a persistent Monitor-launched watcher.
