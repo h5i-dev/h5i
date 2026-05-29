@@ -1375,3 +1375,9 @@ _[Checkpoint: 6a18e0d8 — edited src/main.rs; edited src/main.rs; edited .claud
 [00:43:01] OBSERVE: read docs/design.md
 [00:43:01] OBSERVE: searched src/msg.rs for "src/main.rs"
 [00:43:01] OBSERVE: searched src/main.rs
+
+
+---
+_[Checkpoint: 6a18e117 — reviewed communication branch msg implementation and identified delivery/data-integrity/doc issues]_
+---
+
