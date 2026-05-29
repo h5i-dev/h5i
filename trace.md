@@ -1604,3 +1604,4 @@ _[Checkpoint: 6a190192 — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 _[Checkpoint: 6a1908b3 — edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1]_
 ---
 
+[03:33:16] THINK: Recommend h5i share push evolve into fetch-merge-push per-dimension sync plus remote migration cleanup over treating refs/h5i/* as branch upstreams because Git upstream semantics do not apply to custom refs and force-push risks data loss.
