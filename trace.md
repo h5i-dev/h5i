@@ -1731,3 +1731,9 @@ _[Checkpoint: 6a19a885 — session ended (auto-checkpoint)]_
 [16:52:56] OBSERVE: read tests/msg_integration.rs
 [16:53:06] ACT: edited tests/msg_integration.rs
 [16:53:33] THINK: I'll start by understanding the existing messaging code structure before implementing `h5i msg replay`.
+
+
+---
+_[Checkpoint: 6a19c48d — edited MANUAL.md; edited README.md; edited tests/msg_integration.rs]_
+---
+
