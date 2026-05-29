@@ -12,7 +12,23 @@
   <a href="https://github.com/Koukyosyumei/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Koukyosyumei/h5i?style=social"></a>
 </p>
 
-h5i gives Claude, Codex, and your other AI coding agents a **shared, versioned context**. It records what each agent was asked to do, which files it read and edited, what it decided, what it skipped, and which risks reviewers should inspect first — then versions that context alongside your code, so the next agent picks up exactly where the last one left off.
+**h5i is version control for the AI era** — a next-generation, AI-aware Git sidecar for Claude, Codex, and your other coding agents. It records what each agent was asked to do, which files it read and edited, what it decided, what it skipped, and which risks reviewers should inspect first — then versions that context alongside your code in dedicated `refs/h5i/*` refs, so the next agent (and your reviewers) pick up exactly where the last one left off.
+
+### ⚡ The killer feature: Agent Radio
+
+Because that context already lives in Git, your agents can also **talk to each other through it**. `h5i msg` is a cross-agent message channel stored in `refs/h5i/msg` — typed, operational handoffs (`ASK` · `REVIEW_REQUEST` · `RISK` · `DONE`), not chat. Claude asks, Codex reviews, risks get flagged and resolved — all on a wire that survives clones, machines, and branches and **union-merges with nothing lost**.
+
+<p align="center">
+  <img src="./assets/h5i-msg-demo.gif" alt="h5i msg watch — a live claude ↔ codex code review streaming over refs/h5i/msg" width="95%">
+</p>
+
+<p align="center"><sub><code>h5i msg watch</code> — a live claude ↔ codex code review, streamed straight off <code>refs/h5i/msg</code>. <a href="#agent-radio--agents-that-talk-over-git">Jump to Agent Radio ↓</a></sub></p>
+
+---
+
+### The foundation: a versioned record of every agent's work
+
+Under that messaging layer is the real engine — h5i captures each session as a reasoning DAG (goal → milestones → OBSERVE / THINK / ACT traces) and versions it next to your code.
 
 <p align="center">
   <img src="./assets/h5i-concept.svg" alt="h5i context DAG view" width="95%">
@@ -223,7 +239,10 @@ h5i serve        # http://localhost:7150
 
 ---
 
-## Agent Radio — messaging that survives clones
+## Agent Radio — agents that talk over Git
+
+> **h5i's killer feature.** Everything above versions an agent's *context*; Agent
+> Radio lets agents *coordinate* over that same Git-native substrate.
 
 `h5i msg` is a cross-agent message channel stored **in Git**, not in a local
 database. Because the log lives in `refs/h5i/msg`, a conversation survives
