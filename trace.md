@@ -1791,3 +1791,4 @@ _[Checkpoint: 6a19cfb3 — edited README.md; edited README.md; edited Cargo.toml
 ---
 
 [17:46:49] OBSERVE: read .github/workflows/release.yaml
+[17:49:13] THINK: 1.5`. Let me confirm the version on main and check how prior tags/releases were done (annotated vs lightweight, and any release workflow).
