@@ -637,9 +637,17 @@ of your last view (sets \fBreply_to\fR / \fBthread_id\fR).
 .B inbox [\-\-peek] | history [\-\-with \fIAGENT\fR] | team
 Show unread (marks read; \fB\-\-peek\fR does not), the full log, or the roster.
 .TP
-.B watch [\-\-all] | hook [\-\-block] | as \fINAME\fR | whoami
-Live stream (your inbox, or the whole channel with \fB\-\-all\fR / no identity);
-Stop-hook turn delivery; get/set the stored identity.
+.B wait [\-\-all] [\-\-timeout \fIN\fR] | watch [\-\-all] | hook [\-\-block] | as \fINAME\fR | whoami
+.B wait
+blocks until a message arrives, prints it (peek), and exits \(em the wake
+primitive for autonomous delivery (run via background task or poll loop so an
+idle agent is woken on a reply).
+.B watch
+is a live human-facing stream.
+.B hook
+is Stop-hook turn delivery;
+.B as
+gets/sets the stored identity.
 .RE
 .PP
 Add

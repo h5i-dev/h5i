@@ -88,7 +88,7 @@ impl Clone {
             .args(args)
             .env_remove("H5I_AGENT")
             .current_dir(&self.dir)
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn h5i")
@@ -508,6 +508,42 @@ fn watch_all_streams_channel_without_identity() {
     // And plain `watch` with no identity at all also must not error on identity.
     let bare = a.h5i(&["msg", "watch", "--once", "--plain"]);
     assert!(bare.status.success(), "bare watch errored: {}", String::from_utf8_lossy(&bare.stderr));
+}
+
+#[test]
+fn wait_returns_existing_unread_immediately() {
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "send", "--from", "claude", "codex", "already waiting"]);
+    // Mail is already there → wait returns at once (well under the timeout).
+    let out = a.h5i_ok(&["msg", "wait", "--as", "codex", "--timeout", "30", "--plain"]);
+    assert!(out_str(&out).contains("already waiting"), "wait didn't return existing unread");
+    // Peek semantics: it did NOT consume — inbox still has it.
+    assert!(out_str(&a.h5i_ok(&["msg", "inbox", "--as", "codex"])).contains("already waiting"));
+}
+
+#[test]
+fn wait_times_out_quietly_when_no_message() {
+    let (_root, a, _b) = two_clones();
+    let out = a.h5i_ok(&["msg", "wait", "--as", "codex", "--timeout", "1", "--interval", "1", "--plain"]);
+    assert!(out.status.success(), "wait should exit 0 on timeout");
+    assert!(out_str(&out).trim().is_empty(), "timeout should produce no output");
+}
+
+#[test]
+fn wait_wakes_on_message_arriving_during_the_wait() {
+    let (_root, a, _b) = two_clones();
+    // Start waiting, then deliver a message ~1s later from another process.
+    let waiter = a.h5i_spawn(&["msg", "wait", "--as", "codex", "--timeout", "20", "--interval", "1", "--plain"]);
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    a.h5i_ok(&["msg", "send", "--from", "claude", "codex", "arrived late"]);
+
+    let out = waiter.wait_with_output().expect("waiter");
+    assert!(out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("arrived late"),
+        "wait did not wake on the late message: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
 }
 
 #[test]

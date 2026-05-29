@@ -292,7 +292,7 @@ h5i msg send <agent> <text>               # `all` = broadcast
 h5i msg ask|review|risk|handoff <agent> <text> [flags]
 h5i msg reply|ack|done|decline <n> [text]
 h5i msg inbox [--peek] | history [--with <agent>] | team
-h5i msg watch [--all] | hook [--block] | as <name> | whoami
+h5i msg wait [--all] [--timeout N] | watch [--all] | hook [--block] | as <name> | whoami
 ```
 
 Cross-agent messaging stored **in Git** (`refs/h5i/msg`), not a local database, so
@@ -359,6 +359,11 @@ Add `--plain` to any read command for greppable, uncoloured output.
   resume.
 - **Codex.** `h5i codex prelude` / `sync` / `finish` auto-deliver Codex's inbox
   (Codex has no Stop hook).
+- **`h5i msg wait`.** The autonomous wake primitive: blocks until a message
+  arrives (returns existing unread immediately), prints it, and exits — peek
+  only. Run it as a background task (Claude Code) or in a poll loop (Codex) so
+  an *idle* agent is woken on a reply rather than missing it. `--timeout N`
+  (0 = forever), `--all` for the whole channel.
 - **`h5i msg watch`.** A live stream — your inbox with an identity, or the whole
   channel with `--all` / no identity (a human-facing dashboard). Real-time push
   into a running agent via the Monitor tool is experimental / host-dependent.
