@@ -1507,3 +1507,4 @@ _[Checkpoint: 6a18f415 — edited src/msg.rs; edited src/msg.rs; edited src/msg.
 _[Checkpoint: 6a18f44d — edited src/msg.rs; edited src/msg.rs; edited src/msg.rs]_
 ---
 
+[02:05:21] OBSERVE: read tests/msg_integration.rs
