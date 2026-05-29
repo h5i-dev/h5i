@@ -1562,3 +1562,9 @@ _[Checkpoint: 6a18fc51 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited 
 [02:42:33] OBSERVE: read ../agmsg/scripts/watch.sh
 [02:42:33] OBSERVE: read ../agmsg/README.md
 [02:42:33] OBSERVE: read src/main.rs
+
+
+---
+_[Checkpoint: 6a18fd19 — Analyzed NN two-agent message race and compared h5i turn/watch semantics with agmsg monitor delivery; no code changes.]_
+---
+
