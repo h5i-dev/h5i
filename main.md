@@ -226,11 +226,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Assessed h5i share push design: immediate remote legacy ref conflict, need fetch-merge-push/lease semantics and remote setup ergonomics.
 - [x] edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1
 - [x] edited src/main.rs; edited tests/cli_integration.rs; Added cmd_setup_remote + cmd_migrate_remote + remote_has_legacy_con…
+- [x] edited src/main.rs; edited tests/cli_integration.rs; Added cmd_setup_remote + cmd_migrate_remote + remote_has_legacy_con…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-29 14:43 UTC] `fix-push`: edited src/main.rs; edited tests/cli_integration.rs; Added cmd_setup_remote + cmd_migrate_remote + remote_has_legacy_con…
 - [2026-05-29 03:45 UTC] `fix-push`: edited src/main.rs; edited tests/cli_integration.rs; Added cmd_setup_remote + cmd_migrate_remote + remote_has_legacy_con…
 - [2026-05-29 03:35 UTC] `fix-push`: edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1
 - [2026-05-29 03:33 UTC] `fix-push`: Assessed h5i share push design: immediate remote legacy ref conflict, need fetch-merge-push/lease semantics and remote setup ergonomics.
