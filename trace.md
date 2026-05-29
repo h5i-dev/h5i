@@ -1698,3 +1698,6 @@ _[Checkpoint: 6a19a78d — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a19a804 — session ended (auto-checkpoint)]_
 ---
 
+[14:53:57] THINK: So (a) isn't added machinery — it's the existing kinds plus the one genuinely new piece I should have named separately:
+
+**The reader.
