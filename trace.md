@@ -1485,3 +1485,4 @@ _[Checkpoint: 6a18f13c — edited README.md; edited tests/msg_integration.rs; ed
 _[Checkpoint: 6a18f285 — edited src/main.rs; edited src/main.rs; edited tests/msg_integration.rs]_
 ---
 
+[01:59:08] OBSERVE: read src/msg.rs
