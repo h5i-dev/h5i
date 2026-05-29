@@ -1397,3 +1397,4 @@ _[Checkpoint: 6a18e1b4 — session ended (auto-checkpoint)]_
 [00:49:37] ACT: edited tests/msg_integration.rs
 [00:50:54] ACT: edited tests/msg_integration.rs
 [00:51:08] ACT: edited tests/msg_integration.rs
+[00:54:51] NOTE: DEFERRAL (~/Dev/h5i/.claude/h5i.md): but **raced the Stop hook**, which consumed it first → my follow-up `inbox` saw nothing. | ## The real lesson Two things were draining the same inbo…
