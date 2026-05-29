@@ -1616,3 +1616,4 @@ _[Checkpoint: 6a1908b3 — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 _[Checkpoint: 6a19090f — Assessed h5i share push design: immediate remote legacy ref conflict, need fetch-merge-push/lease semantics and remote setup ergonomics.]_
 ---
 
+[03:34:51] OBSERVE: read src/ctx.rs
