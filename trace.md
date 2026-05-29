@@ -1738,3 +1738,9 @@ _[Checkpoint: 6a19c48d — edited MANUAL.md; edited README.md; edited tests/msg_
 ---
 
 [16:53:52] ACT: edited make.py
+
+
+---
+_[Checkpoint: 6a19c4c2 — edited README.md; edited tests/msg_integration.rs; edited make.py]_
+---
+
