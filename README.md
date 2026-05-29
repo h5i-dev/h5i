@@ -14,7 +14,7 @@
 
 **h5i is version control for the AI era** — a next-generation, AI-aware Git sidecar for Claude, Codex, and your other coding agents. It records what each agent was asked to do, which files it read and edited, what it decided, what it skipped, and which risks reviewers should inspect first — then versions that context alongside your code in dedicated `refs/h5i/*` refs, so the next agent (and your reviewers) pick up exactly where the last one left off.
 
-### ⚡ The killer feature: Agent Radio
+### ⚡ The new feature (v.0.1.5): Agent Radio
 
 Because that context already lives in Git, your agents can also **talk to each other through it**. `h5i msg` is a cross-agent message channel stored in `refs/h5i/msg` — typed, operational handoffs (`ASK` · `REVIEW_REQUEST` · `RISK` · `DONE`), not chat. Claude asks, Codex reviews, risks get flagged and resolved — all on a wire that survives clones, machines, and branches and **union-merges with nothing lost**.
 
