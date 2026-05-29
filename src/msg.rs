@@ -416,44 +416,54 @@ pub fn inbox(
     me: &str,
     advance: bool,
 ) -> Result<Vec<Message>, H5iError> {
-    let mut store = read_cursors(h5i_root)?;
-
     let mut addressed: Vec<Message> = read_messages(repo)
         .into_iter()
         .filter(|m| m.addressed_to(me))
         .collect();
     addressed.sort_by(|a, b| a.key().cmp(&b.key()));
 
-    // Lazily migrate a legacy watermark: everything at or below it was already
-    // read, so seed the seen-set with those ids and drop the watermark.
-    let mut dirty = false;
-    if let Some(wm) = store.cursors.remove(me) {
-        let seen = store.seen.entry(me.to_string()).or_default();
-        for m in &addressed {
-            if m.key() <= wm.key() {
-                seen.insert(m.id.clone());
-            }
-        }
-        dirty = true;
-    }
+    // Read-state lives in a PER-AGENT file (cursors/<agent>.json) so two agents
+    // sharing one clone never write the same file. If the per-agent file is
+    // absent, seed it from the legacy shared cursor.json (one-time migration).
+    let (mut seen, mut dirty) = match read_agent_seen(h5i_root, me) {
+        Some(set) => (set, false),
+        None => (migrate_legacy_seen(h5i_root, me, &addressed), true),
+    };
 
-    let seen = store.seen.get(me).cloned().unwrap_or_default();
     let unread: Vec<Message> = addressed
         .into_iter()
         .filter(|m| !seen.contains(&m.id))
         .collect();
 
     if advance && !unread.is_empty() {
-        let set = store.seen.entry(me.to_string()).or_default();
         for m in &unread {
-            set.insert(m.id.clone());
+            seen.insert(m.id.clone());
         }
         dirty = true;
     }
     if dirty {
-        write_cursors(h5i_root, &store)?;
+        write_agent_seen(h5i_root, me, &seen)?;
     }
     Ok(unread)
+}
+
+/// Seed a fresh per-agent seen-set from the legacy shared `cursor.json`
+/// (the pre-per-agent format): copy `me`'s seen ids, and convert a legacy
+/// watermark to ids by marking everything at or below it as seen.
+fn migrate_legacy_seen(h5i_root: &Path, me: &str, addressed: &[Message]) -> BTreeSet<String> {
+    let mut set = BTreeSet::new();
+    let legacy = read_cursors(h5i_root).unwrap_or_default();
+    if let Some(s) = legacy.seen.get(me) {
+        set.extend(s.iter().cloned());
+    }
+    if let Some(wm) = legacy.cursors.get(me) {
+        for m in addressed {
+            if m.key() <= wm.key() {
+                set.insert(m.id.clone());
+            }
+        }
+    }
+    set
 }
 
 /// Return up to `limit` most-recent messages (oldest-first within the window).
@@ -525,37 +535,35 @@ pub fn stats(repo: &Repository) -> Stats {
 /// `h5i msg reply <n>` can resolve a number back to a message. Scoped to the
 /// viewing agent so a reply can't accidentally target another agent's view.
 pub fn write_last_view(h5i_root: &Path, agent: &str, ids: &[String]) -> Result<(), H5iError> {
-    let dir = msg_dir(h5i_root);
+    let dir = views_dir(h5i_root);
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
-    let view = LastView {
-        agent: agent.to_string(),
-        ids: ids.to_vec(),
-    };
-    let json = serde_json::to_string_pretty(&view)?;
-    let path = last_view_path(h5i_root);
+    let json = serde_json::to_string_pretty(&serde_json::json!({ "ids": ids }))?;
+    let path = agent_view_path(h5i_root, agent);
     std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, path))
 }
 
-/// Resolve a 1-based number from the last numbered view into a message id,
-/// verifying it belongs to `agent`'s view. Returns `None` when there is no
-/// view, the agent differs, or `n` is out of range.
+/// Resolve a 1-based number from `agent`'s last numbered view into a message
+/// id. The view is a per-agent file, so it can't be clobbered by another agent
+/// in the same clone. Returns `None` when there is no view or `n` is out of range.
 pub fn resolve_view_number(h5i_root: &Path, agent: &str, n: usize) -> Option<String> {
-    let view = read_last_view(h5i_root)?;
-    if view.agent != agent || n == 0 || n > view.ids.len() {
+    let raw = std::fs::read_to_string(agent_view_path(h5i_root, agent)).ok()?;
+    let view: ViewFile = serde_json::from_str(&raw).ok()?;
+    if n == 0 || n > view.ids.len() {
         return None;
     }
     Some(view.ids[n - 1].clone())
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct LastView {
-    agent: String,
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct ViewFile {
+    #[serde(default)]
     ids: Vec<String>,
 }
 
-fn read_last_view(h5i_root: &Path) -> Option<LastView> {
-    let raw = std::fs::read_to_string(last_view_path(h5i_root)).ok()?;
-    serde_json::from_str(&raw).ok()
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct SeenFile {
+    #[serde(default)]
+    seen: BTreeSet<String>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -773,14 +781,47 @@ fn identity_path(h5i_root: &Path) -> PathBuf {
     msg_dir(h5i_root).join("identity")
 }
 
+/// Legacy single-file cursor (pre-per-agent). Read only, for migration.
 fn cursor_path(h5i_root: &Path) -> PathBuf {
     msg_dir(h5i_root).join("cursor.json")
 }
 
-fn last_view_path(h5i_root: &Path) -> PathBuf {
-    msg_dir(h5i_root).join("last_view.json")
+fn cursors_dir(h5i_root: &Path) -> PathBuf {
+    msg_dir(h5i_root).join("cursors")
 }
 
+fn agent_cursor_path(h5i_root: &Path, agent: &str) -> PathBuf {
+    cursors_dir(h5i_root).join(format!("{agent}.json"))
+}
+
+fn views_dir(h5i_root: &Path) -> PathBuf {
+    msg_dir(h5i_root).join("views")
+}
+
+fn agent_view_path(h5i_root: &Path, agent: &str) -> PathBuf {
+    views_dir(h5i_root).join(format!("{agent}.json"))
+}
+
+/// Read `agent`'s per-agent seen-set, or `None` if it has none yet.
+fn read_agent_seen(h5i_root: &Path, agent: &str) -> Option<BTreeSet<String>> {
+    let raw = std::fs::read_to_string(agent_cursor_path(h5i_root, agent)).ok()?;
+    let f: SeenFile = serde_json::from_str(&raw).ok()?;
+    Some(f.seen)
+}
+
+fn write_agent_seen(
+    h5i_root: &Path,
+    agent: &str,
+    seen: &BTreeSet<String>,
+) -> Result<(), H5iError> {
+    let dir = cursors_dir(h5i_root);
+    std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+    let json = serde_json::to_string_pretty(&serde_json::json!({ "seen": seen }))?;
+    let path = agent_cursor_path(h5i_root, agent);
+    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, path))
+}
+
+/// Read the legacy shared cursor.json (for one-time migration only).
 fn read_cursors(h5i_root: &Path) -> Result<CursorStore, H5iError> {
     let path = cursor_path(h5i_root);
     match std::fs::read_to_string(&path) {
@@ -788,14 +829,6 @@ fn read_cursors(h5i_root: &Path) -> Result<CursorStore, H5iError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(CursorStore::default()),
         Err(e) => Err(H5iError::with_path(e, path)),
     }
-}
-
-fn write_cursors(h5i_root: &Path, store: &CursorStore) -> Result<(), H5iError> {
-    let dir = msg_dir(h5i_root);
-    std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
-    let path = cursor_path(h5i_root);
-    let json = serde_json::to_string_pretty(store)?;
-    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, path))
 }
 
 /// Read every message currently on the `refs/h5i/msg` tip.
@@ -1203,10 +1236,30 @@ mod tests {
         assert_eq!(unread.len(), 1);
         assert_eq!(unread[0].body, "two");
 
-        // The legacy watermark is gone and a seen-set persisted.
-        let raw = std::fs::read_to_string(cursor_path(&root)).unwrap();
+        // A per-agent seen file was written (the legacy file is left untouched).
+        let raw = std::fs::read_to_string(agent_cursor_path(&root, "bob")).unwrap();
         assert!(raw.contains("seen"));
-        assert!(!raw.contains("cursors"));
+        assert!(raw.contains(&m1.id), "migrated watermark should mark m1 seen");
+        // bob's seen state is isolated — carol has no per-agent file at all.
+        assert!(read_agent_seen(&root, "carol").is_none());
+    }
+
+    #[test]
+    fn read_state_is_isolated_per_agent_in_one_clone() {
+        // Two agents sharing one clone must not clobber each other's read-state.
+        let (_d, repo, root) = fixture();
+        send(&repo, &root, "x", "claude", "to claude", None).unwrap();
+        send(&repo, &root, "x", "codex", "to codex", None).unwrap();
+
+        // claude consumes its inbox; codex's stays untouched.
+        assert_eq!(inbox(&repo, &root, "claude", true).unwrap().len(), 1);
+        assert_eq!(inbox(&repo, &root, "codex", false).unwrap().len(), 1);
+
+        // Per-agent view files don't collide: each reply targets its own view.
+        write_last_view(&root, "claude", &["a".into()]).unwrap();
+        write_last_view(&root, "codex", &["b".into()]).unwrap();
+        assert_eq!(resolve_view_number(&root, "claude", 1).as_deref(), Some("a"));
+        assert_eq!(resolve_view_number(&root, "codex", 1).as_deref(), Some("b"));
     }
 
     #[test]
