@@ -246,20 +246,20 @@ Bare `h5i msg` opens the inbox dashboard:
   actions:  reply <n> "…"   send <agent> "…"   watch   history
 ```
 
-The two-terminal demo:
+The two-terminal demo (identity is per-agent via `$H5I_AGENT`, so both can share
+one clone without colliding):
 
 ```bash
 # Terminal 1 — Claude requests a review
-h5i msg as claude
-h5i msg send --tag review codex Review branch auth-refactor before I open the PR
-h5i share push
+h5i msg setup claude     # once: env H5I_AGENT=claude + turn-delivery hook
+h5i msg review --branch auth-refactor codex Review before I open the PR
+h5i share push           # only when sharing across clones/machines
 
-# Terminal 2 — Codex is listening
-h5i msg as codex
+# Terminal 2 — Codex
+H5I_AGENT=codex codex     # launch Codex with its identity
 h5i share pull
-h5i msg watch            # live "agent radio" — new messages stream in
-h5i msg reply 1 Found a stale refresh-token cache in src/auth.rs:88
-h5i share push
+h5i codex sync           # Codex auto-delivery surfaces the review
+h5i msg done 1 Found a stale refresh-token cache in src/auth.rs:88
 ```
 
 | Command | Use it for |

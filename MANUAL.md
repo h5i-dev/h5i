@@ -15,6 +15,7 @@ Command reference for all h5i subcommands and flags.
   - [h5i codex prelude](#h5i-codex-prelude)
   - [h5i codex sync](#h5i-codex-sync)
   - [h5i codex finish](#h5i-codex-finish)
+- [h5i msg](#h5i-msg)
 - [h5i capture](#h5i-capture)
 - [h5i recall](#h5i-recall)
 - [h5i audit](#h5i-audit)
@@ -279,6 +280,91 @@ h5i codex finish [--summary <text>]
 Run `h5i codex sync`, then auto-checkpoint the current context workspace.
 
 If `--summary` is omitted, h5i derives a short checkpoint summary from the most recent `ACT` entries.
+
+---
+
+## h5i msg
+
+```
+h5i msg                                   # inbox dashboard
+h5i msg setup [<name>] [--scope project|user] [--no-block]
+h5i msg send <agent> <text>               # `all` = broadcast
+h5i msg ask|review|risk|handoff <agent> <text> [flags]
+h5i msg reply|ack|done|decline <n> [text]
+h5i msg inbox [--peek] | history [--with <agent>] | team
+h5i msg watch [--all] | hook [--block] | as <name> | whoami
+```
+
+Cross-agent messaging stored **in Git** (`refs/h5i/msg`), not a local database, so
+a conversation survives clones, machines, and branches and is shared with
+`h5i share push` / `pull` (divergent sends union-merge by message id). Messages
+follow the **i5h protocol** ([docs/i5h-protocol.md](docs/i5h-protocol.md)): typed,
+operational handoffs rather than chat.
+
+### Setup and identity
+
+Identity is **per-agent**, supplied by `$H5I_AGENT` (no `--as` on commands).
+Resolution order: `--from`/`--as` flag → `$H5I_AGENT` → stored default.
+
+```
+# Claude Code (one-time, per project): sets env H5I_AGENT + a turn-delivery Stop hook
+h5i msg setup claude            # → ./.claude/settings.json (autonomous --block hook)
+h5i msg setup claude --scope user   # → ~/.claude/settings.json (all projects)
+h5i msg setup claude --no-block     # notify-only hook instead of autonomous
+
+# Codex: just launch it with the identity in its environment
+H5I_AGENT=codex codex
+```
+
+Several agents can share one clone safely: identity is per-process (env), the
+message ref is concurrency-safe (compare-and-swap on send), and read-state is
+kept in per-agent files (`.git/.h5i/msg/cursors/<agent>.json`,
+`views/<agent>.json`). Never use `h5i msg as` when two agents share a clone — it
+writes a single shared identity file; prefer `$H5I_AGENT`.
+
+### Sending
+
+```
+h5i msg send codex deploy is done            # free text (joined with spaces)
+h5i msg send all standup in 5                # broadcast to everyone else
+h5i msg ask codex can you inspect the failing test
+h5i msg review --branch auth --focus src/auth.rs --pr 42 codex review token refresh
+h5i msg risk --focus src/auth.rs --priority high all auth cache crosses requests
+h5i msg handoff --branch auth --context auth reviewer please take expiry work
+```
+
+Typed verbs set the i5h `kind` (`ASK`, `REVIEW_REQUEST`, `RISK`, `HANDOFF`) and
+structured fields. **Options must precede the recipient** (the body is variadic).
+
+### Reading and replying
+
+```
+h5i msg                          # dashboard: header · inbox · GIT PROOF band (a glance; does not consume)
+h5i msg inbox                    # show unread, mark read, number them
+h5i msg reply 1 on it            # threaded reply to message #1 of your last view
+h5i msg ack 1                    # ACK / DONE / DECLINE are typed threaded replies
+h5i msg done 1 fixed in 1a2b3c4
+h5i msg history --with codex     # full conversation log
+h5i msg team                     # known agents
+```
+
+Add `--plain` to any read command for greppable, uncoloured output.
+
+### Delivery modes
+
+- **Turn delivery (primary).** The Stop hook (`h5i msg hook`) surfaces new
+  messages between turns. Default (`--block`) emits `decision:block` so the
+  agent autonomously handles the message; `--no-block` (via setup) emits a
+  notify-only `systemMessage`. `h5i hook session-start` also notes unread on
+  resume.
+- **Codex.** `h5i codex prelude` / `sync` / `finish` auto-deliver Codex's inbox
+  (Codex has no Stop hook).
+- **`h5i msg watch`.** A live stream — your inbox with an identity, or the whole
+  channel with `--all` / no identity (a human-facing dashboard). Real-time push
+  into a running agent via the Monitor tool is experimental / host-dependent.
+
+Incoming messages are framed as **untrusted collaborator input**, never as
+instructions; agents are told to evaluate and decide.
 
 ---
 

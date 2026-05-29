@@ -583,6 +583,70 @@ in your project root:
 .fi
 .RE
 .
+.\" ─── msg ────────────────────────────────────────────────────────────────────
+.SS h5i msg [\fISUBCOMMAND\fR]
+Cross-agent messaging stored in the Git ref
+.I refs/h5i/msg
+(append-only
+.I messages.jsonl
+plus an
+.I agents.json
+roster), shared with
+.B h5i share push
+/
+.BR pull " (divergent sends union-merge by message id)."
+Follows the i5h protocol: typed, operational handoffs.
+Identity is per-agent and resolves
+.BR \-\-from / \-\-as " > " $H5I_AGENT " > stored default;"
+with
+.B $H5I_AGENT
+set, no flag is needed and several agents may share one clone.
+With no subcommand, prints the inbox dashboard.
+.PP
+.B Subcommands
+.RS 4
+.TP
+.B setup [\fINAME\fR] [\-\-scope project|user] [\-\-no\-block]
+One-time Claude Code wiring: write
+.B env.H5I_AGENT
+and a turn-delivery Stop hook into
+.IR settings.json .
+Default scope is the project with an autonomous
+.B \-\-block
+hook;
+.B \-\-no\-block
+uses a notify-only hook.
+For Codex, launch it with
+.B H5I_AGENT=codex
+instead.
+.TP
+.B send \fITO\fR \fITEXT\fR...
+Send a message (\fITO\fR =
+.B all
+broadcasts). Typed verbs
+.BR ask ", " review ", " risk ", " handoff
+set the i5h kind and structured fields
+(\fB\-\-branch\fR, \fB\-\-focus\fR, \fB\-\-risk\fR, \fB\-\-pr\fR, \fB\-\-priority\fR,
+\fB\-\-context\fR; options precede \fITO\fR).
+.TP
+.B reply \fIN\fR \fITEXT\fR... | ack \fIN\fR | done \fIN\fR | decline \fIN\fR
+Threaded reply to message
+.I N
+of your last view (sets \fBreply_to\fR / \fBthread_id\fR).
+.TP
+.B inbox [\-\-peek] | history [\-\-with \fIAGENT\fR] | team
+Show unread (marks read; \fB\-\-peek\fR does not), the full log, or the roster.
+.TP
+.B watch [\-\-all] | hook [\-\-block] | as \fINAME\fR | whoami
+Live stream (your inbox, or the whole channel with \fB\-\-all\fR / no identity);
+Stop-hook turn delivery; get/set the stored identity.
+.RE
+.PP
+Add
+.B \-\-plain
+to any read command for greppable output.
+Incoming messages are treated as untrusted collaborator input.
+.
 .\" ─── resume ─────────────────────────────────────────────────────────────────
 .SS h5i resume [\fIBRANCH\fR]
 Generate a structured session-handoff briefing assembled entirely from
@@ -1310,6 +1374,12 @@ Default model name for
 Default agent ID for
 .BR "h5i commit" .
 .TP
+.B H5I_AGENT
+Per-agent messaging identity for
+.BR "h5i msg" .
+Takes precedence over the stored default and is the recommended way to give
+each agent (Claude Code, Codex) a distinct name when sharing one clone.
+.TP
 .B H5I_TEST_RESULTS
 Default path to a test results JSON file.
 .TP
@@ -1342,6 +1412,16 @@ Transient file written by the Claude Code hook; consumed and deleted
 at the next
 .BR "h5i commit" .
 .TP
+.I .git/.h5i/msg/
+Local messaging state:
+.I identity
+(stored default agent),
+.I cursors/<agent>.json
+(per-agent read state), and
+.I views/<agent>.json
+(per-agent reply numbering). Per-agent files so multiple agents in one clone
+never collide.
+.TP
 .I .h5i-ctx/
 Context workspace (created by
 .BR "h5i context init" ).
@@ -1364,6 +1444,13 @@ Recover with:
 Git ref storing Claude memory snapshots as a linear commit history of
 git tree objects.
 .TP
+.I refs/h5i/msg
+Git ref storing the cross-agent message log
+(\fImessages.jsonl\fR + \fIagents.json\fR roster).
+Append-only; pushed/pulled by
+.B h5i share
+and union-merged by message id on divergence.
+.TP
 .I ~/.claude/projects/<repo>/memory/
 Claude Code's default per-project memory directory (source for snapshots).
 .TP
@@ -1382,9 +1469,10 @@ Share them with:
 .PP
 .RS 4
 .nf
-h5i push                             # push both refs to origin
+h5i push                             # push all h5i refs to origin
 git push origin refs/h5i/notes
 git push origin refs/h5i/memory
+git push origin refs/h5i/msg
 .fi
 .RE
 .PP
@@ -1399,6 +1487,7 @@ picks them up automatically:
 [remote "origin"]
     fetch = +refs/h5i/notes:refs/h5i/notes
     fetch = +refs/h5i/memory:refs/h5i/memory
+    fetch = +refs/h5i/msg:refs/h5i/msg
 .fi
 .RE
 .
