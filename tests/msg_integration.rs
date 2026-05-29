@@ -70,6 +70,17 @@ impl Clone {
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
+    /// Run h5i with an explicit `H5I_AGENT` (mimics a host that injects the
+    /// identity via env, where it wins over the stored default).
+    fn h5i_as(&self, agent: &str, args: &[&str]) -> Output {
+        Command::new(H5I)
+            .args(args)
+            .env("H5I_AGENT", agent)
+            .current_dir(&self.dir)
+            .output()
+            .expect("failed to run h5i")
+    }
+
     /// Run h5i with `input` piped to stdin (for hook stop_hook_active tests).
     fn h5i_stdin(&self, args: &[&str], input: &str) -> Output {
         use std::io::Write;
@@ -489,15 +500,25 @@ fn hook_block_emits_decision_block_and_honors_guard() {
 }
 
 #[test]
-fn session_start_emits_monitor_directive_when_identity_set() {
+fn session_start_notes_unread_but_does_not_push_monitor() {
     let (_root, a, _b) = two_clones();
-    a.h5i_ok(&["msg", "as", "claude"]);
-    let out = out_str(&a.h5i_ok(&["hook", "session-start"]));
-    assert!(out.contains("monitor mode"), "no monitor directive: {out}");
-    assert!(
-        out.contains("h5i msg watch --as claude --plain"),
-        "directive missing watch command: {out}"
-    );
+    // Identity via env (as a real host injects it) so a `--from codex` send
+    // can't clobber which inbox session-start checks.
+
+    // No unread → silent about messaging (no noise in unrelated repos).
+    let quiet = out_str(&a.h5i_as("claude", &["hook", "session-start"]));
+    assert!(!quiet.contains("unread message"), "noisy when no mail: {quiet}");
+
+    // With unread → a read-only note (not consumed), and NOT a Monitor directive.
+    a.h5i_ok(&["msg", "send", "--from", "codex", "claude", "look at this"]);
+    let out = out_str(&a.h5i_as("claude", &["hook", "session-start"]));
+    assert!(out.contains("1 unread message for claude"), "no unread note: {out}");
+    assert!(out.contains("h5i msg inbox"), "no read hint: {out}");
+    assert!(!out.contains("Monitor tool"), "should not push Monitor: {out}");
+
+    // The note must NOT consume it — turn delivery still gets it.
+    let still = out_str(&a.h5i_as("claude", &["msg", "inbox"]));
+    assert!(still.contains("look at this"), "session note consumed the message: {still}");
 }
 
 #[test]
