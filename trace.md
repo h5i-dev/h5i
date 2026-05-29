@@ -1410,3 +1410,4 @@ _[Checkpoint: 6a18e3db — edited tests/msg_integration.rs; edited tests/msg_int
 _[Checkpoint: 6a18e465 — edited tests/msg_integration.rs; edited tests/msg_integration.rs; edited tests/msg_integration.rs]_
 ---
 
+[01:16:06] NOTE: DEFERRAL (~/Dev/h5i/tests/msg_integration.rs): o that now. **3. Conventional polish (optional, this PR or follow-up):** - Version bump `0.1.4 → 0.2.0` + a README/changelog line (it's a real featu…
