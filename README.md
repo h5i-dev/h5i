@@ -223,6 +223,84 @@ h5i serve        # http://localhost:7150
 
 ---
 
+## Agent Radio — messaging that survives clones
+
+`h5i msg` is a cross-agent message channel stored **in Git**, not in a local
+database. Because the log lives in `refs/h5i/msg`, a conversation survives
+clones, machines, and branches — it travels with `h5i share push` / `pull`,
+and divergent sends from two machines **union-merge** with no message lost.
+
+Bare `h5i msg` opens the inbox dashboard:
+
+```text
+┌─ H5I AGENT RADIO ──────────────────────────────────────────────────────┐
+│ repo h5i   branch communication   agent codex   unread 2               │
+├─ INBOX — 2 unread ─────────────────────────────────────────────────────┤
+│  1 22:14  claude → codex  [review] #25d2d86b3944ad9a                   │
+│      Please review the auth refactor before I open the PR              │
+│  2 22:16  reviewer → codex  [risk] #3a8f63268e9f3d44                   │
+│      Check token refresh behavior after h5i pull                       │
+├─ GIT PROOF ────────────────────────────────────────────────────────────┤
+│ ref refs/h5i/msg · 34 messages · tip #c6d2c03 · last activity 14s ago  │
+└────────────────────────────────────────────────────────────────────────┘
+  actions:  reply <n> "…"   send <agent> "…"   watch   history
+```
+
+The two-terminal demo (identity is per-agent via `$H5I_AGENT`, so both can share
+one clone without colliding):
+
+```bash
+# Terminal 1 — Claude requests a review
+h5i msg setup claude     # once: env H5I_AGENT=claude + turn-delivery hook
+h5i msg review --branch auth-refactor codex Review before I open the PR
+h5i share push           # only when sharing across clones/machines
+
+# Terminal 2 — Codex
+H5I_AGENT=codex codex     # launch Codex with its identity
+h5i share pull
+h5i codex sync           # Codex auto-delivery surfaces the review
+h5i msg done 1 Found a stale refresh-token cache in src/auth.rs:88
+```
+
+| Command | Use it for |
+|---|---|
+| `h5i msg` | Inbox dashboard (header · inbox · Git proof). |
+| `h5i msg as <name>` | Set this repo's agent identity. |
+| `h5i msg send <agent> <text>` | Send a message (`all` to broadcast). |
+| `h5i msg reply <n> <text>` | Reply to a numbered message (threaded). |
+| `h5i msg watch` | Live stream of incoming messages. |
+| `h5i msg history` / `team` | Full log / known agents. |
+
+Messages follow the **i5h protocol** ([docs/i5h-protocol.md](docs/i5h-protocol.md)) —
+typed, operational handoffs rather than chat. Typed verbs set the message kind
+and structured fields:
+
+| Verb | Kind | Notable flags |
+|---|---|---|
+| `h5i msg ask <agent> <text>` | `ASK` | — |
+| `h5i msg review <agent> <text>` | `REVIEW_REQUEST` | `--branch --focus --risk --pr` |
+| `h5i msg risk <agent> <text>` | `RISK` | `--focus --priority` |
+| `h5i msg handoff <agent> <text>` | `HANDOFF` | `--branch --context --focus` |
+| `h5i msg ack\|done\|decline <n> [text]` | `ACK` / `DONE` / `DECLINE` | threaded reply to message `<n>` |
+
+**Setup is one line per agent.** Identity is per-agent (via `$H5I_AGENT`), not
+per-command — no `--as` needed in normal use:
+
+```bash
+h5i msg setup claude          # Claude Code: sets env H5I_AGENT + turn-delivery Stop hook
+H5I_AGENT=codex codex         # Codex: just launch with the identity in its env
+```
+
+`h5i msg setup` writes `./.claude/settings.json` by default (per-project) with an
+autonomous turn hook (the agent handles incoming messages); pass `--scope user`
+for all projects, or `--no-block` for a notify-only hook. It's idempotent. Add
+`--plain` to any read command for greppable output; hook output is framed as
+untrusted collaborator input, never as instructions.
+
+> Agent messaging that survives clones, machines, and branches — because it is stored in Git.
+
+---
+
 ## Token Savings With Claims
 
 Agents waste tokens rediscovering facts they already proved. `h5i capture claim` records a fact with the exact evidence files that support it:
@@ -258,6 +336,7 @@ h5i is a pure Git sidecar. It uses dedicated refs, so it does not pollute your w
 | `refs/h5i/context` | The reasoning workspace as a DAG: goal, milestones, traces, branches, restores. |
 | `refs/h5i/ast` | AST snapshots for structural blame and semantic diffs. |
 | `refs/h5i/checkpoints/<agent>` | Per-agent memory snapshots. |
+| `refs/h5i/msg` | Cross-agent message log (append-only, union-merged on pull). |
 
 Because these are Git objects, they are content-addressed, deduplicated, pushable, fetchable, and survive `git gc`.
 

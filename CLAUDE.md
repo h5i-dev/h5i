@@ -16,7 +16,7 @@ CI runs `cargo build --verbose` then `cargo test --verbose` with Git user config
 
 ## Architecture
 
-**h5i** ("high-five") is a Git sidecar that extends version control with five semantic dimensions: temporal (Git history), structural (AST), intentional (AI provenance), empirical (test metrics), and associative (CRDT collaboration). It stores its data in `.git/.h5i/` with subdirectories `ast/`, `metadata/`, `crdt/`, and `delta/`.
+**h5i** ("high-five") is a Git sidecar that extends version control with five semantic dimensions: temporal (Git history), structural (AST), intentional (AI provenance), empirical (test metrics), and associative (cross-agent messaging via `refs/h5i/msg`). It stores its data in `.git/.h5i/` with subdirectories `ast/`, `metadata/`, and `msg/` (per-agent identity, read cursors, and reply views).
 
 ### Module Overview
 
@@ -26,6 +26,7 @@ CI runs `cargo build --verbose` then `cargo test --verbose` with Git user config
 - **`metadata.rs`** — Data types: `H5iCommitRecord`, `AiMetadata` (model, agent ID, prompt, token count), `TestMetrics`, `IntegrityReport` (severity: Valid/Warning/Violation). Serialized as JSON in Git Notes.
 - **`ast.rs`** — `SemanticAst` (S-expression based), `AstDiff` (additions/deletions/moves/unchanged), similarity scoring (0.0–1.0), SHA-256 structure hashing. Python files are parsed via `script/h5i-py-parser.py`.
 - **`blame.rs`** — Two modes: `Line` (traditional) and `Ast` (semantic). Associates authorship with AI metadata and test results per commit.
+- **`msg.rs`** — Cross-agent messaging (the i5h protocol, `docs/i5h-protocol.md`). Stores an append-only `messages.jsonl` + `agents.json` roster in `refs/h5i/msg`; sends via compare-and-swap, pulls union-merge by message id. `Message` carries i5h fields (version, kind, reply_to, thread_id, priority, focus, risk, links). Identity resolves `--from`/`--as` > `$H5I_AGENT` > stored. Read-state is per-agent local files (`cursors/<agent>.json`, `views/<agent>.json`). Includes `sanitize_display` (terminal-injection defense for untrusted pulled fields) and `merge_settings_json` (powers `h5i msg setup`).
 - **`watcher.rs`** — Uses `notify` crate. Detects file changes and syncs to CRDT session.
 - **`error.rs`** — Error categories mirror the five dimensions (Git/temporal, AST/structural, metadata/intentional, quality/empirical, CRDT/associative).
 - **`main.rs`** — CLI via `clap`. Subcommands: `init`, `session`, `commit`, `log`, `blame`, `resolve`.
@@ -39,6 +40,14 @@ h5i commit --message <msg> [--prompt <text>] [--model <name>] [--agent <id>] [--
 h5i log [--limit N]
 h5i blame <file> [--mode line|ast]
 h5i resolve <ours> <theirs> <file>
+
+# Cross-agent messaging (i5h). Identity via $H5I_AGENT (per agent), no --as needed.
+h5i msg setup [<name>] [--scope project|user] [--no-block]   # one-time Claude Code wiring
+h5i msg                                  # inbox dashboard
+h5i msg send <agent> <text>              # also: ask|review|risk|handoff <agent> <text>
+h5i msg reply|ack|done|decline <n> [text]
+h5i msg inbox | history | team | watch [--all]
+h5i msg hook [--block]                   # Stop-hook turn delivery
 ```
 
 ### Key Dependencies

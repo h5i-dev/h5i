@@ -10,7 +10,20 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "h5i msg hook --block"
+          }
+        ]
+      }
     ]
+  },
+  "env": {
+    "H5I_AGENT": "claude"
   },
   "enabledPlugins": {}
 }

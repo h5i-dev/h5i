@@ -13,6 +13,7 @@ pub mod claude;
 pub mod error;
 pub mod memory;
 pub mod metadata;
+pub mod msg;
 pub mod pr;
 pub mod recap;
 pub mod secrets;
