@@ -1382,3 +1382,4 @@ _[Checkpoint: 6a18e117 — reviewed communication branch msg implementation and 
 ---
 
 [00:44:01] OBSERVE: read bb7bzqm9j.output
+[00:45:40] NOTE: DEFERRAL (~/Dev/h5i/.claude/h5i.md): likely saw a `📬`/systemMessage), and my manual waiter's follow-up `inbox` then found nothing. Two consumers raced; the Stop hook won. Let me confir…
