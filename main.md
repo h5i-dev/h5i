@@ -200,11 +200,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/main.rs; edited src/main.rs; edited .claude/h5i.md
 - [x] edited src/main.rs; edited src/main.rs; edited .claude/h5i.md
 - [x] edited src/main.rs; edited src/main.rs; edited .claude/h5i.md
+- [x] reviewed communication branch msg implementation and identified delivery/data-integrity/doc issues
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-29 00:43 UTC] `communication`: reviewed communication branch msg implementation and identified delivery/data-integrity/doc issues
 - [2026-05-29 00:42 UTC] `communication`: edited src/main.rs; edited src/main.rs; edited .claude/h5i.md
 - [2026-05-29 00:40 UTC] `communication`: edited src/main.rs; edited src/main.rs; edited .claude/h5i.md
 - [2026-05-29 00:35 UTC] `communication`: edited src/main.rs; edited src/main.rs; edited .claude/h5i.md
