@@ -1423,3 +1423,9 @@ _[Checkpoint: 6a18e8d6 — edited tests/msg_integration.rs; edited tests/msg_int
 _[Checkpoint: 6a18e9da — edited tests/msg_integration.rs; edited tests/msg_integration.rs; edited tests/msg_integration.rs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a18ea72 — edited tests/msg_integration.rs; edited tests/msg_integration.rs; edited tests/msg_integration.rs]_
+---
+
