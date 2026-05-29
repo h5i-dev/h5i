@@ -1643,3 +1643,4 @@ _[Checkpoint: 6a19096d — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 [03:43:28] OBSERVE: read tests/cli_integration.rs
 [03:43:39] ACT: edited tests/cli_integration.rs
 [03:45:03] ACT: Added cmd_setup_remote + cmd_migrate_remote + remote_has_legacy_context_ref/print_legacy_context_remediation helpers in src/main.rs; wired share setup-remote/migrate-remote verbs; added legacy-conflict detection to share push. 10 integration tests in tests/cli_integration.rs.
+[03:45:22] THINK: I'll start by setting up the context workspace (per project convention) and exploring the command structure in parallel.
