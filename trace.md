@@ -1745,3 +1745,4 @@ _[Checkpoint: 6a19c4c2 — edited README.md; edited tests/msg_integration.rs; ed
 ---
 
 [16:59:54] THINK: Let me grab the helper glyphs/colors (arrow, kind_badge, RADIO_W, SUCCESS) to match exactly.
+[16:59:54] THINK: Let me test which ImageMagick text rendering path works (pango supports colored markup, ideal for terminal frames).
