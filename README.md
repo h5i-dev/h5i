@@ -283,10 +283,18 @@ and structured fields:
 | `h5i msg handoff <agent> <text>` | `HANDOFF` | `--branch --context --focus` |
 | `h5i msg ack\|done\|decline <n> [text]` | `ACK` / `DONE` / `DECLINE` | threaded reply to message `<n>` |
 
-Add `--plain` to any read command for greppable, uncoloured output (hooks and
-scripts). For turn-by-turn delivery inside Claude Code, register
-`h5i msg hook --as <name>` as a Stop hook (`h5i hook setup` prints the snippet);
-hook output is framed as untrusted collaborator input, never as instructions.
+**Setup is one line per agent.** Identity is per-agent (via `$H5I_AGENT`), not
+per-command — no `--as` needed in normal use:
+
+```bash
+h5i msg setup claude          # Claude Code: sets env H5I_AGENT + turn-delivery Stop hook
+H5I_AGENT=codex codex         # Codex: just launch with the identity in its env
+```
+
+`h5i msg setup` writes `~/.claude/settings.json` by default (all projects), or
+`--scope project` for one repo; it's idempotent. Per-project setup is otherwise
+unnecessary. Add `--plain` to any read command for greppable output; hook output
+is framed as untrusted collaborator input, never as instructions.
 
 > Agent messaging that survives clones, machines, and branches — because it is stored in Git.
 

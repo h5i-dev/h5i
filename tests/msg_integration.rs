@@ -522,6 +522,30 @@ fn session_start_notes_unread_but_does_not_push_monitor() {
 }
 
 #[test]
+fn msg_setup_writes_project_settings_idempotently() {
+    let (_root, a, _b) = two_clones();
+
+    a.h5i_ok(&["msg", "setup", "claude", "--scope", "project"]);
+    let settings_path = a.dir.join(".claude").join("settings.json");
+    assert!(settings_path.exists(), "settings.json not written");
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+    assert_eq!(v["env"]["H5I_AGENT"], "claude");
+    assert_eq!(v["hooks"]["Stop"][0]["hooks"][0]["command"], "h5i msg hook");
+
+    // Re-running is idempotent — still exactly one msg hook entry.
+    a.h5i_ok(&["msg", "setup", "claude", "--scope", "project"]);
+    let v2: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+    let stop = v2["hooks"]["Stop"].as_array().unwrap();
+    let n = stop
+        .iter()
+        .filter(|e| e["hooks"][0]["command"].as_str().map(|s| s.starts_with("h5i msg hook")).unwrap_or(false))
+        .count();
+    assert_eq!(n, 1, "duplicate msg hooks after re-run");
+}
+
+#[test]
 fn hook_emits_unread_then_clears() {
     let (_root, a, _b) = two_clones();
     a.h5i_ok(&["msg", "send", "--from", "lead", "dev", "review", "the", "PR"]);

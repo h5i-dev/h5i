@@ -929,6 +929,12 @@ enum Commands {
     },
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum SetupScope {
+    User,
+    Project,
+}
+
 #[derive(Subcommand)]
 enum MsgCommands {
     /// Send a message to another agent (or `all` to broadcast).
@@ -968,6 +974,22 @@ enum MsgCommands {
     As {
         /// The agent name to act as.
         name: String,
+    },
+
+    /// One-time wiring for Claude Code messaging: set this agent's identity
+    /// (`env.H5I_AGENT`) and add the turn-delivery Stop hook to settings.json.
+    /// Identity is per-agent (no `--as` needed afterward). For Codex, just
+    /// launch it with `H5I_AGENT=<name>` — it doesn't read .claude/settings.json.
+    Setup {
+        /// Identity this Claude Code uses (written to env.H5I_AGENT).
+        #[arg(default_value = "claude")]
+        name: String,
+        /// `user` → ~/.claude/settings.json (all projects); `project` → ./.claude/settings.json.
+        #[arg(long, value_enum, default_value_t = SetupScope::User)]
+        scope: SetupScope,
+        /// Use the autonomous turn hook (`h5i msg hook --block`) instead of the default.
+        #[arg(long)]
+        block: bool,
     },
 
     /// i5h ASK: a general request that expects a response.
@@ -3010,6 +3032,57 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
 
+                Some(MsgCommands::Setup { name, scope, block }) => {
+                    let name = name.trim();
+                    let path = match scope {
+                        SetupScope::User => {
+                            let home = std::env::var("HOME").map_err(|_| {
+                                anyhow::anyhow!("$HOME is not set — use --scope project")
+                            })?;
+                            PathBuf::from(home).join(".claude").join("settings.json")
+                        }
+                        SetupScope::Project => {
+                            let workdir = git
+                                .workdir()
+                                .ok_or_else(|| anyhow::anyhow!("bare repository has no working dir"))?;
+                            workdir.join(".claude").join("settings.json")
+                        }
+                    };
+
+                    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+                    let merged = msg::merge_settings_json(&existing, name, block)?;
+                    if let Some(parent) = path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&path, merged)?;
+
+                    let hook_cmd = if block { "h5i msg hook --block" } else { "h5i msg hook" };
+                    println!(
+                        "{} Claude Code messaging configured as {} in {}",
+                        SUCCESS,
+                        style(name).green().bold(),
+                        style(path.display()).cyan()
+                    );
+                    println!(
+                        "   {} {}   ·   {} {}",
+                        style("env H5I_AGENT=").dim(),
+                        style(name).bold(),
+                        style("Stop hook:").dim(),
+                        style(hook_cmd).bold(),
+                    );
+                    println!();
+                    println!(
+                        "   {} open {} once (or restart) so Claude Code reloads the hook.",
+                        style("→").dim(),
+                        style("/hooks").bold()
+                    );
+                    println!(
+                        "   {} for Codex, launch it with {} (it doesn't read .claude/settings.json).",
+                        style("→").dim(),
+                        style("H5I_AGENT=codex").bold(),
+                    );
+                }
+
                 Some(MsgCommands::Inbox { as_agent, peek }) => {
                     let me = msg::resolve_identity(&h5i_root, as_agent.as_deref())?;
                     let unread = msg::inbox(git, &h5i_root, &me, !peek)?;
@@ -4359,32 +4432,25 @@ jq -c '{
 
             println!();
             println!(
-                "{} For cross-agent messaging ({}), add a turn-delivery hook that",
+                "{} For cross-agent messaging ({}), run the one-liner — it sets your",
                 style("Messaging:").bold(),
                 style("h5i msg").yellow(),
             );
             println!(
-                "  surfaces new messages between assistant turns. Append to the {} array:",
-                style("Stop").yellow(),
+                "  identity ({}) and adds the turn-delivery Stop hook for you:",
+                style("env H5I_AGENT").bold(),
             );
+            println!("        {}", style("h5i msg setup claude").cyan().bold());
             println!(
-                "{}",
-                style(
-                    r#"          { "type": "command", "command": "h5i msg hook --as <your-agent-name>" }"#
-                )
-                .dim()
-            );
-            println!(
-                "  It emits a {} JSON object (shown between turns), or is silent when there\n\
-                 is nothing new. Set your identity once via the settings {} block —",
-                style("systemMessage").bold(),
-                style("\"env\": { \"H5I_AGENT\": \"<name>\" }").bold(),
-            );
-            println!(
-                "  e.g. {} for Claude Code, {} for Codex — so several agents can share one\n\
-                 clone and each sends/receives as itself.",
-                style("\"claude\"").cyan(),
-                style("\"codex\"").cyan(),
+                "  Identity is {} (no {} on commands). {} writes ~/.claude/settings.json\n\
+                 (all projects); {} writes ./.claude/settings.json. For {}, just launch it\n\
+                 with {} — it doesn't read .claude/settings.json.",
+                style("per-agent").bold(),
+                style("--as").dim(),
+                style("(default)").dim(),
+                style("--scope project").bold(),
+                style("Codex").yellow(),
+                style("H5I_AGENT=codex").bold(),
             );
             println!();
             println!(

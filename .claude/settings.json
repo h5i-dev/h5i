@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "h5i msg hook --as claude"
+            "command": "h5i msg hook"
           }
         ]
       }

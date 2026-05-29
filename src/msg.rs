@@ -610,6 +610,73 @@ pub fn write_identity(h5i_root: &Path, name: &str) -> Result<(), H5iError> {
     std::fs::write(&path, format!("{name}\n")).map_err(|e| H5iError::with_path(e, path))
 }
 
+/// Idempotently merge the messaging wiring into a Claude Code `settings.json`
+/// document: set `env.H5I_AGENT = agent` and ensure exactly one turn-delivery
+/// Stop hook (`h5i msg hook`, or `--block`). Existing env keys and other hooks
+/// are preserved. `existing` may be empty (treated as `{}`). Pure (no I/O) so
+/// it is unit-testable; the caller does the file read/write.
+///
+/// The hook intentionally has no `--as` — identity comes from `env.H5I_AGENT`,
+/// so it stays correct even when several agents share one clone.
+pub fn merge_settings_json(existing: &str, agent: &str, block: bool) -> Result<String, H5iError> {
+    use serde_json::{Map, Value};
+    validate_name(agent)?;
+
+    let mut root: Value = if existing.trim().is_empty() {
+        Value::Object(Map::new())
+    } else {
+        serde_json::from_str(existing)?
+    };
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| H5iError::Metadata("settings.json is not a JSON object".into()))?;
+
+    // env.H5I_AGENT = agent
+    let env = obj
+        .entry("env")
+        .or_insert_with(|| Value::Object(Map::new()));
+    env.as_object_mut()
+        .ok_or_else(|| H5iError::Metadata("settings 'env' is not an object".into()))?
+        .insert("H5I_AGENT".to_string(), Value::String(agent.to_string()));
+
+    // hooks.Stop: drop any prior h5i-msg entry, then add ours (idempotent).
+    let cmd = if block { "h5i msg hook --block" } else { "h5i msg hook" };
+    let hooks = obj
+        .entry("hooks")
+        .or_insert_with(|| Value::Object(Map::new()));
+    let hooks_obj = hooks
+        .as_object_mut()
+        .ok_or_else(|| H5iError::Metadata("settings 'hooks' is not an object".into()))?;
+    let stop = hooks_obj
+        .entry("Stop")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let stop_arr = stop
+        .as_array_mut()
+        .ok_or_else(|| H5iError::Metadata("settings hooks.Stop is not an array".into()))?;
+    stop_arr.retain(|entry| !is_msg_hook_entry(entry));
+    stop_arr.push(serde_json::json!({
+        "hooks": [ { "type": "command", "command": cmd } ]
+    }));
+
+    Ok(serde_json::to_string_pretty(&root)?)
+}
+
+/// True if a hooks-array entry contains an inner `h5i msg hook` command.
+fn is_msg_hook_entry(entry: &serde_json::Value) -> bool {
+    entry
+        .get("hooks")
+        .and_then(|h| h.as_array())
+        .map(|hs| {
+            hs.iter().any(|hk| {
+                hk.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.trim_start().starts_with("h5i msg hook"))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
 /// Make an untrusted string safe to print to a terminal.
 ///
 /// Message fields (`from` / `to` / `tag` / `body`) arrive from other clones
@@ -1023,6 +1090,56 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(identity_path(&root), "evil\x1b[31mname\n").unwrap();
         assert!(resolve_identity(&root, None).is_err());
+    }
+
+    #[test]
+    fn merge_settings_adds_env_and_hook_to_empty() {
+        let out = merge_settings_json("", "claude", false).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["env"]["H5I_AGENT"], "claude");
+        let stop = &v["hooks"]["Stop"];
+        assert_eq!(stop[0]["hooks"][0]["command"], "h5i msg hook");
+    }
+
+    #[test]
+    fn merge_settings_preserves_existing_and_is_idempotent() {
+        // Existing settings with an unrelated env key and a PostToolUse hook.
+        let existing = r#"{
+            "env": { "EDITOR": "vim" },
+            "hooks": {
+                "PostToolUse": [ { "hooks": [ { "type": "command", "command": "h5i hook run" } ] } ],
+                "Stop": [ { "hooks": [ { "type": "command", "command": "h5i hook stop" } ] } ]
+            }
+        }"#;
+        let once = merge_settings_json(existing, "claude", false).unwrap();
+        let twice = merge_settings_json(&once, "claude", false).unwrap();
+        // Idempotent: second run yields the same document.
+        assert_eq!(once, twice);
+
+        let v: serde_json::Value = serde_json::from_str(&twice).unwrap();
+        // Preserved unrelated state.
+        assert_eq!(v["env"]["EDITOR"], "vim");
+        assert_eq!(v["hooks"]["PostToolUse"][0]["hooks"][0]["command"], "h5i hook run");
+        // Stop keeps the context hook AND has exactly one msg hook.
+        let stop = v["hooks"]["Stop"].as_array().unwrap();
+        let msg_hooks = stop
+            .iter()
+            .filter(|e| is_msg_hook_entry(e))
+            .count();
+        assert_eq!(msg_hooks, 1, "exactly one msg hook entry");
+        assert!(stop.iter().any(|e| e["hooks"][0]["command"] == "h5i hook stop"));
+        assert_eq!(v["env"]["H5I_AGENT"], "claude");
+    }
+
+    #[test]
+    fn merge_settings_block_flag_and_validation() {
+        let out = merge_settings_json("{}", "codex", true).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["hooks"]["Stop"][0]["hooks"][0]["command"], "h5i msg hook --block");
+        assert_eq!(v["env"]["H5I_AGENT"], "codex");
+        // Bad identity rejected; non-object document rejected.
+        assert!(merge_settings_json("", "bad name", false).is_err());
+        assert!(merge_settings_json("[1,2]", "claude", false).is_err());
     }
 
     #[test]
