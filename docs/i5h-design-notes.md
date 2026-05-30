@@ -166,26 +166,25 @@ i5h borrows ideas from three traditions but keeps only the parts that survive th
 
 ### How other agent systems pass messages
 
-Survey how today's frameworks move a message between agents and the pattern is
-stark — coordination is **ephemeral, central, and online**:
+The framework landscape moves fast and any feature matrix rots quickly, so the
+durable contrast is one of *what each design optimizes for*, not a cell-by-cell
+table. **Mainstream multi-agent frameworks optimize live orchestration**: AutoGen
+0.4+ passes async events between in-process actors; CrewAI hands off between
+role-based tasks; OpenAI's Swarm/Agents SDK does handoffs as function returns;
+LangGraph routes through shared graph state; Letta/MemGPT coordinate through a
+server's shared memory; MCP and A2A are live HTTP/SSE transports. Several offer
+*durable* state — notably LangGraph checkpointers, Letta's store, and LangSmith
+traces — and these are genuinely replayable. But that durability is **centralized
+and online**: it is state for one orchestrated app behind a shared backend, not a
+portable artifact two independently-running agents can each append to *offline*
+and reconcile later. (Where persistence is "implementation-defined," as in
+MCP/A2A, treat it as not guaranteed by the protocol.)
 
-| System | Mechanism | Durable without a running server/DB? | Replay the exact transcript? |
-|---|---|---|---|
-| AutoGen 0.4+ | in-process actor messages / pub-sub | no (in-memory) | no |
-| CrewAI | task handoff + local vector memory | partial, same-machine | no |
-| LangGraph | shared state channels + *opt-in* checkpointer | only with a live DB | **yes** (time-travel by checkpoint) |
-| OpenAI Swarm / Agents SDK | handoff = function returns next agent | no (stateless) | no |
-| Letta / MemGPT | shared memory blocks in a server DB | only with the server | partial (server recall) |
-| MCP, A2A | live HTTP/SSE; persistence implementation-defined | no | no |
-
-The durable cases (LangGraph checkpointers, Letta's DB, LangSmith traces) are real
-but **centralized and online** — state for one orchestrated app on a shared
-backend, not a portable artifact two independently-running agents can both write
-to offline and later reconcile. i5h's wedge is the *conjunction* no single system
-above offers: **durable + offline-first + decentralized + repo-resident +
-replayable + CRDT-merged** coordination receipts. MCP and A2A connect *live*
-agents and degrade gracefully when the connection drops; i5h connects
-*asynchronous* agents where there is no connection to drop.
+**i5h optimizes the opposite axis: repo-resident, offline-convergent receipts.**
+Its wedge is a *conjunction* none of the above targets together — **durable +
+offline-first + decentralized + repo-resident + replayable + CRDT-merged**. MCP
+and A2A connect *live* agents and degrade gracefully when the connection drops;
+i5h connects *asynchronous* agents where there is no connection to drop.
 
 ### Prior art in the Git-native niche (and how i5h differs)
 
@@ -199,11 +198,19 @@ honest:
   dedicated **side ref** (`refs/h5i/msg`, out of the working tree), a **strictly
   append-only** log, and **CRDT union-merge by message id** — so concurrent
   offline writers converge with no rebase race and no lost message.
-- **EvoGit** coordinates agents *implicitly* through the commit graph with **no
-  explicit message channel**; i5h provides explicit, typed receipts (`kind`,
-  `reply_to`, `thread_id`).
-- **CodeCRDT** validates the CRDT + offline-first premise but keeps state
-  **in-memory**, not Git-persisted.
+- **EvoGit** ([arXiv:2506.02049](https://arxiv.org/abs/2506.02049)) coordinates
+  agents *implicitly* through a Git phylogenetic/commit graph — asynchronous, with
+  **no explicit messaging or shared memory**; i5h provides explicit, typed
+  receipts (`kind`, `reply_to`, `thread_id`).
+- **Open GAP / GitAgentProtocol**
+  ([open-gitagent/gitagent](https://github.com/open-gitagent/gitagent)) is
+  Git-native but versions **agent definitions/skills/memory**, not append-only
+  *inter-agent receipts* — adjacent landscape, different layer.
+- **CodeCRDT** ([arXiv:2510.18893](https://arxiv.org/abs/2510.18893)) is the
+  academic validation of the premise: observation-driven CRDT coordination with
+  deterministic convergence for multi-agent work. (It establishes the CRDT/
+  offline-convergence idea; i5h's contribution is persisting that log as a Git
+  side ref rather than as runtime state.)
 
 So the honest claim is narrow and defensible: not "first Git-native agent
 protocol," but **the append-only, side-ref, CRDT-by-id coordination log** — the
@@ -266,9 +273,10 @@ How agent frameworks pass messages (the ephemeral/centralized contrast)
 
 Git-native agent coordination (the niche i5h shares — see Positioning for how it differs)
 
-- GNAP — Git-Native Agent Protocol (working-tree JSON, LWW + rebase-retry) — <https://github.com/farol-team/gnap>
-- EvoGit — decentralized agents coordinating via the commit graph (no explicit channel) — <https://arxiv.org/pdf/2506.02049>
-- CodeCRDT — CRDT, offline-capable multi-agent coordination (in-memory) — <https://arxiv.org/pdf/2510.18893>
+- GNAP — Git-Native Agent Protocol (working-tree JSON, tasks/runs/messages, LWW + pull-rebase-retry) — <https://github.com/farol-team/gnap>
+- EvoGit — decentralized agents coordinating via a Git phylogenetic graph (no explicit channel) — <https://arxiv.org/abs/2506.02049>
+- Open GAP / GitAgentProtocol — Git-native agent *definitions*/skills/memory (different layer) — <https://github.com/open-gitagent/gitagent>
+- CodeCRDT — observation-driven CRDT multi-agent coordination, deterministic convergence — <https://arxiv.org/abs/2510.18893>
 
 Distributed systems foundations
 
