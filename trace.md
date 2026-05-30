@@ -1983,3 +1983,4 @@ _[Checkpoint: 6a1a641a — wrote docs/i5h-protocol.md; Restructured docs/i5h-pro
 [04:18:33] NOTE: RISK: simplified docs/i5h-protocol.md examples omit required version; public-inbox comparison conflates per-message blobs with i5h's rewritten JSONL blob; malformed JSON needs quarantine rather than NOT_UNDERSTOOD reply.
 [04:18:33] OBSERVE: listed files under ..
 [04:18:33] OBSERVE: read ../agmsg/README.md
+[04:18:33] OBSERVE: searched ../agmsg/README.md for "../agmsg/scripts"
