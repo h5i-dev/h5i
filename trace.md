@@ -2175,3 +2175,9 @@ _[Checkpoint: 6a1af217 — Continued usefulness-first i5h review after Claude in
 [14:25:44] NOTE: DEFERRAL (~/Dev/h5i/docs/i5h-protocol.md): nown-implementation-gaps note after the checklist and point deferred features to the design notes
 [14:25:44] NOTE: DEFERRAL (~/Dev/h5i/docs/i5h-protocol.md): lace the Positioning section with a pointer, fix the broken Deferred link in "What i5h is not", and replace References + README with a design-notes po…
 [14:25:44] NOTE: DEFERRAL (~/Dev/h5i/docs/i5h-protocol.md): ngling `#honest-limitations` and `#considered--deliberately-deferred` references
+
+
+---
+_[Checkpoint: 6a1af368 — edited docs/i5h-protocol.md; edited docs/i5h-protocol.md; Split docs/i5h-protocol.md (738→~620 normative spec) + new doc…]_
+---
+
