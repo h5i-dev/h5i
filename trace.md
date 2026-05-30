@@ -1849,3 +1849,4 @@ _[Checkpoint: 6a1a289e — Compared h5i against ../agentmemory and identified pr
 [00:04:21] ACT: edited tests/cli_integration.rs
 [00:06:46] ACT: edited src/main.rs
 [00:06:46] OBSERVE: searched sessions|h5i for "prelude|Codex"
+[00:06:46] OBSERVE: read MANUAL.md
