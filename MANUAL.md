@@ -491,7 +491,9 @@ Publish provenance to teammates and PRs.
 
 ```
 h5i share pr post [--number N] [--limit N] [--style STYLE] [--dry-run]
+                  [--no-msg] [--msg-bodies] [--msg-limit N]
 h5i share pr body [--limit N] [--style STYLE]
+                  [--no-msg] [--msg-bodies] [--msg-limit N]
 ```
 
 Posts or previews a sticky GitHub PR comment summarising h5i provenance for
@@ -506,6 +508,34 @@ The comment renders, for each AI commit:
 - test metrics (passed / failed / total, exit code)
 - structured `--decisions` if recorded at commit time
 - a 🚩 flag with `h5i audit review` triggers (uncertainty, blind edits, churn, scope) when the commit crosses the review threshold
+
+**💬 Agent coordination (i5h messages)**
+
+Below the reasoning DAG, the comment folds in the cross-agent message threads
+(`refs/h5i/msg`, see [`h5i msg`](#h5i-msg)) that are **relevant to this branch** —
+a thread is included when at least one of its messages was tagged with the PR
+branch (e.g. `h5i msg review --branch <b> …`), and the whole thread (including
+replies that omitted the branch) travels with it. The section is collapsed by
+default and self-omits when no branch-relevant threads exist.
+
+Because a PR comment is published, message text is treated as untrusted and
+disclosure-safe by default:
+
+- Only **review-typed** messages (`REVIEW_REQUEST`, `RISK`, `HANDOFF`, `ASK`
+  and their `ACK`/`DONE`/`DECLINE`/`BLOCKED` replies) show a one-line excerpt;
+  `FYI` / free-text messages are rendered **metadata-only** (kind, who, when).
+- Every rendered field is **secret-redacted** (the `h5i` secret rule pack, with
+  control/escape bytes stripped *before* redaction so a split token can't be
+  reassembled afterwards) and Markdown/HTML-escaped.
+- A footer line records the `refs/h5i/msg` tip OID the data came from.
+
+Flags:
+
+| Flag | Effect |
+|------|--------|
+| `--no-msg` | Omit the Agent coordination section entirely. |
+| `--msg-bodies` | Show a (still redacted + sanitized) excerpt for **every** kind, not just review-typed ones. Opt-in — accepts that `FYI`/free-text bodies are published. |
+| `--msg-limit N` | Cap the number of threads rendered before eliding (default 12). |
 
 **Hero block styles (`--style`)**
 
@@ -530,6 +560,9 @@ h5i share pr post --number 42              # target a specific PR (default: auto
 h5i share pr body --style review           # preview the reviewer-triage layout
 h5i share pr body --style detective        # preview the narrative layout
 h5i share pr post --style replay --dry-run # preview the DAG-as-hero layout
+h5i share pr body --no-msg                  # drop the Agent coordination section
+h5i share pr body --msg-bodies              # include excerpts for FYI/free-text too
+h5i share pr body --msg-limit 5             # cap coordination threads at 5
 ```
 
 **Requirements**

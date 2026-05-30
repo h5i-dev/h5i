@@ -157,6 +157,13 @@ h5i share pr post --style replay      # make the Mermaid DAG the hero
 (`gh auth status` clean). Use `h5i share pr body` when CI should render markdown
 without posting through `gh`.
 
+The comment also folds in a collapsed **💬 Agent coordination** section: the
+branch-relevant cross-agent message threads from `refs/h5i/msg`. It is
+disclosure-safe by default — only review-typed messages (`REVIEW_REQUEST`,
+`RISK`, `HANDOFF`, `ASK`, …) show a secret-redacted excerpt; `FYI`/free-text are
+metadata-only. Use `--no-msg` to drop it, `--msg-bodies` to include every kind's
+excerpt, or `--msg-limit N` to cap threads.
+
 Sync h5i sidecar refs with teammates:
 
 ```bash

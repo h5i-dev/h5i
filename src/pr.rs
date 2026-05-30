@@ -1915,7 +1915,9 @@ fn render_kind(kind: &str) -> String {
     if KNOWN_KINDS.contains(&kind) {
         kind.to_string()
     } else {
-        md_escape(&truncate_chars(kind, 24))
+        // Untrusted unknown kind: sanitize (drop control/newline bytes) before
+        // truncate + escape, same fail-closed order as every other field.
+        md_escape(&truncate_chars(&crate::msg::sanitize_display(kind), 24))
     }
 }
 
@@ -3537,6 +3539,19 @@ mod tests {
         let line = render_message_line(&m, false, false);
         assert!(!line.contains("<script>"), "unknown kind must be escaped: {line}");
         assert!(line.contains("&lt;"));
+    }
+
+    #[test]
+    fn unknown_kind_strips_control_bytes() {
+        // Regression (Codex follow-up): an unknown kind with newline/control
+        // bytes must be sanitized, not just escaped — no raw controls or
+        // injected Markdown structure leak through.
+        let m = msg("EVIL\nKIND\u{1b}[31m", "x", "y", "hi", "2026-05-30T12:00:00Z");
+        let line = render_message_line(&m, false, false);
+        // Ignore the single trailing line terminator; the kind itself must carry
+        // no embedded newline or control byte.
+        assert!(!line.trim_end().contains('\n'), "kind newline must be folded: {:?}", line);
+        assert!(!line.contains('\u{1b}'), "control byte must be gone: {:?}", line);
     }
 
     #[test]
