@@ -270,11 +270,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Fixed identity-flip in shared clone. src/msg.rs: (1) added known_agents() helper (scans cursors/+views/ dirs + stored id…
 - [x] wrote newtest.txt; wrote newtest.txt
 - [x] session ended (auto-checkpoint)
+- [x] Discussed PR-body msg history with Claude and converged on branch-scoped thread rendering, privacy-aware default excerpts, explicit full-body opt-in, strict redaction/escaping, bounded output, and placement after the DAG before provenance. No files edited.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-30 18:53 UTC] `improve-i5h`: Discussed PR-body msg history with Claude and converged on branch-scoped thread rendering, privacy-aware default excerpts, explicit full-body opt-in, strict redaction/escaping, bounded output, and placement after the DAG before provenance. No files edited.
 - [2026-05-30 18:53 UTC] `improve-i5h`: session ended (auto-checkpoint)
 - [2026-05-30 18:51 UTC] `improve-i5h`: wrote newtest.txt; wrote newtest.txt
 - [2026-05-30 18:48 UTC] `improve-i5h`: Fixed identity-flip in shared clone. src/msg.rs: (1) added known_agents() helper (scans cursors/+views/ dirs + stored id…
