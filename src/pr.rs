@@ -42,6 +42,39 @@ const SWIMLANE_MAX_FILES: usize = 4;
 /// chain-DAG threshold because per-lane density matters more than per-graph.
 const SWIMLANE_COMPRESS_RUN: usize = 2;
 
+/// Default cap on coordination threads rendered in the PR body. Enough to show
+/// the shape of a collaboration without letting a chatty branch dominate the
+/// comment; surplus threads are noted as elided.
+const MSG_THREAD_LIMIT: usize = 12;
+
+/// Character budget for a default (review-typed) message excerpt — the first
+/// non-empty line, trimmed to roughly a sentence.
+const MSG_EXCERPT_BUDGET: usize = 200;
+
+/// Character budget for a `--msg-bodies` full body (newlines folded to spaces).
+const MSG_FULL_BUDGET: usize = 1000;
+
+/// Controls whether — and how much of — the i5h coordination history is folded
+/// into the PR body. Defaults to the disclosure-safe shape agreed for the
+/// feature: include branch-scoped threads, but only review-typed messages get a
+/// one-line (secret-redacted) excerpt; everything else is metadata-only.
+#[derive(Debug, Clone, Copy)]
+pub struct MsgOptions {
+    /// Render the coordination section at all (`--no-msg` sets this false).
+    pub include: bool,
+    /// Show a (still redacted + sanitized) excerpt for *every* message kind,
+    /// not just review-typed ones (`--msg-bodies`).
+    pub full_bodies: bool,
+    /// Cap on threads rendered before eliding.
+    pub max_threads: usize,
+}
+
+impl Default for MsgOptions {
+    fn default() -> Self {
+        Self { include: true, full_bodies: false, max_threads: MSG_THREAD_LIMIT }
+    }
+}
+
 // ── Detail-string parsers ────────────────────────────────────────────────────
 
 /// Parsed `CREDENTIAL_LEAK` finding row, suitable for table rendering.
@@ -404,9 +437,26 @@ pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
 ///   4. 🧠 Reasoning DAG — placement depends on style:
 ///      Receipt/Detective/Minimal/Review: collapsible, below the fold
 ///      Replay:                           rendered inside the hero, expanded
-///   5. 📜 Per-commit provenance (collapsible if >5 AI commits)
-///   6. Footer
+///   5. 💬 Agent coordination — branch-scoped i5h message threads (collapsible)
+///   6. 📜 Per-commit provenance (collapsible if >5 AI commits)
+///   7. Footer
+///
+/// Backward-compatible 3-arg entry point: renders with the default
+/// [`MsgOptions`] (coordination section on, review-typed excerpts). Callers that
+/// need to honour `--no-msg` / `--msg-bodies` / `--msg-limit` use
+/// [`render_body_with_options`].
 pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> Result<String> {
+    render_body_with_options(workdir, limit, style, &MsgOptions::default())
+}
+
+/// Options-aware variant of [`render_body_with_style`]. See that function for
+/// the section layout; `msg_opts` controls the 💬 Agent coordination section.
+pub fn render_body_with_options(
+    workdir: &Path,
+    limit: usize,
+    style: PrStyle,
+    msg_opts: &MsgOptions,
+) -> Result<String> {
     let _span = tracing::info_span!("pr_render_body", limit, ?style).entered();
     let repo = H5iRepository::open(workdir)?;
     let records = repo
@@ -482,6 +532,14 @@ pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> R
     // same collapsed click-to-expand DAG below the audit sections.
     if !matches!(style, PrStyle::Replay) {
         body.push_str(&render_swimlane_section(&dag));
+    }
+    // 💬 Agent coordination — branch-scoped i5h message threads. Sibling to the
+    // reasoning DAG (collaboration context, not a headline), so it sits between
+    // the DAG and the per-commit provenance. Self-omits when there's nothing
+    // branch-relevant or when `--no-msg` is set.
+    if msg_opts.include {
+        let branch = ctx::current_git_branch(workdir);
+        body.push_str(&render_coordination_section(repo.git(), &branch, msg_opts));
     }
     body.push_str(&render_per_commit_section(&records, &by_oid, &repo));
 
@@ -1828,6 +1886,270 @@ fn render_badges(
     parts.join(" · ")
 }
 
+// ── 💬 Agent coordination (i5h message threads) ──────────────────────────────
+
+/// i5h kinds whose bodies are review-relevant enough to excerpt by default.
+/// These are authored to be shared (a review ask, a risk callout, a handoff)
+/// and their typed replies; everything else (FYI, free-text) is metadata-only,
+/// which keeps casual internal chatter out of a published PR body.
+fn kind_gets_excerpt(kind: &str) -> bool {
+    matches!(
+        kind,
+        "REVIEW_REQUEST" | "RISK" | "HANDOFF" | "ASK" | "ACK" | "DONE" | "DECLINE" | "BLOCKED"
+    )
+}
+
+/// The i5h kind vocabulary. A `kind` from a pulled message is untrusted, so it
+/// is checked against this set: a known kind renders as its readable label
+/// (no entity-escaping noise like `REVIEW&#95;REQUEST`), anything else is
+/// truncated and escaped so a hostile `kind` can't break out.
+const KNOWN_KINDS: &[&str] = &[
+    "FYI", "ASK", "REVIEW_REQUEST", "RISK", "BLOCKED", "HANDOFF", "ACK", "DONE", "DECLINE",
+    "BROADCAST", "NOT_UNDERSTOOD",
+];
+
+/// Render a message kind label: readable for known kinds, escaped for untrusted
+/// unknown ones. (The lone `_` in names like `REVIEW_REQUEST` is inert in
+/// Markdown — a single underscore isn't emphasis — so it's safe to emit raw.)
+fn render_kind(kind: &str) -> String {
+    if KNOWN_KINDS.contains(&kind) {
+        kind.to_string()
+    } else {
+        // Untrusted unknown kind: sanitize (drop control/newline bytes) before
+        // truncate + escape, same fail-closed order as every other field.
+        md_escape(&truncate_chars(&crate::msg::sanitize_display(kind), 24))
+    }
+}
+
+/// Status glyph for a thread: ✅ once a `DONE`/`DECLINE` lands, 🟡 while a
+/// request-type root is still open, • otherwise (informational).
+fn thread_glyph(thread: &crate::msg::PrThread) -> &'static str {
+    let closed = thread
+        .messages
+        .iter()
+        .any(|m| matches!(m.effective_kind().as_str(), "DONE" | "DECLINE"));
+    if closed {
+        return "✅";
+    }
+    let root_kind = thread
+        .messages
+        .first()
+        .map(|m| m.effective_kind())
+        .unwrap_or_default();
+    if matches!(
+        root_kind.as_str(),
+        "ASK" | "REVIEW_REQUEST" | "RISK" | "HANDOFF" | "BLOCKED"
+    ) {
+        "🟡"
+    } else {
+        "•"
+    }
+}
+
+/// Truncate to at most `budget` characters, appending `…` when cut.
+fn truncate_chars(s: &str, budget: usize) -> String {
+    if s.chars().count() <= budget {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(budget.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+/// Escape the Markdown/HTML metacharacters that would let an untrusted string
+/// break out of its rendered context in a PR comment — close the `<details>`,
+/// inject a `<script>`, forge a table column, or trigger emphasis/links. Paired
+/// with [`crate::msg::sanitize_display`] (control chars / newlines) and
+/// [`crate::secrets::redact_text`] (credentials), this is the third layer.
+fn md_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '`' => out.push_str("&#96;"),
+            '|' => out.push_str("&#124;"),
+            '*' => out.push_str("&#42;"),
+            '_' => out.push_str("&#95;"),
+            '[' => out.push_str("&#91;"),
+            ']' => out.push_str("&#93;"),
+            '\\' => out.push_str("&#92;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Strip control/escape bytes but keep line breaks (`\t`/`\r` fold to a space).
+/// Used before redaction on multi-line bodies: dropping the `ESC` etc. *first*
+/// means an ANSI-split credential is reassembled into contiguous text that the
+/// redactor can then catch — sanitizing *after* redaction would instead
+/// reconstruct a token the only redaction pass never saw (Codex RISK #4).
+fn strip_controls_keep_newlines(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\n' => out.push('\n'),
+            '\t' | '\r' => out.push(' '),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Render the safe, display-ready text for one untrusted single-line field.
+///
+/// Order is fail-closed: sanitize (drop control/escape bytes, fold newlines)
+/// FIRST so a token split by control bytes can't be reassembled *after* the
+/// redaction pass; then redact secrets; then truncate (redact-before-truncate
+/// so a secret near the cut can't be half-emitted); then Markdown/HTML-escape.
+fn safe_field(raw: &str, budget: usize) -> String {
+    let sanitized = crate::msg::sanitize_display(raw);
+    let redacted = crate::secrets::redact_text(&sanitized);
+    let truncated = truncate_chars(&redacted, budget);
+    md_escape(&truncated)
+}
+
+/// Excerpt a message body with the same fail-closed ordering as [`safe_field`],
+/// but newline-aware: control bytes are stripped *keeping* line breaks, then the
+/// first non-empty line is taken (or, under `full`, newlines fold to spaces —
+/// space, not nothing, so a token can't bridge two lines), THEN redaction runs.
+fn excerpt_body(body: &str, full: bool) -> String {
+    let cleaned = strip_controls_keep_newlines(body);
+    let (line_src, budget) = if full {
+        (cleaned.replace('\n', " "), MSG_FULL_BUDGET)
+    } else {
+        let first = cleaned
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("")
+            .to_string();
+        (first, MSG_EXCERPT_BUDGET)
+    };
+    let redacted = crate::secrets::redact_text(&line_src);
+    let truncated = truncate_chars(&redacted, budget);
+    md_escape(&truncated)
+}
+
+/// `2026-05-30T18:15:40.123Z` → `2026-05-30 18:15`. Absolute (not relative) so
+/// the rendered comment doesn't rot; falls back to the raw value if unparseable.
+fn short_ts(ts: &str) -> String {
+    match (ts.get(0..10), ts.get(11..16)) {
+        (Some(date), Some(time)) if ts.as_bytes().get(10) == Some(&b'T') => {
+            format!("{date} {time}")
+        }
+        _ => ts.to_string(),
+    }
+}
+
+/// One message line: `KIND · from → to · 2026-05-30 18:15`, plus focus/risk/
+/// priority chips and (for review-typed kinds, or always under `--msg-bodies`)
+/// an excerpt. All untrusted fields pass through [`safe_field`]/[`excerpt_body`].
+fn render_message_line(m: &crate::msg::Message, full_bodies: bool, indent: bool) -> String {
+    let mut s = String::new();
+    let lead = if indent { "  - ↳ " } else { "- " };
+    let kind = m.effective_kind();
+    let _ = write!(
+        s,
+        "{lead}**{}** · {} → {} · {}",
+        render_kind(&kind),
+        safe_field(&m.from, 40),
+        safe_field(&m.to, 40),
+        // `ts` is untrusted: `short_ts` falls back to the raw value when it
+        // can't parse, so the result must still be sanitized + escaped before it
+        // lands in the comment (Codex RISK #3b).
+        md_escape(&crate::msg::sanitize_display(&short_ts(&m.ts))),
+    );
+    if let Some(p) = m.priority.as_deref() {
+        if matches!(p, "high" | "urgent") {
+            let _ = write!(s, " · `prio:{}`", md_escape(p));
+        }
+    }
+    if !m.focus.is_empty() {
+        let chips: Vec<String> = m.focus.iter().take(3).map(|f| safe_field(f, 60)).collect();
+        let _ = write!(s, " · 🎯 {}", chips.join(", "));
+    }
+    if let Some(r) = m.risk.as_deref() {
+        if !r.is_empty() {
+            let _ = write!(s, " · ⚠ {}", safe_field(r, 120));
+        }
+    }
+
+    let show_excerpt = full_bodies || kind_gets_excerpt(&kind);
+    if show_excerpt {
+        let ex = excerpt_body(&m.body, full_bodies);
+        if !ex.is_empty() {
+            let _ = write!(s, " — {ex}");
+        }
+    } else {
+        s.push_str(" _(metadata only)_");
+    }
+    s.push('\n');
+    s
+}
+
+/// Render the collapsible 💬 Agent coordination section for `branch`. Returns
+/// the empty string when there are no branch-relevant threads (self-omitting,
+/// like the secret/duplicate sections).
+fn render_coordination_section(
+    repo: &git2::Repository,
+    branch: &str,
+    opts: &MsgOptions,
+) -> String {
+    let max = opts.max_threads.max(1);
+    let (threads, total_threads) = crate::msg::threads_for_branch(repo, branch, max);
+    if threads.is_empty() {
+        return String::new();
+    }
+    let msg_count: usize = threads.iter().map(|t| t.messages.len()).sum();
+
+    let mut s = String::new();
+    let _ = writeln!(
+        s,
+        "<details><summary><b>💬 Agent coordination</b> — {} message{} across {} thread{}{}</summary>",
+        msg_count,
+        plural_s(msg_count),
+        threads.len(),
+        plural_s(threads.len()),
+        if total_threads > threads.len() {
+            format!(", latest {} of {}", threads.len(), total_threads)
+        } else {
+            String::new()
+        },
+    );
+    s.push('\n');
+
+    // Git-proof + scope line: where the data came from and how to suppress it.
+    let stats = crate::msg::stats(repo);
+    let tip = stats.tip.unwrap_or_else(|| "—".into());
+    let _ = writeln!(
+        s,
+        "<sub>From <code>refs/h5i/msg</code> @ <code>{tip}</code> · branch <code>{}</code>{} · <code>--no-msg</code> to omit{}.</sub>\n",
+        md_escape(branch),
+        if opts.full_bodies { "" } else { " · review-typed excerpts only" },
+        if opts.full_bodies { "" } else { ", <code>--msg-bodies</code> for full" },
+    );
+
+    for t in &threads {
+        let _ = write!(s, "{} ", thread_glyph(t));
+        // First message is the thread root; the rest are indented replies.
+        let mut msgs = t.messages.iter();
+        if let Some(root) = msgs.next() {
+            s.push_str(render_message_line(root, opts.full_bodies, false).trim_start_matches("- "));
+        }
+        for reply in msgs {
+            s.push_str(&render_message_line(reply, opts.full_bodies, true));
+        }
+        s.push('\n');
+    }
+
+    s.push_str("</details>\n\n");
+    s
+}
+
 fn render_per_commit_section(
     records: &[H5iCommitRecord],
     by_oid: &HashMap<String, &ReviewPoint>,
@@ -3115,5 +3437,144 @@ mod tests {
                 },
             ]
         );
+    }
+
+    // ── 💬 Agent coordination ─────────────────────────────────────────────
+
+    use crate::msg::Message;
+
+    fn msg(kind: &str, from: &str, to: &str, body: &str, ts: &str) -> Message {
+        Message {
+            id: ts.into(),
+            ts: ts.into(),
+            from: from.into(),
+            to: to.into(),
+            body: body.into(),
+            kind: Some(kind.into()),
+            version: 1,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn md_escape_neutralizes_html_and_table_injection() {
+        let out = md_escape("</summary><script>alert(1)</script> | col | `code`");
+        assert!(!out.contains('<'), "raw < must be gone: {out}");
+        assert!(!out.contains('>'), "raw > must be gone: {out}");
+        assert!(!out.contains('|'), "raw | must be gone: {out}");
+        assert!(!out.contains('`'), "raw backtick must be gone: {out}");
+        assert!(out.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn truncate_chars_appends_ellipsis_only_when_cut() {
+        assert_eq!(truncate_chars("short", 10), "short");
+        let t = truncate_chars("abcdefghij", 5);
+        assert_eq!(t.chars().count(), 5);
+        assert!(t.ends_with('…'));
+    }
+
+    #[test]
+    fn short_ts_formats_rfc3339() {
+        assert_eq!(short_ts("2026-05-30T18:15:40.123Z"), "2026-05-30 18:15");
+        // Unparseable input falls back to the raw value.
+        assert_eq!(short_ts("whenever"), "whenever");
+    }
+
+    #[test]
+    fn excerpt_uses_first_nonempty_line_and_redacts() {
+        // Build the token from parts so the credential literal never appears on
+        // a single source line (keeps the in-repo secret scanner quiet — this
+        // file isn't on its test-fixture allowlist the way `secrets.rs` is).
+        let token = format!("ghp_{}", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789");
+        let body = format!("\n  summary line with {token}\nsecond line");
+        let ex = excerpt_body(&body, false);
+        assert!(ex.starts_with("summary line"), "first non-empty line: {ex}");
+        assert!(!ex.contains("second line"), "later lines dropped in excerpt mode");
+        assert!(!ex.contains(&token), "secret redacted: {ex}");
+    }
+
+    #[test]
+    fn review_typed_kinds_get_excerpt_fyi_does_not() {
+        assert!(kind_gets_excerpt("REVIEW_REQUEST"));
+        assert!(kind_gets_excerpt("RISK"));
+        assert!(kind_gets_excerpt("DONE"));
+        assert!(!kind_gets_excerpt("FYI"));
+        assert!(!kind_gets_excerpt("BROADCAST"));
+    }
+
+    #[test]
+    fn message_line_shows_review_excerpt() {
+        let m = msg("REVIEW_REQUEST", "codex", "claude", "please review the redactor", "2026-05-30T18:15:40Z");
+        let line = render_message_line(&m, false, false);
+        // Known kinds render readably (no entity-escaping noise).
+        assert!(line.contains("**REVIEW_REQUEST**"), "{line}");
+        assert!(line.contains("codex → claude"));
+        assert!(line.contains("please review the redactor"));
+        assert!(!line.contains("metadata only"));
+    }
+
+    #[test]
+    fn fyi_internal_chatter_hidden_by_default() {
+        // An FYI body that mentions an internal path / error must NOT leak into
+        // the default render — metadata only.
+        let m = msg("FYI", "claude", "all", "stack trace at /home/me/secrets/notes.txt blew up", "2026-05-30T12:00:00Z");
+        let line = render_message_line(&m, false, false);
+        assert!(line.contains("_(metadata only)_"));
+        assert!(!line.contains("/home/me/secrets/notes.txt"), "FYI body must not appear: {line}");
+    }
+
+    #[test]
+    fn msg_bodies_flag_reveals_fyi_body() {
+        let m = msg("FYI", "claude", "all", "heads up: rebased onto main", "2026-05-30T12:00:00Z");
+        let line = render_message_line(&m, true, false);
+        assert!(line.contains("heads up: rebased onto main"));
+        assert!(!line.contains("metadata only"));
+    }
+
+    #[test]
+    fn unknown_kind_is_escaped() {
+        // A hostile pulled message with a breakout `kind` must be neutralised.
+        let m = msg("</summary><script>", "x", "y", "hi", "2026-05-30T12:00:00Z");
+        let line = render_message_line(&m, false, false);
+        assert!(!line.contains("<script>"), "unknown kind must be escaped: {line}");
+        assert!(line.contains("&lt;"));
+    }
+
+    #[test]
+    fn unknown_kind_strips_control_bytes() {
+        // Regression (Codex follow-up): an unknown kind with newline/control
+        // bytes must be sanitized, not just escaped — no raw controls or
+        // injected Markdown structure leak through.
+        let m = msg("EVIL\nKIND\u{1b}[31m", "x", "y", "hi", "2026-05-30T12:00:00Z");
+        let line = render_message_line(&m, false, false);
+        // Ignore the single trailing line terminator; the kind itself must carry
+        // no embedded newline or control byte.
+        assert!(!line.trim_end().contains('\n'), "kind newline must be folded: {:?}", line);
+        assert!(!line.contains('\u{1b}'), "control byte must be gone: {:?}", line);
+    }
+
+    #[test]
+    fn malformed_ts_is_escaped() {
+        // Regression (Codex RISK #3b): an unparseable ts falls back to raw, so it
+        // must still be escaped — no Markdown/HTML injection via the timestamp.
+        let m = msg("ASK", "x", "y", "hi", "</summary><img src=x onerror=alert(1)>");
+        let line = render_message_line(&m, false, false);
+        assert!(!line.contains("<img"), "raw ts must not inject: {line}");
+        assert!(line.contains("&lt;"));
+    }
+
+    #[test]
+    fn excerpt_redacts_token_split_by_control_bytes() {
+        // Regression (Codex RISK #4): a credential split by an ANSI/control byte
+        // must not survive — control bytes are stripped BEFORE redaction, so the
+        // reassembled token is caught rather than reconstructed afterwards.
+        let token = format!("ghp_{}", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789");
+        // Insert an ESC (0x1b) mid-token: redacting the raw string wouldn't match.
+        let split = format!("ghp_\u{1b}{}", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789");
+        let m = msg("ASK", "x", "y", &split, "2026-05-30T12:00:00Z");
+        let line = render_message_line(&m, false, false);
+        assert!(!line.contains(&token), "reassembled token leaked: {line}");
+        assert!(!line.contains('\u{1b}'), "control byte must be gone: {line}");
     }
 }

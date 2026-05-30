@@ -477,6 +477,106 @@ pub fn scan_text(path: &Path, text: &str) -> Vec<SecretFinding> {
     )
 }
 
+/// Marker substituted for a redacted secret span.
+const REDACTION_MARKER: &str = "‹redacted›";
+
+/// Replace every secret-like span in `text` with [`REDACTION_MARKER`], reusing
+/// the same rule pack as [`scan_lines`]. Returns a scrubbed copy safe to embed
+/// in published output (e.g. a PR comment or a pulled message body).
+///
+/// Differences from [`scan_lines`], which exists to *report* findings:
+/// - There is no path argument and no path allowlist — the caller is redacting
+///   arbitrary untrusted text (a message body), not a file, so "skip lockfiles"
+///   does not apply.
+/// - It redacts *every* matching rule on a line, not just the first, because a
+///   single untrusted line may carry more than one credential. Defense in depth.
+///
+/// The guillemet marker is intentionally free of Markdown/HTML metacharacters so
+/// it survives a later escaping pass unchanged.
+pub fn redact_text(text: &str) -> String {
+    let mut lines = text.lines().map(redact_line);
+    match lines.next() {
+        None => String::new(),
+        Some(first) => {
+            let mut out = first;
+            for line in lines {
+                out.push('\n');
+                out.push_str(&line);
+            }
+            out
+        }
+    }
+}
+
+/// Redact one line. Mirrors the per-line *matching* in [`scan_lines`] but
+/// substitutes every matched span instead of recording a finding.
+///
+/// Redaction is a publication safety control, so it deliberately diverges from
+/// detection in two fail-closed ways:
+///
+/// - **No [`STOPLIST`] early-return.** In detection the stoplist suppresses
+///   placeholder false positives (`your-key-here`, `EXAMPLE`). Applied to
+///   redaction it would be *fail-open*: a line like `example token ghp_<real>`
+///   contains `example`, so the whole line — real credential included — would be
+///   emitted verbatim. We accept the occasional redacted placeholder instead.
+/// - **Every match of every rule is scrubbed**, not just the first per rule, so
+///   two distinct credentials of the same type on one line are both removed.
+///
+/// Matches are collected as byte spans, merged, and the line rebuilt — overlaps
+/// across rules collapse to a single marker.
+fn redact_line(line: &str) -> String {
+    let lowered = line.to_ascii_lowercase();
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    for (re, rule) in compiled_rules() {
+        if !keywords_match(rule.keywords, &lowered) {
+            continue;
+        }
+        for caps in re.captures_iter(line) {
+            let m = if let Some(grp) = rule.entropy_group {
+                match caps.get(grp) {
+                    Some(g) if shannon_entropy(g.as_str()) >= rule.min_entropy => g,
+                    _ => continue,
+                }
+            } else {
+                match caps.get(0) {
+                    Some(g) => g,
+                    None => continue,
+                }
+            };
+            if m.start() != m.end() {
+                spans.push((m.start(), m.end()));
+            }
+        }
+    }
+    if spans.is_empty() {
+        return line.to_string();
+    }
+    // Merge overlapping/adjacent spans so a region matched by two rules yields a
+    // single marker rather than a marker nested inside another.
+    spans.sort_by_key(|s| s.0);
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(spans.len());
+    for (s, e) in spans {
+        match merged.last_mut() {
+            Some(last) if s <= last.1 => {
+                if e > last.1 {
+                    last.1 = e;
+                }
+            }
+            _ => merged.push((s, e)),
+        }
+    }
+    // Regex offsets land on char boundaries, so byte slicing is safe.
+    let mut out = String::with_capacity(line.len());
+    let mut cursor = 0;
+    for (s, e) in merged {
+        out.push_str(&line[cursor..s]);
+        out.push_str(REDACTION_MARKER);
+        cursor = e;
+    }
+    out.push_str(&line[cursor..]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,6 +602,63 @@ mod tests {
         let f = scan("token: \"ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789\"");
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].rule_id, "GITHUB_PAT");
+    }
+
+    #[test]
+    fn redact_text_scrubs_secret_keeps_prose() {
+        let input = "deploy used token ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789 — rotate it";
+        let out = redact_text(input);
+        assert!(
+            !out.contains("ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"),
+            "secret must be gone: {out}"
+        );
+        assert!(out.contains(REDACTION_MARKER), "marker must be present: {out}");
+        // Surrounding prose is preserved.
+        assert!(out.starts_with("deploy used token "));
+        assert!(out.ends_with(" — rotate it"));
+    }
+
+    #[test]
+    fn redact_text_leaves_clean_text_untouched() {
+        let input = "I refactored render_body and added a test; no creds here.";
+        assert_eq!(redact_text(input), input);
+    }
+
+    #[test]
+    fn redact_text_preserves_line_structure() {
+        // Clean placeholder text (matches no rule) is left alone; the real key
+        // on the next line is redacted. Line breaks are preserved.
+        let input = "key = your-key-here\nreal = AKIAZZZZZZZZZZZZZZZZ";
+        let out = redact_text(input);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "key = your-key-here");
+        assert!(!lines[1].contains("AKIAZZZZZZZZZZZZZZZZ"));
+        assert!(lines[1].contains(REDACTION_MARKER));
+    }
+
+    #[test]
+    fn redact_text_fails_closed_on_stoplist_word() {
+        // Regression (Codex RISK): a stoplist word (`example`) on the same line
+        // as a real credential must NOT shield it. Redaction is fail-closed.
+        let token = format!("ghp_{}", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789");
+        let input = format!("example token {token} please rotate");
+        let out = redact_text(&input);
+        assert!(!out.contains(&token), "stoplist word must not fail open: {out}");
+        assert!(out.contains(REDACTION_MARKER));
+    }
+
+    #[test]
+    fn redact_text_scrubs_multiple_same_rule_secrets() {
+        // Regression (Codex RISK): two distinct tokens of the SAME rule on one
+        // line must both be removed, not just the first.
+        let t1 = format!("ghp_{}", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let t2 = format!("ghp_{}", "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+        let input = format!("old {t1} new {t2}");
+        let out = redact_text(&input);
+        assert!(!out.contains(&t1), "first token leaked: {out}");
+        assert!(!out.contains(&t2), "second token leaked: {out}");
+        assert_eq!(out.matches(REDACTION_MARKER).count(), 2);
     }
 
     #[test]

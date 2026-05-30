@@ -277,7 +277,8 @@ fn deliver_codex_inbox(workdir: &Path) {
         return;
     };
     let me = codex_identity();
-    let Ok(unread) = msg::inbox(repo.git(), &repo.h5i_root, &me, true) else {
+    // Peek (don't consume yet); commit read-state only after we've printed.
+    let Ok(unread) = msg::inbox(repo.git(), &repo.h5i_root, &me, false) else {
         return;
     };
     if unread.is_empty() {
@@ -286,6 +287,8 @@ fn deliver_codex_inbox(workdir: &Path) {
     let ids: Vec<String> = unread.iter().map(|m| m.id.clone()).collect();
     let _ = msg::write_last_view(&repo.h5i_root, &me, &ids);
     println!("\n{}", frame_unread(&me, &unread));
+    // Acknowledge only after a successful render (deliver-then-ack).
+    let _ = msg::mark_seen(&repo.h5i_root, &me, &ids);
 }
 
 // ── agent-radio box drawing ────────────────────────────────────────────────
@@ -513,18 +516,9 @@ fn send_reply(
     kind: Option<&str>,
     body: String,
 ) -> anyhow::Result<()> {
-    let to = if original.from == me {
-        original.to.clone()
-    } else {
-        original.from.clone()
-    };
-    let opts = msg::SendOpts {
-        kind: kind.map(str::to_string),
-        reply_to: Some(original.id.clone()),
-        thread_id: Some(original.thread_root()),
-        ..Default::default()
-    };
-    let m = msg::send_msg(repo.git(), &repo.h5i_root, me, &to, &body, opts)?;
+    // Branch inheritance / thread-relevance lives in msg::reply (testable, and
+    // shared with any other reply path).
+    let m = msg::reply(repo.git(), &repo.h5i_root, me, original, kind, &body)?;
     report_sent(&m);
     Ok(())
 }
@@ -997,6 +991,9 @@ enum MsgCommands {
         /// Optional classification, e.g. `review` or `risk` (coloured in the UI).
         #[arg(long)]
         tag: Option<String>,
+        /// Git branch this message relates to (default: current branch; pass "" to leave untagged).
+        #[arg(long)]
+        branch: Option<String>,
     },
 
     /// Reply to a numbered message from your last inbox / dashboard view.
@@ -1043,6 +1040,9 @@ enum MsgCommands {
         body: Vec<String>,
         #[arg(long)]
         from: Option<String>,
+        /// Git branch this ask relates to (default: current branch; pass "" to leave untagged).
+        #[arg(long)]
+        branch: Option<String>,
     },
 
     /// i5h REVIEW_REQUEST: ask for code/design/security review.
@@ -1053,7 +1053,7 @@ enum MsgCommands {
         body: Vec<String>,
         #[arg(long)]
         from: Option<String>,
-        /// Git branch to review.
+        /// Git branch to review (default: current branch; pass "" to leave untagged).
         #[arg(long)]
         branch: Option<String>,
         /// File/symbol/test to inspect first (repeatable).
@@ -1075,6 +1075,9 @@ enum MsgCommands {
         body: Vec<String>,
         #[arg(long)]
         from: Option<String>,
+        /// Git branch this risk relates to (default: current branch; pass "" to leave untagged).
+        #[arg(long)]
+        branch: Option<String>,
         #[arg(long)]
         focus: Vec<String>,
         /// low | normal | high | urgent.
@@ -1090,6 +1093,7 @@ enum MsgCommands {
         body: Vec<String>,
         #[arg(long)]
         from: Option<String>,
+        /// Git branch being handed off (default: current branch; pass "" to leave untagged).
         #[arg(long)]
         branch: Option<String>,
         /// h5i context branch relevant to the handoff.
@@ -1250,6 +1254,19 @@ enum PrCommands {
         /// Print the markdown body and exit without calling `gh`
         #[arg(long)]
         dry_run: bool,
+
+        /// Omit the 💬 Agent coordination section (branch-scoped i5h messages)
+        #[arg(long)]
+        no_msg: bool,
+
+        /// Include a redacted excerpt for *every* message kind, not just
+        /// review-typed ones (default: FYI/free-text are metadata-only).
+        #[arg(long)]
+        msg_bodies: bool,
+
+        /// Cap on coordination threads rendered before eliding
+        #[arg(long, value_name = "N", default_value_t = 12)]
+        msg_limit: usize,
     },
 
     /// Print the PR comment markdown to stdout (for piping into `gh pr edit --body-file -`)
@@ -1261,6 +1278,19 @@ enum PrCommands {
         /// Hero block layout — see `h5i share pr post --help` for options.
         #[arg(long, value_enum, default_value_t = PrStyleArg::Receipt)]
         style: PrStyleArg,
+
+        /// Omit the 💬 Agent coordination section (branch-scoped i5h messages)
+        #[arg(long)]
+        no_msg: bool,
+
+        /// Include a redacted excerpt for *every* message kind, not just
+        /// review-typed ones (default: FYI/free-text are metadata-only).
+        #[arg(long)]
+        msg_bodies: bool,
+
+        /// Cap on coordination threads rendered before eliding
+        #[arg(long, value_name = "N", default_value_t = 12)]
+        msg_limit: usize,
     },
 }
 
@@ -3410,18 +3440,28 @@ fn main() -> anyhow::Result<()> {
         }
 
         Commands::Pr { action } => match action {
-            PrCommands::Post { number, limit, style, dry_run } => {
+            PrCommands::Post { number, limit, style, dry_run, no_msg, msg_bodies, msg_limit } => {
                 let workdir = std::env::current_dir()?;
-                let body = h5i_core::pr::render_body_with_style(&workdir, limit, style.into())?;
+                let msg_opts = h5i_core::pr::MsgOptions {
+                    include: !no_msg,
+                    full_bodies: msg_bodies,
+                    max_threads: msg_limit,
+                };
+                let body = h5i_core::pr::render_body_with_options(&workdir, limit, style.into(), &msg_opts)?;
                 if dry_run {
                     println!("{}", body);
                     return Ok(());
                 }
                 h5i_core::pr::post_comment(&workdir, number, &body)?;
             }
-            PrCommands::Body { limit, style } => {
+            PrCommands::Body { limit, style, no_msg, msg_bodies, msg_limit } => {
                 let workdir = std::env::current_dir()?;
-                let body = h5i_core::pr::render_body_with_style(&workdir, limit, style.into())?;
+                let msg_opts = h5i_core::pr::MsgOptions {
+                    include: !no_msg,
+                    full_bodies: msg_bodies,
+                    max_threads: msg_limit,
+                };
+                let body = h5i_core::pr::render_body_with_options(&workdir, limit, style.into(), &msg_opts)?;
                 println!("{}", body);
             }
         },
@@ -3434,20 +3474,31 @@ fn main() -> anyhow::Result<()> {
             match action {
                 // Bare `h5i msg` → the inbox dashboard.
                 None => {
-                    let me = msg::read_identity(&h5i_root);
+                    // Resolve env-first (like every other verb) so the dashboard
+                    // shows who *this* host acts as, not whatever the shared
+                    // stored slot was last set to. This is a read, so an
+                    // ambiguous identity warns and renders without a name rather
+                    // than erroring or impersonating another agent.
+                    let me = match msg::resolve_identity(&h5i_root, None) {
+                        Ok(name) => Some(name),
+                        Err(e) => {
+                            eprintln!("h5i: warning: {e}");
+                            None
+                        }
+                    };
                     let branch = current_branch(&repo);
                     render_dashboard(&repo, &branch, me.as_deref(), plain)?;
                 }
 
-                Some(MsgCommands::Send { to, body, from, tag }) => {
+                Some(MsgCommands::Send { to, body, from, tag, branch }) => {
                     let me = msg::resolve_identity(&h5i_root, from.as_deref())?;
-                    let m = msg::send(git, &h5i_root, &me, &to, &body.join(" "), tag.as_deref())?;
-                    report_sent(&m);
+                    let opts = msg::SendOpts { tag, branch, ..Default::default() };
+                    report_sent(&msg::send_msg(git, &h5i_root, &me, &to, &body.join(" "), opts)?);
                 }
 
-                Some(MsgCommands::Ask { to, body, from }) => {
+                Some(MsgCommands::Ask { to, body, from, branch }) => {
                     let me = msg::resolve_identity(&h5i_root, from.as_deref())?;
-                    let opts = msg::SendOpts { kind: Some("ASK".into()), ..Default::default() };
+                    let opts = msg::SendOpts { kind: Some("ASK".into()), branch, ..Default::default() };
                     report_sent(&msg::send_msg(git, &h5i_root, &me, &to, &body.join(" "), opts)?);
                 }
 
@@ -3465,10 +3516,11 @@ fn main() -> anyhow::Result<()> {
                     report_sent(&msg::send_msg(git, &h5i_root, &me, &to, &body.join(" "), opts)?);
                 }
 
-                Some(MsgCommands::Risk { to, body, from, focus, priority }) => {
+                Some(MsgCommands::Risk { to, body, from, branch, focus, priority }) => {
                     let me = msg::resolve_identity(&h5i_root, from.as_deref())?;
                     let opts = msg::SendOpts {
                         kind: Some("RISK".into()),
+                        branch,
                         focus,
                         priority,
                         ..Default::default()
@@ -3722,7 +3774,10 @@ fn main() -> anyhow::Result<()> {
                     if block && stdin_stop_hook_active() {
                         return Ok(());
                     }
-                    let unread = msg::inbox(git, &h5i_root, &me, true)?;
+                    // Peek (advance=false): we commit read-state only *after* the
+                    // messages have actually been emitted, so a dropped or failed
+                    // render never silently consumes mail (deliver-then-ack).
+                    let unread = msg::inbox(git, &h5i_root, &me, false)?;
                     if !unread.is_empty() {
                         let ids: Vec<String> = unread.iter().map(|m| m.id.clone()).collect();
                         msg::write_last_view(&h5i_root, &me, &ids)?;
@@ -3748,6 +3803,9 @@ fn main() -> anyhow::Result<()> {
                             let out = serde_json::json!({ "systemMessage": text });
                             println!("{}", serde_json::to_string(&out)?);
                         }
+
+                        // Acknowledge after a successful emit.
+                        msg::mark_seen(&h5i_root, &me, &ids)?;
                     }
                 }
 
@@ -3813,8 +3871,9 @@ fn main() -> anyhow::Result<()> {
                 Some(MsgCommands::Watch { as_agent, all, interval, once }) => {
                     use std::collections::HashSet;
                     use std::io::Write as _;
-                    // Identity-scoped inbox stream, unless `--all` or no identity
-                    // is resolvable → watch the whole channel (no identity needed).
+                    // Identity-scoped *conversation* stream (both directions —
+                    // sent, received, and broadcasts), unless `--all` or no
+                    // identity is resolvable → watch the whole channel.
                     let me: Option<String> = if all {
                         None
                     } else {
@@ -3838,8 +3897,12 @@ fn main() -> anyhow::Result<()> {
                         radio_bottom();
                     }
 
-                    // Firehose: only stream messages that arrive AFTER launch, so
-                    // seed `seen` with the current log (no identity, no cursor).
+                    // `watch` is a PASSIVE dashboard: it must never advance the
+                    // shared per-agent read-state (doing so silently consumed mail
+                    // before the Stop hook / `inbox` could surface it). Dedup is
+                    // tracked in this in-memory `seen` set only. For the firehose
+                    // (no identity) we seed it with the current log so we stream
+                    // only messages that arrive AFTER launch.
                     let mut seen: HashSet<String> = if me.is_none() {
                         msg::history(git, None, usize::MAX)?
                             .into_iter()
@@ -3853,20 +3916,26 @@ fn main() -> anyhow::Result<()> {
                         // Reopen the repo each tick so messages committed by other
                         // processes become visible.
                         let repo = H5iRepository::open(".")?;
-                        let batch: Vec<msg::Message> = match &me {
-                            Some(name) => msg::inbox(repo.git(), &repo.h5i_root, name, true)?,
-                            None => {
-                                let fresh: Vec<msg::Message> =
-                                    msg::history(repo.git(), None, usize::MAX)?
-                                        .into_iter()
-                                        .filter(|m| !seen.contains(&m.id))
-                                        .collect();
-                                for m in &fresh {
-                                    seen.insert(m.id.clone());
-                                }
-                                fresh
-                            }
+                        // A passive *conversation* view: stream every message the
+                        // agent sent or received (and broadcasts), both directions
+                        // — like `history`, not just the inbox. Read from the full
+                        // log and filter; never touch the per-agent read cursor.
+                        let candidates: Vec<msg::Message> = match &me {
+                            Some(name) => msg::history(repo.git(), None, usize::MAX)?
+                                .into_iter()
+                                .filter(|m| {
+                                    &m.from == name || &m.to == name || m.to == msg::BROADCAST
+                                })
+                                .collect(),
+                            None => msg::history(repo.git(), None, usize::MAX)?,
                         };
+                        let batch: Vec<msg::Message> = candidates
+                            .into_iter()
+                            .filter(|m| !seen.contains(&m.id))
+                            .collect();
+                        for m in &batch {
+                            seen.insert(m.id.clone());
+                        }
                         if !batch.is_empty() {
                             if let Some(name) = &me {
                                 // Persist the batch so `h5i msg reply <n>` works.

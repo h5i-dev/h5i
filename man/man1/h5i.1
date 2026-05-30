@@ -1,4 +1,4 @@
-.TH H5I 1 "2026-05-24" "h5i 0.1.4" "h5i Manual"
+.TH H5I 1 "2026-05-30" "h5i 0.1.6" "h5i Manual"
 .
 .SH NAME
 h5i \- Advanced Git sidecar for the AI era
@@ -506,7 +506,32 @@ are shared across styles, except
 .B \-\-dry\-run
 Print the markdown body and exit without calling
 .BR gh .
+.TP
+.B \-\-no\-msg
+Omit the 💬 Agent coordination section (branch-scoped i5h message threads
+from
+.BR refs/h5i/msg ).
+.TP
+.B \-\-msg\-bodies
+Show a redacted excerpt for every message kind, not just review-typed ones.
+By default
+.BR FYI /free\-text
+messages are metadata-only; this opt-in publishes their excerpts too. All text
+remains secret-redacted and escaped.
+.TP
+.BI \-\-msg\-limit\  N
+Cap coordination threads rendered before eliding (default: 12).
 .RE
+.PP
+The Agent coordination section folds in cross-agent message threads relevant to
+the PR branch (a thread is included when one of its messages was tagged with the
+branch). It is collapsed, self-omits when empty, and is disclosure-safe: only
+review-typed messages
+.RB ( REVIEW_REQUEST ", " RISK ", " HANDOFF ", " ASK
+and their replies) show an excerpt, every field is secret-redacted and escaped,
+and a footer records the
+.B refs/h5i/msg
+tip OID.
 .PP
 .B Examples
 .RS 4
@@ -518,6 +543,8 @@ h5i share pr post \-\-number 42              # target a specific PR
 h5i share pr body \-\-style review           # preview the reviewer-triage layout
 h5i share pr body \-\-style detective        # preview the narrative layout
 h5i share pr post \-\-style replay \-\-dry\-run # preview the DAG-as-hero layout
+h5i share pr body \-\-no\-msg                  # drop the Agent coordination section
+h5i share pr body \-\-msg\-bodies              # include FYI/free-text excerpts too
 .fi
 .RE
 .
@@ -546,6 +573,10 @@ or
 See
 .B h5i share pr post
 above for descriptions.
+.TP
+.B \-\-no\-msg ", " \-\-msg\-bodies ", " \-\-msg\-limit \fIN\fR
+Control the 💬 Agent coordination section, exactly as for
+.BR "h5i share pr post" .
 .RE
 .
 .\" ─── hook ───────────────────────────────────────────────────────────────────

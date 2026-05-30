@@ -308,6 +308,18 @@ pub fn send_msg(
         .unwrap_or_else(|| infer_kind(tag.as_deref(), to));
     let thread_id = opts.thread_id.or_else(|| opts.reply_to.clone());
 
+    // Auto-tag the sender's current git branch unless overridden. This is what
+    // makes the PR-body coordination section (which selects threads by branch)
+    // capture a conversation without every message having to pass `--branch`.
+    //   - explicit non-empty branch  → kept as-is
+    //   - explicit empty (`--branch ""`) → opt out, stays untagged
+    //   - absent → the current branch (or None on a detached/unborn HEAD)
+    let branch = match opts.branch {
+        Some(b) if b.trim().is_empty() => None,
+        Some(b) => Some(b),
+        None => current_branch(repo),
+    };
+
     let msg = Message {
         id,
         ts,
@@ -321,7 +333,7 @@ pub fn send_msg(
         thread_id,
         priority: opts.priority.map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty()),
         status: opts.status.map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty()),
-        branch: opts.branch.filter(|s| !s.is_empty()),
+        branch,
         context_branch: opts.context_branch.filter(|s| !s.is_empty()),
         focus: opts.focus.into_iter().filter(|s| !s.is_empty()).collect(),
         risk: opts.risk.filter(|s| !s.is_empty()),
@@ -331,8 +343,66 @@ pub fn send_msg(
     };
 
     append_message_cas(repo, &msg)?;
-    write_identity(h5i_root, from)?;
+    // Persist the sender as the local default only in a solo clone. In a shared
+    // clone this single slot is ambiguous — `resolve_identity` refuses to trust
+    // it — so writing it just churns shared state and risks misleading a tool
+    // that reads the file directly. `from` is already counted by `known_agents`,
+    // so a brand-new solo clone still sees `len() <= 1` here.
+    if known_agents(h5i_root).len() <= 1 {
+        write_identity(h5i_root, from)?;
+    }
     Ok(msg)
+}
+
+/// Send a threaded reply to `original`, as `me`.
+///
+/// Resolves the recipient (the *other* party of `original`), threads via
+/// `reply_to` + the thread root, and — crucially — inherits the **thread's**
+/// branch rather than letting [`send_msg`] auto-tag the responder's current
+/// checkout. A reply's relevance is the thread it belongs to; tagging it with
+/// wherever the replier happens to be standing would let, say, an `ACK` typed
+/// from a `docs` checkout drag an `auth` thread into the `docs` PR body. The
+/// thread's branch is the root message's branch (falling back to the immediate
+/// parent's); when the thread is untagged, an empty string opts the reply out
+/// of auto-tagging too.
+pub fn reply(
+    repo: &Repository,
+    h5i_root: &Path,
+    me: &str,
+    original: &Message,
+    kind: Option<&str>,
+    body: &str,
+) -> Result<Message, H5iError> {
+    let to = if original.from == me {
+        original.to.clone()
+    } else {
+        original.from.clone()
+    };
+    let thread_branch = get_message(repo, &original.thread_root())
+        .and_then(|root| root.branch)
+        .or_else(|| original.branch.clone());
+    let opts = SendOpts {
+        kind: kind.map(str::to_string),
+        reply_to: Some(original.id.clone()),
+        thread_id: Some(original.thread_root()),
+        // Some("") when untagged → opt out of send_msg's current-branch auto-tag.
+        branch: Some(thread_branch.unwrap_or_default()),
+        ..Default::default()
+    };
+    send_msg(repo, h5i_root, me, &to, body, opts)
+}
+
+/// The sender's current git branch, or `None` on a detached or unborn HEAD.
+///
+/// Deliberately uses `repo.head()` (not a HEAD-file fallback): if we aren't on a
+/// real branch, a message is left untagged rather than guessing — auto-tagging
+/// is a convenience, not something to fabricate.
+fn current_branch(repo: &Repository) -> Option<String> {
+    repo.head()
+        .ok()?
+        .shorthand()
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
 }
 
 /// Append `msg` to `refs/h5i/msg` with compare-and-swap semantics: build the
@@ -450,6 +520,26 @@ pub fn inbox(
     Ok(unread)
 }
 
+/// Commit read-state for `me` by adding `ids` to its seen-set, without reading
+/// the log. This is the **acknowledge** half of a deliver-then-ack handoff:
+/// callers `inbox(.., advance=false)` to peek, render the messages, and only
+/// then call `mark_seen` — so a dropped or failed render never silently
+/// consumes mail. Idempotent; a no-op when `ids` are already seen.
+pub fn mark_seen(h5i_root: &Path, me: &str, ids: &[String]) -> Result<(), H5iError> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut seen = read_agent_seen(h5i_root, me).unwrap_or_default();
+    let mut dirty = false;
+    for id in ids {
+        dirty |= seen.insert(id.clone());
+    }
+    if dirty {
+        write_agent_seen(h5i_root, me, &seen)?;
+    }
+    Ok(())
+}
+
 /// Seed a fresh per-agent seen-set from the legacy shared `cursor.json`
 /// (the pre-per-agent format): copy `me`'s seen ids, and convert a legacy
 /// watermark to ids by marking everything at or below it as seen.
@@ -489,6 +579,77 @@ pub fn history(
         all = all.split_off(all.len() - limit);
     }
     Ok(all)
+}
+
+/// One coordination thread selected for a PR body: every message sharing a
+/// `thread_root`, sorted in canonical `(ts, id)` order.
+#[derive(Debug, Clone)]
+pub struct PrThread {
+    /// Stable thread-root id.
+    pub thread_id: String,
+    /// Messages in the thread, oldest-first.
+    pub messages: Vec<Message>,
+    /// Timestamp of the most recent message — the thread's sort key.
+    pub latest_ts: String,
+}
+
+/// Select the message threads relevant to a PR for `branch`, newest thread
+/// first, capped at `max_threads`.
+///
+/// A thread qualifies iff at least one of its messages carries
+/// `branch == Some(branch)` (exact match). The *entire* thread is then returned
+/// — including replies that omitted the branch field — so an `ACK`/`DONE` that
+/// only set `reply_to` still travels with its `REVIEW_REQUEST`. This is the
+/// "exact branch match + thread closure" rule agreed for the PR body.
+///
+/// Returns `(threads, total_qualifying)` so the caller can render an elision
+/// note when `total_qualifying > threads.len()`.
+pub fn threads_for_branch(
+    repo: &Repository,
+    branch: &str,
+    max_threads: usize,
+) -> (Vec<PrThread>, usize) {
+    let all = read_messages(repo);
+
+    // Roots that have at least one message explicitly tagged with this branch.
+    let mut matched_roots: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for m in &all {
+        if m.branch.as_deref() == Some(branch) {
+            matched_roots.insert(m.thread_root());
+        }
+    }
+
+    // Bucket every message under its thread_root, keeping only matched roots.
+    let mut by_root: HashMap<String, Vec<Message>> = HashMap::new();
+    for m in all {
+        let root = m.thread_root();
+        if matched_roots.contains(&root) {
+            by_root.entry(root).or_default().push(m);
+        }
+    }
+
+    let mut threads: Vec<PrThread> = by_root
+        .into_iter()
+        .map(|(thread_id, mut messages)| {
+            messages.sort_by(|a, b| a.key().cmp(&b.key()));
+            let latest_ts = messages
+                .last()
+                .map(|m| m.ts.clone())
+                .unwrap_or_default();
+            PrThread { thread_id, messages, latest_ts }
+        })
+        .collect();
+
+    // Newest thread first; tie-break on thread_id for a stable order.
+    threads.sort_by(|a, b| {
+        b.latest_ts
+            .cmp(&a.latest_ts)
+            .then_with(|| a.thread_id.cmp(&b.thread_id))
+    });
+
+    let total = threads.len();
+    threads.truncate(max_threads);
+    (threads, total)
 }
 
 /// List known agents as `(name, last_seen_ts)`, sorted by name.
@@ -542,7 +703,8 @@ pub fn write_last_view(h5i_root: &Path, agent: &str, ids: &[String]) -> Result<(
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
     let json = serde_json::to_string_pretty(&serde_json::json!({ "ids": ids }))?;
     let path = agent_view_path(h5i_root, agent);
-    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, path))
+    // Atomic replace so `reply <n>` never reads a half-written view file.
+    atomic_write(&path, json.as_bytes()).map_err(|e| H5iError::with_path(e, path))
 }
 
 /// Resolve a 1-based number from `agent`'s last numbered view into a message
@@ -592,6 +754,20 @@ pub fn resolve_identity(h5i_root: &Path, explicit: Option<&str>) -> Result<Strin
     }
     if let Some(stored) = read_identity(h5i_root) {
         validate_name(&stored)?;
+        // Safe-by-default: in a clone shared by more than one agent the single
+        // stored-identity file is an ambiguous slot — the last `msg as`/sender
+        // wins it (see `send_msg`), so silently trusting it would attribute
+        // messages to whoever wrote it last. Refuse instead and make the caller
+        // be explicit. Solo clones keep the convenient fallback.
+        let agents = known_agents(h5i_root);
+        if agents.len() > 1 {
+            return Err(H5iError::Metadata(format!(
+                "ambiguous agent identity in a shared clone ({}): the stored \
+                 default '{stored}' is not trustworthy here — set $H5I_AGENT or \
+                 pass --from <name>/--as <name>",
+                agents.into_iter().collect::<Vec<_>>().join(", ")
+            )));
+        }
         return Ok(stored);
     }
     Err(H5iError::Metadata(format!(
@@ -619,6 +795,35 @@ pub fn write_identity(h5i_root: &Path, name: &str) -> Result<(), H5iError> {
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
     let path = identity_path(h5i_root);
     std::fs::write(&path, format!("{name}\n")).map_err(|e| H5iError::with_path(e, path))
+}
+
+/// Agents known to share this clone, discovered from per-agent read-state files
+/// (`msg/cursors/<agent>.json`, `msg/views/<agent>.json`) plus the stored
+/// default identity. Used to detect a multi-agent clone, where the single
+/// stored-identity slot is ambiguous and must not be trusted as a silent
+/// identity fallback (see [`resolve_identity`]).
+fn known_agents(h5i_root: &Path) -> BTreeSet<String> {
+    let mut agents = BTreeSet::new();
+    for dir in [cursors_dir(h5i_root), views_dir(h5i_root)] {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                if validate_name(stem).is_ok() {
+                    agents.insert(stem.to_string());
+                }
+            }
+        }
+    }
+    if let Some(stored) = read_identity(h5i_root) {
+        agents.insert(stored);
+    }
+    agents
 }
 
 /// Idempotently merge the messaging wiring into a Claude Code `settings.json`
@@ -819,9 +1024,38 @@ fn write_agent_seen(
 ) -> Result<(), H5iError> {
     let dir = cursors_dir(h5i_root);
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
-    let json = serde_json::to_string_pretty(&serde_json::json!({ "seen": seen }))?;
     let path = agent_cursor_path(h5i_root, agent);
-    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, path))
+    // The seen-set is grow-only, so re-read the current on-disk set and UNION
+    // before writing. Multiple processes can act as the same identity in one
+    // clone (an agent's Stop hook + its own `inbox` calls), and a plain
+    // last-writer-wins overwrite would drop a concurrent writer's additions —
+    // re-delivering already-read mail. Union makes the merge commutative.
+    let mut merged = read_agent_seen(h5i_root, agent).unwrap_or_default();
+    merged.extend(seen.iter().cloned());
+    let json = serde_json::to_string_pretty(&serde_json::json!({ "seen": merged }))?;
+    atomic_write(&path, json.as_bytes()).map_err(|e| H5iError::with_path(e, path))
+}
+
+/// Write `bytes` to `path` atomically: write to a unique temp file in the same
+/// directory, then rename over the target. On POSIX the rename is atomic, so a
+/// concurrent reader never observes a half-written file (a truncated cursor file
+/// would fail to parse and silently reset read-state, re-delivering everything).
+fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let tmp = path.with_extension(format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&tmp, bytes)?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp); // don't leak the temp on failure
+            Err(e)
+        }
+    }
 }
 
 /// Read the legacy shared cursor.json (for one-time migration only).
@@ -1024,6 +1258,49 @@ mod tests {
         let peek2 = inbox(&repo, &root, "bob", false).unwrap();
         assert_eq!(peek2.len(), 1);
         assert_eq!(unread_count(&repo, &root, "bob").unwrap(), 1);
+    }
+
+    #[test]
+    fn peek_then_mark_seen_equals_advance() {
+        // Deliver-then-ack: peeking (advance=false) then mark_seen consumes the
+        // message exactly once, just like inbox(advance=true) — but only after
+        // the caller has surfaced it. A peek that is never acked is NOT consumed,
+        // which is what prevents `watch` and dropped renders from losing mail.
+        let (_d, repo, root) = fixture();
+        send(&repo, &root, "alice", "bob", "hi", None).unwrap();
+
+        // Peek without ack: still unread (this is the watch / dropped-render case).
+        assert_eq!(inbox(&repo, &root, "bob", false).unwrap().len(), 1);
+        assert_eq!(inbox(&repo, &root, "bob", false).unwrap().len(), 1);
+
+        // Surface, then ack.
+        let peeked = inbox(&repo, &root, "bob", false).unwrap();
+        let ids: Vec<String> = peeked.iter().map(|m| m.id.clone()).collect();
+        mark_seen(&root, "bob", &ids).unwrap();
+
+        // Now consumed — nothing left, and mark_seen is idempotent.
+        assert_eq!(unread_count(&repo, &root, "bob").unwrap(), 0);
+        mark_seen(&root, "bob", &ids).unwrap();
+        assert_eq!(unread_count(&repo, &root, "bob").unwrap(), 0);
+    }
+
+    #[test]
+    fn write_agent_seen_unions_with_disk() {
+        // Two processes acting as the same identity: A persists {a}; B started
+        // from an empty view and persists {b}. A naive overwrite would drop {a};
+        // the grow-only union-on-write must keep both (no re-delivery of read mail).
+        let (_d, _repo, root) = fixture();
+        let mut a = BTreeSet::new();
+        a.insert("a".to_string());
+        write_agent_seen(&root, "bob", &a).unwrap();
+
+        let mut b = BTreeSet::new();
+        b.insert("b".to_string());
+        write_agent_seen(&root, "bob", &b).unwrap();
+
+        let seen = read_agent_seen(&root, "bob").unwrap();
+        assert!(seen.contains("a"), "concurrent writer's id must survive");
+        assert!(seen.contains("b"));
     }
 
     #[test]
@@ -1259,6 +1536,7 @@ mod tests {
         assert_eq!(inbox(&repo, &root, "codex", false).unwrap().len(), 1);
 
         // Per-agent view files don't collide: each reply targets its own view.
+
         write_last_view(&root, "claude", &["a".into()]).unwrap();
         write_last_view(&root, "codex", &["b".into()]).unwrap();
         assert_eq!(resolve_view_number(&root, "claude", 1).as_deref(), Some("a"));
@@ -1473,5 +1751,216 @@ mod tests {
         assert!(bodies.contains(&"local-only".to_string()));
         assert!(bodies.contains(&"incoming-only".to_string()));
         assert_eq!(bodies.len(), 3);
+    }
+
+    #[test]
+    fn identity_resolution_refuses_shared_stored_in_multi_agent_clone() {
+        let (_d, _repo, root) = fixture();
+        std::env::remove_var(AGENT_ENV);
+
+        // Solo clone: the stored default is the only known agent, so the
+        // convenient fallback is allowed.
+        write_identity(&root, "codex").unwrap();
+        assert_eq!(resolve_identity(&root, None).unwrap(), "codex");
+
+        // A second agent's per-agent read-state file makes this a shared clone.
+        let cursors = cursors_dir(&root);
+        std::fs::create_dir_all(&cursors).unwrap();
+        std::fs::write(cursors.join("claude.json"), "{}").unwrap();
+
+        // The ambiguous shared slot must no longer be silently trusted...
+        assert!(resolve_identity(&root, None).is_err());
+        // ...but an explicit identity (and $H5I_AGENT, checked elsewhere) still
+        // resolves cleanly.
+        assert_eq!(resolve_identity(&root, Some("claude")).unwrap(), "claude");
+    }
+
+    fn send_on(
+        repo: &Repository,
+        root: &Path,
+        from: &str,
+        to: &str,
+        body: &str,
+        branch: Option<&str>,
+        reply_to: Option<&str>,
+    ) -> Message {
+        send_msg(
+            repo,
+            root,
+            from,
+            to,
+            body,
+            SendOpts {
+                kind: Some("ASK".into()),
+                branch: branch.map(str::to_string),
+                reply_to: reply_to.map(str::to_string),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn threads_for_branch_filters_and_includes_full_thread() {
+        let (_d, repo, root) = fixture();
+
+        // Thread A: rooted on `feature-x`, with a reply that omits the branch.
+        let a_root = send_on(&repo, &root, "codex", "claude", "review feature-x", Some("feature-x"), None);
+        let _a_reply = send_on(&repo, &root, "claude", "codex", "done", None, Some(&a_root.id));
+
+        // Thread B: a different branch — must be excluded entirely.
+        let _b = send_on(&repo, &root, "codex", "claude", "review other", Some("other-branch"), None);
+
+        // A branch-less broadcast — excluded (no matching branch tag).
+        let _c = send_on(&repo, &root, "claude", "codex", "fyi", None, None);
+
+        let (threads, total) = threads_for_branch(&repo, "feature-x", 12);
+        assert_eq!(total, 1, "only thread A qualifies");
+        assert_eq!(threads.len(), 1);
+        // Thread closure: the branch-less reply rides along with its root.
+        assert_eq!(threads[0].messages.len(), 2);
+        assert_eq!(threads[0].messages[0].body, "review feature-x");
+        assert_eq!(threads[0].messages[1].body, "done");
+    }
+
+    #[test]
+    fn threads_for_branch_caps_and_reports_total() {
+        let (_d, repo, root) = fixture();
+        for i in 0..5 {
+            send_on(&repo, &root, "codex", "claude", &format!("msg {i}"), Some("b"), None);
+        }
+        let (threads, total) = threads_for_branch(&repo, "b", 3);
+        assert_eq!(total, 5, "total reflects all qualifying threads");
+        assert_eq!(threads.len(), 3, "capped at max_threads");
+    }
+
+    #[test]
+    fn threads_for_branch_empty_when_no_match() {
+        let (_d, repo, root) = fixture();
+        send_on(&repo, &root, "codex", "claude", "hi", Some("main"), None);
+        let (threads, total) = threads_for_branch(&repo, "nonexistent", 12);
+        assert!(threads.is_empty());
+        assert_eq!(total, 0);
+    }
+
+    /// Put the fixture repo on a real (born) branch with one commit, so
+    /// `repo.head().shorthand()` resolves — needed to exercise auto-tagging.
+    fn commit_on_branch(repo: &Repository, branch: &str) {
+        repo.set_head(&format!("refs/heads/{branch}")).unwrap();
+        let sig = repo.signature().unwrap();
+        let tree = {
+            let mut idx = repo.index().unwrap();
+            repo.find_tree(idx.write_tree().unwrap()).unwrap()
+        };
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+    }
+
+    #[test]
+    fn send_auto_tags_current_branch() {
+        let (_d, repo, root) = fixture();
+        commit_on_branch(&repo, "feature-x");
+        // Plain send (no branch opt) must inherit the sender's current branch.
+        let m = send(&repo, &root, "alice", "bob", "hi", None).unwrap();
+        assert_eq!(m.branch.as_deref(), Some("feature-x"));
+        // And it's selectable for that branch's PR body.
+        let (threads, total) = threads_for_branch(&repo, "feature-x", 12);
+        assert_eq!(total, 1);
+        assert_eq!(threads.len(), 1);
+    }
+
+    #[test]
+    fn explicit_branch_overrides_auto_tag() {
+        let (_d, repo, root) = fixture();
+        commit_on_branch(&repo, "feature-x");
+        let m = send_msg(
+            &repo,
+            &root,
+            "alice",
+            "bob",
+            "hi",
+            SendOpts { branch: Some("other".into()), ..Default::default() },
+        )
+        .unwrap();
+        assert_eq!(m.branch.as_deref(), Some("other"));
+    }
+
+    #[test]
+    fn empty_branch_opts_out_of_auto_tag() {
+        let (_d, repo, root) = fixture();
+        commit_on_branch(&repo, "feature-x");
+        let m = send_msg(
+            &repo,
+            &root,
+            "alice",
+            "bob",
+            "hi",
+            SendOpts { branch: Some("".into()), ..Default::default() },
+        )
+        .unwrap();
+        assert_eq!(m.branch, None, "explicit empty branch must opt out");
+    }
+
+    #[test]
+    fn reply_inherits_thread_branch_not_responder_checkout() {
+        // Regression (Codex blocker): a reply must take its thread's branch, not
+        // wherever the responder is checked out — else replying to an `auth`
+        // thread from a `docs` checkout would drag the whole `auth` thread into
+        // the `docs` PR body.
+        let (_d, repo, root) = fixture();
+        commit_on_branch(&repo, "docs"); // responder's current checkout
+        let auth_root = send_msg(
+            &repo,
+            &root,
+            "alice",
+            "bob",
+            "auth work",
+            SendOpts { branch: Some("auth".into()), ..Default::default() },
+        )
+        .unwrap();
+
+        let r = reply(&repo, &root, "bob", &auth_root, Some("ACK"), "looking").unwrap();
+        assert_eq!(r.to, "alice", "reply goes back to the other party");
+        assert_eq!(
+            r.branch.as_deref(),
+            Some("auth"),
+            "reply inherits the thread branch, not the docs checkout"
+        );
+
+        // The docs PR must NOT pick up the auth thread...
+        let (docs_threads, _) = threads_for_branch(&repo, "docs", 12);
+        assert!(docs_threads.is_empty(), "auth thread leaked into docs: {docs_threads:?}");
+        // ...while the auth PR shows the full thread (root + reply).
+        let (auth_threads, _) = threads_for_branch(&repo, "auth", 12);
+        assert_eq!(auth_threads.len(), 1);
+        assert_eq!(auth_threads[0].messages.len(), 2);
+    }
+
+    #[test]
+    fn reply_to_untagged_thread_stays_untagged() {
+        // Replying (from a real branch) to an untagged thread must not suddenly
+        // tag the reply with the checkout — the thread has no branch relevance.
+        let (_d, repo, root) = fixture();
+        commit_on_branch(&repo, "docs");
+        let untagged = send_msg(
+            &repo,
+            &root,
+            "alice",
+            "bob",
+            "general note",
+            SendOpts { branch: Some("".into()), ..Default::default() }, // opt out
+        )
+        .unwrap();
+        assert_eq!(untagged.branch, None);
+        let r = reply(&repo, &root, "bob", &untagged, None, "ok").unwrap();
+        assert_eq!(r.branch, None, "reply to an untagged thread stays untagged");
+    }
+
+    #[test]
+    fn unborn_head_leaves_branch_untagged() {
+        // The default fixture has no commit (unborn HEAD): auto-tag must yield
+        // None rather than fabricating a branch name from the HEAD file.
+        let (_d, repo, root) = fixture();
+        let m = send(&repo, &root, "alice", "bob", "hi", None).unwrap();
+        assert_eq!(m.branch, None);
     }
 }

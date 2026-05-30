@@ -1,29 +1,29 @@
 {
+  "enabledPlugins": {},
+  "env": {
+    "H5I_AGENT": "claude"
+  },
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|Read",
         "hooks": [
           {
-            "type": "command",
-            "command": "h5i hook run"
+            "command": "h5i hook run",
+            "type": "command"
           }
-        ]
+        ],
+        "matcher": "Edit|Write|Read"
       }
     ],
     "Stop": [
       {
         "hooks": [
           {
-            "type": "command",
-            "command": "h5i msg hook --block"
+            "command": "h5i msg hook --block",
+            "type": "command"
           }
         ]
       }
     ]
-  },
-  "env": {
-    "H5I_AGENT": "claude"
-  },
-  "enabledPlugins": {}
+  }
 }
