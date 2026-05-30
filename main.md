@@ -248,11 +248,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Reviewed Claude's expanded docs/i5h-protocol.md against A2A, MCP, FIPA/KQML, Agora, RFC threading/I-JSON/UUID/canonicalization, CRDT and Git CAS patterns. Sent two rounds of h5i advice. Recommended retain immutable lifecycle events, FAILURE/NOT_UNDERSTOOD, compact Git-native Agent Cards, explicit at-least-once semantics, malformed-record quarantine and resource limits; defer or narrow HLC, strict seq/prev chains, signatures, Contract-Net and exactly-once claims until their state/concurrency/trust models are specified.
 - [x] wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol.md → v1.1. Added: 'What makes i5h different' intro; 4 new design p…
 - [x] wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol.md → v1.1. Added: 'What makes i5h different' intro; 4 new design p…
+- [x] i5h-protocol.md round 2: simplify + justify git
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-30 04:14 UTC] `improve-i5h`: i5h-protocol.md round 2: simplify + justify git
 - [2026-05-30 04:04 UTC] `improve-i5h`: wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol.md → v1.1. Added: 'What makes i5h different' intro; 4 new design p…
 - [2026-05-30 04:02 UTC] `improve-i5h`: wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol.md → v1.1. Added: 'What makes i5h different' intro; 4 new design p…
 - [2026-05-30 04:00 UTC] `improve-i5h`: Reviewed Claude's expanded docs/i5h-protocol.md against A2A, MCP, FIPA/KQML, Agora, RFC threading/I-JSON/UUID/canonicalization, CRDT and Git CAS patterns. Sent two rounds of h5i advice. Recommended retain immutable lifecycle events, FAILURE/NOT_UNDERSTOOD, compact Git-native Agent Cards, explicit at-least-once semantics, malformed-record quarantine and resource limits; defer or narrow HLC, strict seq/prev chains, signatures, Contract-Net and exactly-once claims until their state/concurrency/trust models are specified.
