@@ -244,11 +244,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Implemented opt-in task-aware smart recall for Codex prelude with tests and docs
 - [x] Moved task-aware smart recall to h5i recall context smart
 - [x] i5h-protocol.md upgraded to v1.1 (research-grounded)
+- [x] edited MANUAL.md; wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol.md → v1.1. Added: 'What makes i5h different' int…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-30 03:57 UTC] `improve-i5h`: edited MANUAL.md; wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol.md → v1.1. Added: 'What makes i5h different' int…
 - [2026-05-30 03:57 UTC] `improve-i5h`: i5h-protocol.md upgraded to v1.1 (research-grounded)
 - [2026-05-30 00:15 UTC] `compare-with-agentmemory`: Moved task-aware smart recall to h5i recall context smart
 - [2026-05-30 00:10 UTC] `compare-with-agentmemory`: Implemented opt-in task-aware smart recall for Codex prelude with tests and docs
