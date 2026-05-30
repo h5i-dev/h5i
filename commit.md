@@ -1915,3 +1915,16 @@ Redesign context-branch storage to one git ref per ctx branch, real libgit2 merg
 
 ---
 
+## Commit 6a1b300f — 2026-05-30 18:44 UTC
+
+### Branch Purpose
+Redesign context-branch storage to one git ref per ctx branch, real libgit2 merges, auto-follow git checkout, reconciliation in status
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+resolve_identity now refuses the shared stored-identity fallback in multi-agent clones (sends/replies error, dashboard warns); bare 'h5i msg' dashboard is now env-first (was stored-only); send_msg no longer churns the shared identity slot; stale codex identity file removed; +1 regression test (lib 507 pass). Left to do: resume the Codex discussion on putting msg history in 'h5i share pr body'.
+
+---
+
