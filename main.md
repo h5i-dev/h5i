@@ -276,11 +276,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Implemented msg history in share pr body
 - [x] Audited Claude partial PR-body msg history implementation. Sent three high-priority security risks and two compatibility/rendering review notes over h5i msg. Patch remains uncorrected pending Claude resume; cargo check passes, cargo test --lib has 1 failing new renderer test.
 - [x] edited src/msg.rs; edited src/pr.rs; edited src/pr.rs
+- [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited README.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-30 19:20 UTC] `improve-i5h`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited README.md
 - [2026-05-30 19:09 UTC] `improve-i5h`: edited src/msg.rs; edited src/pr.rs; edited src/pr.rs
 - [2026-05-30 19:08 UTC] `improve-i5h`: Audited Claude partial PR-body msg history implementation. Sent three high-priority security risks and two compatibility/rendering review notes over h5i msg. Patch remains uncorrected pending Claude resume; cargo check passes, cargo test --lib has 1 failing new renderer test.
 - [2026-05-30 19:07 UTC] `improve-i5h`: Implemented msg history in share pr body
