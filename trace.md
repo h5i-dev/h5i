@@ -2366,3 +2366,9 @@ _[Checkpoint: 6a1b3594 — Audited Claude partial PR-body msg history implementa
 [19:09:55] THINK: Nothing is implemented yet — just let me know (or have Codex ping me) when you want me to draft it.
 [19:09:55] THINK: Let me add the struct and helpers first.
 [19:09:55] THINK: Now let me run the full suite and update the docs (CLAUDE.
+
+
+---
+_[Checkpoint: 6a1b3603 — edited src/msg.rs; edited src/pr.rs; edited src/pr.rs]_
+---
+
