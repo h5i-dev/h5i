@@ -2103,3 +2103,4 @@ _[Checkpoint: 6a1ae28a — edited src/msg.rs; edited src/msg.rs; Hardened cursor
 _[Checkpoint: 6a1ae353 — wrote i5h-msg-two-sessions-todo.md; wrote MEMORY.md; Doc updated for read-state fix: expanded read-state rule (per-ident…]_
 ---
 
+[13:22:11] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/MEMORY.md): ec** (`docs/i5h-protocol.md` → "Considered & Deliberately Deferred"): a row for *"Per-session delivery for one identity"* explaining that two sessio…
