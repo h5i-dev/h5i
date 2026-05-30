@@ -2110,3 +2110,4 @@ _[Checkpoint: 6a1ae353 — wrote i5h-msg-two-sessions-todo.md; wrote MEMORY.md; 
 _[Checkpoint: 6a1ae483 — wrote i5h-msg-two-sessions-todo.md; wrote MEMORY.md; Doc updated for read-state fix: expanded read-state rule (per-ident…]_
 ---
 
+[13:57:19] OBSERVE: read tests/msg_integration.rs
