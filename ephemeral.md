@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: fix-push
+# Ephemeral traces — Branch: compare-with-agentmemory
 
