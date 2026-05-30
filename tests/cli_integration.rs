@@ -167,6 +167,53 @@ fn doctor_without_repair_reports_missing_sidecar() {
     assert!(s.contains("missing_sidecar"), "unexpected doctor output: {s}");
 }
 
+#[test]
+fn codex_prelude_does_not_run_smart_recall_by_default() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["context", "init", "--goal", "implement token validation"]);
+    repo.h5i_ok(&[
+        "context",
+        "trace",
+        "--kind",
+        "THINK",
+        "auth.rs validates tokens with jose",
+    ]);
+
+    let out = repo.h5i_ok(&["codex", "prelude"]);
+    let s = stdout(&out);
+    assert!(s.contains("Context workspace active"), "unexpected prelude output: {s}");
+    assert!(
+        !s.contains("Smart recall for task"),
+        "smart recall must stay off by default: {s}"
+    );
+}
+
+#[test]
+fn recall_context_smart_returns_task_aware_results() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["context", "init", "--goal", "implement token validation"]);
+    repo.h5i_ok(&[
+        "context",
+        "trace",
+        "--kind",
+        "THINK",
+        "auth.rs validates tokens with jose",
+    ]);
+
+    let out = repo.h5i_ok(&[
+        "recall",
+        "context",
+        "smart",
+        "--query",
+        "token validation",
+        "--limit",
+        "3",
+    ]);
+    let s = stdout(&out);
+    assert!(s.contains("Smart recall for task: token validation"), "unexpected output: {s}");
+    assert!(s.contains("auth.rs"), "expected recalled file in output: {s}");
+}
+
 // ─── commit ─────────────────────────────────────────────────────────────────
 
 #[test]
