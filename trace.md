@@ -2472,3 +2472,4 @@ _[Checkpoint: 6a1b3f21 — edited src/main.rs; edited src/main.rs; edited MANUAL
 [19:51:11] NOTE: AUDIT FOLLOW-UP: reviewed Claude commit 3a9a006c auto-tagging msg branch in send_msg. Central defaulting layer is appropriate, but replies currently use default SendOpts and can tag responder checkout, causing unrelated PR thread inclusion via thread closure. Requested reply relevance inheritance/opt-out regression. Also requested --branch wiring for send/ask/risk because MANUAL claims risk support that CLI lacks and general broadcast/cross-branch asks need reachable opt-out/override.
 [19:51:11] OBSERVE: read b2wijxf2o.output
 [19:51:11] OBSERVE: searched \{|Review for "\{|Ask"
+[19:52:33] ACT: edited src/msg.rs
