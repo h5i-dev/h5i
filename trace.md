@@ -2032,3 +2032,9 @@ _[Checkpoint: 6a1ade94 — i5h-protocol.md round 3: codex review corrections]_
 [12:57:10] NOTE: DEFERRAL (~/Dev/h5i/docs/i5h-protocol.md): ignatures all moved into a new **"Considered & Deliberately Deferred"** table — each with a one-line reason it's not worth the adoption tax *yet*. T…
 [12:57:10] NOTE: DEFERRAL (~/Dev/h5i/docs/i5h-protocol.md): tely Deferred"** table — each with a one-line reason it's not worth the adoption tax *yet*. This is more honest (and more innovative) than bundling …
 [12:57:10] NOTE: DEFERRAL (~/Dev/h5i/docs/i5h-protocol.md): Now fix the Implementation Checklist `id` line and the Deferred table (signatures + Agent Cards nuance)
+
+
+---
+_[Checkpoint: 6a1adea6 — edited docs/i5h-protocol.md; edited docs/i5h-protocol.md; Incorporated codex's line-level review (found via h5i msg hist…]_
+---
+
