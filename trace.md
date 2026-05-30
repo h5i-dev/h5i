@@ -1907,3 +1907,4 @@ _[Checkpoint: 6a1a2c34 — Moved task-aware smart recall to h5i recall context s
 ---
 
 [03:47:06] OBSERVE: read docs/i5h-protocol.md
+[03:47:21] OBSERVE: i5h-protocol.md is comprehensive: goals, wire format (JSONL under refs/h5i/msg), 10 message kinds, CLI mapping, terminal rendering, hook delivery, CAS+union-merge storage, identity, security. Gaps to probe: no formal performative semantics ref, no capability/discovery, no delivery guarantees model, no schema versioning/negotiation, no relation to MCP/A2A/ACP.
