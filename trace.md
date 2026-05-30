@@ -2274,3 +2274,4 @@ _[Checkpoint: 6a1b31b8 — wrote newtest.txt; wrote newtest.txt]_
 [18:53:17] OBSERVE: searched body|pr for "pr"
 [18:53:17] OBSERVE: read src/pr.rs
 [18:53:17] OBSERVE: read src/msg.rs
+[18:53:17] OBSERVE: searched .*message|pub for "fn"
