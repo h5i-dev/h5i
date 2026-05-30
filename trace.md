@@ -2277,3 +2277,4 @@ _[Checkpoint: 6a1b31b8 — wrote newtest.txt; wrote newtest.txt]_
 [18:53:17] OBSERVE: searched .*message|pub for "fn"
 [18:53:17] OBSERVE: searched src/main.rs for "history|History|format.*msg|effective_kind|thread_root""
 [18:53:17] OBSERVE: read src/pr.rs
+[18:53:17] OBSERVE: searched src/pr.rs for "src/secrets.rs"
