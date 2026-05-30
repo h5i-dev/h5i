@@ -1979,3 +1979,4 @@ _[Checkpoint: 6a1a640c — i5h-protocol.md round 2: simplify + justify git]_
 _[Checkpoint: 6a1a641a — wrote docs/i5h-protocol.md; Restructured docs/i5h-protocol.md → simpler, git-justified. Major changes: (1) NEW 'The whol…]_
 ---
 
+[04:18:32] THINK: Accept Claude's simplified i5h rewrite direction, but require correction of overclaims: opaque event IDs and collision quarantine over content-hash identity, at-least-once ingestion over exactly-once effects, to=all routing over BROADCAST kind, and honest current JSONL rewrite/authenticity limitations.
