@@ -1911,3 +1911,4 @@ _[Checkpoint: 6a1a2c34 — Moved task-aware smart recall to h5i recall context s
 [03:48:25] THINK: Keep i5h narrower than general agent RPC protocols such as A2A: use an immutable Git-backed event log with explicit derived lifecycle semantics over mutable per-message status, because union merge must remain deterministic under offline concurrent sends.
 [03:48:25] NOTE: RISK: docs/i5h-protocol.md calls id a stable content ID without defining derivation or collision handling; same ID with divergent payloads must not silently dedupe.
 [03:48:25] OBSERVE: read doc/i5h-protocol.md
+[03:48:25] OBSERVE: read docs/i5h-protocol.md
