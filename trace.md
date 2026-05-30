@@ -2273,3 +2273,4 @@ _[Checkpoint: 6a1b31b8 — wrote newtest.txt; wrote newtest.txt]_
 [18:52:46] THINK: Disclosure risk has TWO parts: (1) secrets in bodies → reuse secrets.rs rule pack but need a NEW redact_text(text)->String (redact() is private, only builds previews; scan_text returns findings w/ line#s, no in-place substitution). (2) internal chatter/paths/errors → mitigated by gating which kinds get body excerpts. Endorse Codex's typed-thread default: REVIEW_REQUEST/RISK/HANDOFF/ASK+replies get redacted one-line excerpt; FYI/free-text get metadata-only; --msg-bodies opt-in for full. Same renderer for pr body and pr post (body must preview what post publishes).
 [18:53:17] OBSERVE: searched body|pr for "pr"
 [18:53:17] OBSERVE: read src/pr.rs
+[18:53:17] OBSERVE: read src/msg.rs
