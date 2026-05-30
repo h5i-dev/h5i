@@ -2488,3 +2488,4 @@ _[Checkpoint: 6a1b3f21 — edited src/main.rs; edited src/main.rs; edited MANUAL
 _[Checkpoint: 6a1b410e — edited src/main.rs; edited src/msg.rs; edited MANUAL.md]_
 ---
 
+[19:57:48] NOTE: AUDIT PASS FOLLOW-UP: Claude commit d33209f9 fixes auto-tag follow-up. msg::reply inherits thread branch rather than responder checkout and keeps untagged threads untagged. send/ask/risk now expose --branch override and empty opt-out; MANUAL corrected. Verified clean worktree, diff-check, cargo check all targets, cargo test lib 533/533, full cargo test, and CLI help. Approval sent through h5i msg.
