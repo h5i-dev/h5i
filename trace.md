@@ -2318,3 +2318,4 @@ _[Checkpoint: 6a1b3247 — session ended (auto-checkpoint)]_
 [18:57:10] OBSERVE: read src/pr.rs
 [18:57:22] OBSERVE: read src/ctx.rs
 [18:57:55] THINK: Implementation plan locked. Integration points: secrets.rs add pub redact_text (reuse compiled_rules/STOPLIST/keywords_match/shannon_entropy); msg.rs add pub threads_for_branch(repo,branch,max)->(Vec<PrThread>,total) using read_messages+thread_root grouping; pr.rs add MsgOptions struct + render_coordination_section, wire into render_body_with_style after DAG/before per-commit; main.rs add --no-msg/--msg-bodies/--msg-limit to Post+Body. branch via ctx::current_git_branch. Excerpt pipeline: redact_text -> first non-empty line -> truncate 200 -> sanitize_display -> md_escape.
+[18:58:27] ACT: edited src/secrets.rs
