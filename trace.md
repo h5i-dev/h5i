@@ -2115,3 +2115,4 @@ _[Checkpoint: 6a1ae483 — wrote i5h-msg-two-sessions-todo.md; wrote MEMORY.md; 
 [13:57:31] OBSERVE: read tests/msg_integration.rs
 [13:58:33] OBSERVE: read tests/msg_integration.rs
 [13:59:58] ACT: Added 5 realistic e2e msg tests (tests/msg_integration.rs, now 35 integration tests): watch-non-destructive (regression for the fixed bug), 3-agent per-identity cursor isolation, broadcast per-recipient read-state, union-merge dedup of shared base + re-pull idempotency, structured-fields survive divergent merge. All pass.
+[14:00:08] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/MEMORY.md): deliberately chose (the heavier machinery is in the doc's "Deferred" table). So the doc's "grow-only set (G-Set) CRDT" claim is **accurate and earned*…
