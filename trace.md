@@ -2288,3 +2288,4 @@ _[Checkpoint: 6a1b31b8 — wrote newtest.txt; wrote newtest.txt]_
 _[Checkpoint: 6a1b321d — session ended (auto-checkpoint)]_
 ---
 
+[18:53:27] OBSERVE: read bm3oat7zn.output
