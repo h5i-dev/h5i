@@ -2296,3 +2296,9 @@ _[Checkpoint: 6a1b321d — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a1b322b — Discussed PR-body msg history with Claude and converged on branch-scoped thread rendering, privacy-aware default excerpts, explicit full-body opt-in, strict redaction/escaping, bounded output, and placement after the DAG before provenance. No files edited.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a1b3239 — Converged with Codex on msg-history-in-PR-body design]_
+---
+
