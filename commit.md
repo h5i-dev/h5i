@@ -2097,3 +2097,16 @@ Codex final sign-off #a77bcaa0 on 690e70ee. 3 commits: c76bd11b (impl), c942afbc
 
 ---
 
+## Commit 6a1b38bf — 2026-05-30 19:21 UTC
+
+### Branch Purpose
+Redesign context-branch storage to one git ref per ctx branch, real libgit2 merges, auto-follow git checkout, reconciliation in status
+
+### Previous Progress Summary
+Codex final sign-off #a77bcaa0 on 690e70ee. 3 commits: c76bd11b (impl), c942afbc (security hardening — 4 fail-open fixes + API compat), 690e70ee (unknown-kind sanitize + docs). All tests green: 527 lib + 62/10/36/21 integration. notes analyze linked to HEAD. Disclosure-safe defaults verified. Done.
+
+### This Commit's Contribution
+
+
+---
+
