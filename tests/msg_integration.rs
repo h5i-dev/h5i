@@ -733,3 +733,124 @@ fn hook_emits_unread_then_clears() {
     let hook2 = out_str(&a.h5i_ok(&["msg", "hook", "--as", "dev"]));
     assert!(hook2.trim().is_empty(), "hook should be silent now: {hook2}");
 }
+
+// ─── realistic multi-agent + read-state regressions ──────────────────────────
+
+#[test]
+fn watch_is_non_destructive_does_not_consume_unread() {
+    // Regression: `h5i msg watch` (a passive dashboard) used to call inbox with
+    // advance=true every tick, so watching as an identity silently consumed that
+    // identity's unread mail before the Stop hook / `inbox` could surface it.
+    // (This is the bug a side-terminal `watch` as `claude` actually hit.)
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "send", "--from", "codex", "claude", "please review auth"]);
+
+    // Watching one tick DISPLAYS the message…
+    let w = out_str(&a.h5i_as("claude", &["msg", "watch", "--once", "--plain"]));
+    assert!(w.contains("please review auth"), "watch did not show the message: {w}");
+
+    // …but does NOT consume it: an explicit inbox read still delivers it.
+    let inbox = out_str(&a.h5i_as("claude", &["msg", "inbox"]));
+    assert!(
+        inbox.contains("please review auth"),
+        "watch consumed unread mail (read-state regression): {inbox}"
+    );
+
+    // The explicit read is what advances the cursor.
+    let inbox2 = out_str(&a.h5i_as("claude", &["msg", "inbox"]));
+    assert!(inbox2.contains("No new messages"), "inbox did not advance: {inbox2}");
+}
+
+#[test]
+fn three_agents_have_independent_read_state_in_one_clone() {
+    // claude, codex, reviewer share one clone (the realistic setup). Each has its
+    // own per-identity cursor, so one agent reading its inbox must never consume
+    // another's.
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "send", "--from", "claude", "codex", "codex task"]);
+    a.h5i_ok(&["msg", "send", "--from", "claude", "reviewer", "reviewer task"]);
+
+    // codex reads its inbox — sees only its own, consumes only its own.
+    let cx = out_str(&a.h5i_ok(&["msg", "inbox", "--as", "codex"]));
+    assert!(cx.contains("codex task"), "codex missing its task: {cx}");
+    assert!(!cx.contains("reviewer task"), "codex saw reviewer's mail: {cx}");
+
+    // reviewer's inbox is untouched by codex's read.
+    let rv = out_str(&a.h5i_ok(&["msg", "inbox", "--as", "reviewer"]));
+    assert!(rv.contains("reviewer task"), "reviewer lost its mail after codex read: {rv}");
+
+    // Both cursors are now independently advanced.
+    assert!(out_str(&a.h5i_ok(&["msg", "inbox", "--as", "codex"])).contains("No new"));
+    assert!(out_str(&a.h5i_ok(&["msg", "inbox", "--as", "reviewer"])).contains("No new"));
+}
+
+#[test]
+fn broadcast_is_unread_independently_per_recipient() {
+    // A broadcast fans out to every non-sender, and each recipient's read-state
+    // is independent — one reading it must not mark it read for the others.
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "send", "--from", "claude", "all", "standup in 5"]);
+
+    // codex reads (and consumes) the broadcast.
+    assert!(
+        out_str(&a.h5i_ok(&["msg", "inbox", "--as", "codex"])).contains("standup in 5"),
+        "codex did not receive broadcast"
+    );
+    // reviewer still sees it — read-state did not leak across recipients.
+    assert!(
+        out_str(&a.h5i_ok(&["msg", "inbox", "--as", "reviewer"])).contains("standup in 5"),
+        "broadcast read-state leaked across recipients"
+    );
+    // The sender never receives its own broadcast.
+    assert!(out_str(&a.h5i_ok(&["msg", "inbox", "--as", "claude"])).contains("No new"));
+}
+
+#[test]
+fn union_merge_dedups_the_shared_base_message() {
+    // The common-ancestor message exists on BOTH diverged sides; the union-merge
+    // must keep exactly one copy (G-Set idempotency), and re-pulling stays a no-op.
+    let (_root, a, b) = two_clones();
+    a.h5i_ok(&["msg", "send", "--from", "alice", "bob", "BASE"]);
+    a.h5i_ok(&["share", "push"]);
+    b.h5i_ok(&["share", "pull"]); // both clones now hold BASE
+
+    // Diverge: each sends while "offline".
+    a.h5i_ok(&["msg", "send", "--from", "alice", "bob", "X"]);
+    b.h5i_ok(&["msg", "send", "--from", "carol", "bob", "Y"]);
+    a.h5i_ok(&["share", "push"]);
+    b.h5i_ok(&["share", "pull"]); // B union-merges
+
+    let log = b.msg_log();
+    assert_eq!(log.matches(r#""body":"BASE""#).count(), 1, "BASE duplicated by merge: {log}");
+    assert!(log.contains(r#""body":"X""#) && log.contains(r#""body":"Y""#), "lost a side: {log}");
+
+    // Re-pulling when already converged adds nothing.
+    b.h5i_ok(&["share", "pull"]);
+    assert_eq!(b.msg_log().matches(r#""body":"BASE""#).count(), 1, "re-pull duplicated BASE");
+}
+
+#[test]
+fn structured_fields_survive_divergent_union_merge() {
+    // A rich REVIEW_REQUEST (kind + branch + focus + risk) must survive a
+    // cross-clone union-merge byte-for-byte, not just the body.
+    let (_root, a, b) = two_clones();
+    a.h5i_ok(&["msg", "send", "--from", "alice", "bob", "base"]);
+    a.h5i_ok(&["share", "push"]);
+    b.h5i_ok(&["share", "pull"]);
+
+    // A files a structured review while offline; B sends something concurrently.
+    a.h5i_ok(&[
+        "msg", "review", "--from", "alice",
+        "--branch", "auth", "--focus", "src/auth.rs", "--risk", "expiry edge cases",
+        "bob", "check token refresh",
+    ]);
+    b.h5i_ok(&["msg", "send", "--from", "carol", "bob", "meanwhile"]);
+    a.h5i_ok(&["share", "push"]);
+    b.h5i_ok(&["share", "pull"]); // union-merge on B
+
+    let log = b.msg_log();
+    assert!(log.contains(r#""kind":"REVIEW_REQUEST""#), "kind lost in merge: {log}");
+    assert!(log.contains(r#""branch":"auth""#), "branch lost in merge: {log}");
+    assert!(log.contains("src/auth.rs"), "focus lost in merge: {log}");
+    assert!(log.contains("expiry edge cases"), "risk lost in merge: {log}");
+}
