@@ -2019,3 +2019,16 @@ Agreed design for h5i share pr body to include i5h msg history. WHAT: branch-sco
 
 ---
 
+## Commit 6a1b3585 — 2026-05-30 19:07 UTC
+
+### Branch Purpose
+Redesign context-branch storage to one git ref per ctx branch, real libgit2 merges, auto-follow git checkout, reconciliation in status
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Added: secrets::redact_text (in-place secret scrub reusing rule pack); msg::threads_for_branch (exact-branch + thread-closure selection, capped, returns total); pr.rs MsgOptions + render_coordination_section (collapsible, after DAG/before provenance, git-proof line, 🟡/✅ glyphs, focus/risk/priority chips, review-typed excerpt vs metadata-only FYI, md_escape+sanitize+redact pipeline); main.rs --no-msg/--msg-bodies/--msg-limit on pr post+body. 9 new tests (redact, escape/injection, excerpt-first-line, kind-gating, FYI-hidden, branch-filter+closure, cap, empty-omit). All 521 lib tests pass. Smoke-tested in scratch repo: secret redacted to ‹redacted›, --no-msg suppresses.
+
+---
+
