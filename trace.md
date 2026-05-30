@@ -1822,3 +1822,4 @@ _[Checkpoint: 6a19d2b4 — edited README.md; edited README.md; edited Cargo.toml
 [00:00:14] OBSERVE: searched src/functions/*.ts for "src/mcp/server.ts"
 [00:00:14] OBSERVE: read MANUAL.md
 [00:00:14] OBSERVE: read MANUAL.md
+[00:00:14] OBSERVE: searched src/ctx.rs for "search|smart|BM25|graph|lesson|confidence|retention|relevant|pack|prompt|Mcp|resources|tools""
