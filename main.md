@@ -268,11 +268,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Fixed cross-agent identity-flip in shared msg clone
 - [x] Fixed identity-flip in shared clone. src/msg.rs: (1) added known_agents() helper (scans cursors/+views/ dirs + stored id…
 - [x] Fixed identity-flip in shared clone. src/msg.rs: (1) added known_agents() helper (scans cursors/+views/ dirs + stored id…
+- [x] wrote newtest.txt; wrote newtest.txt
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-30 18:51 UTC] `improve-i5h`: wrote newtest.txt; wrote newtest.txt
 - [2026-05-30 18:48 UTC] `improve-i5h`: Fixed identity-flip in shared clone. src/msg.rs: (1) added known_agents() helper (scans cursors/+views/ dirs + stored id…
 - [2026-05-30 18:47 UTC] `improve-i5h`: Fixed identity-flip in shared clone. src/msg.rs: (1) added known_agents() helper (scans cursors/+views/ dirs + stored id…
 - [2026-05-30 18:44 UTC] `improve-i5h`: Fixed cross-agent identity-flip in shared msg clone
