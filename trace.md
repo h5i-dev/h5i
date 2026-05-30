@@ -2256,3 +2256,4 @@ _[Checkpoint: 6a1b30a8 — Fixed identity-flip in shared clone. src/msg.rs: (1) 
 _[Checkpoint: 6a1b3119 — Fixed identity-flip in shared clone. src/msg.rs: (1) added known_agents() helper (scans cursors/+views/ dirs + stored id…]_
 ---
 
+[18:49:57] OBSERVE: read src/pr.rs
