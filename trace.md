@@ -2181,3 +2181,4 @@ _[Checkpoint: 6a1af217 — Continued usefulness-first i5h review after Claude in
 _[Checkpoint: 6a1af368 — edited docs/i5h-protocol.md; edited docs/i5h-protocol.md; Split docs/i5h-protocol.md (738→~620 normative spec) + new doc…]_
 ---
 
+[14:26:19] OBSERVE: read docs/i5h-design-notes.md
