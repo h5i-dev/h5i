@@ -2075,3 +2075,4 @@ _[Checkpoint: 6a1ae0f3 — edited src/msg.rs; edited docs/i5h-protocol.md; Fixed
 [13:10:03] ACT: edited src/msg.rs
 [13:10:10] ACT: edited src/msg.rs
 [13:10:32] ACT: edited src/msg.rs
+[13:11:43] ACT: Hardened cursor writes (commit pending). write_agent_seen now re-reads+unions on-disk seen-set (grow-only, fixes lost-update under concurrent same-identity writers) and uses new atomic_write (temp+rename, fixes partial-read reset). write_last_view also atomic. Added test write_agent_seen_unions_with_disk. 629 tests pass. Clarified: multiple files in cursors/ = fine by design (per-identity isolation); risk was concurrent writes to SAME file, now mitigated.
