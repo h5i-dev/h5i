@@ -2082,3 +2082,9 @@ _[Checkpoint: 6a1ae0f3 — edited src/msg.rs; edited docs/i5h-protocol.md; Fixed
 _[Checkpoint: 6a1ae21d — edited src/msg.rs; edited src/msg.rs; Hardened cursor writes (commit pending). write_agent_seen now re-reads+unions on-d…]_
 ---
 
+
+
+---
+_[Checkpoint: 6a1ae28a — edited src/msg.rs; edited src/msg.rs; Hardened cursor writes (commit pending). write_agent_seen now re-reads+unions on-d…]_
+---
+
