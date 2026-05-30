@@ -1956,3 +1956,4 @@ _[Checkpoint: 6a1a614e — wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol
 _[Checkpoint: 6a1a61b6 — wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol.md → v1.1. Added: 'What makes i5h different' intro; 4 new design p…]_
 ---
 
+[04:06:04] THINK: Round 2 goals: (1) research OSS that stores app data in git (git-bug=CRDTs-in-git, Radicle COBs, git-appraise, public-inbox=mailing-lists-in-git, git-ssb, Dolt, Fossil) to JUSTIFY why-git; (2) add a strong 'Why Git' section; (3) user warns 'truly useful, not just complicated' → be willing to CUT/tier the v1.1 machinery, lead with minimal useful core; (4) get codex feedback this time.
