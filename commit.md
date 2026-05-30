@@ -1759,3 +1759,16 @@ Diagnosed h5i msg read-state bug (Stop-hook advance=true consumes cursor). Folde
 
 ---
 
+## Commit 6a1ae036 — 2026-05-30 13:03 UTC
+
+### Branch Purpose
+Redesign context-branch storage to one git ref per ctx branch, real libgit2 merges, auto-follow git checkout, reconciliation in status
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+watch made non-destructive; deliver-then-ack for hook+codex; test added; verified e2e.
+
+---
+

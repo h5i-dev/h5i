@@ -2052,3 +2052,9 @@ _[Checkpoint: 6a1adea6 — edited docs/i5h-protocol.md; edited docs/i5h-protocol
 [13:01:56] ACT: edited src/msg.rs
 [13:03:38] ACT: edited docs/i5h-protocol.md
 [13:03:50] ACT: Fixed h5i msg read-state bug (commits 116f6621 code + doc). Root cause: watch called inbox(advance=true) every tick → passive dashboard destructively consumed unread mail from shared per-agent cursor before hook/inbox surfaced it; hook+codex delivery also advanced-before-emit. Fix: watch now peek(advance=false)+in-memory dedup (never touches persistent cursor); added msg::mark_seen(); Stop hook + deliver_codex_inbox now deliver-then-ack (peek→emit→mark_seen). Added test peek_then_mark_seen_equals_advance. All 628 tests pass; verified e2e in /tmp (watch no longer consumes). Updated doc read-state rule.
+
+
+---
+_[Checkpoint: 6a1ae036 — h5i msg read-state bug fixed]_
+---
+
