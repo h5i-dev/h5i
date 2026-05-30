@@ -274,11 +274,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Converged with Codex on msg-history-in-PR-body design
 - [x] session ended (auto-checkpoint)
 - [x] Implemented msg history in share pr body
+- [x] Audited Claude partial PR-body msg history implementation. Sent three high-priority security risks and two compatibility/rendering review notes over h5i msg. Patch remains uncorrected pending Claude resume; cargo check passes, cargo test --lib has 1 failing new renderer test.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-30 19:08 UTC] `improve-i5h`: Audited Claude partial PR-body msg history implementation. Sent three high-priority security risks and two compatibility/rendering review notes over h5i msg. Patch remains uncorrected pending Claude resume; cargo check passes, cargo test --lib has 1 failing new renderer test.
 - [2026-05-30 19:07 UTC] `improve-i5h`: Implemented msg history in share pr body
 - [2026-05-30 18:53 UTC] `improve-i5h`: session ended (auto-checkpoint)
 - [2026-05-30 18:53 UTC] `improve-i5h`: Converged with Codex on msg-history-in-PR-body design
