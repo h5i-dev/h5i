@@ -2070,3 +2070,4 @@ _[Checkpoint: 6a1ae046 — edited src/msg.rs; edited docs/i5h-protocol.md; Fixed
 _[Checkpoint: 6a1ae0f3 — edited src/msg.rs; edited docs/i5h-protocol.md; Fixed h5i msg read-state bug (commits 116f6621 code + doc). Root cause: …]_
 ---
 
+[13:09:19] OBSERVE: read src/msg.rs
