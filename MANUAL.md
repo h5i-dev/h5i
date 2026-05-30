@@ -514,9 +514,14 @@ The comment renders, for each AI commit:
 Below the reasoning DAG, the comment folds in the cross-agent message threads
 (`refs/h5i/msg`, see [`h5i msg`](#h5i-msg)) that are **relevant to this branch** —
 a thread is included when at least one of its messages was tagged with the PR
-branch (e.g. `h5i msg review --branch <b> …`), and the whole thread (including
-replies that omitted the branch) travels with it. The section is collapsed by
-default and self-omits when no branch-relevant threads exist.
+branch, and the whole thread (including replies tagged for another branch or
+none) travels with it. The section is collapsed by default and self-omits when
+no branch-relevant threads exist.
+
+Messages are **auto-tagged with the sender's current git branch**, so a normal
+back-and-forth conducted while working on the branch is captured without any
+extra flags. Pass `--branch <b>` (on `review`/`risk`/`handoff`) to tag for a
+different branch, or `--branch ""` to leave a message untagged.
 
 Because a PR comment is published, message text is treated as untrusted and
 disclosure-safe by default:

@@ -1056,7 +1056,7 @@ enum MsgCommands {
         body: Vec<String>,
         #[arg(long)]
         from: Option<String>,
-        /// Git branch to review.
+        /// Git branch to review (default: current branch; pass "" to leave untagged).
         #[arg(long)]
         branch: Option<String>,
         /// File/symbol/test to inspect first (repeatable).
@@ -1093,6 +1093,7 @@ enum MsgCommands {
         body: Vec<String>,
         #[arg(long)]
         from: Option<String>,
+        /// Git branch being handed off (default: current branch; pass "" to leave untagged).
         #[arg(long)]
         branch: Option<String>,
         /// h5i context branch relevant to the handoff.

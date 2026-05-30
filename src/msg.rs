@@ -308,6 +308,18 @@ pub fn send_msg(
         .unwrap_or_else(|| infer_kind(tag.as_deref(), to));
     let thread_id = opts.thread_id.or_else(|| opts.reply_to.clone());
 
+    // Auto-tag the sender's current git branch unless overridden. This is what
+    // makes the PR-body coordination section (which selects threads by branch)
+    // capture a conversation without every message having to pass `--branch`.
+    //   - explicit non-empty branch  → kept as-is
+    //   - explicit empty (`--branch ""`) → opt out, stays untagged
+    //   - absent → the current branch (or None on a detached/unborn HEAD)
+    let branch = match opts.branch {
+        Some(b) if b.trim().is_empty() => None,
+        Some(b) => Some(b),
+        None => current_branch(repo),
+    };
+
     let msg = Message {
         id,
         ts,
@@ -321,7 +333,7 @@ pub fn send_msg(
         thread_id,
         priority: opts.priority.map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty()),
         status: opts.status.map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty()),
-        branch: opts.branch.filter(|s| !s.is_empty()),
+        branch,
         context_branch: opts.context_branch.filter(|s| !s.is_empty()),
         focus: opts.focus.into_iter().filter(|s| !s.is_empty()).collect(),
         risk: opts.risk.filter(|s| !s.is_empty()),
@@ -340,6 +352,19 @@ pub fn send_msg(
         write_identity(h5i_root, from)?;
     }
     Ok(msg)
+}
+
+/// The sender's current git branch, or `None` on a detached or unborn HEAD.
+///
+/// Deliberately uses `repo.head()` (not a HEAD-file fallback): if we aren't on a
+/// real branch, a message is left untagged rather than guessing — auto-tagging
+/// is a convenience, not something to fabricate.
+fn current_branch(repo: &Repository) -> Option<String> {
+    repo.head()
+        .ok()?
+        .shorthand()
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
 }
 
 /// Append `msg` to `refs/h5i/msg` with compare-and-swap semantics: build the
@@ -1778,5 +1803,71 @@ mod tests {
         let (threads, total) = threads_for_branch(&repo, "nonexistent", 12);
         assert!(threads.is_empty());
         assert_eq!(total, 0);
+    }
+
+    /// Put the fixture repo on a real (born) branch with one commit, so
+    /// `repo.head().shorthand()` resolves — needed to exercise auto-tagging.
+    fn commit_on_branch(repo: &Repository, branch: &str) {
+        repo.set_head(&format!("refs/heads/{branch}")).unwrap();
+        let sig = repo.signature().unwrap();
+        let tree = {
+            let mut idx = repo.index().unwrap();
+            repo.find_tree(idx.write_tree().unwrap()).unwrap()
+        };
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+    }
+
+    #[test]
+    fn send_auto_tags_current_branch() {
+        let (_d, repo, root) = fixture();
+        commit_on_branch(&repo, "feature-x");
+        // Plain send (no branch opt) must inherit the sender's current branch.
+        let m = send(&repo, &root, "alice", "bob", "hi", None).unwrap();
+        assert_eq!(m.branch.as_deref(), Some("feature-x"));
+        // And it's selectable for that branch's PR body.
+        let (threads, total) = threads_for_branch(&repo, "feature-x", 12);
+        assert_eq!(total, 1);
+        assert_eq!(threads.len(), 1);
+    }
+
+    #[test]
+    fn explicit_branch_overrides_auto_tag() {
+        let (_d, repo, root) = fixture();
+        commit_on_branch(&repo, "feature-x");
+        let m = send_msg(
+            &repo,
+            &root,
+            "alice",
+            "bob",
+            "hi",
+            SendOpts { branch: Some("other".into()), ..Default::default() },
+        )
+        .unwrap();
+        assert_eq!(m.branch.as_deref(), Some("other"));
+    }
+
+    #[test]
+    fn empty_branch_opts_out_of_auto_tag() {
+        let (_d, repo, root) = fixture();
+        commit_on_branch(&repo, "feature-x");
+        let m = send_msg(
+            &repo,
+            &root,
+            "alice",
+            "bob",
+            "hi",
+            SendOpts { branch: Some("".into()), ..Default::default() },
+        )
+        .unwrap();
+        assert_eq!(m.branch, None, "explicit empty branch must opt out");
+    }
+
+    #[test]
+    fn unborn_head_leaves_branch_untagged() {
+        // The default fixture has no commit (unborn HEAD): auto-tag must yield
+        // None rather than fabricating a branch name from the HEAD file.
+        let (_d, repo, root) = fixture();
+        let m = send(&repo, &root, "alice", "bob", "hi", None).unwrap();
+        assert_eq!(m.branch, None);
     }
 }
