@@ -2170,3 +2170,4 @@ _[Checkpoint: 6a1af217 — Continued usefulness-first i5h review after Claude in
 [14:25:44] THINK: Let me set up, check the messaging channel properly (read-state is fixed now), and review the doc's current state before deciding what genuinely adds value.
 [14:25:44] THINK: " Let me run a **fresh** research sweep on ground I haven't covered (how today's LLM multi-agent frameworks actually pass messages, and the durable-audit/"receipts" angle), and ask codex for a final review pass.
 [14:25:44] THINK: Let me record this and act on the two highest-value, user-aligned items: **split the doc** (slim normative spec + design notes) and **narrow the claims** Codex flagged.
+[14:25:44] THINK: I'll truncate the spec at line 619 (removing the duplicated References + README, now in the design notes):
