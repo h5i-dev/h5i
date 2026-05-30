@@ -2210,3 +2210,4 @@ _[Checkpoint: 6a1af4c0 — edited src/main.rs; edited tests/msg_integration.rs; 
 [18:21:20] OBSERVE: read src/msg.rs
 [18:21:30] OBSERVE: read src/msg.rs
 [18:22:30] OBSERVE: read idrefs.txt
+[18:24:05] OBSERVE: read settings.txt
