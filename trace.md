@@ -1820,3 +1820,4 @@ _[Checkpoint: 6a19d2b4 — edited README.md; edited README.md; edited Cargo.toml
 [00:00:14] OBSERVE: read ROADMAP.md
 [00:00:14] OBSERVE: read DESIGN.md
 [00:00:14] OBSERVE: searched src/functions/*.ts for "src/mcp/server.ts"
+[00:00:14] OBSERVE: read MANUAL.md
