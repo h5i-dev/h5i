@@ -2222,3 +2222,4 @@ _[Checkpoint: 6a1af4c0 — edited src/main.rs; edited tests/msg_integration.rs; 
 [18:41:14] ACT: edited src/main.rs
 [18:41:17] OBSERVE: read src/msg.rs
 [18:42:38] ACT: Fixed identity-flip in shared clone. src/msg.rs: (1) added known_agents() helper (scans cursors/+views/ dirs + stored identity); (2) resolve_identity now refuses the shared stored-identity fallback when >1 known agent (returns H5iError::Metadata) so sends/replies (which use ?) error out; (3) send_msg only persists identity in solo clones (no shared-slot churn); (4) new test identity_resolution_refuses_shared_stored_in_multi_agent_clone. src/main.rs: bare 'h5i msg' dashboard now resolves env-first via resolve_identity (was read_identity = stored-only, ignoring $H5I_AGENT) and warns+renders-without-name on ambiguity. Removed stale .git/.h5i/msg/identity (=codex). Verified: env=claude->claude; env-unset->warn(read)/error(send); 74 msg tests + full suite pass.
+[18:43:00] OBSERVE: read src/msg.rs
