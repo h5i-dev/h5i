@@ -412,11 +412,12 @@ behaviors worth implementing without touching the message format:
 - **Clear turn-vs-watch semantics** — `watch` is a human dashboard showing a
   recent window; `inbox`/`history` are the authoritative per-agent views.
 
-> ⚠ **Known issue (read-state):** delivery mode and manual `inbox`/`wait` share
-> one per-agent seen-set, so whichever consumer runs first (e.g. a Stop hook with
-> `advance = true`) can mark messages read before another surfaces them. Read
-> state SHOULD only advance once a message has actually been shown to its agent,
-> and `history` (which ignores seen-state) is the ground truth for "what exists."
+> **Read-state rule (deliver-then-ack):** all consumers share one per-agent
+> seen-set, so a consumer MUST only advance it *after* a message has actually
+> been surfaced to the agent — peek, render, then acknowledge. Passive views
+> (`watch`, the dashboard, `wait`) MUST NOT advance read-state at all; only an
+> explicit read (`inbox`) or a confirmed delivery (the Stop hook) does.
+> `history`, which ignores seen-state, is the ground truth for "what exists."
 
 ## Security
 
