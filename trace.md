@@ -2122,3 +2122,4 @@ _[Checkpoint: 6a1ae483 — wrote i5h-msg-two-sessions-todo.md; wrote MEMORY.md; 
 _[Checkpoint: 6a1aed68 — wrote MEMORY.md; Doc updated for read-state fix: expanded read-state rule (per-identity local cursors, grow-only union-o…]_
 ---
 
+[14:09:37] THINK: Re-issued improve-i5h-doc request. Doc already through 3 rounds (research v1.1 → simplify+git-justify → codex-review corrections). Plan: (1) check inbox for new codex msgs (read-state now fixed); (2) fresh focused research on NEW angles + deepen why-git + 2025/26 agent-coordination OSS; (3) ask codex for final-pass review; (4) targeted improvements only, NO bloat (user repeats 'truly useful not complicated'). Watch for codex's earlier unfolded ideas: 'coordination receipts' positioning (#16), A2A 1.0.0 spec URL (#11), Agora routine-digest-in-meta (#10).
