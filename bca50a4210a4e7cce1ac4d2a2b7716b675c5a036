@@ -1,0 +1,1 @@
+{"git_oid":"bca50a4210a4e7cce1ac4d2a2b7716b675c5a036","parent_oid":"7426d314800cd3f1a4bca21eafcacf546b4a1562","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"make two-session case a future TODO; update i5h-protocol.md for the fix","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-05-30T13:16:56.320018492Z"}
