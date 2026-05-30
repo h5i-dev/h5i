@@ -1936,3 +1936,9 @@ _[Checkpoint: 6a1a6015 — i5h-protocol.md upgraded to v1.1 (research-grounded)]
 _[Checkpoint: 6a1a602a — edited MANUAL.md; wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol.md → v1.1. Added: 'What makes i5h different' int…]_
 ---
 
+
+
+---
+_[Checkpoint: 6a1a60ef — Reviewed Claude's expanded docs/i5h-protocol.md against A2A, MCP, FIPA/KQML, Agora, RFC threading/I-JSON/UUID/canonicalization, CRDT and Git CAS patterns. Sent two rounds of h5i advice. Recommended retain immutable lifecycle events, FAILURE/NOT_UNDERSTOOD, compact Git-native Agent Cards, explicit at-least-once semantics, malformed-record quarantine and resource limits; defer or narrow HLC, strict seq/prev chains, signatures, Contract-Net and exactly-once claims until their state/concurrency/trust models are specified.]_
+---
+
