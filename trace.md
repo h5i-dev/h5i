@@ -2290,3 +2290,9 @@ _[Checkpoint: 6a1b321d — session ended (auto-checkpoint)]_
 
 [18:53:27] OBSERVE: read bm3oat7zn.output
 [18:53:28] THINK: For h5i share pr body msg history, use exact current-branch selection plus thread closure over global history because PR output must stay relevant and predictable. Render a collapsed Agent coordination section after the DAG and before per-commit provenance. Default to metadata plus redacted first-non-empty-line excerpts only for typed review coordination threads; keep FYI/free-text metadata-only because injection escaping does not prevent disclosure. Add --no-msg and explicit --msg-bodies opt-in for all redacted bodies. Reuse the secrets rule pack via secrets::redact_text, redact before truncate, then sanitize and Markdown/HTML escape.
+
+
+---
+_[Checkpoint: 6a1b322b — Discussed PR-body msg history with Claude and converged on branch-scoped thread rendering, privacy-aware default excerpts, explicit full-body opt-in, strict redaction/escaping, bounded output, and placement after the DAG before provenance. No files edited.]_
+---
+
