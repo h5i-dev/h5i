@@ -1928,3 +1928,4 @@ _[Checkpoint: 6a1a2c34 — Moved task-aware smart recall to h5i recall context s
 _[Checkpoint: 6a1a6015 — i5h-protocol.md upgraded to v1.1 (research-grounded)]_
 ---
 
+[03:57:14] THINK: Review revised i5h draft conservatively: retain append-only G-Set semantics, explicit lifecycle replies, compact offline discovery, and untrusted-input rules; defer HLC, strict per-agent feed chains, and signatures until their state, concurrency, and trust models are specified.
