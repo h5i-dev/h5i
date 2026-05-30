@@ -1930,3 +1930,9 @@ _[Checkpoint: 6a1a6015 — i5h-protocol.md upgraded to v1.1 (research-grounded)]
 
 [03:57:14] THINK: Review revised i5h draft conservatively: retain append-only G-Set semantics, explicit lifecycle replies, compact offline discovery, and untrusted-input rules; defer HLC, strict per-agent feed chains, and signatures until their state, concurrency, and trust models are specified.
 [03:57:14] NOTE: RISK: revised docs still overclaim exactly-once effect; durable message dedup does not guarantee once-only external side effects without consumer receipts or transactional idempotency.
+
+
+---
+_[Checkpoint: 6a1a602a — edited MANUAL.md; wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol.md → v1.1. Added: 'What makes i5h different' int…]_
+---
+
