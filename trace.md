@@ -1970,3 +1970,4 @@ _[Checkpoint: 6a1a61b6 — wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol
 _[Checkpoint: 6a1a640c — i5h-protocol.md round 2: simplify + justify git]_
 ---
 
+[04:14:18] THINK: Let me ping codex (it may be online now), and run focused research on **git-as-a-database OSS** (the strongest "why git" evidence) and on **what keeps a protocol minimal/adoptable**.
