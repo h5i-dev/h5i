@@ -1616,6 +1616,27 @@ h5i context relevant src/repository.rs
 
 ---
 
+### h5i recall context smart
+
+```
+h5i recall context smart --query "<current task>" [--limit <n>]
+```
+
+Recall task-aware prior context without tying the feature to a specific agent. This ranks prior trace snippets and session footprint evidence against the current task and prints the most relevant files to inspect first.
+
+`smart` is off unless you invoke it explicitly. The legacy spelling `h5i context smart --query ...` also works, but the preferred command is under `h5i recall`.
+
+| Option | Description |
+|---|---|
+| `--query <text>` | Task prompt/query to rank prior context against |
+| `--limit <n>` | Maximum recalled file results to show (default: 5) |
+
+```bash
+h5i recall context smart --query "add retry-aware HTTP client" --limit 5
+```
+
+---
+
 ### h5i context pack
 
 ```

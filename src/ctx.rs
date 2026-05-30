@@ -3062,6 +3062,16 @@ pub struct SearchResult {
     pub cochanged_with: Vec<String>,
 }
 
+/// Task-aware recall bundle rendered by session preludes.
+#[derive(Debug, Clone)]
+pub struct SmartRecall {
+    /// Query used to retrieve context. Usually the current task prompt; falls
+    /// back to the branch goal when the caller does not provide one.
+    pub query: String,
+    /// Ranked files and snippets from context traces / session analyses.
+    pub results: Vec<SearchResult>,
+}
+
 /// Tokenise a string into lowercase words, stripping punctuation.
 fn tokenise(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric() && c != '_')
@@ -3226,6 +3236,23 @@ pub fn search(workdir: &Path, query: &str, limit: usize) -> Result<Vec<SearchRes
     results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     results.truncate(limit);
     Ok(results)
+}
+
+/// Retrieve task-aware context for a session prelude.
+///
+/// This is intentionally a thin wrapper over `search`: the feature is opt-in at
+/// the caller, and this function stays deterministic/offline so it is safe to
+/// use in startup paths and tests.
+pub fn smart_recall(workdir: &Path, query: &str, limit: usize) -> Result<SmartRecall, H5iError> {
+    let query = query.trim().to_string();
+    if query.is_empty() || limit == 0 {
+        return Ok(SmartRecall {
+            query,
+            results: vec![],
+        });
+    }
+    let results = search(workdir, &query, limit)?;
+    Ok(SmartRecall { query, results })
 }
 
 /// Pretty-print search results to the terminal.
@@ -5427,6 +5454,48 @@ mod tests {
                 "results should be sorted by descending score"
             );
         }
+    }
+
+    #[test]
+    fn smart_recall_returns_empty_for_blank_query() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "THINK", "retry_client.rs uses exponential backoff", false).unwrap();
+
+        let recall = smart_recall(dir.path(), "   ", 5).unwrap();
+        assert!(recall.results.is_empty(), "blank task query should not recall anything");
+    }
+
+    #[test]
+    fn smart_recall_respects_limit_and_keeps_query() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "THINK", "auth.rs validates tokens with jose", false).unwrap();
+        append_log(dir.path(), "THINK", "middleware.rs wires token validation", false).unwrap();
+
+        let recall = smart_recall(dir.path(), "token validation", 1).unwrap();
+        assert_eq!(recall.query, "token validation");
+        assert_eq!(recall.results.len(), 1, "smart recall must honor the caller's limit");
+        assert!(
+            recall.results[0].file == "auth.rs" || recall.results[0].file == "middleware.rs",
+            "expected a matching file result, got {:?}",
+            recall.results
+        );
+    }
+
+    #[test]
+    fn smart_recall_ranks_task_specific_context() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        append_log(dir.path(), "THINK", "cache.rs handles eviction policy", false).unwrap();
+        append_log(dir.path(), "THINK", "retry_client.rs uses exponential backoff and jitter", false).unwrap();
+
+        let recall = smart_recall(dir.path(), "exponential backoff jitter", 5).unwrap();
+        assert!(!recall.results.is_empty(), "expected task-aware recall results");
+        assert_eq!(recall.results[0].file, "retry_client.rs");
     }
 
     // ── distill_knowledge ─────────────────────────────────────────────────────

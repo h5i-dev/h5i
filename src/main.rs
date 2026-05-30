@@ -1576,6 +1576,16 @@ enum ContextCommands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Recall task-aware prior context for any agent or workflow.
+    Smart {
+        /// Current task prompt/query to rank prior context against
+        #[arg(long)]
+        query: String,
+        /// Maximum recalled file results to show
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2173,6 +2183,29 @@ fn print_shared_context_prelude(workdir: &Path) {
 
     println!();
     println!("[h5i] Use `h5i context show` for full details.");
+}
+
+fn print_smart_recall(recall: &ctx::SmartRecall) {
+    if recall.results.is_empty() {
+        println!("[h5i] Smart recall found no prior context for: {}", recall.query);
+        return;
+    }
+
+    println!("[h5i] Smart recall for task: {}", recall.query);
+    for (idx, result) in recall.results.iter().enumerate() {
+        println!(
+            "  {}. {}  score {:.2}  signal {}",
+            idx + 1,
+            style(&result.file).cyan().bold(),
+            result.score,
+            style(&result.signal).dim()
+        );
+        for snippet in result.snippets.iter().take(2) {
+            let display: String = snippet.chars().take(120).collect();
+            println!("     ↳ {display}");
+        }
+    }
+    println!("  Run `h5i context relevant <file>` before editing a recalled file.");
 }
 
 /// Persisted cursor for [`auto_derive_traces_from_claude_session`].
@@ -6528,6 +6561,14 @@ jq -c '{
                     } else {
                         ctx::print_search_results(&results, &query);
                     }
+                }
+
+                ContextCommands::Smart { query, limit } => {
+                    if !ctx::is_initialized(workdir) {
+                        anyhow::bail!(".h5i-ctx/ not initialized. Run `h5i context init` first.");
+                    }
+                    let recall = ctx::smart_recall(workdir, &query, limit)?;
+                    print_smart_recall(&recall);
                 }
             }
         }

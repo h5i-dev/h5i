@@ -130,6 +130,12 @@ h5i codex sync
 h5i codex finish --summary "implemented retry-aware API client"
 ```
 
+Task-aware context recall is a generic recall command, off unless invoked:
+
+```bash
+h5i recall context smart --query "retry-aware API client" --limit 5
+```
+
 Commit with AI provenance:
 
 ```bash
