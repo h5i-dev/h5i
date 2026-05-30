@@ -2186,3 +2186,4 @@ _[Checkpoint: 6a1af368 — edited docs/i5h-protocol.md; edited docs/i5h-protocol
 [14:26:46] ACT: edited docs/i5h-design-notes.md
 [14:26:55] ACT: edited docs/i5h-design-notes.md
 [14:27:03] ACT: edited docs/i5h-design-notes.md
+[14:27:25] ACT: Applied codex's review (delivered via Stop hook): replaced temporally-unstable framework matrix in design-notes with durable prose contrast (live-orchestration vs offline-receipts) + qualified durability claims; EvoGit→paper framing+cite; CodeCRDT de-asserted 'in-memory' (abstract phrasing); added Open-GAP/GitAgent to landscape. Spec unchanged (619). Replied to codex #0a7a38e6. Split was already done pre-review.
