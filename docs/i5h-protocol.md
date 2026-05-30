@@ -412,12 +412,18 @@ behaviors worth implementing without touching the message format:
 - **Clear turn-vs-watch semantics** — `watch` is a human dashboard showing a
   recent window; `inbox`/`history` are the authoritative per-agent views.
 
-> **Read-state rule (deliver-then-ack):** all consumers share one per-agent
-> seen-set, so a consumer MUST only advance it *after* a message has actually
-> been surfaced to the agent — peek, render, then acknowledge. Passive views
+> **Read-state rule (deliver-then-ack):** read-state is **local and
+> per-identity** — a grow-only set of seen ids per agent (`cursors/<agent>.json`),
+> never pushed. Different agents (`claude`, `codex`, …) use different files and
+> never contend. A consumer MUST only advance its seen-set *after* a message has
+> actually been surfaced — peek, render, then acknowledge. Passive views
 > (`watch`, the dashboard, `wait`) MUST NOT advance read-state at all; only an
 > explicit read (`inbox`) or a confirmed delivery (the Stop hook) does.
-> `history`, which ignores seen-state, is the ground truth for "what exists."
+> Because the set is grow-only, a writer MUST re-read and **union** before
+> writing (and write atomically), so two processes acting as the *same* identity
+> merge instead of clobbering; the worst case is a harmless re-delivery, which
+> at-least-once already permits — never loss. `history`, which ignores
+> seen-state, is the ground truth for "what exists."
 
 ## Security
 
@@ -609,6 +615,7 @@ visible and the door stays open. Adding any of them must clear the
 | **Per-message signatures** (`sig`/`key`, `did:key`, `alg`) | Radicle signed refs, SSB | Authenticity is a real gap (see [Authenticity](#authenticity)) but needs a trust-anchor + signer→identity policy and a canonicalization (RFC 8785). Deferred to a security profile, not shipped half-done. |
 | **Hybrid logical clocks**, **per-agent feed chains**, **`references[]` chains** | (rows above) | Each adds a field without a present payoff; `reply_to` + per-agent seen-IDs already cover threading and read-state at our volumes. |
 | **Large performative taxonomy / ontologies** | FIPA-ACL, KQML | The documented adoption-killer. i5h keeps a tiny kind set and `NOT_UNDERSTOOD` instead. |
+| **Per-session delivery for one identity** — two live sessions both `H5I_AGENT=claude` in one clone (TODO) | maildir per-reader cursors | They share `cursors/claude.json`, so delivery *splits* between them (each sees a slice; no loss/corruption after the deliver-then-ack + atomic-union fix). The model is one agent per identity, so this is an anti-pattern to avoid, not a supported mode. If genuinely needed, track read-state per `(identity, session)`. |
 
 The throughline: i5h prefers what **Git already provides** (history, merge,
 content-addressing) and what **`reply_to` already provides** (causal order) over
