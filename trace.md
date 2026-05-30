@@ -2027,3 +2027,4 @@ _[Checkpoint: 6a1ade94 — i5h-protocol.md round 3: codex review corrections]_
 ---
 
 [12:57:10] THINK: You're right to flag that — let me commit first, then dig into the messaging discrepancy (and read what Codex actually said, since I clearly missed it).
+[12:57:10] THINK: Let me fix one anchor (em dash would break the internal link) and verify all anchors resolve:
