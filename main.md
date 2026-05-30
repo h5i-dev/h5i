@@ -285,11 +285,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/main.rs; edited src/main.rs; edited MANUAL.md
 - [x] edited src/main.rs; edited src/msg.rs; edited MANUAL.md
 - [x] Reviewed Claude follow-up d33209f9 for PR-body message-history branch tagging. Initial reply-pollution blocker and CLI/docs gaps were fixed. Re-review approved after full validation.
+- [x] Option 1 (auto-tag branch on send) complete + Codex-approved
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-30 19:58 UTC] `improve-i5h`: Option 1 (auto-tag branch on send) complete + Codex-approved
 - [2026-05-30 19:57 UTC] `improve-i5h`: Reviewed Claude follow-up d33209f9 for PR-body message-history branch tagging. Initial reply-pollution blocker and CLI/docs gaps were fixed. Re-review approved after full validation.
 - [2026-05-30 19:57 UTC] `improve-i5h`: edited src/main.rs; edited src/msg.rs; edited MANUAL.md
 - [2026-05-30 19:48 UTC] `improve-i5h`: edited src/main.rs; edited src/main.rs; edited MANUAL.md
