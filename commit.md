@@ -2188,3 +2188,16 @@ Codex approval #2286e75b on d33209f9. Two commits: 3a9a006c (auto-tag current br
 
 ---
 
+## Commit 6a1b4175 — 2026-05-30 19:58 UTC
+
+### Branch Purpose
+Redesign context-branch storage to one git ref per ctx branch, real libgit2 merges, auto-follow git checkout, reconciliation in status
+
+### Previous Progress Summary
+Codex approval #2286e75b on d33209f9. Two commits: 3a9a006c (auto-tag current branch in send_msg) + d33209f9 (reply inherits thread branch not checkout; --branch+opt-out added to send/ask/risk; MANUAL fixed). msg::reply centralizes reply semantics. 533 lib tests + full integration green. PR-body coordination section now captures real conversations automatically without per-message --branch.
+
+### This Commit's Contribution
+
+
+---
+
