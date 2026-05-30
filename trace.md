@@ -2450,3 +2450,4 @@ _[Checkpoint: 6a1b3d08 — session ended (auto-checkpoint)]_
 
 [19:40:45] OBSERVE: read src/main.rs
 [19:41:13] OBSERVE: read src/main.rs
+[19:41:24] THINK: Option 1 chosen: auto-tag current git branch on send. Single chokepoint = msg::send_msg (send/ask/reply/ack/done/decline + send_reply all funnel through it). Use repo.head().ok().and_then(shorthand) (NOT ctx::current_git_branch — that reads HEAD file even when unborn and would tag fresh repos). Semantics: explicit --branch X wins; --branch "" (empty) opts out -> None; absent -> auto-tag. Keeps msg.rs tests stable (fixture repo is unborn -> head() errors -> None).
