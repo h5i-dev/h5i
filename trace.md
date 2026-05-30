@@ -1891,3 +1891,4 @@ _[Checkpoint: 6a1a2afb — Implemented opt-in task-aware smart recall for Codex 
 [00:14:39] ACT: edited tests/cli_integration.rs
 [00:14:39] ACT: edited README.md
 [00:14:39] ACT: edited AGENTS.md
+[00:14:39] ACT: edited MANUAL.md
