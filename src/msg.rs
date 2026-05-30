@@ -562,7 +562,8 @@ pub fn write_last_view(h5i_root: &Path, agent: &str, ids: &[String]) -> Result<(
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
     let json = serde_json::to_string_pretty(&serde_json::json!({ "ids": ids }))?;
     let path = agent_view_path(h5i_root, agent);
-    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, path))
+    // Atomic replace so `reply <n>` never reads a half-written view file.
+    atomic_write(&path, json.as_bytes()).map_err(|e| H5iError::with_path(e, path))
 }
 
 /// Resolve a 1-based number from `agent`'s last numbered view into a message
@@ -839,9 +840,38 @@ fn write_agent_seen(
 ) -> Result<(), H5iError> {
     let dir = cursors_dir(h5i_root);
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
-    let json = serde_json::to_string_pretty(&serde_json::json!({ "seen": seen }))?;
     let path = agent_cursor_path(h5i_root, agent);
-    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, path))
+    // The seen-set is grow-only, so re-read the current on-disk set and UNION
+    // before writing. Multiple processes can act as the same identity in one
+    // clone (an agent's Stop hook + its own `inbox` calls), and a plain
+    // last-writer-wins overwrite would drop a concurrent writer's additions —
+    // re-delivering already-read mail. Union makes the merge commutative.
+    let mut merged = read_agent_seen(h5i_root, agent).unwrap_or_default();
+    merged.extend(seen.iter().cloned());
+    let json = serde_json::to_string_pretty(&serde_json::json!({ "seen": merged }))?;
+    atomic_write(&path, json.as_bytes()).map_err(|e| H5iError::with_path(e, path))
+}
+
+/// Write `bytes` to `path` atomically: write to a unique temp file in the same
+/// directory, then rename over the target. On POSIX the rename is atomic, so a
+/// concurrent reader never observes a half-written file (a truncated cursor file
+/// would fail to parse and silently reset read-state, re-delivering everything).
+fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let tmp = path.with_extension(format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&tmp, bytes)?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp); // don't leak the temp on failure
+            Err(e)
+        }
+    }
 }
 
 /// Read the legacy shared cursor.json (for one-time migration only).
@@ -1068,6 +1098,25 @@ mod tests {
         assert_eq!(unread_count(&repo, &root, "bob").unwrap(), 0);
         mark_seen(&root, "bob", &ids).unwrap();
         assert_eq!(unread_count(&repo, &root, "bob").unwrap(), 0);
+    }
+
+    #[test]
+    fn write_agent_seen_unions_with_disk() {
+        // Two processes acting as the same identity: A persists {a}; B started
+        // from an empty view and persists {b}. A naive overwrite would drop {a};
+        // the grow-only union-on-write must keep both (no re-delivery of read mail).
+        let (_d, _repo, root) = fixture();
+        let mut a = BTreeSet::new();
+        a.insert("a".to_string());
+        write_agent_seen(&root, "bob", &a).unwrap();
+
+        let mut b = BTreeSet::new();
+        b.insert("b".to_string());
+        write_agent_seen(&root, "bob", &b).unwrap();
+
+        let seen = read_agent_seen(&root, "bob").unwrap();
+        assert!(seen.contains("a"), "concurrent writer's id must survive");
+        assert!(seen.contains("b"));
     }
 
     #[test]
