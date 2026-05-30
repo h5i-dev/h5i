@@ -2431,3 +2431,4 @@ _[Checkpoint: 6a1b38b4 — Feature complete + Codex-approved: msg history in sha
 _[Checkpoint: 6a1b38bf — edited man/man1/h5i.1; edited man/man1/h5i.1; edited README.md]_
 ---
 
+[19:39:15] THINK: The h5i refs (including this whole review conversation) also stay local until you run `h5i share push` — say the word and I'll push, or open a PR.
