@@ -2141,3 +2141,4 @@ _[Checkpoint: 6a1aed68 — wrote MEMORY.md; Doc updated for read-state fix: expa
 [14:17:04] OBSERVE: searched keys|read-union|lock|atomic for "major|quarantine|duplicate"
 [14:17:04] OBSERVE: searched version|quarantine|copied|moved|truncate|best-effort|file for "major|unsupported"
 [14:17:32] OBSERVE: read docs/i5h-protocol.md
+[14:18:14] OBSERVE: read docs/i5h-protocol.md
