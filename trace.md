@@ -2097,3 +2097,9 @@ _[Checkpoint: 6a1ae28a — edited src/msg.rs; edited src/msg.rs; Hardened cursor
 [13:16:56] ACT: Doc updated for read-state fix: expanded read-state rule (per-identity local cursors, grow-only union-on-write, atomic, worst-case re-delivery not loss); added 'two live sessions same H5I_AGENT' to Deferred table as future TODO + saved project memory i5h-msg-two-sessions-todo. Committed.
 [13:17:07] THINK: Good call on both. Let me record the two-sessions case as a future TODO (in the doc's deferred list + a persistent memory) and add a tight read-state note reflecting the fix.
 [13:17:07] NOTE: DEFERRAL (~/Dev/h5i/src/msg.rs): record the two-sessions case as a future TODO (in the doc's deferred list + a persistent memory) and add a tight read-state note reflecting the fix. L…
+
+
+---
+_[Checkpoint: 6a1ae353 — wrote i5h-msg-two-sessions-todo.md; wrote MEMORY.md; Doc updated for read-state fix: expanded read-state rule (per-ident…]_
+---
+
