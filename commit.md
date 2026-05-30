@@ -1694,3 +1694,16 @@ Redesign context-branch storage to one git ref per ctx branch, real libgit2 merg
 
 ---
 
+## Commit 6a1a640c — 2026-05-30 04:14 UTC
+
+### Branch Purpose
+Redesign context-branch storage to one git ref per ctx branch, real libgit2 merges, auto-follow git checkout, reconciliation in status
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Folded git-as-database OSS (justify why-git) + protocol-minimalism research (cut over-engineering). Demoted v1.1 heavy machinery to 'Considered & Deferred'. Done. Pending: codex feedback (offline), user decision to commit.
+
+---
+

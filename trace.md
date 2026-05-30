@@ -1964,3 +1964,9 @@ _[Checkpoint: 6a1a61b6 — wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol
 [04:11:06] THINK: Decision: SIMPLIFY. Restructure doc: lead with tiny strict Core (from/to/body/id/ts/kind+reply_to, must-ignore unknown fields); add strong 'Why Git' section (OSS precedents); keep small kind set + NOT_UNDERSTOOD(graceful-degrade)+FAILURE; keep simple Delivery Semantics (cat_sort_uniq precedent); DEMOTE optional hints (priority/focus/risk/links); MOVE HLC, seq/prev feed chains, references[], Agent-Card capability-negotiation, Contract-Net into 'Considered & Deliberately Deferred' with cited rationale (this is more honest+innovative than bundling them). Lean on git's NATIVE commit/ref signing (Radicle) instead of bespoke per-msg sig as primary. Trim speech-act section + frame FIPA's 20+performatives+ontology as the anti-pattern we avoid.
 [04:13:39] ACT: wrote docs/i5h-protocol.md
 [04:14:04] ACT: Restructured docs/i5h-protocol.md → simpler, git-justified. Major changes: (1) NEW 'The whole protocol in one screen' — 7 required fields lead the doc; (2) NEW 'Why Git?' section w/ OSS precedent table (public-inbox, git-appraise cat_sort_uniq, git-bug, Radicle signed refs) + 6 free benefits + honest limitations (no ref-per-msg, not a query engine, supply-your-own-semantics); (3) NEW 'Design discipline' — RFC6709 must-ignore/few-options, Worse-is-Better, Postel critique, FIPA-ACL-as-anti-pattern, earns-a-place bar; (4) SIMPLIFIED ordering to reply_to + seen-IDs (no HLC); (5) DEMOTED HLC, seq/prev, references[], Agent-Card negotiation, Contract-Net, per-msg signing into NEW 'Considered & Deliberately Deferred' table w/ rationale; (6) Authenticity now leans on git native commit/ref signing (Radicle) not bespoke field; (7) trimmed kind set notes; (8) refreshed References (git-as-DB + minimalism sources). Net: shorter, leads with usefulness, justifies git.
+
+
+---
+_[Checkpoint: 6a1a640c — i5h-protocol.md round 2: simplify + justify git]_
+---
+
