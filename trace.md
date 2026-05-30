@@ -2394,3 +2394,4 @@ _[Checkpoint: 6a1b3603 — edited src/msg.rs; edited src/pr.rs; edited src/pr.rs
 [19:18:06] ACT: edited man/man1/h5i.1
 [19:18:09] OBSERVE: read README.md
 [19:18:15] ACT: edited README.md
+[19:20:28] THINK: Let me start with the redaction fixes in `secrets.
