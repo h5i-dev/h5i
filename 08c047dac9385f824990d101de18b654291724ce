@@ -1,0 +1,1 @@
+{"git_oid":"08c047dac9385f824990d101de18b654291724ce","parent_oid":"116f6621fc1605936104728fb529a458443489ac","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"fix the h5i msg read-state bug","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-05-30T13:03:50.606846989Z"}
