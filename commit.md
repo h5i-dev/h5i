@@ -2006,3 +2006,16 @@ Agreed design for h5i share pr body to include i5h msg history. WHAT: branch-sco
 
 ---
 
+## Commit 6a1b3247 — 2026-05-30 18:53 UTC
+
+### Branch Purpose
+Redesign context-branch storage to one git ref per ctx branch, real libgit2 merges, auto-follow git checkout, reconciliation in status
+
+### Previous Progress Summary
+Agreed design for h5i share pr body to include i5h msg history. WHAT: branch-scoped (exact branch match + full thread closure), collapsed <details> section 'Agent coordination', placed after Reasoning DAG / before per-commit provenance, with refs/h5i/msg tip OID proof line. DEFAULT (disclosure-safe): review-typed threads (REVIEW_REQUEST/RISK/HANDOFF/ASK + typed replies ACK/DONE/DECLINE/BLOCKED) get metadata + ONE redacted excerpt = first non-empty line, ~200 chars; FYI/free-text get metadata-only (no body). Pipeline order: secrets::redact_text -> truncate -> sanitize_display -> markdown/HTML-escape. FLAGS: --no-msg (disable), --msg-bodies (opt into full redacted+sanitized bodies for all threads). Same renderer for pr body and pr post (body previews what post publishes). REDACTOR: add general secrets::redact_text(&str)->String reusing compiled_rules (none exists today; redact() is private, scan_* only return findings). TESTS: injection, branch-filter, empty-omit, elision count, thread grouping, internal-chatter FYI hidden-by-default. Codex is reporting the agreed design to the user; implementation deferred until requested.
+
+### This Commit's Contribution
+
+
+---
+
