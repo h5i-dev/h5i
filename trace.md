@@ -1818,3 +1818,4 @@ _[Checkpoint: 6a19d2b4 — edited README.md; edited README.md; edited Cargo.toml
 [00:00:14] OBSERVE: searched |agentmemory for "|###"
 [00:00:14] OBSERVE: searched .*Args|Subcommand|Context|Recall|Remember|Mcp|hook|serve|search|memory|claim|trace|summary|recap|compress" for "Commands|struct"
 [00:00:14] OBSERVE: read ROADMAP.md
+[00:00:14] OBSERVE: read DESIGN.md
