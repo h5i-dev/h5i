@@ -2199,3 +2199,9 @@ _[Checkpoint: 6a1af3da — edited docs/i5h-design-notes.md; edited docs/i5h-desi
 [14:30:38] OBSERVE: read tests/msg_integration.rs
 [14:30:45] ACT: edited tests/msg_integration.rs
 [14:31:18] ACT: Fixed watch directionality: watch --as me now streams full conversation (from==me||to==me||to==all) from history instead of inbox(peek) incoming-only. Stays non-destructive (reads history, no cursor touch). Added regression test watch_shows_both_directions_not_just_inbox. All tests pass.
+
+
+---
+_[Checkpoint: 6a1af4c0 — edited src/main.rs; edited tests/msg_integration.rs; Fixed watch directionality: watch --as me now streams full conversa…]_
+---
+
