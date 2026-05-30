@@ -508,41 +508,73 @@ pub fn redact_text(text: &str) -> String {
     }
 }
 
-/// Redact one line. Mirrors the per-line matching in [`scan_lines`] but
-/// substitutes the matched span instead of recording a finding. A line that
-/// trips the placeholder [`STOPLIST`] is returned verbatim — those are known
-/// non-secrets (`your-key-here`, `EXAMPLE`, …), and redacting them would be
-/// noise, not protection.
+/// Redact one line. Mirrors the per-line *matching* in [`scan_lines`] but
+/// substitutes every matched span instead of recording a finding.
+///
+/// Redaction is a publication safety control, so it deliberately diverges from
+/// detection in two fail-closed ways:
+///
+/// - **No [`STOPLIST`] early-return.** In detection the stoplist suppresses
+///   placeholder false positives (`your-key-here`, `EXAMPLE`). Applied to
+///   redaction it would be *fail-open*: a line like `example token ghp_<real>`
+///   contains `example`, so the whole line — real credential included — would be
+///   emitted verbatim. We accept the occasional redacted placeholder instead.
+/// - **Every match of every rule is scrubbed**, not just the first per rule, so
+///   two distinct credentials of the same type on one line are both removed.
+///
+/// Matches are collected as byte spans, merged, and the line rebuilt — overlaps
+/// across rules collapse to a single marker.
 fn redact_line(line: &str) -> String {
     let lowered = line.to_ascii_lowercase();
-    if STOPLIST.iter().any(|s| lowered.contains(s)) {
-        return line.to_string();
-    }
-    let mut redacted = line.to_string();
+    let mut spans: Vec<(usize, usize)> = Vec::new();
     for (re, rule) in compiled_rules() {
         if !keywords_match(rule.keywords, &lowered) {
             continue;
         }
-        let Some(caps) = re.captures(line) else {
-            continue;
-        };
-        let span = if let Some(grp) = rule.entropy_group {
-            match caps.get(grp) {
-                Some(m) if shannon_entropy(m.as_str()) >= rule.min_entropy => m.as_str(),
-                _ => continue,
+        for caps in re.captures_iter(line) {
+            let m = if let Some(grp) = rule.entropy_group {
+                match caps.get(grp) {
+                    Some(g) if shannon_entropy(g.as_str()) >= rule.min_entropy => g,
+                    _ => continue,
+                }
+            } else {
+                match caps.get(0) {
+                    Some(g) => g,
+                    None => continue,
+                }
+            };
+            if m.start() != m.end() {
+                spans.push((m.start(), m.end()));
             }
-        } else {
-            caps.get(0).map(|m| m.as_str()).unwrap_or("")
-        };
-        if span.is_empty() {
-            continue;
         }
-        // Replace against the original matched substring; `str::replace` scrubs
-        // every occurrence on the line, so a credential repeated inline is fully
-        // removed. Already-replaced spans simply don't match a later rule.
-        redacted = redacted.replace(span, REDACTION_MARKER);
     }
-    redacted
+    if spans.is_empty() {
+        return line.to_string();
+    }
+    // Merge overlapping/adjacent spans so a region matched by two rules yields a
+    // single marker rather than a marker nested inside another.
+    spans.sort_by_key(|s| s.0);
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(spans.len());
+    for (s, e) in spans {
+        match merged.last_mut() {
+            Some(last) if s <= last.1 => {
+                if e > last.1 {
+                    last.1 = e;
+                }
+            }
+            _ => merged.push((s, e)),
+        }
+    }
+    // Regex offsets land on char boundaries, so byte slicing is safe.
+    let mut out = String::with_capacity(line.len());
+    let mut cursor = 0;
+    for (s, e) in merged {
+        out.push_str(&line[cursor..s]);
+        out.push_str(REDACTION_MARKER);
+        cursor = e;
+    }
+    out.push_str(&line[cursor..]);
+    out
 }
 
 #[cfg(test)]
@@ -593,9 +625,9 @@ mod tests {
     }
 
     #[test]
-    fn redact_text_preserves_lines_and_stoplist() {
-        // A placeholder line trips the STOPLIST and is left verbatim; the real
-        // key on the next line is redacted. Line structure is preserved.
+    fn redact_text_preserves_line_structure() {
+        // Clean placeholder text (matches no rule) is left alone; the real key
+        // on the next line is redacted. Line breaks are preserved.
         let input = "key = your-key-here\nreal = AKIAZZZZZZZZZZZZZZZZ";
         let out = redact_text(input);
         let lines: Vec<&str> = out.lines().collect();
@@ -603,6 +635,30 @@ mod tests {
         assert_eq!(lines[0], "key = your-key-here");
         assert!(!lines[1].contains("AKIAZZZZZZZZZZZZZZZZ"));
         assert!(lines[1].contains(REDACTION_MARKER));
+    }
+
+    #[test]
+    fn redact_text_fails_closed_on_stoplist_word() {
+        // Regression (Codex RISK): a stoplist word (`example`) on the same line
+        // as a real credential must NOT shield it. Redaction is fail-closed.
+        let token = format!("ghp_{}", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789");
+        let input = format!("example token {token} please rotate");
+        let out = redact_text(&input);
+        assert!(!out.contains(&token), "stoplist word must not fail open: {out}");
+        assert!(out.contains(REDACTION_MARKER));
+    }
+
+    #[test]
+    fn redact_text_scrubs_multiple_same_rule_secrets() {
+        // Regression (Codex RISK): two distinct tokens of the SAME rule on one
+        // line must both be removed, not just the first.
+        let t1 = format!("ghp_{}", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let t2 = format!("ghp_{}", "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+        let input = format!("old {t1} new {t2}");
+        let out = redact_text(&input);
+        assert!(!out.contains(&t1), "first token leaked: {out}");
+        assert!(!out.contains(&t2), "second token leaked: {out}");
+        assert_eq!(out.matches(REDACTION_MARKER).count(), 2);
     }
 
     #[test]

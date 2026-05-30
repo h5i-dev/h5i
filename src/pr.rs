@@ -425,7 +425,7 @@ struct DecisionEntry {
 /// signature for callers (and our test suite) that don't pass a style. Equivalent
 /// to `render_body_with_style(..., PrStyle::Receipt)`.
 pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
-    render_body_with_style(workdir, limit, PrStyle::Receipt, &MsgOptions::default())
+    render_body_with_style(workdir, limit, PrStyle::Receipt)
 }
 
 /// Render the full Markdown body for the PR comment.
@@ -440,7 +440,18 @@ pub fn render_body(workdir: &Path, limit: usize) -> Result<String> {
 ///   5. 💬 Agent coordination — branch-scoped i5h message threads (collapsible)
 ///   6. 📜 Per-commit provenance (collapsible if >5 AI commits)
 ///   7. Footer
-pub fn render_body_with_style(
+///
+/// Backward-compatible 3-arg entry point: renders with the default
+/// [`MsgOptions`] (coordination section on, review-typed excerpts). Callers that
+/// need to honour `--no-msg` / `--msg-bodies` / `--msg-limit` use
+/// [`render_body_with_options`].
+pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> Result<String> {
+    render_body_with_options(workdir, limit, style, &MsgOptions::default())
+}
+
+/// Options-aware variant of [`render_body_with_style`]. See that function for
+/// the section layout; `msg_opts` controls the 💬 Agent coordination section.
+pub fn render_body_with_options(
     workdir: &Path,
     limit: usize,
     style: PrStyle,
@@ -1888,6 +1899,26 @@ fn kind_gets_excerpt(kind: &str) -> bool {
     )
 }
 
+/// The i5h kind vocabulary. A `kind` from a pulled message is untrusted, so it
+/// is checked against this set: a known kind renders as its readable label
+/// (no entity-escaping noise like `REVIEW&#95;REQUEST`), anything else is
+/// truncated and escaped so a hostile `kind` can't break out.
+const KNOWN_KINDS: &[&str] = &[
+    "FYI", "ASK", "REVIEW_REQUEST", "RISK", "BLOCKED", "HANDOFF", "ACK", "DONE", "DECLINE",
+    "BROADCAST", "NOT_UNDERSTOOD",
+];
+
+/// Render a message kind label: readable for known kinds, escaped for untrusted
+/// unknown ones. (The lone `_` in names like `REVIEW_REQUEST` is inert in
+/// Markdown — a single underscore isn't emphasis — so it's safe to emit raw.)
+fn render_kind(kind: &str) -> String {
+    if KNOWN_KINDS.contains(&kind) {
+        kind.to_string()
+    } else {
+        md_escape(&truncate_chars(kind, 24))
+    }
+}
+
 /// Status glyph for a thread: ✅ once a `DONE`/`DECLINE` lands, 🟡 while a
 /// request-type root is still open, • otherwise (informational).
 fn thread_glyph(thread: &crate::msg::PrThread) -> &'static str {
@@ -1948,32 +1979,57 @@ fn md_escape(s: &str) -> String {
     out
 }
 
-/// Render the safe, display-ready text for one untrusted field: redact secrets,
-/// sanitize control/escape sequences, then Markdown/HTML-escape. Order matters
-/// — redaction runs on the raw text so a credential can't slip through escaping.
-fn safe_field(raw: &str, budget: usize) -> String {
-    let redacted = crate::secrets::redact_text(raw);
-    let truncated = truncate_chars(&redacted, budget);
-    md_escape(&crate::msg::sanitize_display(&truncated))
+/// Strip control/escape bytes but keep line breaks (`\t`/`\r` fold to a space).
+/// Used before redaction on multi-line bodies: dropping the `ESC` etc. *first*
+/// means an ANSI-split credential is reassembled into contiguous text that the
+/// redactor can then catch — sanitizing *after* redaction would instead
+/// reconstruct a token the only redaction pass never saw (Codex RISK #4).
+fn strip_controls_keep_newlines(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\n' => out.push('\n'),
+            '\t' | '\r' => out.push(' '),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
-/// Excerpt a message body: redact, take the first non-empty line, truncate,
-/// sanitize, escape. In `full_bodies` mode the whole body is used (newlines fold
-/// to spaces via `sanitize_display`) with a larger budget.
+/// Render the safe, display-ready text for one untrusted single-line field.
+///
+/// Order is fail-closed: sanitize (drop control/escape bytes, fold newlines)
+/// FIRST so a token split by control bytes can't be reassembled *after* the
+/// redaction pass; then redact secrets; then truncate (redact-before-truncate
+/// so a secret near the cut can't be half-emitted); then Markdown/HTML-escape.
+fn safe_field(raw: &str, budget: usize) -> String {
+    let sanitized = crate::msg::sanitize_display(raw);
+    let redacted = crate::secrets::redact_text(&sanitized);
+    let truncated = truncate_chars(&redacted, budget);
+    md_escape(&truncated)
+}
+
+/// Excerpt a message body with the same fail-closed ordering as [`safe_field`],
+/// but newline-aware: control bytes are stripped *keeping* line breaks, then the
+/// first non-empty line is taken (or, under `full`, newlines fold to spaces —
+/// space, not nothing, so a token can't bridge two lines), THEN redaction runs.
 fn excerpt_body(body: &str, full: bool) -> String {
-    let redacted = crate::secrets::redact_text(body);
-    let (source, budget) = if full {
-        (redacted.as_str(), MSG_FULL_BUDGET)
+    let cleaned = strip_controls_keep_newlines(body);
+    let (line_src, budget) = if full {
+        (cleaned.replace('\n', " "), MSG_FULL_BUDGET)
     } else {
-        let first = redacted
+        let first = cleaned
             .lines()
             .map(str::trim)
             .find(|l| !l.is_empty())
-            .unwrap_or("");
+            .unwrap_or("")
+            .to_string();
         (first, MSG_EXCERPT_BUDGET)
     };
-    let truncated = truncate_chars(source, budget);
-    md_escape(&crate::msg::sanitize_display(&truncated))
+    let redacted = crate::secrets::redact_text(&line_src);
+    let truncated = truncate_chars(&redacted, budget);
+    md_escape(&truncated)
 }
 
 /// `2026-05-30T18:15:40.123Z` → `2026-05-30 18:15`. Absolute (not relative) so
@@ -1997,10 +2053,13 @@ fn render_message_line(m: &crate::msg::Message, full_bodies: bool, indent: bool)
     let _ = write!(
         s,
         "{lead}**{}** · {} → {} · {}",
-        md_escape(&kind),
+        render_kind(&kind),
         safe_field(&m.from, 40),
         safe_field(&m.to, 40),
-        short_ts(&m.ts),
+        // `ts` is untrusted: `short_ts` falls back to the raw value when it
+        // can't parse, so the result must still be sanitized + escaped before it
+        // lands in the comment (Codex RISK #3b).
+        md_escape(&crate::msg::sanitize_display(&short_ts(&m.ts))),
     );
     if let Some(p) = m.priority.as_deref() {
         if matches!(p, "high" | "urgent") {
@@ -3446,9 +3505,8 @@ mod tests {
     fn message_line_shows_review_excerpt() {
         let m = msg("REVIEW_REQUEST", "codex", "claude", "please review the redactor", "2026-05-30T18:15:40Z");
         let line = render_message_line(&m, false, false);
-        // Kind is escaped for safety (it can come from an untrusted pulled
-        // message); `&#95;` renders back to `_` on GitHub.
-        assert!(line.contains(&format!("**{}**", md_escape("REVIEW_REQUEST"))));
+        // Known kinds render readably (no entity-escaping noise).
+        assert!(line.contains("**REVIEW_REQUEST**"), "{line}");
         assert!(line.contains("codex → claude"));
         assert!(line.contains("please review the redactor"));
         assert!(!line.contains("metadata only"));
@@ -3470,5 +3528,38 @@ mod tests {
         let line = render_message_line(&m, true, false);
         assert!(line.contains("heads up: rebased onto main"));
         assert!(!line.contains("metadata only"));
+    }
+
+    #[test]
+    fn unknown_kind_is_escaped() {
+        // A hostile pulled message with a breakout `kind` must be neutralised.
+        let m = msg("</summary><script>", "x", "y", "hi", "2026-05-30T12:00:00Z");
+        let line = render_message_line(&m, false, false);
+        assert!(!line.contains("<script>"), "unknown kind must be escaped: {line}");
+        assert!(line.contains("&lt;"));
+    }
+
+    #[test]
+    fn malformed_ts_is_escaped() {
+        // Regression (Codex RISK #3b): an unparseable ts falls back to raw, so it
+        // must still be escaped — no Markdown/HTML injection via the timestamp.
+        let m = msg("ASK", "x", "y", "hi", "</summary><img src=x onerror=alert(1)>");
+        let line = render_message_line(&m, false, false);
+        assert!(!line.contains("<img"), "raw ts must not inject: {line}");
+        assert!(line.contains("&lt;"));
+    }
+
+    #[test]
+    fn excerpt_redacts_token_split_by_control_bytes() {
+        // Regression (Codex RISK #4): a credential split by an ANSI/control byte
+        // must not survive — control bytes are stripped BEFORE redaction, so the
+        // reassembled token is caught rather than reconstructed afterwards.
+        let token = format!("ghp_{}", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789");
+        // Insert an ESC (0x1b) mid-token: redacting the raw string wouldn't match.
+        let split = format!("ghp_\u{1b}{}", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789");
+        let m = msg("ASK", "x", "y", &split, "2026-05-30T12:00:00Z");
+        let line = render_message_line(&m, false, false);
+        assert!(!line.contains(&token), "reassembled token leaked: {line}");
+        assert!(!line.contains('\u{1b}'), "control byte must be gone: {line}");
     }
 }

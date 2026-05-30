@@ -3446,7 +3446,7 @@ fn main() -> anyhow::Result<()> {
                     full_bodies: msg_bodies,
                     max_threads: msg_limit,
                 };
-                let body = h5i_core::pr::render_body_with_style(&workdir, limit, style.into(), &msg_opts)?;
+                let body = h5i_core::pr::render_body_with_options(&workdir, limit, style.into(), &msg_opts)?;
                 if dry_run {
                     println!("{}", body);
                     return Ok(());
@@ -3460,7 +3460,7 @@ fn main() -> anyhow::Result<()> {
                     full_bodies: msg_bodies,
                     max_threads: msg_limit,
                 };
-                let body = h5i_core::pr::render_body_with_style(&workdir, limit, style.into(), &msg_opts)?;
+                let body = h5i_core::pr::render_body_with_options(&workdir, limit, style.into(), &msg_opts)?;
                 println!("{}", body);
             }
         },
