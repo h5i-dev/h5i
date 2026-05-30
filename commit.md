@@ -1629,3 +1629,16 @@ Redesign context-branch storage to one git ref per ctx branch, real libgit2 merg
 
 ---
 
+## Commit 6a1a6015 — 2026-05-30 03:57 UTC
+
+### Branch Purpose
+Redesign context-branch storage to one git ref per ctx branch, real libgit2 merges, auto-follow git checkout, reconciliation in status
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Folded in MCP/A2A/ACP/FIPA-ACL/KQML/Agora/ANP/CRDT/SSB/Matrix/Kafka prior art. Done: full rewrite with optional layered extensions + bibliography. Pending: codex feedback (waiter running), user review, decision on whether to commit.
+
+---
+

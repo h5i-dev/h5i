@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: compare-with-agentmemory
+# Ephemeral traces — Branch: improve-i5h
 
