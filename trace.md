@@ -2495,3 +2495,9 @@ _[Checkpoint: 6a1b410e — edited src/main.rs; edited src/msg.rs; edited MANUAL.
 _[Checkpoint: 6a1b413c — Reviewed Claude follow-up d33209f9 for PR-body message-history branch tagging. Initial reply-pollution blocker and CLI/docs gaps were fixed. Re-review approved after full validation.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a1b416b — Option 1 (auto-tag branch on send) complete + Codex-approved]_
+---
+
