@@ -278,11 +278,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/msg.rs; edited src/pr.rs; edited src/pr.rs
 - [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited README.md
 - [x] Completed h5i auditor review of PR-body msg history. Claude fixed all identified disclosure, injection, and API compatibility issues, added regressions and docs, and received final sign-off. Final HEAD 690e70e; worktree clean.
+- [x] Feature complete + Codex-approved: msg history in share pr body
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-30 19:21 UTC] `improve-i5h`: Feature complete + Codex-approved: msg history in share pr body
 - [2026-05-30 19:20 UTC] `improve-i5h`: Completed h5i auditor review of PR-body msg history. Claude fixed all identified disclosure, injection, and API compatibility issues, added regressions and docs, and received final sign-off. Final HEAD 690e70e; worktree clean.
 - [2026-05-30 19:20 UTC] `improve-i5h`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited README.md
 - [2026-05-30 19:09 UTC] `improve-i5h`: edited src/msg.rs; edited src/pr.rs; edited src/pr.rs
