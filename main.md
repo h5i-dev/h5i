@@ -254,11 +254,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] i5h-protocol.md round 3: codex review corrections
 - [x] edited docs/i5h-protocol.md; edited docs/i5h-protocol.md; Incorporated codex's line-level review (found via h5i msg hist…
 - [x] h5i msg read-state bug fixed
+- [x] edited src/msg.rs; edited docs/i5h-protocol.md; Fixed h5i msg read-state bug (commits 116f6621 code + doc). Root cause: …
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-30 13:04 UTC] `improve-i5h`: edited src/msg.rs; edited docs/i5h-protocol.md; Fixed h5i msg read-state bug (commits 116f6621 code + doc). Root cause: …
 - [2026-05-30 13:03 UTC] `improve-i5h`: h5i msg read-state bug fixed
 - [2026-05-30 12:57 UTC] `improve-i5h`: edited docs/i5h-protocol.md; edited docs/i5h-protocol.md; Incorporated codex's line-level review (found via h5i msg hist…
 - [2026-05-30 12:56 UTC] `improve-i5h`: i5h-protocol.md round 3: codex review corrections
