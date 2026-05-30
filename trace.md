@@ -2127,3 +2127,4 @@ _[Checkpoint: 6a1aed68 — wrote MEMORY.md; Doc updated for read-state fix: expa
 [14:11:42] NOTE: RISK: cursor read-union-atomic-rename remains a lost-update race for concurrent same-identity writers; atomic rename prevents torn files, not read-modify-write clobber. Outcome is re-delivery, not message loss, unless protected by a lock/CAS.
 [14:11:42] OBSERVE: searched line|max for "hash|BROADCAST|public-inbox|quarantine|malformed|max"
 [14:11:42] OBSERVE: searched src/msg.rs for "src/main.rs"
+[14:11:42] OBSERVE: read src/main.rs
