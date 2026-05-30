@@ -518,6 +518,77 @@ pub fn history(
     Ok(all)
 }
 
+/// One coordination thread selected for a PR body: every message sharing a
+/// `thread_root`, sorted in canonical `(ts, id)` order.
+#[derive(Debug, Clone)]
+pub struct PrThread {
+    /// Stable thread-root id.
+    pub thread_id: String,
+    /// Messages in the thread, oldest-first.
+    pub messages: Vec<Message>,
+    /// Timestamp of the most recent message — the thread's sort key.
+    pub latest_ts: String,
+}
+
+/// Select the message threads relevant to a PR for `branch`, newest thread
+/// first, capped at `max_threads`.
+///
+/// A thread qualifies iff at least one of its messages carries
+/// `branch == Some(branch)` (exact match). The *entire* thread is then returned
+/// — including replies that omitted the branch field — so an `ACK`/`DONE` that
+/// only set `reply_to` still travels with its `REVIEW_REQUEST`. This is the
+/// "exact branch match + thread closure" rule agreed for the PR body.
+///
+/// Returns `(threads, total_qualifying)` so the caller can render an elision
+/// note when `total_qualifying > threads.len()`.
+pub fn threads_for_branch(
+    repo: &Repository,
+    branch: &str,
+    max_threads: usize,
+) -> (Vec<PrThread>, usize) {
+    let all = read_messages(repo);
+
+    // Roots that have at least one message explicitly tagged with this branch.
+    let mut matched_roots: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for m in &all {
+        if m.branch.as_deref() == Some(branch) {
+            matched_roots.insert(m.thread_root());
+        }
+    }
+
+    // Bucket every message under its thread_root, keeping only matched roots.
+    let mut by_root: HashMap<String, Vec<Message>> = HashMap::new();
+    for m in all {
+        let root = m.thread_root();
+        if matched_roots.contains(&root) {
+            by_root.entry(root).or_default().push(m);
+        }
+    }
+
+    let mut threads: Vec<PrThread> = by_root
+        .into_iter()
+        .map(|(thread_id, mut messages)| {
+            messages.sort_by(|a, b| a.key().cmp(&b.key()));
+            let latest_ts = messages
+                .last()
+                .map(|m| m.ts.clone())
+                .unwrap_or_default();
+            PrThread { thread_id, messages, latest_ts }
+        })
+        .collect();
+
+    // Newest thread first; tie-break on thread_id for a stable order.
+    threads.sort_by(|a, b| {
+        b.latest_ts
+            .cmp(&a.latest_ts)
+            .then_with(|| a.thread_id.cmp(&b.thread_id))
+    });
+
+    let total = threads.len();
+    threads.truncate(max_threads);
+    (threads, total)
+}
+
 /// List known agents as `(name, last_seen_ts)`, sorted by name.
 pub fn team(repo: &Repository) -> Vec<(String, String)> {
     read_roster(repo).agents.into_iter().collect()
@@ -1639,5 +1710,73 @@ mod tests {
         // ...but an explicit identity (and $H5I_AGENT, checked elsewhere) still
         // resolves cleanly.
         assert_eq!(resolve_identity(&root, Some("claude")).unwrap(), "claude");
+    }
+
+    fn send_on(
+        repo: &Repository,
+        root: &Path,
+        from: &str,
+        to: &str,
+        body: &str,
+        branch: Option<&str>,
+        reply_to: Option<&str>,
+    ) -> Message {
+        send_msg(
+            repo,
+            root,
+            from,
+            to,
+            body,
+            SendOpts {
+                kind: Some("ASK".into()),
+                branch: branch.map(str::to_string),
+                reply_to: reply_to.map(str::to_string),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn threads_for_branch_filters_and_includes_full_thread() {
+        let (_d, repo, root) = fixture();
+
+        // Thread A: rooted on `feature-x`, with a reply that omits the branch.
+        let a_root = send_on(&repo, &root, "codex", "claude", "review feature-x", Some("feature-x"), None);
+        let _a_reply = send_on(&repo, &root, "claude", "codex", "done", None, Some(&a_root.id));
+
+        // Thread B: a different branch — must be excluded entirely.
+        let _b = send_on(&repo, &root, "codex", "claude", "review other", Some("other-branch"), None);
+
+        // A branch-less broadcast — excluded (no matching branch tag).
+        let _c = send_on(&repo, &root, "claude", "codex", "fyi", None, None);
+
+        let (threads, total) = threads_for_branch(&repo, "feature-x", 12);
+        assert_eq!(total, 1, "only thread A qualifies");
+        assert_eq!(threads.len(), 1);
+        // Thread closure: the branch-less reply rides along with its root.
+        assert_eq!(threads[0].messages.len(), 2);
+        assert_eq!(threads[0].messages[0].body, "review feature-x");
+        assert_eq!(threads[0].messages[1].body, "done");
+    }
+
+    #[test]
+    fn threads_for_branch_caps_and_reports_total() {
+        let (_d, repo, root) = fixture();
+        for i in 0..5 {
+            send_on(&repo, &root, "codex", "claude", &format!("msg {i}"), Some("b"), None);
+        }
+        let (threads, total) = threads_for_branch(&repo, "b", 3);
+        assert_eq!(total, 5, "total reflects all qualifying threads");
+        assert_eq!(threads.len(), 3, "capped at max_threads");
+    }
+
+    #[test]
+    fn threads_for_branch_empty_when_no_match() {
+        let (_d, repo, root) = fixture();
+        send_on(&repo, &root, "codex", "claude", "hi", Some("main"), None);
+        let (threads, total) = threads_for_branch(&repo, "nonexistent", 12);
+        assert!(threads.is_empty());
+        assert_eq!(total, 0);
     }
 }

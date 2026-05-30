@@ -1253,6 +1253,19 @@ enum PrCommands {
         /// Print the markdown body and exit without calling `gh`
         #[arg(long)]
         dry_run: bool,
+
+        /// Omit the 💬 Agent coordination section (branch-scoped i5h messages)
+        #[arg(long)]
+        no_msg: bool,
+
+        /// Include a redacted excerpt for *every* message kind, not just
+        /// review-typed ones (default: FYI/free-text are metadata-only).
+        #[arg(long)]
+        msg_bodies: bool,
+
+        /// Cap on coordination threads rendered before eliding
+        #[arg(long, value_name = "N", default_value_t = 12)]
+        msg_limit: usize,
     },
 
     /// Print the PR comment markdown to stdout (for piping into `gh pr edit --body-file -`)
@@ -1264,6 +1277,19 @@ enum PrCommands {
         /// Hero block layout — see `h5i share pr post --help` for options.
         #[arg(long, value_enum, default_value_t = PrStyleArg::Receipt)]
         style: PrStyleArg,
+
+        /// Omit the 💬 Agent coordination section (branch-scoped i5h messages)
+        #[arg(long)]
+        no_msg: bool,
+
+        /// Include a redacted excerpt for *every* message kind, not just
+        /// review-typed ones (default: FYI/free-text are metadata-only).
+        #[arg(long)]
+        msg_bodies: bool,
+
+        /// Cap on coordination threads rendered before eliding
+        #[arg(long, value_name = "N", default_value_t = 12)]
+        msg_limit: usize,
     },
 }
 
@@ -3413,18 +3439,28 @@ fn main() -> anyhow::Result<()> {
         }
 
         Commands::Pr { action } => match action {
-            PrCommands::Post { number, limit, style, dry_run } => {
+            PrCommands::Post { number, limit, style, dry_run, no_msg, msg_bodies, msg_limit } => {
                 let workdir = std::env::current_dir()?;
-                let body = h5i_core::pr::render_body_with_style(&workdir, limit, style.into())?;
+                let msg_opts = h5i_core::pr::MsgOptions {
+                    include: !no_msg,
+                    full_bodies: msg_bodies,
+                    max_threads: msg_limit,
+                };
+                let body = h5i_core::pr::render_body_with_style(&workdir, limit, style.into(), &msg_opts)?;
                 if dry_run {
                     println!("{}", body);
                     return Ok(());
                 }
                 h5i_core::pr::post_comment(&workdir, number, &body)?;
             }
-            PrCommands::Body { limit, style } => {
+            PrCommands::Body { limit, style, no_msg, msg_bodies, msg_limit } => {
                 let workdir = std::env::current_dir()?;
-                let body = h5i_core::pr::render_body_with_style(&workdir, limit, style.into())?;
+                let msg_opts = h5i_core::pr::MsgOptions {
+                    include: !no_msg,
+                    full_bodies: msg_bodies,
+                    max_threads: msg_limit,
+                };
+                let body = h5i_core::pr::render_body_with_style(&workdir, limit, style.into(), &msg_opts)?;
                 println!("{}", body);
             }
         },

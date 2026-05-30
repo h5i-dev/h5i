@@ -477,6 +477,74 @@ pub fn scan_text(path: &Path, text: &str) -> Vec<SecretFinding> {
     )
 }
 
+/// Marker substituted for a redacted secret span.
+const REDACTION_MARKER: &str = "‹redacted›";
+
+/// Replace every secret-like span in `text` with [`REDACTION_MARKER`], reusing
+/// the same rule pack as [`scan_lines`]. Returns a scrubbed copy safe to embed
+/// in published output (e.g. a PR comment or a pulled message body).
+///
+/// Differences from [`scan_lines`], which exists to *report* findings:
+/// - There is no path argument and no path allowlist — the caller is redacting
+///   arbitrary untrusted text (a message body), not a file, so "skip lockfiles"
+///   does not apply.
+/// - It redacts *every* matching rule on a line, not just the first, because a
+///   single untrusted line may carry more than one credential. Defense in depth.
+///
+/// The guillemet marker is intentionally free of Markdown/HTML metacharacters so
+/// it survives a later escaping pass unchanged.
+pub fn redact_text(text: &str) -> String {
+    let mut lines = text.lines().map(redact_line);
+    match lines.next() {
+        None => String::new(),
+        Some(first) => {
+            let mut out = first;
+            for line in lines {
+                out.push('\n');
+                out.push_str(&line);
+            }
+            out
+        }
+    }
+}
+
+/// Redact one line. Mirrors the per-line matching in [`scan_lines`] but
+/// substitutes the matched span instead of recording a finding. A line that
+/// trips the placeholder [`STOPLIST`] is returned verbatim — those are known
+/// non-secrets (`your-key-here`, `EXAMPLE`, …), and redacting them would be
+/// noise, not protection.
+fn redact_line(line: &str) -> String {
+    let lowered = line.to_ascii_lowercase();
+    if STOPLIST.iter().any(|s| lowered.contains(s)) {
+        return line.to_string();
+    }
+    let mut redacted = line.to_string();
+    for (re, rule) in compiled_rules() {
+        if !keywords_match(rule.keywords, &lowered) {
+            continue;
+        }
+        let Some(caps) = re.captures(line) else {
+            continue;
+        };
+        let span = if let Some(grp) = rule.entropy_group {
+            match caps.get(grp) {
+                Some(m) if shannon_entropy(m.as_str()) >= rule.min_entropy => m.as_str(),
+                _ => continue,
+            }
+        } else {
+            caps.get(0).map(|m| m.as_str()).unwrap_or("")
+        };
+        if span.is_empty() {
+            continue;
+        }
+        // Replace against the original matched substring; `str::replace` scrubs
+        // every occurrence on the line, so a credential repeated inline is fully
+        // removed. Already-replaced spans simply don't match a later rule.
+        redacted = redacted.replace(span, REDACTION_MARKER);
+    }
+    redacted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,6 +570,39 @@ mod tests {
         let f = scan("token: \"ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789\"");
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].rule_id, "GITHUB_PAT");
+    }
+
+    #[test]
+    fn redact_text_scrubs_secret_keeps_prose() {
+        let input = "deploy used token ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789 — rotate it";
+        let out = redact_text(input);
+        assert!(
+            !out.contains("ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"),
+            "secret must be gone: {out}"
+        );
+        assert!(out.contains(REDACTION_MARKER), "marker must be present: {out}");
+        // Surrounding prose is preserved.
+        assert!(out.starts_with("deploy used token "));
+        assert!(out.ends_with(" — rotate it"));
+    }
+
+    #[test]
+    fn redact_text_leaves_clean_text_untouched() {
+        let input = "I refactored render_body and added a test; no creds here.";
+        assert_eq!(redact_text(input), input);
+    }
+
+    #[test]
+    fn redact_text_preserves_lines_and_stoplist() {
+        // A placeholder line trips the STOPLIST and is left verbatim; the real
+        // key on the next line is redacted. Line structure is preserved.
+        let input = "key = your-key-here\nreal = AKIAZZZZZZZZZZZZZZZZ";
+        let out = redact_text(input);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "key = your-key-here");
+        assert!(!lines[1].contains("AKIAZZZZZZZZZZZZZZZZ"));
+        assert!(lines[1].contains(REDACTION_MARKER));
     }
 
     #[test]
