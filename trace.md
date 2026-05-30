@@ -1949,3 +1949,4 @@ _[Checkpoint: 6a1a60ef — Reviewed Claude's expanded docs/i5h-protocol.md again
 _[Checkpoint: 6a1a614e — wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol.md → v1.1. Added: 'What makes i5h different' intro; 4 new design p…]_
 ---
 
+[04:04:06] NOTE: DEFERRAL (~/Dev/h5i/docs/i5h-protocol.md): urface between turns and we can fold any suggestions into a follow-up. Nothing is pushed; `h5i push` would be needed to share the h5i refs (notes/cont…
