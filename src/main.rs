@@ -277,7 +277,8 @@ fn deliver_codex_inbox(workdir: &Path) {
         return;
     };
     let me = codex_identity();
-    let Ok(unread) = msg::inbox(repo.git(), &repo.h5i_root, &me, true) else {
+    // Peek (don't consume yet); commit read-state only after we've printed.
+    let Ok(unread) = msg::inbox(repo.git(), &repo.h5i_root, &me, false) else {
         return;
     };
     if unread.is_empty() {
@@ -286,6 +287,8 @@ fn deliver_codex_inbox(workdir: &Path) {
     let ids: Vec<String> = unread.iter().map(|m| m.id.clone()).collect();
     let _ = msg::write_last_view(&repo.h5i_root, &me, &ids);
     println!("\n{}", frame_unread(&me, &unread));
+    // Acknowledge only after a successful render (deliver-then-ack).
+    let _ = msg::mark_seen(&repo.h5i_root, &me, &ids);
 }
 
 // ── agent-radio box drawing ────────────────────────────────────────────────
@@ -3722,7 +3725,10 @@ fn main() -> anyhow::Result<()> {
                     if block && stdin_stop_hook_active() {
                         return Ok(());
                     }
-                    let unread = msg::inbox(git, &h5i_root, &me, true)?;
+                    // Peek (advance=false): we commit read-state only *after* the
+                    // messages have actually been emitted, so a dropped or failed
+                    // render never silently consumes mail (deliver-then-ack).
+                    let unread = msg::inbox(git, &h5i_root, &me, false)?;
                     if !unread.is_empty() {
                         let ids: Vec<String> = unread.iter().map(|m| m.id.clone()).collect();
                         msg::write_last_view(&h5i_root, &me, &ids)?;
@@ -3748,6 +3754,9 @@ fn main() -> anyhow::Result<()> {
                             let out = serde_json::json!({ "systemMessage": text });
                             println!("{}", serde_json::to_string(&out)?);
                         }
+
+                        // Acknowledge after a successful emit.
+                        msg::mark_seen(&h5i_root, &me, &ids)?;
                     }
                 }
 
@@ -3838,8 +3847,12 @@ fn main() -> anyhow::Result<()> {
                         radio_bottom();
                     }
 
-                    // Firehose: only stream messages that arrive AFTER launch, so
-                    // seed `seen` with the current log (no identity, no cursor).
+                    // `watch` is a PASSIVE dashboard: it must never advance the
+                    // shared per-agent read-state (doing so silently consumed mail
+                    // before the Stop hook / `inbox` could surface it). Dedup is
+                    // tracked in this in-memory `seen` set only. For the firehose
+                    // (no identity) we seed it with the current log so we stream
+                    // only messages that arrive AFTER launch.
                     let mut seen: HashSet<String> = if me.is_none() {
                         msg::history(git, None, usize::MAX)?
                             .into_iter()
@@ -3853,20 +3866,19 @@ fn main() -> anyhow::Result<()> {
                         // Reopen the repo each tick so messages committed by other
                         // processes become visible.
                         let repo = H5iRepository::open(".")?;
-                        let batch: Vec<msg::Message> = match &me {
-                            Some(name) => msg::inbox(repo.git(), &repo.h5i_root, name, true)?,
-                            None => {
-                                let fresh: Vec<msg::Message> =
-                                    msg::history(repo.git(), None, usize::MAX)?
-                                        .into_iter()
-                                        .filter(|m| !seen.contains(&m.id))
-                                        .collect();
-                                for m in &fresh {
-                                    seen.insert(m.id.clone());
-                                }
-                                fresh
-                            }
+                        // Peek only — `advance=false` for the identity inbox so the
+                        // persistent cursor is never touched by watching.
+                        let candidates: Vec<msg::Message> = match &me {
+                            Some(name) => msg::inbox(repo.git(), &repo.h5i_root, name, false)?,
+                            None => msg::history(repo.git(), None, usize::MAX)?,
                         };
+                        let batch: Vec<msg::Message> = candidates
+                            .into_iter()
+                            .filter(|m| !seen.contains(&m.id))
+                            .collect();
+                        for m in &batch {
+                            seen.insert(m.id.clone());
+                        }
                         if !batch.is_empty() {
                             if let Some(name) = &me {
                                 // Persist the batch so `h5i msg reply <n>` works.

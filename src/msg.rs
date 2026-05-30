@@ -450,6 +450,26 @@ pub fn inbox(
     Ok(unread)
 }
 
+/// Commit read-state for `me` by adding `ids` to its seen-set, without reading
+/// the log. This is the **acknowledge** half of a deliver-then-ack handoff:
+/// callers `inbox(.., advance=false)` to peek, render the messages, and only
+/// then call `mark_seen` — so a dropped or failed render never silently
+/// consumes mail. Idempotent; a no-op when `ids` are already seen.
+pub fn mark_seen(h5i_root: &Path, me: &str, ids: &[String]) -> Result<(), H5iError> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut seen = read_agent_seen(h5i_root, me).unwrap_or_default();
+    let mut dirty = false;
+    for id in ids {
+        dirty |= seen.insert(id.clone());
+    }
+    if dirty {
+        write_agent_seen(h5i_root, me, &seen)?;
+    }
+    Ok(())
+}
+
 /// Seed a fresh per-agent seen-set from the legacy shared `cursor.json`
 /// (the pre-per-agent format): copy `me`'s seen ids, and convert a legacy
 /// watermark to ids by marking everything at or below it as seen.
@@ -1024,6 +1044,30 @@ mod tests {
         let peek2 = inbox(&repo, &root, "bob", false).unwrap();
         assert_eq!(peek2.len(), 1);
         assert_eq!(unread_count(&repo, &root, "bob").unwrap(), 1);
+    }
+
+    #[test]
+    fn peek_then_mark_seen_equals_advance() {
+        // Deliver-then-ack: peeking (advance=false) then mark_seen consumes the
+        // message exactly once, just like inbox(advance=true) — but only after
+        // the caller has surfaced it. A peek that is never acked is NOT consumed,
+        // which is what prevents `watch` and dropped renders from losing mail.
+        let (_d, repo, root) = fixture();
+        send(&repo, &root, "alice", "bob", "hi", None).unwrap();
+
+        // Peek without ack: still unread (this is the watch / dropped-render case).
+        assert_eq!(inbox(&repo, &root, "bob", false).unwrap().len(), 1);
+        assert_eq!(inbox(&repo, &root, "bob", false).unwrap().len(), 1);
+
+        // Surface, then ack.
+        let peeked = inbox(&repo, &root, "bob", false).unwrap();
+        let ids: Vec<String> = peeked.iter().map(|m| m.id.clone()).collect();
+        mark_seen(&root, "bob", &ids).unwrap();
+
+        // Now consumed — nothing left, and mark_seen is idempotent.
+        assert_eq!(unread_count(&repo, &root, "bob").unwrap(), 0);
+        mark_seen(&root, "bob", &ids).unwrap();
+        assert_eq!(unread_count(&repo, &root, "bob").unwrap(), 0);
     }
 
     #[test]
