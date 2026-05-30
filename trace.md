@@ -2215,3 +2215,4 @@ _[Checkpoint: 6a1af4c0 — edited src/main.rs; edited tests/msg_integration.rs; 
 [18:33:41] OBSERVE: CORRECTED root cause. Env precedence WORKS: controlled --plain test shows H5I_AGENT=claude -> agent claude; H5I_AGENT=zztest -> agent zztest; env unset -> agent codex (stored fallback). Earlier 'codex with env set' readings were grep artifacts (ANSI codes in colored header made grep skip the header). REAL bug: when H5I_AGENT is absent, resolve_identity silently falls back to the SHARED .git/.h5i/msg/identity file (=codex). That file is poisoned because send_msg() calls write_identity(from) on EVERY send -> last sender wins the shared default. In a shared clone (cursors/claude.json+codex.json) this silently misattributes. Fix chosen by user: safe-by-default resolve (refuse shared-stored fallback when >1 known agent; sends error, reads warn) + clear stale file.
 [18:40:46] OBSERVE: read src/msg.rs
 [18:40:54] ACT: edited src/msg.rs
+[18:40:58] ACT: edited src/msg.rs
