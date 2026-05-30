@@ -2041,3 +2041,4 @@ _[Checkpoint: 6a1adea6 — edited docs/i5h-protocol.md; edited docs/i5h-protocol
 [12:57:29] THINK: Fixing h5i msg read-state bug. Root cause hypothesis: Stop hook 'h5i msg hook --block' calls inbox(advance=true), marking msgs seen at turn-end before content reaches agent; cursor is single shared per-agent seen-set so first consumer wins. Need to read msg.rs hook/inbox + main.rs CLI to find exact advance points and design a fix where read-state advances only after successful surfacing.
 [12:57:34] OBSERVE: read src/msg.rs
 [12:57:38] OBSERVE: read src/main.rs
+[12:58:38] OBSERVE: read src/main.rs
