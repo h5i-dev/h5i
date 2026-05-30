@@ -2268,3 +2268,4 @@ _[Checkpoint: 6a1b3119 — Fixed identity-flip in shared clone. src/msg.rs: (1) 
 _[Checkpoint: 6a1b31b8 — wrote newtest.txt; wrote newtest.txt]_
 ---
 
+[18:51:55] OBSERVE: read bkxelivbu.output
