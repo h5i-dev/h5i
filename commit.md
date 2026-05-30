@@ -1772,3 +1772,16 @@ watch made non-destructive; deliver-then-ack for hook+codex; test added; verifie
 
 ---
 
+## Commit 6a1ae046 — 2026-05-30 13:04 UTC
+
+### Branch Purpose
+Redesign context-branch storage to one git ref per ctx branch, real libgit2 merges, auto-follow git checkout, reconciliation in status
+
+### Previous Progress Summary
+watch made non-destructive; deliver-then-ack for hook+codex; test added; verified e2e.
+
+### This Commit's Contribution
+
+
+---
+

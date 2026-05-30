@@ -2058,3 +2058,9 @@ _[Checkpoint: 6a1adea6 — edited docs/i5h-protocol.md; edited docs/i5h-protocol
 _[Checkpoint: 6a1ae036 — h5i msg read-state bug fixed]_
 ---
 
+
+
+---
+_[Checkpoint: 6a1ae046 — edited src/msg.rs; edited docs/i5h-protocol.md; Fixed h5i msg read-state bug (commits 116f6621 code + doc). Root cause: …]_
+---
+
