@@ -2193,3 +2193,4 @@ _[Checkpoint: 6a1af368 — edited docs/i5h-protocol.md; edited docs/i5h-protocol
 _[Checkpoint: 6a1af3da — edited docs/i5h-design-notes.md; edited docs/i5h-design-notes.md; Applied codex's review (delivered via Stop hook): repl…]_
 ---
 
+[14:28:58] OBSERVE: read src/main.rs
