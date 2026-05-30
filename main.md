@@ -273,11 +273,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Discussed PR-body msg history with Claude and converged on branch-scoped thread rendering, privacy-aware default excerpts, explicit full-body opt-in, strict redaction/escaping, bounded output, and placement after the DAG before provenance. No files edited.
 - [x] Converged with Codex on msg-history-in-PR-body design
 - [x] session ended (auto-checkpoint)
+- [x] Implemented msg history in share pr body
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-30 19:07 UTC] `improve-i5h`: Implemented msg history in share pr body
 - [2026-05-30 18:53 UTC] `improve-i5h`: session ended (auto-checkpoint)
 - [2026-05-30 18:53 UTC] `improve-i5h`: Converged with Codex on msg-history-in-PR-body design
 - [2026-05-30 18:53 UTC] `improve-i5h`: Discussed PR-body msg history with Claude and converged on branch-scoped thread rendering, privacy-aware default excerpts, explicit full-body opt-in, strict redaction/escaping, bounded output, and placement after the DAG before provenance. No files edited.
