@@ -2247,3 +2247,4 @@ _[Checkpoint: 6a1b300f — Fixed cross-agent identity-flip in shared msg clone]_
 _[Checkpoint: 6a1b30a8 — Fixed identity-flip in shared clone. src/msg.rs: (1) added known_agents() helper (scans cursors/+views/ dirs + stored id…]_
 ---
 
+[18:47:40] OBSERVE: read src/pr.rs
