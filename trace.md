@@ -1915,3 +1915,4 @@ _[Checkpoint: 6a1a2c34 — Moved task-aware smart recall to h5i recall context s
 [03:48:25] OBSERVE: read docs/i5h-protocol.md
 [03:48:25] OBSERVE: searched Kinds|Wire for "wait|refs/h5i/msg|Message"
 [03:48:25] OBSERVE: read src/msg.rs
+[03:48:37] NOTE: LIMITATION: current refs/h5i/msg representation rewrites the full messages.jsonl blob on every local append and full-unions logs on divergence. Preserve v1 wire semantics independently of physical layout so segmented/per-message storage and indexes remain possible.
