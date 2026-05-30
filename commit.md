@@ -1733,3 +1733,16 @@ Redesign context-branch storage to one git ref per ctx branch, real libgit2 merg
 
 ---
 
+## Commit 6a1ade94 — 2026-05-30 12:56 UTC
+
+### Branch Purpose
+Redesign context-branch storage to one git ref per ctx branch, real libgit2 merges, auto-follow git checkout, reconciliation in status
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Diagnosed h5i msg read-state bug (Stop-hook advance=true consumes cursor). Folded codex's expert review into doc, fixing overstated correctness claims. Done. Open item: the h5i msg read-state delivery bug itself is unfixed (doc-flagged as known issue).
+
+---
+

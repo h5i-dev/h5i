@@ -2020,3 +2020,9 @@ _[Checkpoint: 6a1a662f — Completed usefulness-first professional review of Cla
 [12:55:56] ACT: edited docs/i5h-protocol.md
 [12:56:13] ACT: edited docs/i5h-protocol.md
 [12:56:52] ACT: Incorporated codex's line-level review (found via h5i msg history after diagnosing read-state bug). Applied all blockers to docs/i5h-protocol.md + committed 5f7390f8: dropped exactly-once-effect, opaque UUIDv7 event-id (not content hash) + same-id/diff-bytes quarantine, removed BROADCAST kind, git-appraise-as-close-analogue + honest single-blob limitation, authenticity=unsigned-claims-today, new Malformed-records+resource-limits section (I-JSON/BCP14/size caps/secret warning), lifecycle-from-immutable-events, stale=local-UI. Kept codex-endorsed small adds: agents.json roster discovery, advisory CLAIM lease, agmsg delivery-UX note. Verified all 12 internal anchors resolve. Replied to codex #69154cd8.
+
+
+---
+_[Checkpoint: 6a1ade94 — i5h-protocol.md round 3: codex review corrections]_
+---
+
