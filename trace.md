@@ -1870,3 +1870,9 @@ _[Checkpoint: 6a1a289e — Compared h5i against ../agentmemory and identified pr
 [00:10:25] ACT: edited tests/cli_integration.rs
 [00:10:25] ACT: edited AGENTS.md
 [00:10:31] THINK: Implemented smart recall as an explicit Codex prelude opt-in using existing deterministic context search, keeping default preludes unchanged while ranking prior trace/session evidence when --smart-recall is passed.
+
+
+---
+_[Checkpoint: 6a1a2afb — Implemented opt-in task-aware smart recall for Codex prelude with tests and docs]_
+---
+
