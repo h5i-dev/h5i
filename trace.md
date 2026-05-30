@@ -2249,3 +2249,4 @@ _[Checkpoint: 6a1b30a8 — Fixed identity-flip in shared clone. src/msg.rs: (1) 
 
 [18:47:40] OBSERVE: read src/pr.rs
 [18:47:41] OBSERVE: read src/pr.rs
+[18:48:57] THINK: First let me ground the proposal in the *real* PR-body code (`src/pr.
