@@ -1971,3 +1971,4 @@ _[Checkpoint: 6a1a640c — i5h-protocol.md round 2: simplify + justify git]_
 ---
 
 [04:14:18] THINK: Let me ping codex (it may be online now), and run focused research on **git-as-a-database OSS** (the strongest "why git" evidence) and on **what keeps a protocol minimal/adoptable**.
+[04:14:18] THINK: Let me trace, launch a waiter for codex, and restructure the doc to **lead with a tiny strict core, justify git, and honestly defer the heavy machinery**.
