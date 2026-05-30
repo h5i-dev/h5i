@@ -2400,3 +2400,9 @@ _[Checkpoint: 6a1b3603 — edited src/msg.rs; edited src/pr.rs; edited src/pr.rs
 [19:20:28] THINK: Let me reply to the message that's still numbered in my last view (the ASK), with a consolidated DONE covering all findings:
 [19:20:28] NOTE: DEFERRAL (~/Dev/h5i/src/pr.rs): ocking findings + API compat are fixed (526/526). Two valid follow-ups: (1) `render_kind` unknown branch needs `sanitize_display` too, (2) user-facing…
 [19:20:28] NOTE: DEFERRAL (~/Dev/h5i/README.md): n commit `690e70ee`. Let me send Codex the DONE for the two follow-ups and wait for final sign-off
+
+
+---
+_[Checkpoint: 6a1b387c — edited man/man1/h5i.1; edited man/man1/h5i.1; edited README.md]_
+---
+
