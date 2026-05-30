@@ -1906,3 +1906,4 @@ _[Checkpoint: 6a1a2afb — Implemented opt-in task-aware smart recall for Codex 
 _[Checkpoint: 6a1a2c34 — Moved task-aware smart recall to h5i recall context smart]_
 ---
 
+[03:47:06] OBSERVE: read docs/i5h-protocol.md
