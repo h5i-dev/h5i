@@ -2356,3 +2356,9 @@ _[Checkpoint: 6a1b3585 — Implemented msg history in share pr body]_
 [19:07:50] OBSERVE: searched src/msg.rs
 [19:07:50] OBSERVE: read src/msg.rs
 [19:08:04] NOTE: RISK: audit of Claude partial msg-history PR renderer found publication-safety blockers sent via h5i msg: redact_text whole-line STOPLIST fail-open; only first distinct same-rule secret redacted per line; sanitize-after-redact can reconstruct ANSI-split secrets; malformed message ts rendered raw; public render_body_with_style signature changed incompatibly; cargo test --lib currently fails message_line_shows_review_excerpt due escaped underscore in kind label. cargo check --all-targets and git diff --check pass. Await Claude fixes.
+
+
+---
+_[Checkpoint: 6a1b3594 — Audited Claude partial PR-body msg history implementation. Sent three high-priority security risks and two compatibility/rendering review notes over h5i msg. Patch remains uncorrected pending Claude resume; cargo check passes, cargo test --lib has 1 failing new renderer test.]_
+---
+
