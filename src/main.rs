@@ -3822,8 +3822,9 @@ fn main() -> anyhow::Result<()> {
                 Some(MsgCommands::Watch { as_agent, all, interval, once }) => {
                     use std::collections::HashSet;
                     use std::io::Write as _;
-                    // Identity-scoped inbox stream, unless `--all` or no identity
-                    // is resolvable → watch the whole channel (no identity needed).
+                    // Identity-scoped *conversation* stream (both directions —
+                    // sent, received, and broadcasts), unless `--all` or no
+                    // identity is resolvable → watch the whole channel.
                     let me: Option<String> = if all {
                         None
                     } else {
@@ -3866,10 +3867,17 @@ fn main() -> anyhow::Result<()> {
                         // Reopen the repo each tick so messages committed by other
                         // processes become visible.
                         let repo = H5iRepository::open(".")?;
-                        // Peek only — `advance=false` for the identity inbox so the
-                        // persistent cursor is never touched by watching.
+                        // A passive *conversation* view: stream every message the
+                        // agent sent or received (and broadcasts), both directions
+                        // — like `history`, not just the inbox. Read from the full
+                        // log and filter; never touch the per-agent read cursor.
                         let candidates: Vec<msg::Message> = match &me {
-                            Some(name) => msg::inbox(repo.git(), &repo.h5i_root, name, false)?,
+                            Some(name) => msg::history(repo.git(), None, usize::MAX)?
+                                .into_iter()
+                                .filter(|m| {
+                                    &m.from == name || &m.to == name || m.to == msg::BROADCAST
+                                })
+                                .collect(),
                             None => msg::history(repo.git(), None, usize::MAX)?,
                         };
                         let batch: Vec<msg::Message> = candidates

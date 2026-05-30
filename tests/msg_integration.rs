@@ -762,6 +762,22 @@ fn watch_is_non_destructive_does_not_consume_unread() {
 }
 
 #[test]
+fn watch_shows_both_directions_not_just_inbox() {
+    // Regression: `watch --as me` used to stream only the inbox (messages
+    // addressed *to* me), so a conversation looked one-sided. It must show the
+    // agent's full conversation — sent, received, and broadcasts — like history.
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "send", "--from", "codex", "claude", "incoming ping"]);
+    a.h5i_ok(&["msg", "send", "--from", "claude", "codex", "outgoing pong"]);
+    a.h5i_ok(&["msg", "send", "--from", "claude", "all", "broadcast hi"]);
+
+    let w = out_str(&a.h5i_as("claude", &["msg", "watch", "--once", "--plain"]));
+    assert!(w.contains("incoming ping"), "watch dropped incoming: {w}");
+    assert!(w.contains("outgoing pong"), "watch dropped the agent's OWN sent message: {w}");
+    assert!(w.contains("broadcast hi"), "watch dropped broadcast: {w}");
+}
+
+#[test]
 fn three_agents_have_independent_read_state_in_one_clone() {
     // claude, codex, reviewer share one clone (the realistic setup). Each has its
     // own per-identity cursor, so one agent reading its inbox must never consume
