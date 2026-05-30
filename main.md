@@ -288,11 +288,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Option 1 (auto-tag branch on send) complete + Codex-approved
 - [x] edited src/main.rs; edited src/msg.rs; edited MANUAL.md
 - [x] edited MANUAL.md; edited Cargo.toml; edited man/man1/h5i.1
+- [x] edited MANUAL.md; edited Cargo.toml; edited man/man1/h5i.1
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-30 20:11 UTC] `improve-i5h`: edited MANUAL.md; edited Cargo.toml; edited man/man1/h5i.1
 - [2026-05-30 20:00 UTC] `improve-i5h`: edited MANUAL.md; edited Cargo.toml; edited man/man1/h5i.1
 - [2026-05-30 19:58 UTC] `improve-i5h`: edited src/main.rs; edited src/msg.rs; edited MANUAL.md
 - [2026-05-30 19:58 UTC] `improve-i5h`: Option 1 (auto-tag branch on send) complete + Codex-approved
