@@ -354,6 +354,44 @@ pub fn send_msg(
     Ok(msg)
 }
 
+/// Send a threaded reply to `original`, as `me`.
+///
+/// Resolves the recipient (the *other* party of `original`), threads via
+/// `reply_to` + the thread root, and — crucially — inherits the **thread's**
+/// branch rather than letting [`send_msg`] auto-tag the responder's current
+/// checkout. A reply's relevance is the thread it belongs to; tagging it with
+/// wherever the replier happens to be standing would let, say, an `ACK` typed
+/// from a `docs` checkout drag an `auth` thread into the `docs` PR body. The
+/// thread's branch is the root message's branch (falling back to the immediate
+/// parent's); when the thread is untagged, an empty string opts the reply out
+/// of auto-tagging too.
+pub fn reply(
+    repo: &Repository,
+    h5i_root: &Path,
+    me: &str,
+    original: &Message,
+    kind: Option<&str>,
+    body: &str,
+) -> Result<Message, H5iError> {
+    let to = if original.from == me {
+        original.to.clone()
+    } else {
+        original.from.clone()
+    };
+    let thread_branch = get_message(repo, &original.thread_root())
+        .and_then(|root| root.branch)
+        .or_else(|| original.branch.clone());
+    let opts = SendOpts {
+        kind: kind.map(str::to_string),
+        reply_to: Some(original.id.clone()),
+        thread_id: Some(original.thread_root()),
+        // Some("") when untagged → opt out of send_msg's current-branch auto-tag.
+        branch: Some(thread_branch.unwrap_or_default()),
+        ..Default::default()
+    };
+    send_msg(repo, h5i_root, me, &to, body, opts)
+}
+
 /// The sender's current git branch, or `None` on a detached or unborn HEAD.
 ///
 /// Deliberately uses `repo.head()` (not a HEAD-file fallback): if we aren't on a
@@ -1860,6 +1898,61 @@ mod tests {
         )
         .unwrap();
         assert_eq!(m.branch, None, "explicit empty branch must opt out");
+    }
+
+    #[test]
+    fn reply_inherits_thread_branch_not_responder_checkout() {
+        // Regression (Codex blocker): a reply must take its thread's branch, not
+        // wherever the responder is checked out — else replying to an `auth`
+        // thread from a `docs` checkout would drag the whole `auth` thread into
+        // the `docs` PR body.
+        let (_d, repo, root) = fixture();
+        commit_on_branch(&repo, "docs"); // responder's current checkout
+        let auth_root = send_msg(
+            &repo,
+            &root,
+            "alice",
+            "bob",
+            "auth work",
+            SendOpts { branch: Some("auth".into()), ..Default::default() },
+        )
+        .unwrap();
+
+        let r = reply(&repo, &root, "bob", &auth_root, Some("ACK"), "looking").unwrap();
+        assert_eq!(r.to, "alice", "reply goes back to the other party");
+        assert_eq!(
+            r.branch.as_deref(),
+            Some("auth"),
+            "reply inherits the thread branch, not the docs checkout"
+        );
+
+        // The docs PR must NOT pick up the auth thread...
+        let (docs_threads, _) = threads_for_branch(&repo, "docs", 12);
+        assert!(docs_threads.is_empty(), "auth thread leaked into docs: {docs_threads:?}");
+        // ...while the auth PR shows the full thread (root + reply).
+        let (auth_threads, _) = threads_for_branch(&repo, "auth", 12);
+        assert_eq!(auth_threads.len(), 1);
+        assert_eq!(auth_threads[0].messages.len(), 2);
+    }
+
+    #[test]
+    fn reply_to_untagged_thread_stays_untagged() {
+        // Replying (from a real branch) to an untagged thread must not suddenly
+        // tag the reply with the checkout — the thread has no branch relevance.
+        let (_d, repo, root) = fixture();
+        commit_on_branch(&repo, "docs");
+        let untagged = send_msg(
+            &repo,
+            &root,
+            "alice",
+            "bob",
+            "general note",
+            SendOpts { branch: Some("".into()), ..Default::default() }, // opt out
+        )
+        .unwrap();
+        assert_eq!(untagged.branch, None);
+        let r = reply(&repo, &root, "bob", &untagged, None, "ok").unwrap();
+        assert_eq!(r.branch, None, "reply to an untagged thread stays untagged");
     }
 
     #[test]

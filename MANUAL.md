@@ -520,8 +520,11 @@ no branch-relevant threads exist.
 
 Messages are **auto-tagged with the sender's current git branch**, so a normal
 back-and-forth conducted while working on the branch is captured without any
-extra flags. Pass `--branch <b>` (on `review`/`risk`/`handoff`) to tag for a
-different branch, or `--branch ""` to leave a message untagged.
+extra flags. `send`, `ask`, `review`, `risk`, and `handoff` all accept
+`--branch <b>` to tag for a different branch, or `--branch ""` to leave a
+message untagged. Replies (`reply`/`ack`/`done`/`decline`) do **not** use the
+responder's checkout — they inherit their thread's branch, so acknowledging a
+thread from an unrelated branch can't drag it into the wrong PR.
 
 Because a PR comment is published, message text is treated as untrusted and
 disclosure-safe by default:

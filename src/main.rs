@@ -516,18 +516,9 @@ fn send_reply(
     kind: Option<&str>,
     body: String,
 ) -> anyhow::Result<()> {
-    let to = if original.from == me {
-        original.to.clone()
-    } else {
-        original.from.clone()
-    };
-    let opts = msg::SendOpts {
-        kind: kind.map(str::to_string),
-        reply_to: Some(original.id.clone()),
-        thread_id: Some(original.thread_root()),
-        ..Default::default()
-    };
-    let m = msg::send_msg(repo.git(), &repo.h5i_root, me, &to, &body, opts)?;
+    // Branch inheritance / thread-relevance lives in msg::reply (testable, and
+    // shared with any other reply path).
+    let m = msg::reply(repo.git(), &repo.h5i_root, me, original, kind, &body)?;
     report_sent(&m);
     Ok(())
 }
@@ -1000,6 +991,9 @@ enum MsgCommands {
         /// Optional classification, e.g. `review` or `risk` (coloured in the UI).
         #[arg(long)]
         tag: Option<String>,
+        /// Git branch this message relates to (default: current branch; pass "" to leave untagged).
+        #[arg(long)]
+        branch: Option<String>,
     },
 
     /// Reply to a numbered message from your last inbox / dashboard view.
@@ -1046,6 +1040,9 @@ enum MsgCommands {
         body: Vec<String>,
         #[arg(long)]
         from: Option<String>,
+        /// Git branch this ask relates to (default: current branch; pass "" to leave untagged).
+        #[arg(long)]
+        branch: Option<String>,
     },
 
     /// i5h REVIEW_REQUEST: ask for code/design/security review.
@@ -1078,6 +1075,9 @@ enum MsgCommands {
         body: Vec<String>,
         #[arg(long)]
         from: Option<String>,
+        /// Git branch this risk relates to (default: current branch; pass "" to leave untagged).
+        #[arg(long)]
+        branch: Option<String>,
         #[arg(long)]
         focus: Vec<String>,
         /// low | normal | high | urgent.
@@ -3490,15 +3490,15 @@ fn main() -> anyhow::Result<()> {
                     render_dashboard(&repo, &branch, me.as_deref(), plain)?;
                 }
 
-                Some(MsgCommands::Send { to, body, from, tag }) => {
+                Some(MsgCommands::Send { to, body, from, tag, branch }) => {
                     let me = msg::resolve_identity(&h5i_root, from.as_deref())?;
-                    let m = msg::send(git, &h5i_root, &me, &to, &body.join(" "), tag.as_deref())?;
-                    report_sent(&m);
+                    let opts = msg::SendOpts { tag, branch, ..Default::default() };
+                    report_sent(&msg::send_msg(git, &h5i_root, &me, &to, &body.join(" "), opts)?);
                 }
 
-                Some(MsgCommands::Ask { to, body, from }) => {
+                Some(MsgCommands::Ask { to, body, from, branch }) => {
                     let me = msg::resolve_identity(&h5i_root, from.as_deref())?;
-                    let opts = msg::SendOpts { kind: Some("ASK".into()), ..Default::default() };
+                    let opts = msg::SendOpts { kind: Some("ASK".into()), branch, ..Default::default() };
                     report_sent(&msg::send_msg(git, &h5i_root, &me, &to, &body.join(" "), opts)?);
                 }
 
@@ -3516,10 +3516,11 @@ fn main() -> anyhow::Result<()> {
                     report_sent(&msg::send_msg(git, &h5i_root, &me, &to, &body.join(" "), opts)?);
                 }
 
-                Some(MsgCommands::Risk { to, body, from, focus, priority }) => {
+                Some(MsgCommands::Risk { to, body, from, branch, focus, priority }) => {
                     let me = msg::resolve_identity(&h5i_root, from.as_deref())?;
                     let opts = msg::SendOpts {
                         kind: Some("RISK".into()),
+                        branch,
                         focus,
                         priority,
                         ..Default::default()
