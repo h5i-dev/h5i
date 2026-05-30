@@ -2423,3 +2423,4 @@ _[Checkpoint: 6a1b3880 — Completed h5i auditor review of PR-body msg history. 
 _[Checkpoint: 6a1b38b4 — Feature complete + Codex-approved: msg history in share pr body]_
 ---
 
+[19:21:35] NOTE: PLACEHOLDER (~/Dev/h5i/README.md): tests):** | Finding | Fix | |---|---| | STOPLIST fail-open (placeholder word shields a real secret) | `redact_line` no longer early-returns on stoplis…
