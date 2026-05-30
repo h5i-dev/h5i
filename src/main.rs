@@ -3437,7 +3437,18 @@ fn main() -> anyhow::Result<()> {
             match action {
                 // Bare `h5i msg` → the inbox dashboard.
                 None => {
-                    let me = msg::read_identity(&h5i_root);
+                    // Resolve env-first (like every other verb) so the dashboard
+                    // shows who *this* host acts as, not whatever the shared
+                    // stored slot was last set to. This is a read, so an
+                    // ambiguous identity warns and renders without a name rather
+                    // than erroring or impersonating another agent.
+                    let me = match msg::resolve_identity(&h5i_root, None) {
+                        Ok(name) => Some(name),
+                        Err(e) => {
+                            eprintln!("h5i: warning: {e}");
+                            None
+                        }
+                    };
                     let branch = current_branch(&repo);
                     render_dashboard(&repo, &branch, me.as_deref(), plain)?;
                 }

@@ -331,7 +331,14 @@ pub fn send_msg(
     };
 
     append_message_cas(repo, &msg)?;
-    write_identity(h5i_root, from)?;
+    // Persist the sender as the local default only in a solo clone. In a shared
+    // clone this single slot is ambiguous — `resolve_identity` refuses to trust
+    // it — so writing it just churns shared state and risks misleading a tool
+    // that reads the file directly. `from` is already counted by `known_agents`,
+    // so a brand-new solo clone still sees `len() <= 1` here.
+    if known_agents(h5i_root).len() <= 1 {
+        write_identity(h5i_root, from)?;
+    }
     Ok(msg)
 }
 
@@ -613,6 +620,20 @@ pub fn resolve_identity(h5i_root: &Path, explicit: Option<&str>) -> Result<Strin
     }
     if let Some(stored) = read_identity(h5i_root) {
         validate_name(&stored)?;
+        // Safe-by-default: in a clone shared by more than one agent the single
+        // stored-identity file is an ambiguous slot — the last `msg as`/sender
+        // wins it (see `send_msg`), so silently trusting it would attribute
+        // messages to whoever wrote it last. Refuse instead and make the caller
+        // be explicit. Solo clones keep the convenient fallback.
+        let agents = known_agents(h5i_root);
+        if agents.len() > 1 {
+            return Err(H5iError::Metadata(format!(
+                "ambiguous agent identity in a shared clone ({}): the stored \
+                 default '{stored}' is not trustworthy here — set $H5I_AGENT or \
+                 pass --from <name>/--as <name>",
+                agents.into_iter().collect::<Vec<_>>().join(", ")
+            )));
+        }
         return Ok(stored);
     }
     Err(H5iError::Metadata(format!(
@@ -640,6 +661,35 @@ pub fn write_identity(h5i_root: &Path, name: &str) -> Result<(), H5iError> {
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
     let path = identity_path(h5i_root);
     std::fs::write(&path, format!("{name}\n")).map_err(|e| H5iError::with_path(e, path))
+}
+
+/// Agents known to share this clone, discovered from per-agent read-state files
+/// (`msg/cursors/<agent>.json`, `msg/views/<agent>.json`) plus the stored
+/// default identity. Used to detect a multi-agent clone, where the single
+/// stored-identity slot is ambiguous and must not be trusted as a silent
+/// identity fallback (see [`resolve_identity`]).
+fn known_agents(h5i_root: &Path) -> BTreeSet<String> {
+    let mut agents = BTreeSet::new();
+    for dir in [cursors_dir(h5i_root), views_dir(h5i_root)] {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                if validate_name(stem).is_ok() {
+                    agents.insert(stem.to_string());
+                }
+            }
+        }
+    }
+    if let Some(stored) = read_identity(h5i_root) {
+        agents.insert(stored);
+    }
+    agents
 }
 
 /// Idempotently merge the messaging wiring into a Claude Code `settings.json`
@@ -1352,6 +1402,7 @@ mod tests {
         assert_eq!(inbox(&repo, &root, "codex", false).unwrap().len(), 1);
 
         // Per-agent view files don't collide: each reply targets its own view.
+
         write_last_view(&root, "claude", &["a".into()]).unwrap();
         write_last_view(&root, "codex", &["b".into()]).unwrap();
         assert_eq!(resolve_view_number(&root, "claude", 1).as_deref(), Some("a"));
@@ -1566,5 +1617,27 @@ mod tests {
         assert!(bodies.contains(&"local-only".to_string()));
         assert!(bodies.contains(&"incoming-only".to_string()));
         assert_eq!(bodies.len(), 3);
+    }
+
+    #[test]
+    fn identity_resolution_refuses_shared_stored_in_multi_agent_clone() {
+        let (_d, _repo, root) = fixture();
+        std::env::remove_var(AGENT_ENV);
+
+        // Solo clone: the stored default is the only known agent, so the
+        // convenient fallback is allowed.
+        write_identity(&root, "codex").unwrap();
+        assert_eq!(resolve_identity(&root, None).unwrap(), "codex");
+
+        // A second agent's per-agent read-state file makes this a shared clone.
+        let cursors = cursors_dir(&root);
+        std::fs::create_dir_all(&cursors).unwrap();
+        std::fs::write(cursors.join("claude.json"), "{}").unwrap();
+
+        // The ambiguous shared slot must no longer be silently trusted...
+        assert!(resolve_identity(&root, None).is_err());
+        // ...but an explicit identity (and $H5I_AGENT, checked elsewhere) still
+        // resolves cleanly.
+        assert_eq!(resolve_identity(&root, Some("claude")).unwrap(), "claude");
     }
 }
