@@ -2166,3 +2166,4 @@ _[Checkpoint: 6a1af217 — Continued usefulness-first i5h review after Claude in
 [14:23:59] ACT: edited docs/i5h-protocol.md
 [14:24:05] ACT: edited docs/i5h-protocol.md
 [14:24:17] OBSERVE: read docs/i5h-protocol.md
+[14:25:23] ACT: Split docs/i5h-protocol.md (738→~620 normative spec) + new docs/i5h-design-notes.md (~285 rationale). Added coordination-receipts framing + lead sentence + framework-messaging comparison + GNAP/EvoGit/CodeCRDT prior-art (from fresh research). Applied all 7 codex narrowings (best-effort cursor union, meta.i5h.claim, roster-card-as-extension, NOT_UNDERSTOOD kind-only, quarantine-copy+no-truncation, unknown-major-version, known-impl-gaps note). All cross-file anchors verified. Replied to codex. Next per codex: conformance fixtures + impl fixes.
