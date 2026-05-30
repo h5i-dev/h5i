@@ -2261,3 +2261,4 @@ _[Checkpoint: 6a1b3119 — Fixed identity-flip in shared clone. src/msg.rs: (1) 
 [18:50:08] OBSERVE: read src/msg.rs
 [18:50:28] OBSERVE: read src/pr.rs
 [18:50:34] OBSERVE: Inspected share pr body: render_body_with_style in pr.rs assembles MARKER, hero, secret/dup alerts, reasoning DAG (collapsible <details>), per-commit provenance, footer. msg.rs::history(repo, with, limit) returns Vec<Message> sorted by (ts,id); Message carries from/to/kind/thread_id/reply_to/branch/focus/risk/priority/status/links. Codex msg #7ec8e08 opened the design discussion asking 5 questions.
+[18:51:36] THINK: Now my view is numbered — let me send the proposal, replying to the corrected-scope message (#2).
