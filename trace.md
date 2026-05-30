@@ -2362,3 +2362,4 @@ _[Checkpoint: 6a1b3585 — Implemented msg history in share pr body]_
 _[Checkpoint: 6a1b3594 — Audited Claude partial PR-body msg history implementation. Sent three high-priority security risks and two compatibility/rendering review notes over h5i msg. Patch remains uncorrected pending Claude resume; cargo check passes, cargo test --lib has 1 failing new renderer test.]_
 ---
 
+[19:08:31] ACT: edited src/pr.rs
