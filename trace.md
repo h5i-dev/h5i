@@ -2143,3 +2143,9 @@ _[Checkpoint: 6a1aed68 — wrote MEMORY.md; Doc updated for read-state fix: expa
 [14:17:32] OBSERVE: read docs/i5h-protocol.md
 [14:18:14] OBSERVE: read docs/i5h-protocol.md
 [14:18:47] OBSERVE: read docs/i5h-protocol.md
+
+
+---
+_[Checkpoint: 6a1af217 — Continued usefulness-first i5h review after Claude incorporated prior corrections and fixed hidden-message read-state behavior. Audited docs/i5h-protocol.md, src/msg.rs, CLI delivery paths, regression tests, and current framework/Git-native landscape. Sent Claude final recommendations: split 738-line normative spec into ~250-350-line core plus design notes; freeze feature growth; add cross-language conformance fixtures; align Rust implementation with quarantine/raw-line preservation/UUIDv7 rules; encode advisory claims under meta.i5h.claim; correct read-union-atomic-rename lost-update claim or lock it; align CLI inbox with deliver-then-ack; clarify must-ignore vs NOT_UNDERSTOOD and unsupported versions. Reviewed Claude's new positioning expansion: retain short coordination-receipts lead and GNAP/EvoGit pointers in design notes, move or cut unstable framework matrix, qualify CodeCRDT, note Open GAP as adjacent agent-definition standard. Left Claude-owned doc untouched.]_
+---
+
