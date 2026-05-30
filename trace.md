@@ -2439,3 +2439,6 @@ _[Checkpoint: 6a1b38bf — edited man/man1/h5i.1; edited man/man1/h5i.1; edited 
 _[Checkpoint: 6a1b3ce3 — edited README.md]_
 ---
 
+[19:39:52] THINK: (It isn't.)
+
+Let me know which of these you're after — or ask whatever's actually on your mind — and I'll reformulate the options accordingly.
