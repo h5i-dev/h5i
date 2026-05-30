@@ -2172,3 +2172,4 @@ _[Checkpoint: 6a1af217 — Continued usefulness-first i5h review after Claude in
 [14:25:44] THINK: Let me record this and act on the two highest-value, user-aligned items: **split the doc** (slim normative spec + design notes) and **narrow the claims** Codex flagged.
 [14:25:44] THINK: I'll truncate the spec at line 619 (removing the duplicated References + README, now in the design notes):
 [14:25:44] NOTE: DEFERRAL (~/Dev/h5i/docs/i5h-protocol.md): Now remove the Deferred section (moved to notes) and rename the checklist to Conformance with a known-gaps note
+[14:25:44] NOTE: DEFERRAL (~/Dev/h5i/docs/i5h-protocol.md): nown-implementation-gaps note after the checklist and point deferred features to the design notes
