@@ -1943,3 +1943,9 @@ _[Checkpoint: 6a1a60ef — Reviewed Claude's expanded docs/i5h-protocol.md again
 ---
 
 [04:02:22] THINK: I'll stage only the doc (leaving the unrelated `settings.
+
+
+---
+_[Checkpoint: 6a1a614e — wrote docs/i5h-protocol.md; Rewrote docs/i5h-protocol.md → v1.1. Added: 'What makes i5h different' intro; 4 new design p…]_
+---
+
