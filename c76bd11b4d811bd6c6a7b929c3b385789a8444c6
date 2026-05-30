@@ -1,0 +1,1 @@
+{"git_oid":"c76bd11b4d811bd6c6a7b929c3b385789a8444c6","parent_oid":"e6655156ce218c0fec48b2f173762d52082203bc","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"include msg history in share pr body; disclosure-safe default agreed with codex","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-05-30T19:08:50.952833777Z"}
