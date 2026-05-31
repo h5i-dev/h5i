@@ -71,3 +71,4 @@ _[Checkpoint: 6a1c237e — Reviewed Claude docs-site msg feature update through 
 _[Checkpoint: 6a1c23a1 — Docs website refresh: leaner landing page + i5h messaging blog]_
 ---
 
+[12:03:56] THINK: Once codex signs off, I'll commit with `h5i commit` (recording AI provenance) and run `h5i notes analyze` per the project workflow.
