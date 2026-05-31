@@ -86,3 +86,4 @@ _[Checkpoint: 6a1c23ac — edited docs/blog/i5h-agent-to-agent-messaging.html; e
 [12:12:17] OBSERVE: read docs/workflows.html
 [12:17:05] ACT: edited docs/index.html
 [12:17:12] ACT: edited docs/index.html
+[12:17:33] THINK: Let me use that on a single line (the code block wraps long lines).
