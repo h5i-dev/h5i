@@ -24,3 +24,4 @@
 [11:56:52] ACT: edited docs/index.html
 [11:56:59] ACT: Simplified docs/index.html: tightened hero sub, cut feature grid 16→8 outcome cards, added msg use case #02 with h5i-msg-demo.gif; wrote new blog post docs/blog/i5h-agent-to-agent-messaging.html; updated blog index, sitemap; copied gif to _static
 [11:56:59] OBSERVE: gif first frame titled 'h5i msg watch — live channel' (single watch terminal, not a two-pane split) — corrected captions/alt to match
+[11:57:20] THINK: I'll start by exploring the docs website structure and following the h5i workflow.
