@@ -104,3 +104,4 @@ _[Checkpoint: 6a1c26dd — edited docs/index.html; edited docs/index.html; edite
 [13:04:12] ACT: edited docs/blog/i5h-agent-to-agent-messaging.html
 [13:04:20] ACT: edited docs/i5h-protocol.md
 [13:05:37] OBSERVE: read i5h-protocol3.png
+[13:06:48] THINK: The SVG logic is sound, but ImageMagick exposed two robustness issues I should fix so it renders correctly everywhere (not just browsers): inline `tspan` flow gets stacked, and `fill-opacity` badges with same-color text become invisible if …
