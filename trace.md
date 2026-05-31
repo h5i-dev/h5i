@@ -27,3 +27,4 @@
 [11:57:20] THINK: I'll start by exploring the docs website structure and following the h5i workflow.
 [11:57:20] THINK: Now I'll add a messaging use case prominently as #02 (with the gif) and renumber the rest.
 [11:57:20] THINK: Let me bump the existing numbers first (highest first to avoid collisions).
+[11:57:20] THINK: Now let me insert the messaging use case (#02) with the gif.
