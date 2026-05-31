@@ -56,3 +56,16 @@ Cut feature grid 16->8 outcome cards, added msg use case #02 with gif, new blog 
 
 ---
 
+## Commit 6a1c23ac — 2026-05-31 12:03 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+Cut feature grid 16->8 outcome cards, added msg use case #02 with gif, new blog post on i5h messaging; codex-reviewed (fixed option-order + host-specific delivery). Committed 47beebf3.
+
+### This Commit's Contribution
+
+
+---
+

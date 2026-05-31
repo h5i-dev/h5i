@@ -72,3 +72,9 @@ _[Checkpoint: 6a1c23a1 — Docs website refresh: leaner landing page + i5h messa
 ---
 
 [12:03:56] THINK: Once codex signs off, I'll commit with `h5i commit` (recording AI provenance) and run `h5i notes analyze` per the project workflow.
+
+
+---
+_[Checkpoint: 6a1c23ac — edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/i5h-…]_
+---
+
