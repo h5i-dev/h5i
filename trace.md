@@ -28,3 +28,9 @@
 [11:57:20] THINK: Now I'll add a messaging use case prominently as #02 (with the gif) and renumber the rest.
 [11:57:20] THINK: Let me bump the existing numbers first (highest first to avoid collisions).
 [11:57:20] THINK: Now let me insert the messaging use case (#02) with the gif.
+
+
+---
+_[Checkpoint: 6a1c2220 — edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/index.html; Simplified docs/index.html: tightened hero s…]_
+---
+
