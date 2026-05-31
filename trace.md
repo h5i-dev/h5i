@@ -95,3 +95,4 @@ _[Checkpoint: 6a1c26dd — edited docs/index.html; edited docs/index.html; edite
 ---
 
 [12:59:22] ACT: wrote docs/_static/i5h-protocol.svg
+[13:00:39] OBSERVE: read i5h-protocol.png
