@@ -31,6 +31,8 @@ run ends, an i5h message is a Git object you can still `git show` a year later.
 
 ## The whole protocol in one screen
 
+![i5h protocol at a glance: one agent appends a typed request to refs/h5i/msg; the other reads it and appends ACK then DONE replies that thread back via reply_to; the append-only log is shared by h5i share push/pull and merged by union of ids.](_static/i5h-protocol.svg)
+
 A message is one JSON object, appended as one line to `messages.jsonl` inside the
 Git ref `refs/h5i/msg`:
 

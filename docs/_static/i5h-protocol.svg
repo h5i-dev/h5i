@@ -1,0 +1,127 @@
+<svg width="1240" height="440" viewBox="0 0 1240 440" xmlns="http://www.w3.org/2000/svg" font-family="Inter, Arial, sans-serif">
+  <!--
+    i5h protocol, the easy version.
+    Story: Claude sends a typed request -> it becomes one append-only JSON line
+    in the Git ref refs/h5i/msg -> Codex reads it, then appends ACK and DONE
+    replies that thread back to it (reply_to). The log is a grow-only set merged
+    by id and shared with h5i push / pull. Same GitHub-flavored palette as
+    h5i-concept.svg so it reads on light and dark backgrounds; corners are
+    transparent to blend into any page.
+  -->
+  <defs>
+    <linearGradient id="i5hbg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#151b25"/>
+      <stop offset="1" stop-color="#0c1015"/>
+    </linearGradient>
+    <filter id="i5hsoft" x="-6%" y="-10%" width="112%" height="124%">
+      <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#01040a" flood-opacity="0.32"/>
+    </filter>
+    <marker id="i5hBlue" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#58a6ff"/>
+    </marker>
+    <marker id="i5hGreen" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#3fb950"/>
+    </marker>
+    <marker id="i5hPurple" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#a371f7"/>
+    </marker>
+  </defs>
+
+  <style>
+    .phase  { font-weight:700; font-size:13px; fill:#8b949e; letter-spacing:2px; }
+    .name   { font-weight:700; font-size:17px; fill:#f0f6fc; }
+    .sub    { font-weight:400; font-size:12px; fill:#8b949e; }
+    .mono   { font-weight:700; font-size:13px; fill:#79c0ff; font-family:ui-monospace, Menlo, Consolas, monospace; }
+    .monos  { font-weight:400; font-size:12.5px; fill:#adbac7; font-family:ui-monospace, Menlo, Consolas, monospace; }
+    .dim    { font-weight:400; font-size:11.5px; fill:#768390; font-family:ui-monospace, Menlo, Consolas, monospace; }
+    .kind   { font-weight:700; font-size:11.5px; font-family:ui-monospace, Menlo, Consolas, monospace; }
+    .step   { font-weight:700; font-size:11.5px; fill:#8b949e; letter-spacing:.5px; }
+    .foot   { font-weight:600; font-size:12px; fill:#8b949e; }
+    .footk  { font-weight:700; font-size:12px; fill:#adbac7; font-family:ui-monospace, Menlo, Consolas, monospace; }
+  </style>
+
+  <!-- card -->
+  <rect x="8" y="8" width="1224" height="424" rx="18" fill="url(#i5hbg)" stroke="#30363d" stroke-width="1.5" filter="url(#i5hsoft)"/>
+
+  <!-- title -->
+  <text x="40" y="50" class="name" font-size="18">i5h — agent messaging over Git</text>
+  <text x="40" y="72" class="sub">Typed work handoffs, appended to one Git ref. No server, no socket.</text>
+
+  <!-- phase labels -->
+  <text x="119"  y="116" text-anchor="middle" class="phase">SENDER</text>
+  <text x="620"  y="116" text-anchor="middle" class="phase">refs/h5i/msg</text>
+  <text x="1121" y="116" text-anchor="middle" class="phase">RECIPIENT</text>
+
+  <!-- ── Claude (sender) ─────────────────────────────────────── -->
+  <rect x="44" y="150" width="150" height="118" rx="12" fill="#161b22" stroke="#30363d"/>
+  <rect x="66" y="172" width="30" height="30" rx="8" fill="#8957e5" fill-opacity="0.22" stroke="#a371f7"/>
+  <circle cx="81" cy="187" r="6" fill="#a371f7"/>
+  <text x="106" y="193" class="name">Claude</text>
+  <text x="66" y="230" class="monos" fill="#a371f7">H5I_AGENT</text>
+  <text x="66" y="250" class="monos">= claude</text>
+
+  <!-- ── Codex (recipient) ───────────────────────────────────── -->
+  <rect x="1046" y="150" width="150" height="118" rx="12" fill="#161b22" stroke="#30363d"/>
+  <rect x="1068" y="172" width="30" height="30" rx="8" fill="#1f6feb" fill-opacity="0.22" stroke="#58a6ff"/>
+  <rect x="1075" y="180" width="16" height="6" rx="2" fill="#58a6ff"/>
+  <rect x="1075" y="190" width="16" height="6" rx="2" fill="#58a6ff"/>
+  <text x="1108" y="193" class="name">Codex</text>
+  <text x="1068" y="230" class="monos" fill="#58a6ff">H5I_AGENT</text>
+  <text x="1068" y="250" class="monos">= codex</text>
+
+  <!-- ── central append-only log ─────────────────────────────── -->
+  <rect x="300" y="132" width="640" height="232" rx="14" fill="#0d1117" stroke="#30363d"/>
+  <text x="320" y="160" class="mono">messages.jsonl</text>
+  <text x="920" y="160" text-anchor="end" class="dim">append-only · grow-only set</text>
+  <line x1="320" y1="172" x2="920" y2="172" stroke="#21262d" stroke-width="1"/>
+
+  <!-- message rows -->
+  <!-- row 1: REVIEW_REQUEST -->
+  <rect x="320" y="186" width="600" height="46" rx="9" fill="#161b22" stroke="#30363d"/>
+  <text x="338" y="214" class="monos">claude &#8594; codex</text>
+  <rect x="492" y="197" width="138" height="24" rx="6" fill="#221c0d" stroke="#e3b341" stroke-opacity="0.7"/>
+  <text x="561" y="214" text-anchor="middle" class="kind" fill="#e3b341">REVIEW_REQUEST</text>
+  <text x="650" y="214" class="dim">"review token refresh…"</text>
+  <text x="902" y="214" text-anchor="end" class="dim">#8f21c9a</text>
+
+  <!-- row 2: ACK -->
+  <rect x="320" y="244" width="600" height="46" rx="9" fill="#161b22" stroke="#30363d"/>
+  <text x="338" y="272" class="monos">codex &#8594; claude</text>
+  <rect x="492" y="255" width="50" height="24" rx="6" fill="#0f2417" stroke="#3fb950" stroke-opacity="0.7"/>
+  <text x="517" y="272" text-anchor="middle" class="kind" fill="#3fb950">ACK</text>
+  <text x="560" y="272" class="dim">reply_to #8f21c9a</text>
+  <text x="902" y="272" text-anchor="end" class="dim">#cb902e3</text>
+
+  <!-- row 3: DONE -->
+  <rect x="320" y="302" width="600" height="46" rx="9" fill="#161b22" stroke="#30363d"/>
+  <text x="338" y="330" class="monos">codex &#8594; claude</text>
+  <rect x="492" y="313" width="58" height="24" rx="6" fill="#0f2417" stroke="#3fb950" stroke-opacity="0.7"/>
+  <text x="521" y="330" text-anchor="middle" class="kind" fill="#3fb950">DONE</text>
+  <text x="568" y="330" class="dim">reply_to #8f21c9a · fixed in 1a2b3c4</text>
+  <text x="902" y="330" text-anchor="end" class="dim">#72ce004</text>
+
+  <!-- threading bracket: the replies point back to the request via reply_to -->
+  <path d="M313,209 L307,209 L307,325 L313,325" fill="none" stroke="#484f58" stroke-width="1.4"/>
+
+  <!-- ── flow arrows ─────────────────────────────────────────── -->
+  <!-- 1 · Claude appends the request -->
+  <path d="M194,200 C246,200 258,209 298,209" fill="none" stroke="#a371f7" stroke-width="2" marker-end="url(#i5hPurple)"/>
+  <text x="246" y="190" text-anchor="middle" class="step" fill="#a371f7">1 · send</text>
+
+  <!-- 2 · Codex reads it -->
+  <path d="M942,209 C982,209 998,200 1044,200" fill="none" stroke="#58a6ff" stroke-width="2" marker-end="url(#i5hBlue)"/>
+  <text x="994" y="190" text-anchor="middle" class="step" fill="#58a6ff">2 · read</text>
+
+  <!-- 3 · Codex appends ACK + DONE -->
+  <path d="M1044,250 C998,290 982,316 942,316" fill="none" stroke="#3fb950" stroke-width="2" marker-end="url(#i5hGreen)"/>
+  <text x="996" y="332" text-anchor="middle" class="step" fill="#3fb950">3 · reply</text>
+
+  <!-- ── footer notes ────────────────────────────────────────── -->
+  <line x1="40" y1="388" x2="1200" y2="388" stroke="#21262d" stroke-width="1"/>
+  <text x="40" y="406" class="foot">7 required fields</text>
+  <text x="40" y="424" class="footk" fill="#79c0ff">version · id · ts · from · to · kind · body</text>
+  <text x="620" y="406" text-anchor="middle" class="foot">request lifecycle</text>
+  <text x="620" y="424" text-anchor="middle" class="footk">open &#8594; working &#8594; completed</text>
+  <text x="1200" y="406" text-anchor="end" class="foot">shared by h5i share push / pull</text>
+  <text x="1200" y="424" text-anchor="end" class="footk">merge = union by id</text>
+</svg>

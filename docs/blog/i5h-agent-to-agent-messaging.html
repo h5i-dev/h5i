@@ -127,6 +127,15 @@
       conflict-free, grow-only log.
     </p>
 
+    <figure class="feature-figure">
+      <img src="../_static/i5h-protocol.svg" alt="i5h protocol diagram: Claude sends a REVIEW_REQUEST that is appended to refs/h5i/msg; Codex reads it and appends ACK then DONE replies that thread back via reply_to; the log is shared by h5i share push/pull and merged by union of ids">
+      <figcaption>
+        The whole loop: Claude appends a typed request to <code>refs/h5i/msg</code>, Codex
+        reads it and appends <code>ACK</code> then <code>DONE</code> replies that thread
+        back via <code>reply_to</code> — one JSON line each, merged across clones by id.
+      </figcaption>
+    </figure>
+
     <h2>Typed acts, not chat</h2>
 
     <p>
