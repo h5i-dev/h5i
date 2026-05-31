@@ -34,3 +34,4 @@
 _[Checkpoint: 6a1c2220 — edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/index.html; Simplified docs/index.html: tightened hero s…]_
 ---
 
+[11:58:10] NOTE: Review requested: fix typed msg helper flag ordering before recipient; distinguish Claude Stop-hook delivery from Codex prelude/sync/finish; add setup, per-process identity, and share push/pull snippets; refresh stale HTML comments.
