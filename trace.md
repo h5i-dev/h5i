@@ -78,3 +78,4 @@ _[Checkpoint: 6a1c23a1 — Docs website refresh: leaner landing page + i5h messa
 _[Checkpoint: 6a1c23ac — edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/i5h-…]_
 ---
 
+[12:11:33] OBSERVE: read README.md
