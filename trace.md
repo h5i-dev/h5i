@@ -119,3 +119,9 @@ _[Checkpoint: 6a1c3268 — edited docs/_static/i5h-protocol.svg; edited docs/blo
 [13:08:09] ACT: edited docs/_static/i5h-protocol.svg
 [13:09:29] OBSERVE: read i5h-protocol4.png
 [13:10:52] THINK: Both are valid. Let me apply them: (1) show `reply_to` on the DONE row too, and (2) use the primary `h5i share push / pull` spelling.
+
+
+---
+_[Checkpoint: 6a1c335c — edited docs/i5h-protocol.md; edited docs/_static/i5h-protocol.svg; edited docs/_static/i5h-protocol.svg]_
+---
+
