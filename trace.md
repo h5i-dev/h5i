@@ -113,3 +113,4 @@ _[Checkpoint: 6a1c26dd — edited docs/index.html; edited docs/index.html; edite
 _[Checkpoint: 6a1c3268 — edited docs/_static/i5h-protocol.svg; edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/i5h-protocol.md]_
 ---
 
+[13:07:27] NOTE: SVG follow-up review requested: make DONE reply_to threading explicit and use primary h5i share push / pull spelling in diagram and named sync descriptions.
