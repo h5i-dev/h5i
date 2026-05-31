@@ -7,3 +7,4 @@
 [11:46:03] THINK: Use Claude as the docs author and Codex as reviewer over h5i msg because the user explicitly requested a reviewer workflow; evaluate homepage scanability, top-page msg visibility, GIF placement, detailed blog usefulness, and preservation of the exact headline.
 [11:48:16] OBSERVE: searched docs/index.html
 [11:48:16] OBSERVE: listed files under assets/h5i-msg-demo.gif
+[11:48:16] OBSERVE: read docs/index.html
