@@ -94,3 +94,4 @@ _[Checkpoint: 6a1c23ac — edited docs/blog/i5h-agent-to-agent-messaging.html; e
 _[Checkpoint: 6a1c26dd — edited docs/index.html; edited docs/index.html; edited docs/index.html]_
 ---
 
+[12:59:22] ACT: wrote docs/_static/i5h-protocol.svg
