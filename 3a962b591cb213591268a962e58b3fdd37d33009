@@ -1,0 +1,1 @@
+{"git_oid":"3a962b591cb213591268a962e58b3fdd37d33009","parent_oid":"47beebf35e8cd6990c3bb8186e854ca394cc1a83","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"update the install command","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-05-31T12:17:24.958042503Z"}
