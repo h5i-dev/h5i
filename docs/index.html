@@ -515,7 +515,7 @@
       <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-ghost">View on GitHub</a>
     </div>
     <div class="hero-install">
-      <code id="install-cmd">cargo install --git https://github.com/Koukyosyumei/h5i h5i-core</code>
+      <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh | sh</code>
       <button class="copy-btn" onclick="copyInstall()">copy</button>
     </div>
     <div class="hero-stats">
@@ -920,14 +920,15 @@
       <div class="install-card reveal">
         <h3>INSTALL</h3>
         <div class="code-block">
-<span class="cm"># Install from source</span>
-<span class="hl">cargo install \</span>
-<span class="hl">  --git https://github.com/Koukyosyumei/h5i \</span>
-<span class="hl">  h5i-core</span>
+<span class="cm"># Install the prebuilt binary</span>
+<span class="hl">curl -fsSL <span class="st">https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh</span> | sh</span>
+
+<span class="cm"># …or build from source</span>
+<span class="hl">cargo install --git \</span>
+<span class="hl">  https://github.com/Koukyosyumei/h5i h5i-core</span>
 
 <span class="cm"># Init in your project</span>
-<span class="hl">cd your-project</span>
-<span class="hl">h5i init</span>
+<span class="hl">cd your-project &amp;&amp; h5i init</span>
         </div>
       </div>
       <div class="install-card reveal">
