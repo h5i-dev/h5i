@@ -296,11 +296,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/i5h-…
 - [x] edited docs/index.html; edited docs/index.html; edited docs/index.html
 - [x] edited docs/_static/i5h-protocol.svg; edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/i5h-protocol.md
+- [x] edited docs/i5h-protocol.md; edited docs/_static/i5h-protocol.svg; edited docs/_static/i5h-protocol.svg
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-31 13:10 UTC] `update-doc-with-i5h`: edited docs/i5h-protocol.md; edited docs/_static/i5h-protocol.svg; edited docs/_static/i5h-protocol.svg
 - [2026-05-31 13:06 UTC] `update-doc-with-i5h`: edited docs/_static/i5h-protocol.svg; edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/i5h-protocol.md
 - [2026-05-31 12:17 UTC] `update-doc-with-i5h`: edited docs/index.html; edited docs/index.html; edited docs/index.html
 - [2026-05-31 12:03 UTC] `update-doc-with-i5h`: edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/i5h-…
