@@ -291,11 +291,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited MANUAL.md; edited Cargo.toml; edited man/man1/h5i.1
 - [x] edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/index.html; Simplified docs/index.html: tightened hero s…
 - [x] edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/i5h-…
+- [x] Reviewed Claude docs-site msg feature update through h5i msg; requested and verified corrections for CLI option ordering, Codex delivery semantics, practical identity/sync setup, and HTML comment numbering; approved final draft after static checks.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-31 12:03 UTC] `update-doc-with-i5h`: Reviewed Claude docs-site msg feature update through h5i msg; requested and verified corrections for CLI option ordering, Codex delivery semantics, practical identity/sync setup, and HTML comment numbering; approved final draft after static checks.
 - [2026-05-31 12:02 UTC] `update-doc-with-i5h`: edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/i5h-…
 - [2026-05-31 11:57 UTC] `update-doc-with-i5h`: edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/index.html; Simplified docs/index.html: tightened hero s…
 - [2026-05-30 20:11 UTC] `improve-i5h`: edited MANUAL.md; edited Cargo.toml; edited man/man1/h5i.1
