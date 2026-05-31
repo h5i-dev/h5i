@@ -88,3 +88,9 @@ _[Checkpoint: 6a1c23ac — edited docs/blog/i5h-agent-to-agent-messaging.html; e
 [12:17:12] ACT: edited docs/index.html
 [12:17:33] THINK: Let me use that on a single line (the code block wraps long lines).
 [12:17:33] NOTE: DEFERRAL (~/Dev/h5i/docs/index.html): primary with cargo as the alternative — it's current, so I'll leave it. The three blog posts show only the old cargo line as a quick aside. Let me u…
+
+
+---
+_[Checkpoint: 6a1c26dd — edited docs/index.html; edited docs/index.html; edited docs/index.html]_
+---
+
