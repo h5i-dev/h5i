@@ -506,8 +506,8 @@
       <span class="shine-text">Next-Gen AI-Aware Git</span>
     </h1>
     <p class="hero-sub">
-      <strong>h5i</strong> (pronounced <em>high-five</em>) is a Git sidecar that extends version control for teams where AI agents write production code alongside humans.
-      Where Git answers <strong>what changed</strong>, h5i answers <strong>who, why, what the agent knew, whether it was safe, how to undo it, and how the next agent should continue</strong>.
+      <strong>h5i</strong> (pronounced <em>high-five</em>) is a Git sidecar for teams where AI agents write code alongside humans.
+      Git records <strong>what changed</strong>. h5i records the rest: <strong>who, why, what the agent knew, whether it was safe, and how the next agent picks up where the last left off</strong>.
     </p>
     <div class="hero-actions">
       <a href="#install" class="btn btn-primary">Get Started</a>
@@ -515,7 +515,7 @@
       <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-ghost">View on GitHub</a>
     </div>
     <div class="hero-install">
-      <code id="install-cmd">cargo install --git https://github.com/Koukyosyumei/h5i h5i-core</code>
+      <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh | sh</code>
       <button class="copy-btn" onclick="copyInstall()">copy</button>
     </div>
     <div class="hero-stats">
@@ -536,8 +536,8 @@
   <div class="container">
     <div class="section-head reveal">
       <span class="section-tag">Feature Overview</span>
-      <h2 class="section-title">Four nouns for the AI coding lifecycle.</h2>
-      <p class="section-sub">The current CLI is organized around capture, recall, audit, and share. Legacy commands still work, but these are the commands new users should learn first.</p>
+      <h2 class="section-title">Four verbs for the AI coding lifecycle.</h2>
+      <p class="section-sub">Everything in h5i is some form of capture, recall, audit, or share. Here's what that gets you.</p>
       <div class="divider"></div>
     </div>
     <div class="mode-grid reveal">
@@ -549,83 +549,43 @@
     <div class="feat-grid">
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i recall context</span>
-        <div class="feat-name">Versioned reasoning workspace</div>
-        <div class="feat-desc">Every OBSERVE → THINK → ACT step is stored as a DAG node linked to its code commit in <code style="color:var(--red);font-family:var(--mono)">refs/h5i/context</code>. Survives session resets, machine switches, and team handoffs.</div>
+        <div class="feat-name">Versioned reasoning</div>
+        <div class="feat-desc">Every observation, decision, and action is saved as a node linked to its commit — so the why behind the code survives session resets and handoffs.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i codex prelude / sync / finish</span>
-        <div class="feat-name">Codex session handoff</div>
-        <div class="feat-desc">Codex can restore the shared context at session start, sync file reads and edits from its JSONL session, and close with a checkpointed summary.</div>
+        <span class="feat-cmd">h5i codex prelude · h5i hook setup</span>
+        <div class="feat-name">Session handoff for Claude &amp; Codex</div>
+        <div class="feat-desc">Both agents restore the shared context when a session starts and check their work back in when it ends — Claude Code via hooks and MCP, Codex via explicit commands.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i recall context show --depth 1|2|3</span>
-        <div class="feat-name">Progressive disclosure</div>
-        <div class="feat-desc">Pay only for the depth you need: depth&nbsp;1 (~800 tokens) gives a compact index; depth&nbsp;2 adds the timeline; depth&nbsp;3 includes the full OTA log.</div>
+        <span class="feat-cmd">h5i capture claim · h5i capture memory</span>
+        <div class="feat-name">Reusable memory &amp; claims</div>
+        <div class="feat-desc">Record verified facts and snapshot agent memory so the next session skips re-grounding — a measured A/B shows ~77% fewer cache-read tokens.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i recall context branch / merge</span>
-        <div class="feat-name">Reasoning branches</div>
-        <div class="feat-desc">Explore a risky alternative without polluting the main thread — exactly like <code style="color:var(--red);font-family:var(--mono)">git branch</code>. Merge nodes are recorded in the DAG with two parent IDs.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i recall context restore &lt;sha&gt;</span>
-        <div class="feat-name">Reasoning time-travel</div>
-        <div class="feat-desc">Every h5i provenance commit can snapshot the context workspace. Restore reasoning to any past commit SHA — or diff how it evolved between two commits.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i hook setup</span>
-        <div class="feat-name">Claude Code hooks + MCP</div>
-        <div class="feat-desc">Claude Code can trace reads and edits, inject prior context at session start, checkpoint on stop, and call h5i through MCP tools instead of shell commands.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i capture memory / recall memory</span>
-        <div class="feat-name">Memory versioning</div>
-        <div class="feat-desc">Snapshot agent memory into <code style="color:var(--red);font-family:var(--mono)">refs/h5i/memory</code>, diff it across versions, restore it, and sync it to teammates.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i capture claim / recall claims</span>
-        <div class="feat-name">Content-addressed claims</div>
-        <div class="feat-desc">Record what the agent concluded — each claim pins its evidence as a Merkle hash over the files it depends on. Stays <code style="color:var(--red);font-family:var(--mono)">live</code> until any evidence blob changes, then auto-invalidates. Injected into the next session's preamble so the agent skips re-grounding — measured A/B (N=10) shows <strong>~77% fewer cache-read tokens</strong> and ~5.6× fewer file reads.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i capture commit --prompt … --audit</span>
+        <span class="feat-cmd">h5i capture commit --prompt …</span>
         <div class="feat-name">AI-tagged commits</div>
-        <div class="feat-desc">Stores the exact prompt, model, agent ID, and test results alongside every diff in <code style="color:var(--red);font-family:var(--mono)">refs/h5i/notes</code>. Automatic with hooks installed.</div>
+        <div class="feat-desc">Every diff carries the exact prompt, model, agent, and test result — captured automatically once hooks are installed.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i recall notes footprint / uncertainty</span>
-        <div class="feat-name">Session analysis</div>
-        <div class="feat-desc">After each session: exploration footprint, uncertainty heatmap (every hedge with confidence score), omissions (stubs, deferrals, broken promises), and blind-edit coverage.</div>
+        <span class="feat-cmd">h5i audit review · h5i audit scan</span>
+        <div class="feat-name">Audit &amp; injection detection</div>
+        <div class="feat-desc">Rank which commits most need review and scan reasoning traces for prompt-injection signals — deterministic, with no model in the audit path.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i audit review</span>
-        <div class="feat-name">Integrity audit</div>
-        <div class="feat-desc">Quality signals catch credential leaks, blind edits, duplicated code, sensitive files, CI/CD changes, test regressions, binaries, and code execution. Shape signals add context without flagging alone.</div>
+        <span class="feat-cmd">h5i msg</span>
+        <div class="feat-name">Agent-to-agent messaging (i5h)</div>
+        <div class="feat-desc">Agents ask, review, reply, hand off, and wait on each other without sharing a terminal — every message a durable Git object you can replay later.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i audit scan</span>
-        <div class="feat-name">Injection detection</div>
-        <div class="feat-desc">Scans every OBSERVE/THINK/ACT entry for prompt-injection signals — instruction overrides, role hijacks, credential exfiltration — and reports a 0.0–1.0 risk score.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i recall resume</span>
-        <div class="feat-name">Session handoff</div>
-        <div class="feat-desc">Ready-to-paste briefing — goal, progress, risky files, suggested opening prompt — generated entirely from local data. No API call.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i share push / pull</span>
-        <div class="feat-name">Team sharing</div>
-        <div class="feat-desc">Syncs all h5i refs (<code style="color:var(--red);font-family:var(--mono)">notes · context · memory</code>) to/from the remote in one command — teammates see full provenance and reasoning history.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i share pr post --style review</span>
-        <div class="feat-name">PR view of the context graph</div>
-        <div class="feat-desc">Posts a sticky GitHub PR comment that renders the same shared context where reviewers already work: goal, evidence, checklist, THINK/NOTE highlights, audit signals, and per-commit provenance.</div>
+        <span class="feat-cmd">h5i share push · h5i share pr post</span>
+        <div class="feat-name">Team sharing &amp; PR view</div>
+        <div class="feat-desc">Sync all h5i context to teammates in one command, and post it as a sticky GitHub PR comment right where reviewers already work.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i serve</span>
         <div class="feat-name">Web dashboard</div>
-        <div class="feat-desc">Browser UI with Timeline, Summary, Integrity, Intent Graph, Memory, and Sessions tabs at localhost:7150.</div>
+        <div class="feat-desc">Browse the timeline, integrity scores, intent graph, memory, and sessions in a local browser UI at localhost:7150.</div>
       </div>
     </div>
   </div>
@@ -679,6 +639,36 @@
       <div class="usecase-header">
         <div class="usecase-num">02</div>
         <div>
+          <div class="usecase-title">Let one agent ask another for a review</div>
+          <div class="usecase-sub">With <code style="font-family:var(--mono);color:var(--red)">h5i msg</code> (the i5h protocol), Claude and Codex coordinate over Git — ask, review, hand off, and reply — without sharing a terminal.</div>
+        </div>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">claude → codex  ·  refs/h5i/msg</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-cmt"># claude finishes a risky change and asks codex to review</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i msg review --branch auth-refactor \
+    --focus src/auth.rs --risk "token cache now crosses requests" \
+    codex "Review token refresh before I open the PR."</span>
+<span class="t-pass">✔</span>  <span class="t-out">claude → codex  </span><span class="t-warn">REVIEW_REQUEST high</span><span class="t-out">  #8f21c9a</span>
+
+<span class="t-cmt"># codex sees it between turns, acknowledges, and closes the thread</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i msg ack 1</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i msg done 1 "LGTM — fixed one expiry edge case in 1a2b3c4."</span></pre></div>
+      </div>
+      <figure style="margin:1.5rem 0 0; border:1px solid var(--border); border-radius:var(--radius-lg); overflow:hidden; background:#090909;">
+        <img src="_static/h5i-msg-demo.gif" alt="The h5i msg watch view: a live agent channel with typed messages arriving in real time over refs/h5i/msg" loading="lazy" style="width:100%;">
+        <figcaption style="padding:0.85rem 1rem; font-size:0.82rem; color:var(--text-dim); border-top:1px solid var(--border);">Every message is a durable Git object in <code style="font-family:var(--mono);color:var(--red)">refs/h5i/msg</code> — shared with <code style="font-family:var(--mono);color:var(--red)">h5i push</code>, replayable a year later. <a href="blog/i5h-agent-to-agent-messaging.html" style="color:var(--red)">Read how it works →</a></figcaption>
+      </figure>
+    </div>
+
+    <!-- 3 -->
+    <div class="usecase reveal">
+      <div class="usecase-header">
+        <div class="usecase-num">03</div>
+        <div>
           <div class="usecase-title">Resume exactly where you left off</div>
           <div class="usecase-sub">Claude Code can use hooks and MCP. Codex uses explicit <code style="font-family:var(--mono);color:var(--red)">prelude</code>, <code style="font-family:var(--mono);color:var(--red)">sync</code>, and <code style="font-family:var(--mono);color:var(--red)">finish</code> commands.</div>
         </div>
@@ -722,10 +712,10 @@
       </div>
     </div>
 
-    <!-- 3 -->
+    <!-- 4 -->
     <div class="usecase reveal">
       <div class="usecase-header">
-        <div class="usecase-num">03</div>
+        <div class="usecase-num">04</div>
         <div>
           <div class="usecase-title">Audit what the integrity engine caught</div>
           <div class="usecase-sub">Quality signals flag real review risks; shape signals explain large or broad diffs without creating noise by themselves.</div>
@@ -747,10 +737,10 @@
       </div>
     </div>
 
-    <!-- 4 -->
+    <!-- 5 -->
     <div class="usecase reveal">
       <div class="usecase-header">
-        <div class="usecase-num">04</div>
+        <div class="usecase-num">05</div>
         <div>
           <div class="usecase-title">Understand what Claude actually did in a session</div>
           <div class="usecase-sub">Footprint, uncertainty heatmap, and file churn — all from the session log.</div>
@@ -780,10 +770,10 @@
       </div>
     </div>
 
-    <!-- 5 -->
+    <!-- 6 -->
     <div class="usecase reveal">
       <div class="usecase-header">
-        <div class="usecase-num">05</div>
+        <div class="usecase-num">06</div>
         <div>
           <div class="usecase-title">Detect prompt-injection signals in the reasoning trace</div>
           <div class="usecase-sub">Eight regex rules scan every OBSERVE/THINK/ACT entry — no model call, fully deterministic.</div>
@@ -816,10 +806,10 @@
       </div>
     </div>
 
-    <!-- 6 -->
+    <!-- 7 -->
     <div class="usecase reveal">
       <div class="usecase-header">
-        <div class="usecase-num">06</div>
+        <div class="usecase-num">07</div>
         <div>
           <div class="usecase-title">Start the next session with full situational awareness</div>
           <div class="usecase-sub">No API call needed — every field comes from locally stored h5i data.</div>
@@ -857,10 +847,10 @@
       </div>
     </div>
 
-    <!-- 7 -->
+    <!-- 8 -->
     <div class="usecase reveal">
       <div class="usecase-header">
-        <div class="usecase-num">07</div>
+        <div class="usecase-num">08</div>
         <div>
           <div class="usecase-title">Stop paying tokens to re-derive what the agent already figured out</div>
           <div class="usecase-sub">Record each conclusion with its evidence pinned as a hash of the files it depends on. Live claims ride in the next session's preamble as pre-verified facts.</div>
@@ -930,14 +920,15 @@
       <div class="install-card reveal">
         <h3>INSTALL</h3>
         <div class="code-block">
-<span class="cm"># Install from source</span>
-<span class="hl">cargo install \</span>
-<span class="hl">  --git https://github.com/Koukyosyumei/h5i \</span>
-<span class="hl">  h5i-core</span>
+<span class="cm"># Install the prebuilt binary</span>
+<span class="hl">curl -fsSL <span class="st">https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh</span> | sh</span>
+
+<span class="cm"># …or build from source</span>
+<span class="hl">cargo install --git \</span>
+<span class="hl">  https://github.com/Koukyosyumei/h5i h5i-core</span>
 
 <span class="cm"># Init in your project</span>
-<span class="hl">cd your-project</span>
-<span class="hl">h5i init</span>
+<span class="hl">cd your-project &amp;&amp; h5i init</span>
         </div>
       </div>
       <div class="install-card reveal">

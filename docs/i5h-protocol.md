@@ -31,6 +31,8 @@ run ends, an i5h message is a Git object you can still `git show` a year later.
 
 ## The whole protocol in one screen
 
+![i5h protocol at a glance: one agent appends a typed request to refs/h5i/msg; the other reads it and appends ACK then DONE replies that thread back via reply_to; the append-only log is shared by h5i share push/pull and merged by union of ids.](_static/i5h-protocol.svg)
+
 A message is one JSON object, appended as one line to `messages.jsonl` inside the
 Git ref `refs/h5i/msg`:
 
@@ -434,18 +436,21 @@ Typed helpers map to kinds:
 ```bash
 h5i msg ask codex "Can you inspect the failing auth test?"
 
-h5i msg review codex \
+h5i msg review \
   --branch auth-refactor \
   --focus src/auth.rs --focus src/session.rs \
   --risk "token refresh cache changed; expiry edge cases likely" \
-  "Review token refresh behavior before PR."
+  codex "Review token refresh behavior before PR."
 
-h5i msg risk all --focus src/auth.rs --priority high \
-  "Auth cache now crosses request boundaries."
+h5i msg risk --focus src/auth.rs --priority high \
+  all "Auth cache now crosses request boundaries."
 
-h5i msg handoff reviewer --branch auth-refactor --context auth-refactor \
-  --focus src/auth.rs "Implementation done; please review expiry behavior."
+h5i msg handoff --branch auth-refactor --context auth-refactor \
+  --focus src/auth.rs reviewer "Implementation done; please review expiry behavior."
 ```
+
+For the typed verbs (`review`, `risk`, `handoff`, …) the options must precede the
+recipient — the message body is the trailing variadic argument.
 
 Backwards compatibility with the PoC:
 
