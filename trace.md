@@ -59,3 +59,9 @@ _[Checkpoint: 6a1c2359 — edited docs/blog/i5h-agent-to-agent-messaging.html; e
 [12:03:10] OBSERVE: read docs/blog/i5h-agent-to-agent-messaging.html
 [12:03:10] OBSERVE: read docs/i5h-protocol.md
 [12:03:10] OBSERVE: searched (review|risk|handoff) for "msg"
+
+
+---
+_[Checkpoint: 6a1c237e — Reviewed Claude docs-site msg feature update through h5i msg; requested and verified corrections for CLI option ordering, Codex delivery semantics, practical identity/sync setup, and HTML comment numbering; approved final draft after static checks.]_
+---
+
