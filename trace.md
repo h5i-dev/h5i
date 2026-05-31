@@ -126,3 +126,9 @@ _[Checkpoint: 6a1c335c — edited docs/i5h-protocol.md; edited docs/_static/i5h-
 ---
 
 [13:11:07] OBSERVE: searched share for "by|h5i"
+
+
+---
+_[Checkpoint: 6a1c336b — Reviewed Claude follow-up i5h protocol SVG through h5i msg; requested explicit DONE reply_to threading and primary h5i share push / pull spelling; verified render, XML, embeds, and diff check; approved.]_
+---
+
