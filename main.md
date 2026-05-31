@@ -297,11 +297,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited docs/index.html; edited docs/index.html; edited docs/index.html
 - [x] edited docs/_static/i5h-protocol.svg; edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/i5h-protocol.md
 - [x] edited docs/i5h-protocol.md; edited docs/_static/i5h-protocol.svg; edited docs/_static/i5h-protocol.svg
+- [x] Reviewed Claude follow-up i5h protocol SVG through h5i msg; requested explicit DONE reply_to threading and primary h5i share push / pull spelling; verified render, XML, embeds, and diff check; approved.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-31 13:11 UTC] `update-doc-with-i5h`: Reviewed Claude follow-up i5h protocol SVG through h5i msg; requested explicit DONE reply_to threading and primary h5i share push / pull spelling; verified render, XML, embeds, and diff check; approved.
 - [2026-05-31 13:10 UTC] `update-doc-with-i5h`: edited docs/i5h-protocol.md; edited docs/_static/i5h-protocol.svg; edited docs/_static/i5h-protocol.svg
 - [2026-05-31 13:06 UTC] `update-doc-with-i5h`: edited docs/_static/i5h-protocol.svg; edited docs/blog/i5h-agent-to-agent-messaging.html; edited docs/i5h-protocol.md
 - [2026-05-31 12:17 UTC] `update-doc-with-i5h`: edited docs/index.html; edited docs/index.html; edited docs/index.html
