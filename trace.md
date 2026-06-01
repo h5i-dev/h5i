@@ -153,3 +153,4 @@ _[Checkpoint: 6a1c336b — Reviewed Claude follow-up i5h protocol SVG through h5
 [21:37:28] ACT: edited sitemap.xml
 [21:37:34] ACT: edited sitemap.xml
 [21:37:55] ACT: edited index.html
+[21:38:09] ACT: docs/index.html: added FAQPage+Organization+WebSite+BreadcrumbList JSON-LD @graph, scroll-progress bar, works-with strip, visible FAQ section, image width/height (CLS), non-blocking fonts, switched OG/Twitter image from SVG to PNG; sitemap lastmod added
