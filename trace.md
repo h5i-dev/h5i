@@ -313,3 +313,4 @@ _[Checkpoint: 6a1e1631 — Agent Radio TUI — Codex-reviewed & approved]_
 ---
 
 [23:31:12] THINK: Let me fix it to source from `msg::stats()`.
+[23:31:12] THINK: Let me record the non-obvious design constraint I learned (passive views must not write shared read-state) and checkpoint the context.
