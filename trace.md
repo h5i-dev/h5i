@@ -245,3 +245,4 @@ _[Checkpoint: 6a1e0ea2 — edited _static/blog.js; docs UX/a11y pass: added acce
 [23:18:12] OBSERVE: watch is a passive polling loop in main.rs (~3868); reuses radio_border/row helpers; msg::history+Stats available; console crate gives truncate_str/measure_text_width/Term::size — enough for full-screen ANSI without crossterm. Codex advised ratatui but user chose enhanced ANSI + NORAD.
 [23:19:40] ACT: wrote src/radio.rs
 [23:19:46] OBSERVE: read src/lib.rs
+[23:19:49] ACT: edited src/lib.rs
