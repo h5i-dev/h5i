@@ -162,3 +162,5 @@ _[Checkpoint: 6a1c336b — Reviewed Claude follow-up i5h protocol SVG through h5
 _[Checkpoint: 6a1dfbd0 — edited sitemap.xml; edited index.html; docs/index.html: added FAQPage+Organization+WebSite+BreadcrumbList JSON-LD @graph…]_
 ---
 
+[21:38:37] THINK: A couple of things I deliberately **didn't** do (let me know if you want them):
+- **Apply the same head pattern** (non-blocking fonts, richer robots, OG-PNG fix, CWV) to `pitch.
