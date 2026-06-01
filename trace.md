@@ -255,3 +255,9 @@ _[Checkpoint: 6a1e0ea2 — edited _static/blog.js; docs UX/a11y pass: added acce
 [23:22:07] ACT: edited src/radio.rs
 [23:23:42] ACT: edited src/main.rs
 [23:24:29] ACT: Added src/radio.rs (full-screen NORAD watch TUI); registered module in lib.rs; added --no-tui flag + TTY-gated routing in main.rs Watch handler; 6 unit tests for render_frame width-safety/tail/roster.
+
+
+---
+_[Checkpoint: 6a1e14ad — cinematic Agent Radio TUI for 'h5i msg watch']_
+---
+
