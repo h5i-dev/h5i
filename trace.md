@@ -262,3 +262,4 @@ _[Checkpoint: 6a1e14ad — cinematic Agent Radio TUI for 'h5i msg watch']_
 ---
 
 [23:24:46] THINK: Let me consult Codex for design input (dogfooding the very feature we're improving) and launch a background waiter for the reply.
+[23:24:46] THINK: All tests green. Now let me actually see the TUI render in a real PTY (the whole point is visual quality).
