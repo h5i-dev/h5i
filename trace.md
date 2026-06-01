@@ -179,3 +179,4 @@ _[Checkpoint: 6a1dfbdd — edited sitemap.xml; edited index.html; docs/index.htm
 _[Checkpoint: 6a1dfd19 — edited index.html; docs/index.html: added FAQPage+Organization+WebSite+BreadcrumbList JSON-LD @graph, scroll-progress ba…]_
 ---
 
+[21:45:00] OBSERVE: read docs/_static/blog.css
