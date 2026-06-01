@@ -155,3 +155,4 @@ _[Checkpoint: 6a1c336b — Reviewed Claude follow-up i5h protocol SVG through h5
 [21:37:55] ACT: edited index.html
 [21:38:09] ACT: docs/index.html: added FAQPage+Organization+WebSite+BreadcrumbList JSON-LD @graph, scroll-progress bar, works-with strip, visible FAQ section, image width/height (CLS), non-blocking fonts, switched OG/Twitter image from SVG to PNG; sitemap lastmod added
 [21:38:24] THINK: Let me get image dimensions so I can add explicit `width`/`height` (prevents layout shift — a Core Web Vitals ranking factor), then implement.
+[21:38:24] THINK: Let me fix one more visibility issue: the `og:image`/`twitter:image` currently point to an **SVG**, which most social scrapers (Twitter, LinkedIn, Slack, Facebook) silently reject — so link previews likely render with no image.
