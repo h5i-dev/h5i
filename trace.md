@@ -335,3 +335,9 @@ _[Checkpoint: 6a1e1640 — edited src/radio.rs; wrote passive-views-no-last-view
 [23:37:34] OBSERVE: read src/radio.rs
 [23:38:58] ACT: Fixed scroll/staircase bug: real terminals scrolled because redraw used cursor-home + trailing \n per line (newline at bottom row scrolls). Refactored render_frame into testable build_frame_lines + assembly that places each line via ABSOLUTE cursor move (ESC[row;1H)+ESC[K, no newlines, trailing ESC[J. Verified PTY stream: 0 newlines, 375 absolute moves. Added rendered_frame_has_no_newlines test. 670 tests pass.
 [23:39:09] THINK: Now I'll refactor: split into `build_frame_lines` (testable, returns the lines) and `render_frame` (assembles with absolute positioning, no newlines).
+
+
+---
+_[Checkpoint: 6a1e181d — edited src/radio.rs; edited src/radio.rs; Fixed scroll/staircase bug: real terminals scrolled because redraw used cursor…]_
+---
+
