@@ -8,10 +8,14 @@
   <meta name="keywords" content="claude code, codex, ai provenance, ai code review, prompt injection detection, agent memory, version control, ai-generated code audit, git sidecar, h5i">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
-  <meta name="robots" content="index, follow">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <meta name="application-name" content="h5i">
   <link rel="canonical" href="https://h5i.dev/">
+  <link rel="sitemap" type="application/xml" href="/sitemap.xml">
   <link rel="icon" type="image/png" href="_static/logo.png">
   <link rel="apple-touch-icon" href="_static/logo.png">
+  <link rel="preload" as="image" href="_static/logo.png" fetchpriority="high">
 
   <!-- Open Graph -->
   <meta property="og:type" content="website">
@@ -19,50 +23,130 @@
   <meta property="og:title" content="h5i — Shared Versioned Context for Claude Code &amp; Codex">
   <meta property="og:description" content="A Git sidecar that versions the reasoning, memory, and provenance behind AI-assisted code. PR briefs are one way to view and share it.">
   <meta property="og:url" content="https://h5i.dev/">
-  <meta property="og:image" content="https://h5i.dev/_static/h5i-concept.svg">
-  <meta property="og:image:alt" content="h5i concept diagram showing AI agents sharing versioned context through refs/h5i">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="og:image:width" content="2257">
+  <meta property="og:image:height" content="1222">
+  <meta property="og:image:alt" content="h5i web dashboard showing AI provenance, integrity scores, and test badges for each commit">
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="h5i — Shared Versioned Context for Claude Code &amp; Codex">
   <meta name="twitter:description" content="Version the reasoning, memory, and provenance behind AI-assisted code.">
-  <meta name="twitter:image" content="https://h5i.dev/_static/h5i-concept.svg">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta name="twitter:image:alt" content="h5i web dashboard showing AI provenance, integrity scores, and test badges for each commit">
 
   <!-- Structured data -->
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "h5i",
-    "alternateName": "high-five",
-    "applicationCategory": "DeveloperApplication",
-    "operatingSystem": "Linux, macOS, Windows",
-    "description": "A Git sidecar that gives AI coding agents shared, version-controlled context with prompts, reasoning traces, memory snapshots, audit signals, and shareable evidence.",
-    "url": "https://h5i.dev/",
-    "sameAs": ["https://github.com/Koukyosyumei/h5i"],
-    "license": "https://www.apache.org/licenses/LICENSE-2.0",
-    "author": {"@type": "Person", "name": "Koukyosyumei"},
-    "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://h5i.dev/#org",
+        "name": "h5i",
+        "url": "https://h5i.dev/",
+        "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png", "width": 1280, "height": 640},
+        "sameAs": ["https://github.com/Koukyosyumei/h5i"]
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://h5i.dev/#website",
+        "name": "h5i",
+        "alternateName": "high-five",
+        "url": "https://h5i.dev/",
+        "description": "A Git sidecar that gives AI coding agents shared, version-controlled context.",
+        "publisher": {"@id": "https://h5i.dev/#org"},
+        "inLanguage": "en"
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://h5i.dev/#app",
+        "name": "h5i",
+        "alternateName": "high-five",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Linux, macOS, Windows",
+        "description": "A Git sidecar that gives AI coding agents shared, version-controlled context with prompts, reasoning traces, memory snapshots, audit signals, and shareable evidence.",
+        "url": "https://h5i.dev/",
+        "downloadUrl": "https://github.com/Koukyosyumei/h5i",
+        "softwareHelp": "https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md",
+        "programmingLanguage": "Rust",
+        "sameAs": ["https://github.com/Koukyosyumei/h5i"],
+        "license": "https://www.apache.org/licenses/LICENSE-2.0",
+        "author": {"@type": "Person", "name": "Koukyosyumei"},
+        "publisher": {"@id": "https://h5i.dev/#org"},
+        "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+      },
+      {
+        "@type": "BreadcrumbList",
+        "@id": "https://h5i.dev/#breadcrumb",
+        "itemListElement": [
+          {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"},
+          {"@type": "ListItem", "position": 2, "name": "Workflows", "item": "https://h5i.dev/workflows.html"},
+          {"@type": "ListItem", "position": 3, "name": "Blog", "item": "https://h5i.dev/blog/"}
+        ]
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://h5i.dev/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "What is h5i?",
+            "acceptedAnswer": {"@type": "Answer", "text": "h5i (pronounced high-five) is an open-source Git sidecar for AI-era development. Git records what changed; h5i records the rest — the prompt, model, agent, reasoning, file observations, decisions, audit signals, and memory behind every change — and versions it alongside your code in refs/h5i/*."}
+          },
+          {
+            "@type": "Question",
+            "name": "Does h5i work with Claude Code and Codex?",
+            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i is built for teams where AI agents write code alongside humans. Claude Code integrates via hooks and MCP; Codex uses explicit prelude, sync, and finish commands. Both agents restore the same shared context when a session starts and check their work back in when it ends."}
+          },
+          {
+            "@type": "Question",
+            "name": "How is h5i different from plain Git?",
+            "acceptedAnswer": {"@type": "Answer", "text": "Git versions code. h5i adds five semantic dimensions on top: temporal (history), structural (AST), intentional (AI provenance), empirical (test metrics), and associative (cross-agent messaging). It stores this metadata in dedicated refs/h5i/* refs so it travels with the repo without touching your commit history."}
+          },
+          {
+            "@type": "Question",
+            "name": "Can h5i reduce AI token costs?",
+            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i records verified facts as content-addressed claims and snapshots agent memory, so the next session skips re-grounding. A measured A/B test (N=10 per arm) showed about 77% fewer cache-read tokens and 82% fewer file reads on an identical task."}
+          },
+          {
+            "@type": "Question",
+            "name": "Is h5i free and open source?",
+            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i is free and open source under the Apache 2.0 license, with no lock-in. It is written in Rust and runs on Linux, macOS, and Windows."}
+          },
+          {
+            "@type": "Question",
+            "name": "Can h5i detect prompt injection in AI-generated code?",
+            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i audit scan applies deterministic regex rules to every OBSERVE/THINK/ACT entry in an agent's reasoning trace to flag prompt-injection signals — with no model in the audit path — and can rank which commits most need human review."}
+          }
+        ]
+      }
+    ]
   }
   </script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <style>
     /* ── Variables ─────────────────────────────────────────── */
     :root {
       --red:        #D21C1C;
       --red-dark:   #8a0000;
       --red-glow:   rgba(210, 28, 28, 0.18);
+      --red-text:   #ff5252;   /* red as TEXT on dark — AA >= 4.5:1 */
+      --danger:     #ff5252;   /* errors / integrity violations */
+      --warn:       #f5a623;   /* caution — amber, distinct from brand */
       --bg:         #050505;
       --bg-card:    #0d0d0d;
       --bg-card2:   #111111;
       --border:     rgba(255,255,255,0.07);
       --border-red: rgba(210,28,28,0.35);
       --text:       #ffffff;
-      --text-dim:   rgba(255,255,255,0.55);
-      --text-faint: rgba(255,255,255,0.25);
+      --text-dim:   rgba(255,255,255,0.62);
+      --text-faint: rgba(255,255,255,0.50);
       --cyan:       #00c8ff;
       --green:      #22dd88;
       --yellow:     #f5c542;
@@ -175,7 +259,7 @@
     .hero-badge {
       display: inline-flex; align-items: center; gap: 0.5rem;
       font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.12em;
-      color: var(--red); border: 1px solid var(--border-red);
+      color: var(--red-text); border: 1px solid var(--border-red);
       padding: 0.3rem 0.9rem; border-radius: 999px;
       margin-bottom: 1.4rem;
       background: rgba(210,28,28,0.07);
@@ -275,7 +359,7 @@
     .section-head { text-align: center; margin-bottom: 3.5rem; }
     .section-tag {
       display: inline-block; font-family: var(--mono); font-size: 0.7rem;
-      letter-spacing: 0.18em; color: var(--red); text-transform: uppercase;
+      letter-spacing: 0.18em; color: var(--red-text); text-transform: uppercase;
       margin-bottom: 0.8rem; opacity: 0.9;
     }
     .section-title {
@@ -308,7 +392,7 @@
     }
     .feat-cmd {
       font-family: var(--mono); font-size: 0.73rem;
-      color: var(--red); background: rgba(210,28,28,0.08);
+      color: var(--red-text); background: rgba(210,28,28,0.08);
       border: 1px solid rgba(210,28,28,0.2);
       padding: 0.25rem 0.65rem; border-radius: 5px;
       display: inline-block; width: fit-content;
@@ -329,7 +413,7 @@
     }
     .mode-card h3 {
       font-size: 0.95rem;
-      color: var(--red);
+      color: var(--red-text);
       font-family: var(--mono);
       margin-bottom: 0.55rem;
     }
@@ -346,7 +430,7 @@
       flex-shrink: 0; width: 44px; height: 44px;
       border: 2px solid var(--border-red); border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      font-family: var(--mono); font-size: 0.8rem; font-weight: 700; color: var(--red);
+      font-family: var(--mono); font-size: 0.8rem; font-weight: 700; color: var(--red-text);
     }
     .usecase-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.35rem; }
     .usecase-sub { font-size: 0.88rem; color: var(--text-dim); }
@@ -373,7 +457,7 @@
     .t-out    { color: var(--text-dim); }
     .t-ai     { color: var(--cyan); }
     .t-warn   { color: var(--yellow); }
-    .t-red    { color: var(--red); }
+    .t-red    { color: var(--danger); }
     .t-pass   { color: var(--green); }
     .t-bold   { font-weight: 700; color: var(--text); }
 
@@ -409,7 +493,7 @@
       white-space: pre-wrap;
     }
     .code-block .hl { color: var(--text); }
-    .code-block .kw { color: var(--red); }
+    .code-block .kw { color: var(--red-text); }
     .code-block .cm { color: rgba(255,255,255,0.25); }
     .code-block .st { color: var(--cyan); }
 
@@ -440,7 +524,7 @@
     .footer-brand { display: flex; align-items: center; gap: 0.6rem; }
     .footer-brand img { width: 24px; height: 24px; border-radius: 5px; opacity: 0.8; }
     .footer-brand span { font-weight: 700; font-size: 0.9rem; }
-    .footer-brand .red { color: var(--red); }
+    .footer-brand .red { color: var(--red-text); }
     .footer-links { display: flex; gap: 1.8rem; flex-wrap: wrap; }
     .footer-links a { font-size: 0.82rem; color: var(--text-faint); transition: color 0.2s; }
     .footer-links a:hover { color: var(--text-dim); }
@@ -449,6 +533,74 @@
     /* ── Scroll-reveal ─────────────────────────────────────── */
     .reveal { opacity: 0; transform: translateY(28px); transition: opacity 0.6s ease, transform 0.6s ease; }
     .reveal.visible { opacity: 1; transform: translateY(0); }
+    @media (prefers-reduced-motion: reduce) {
+      .reveal { opacity: 1 !important; transform: none !important; }
+      .hero-logo-wrap, .hero-glow, .shine-text, .hero-badge::before { animation: none !important; }
+      html { scroll-behavior: auto; }
+    }
+
+    /* ── Scroll progress bar ───────────────────────────────── */
+    .scroll-progress {
+      position: fixed; top: 0; left: 0; height: 3px; width: 0;
+      z-index: 200; pointer-events: none;
+      background: linear-gradient(90deg, var(--red-dark), var(--red), #ff6060);
+      box-shadow: 0 0 12px rgba(210,28,28,0.6);
+      transition: width 0.08s linear;
+    }
+
+    /* ── Works-with strip ──────────────────────────────────── */
+    .works {
+      border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+      background: rgba(255,255,255,0.012);
+      padding: 2.2rem 0;
+    }
+    .works-inner {
+      max-width: 1120px; margin: 0 auto; padding: 0 2rem;
+      display: flex; align-items: center; justify-content: center;
+      flex-wrap: wrap; gap: 1rem 2.6rem;
+    }
+    .works-label {
+      font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.18em;
+      text-transform: uppercase; color: var(--text-faint); white-space: nowrap;
+    }
+    .works-item {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      font-weight: 500; font-size: 0.98rem; color: var(--text-dim);
+      letter-spacing: 0.01em; transition: color 0.2s;
+    }
+    .works-item:hover { color: var(--text); }
+    .works-item::before {
+      content: ''; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--red); opacity: 0.8;
+    }
+
+    /* ── FAQ ───────────────────────────────────────────────── */
+    #faq { padding: 100px 0; background: rgba(255,255,255,0.012); }
+    .faq-list { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: 0.9rem; }
+    .faq-item {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden;
+      transition: border-color 0.25s;
+    }
+    .faq-item[open] { border-color: var(--border-red); }
+    .faq-item summary {
+      list-style: none; cursor: pointer;
+      padding: 1.15rem 1.4rem;
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      font-size: 1rem; font-weight: 500; color: var(--text);
+    }
+    .faq-item summary::-webkit-details-marker { display: none; }
+    .faq-item summary::after {
+      content: '+'; flex-shrink: 0;
+      font-family: var(--mono); font-size: 1.3rem; color: var(--red-text);
+      transition: transform 0.25s;
+    }
+    .faq-item[open] summary::after { transform: rotate(45deg); }
+    .faq-item .faq-answer {
+      padding: 0 1.4rem 1.25rem;
+      font-size: 0.9rem; color: var(--text-dim); line-height: 1.7;
+    }
+    .faq-item .faq-answer code { font-family: var(--mono); color: var(--red-text); font-size: 0.85em; }
 
     /* ── Responsive ────────────────────────────────────────── */
     @media (max-width: 768px) {
@@ -460,6 +612,7 @@
       .mode-grid { grid-template-columns: 1fr; }
       .hero-stats { gap: 2rem; }
       .usecase-header { flex-direction: column; }
+      .works-inner { gap: 0.8rem 1.6rem; }
     }
 
     /* ── Scrollbar ─────────────────────────────────────────── */
@@ -467,10 +620,25 @@
     ::-webkit-scrollbar-track { background: var(--bg); }
     ::-webkit-scrollbar-thumb { background: rgba(210,28,28,0.4); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--red); }
+
+    /* ── Accessibility ─────────────────────────────────────── */
+    a:focus-visible, button:focus-visible, summary:focus-visible, .copy-btn:focus-visible {
+      outline: 2px solid var(--red-text); outline-offset: 3px; border-radius: 4px;
+    }
+    .skip-link {
+      position: fixed; top: -60px; left: 1rem; z-index: 300;
+      background: var(--red); color: #fff; padding: 0.6rem 1rem;
+      border-radius: 0 0 8px 8px; font-weight: 700; font-size: 0.85rem;
+      transition: top 0.15s;
+    }
+    .skip-link:focus { top: 0; }
+    section[id] { scroll-margin-top: 76px; }
   </style>
 </head>
 <body>
 
+<a class="skip-link" href="#hero">Skip to content</a>
+<div class="scroll-progress" id="scroll-progress"></div>
 <div class="bg-grid"></div>
 
 <!-- ── Nav ──────────────────────────────────────────────────── -->
@@ -487,6 +655,7 @@
     <li><a href="workflows.html">Workflows</a></li>
     <li><a href="blog/index.html">Blog</a></li>
     <li><a href="pitch.html">Pitch Deck</a></li>
+    <li><a href="#faq">FAQ</a></li>
     <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
   </ul>
   <div class="nav-hamburger" id="hamburger" onclick="toggleNav()">
@@ -495,11 +664,11 @@
 </nav>
 
 <!-- ── Hero ─────────────────────────────────────────────────── -->
-<section id="hero">
+<section id="hero" tabindex="-1">
   <div class="hero-glow"></div>
   <div class="hero-inner">
     <div class="hero-logo-wrap">
-      <img src="_static/logo.png" alt="h5i logo">
+      <img src="_static/logo.png" width="1280" height="640" alt="h5i logo" fetchpriority="high">
     </div>
     <div class="hero-badge">CONTEXT VERSIONING · AI PROVENANCE · OPEN SOURCE</div>
     <h1 class="hero-title">
@@ -525,11 +694,24 @@
       <div class="hero-stat"><div class="val">refs</div><div class="lbl">GIT-NATIVE SIDECAR</div></div>
     </div>
     <div class="hero-shot">
-      <img src="_static/h5i-concept.svg" alt="h5i concept diagram showing Codex and Claude sharing versioned context through refs/h5i">
+      <img src="_static/h5i-concept.svg" width="1240" height="380" alt="h5i concept diagram showing Codex and Claude sharing versioned context through refs/h5i">
       <div class="hero-shot-caption">Agents capture and recall the same versioned context through <code>refs/h5i/*</code>; audits, dashboards, and PR comments are views over that shared record.</div>
     </div>
   </div>
 </section>
+
+<!-- ── Works With ───────────────────────────────────────────── -->
+<aside class="works" aria-label="Works with">
+  <div class="works-inner">
+    <span class="works-label">Designed for</span>
+    <span class="works-item">Claude Code</span>
+    <span class="works-item">Codex</span>
+    <span class="works-item">Git</span>
+    <span class="works-item">GitHub</span>
+    <span class="works-item">MCP</span>
+    <span class="works-item">Apache&nbsp;2.0</span>
+  </div>
+</aside>
 
 <!-- ── Features ──────────────────────────────────────────────── -->
 <section id="features">
@@ -640,7 +822,7 @@
         <div class="usecase-num">02</div>
         <div>
           <div class="usecase-title">Let one agent ask another for a review</div>
-          <div class="usecase-sub">With <code style="font-family:var(--mono);color:var(--red)">h5i msg</code> (the i5h protocol), Claude and Codex coordinate over Git — ask, review, hand off, and reply — without sharing a terminal.</div>
+          <div class="usecase-sub">With <code style="font-family:var(--mono);color:var(--red-text)">h5i msg</code> (the i5h protocol), Claude and Codex coordinate over Git — ask, review, hand off, and reply — without sharing a terminal.</div>
         </div>
       </div>
       <div class="terminal">
@@ -659,8 +841,8 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i msg done 1 "LGTM — fixed one expiry edge case in 1a2b3c4."</span></pre></div>
       </div>
       <figure style="margin:1.5rem 0 0; border:1px solid var(--border); border-radius:var(--radius-lg); overflow:hidden; background:#090909;">
-        <img src="_static/h5i-msg-demo.gif" alt="The h5i msg watch view: a live agent channel with typed messages arriving in real time over refs/h5i/msg" loading="lazy" style="width:100%;">
-        <figcaption style="padding:0.85rem 1rem; font-size:0.82rem; color:var(--text-dim); border-top:1px solid var(--border);">Every message is a durable Git object in <code style="font-family:var(--mono);color:var(--red)">refs/h5i/msg</code> — shared with <code style="font-family:var(--mono);color:var(--red)">h5i push</code>, replayable a year later. <a href="blog/i5h-agent-to-agent-messaging.html" style="color:var(--red)">Read how it works →</a></figcaption>
+        <img src="_static/h5i-msg-demo.gif" width="1200" height="824" alt="The h5i msg watch view: a live agent channel with typed messages arriving in real time over refs/h5i/msg" loading="lazy" style="width:100%; height:auto;">
+        <figcaption style="padding:0.85rem 1rem; font-size:0.82rem; color:var(--text-dim); border-top:1px solid var(--border);">Every message is a durable Git object in <code style="font-family:var(--mono);color:var(--red-text)">refs/h5i/msg</code> — shared with <code style="font-family:var(--mono);color:var(--red-text)">h5i push</code>, replayable a year later. <a href="blog/i5h-agent-to-agent-messaging.html" style="color:var(--red-text)">Read how it works →</a></figcaption>
       </figure>
     </div>
 
@@ -670,7 +852,7 @@
         <div class="usecase-num">03</div>
         <div>
           <div class="usecase-title">Resume exactly where you left off</div>
-          <div class="usecase-sub">Claude Code can use hooks and MCP. Codex uses explicit <code style="font-family:var(--mono);color:var(--red)">prelude</code>, <code style="font-family:var(--mono);color:var(--red)">sync</code>, and <code style="font-family:var(--mono);color:var(--red)">finish</code> commands.</div>
+          <div class="usecase-sub">Claude Code can use hooks and MCP. Codex uses explicit <code style="font-family:var(--mono);color:var(--red-text)">prelude</code>, <code style="font-family:var(--mono);color:var(--red-text)">sync</code>, and <code style="font-family:var(--mono);color:var(--red-text)">finish</code> commands.</div>
         </div>
       </div>
       <div class="terminal">
@@ -895,11 +1077,11 @@
     <div class="section-head reveal">
       <span class="section-tag">Web Dashboard</span>
       <h2 class="section-title">Browse everything in one place</h2>
-      <p class="section-sub">Run <code style="font-family:var(--mono);color:var(--red)">h5i serve</code> to open a local dashboard at <code style="font-family:var(--mono);color:var(--red)">http://localhost:7150</code>.</p>
+      <p class="section-sub">Run <code style="font-family:var(--mono);color:var(--red-text)">h5i serve</code> to open a local dashboard at <code style="font-family:var(--mono);color:var(--red-text)">http://localhost:7150</code>.</p>
       <div class="divider"></div>
     </div>
     <div class="dashboard-wrap reveal">
-      <img src="_static/screenshot_h5i_server.png" alt="h5i web dashboard — Timeline tab" loading="lazy">
+      <img src="_static/screenshot_h5i_server.png" width="2257" height="1222" alt="h5i web dashboard showing the Timeline tab with AI provenance, integrity scores, and test badges for each commit" loading="lazy" style="height:auto;">
     </div>
     <p class="dashboard-caption reveal">
       Timeline tab — every commit with full AI context, test badge, integrity score, and one-click re-audit.<br>
@@ -977,6 +1159,44 @@
   </div>
 </section>
 
+<!-- ── FAQ ────────────────────────────────────────────────────── -->
+<section id="faq">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">FAQ</span>
+      <h2 class="section-title">Frequently asked questions</h2>
+      <p class="section-sub">The short answers. The <a href="blog/index.html" style="color:var(--red-text)">blog</a> and <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md" style="color:var(--red-text)">manual</a> have the long ones.</p>
+      <div class="divider"></div>
+    </div>
+    <div class="faq-list reveal">
+      <details class="faq-item">
+        <summary>What is h5i?</summary>
+        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is an open-source Git sidecar for AI-era development. Git records <strong>what</strong> changed; h5i records the rest — the prompt, model, agent, reasoning, file observations, decisions, audit signals, and memory behind every change — and versions it alongside your code in <code>refs/h5i/*</code>.</div>
+      </details>
+      <details class="faq-item">
+        <summary>Does h5i work with Claude Code and Codex?</summary>
+        <div class="faq-answer">Yes. h5i is built for teams where AI agents write code alongside humans. Claude Code integrates via hooks and MCP; Codex uses explicit <code>prelude</code>, <code>sync</code>, and <code>finish</code> commands. Both agents restore the same shared context when a session starts and check their work back in when it ends.</div>
+      </details>
+      <details class="faq-item">
+        <summary>How is h5i different from plain Git?</summary>
+        <div class="faq-answer">Git versions code. h5i adds five semantic dimensions on top: temporal (history), structural (AST), intentional (AI provenance), empirical (test metrics), and associative (cross-agent messaging). It stores this metadata in dedicated <code>refs/h5i/*</code> refs, so it travels with the repo without touching your commit history.</div>
+      </details>
+      <details class="faq-item">
+        <summary>Can h5i reduce AI token costs?</summary>
+        <div class="faq-answer">Yes. h5i records verified facts as content-addressed claims and snapshots agent memory, so the next session skips re-grounding. A measured A/B test (N=10 per arm) showed about <strong>77% fewer cache-read tokens</strong> and 82% fewer file reads on an identical task.</div>
+      </details>
+      <details class="faq-item">
+        <summary>Is h5i free and open source?</summary>
+        <div class="faq-answer">Yes. h5i is free and open source under the <strong>Apache 2.0</strong> license, with no lock-in. It is written in Rust and runs on Linux, macOS, and Windows.</div>
+      </details>
+      <details class="faq-item">
+        <summary>Can h5i detect prompt injection in AI-generated code?</summary>
+        <div class="faq-answer"><code>h5i audit scan</code> applies deterministic regex rules to every OBSERVE/THINK/ACT entry in an agent's reasoning trace to flag prompt-injection signals — with no model in the audit path — and can rank which commits most need human review.</div>
+      </details>
+    </div>
+  </div>
+</section>
+
 <!-- ── CTA ────────────────────────────────────────────────────── -->
 <section id="cta">
   <div class="cta-glow"></div>
@@ -1048,10 +1268,11 @@
     observer.observe(el);
   });
 
-  /* ── Active nav link ──────────────────────── */
+  /* ── Active nav link + scroll progress ────── */
   const sections = document.querySelectorAll('section[id]');
   const navLinks = document.querySelectorAll('.nav-links a[href^="#"]');
-  window.addEventListener('scroll', () => {
+  const progressBar = document.getElementById('scroll-progress');
+  function onScroll() {
     let current = '';
     sections.forEach(s => {
       if (window.scrollY >= s.offsetTop - 80) current = s.id;
@@ -1059,7 +1280,12 @@
     navLinks.forEach(a => {
       a.style.color = a.getAttribute('href') === `#${current}` ? 'var(--text)' : '';
     });
-  }, { passive: true });
+    const doc = document.documentElement;
+    const scrollable = doc.scrollHeight - doc.clientHeight;
+    progressBar.style.width = scrollable > 0 ? `${(window.scrollY / scrollable) * 100}%` : '0';
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
 </script>
 </body>
 </html>

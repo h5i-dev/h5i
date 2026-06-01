@@ -6,6 +6,9 @@
   --red:        #D21C1C;
   --red-dark:   #8a0000;
   --red-glow:   rgba(210, 28, 28, 0.18);
+  --red-text:   #ff5252;   /* red as TEXT on dark — AA >= 4.5:1 */
+  --danger:     #ff5252;   /* errors / violations */
+  --warn:       #f5a623;   /* caution — amber */
   --bg:         #050505;
   --bg-card:    #0d0d0d;
   --bg-card2:   #111111;
@@ -13,7 +16,7 @@
   --border-red: rgba(210,28,28,0.35);
   --text:       #f4f4f4;
   --text-dim:   rgba(255,255,255,0.7);
-  --text-faint: rgba(255,255,255,0.45);
+  --text-faint: rgba(255,255,255,0.52);
   --cyan:       #00c8ff;
   --green:      #22dd88;
   --yellow:     #f5c542;
@@ -119,7 +122,7 @@ article.post header {
 .post-eyebrow {
   display: inline-flex; align-items: center; gap: 0.5rem;
   font-family: var(--mono); font-size: 0.72rem;
-  letter-spacing: 0.16em; color: var(--red);
+  letter-spacing: 0.16em; color: var(--red-text);
   text-transform: uppercase;
   margin-bottom: 1rem;
 }
@@ -231,7 +234,7 @@ article.post blockquote p + p { margin-top: 0.7rem; }
 .callout.warn { border-left-color: var(--yellow); background: rgba(245,197,66,0.03); }
 .callout.warn strong { color: var(--yellow); }
 .callout.danger { border-left-color: var(--red); background: rgba(210,28,28,0.04); }
-.callout.danger strong { color: var(--red); }
+.callout.danger strong { color: var(--danger); }
 
 /* ── Terminal code block ─────────────────────────── */
 .terminal {
@@ -275,7 +278,7 @@ article.post blockquote p + p { margin-top: 0.7rem; }
 .t-out    { color: var(--text-dim); }
 .t-ai     { color: var(--cyan); }
 .t-warn   { color: var(--yellow); }
-.t-red    { color: var(--red); }
+.t-red    { color: var(--danger); }
 .t-pass   { color: var(--green); }
 .t-bold   { font-weight: 700; color: var(--text); }
 
@@ -307,7 +310,7 @@ table.data tbody td { color: var(--text-dim); }
 table.data tbody td strong { color: var(--text); }
 table.data .num { font-family: var(--mono); text-align: right; }
 table.data .center { text-align: center; }
-.tag-red   { color: var(--red); font-family: var(--mono); font-size: 0.82em; }
+.tag-red   { color: var(--red-text); font-family: var(--mono); font-size: 0.82em; }
 .tag-green { color: var(--green); font-family: var(--mono); font-size: 0.82em; }
 
 /* ── Cross-link (next post / related) ────────────── */
@@ -378,7 +381,7 @@ footer.blog-footer {
   display: flex; align-items: center; gap: 0.5rem;
   font-weight: 700; font-size: 0.95rem;
 }
-.blog-footer .brand .red { color: var(--red); }
+.blog-footer .brand .red { color: var(--red-text); }
 .blog-footer .links {
   display: flex; gap: 1.5rem; flex-wrap: wrap; justify-content: center;
 }
@@ -428,7 +431,7 @@ a.post-card:hover {
 }
 a.post-card .card-meta {
   font-family: var(--mono); font-size: 0.7rem;
-  letter-spacing: 0.1em; color: var(--red);
+  letter-spacing: 0.1em; color: var(--red-text);
   text-transform: uppercase; margin-bottom: 0.6rem;
   display: flex; gap: 1rem;
 }
@@ -463,3 +466,30 @@ a.post-card p {
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: rgba(210,28,28,0.4); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--red); }
+
+/* ── Scroll progress bar ─────────────────────────── */
+.scroll-progress {
+  position: fixed; top: 0; left: 0; height: 3px; width: 0;
+  z-index: 200; pointer-events: none;
+  background: linear-gradient(90deg, var(--red-dark), var(--red), #ff6060);
+  box-shadow: 0 0 12px rgba(210,28,28,0.6);
+  transition: width 0.08s linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scroll-progress { transition: none; }
+}
+
+
+/* ── Accessibility ───────────────────────────────── */
+a:focus-visible, button:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--red-text); outline-offset: 3px; border-radius: 4px;
+}
+.skip-link {
+  position: fixed; top: -60px; left: 1rem; z-index: 300;
+  background: var(--red); color: #fff; padding: 0.6rem 1rem;
+  border-radius: 0 0 8px 8px; font-weight: 700; font-size: 0.9rem;
+  text-decoration: none; transition: top 0.15s;
+}
+.skip-link:focus { top: 0; }
+:target { scroll-margin-top: 80px; }
+article.post h2[id], article.post h3[id] { scroll-margin-top: 80px; }
