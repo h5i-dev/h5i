@@ -8,7 +8,8 @@
   <meta name="keywords" content="i5h protocol, agent to agent messaging, claude code codex, AI agent coordination, git native messaging, multi-agent handoff, refs/h5i/msg, h5i msg">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
-  <meta name="robots" content="index, follow">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
   <link rel="canonical" href="https://h5i.dev/blog/i5h-agent-to-agent-messaging.html">
   <link rel="icon" type="image/png" href="../_static/logo.png">
   <link rel="apple-touch-icon" href="../_static/logo.png">
@@ -47,8 +48,13 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="../_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "i5h: Git-Native Messaging Between AI Coding Agents", "item": "https://h5i.dev/blog/i5h-agent-to-agent-messaging.html"}]}
+  </script>
 </head>
 <body>
 <div class="bg-grid"></div>
@@ -97,7 +103,7 @@
     </p>
 
     <figure class="feature-figure">
-      <img src="../_static/h5i-msg-demo.gif" alt="The h5i msg watch view: a live agent channel with typed messages arriving in real time over refs/h5i/msg">
+      <img width="1200" height="824" src="../_static/h5i-msg-demo.gif" alt="The h5i msg watch view: a live agent channel with typed messages arriving in real time over refs/h5i/msg">
       <figcaption>
         <code>h5i msg watch</code> — the live channel on <code>refs/h5i/msg</code>. Typed
         messages between agents arrive as they're sent, and every one is a durable Git
@@ -128,7 +134,7 @@
     </p>
 
     <figure class="feature-figure">
-      <img src="../_static/i5h-protocol.svg" alt="i5h protocol diagram: Claude sends a REVIEW_REQUEST that is appended to refs/h5i/msg; Codex reads it and appends ACK then DONE replies that thread back via reply_to; the log is shared by h5i share push/pull and merged by union of ids">
+      <img width="1240" height="440" src="../_static/i5h-protocol.svg" alt="i5h protocol diagram: Claude sends a REVIEW_REQUEST that is appended to refs/h5i/msg; Codex reads it and appends ACK then DONE replies that thread back via reply_to; the log is shared by h5i share push/pull and merged by union of ids">
       <figcaption>
         The whole loop: Claude appends a typed request to <code>refs/h5i/msg</code>, Codex
         reads it and appends <code>ACK</code> then <code>DONE</code> replies that thread
@@ -352,5 +358,6 @@
     <div class="legal">Apache 2.0 · Built with Rust</div>
   </div>
 </footer>
+<script src="../_static/blog.js" defer></script>
 </body>
 </html>

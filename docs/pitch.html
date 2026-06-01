@@ -5,12 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>h5i Pitch Deck — Shared Versioned Context for Claude Code &amp; Codex</title>
 <meta name="description" content="h5i pitch deck: the AI era needs a Git sidecar that versions agent reasoning, prompts, decisions, memory, risk signals, and shareable evidence alongside code.">
+<meta name="keywords" content="h5i pitch, ai provenance, versioned agent reasoning, claude code, codex, git sidecar, ai code review, agent memory">
 <meta name="author" content="Koukyosyumei">
 <meta name="theme-color" content="#D21C1C">
-<meta name="robots" content="index, follow">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
 <link rel="canonical" href="https://h5i.dev/pitch.html">
 <link rel="icon" type="image/png" href="_static/logo.png">
 <link rel="apple-touch-icon" href="_static/logo.png">
+
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i Pitch Deck", "headline": "h5i Pitch Deck — Shared Versioned Context for Claude Code & Codex", "description": "Why the AI era needs a Git sidecar that versions agent reasoning, prompts, decisions, memory, risk signals, and shareable evidence alongside code.", "url": "https://h5i.dev/pitch.html", "inLanguage": "en", "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"}, "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}}, "about": {"@type": "SoftwareApplication", "name": "h5i", "applicationCategory": "DeveloperApplication"}}
+</script>
 
 <!-- Open Graph -->
 <meta property="og:type" content="article">
@@ -28,21 +34,26 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
 <style>
   /* ── Variables (identical to index.html) ──────────────────── */
   :root {
     --red:        #D21C1C;
     --red-dark:   #8a0000;
     --red-glow:   rgba(210, 28, 28, 0.18);
+    --red-text:   #ff5252;
+    --danger:     #ff5252;
+    --warn:       #f5a623;
     --bg:         #050505;
     --bg-card:    #0d0d0d;
     --bg-card2:   #111111;
     --border:     rgba(255,255,255,0.07);
     --border-red: rgba(210,28,28,0.35);
     --text:       #ffffff;
-    --text-dim:   rgba(255,255,255,0.55);
-    --text-faint: rgba(255,255,255,0.25);
+    --text-dim:   rgba(255,255,255,0.62);
+    --text-faint: rgba(255,255,255,0.50);
     --cyan:       #00c8ff;
     --green:      #22dd88;
     --yellow:     #f5c542;
@@ -128,7 +139,7 @@
   /* ── Typography ───────────────────────────────────────────── */
   .section-tag {
     display: inline-block; font-family: var(--mono); font-size: 0.92rem;
-    letter-spacing: 0.18em; color: var(--red); text-transform: uppercase;
+    letter-spacing: 0.18em; color: var(--red-text); text-transform: uppercase;
     margin-bottom: 0.9rem; opacity: 0.9;
   }
   h1 {
@@ -142,7 +153,7 @@
   h3 { font-size: 1.3rem; font-weight: 700; }
   p, li { font-size: 1.15rem; line-height: 1.65; color: var(--text-dim); }
 
-  .red { color: var(--red); }
+  .red { color: var(--red-text); }
   .dim { color: var(--text-dim); }
   .faint { color: var(--text-faint); }
   .green { color: var(--green); }
@@ -181,7 +192,7 @@
   .hero-badge {
     display: inline-flex; align-items: center; gap: 0.5rem;
     font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.12em;
-    color: var(--red); border: 1px solid var(--border-red);
+    color: var(--red-text); border: 1px solid var(--border-red);
     padding: 0.3rem 0.9rem; border-radius: 999px;
     margin-bottom: 1.4rem; background: rgba(210,28,28,0.07);
   }
@@ -222,7 +233,7 @@
   }
   .feat-cmd {
     font-family: var(--mono); font-size: 0.88rem;
-    color: var(--red); background: rgba(210,28,28,0.08);
+    color: var(--red-text); background: rgba(210,28,28,0.08);
     border: 1px solid rgba(210,28,28,0.2);
     padding: 0.22rem 0.7rem; border-radius: 5px;
     display: inline-block; width: fit-content;
@@ -254,7 +265,7 @@
   .t-out    { color: var(--text-dim); }
   .t-ai     { color: var(--cyan); }
   .t-warn   { color: var(--yellow); }
-  .t-red    { color: var(--red); }
+  .t-red    { color: var(--danger); }
   .t-pass   { color: var(--green); }
   .t-bold   { font-weight: 700; color: var(--text); }
 
@@ -303,10 +314,10 @@
     background: rgba(210,28,28,0.12); border: 2px solid var(--red);
     box-shadow: 0 0 28px var(--red-glow);
     display: flex; align-items: center; justify-content: center;
-    font-family: var(--mono); font-size: 1.1rem; font-weight: 700; color: var(--red);
+    font-family: var(--mono); font-size: 1.1rem; font-weight: 700; color: var(--red-text);
   }
   .tl-h5i-year { font-family: var(--mono); font-size: 1rem; color: rgba(255,255,255,0.55); }
-  .tl-h5i-name { font-size: 1.6rem; font-weight: 700; color: var(--red); }
+  .tl-h5i-name { font-size: 1.6rem; font-weight: 700; color: var(--red-text); }
   .tl-h5i-desc { font-size: 1.05rem; color: var(--text-dim); text-align: center; }
 
   /* ── Grids ────────────────────────────────────────────────── */
@@ -339,11 +350,11 @@
     width: 36px; height: 36px; flex-shrink: 0;
     border: 2px solid var(--border-red); border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    font-family: var(--mono); font-size: 0.72rem; font-weight: 700; color: var(--red);
+    font-family: var(--mono); font-size: 0.72rem; font-weight: 700; color: var(--red-text);
   }
 
   /* ── Code inline ──────────────────────────────────────────── */
-  code { font-family: var(--mono); color: var(--red); font-size: 0.82em; }
+  code { font-family: var(--mono); color: var(--red-text); font-size: 0.82em; }
 
   /* ── Context DAG ─────────────────────────────────────────── */
   .ctx-dag-wrap {
@@ -381,7 +392,7 @@
   .dag-fork-branch { display: flex; align-items: flex-start; margin-top: 10px; margin-left: 0; }
   .dag-hline { width: 28px; height: 2px; background: rgba(255,255,255,0.15); margin-top: 14px; flex-shrink: 0; }
   .dag-branch-label { font-family: var(--mono); font-size: 0.68rem; color: var(--text-faint); margin-bottom: 5px; letter-spacing: 0.06em; }
-  .dag-abandoned { font-family: var(--mono); font-size: 0.72rem; color: var(--red); opacity: 0.6; margin-top: 5px; }
+  .dag-abandoned { font-family: var(--mono); font-size: 0.72rem; color: var(--red-text); opacity: 0.6; margin-top: 5px; }
 
   /* ── Button ───────────────────────────────────────────────── */
   .btn {
@@ -435,7 +446,14 @@
       overflow: hidden;
     }
   }
+  /* ── Accessibility ───────────────────────────────────────── */
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--red-text); outline-offset: 3px; border-radius: 4px;
+  }
 </style>
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Pitch Deck", "item": "https://h5i.dev/pitch.html"}]}
+  </script>
 </head>
 <body>
 
@@ -522,7 +540,7 @@
         </ul>
       </div>
       <div class="card card-red">
-        <h3 style="margin-bottom:14px;color:var(--red);">Git misses</h3>
+        <h3 style="margin-bottom:14px;color:var(--red-text);">Git misses</h3>
         <ul style="list-style:none;display:flex;flex-direction:column;gap:10px;">
           <li style="display:flex;gap:12px;font-size:1rem;"><span class="red">✗</span><span>Why those files were touched</span></li>
           <li style="display:flex;gap:12px;font-size:1rem;"><span class="red">✗</span><span>What the AI read before editing</span></li>
@@ -843,7 +861,7 @@
       <div class="vs-row head">
         <div class="vs-cell">Capability</div>
         <div class="vs-cell vs-center">Plain Git</div>
-        <div class="vs-cell vs-center" style="color:var(--red);">h5i</div>
+        <div class="vs-cell vs-center" style="color:var(--red-text);">h5i</div>
       </div>
       <div class="vs-row"><div class="vs-cell">Who changed what</div><div class="vs-cell vs-center green">✔</div><div class="vs-cell vs-center green">✔</div></div>
       <div class="vs-row"><div class="vs-cell">AI provenance — prompt, model, agent</div><div class="vs-cell vs-center red">✗</div><div class="vs-cell vs-center green">✔</div></div>
