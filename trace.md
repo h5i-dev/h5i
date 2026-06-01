@@ -312,3 +312,4 @@ _[Checkpoint: 6a1e15c1 — Advised and reviewed Claude's cinematic h5i msg watch
 _[Checkpoint: 6a1e1631 — Agent Radio TUI — Codex-reviewed & approved]_
 ---
 
+[23:31:12] THINK: Let me fix it to source from `msg::stats()`.
