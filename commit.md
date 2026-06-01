@@ -186,3 +186,16 @@ All red-as-text now AA-legible (#ff5252, 6.4:1) while brand fills keep #D21C1C; 
 
 ---
 
+## Commit 6a1dff9c — 2026-06-01 21:54 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+All red-as-text now AA-legible (#ff5252, 6.4:1) while brand fills keep #D21C1C; muted text raised to pass AA; brand red vs alarm red separated via --danger token; keyboard focus rings + skip links + anchor scroll-margin added site-wide. Validated: all pages parse, JSON-LD valid, JS syntax OK.
+
+### This Commit's Contribution
+
+
+---
+
