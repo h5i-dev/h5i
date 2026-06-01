@@ -199,3 +199,4 @@ _[Checkpoint: 6a1dff8b — Accessibility + color-system UX pass on docs site]_
 ---
 
 [21:54:36] THINK: I'll do a comprehensive UX pass: an accessibility-tuned color token system (legible red text + distinct alarm color + AA-compliant muted text), plus keyboard focus rings, a skip-to-content link, and clean anchor scrolling.
+[21:54:36] THINK: Now I'll implement the full token system.
