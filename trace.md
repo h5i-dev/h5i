@@ -235,3 +235,4 @@ _[Checkpoint: 6a1e0e5c — docs: added shared scroll-progress bar to all blog pa
 _[Checkpoint: 6a1e0ea2 — edited _static/blog.js; docs UX/a11y pass: added accessibility token system (--red-text #ff5252 6.4:1 for red text, --da…]_
 ---
 
+[23:10:58] OBSERVE: searched src for "watch|watch""
