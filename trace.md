@@ -182,3 +182,4 @@ _[Checkpoint: 6a1dfd19 — edited index.html; docs/index.html: added FAQPage+Org
 [21:45:00] OBSERVE: read docs/_static/blog.css
 [21:45:47] ACT: edited _static/blog.css
 [21:45:52] ACT: wrote _static/blog.js
+[21:46:54] ACT: docs: added shared scroll-progress bar to all blog pages + workflows via new _static/blog.js (self-injecting, reduced-motion aware) + .scroll-progress in blog.css; script tag added to 14 pages
