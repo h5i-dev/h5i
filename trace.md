@@ -135,3 +135,4 @@ _[Checkpoint: 6a1c336b — Reviewed Claude follow-up i5h protocol SVG through h5
 [21:33:06] OBSERVE: read docs/index.html
 [21:33:14] OBSERVE: read index.css
 [21:33:14] OBSERVE: read Hero.jsx
+[21:33:35] OBSERVE: read animations.js
