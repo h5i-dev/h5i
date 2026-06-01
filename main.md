@@ -312,11 +312,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/radio.rs; edited src/main.rs; Added src/radio.rs (full-screen NORAD watch TUI); registered module in lib.rs; …
 - [x] Advised and reviewed Claude's cinematic h5i msg watch Agent Radio; caught and verified Git PROOF ticker correction; full suite green
 - [x] Agent Radio TUI — Codex-reviewed & approved
+- [x] edited src/radio.rs; wrote passive-views-no-last-view-write.md; edited MEMORY.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-01 23:31 UTC] `update-doc-with-i5h`: edited src/radio.rs; wrote passive-views-no-last-view-write.md; edited MEMORY.md
 - [2026-06-01 23:30 UTC] `update-doc-with-i5h`: Agent Radio TUI — Codex-reviewed & approved
 - [2026-06-01 23:29 UTC] `update-doc-with-i5h`: Advised and reviewed Claude's cinematic h5i msg watch Agent Radio; caught and verified Git PROOF ticker correction; full suite green
 - [2026-06-01 23:24 UTC] `update-doc-with-i5h`: edited src/radio.rs; edited src/main.rs; Added src/radio.rs (full-screen NORAD watch TUI); registered module in lib.rs; …
