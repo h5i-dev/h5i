@@ -299,11 +299,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited docs/i5h-protocol.md; edited docs/_static/i5h-protocol.svg; edited docs/_static/i5h-protocol.svg
 - [x] Reviewed Claude follow-up i5h protocol SVG through h5i msg; requested explicit DONE reply_to threading and primary h5i share push / pull spelling; verified render, XML, embeds, and diff check; approved.
 - [x] edited sitemap.xml; edited index.html; docs/index.html: added FAQPage+Organization+WebSite+BreadcrumbList JSON-LD @graph…
+- [x] edited sitemap.xml; edited index.html; docs/index.html: added FAQPage+Organization+WebSite+BreadcrumbList JSON-LD @graph…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-01 21:38 UTC] `update-doc-with-i5h`: edited sitemap.xml; edited index.html; docs/index.html: added FAQPage+Organization+WebSite+BreadcrumbList JSON-LD @graph…
 - [2026-06-01 21:38 UTC] `update-doc-with-i5h`: edited sitemap.xml; edited index.html; docs/index.html: added FAQPage+Organization+WebSite+BreadcrumbList JSON-LD @graph…
 - [2026-05-31 13:11 UTC] `update-doc-with-i5h`: Reviewed Claude follow-up i5h protocol SVG through h5i msg; requested explicit DONE reply_to threading and primary h5i share push / pull spelling; verified render, XML, embeds, and diff check; approved.
 - [2026-05-31 13:10 UTC] `update-doc-with-i5h`: edited docs/i5h-protocol.md; edited docs/_static/i5h-protocol.svg; edited docs/_static/i5h-protocol.svg
