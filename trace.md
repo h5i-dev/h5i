@@ -328,3 +328,4 @@ _[Checkpoint: 6a1e1640 — edited src/radio.rs; wrote passive-views-no-last-view
 [23:36:55] OBSERVE: read src/radio.rs
 [23:37:00] OBSERVE: read src/radio.rs
 [23:37:13] ACT: edited src/radio.rs
+[23:37:15] OBSERVE: read src/radio.rs
