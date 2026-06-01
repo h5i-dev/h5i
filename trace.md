@@ -180,3 +180,4 @@ _[Checkpoint: 6a1dfd19 — edited index.html; docs/index.html: added FAQPage+Org
 ---
 
 [21:45:00] OBSERVE: read docs/_static/blog.css
+[21:45:47] ACT: edited _static/blog.css
