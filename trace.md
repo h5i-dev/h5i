@@ -243,3 +243,4 @@ _[Checkpoint: 6a1e0ea2 — edited _static/blog.js; docs UX/a11y pass: added acce
 [23:10:58] OBSERVE: read src/main.rs
 [23:11:18] THINK: Recommend an interactive-TTY full-screen ratatui watch dashboard while preserving --plain and passive read-state semantics, because the visual goal benefits from a durable multi-agent timeline but automation and inbox delivery depend on the existing line protocol and non-destructive behavior.
 [23:18:12] OBSERVE: watch is a passive polling loop in main.rs (~3868); reuses radio_border/row helpers; msg::history+Stats available; console crate gives truncate_str/measure_text_width/Term::size — enough for full-screen ANSI without crossterm. Codex advised ratatui but user chose enhanced ANSI + NORAD.
+[23:19:40] ACT: wrote src/radio.rs
