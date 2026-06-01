@@ -303,3 +303,16 @@ PROOF ticker fixed to source msg::stats (real refs/h5i/msg tip OID + global ledg
 
 ---
 
+## Commit 6a1e1640 — 2026-06-01 23:31 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+PROOF ticker fixed to source msg::stats (real refs/h5i/msg tip OID + global ledger; scoped count relabeled VIEW). TUI made fully passive: no write_last_view (avoids clobbering canonical reply numbering). Codex DONE: independently verified check/build --locked, 669/0 tests, radio 7/7, watch 4/4, git diff --check clean. No blocking findings. Not yet git-committed (awaiting user).
+
+### This Commit's Contribution
+
+
+---
+
