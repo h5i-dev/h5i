@@ -285,3 +285,4 @@ _[Checkpoint: 6a1e14be — edited src/radio.rs; edited src/main.rs; Added src/ra
 [23:26:42] ACT: edited src/radio.rs
 [23:27:16] ACT: edited src/radio.rs
 [23:28:34] ACT: Fixed PROOF ticker per Codex review: now sourced from msg::stats(repo.git()) — real ref-tip OID (verified == git rev-parse --short refs/h5i/msg) + global ledger total; relabeled scoped count as VIEW. fetch() returns (Vec<Message>, Stats). Added regression test. 669 tests pass.
+[23:28:38] OBSERVE: searched Cargo.toml for ".github"
