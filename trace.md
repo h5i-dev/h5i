@@ -222,3 +222,9 @@ _[Checkpoint: 6a1e00ef — docs: added shared scroll-progress bar to all blog pa
 ---
 
 [22:57:32] THINK: I'll look at the docs site structure to understand what's there and what SEO/meta tags exist.
+
+
+---
+_[Checkpoint: 6a1e0e5c — docs: added shared scroll-progress bar to all blog pages + workflows via new _static/blog.js (self-injecting, reduced-mo…]_
+---
+
