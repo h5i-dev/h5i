@@ -241,3 +241,4 @@ _[Checkpoint: 6a1e0ea2 — edited _static/blog.js; docs UX/a11y pass: added acce
 [23:10:58] OBSERVE: read tests/msg_integration.rs
 [23:10:58] OBSERVE: read Cargo.toml
 [23:10:58] OBSERVE: read src/main.rs
+[23:11:18] THINK: Recommend an interactive-TTY full-screen ratatui watch dashboard while preserving --plain and passive read-state semantics, because the visual goal benefits from a durable multi-agent timeline but automation and inbox delivery depend on the existing line protocol and non-destructive behavior.
