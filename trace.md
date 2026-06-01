@@ -189,3 +189,4 @@ _[Checkpoint: 6a1dfd19 — edited index.html; docs/index.html: added FAQPage+Org
 _[Checkpoint: 6a1dfde0 — edited _static/blog.css; wrote _static/blog.js; docs: added shared scroll-progress bar to all blog pages + workflows via…]_
 ---
 
+[21:50:34] OBSERVE: read pitch.html
