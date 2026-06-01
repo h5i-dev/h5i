@@ -264,3 +264,16 @@ ANSI full-screen dashboard (no new deps), NORAD aesthetic: header+live clock, ro
 
 ---
 
+## Commit 6a1e14be — 2026-06-01 23:24 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+ANSI full-screen dashboard (no new deps), NORAD aesthetic: header+live clock, roster w/ ACTIVE/IDLE from msg age + stable per-agent colors, numbered transmission feed, PROOF ticker. Passive (no cursor advance), in-memory dedup, bounded tail+auto-follow, arrival accent pulse. Only on TTY & !plain & !once & !no-tui; all scripted/Monitor paths keep the line protocol. 668 tests pass incl 6 new radio tests + 4 watch regressions.
+
+### This Commit's Contribution
+
+
+---
+

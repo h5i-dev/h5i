@@ -264,3 +264,9 @@ _[Checkpoint: 6a1e14ad — cinematic Agent Radio TUI for 'h5i msg watch']_
 [23:24:46] THINK: Let me consult Codex for design input (dogfooding the very feature we're improving) and launch a background waiter for the reply.
 [23:24:46] THINK: All tests green. Now let me actually see the TUI render in a real PTY (the whole point is visual quality).
 [23:24:46] THINK: Clean build. Let me checkpoint my reasoning in the context workspace (per project rules), then summarize for you.
+
+
+---
+_[Checkpoint: 6a1e14be — edited src/radio.rs; edited src/main.rs; Added src/radio.rs (full-screen NORAD watch TUI); registered module in lib.rs; …]_
+---
+
