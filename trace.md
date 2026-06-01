@@ -261,3 +261,4 @@ _[Checkpoint: 6a1e0ea2 — edited _static/blog.js; docs UX/a11y pass: added acce
 _[Checkpoint: 6a1e14ad — cinematic Agent Radio TUI for 'h5i msg watch']_
 ---
 
+[23:24:46] THINK: Let me consult Codex for design input (dogfooding the very feature we're improving) and launch a background waiter for the reply.
