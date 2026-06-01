@@ -199,3 +199,16 @@ All red-as-text now AA-legible (#ff5252, 6.4:1) while brand fills keep #D21C1C; 
 
 ---
 
+## Commit 6a1e00a1 — 2026-06-01 21:58 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+

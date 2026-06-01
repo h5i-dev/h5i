@@ -207,3 +207,9 @@ _[Checkpoint: 6a1dff8b — Accessibility + color-system UX pass on docs site]_
 _[Checkpoint: 6a1dff9c — docs: added shared scroll-progress bar to all blog pages + workflows via new _static/blog.js (self-injecting, reduced-mo…]_
 ---
 
+
+
+---
+_[Checkpoint: 6a1e00a1 — docs: added shared scroll-progress bar to all blog pages + workflows via new _static/blog.js (self-injecting, reduced-mo…]_
+---
+
