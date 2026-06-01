@@ -215,3 +215,9 @@ _[Checkpoint: 6a1e00a1 — docs: added shared scroll-progress bar to all blog pa
 
 [22:00:15] THINK: g. amber-only warnings + a hotter `#ff3b30` for true errors), that's a one-line change to the `--danger` token — say the word and I'll wire it through.
 [22:00:15] THINK: js`. On `update-doc` branch (not main), so I'll stage everything and commit.
+
+
+---
+_[Checkpoint: 6a1e00ef — docs: added shared scroll-progress bar to all blog pages + workflows via new _static/blog.js (self-injecting, reduced-mo…]_
+---
+
