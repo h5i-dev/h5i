@@ -171,3 +171,4 @@ _[Checkpoint: 6a1dfbdd — edited sitemap.xml; edited index.html; docs/index.htm
 ---
 
 [21:43:41] ACT: docs: propagated SEO/CWV upgrades to pitch.html, workflows.html, blog index + 12 posts — richer robots, color-scheme, non-blocking fonts, content-image width/height (CLS), BreadcrumbList JSON-LD on all deep pages, pitch keywords + PresentationDigitalDocument schema, fixed 3 posts' broken SVG og:image -> PNG
+[21:43:53] THINK: Now I'll apply the consistent SEO upgrades across all the other pages with one careful, idempotent script (multi-file identical edits — Edit can only do one file at a time).
