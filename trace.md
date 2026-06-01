@@ -320,3 +320,4 @@ _[Checkpoint: 6a1e1631 — Agent Radio TUI — Codex-reviewed & approved]_
 _[Checkpoint: 6a1e1640 — edited src/radio.rs; wrote passive-views-no-last-view-write.md; edited MEMORY.md]_
 ---
 
+[23:36:18] OBSERVE: read src/radio.rs
