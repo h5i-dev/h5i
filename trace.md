@@ -132,3 +132,4 @@ _[Checkpoint: 6a1c335c — edited docs/i5h-protocol.md; edited docs/_static/i5h-
 _[Checkpoint: 6a1c336b — Reviewed Claude follow-up i5h protocol SVG through h5i msg; requested explicit DONE reply_to threading and primary h5i share push / pull spelling; verified render, XML, embeds, and diff check; approved.]_
 ---
 
+[21:33:06] OBSERVE: read docs/index.html
