@@ -192,3 +192,9 @@ _[Checkpoint: 6a1dfde0 — edited _static/blog.css; wrote _static/blog.js; docs:
 [21:50:34] OBSERVE: read pitch.html
 [21:52:50] ACT: edited _static/blog.js
 [21:54:19] ACT: docs UX/a11y pass: added accessibility token system (--red-text #ff5252 6.4:1 for red text, --danger, --warn amber; lifted --text-faint to ~5.3:1, --text-dim 0.62) across index.html/pitch.html/blog.css; repointed all small red text + terminal t-red off the sub-AA #D21C1C brand red; added :focus-visible rings, skip-to-content link (inline on index, injected via blog.js on 14 blog/workflows pages), and scroll-margin for anchor jumps
+
+
+---
+_[Checkpoint: 6a1dff8b — Accessibility + color-system UX pass on docs site]_
+---
+
