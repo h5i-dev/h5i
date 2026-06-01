@@ -228,3 +228,4 @@ _[Checkpoint: 6a1e00ef — docs: added shared scroll-progress bar to all blog pa
 _[Checkpoint: 6a1e0e5c — docs: added shared scroll-progress bar to all blog pages + workflows via new _static/blog.js (self-injecting, reduced-mo…]_
 ---
 
+[22:58:42] THINK: Let me confirm one detail — whether the blog `TechArticle` schema includes `datePublished`/`author`/`headline` (needed for article rich results).
