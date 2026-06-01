@@ -1,3 +1,3 @@
 # Git Branch Goal: radio-tui
 
-Advise and review Claude's multi-agent h5i msg watch TUI implementation
+Build cinematic NORAD-style full-screen TUI for 'h5i msg watch' (ANSI, no new deps), keeping --plain line protocol + non-TTY fallback
