@@ -303,3 +303,4 @@ _[Checkpoint: 6a1e15c1 — Advised and reviewed Claude's cinematic h5i msg watch
 
 [23:29:12] ACT: edited src/radio.rs
 [23:29:16] ACT: edited src/radio.rs
+[23:30:46] ACT: wrote passive-views-no-last-view-write.md
