@@ -229,3 +229,9 @@ _[Checkpoint: 6a1e0e5c — docs: added shared scroll-progress bar to all blog pa
 ---
 
 [22:58:42] THINK: Let me confirm one detail — whether the blog `TechArticle` schema includes `datePublished`/`author`/`headline` (needed for article rich results).
+
+
+---
+_[Checkpoint: 6a1e0ea2 — edited _static/blog.js; docs UX/a11y pass: added accessibility token system (--red-text #ff5252 6.4:1 for red text, --da…]_
+---
+
