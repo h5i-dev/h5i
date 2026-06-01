@@ -170,3 +170,4 @@ _[Checkpoint: 6a1dfbd0 — edited sitemap.xml; edited index.html; docs/index.htm
 _[Checkpoint: 6a1dfbdd — edited sitemap.xml; edited index.html; docs/index.html: added FAQPage+Organization+WebSite+BreadcrumbList JSON-LD @graph…]_
 ---
 
+[21:43:41] ACT: docs: propagated SEO/CWV upgrades to pitch.html, workflows.html, blog index + 12 posts — richer robots, color-scheme, non-blocking fonts, content-image width/height (CLS), BreadcrumbList JSON-LD on all deep pages, pitch keywords + PresentationDigitalDocument schema, fixed 3 posts' broken SVG og:image -> PNG
