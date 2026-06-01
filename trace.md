@@ -164,3 +164,9 @@ _[Checkpoint: 6a1dfbd0 — edited sitemap.xml; edited index.html; docs/index.htm
 
 [21:38:37] THINK: A couple of things I deliberately **didn't** do (let me know if you want them):
 - **Apply the same head pattern** (non-blocking fonts, richer robots, OG-PNG fix, CWV) to `pitch.
+
+
+---
+_[Checkpoint: 6a1dfbdd — edited sitemap.xml; edited index.html; docs/index.html: added FAQPage+Organization+WebSite+BreadcrumbList JSON-LD @graph…]_
+---
+
