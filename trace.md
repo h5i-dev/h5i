@@ -373,3 +373,4 @@ _[Checkpoint: 6a1e3b2b — edited src/radio.rs; edited src/radio.rs; Fixed scrol
 [02:23:25] ACT: edited pitch.html
 [02:24:27] OBSERVE: read index.html
 [02:24:31] ACT: edited index.html
+[02:24:58] ACT: Rewrote docs/index.html <style> (monochrome+red, white-first hero stats ledger, inverted white CTA, hairline feature/install grids), full rewrite of _static/blog.css (editorial reading column + hairline post list, muted terminals), and pitch.html <style> (deck restyle).
