@@ -726,17 +726,17 @@
           <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
           <span class="terminal-path">A/B evaluation</span>
         </div>
-        <div class="terminal-body"><pre><span class="t-bold">── A/B · 10 trials per arm ────────────────</span>
+        <div class="terminal-body"><pre><span class="t-bold">── A/B · 5 trials per arm ─────────────────</span>
   <span class="t-out">metric            No claims   With claims      Δ</span>
   <span class="t-out">────────────────  ─────────   ───────────  ─────</span>
-  <span class="t-ai">Read tool calls   5.6 ± 1.0     1.0 ± 0    −82%</span>
-  <span class="t-ai">Cache-read tok.    510,284       117,433    −77%</span>
-  <span class="t-ai">Assistant turns  17.1 ± 1.8   4.8 ± 1.2    −72%</span>
-  <span class="t-ai">Wall time           52s ± 9      18s ± 5    −65%</span>
-  <span class="t-ai">Task fidelity         9/10       10/10  ✓</span>
+  <span class="t-ai">Read tool calls   6.2 ± 0.4     4.0 ± 0    −35%</span>
+  <span class="t-ai">Cache-read tok.    793,425       511,824    −35%</span>
+  <span class="t-ai">Assistant turns  25.6 ± 3.8   16.6 ± 3.1    −35%</span>
+  <span class="t-ai">Est. session cost    ~$4.35        ~$2.13    −51%</span>
+  <span class="t-ai">Task fidelity           5/5          5/5  ✓</span>
 
-<span class="t-ai">  ✔  All 10 trials read exactly 1 file —</span>
-<span class="t-ai">     the one the claims point at.</span></pre></div>
+<span class="t-ai">  ✔  All 5 seeded trials read exactly the 4</span>
+<span class="t-ai">     relevant HTTP files.</span></pre></div>
       </div>
     </div>
   </div>
@@ -914,5 +914,6 @@
     if (Math.abs(dx) > 50) changeSlide(dx > 0 ? 1 : -1);
   });
 </script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 </body>
 </html>

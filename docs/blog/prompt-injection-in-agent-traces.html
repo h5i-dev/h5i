@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Detecting Prompt Injection in Agent Reasoning Traces — h5i</title>
-  <meta name="description" content="An agent that reads a poisoned doc carries the injection into its reasoning trace, not always its output. Eight deterministic regex rules over OBSERVE/THINK/ACT entries catch override and exfiltration patterns with no model in the audit path.">
+  <meta name="description" content="Detect prompt injection in AI agent traces with eight deterministic rules for override and exfiltration patterns in OBSERVE, THINK, and ACT entries.">
   <meta name="keywords" content="prompt injection detection, llm security, agent security, owasp llm top 10, claude code security, h5i context scan, prompt injection regex">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
@@ -36,7 +36,7 @@
     "description": "Eight deterministic regex rules over OBSERVE/THINK/ACT entries catch override and exfiltration patterns with no model in the audit path.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-05-06",
-    "dateModified": "2026-05-06",
+    "dateModified": "2026-06-02",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/prompt-injection-in-agent-traces.html"},
     "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
@@ -88,12 +88,12 @@
     <p>
       Prompt injection is the LLM-era equivalent of SQL injection: untrusted input gets concatenated
       into a control channel, the control channel obeys it, and the system does the wrong thing.
-      OWASP put it at #1 on the LLM Top 10 for a reason — it shows up everywhere agents read
-      external content, which is to say, everywhere agents are useful.
+      <a href="https://genai.owasp.org/llmrisk/llm01-prompt-injection/">OWASP lists prompt injection
+      as LLM01:2025</a>: crafted input can alter model behavior or output in unintended ways.
     </p>
 
     <p>
-      The dominant detection strategy today is to scan the agent's <em>output</em>. The thinking is
+      Scanning only the agent's <em>output</em> is incomplete. The thinking is
       reasonable: if the model was successfully manipulated, surely the output will look weird.
       Sometimes that's true. Often it isn't. The injection planted a belief, the belief informed a
       tool call three turns later, and the output that arrives in your channel looks completely
@@ -116,7 +116,7 @@
 
     <ul>
       <li><strong>The output channel</strong> — what arrives in the user's chat window.</li>
-      <li><strong>The thinking blocks</strong> — the model's private monologue, recorded in the session log.</li>
+      <li><strong>Captured reasoning entries</strong> — session-log content available to the audit path.</li>
       <li><strong>The reasoning trace</strong> — h5i's structured OBSERVE / THINK / ACT entries, written via the <code>PostToolUse</code> hook and explicit <code>h5i context trace</code> calls.</li>
     </ul>
 
@@ -124,8 +124,8 @@
       An injection's lifecycle inside the agent goes: enters via tool result → reflected in
       thinking → recorded as OBSERVE in the trace → influences future THINK and ACT entries →
       possibly produces a tool call → maybe surfaces in output. The earlier in that chain you scan,
-      the more reliably you catch the injection. By the time it's in the output, half the
-      injections have already executed their action.
+      the more context you retain for review. By the time it appears in output, the trace may
+      already contain the earlier tool result and action sequence that explain what happened.
     </p>
 
     <p>
@@ -364,5 +364,6 @@
 </footer>
 
 <script src="../_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 </body>
 </html>

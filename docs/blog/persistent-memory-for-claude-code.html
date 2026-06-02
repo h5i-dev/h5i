@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Giving Claude Code Persistent Memory Across Sessions — h5i</title>
-  <meta name="description" content="Claude Code's session memory wipes everything except a flat memory file. Here's how to give Claude versioned reasoning, per-commit context snapshots, and automatic restoration on every new session — using h5i.">
+  <meta name="description" content="Give Claude Code persistent memory across sessions with versioned reasoning, per-commit context snapshots, and automatic SessionStart restoration.">
   <meta name="keywords" content="claude code memory, claude code session, claude session continuity, agent memory, h5i context, sessionstart hook, claude code persistent memory">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
@@ -38,7 +38,7 @@
     "description": "Anthropic gives you a memory primitive. h5i gives you the layers above it — versioned reasoning, per-commit snapshots, and automatic injection at session start.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-05-06",
-    "dateModified": "2026-05-06",
+    "dateModified": "2026-06-02",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/persistent-memory-for-claude-code.html"},
     "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
@@ -345,7 +345,7 @@
     <div class="next-up">
       <span class="label">Read next</span>
       <a href="reduce-claude-token-costs.html">
-        <h3>Cutting Claude API token costs 77% with content-addressed claims</h3>
+        <h3>Cutting Claude coding-agent costs 51% with content-addressed claims</h3>
         <p>Once memory is solid, the next bottleneck is re-derivation. Here's the A/B benchmark.</p>
       </a>
     </div>
@@ -373,5 +373,6 @@
 </footer>
 
 <script src="../_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 </body>
 </html>

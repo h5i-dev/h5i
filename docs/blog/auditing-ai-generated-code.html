@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Auditing AI-Generated Code: A Practical Framework — h5i</title>
-  <meta name="description" content="Your team merges 50 PRs a week and most are AI-assisted. Here's a four-vector framework — blind edits, uncertainty, scope creep, prompt injection — and the deterministic signals that surface the commits actually worth scrutinizing.">
+  <meta name="description" content="Audit AI-generated code with four deterministic risk signals: blind edits, uncertainty, scope creep, and prompt injection.">
   <meta name="keywords" content="audit ai generated code, ai code review checklist, ai provenance, ai code governance, claude code review, blind edits, ai code compliance">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
@@ -36,7 +36,7 @@
     "description": "A four-vector framework for finding the AI commits that actually need human eyes — and the deterministic signals that surface them.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-05-06",
-    "dateModified": "2026-05-06",
+    "dateModified": "2026-06-02",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/auditing-ai-generated-code.html"},
     "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
@@ -108,9 +108,8 @@
     <h2>Four risk vectors that matter</h2>
 
     <p>
-      Across roughly a year of post-mortems on AI-introduced regressions, four recurring failure
-      modes emerged. Each has a deterministic signal — something you can extract from session logs
-      without invoking another model.
+      A practical AI-code audit can start with four recurring failure modes. Each has a
+      deterministic signal that can be extracted from session logs without invoking another model.
     </p>
 
     <div class="tbl-wrap">
@@ -182,7 +181,7 @@
 
     <p>
       We covered this detector in detail in
-      <a href="uncertainty-heatmap.html">Vibe Coding With Claude Is Fun — Until It Silently Ships a Risk</a>.
+      <a href="uncertainty-heatmap.html">Claude Code Uncertainty Heatmap for AI Code Review</a>.
       The short version is: <code>h5i notes uncertainty</code> turns a session's hidden hedges into a heatmap
       that tells you where to start reading.
     </p>
@@ -363,5 +362,6 @@
 </footer>
 
 <script src="../_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 </body>
 </html>

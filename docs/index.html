@@ -107,7 +107,7 @@
           {
             "@type": "Question",
             "name": "Can h5i reduce AI token costs?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i records verified facts as content-addressed claims and snapshots agent memory, so the next session skips re-grounding. A measured A/B test (N=10 per arm) showed about 77% fewer cache-read tokens and 82% fewer file reads on an identical task."}
+            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i records verified facts as content-addressed claims and snapshots agent memory, so the next session skips re-grounding. In a reproducible N=5 experiment, seeded claims reduced estimated session cost by 51% and cache-read tokens by 35.5% with full task fidelity."}
           },
           {
             "@type": "Question",
@@ -819,7 +819,7 @@
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i capture claim · h5i capture memory</span>
         <div class="feat-name">Reusable memory &amp; claims</div>
-        <div class="feat-desc">Record verified facts and snapshot agent memory so the next session skips re-grounding — a measured A/B shows ~77% fewer cache-read tokens.</div>
+        <div class="feat-desc">Record verified facts and snapshot agent memory so the next session skips re-grounding — a reproducible N=5 experiment cut estimated session cost by 51%.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i capture commit --prompt …</span>
@@ -1132,17 +1132,17 @@
 <span class="t-warn">○ stale</span>   <span class="t-ai">9f02ab1e733c</span>  <span class="t-out">FooError::Parse only constructed in parser.rs</span>
           <span class="t-out">↳  src/parser.rs changed — evidence no longer matches</span>
 
-<span class="t-cmt"># Identical task, identical codebase — measured A/B (N=10 trials per arm):</span>
+<span class="t-cmt"># Identical task, identical codebase — measured A/B (N=5 trials per arm):</span>
 
 <span class="t-bold">── Result ─────────────────────────────────────────────</span>
   <span class="t-out">metric             No claims   With claims       Δ</span>
-  <span class="t-ai">Read tool calls    5.6 ± 1.0     1.0 ± 0     −82%</span>
-  <span class="t-ai">Cache-read tokens    510,284       117,433    −77%</span>
-  <span class="t-ai">Assistant turns    17.1 ± 1.8   4.8 ± 1.2    −72%</span>
-  <span class="t-ai">Wall time             52s ± 9      18s ± 5    −65%</span>
-  <span class="t-ai">Task fidelity          9/10        10/10  ✓</span>
+  <span class="t-ai">Read tool calls    6.2 ± 0.4     4.0 ± 0     −35%</span>
+  <span class="t-ai">Cache-read tokens    793,425       511,824    −35%</span>
+  <span class="t-ai">Assistant turns    25.6 ± 3.8   16.6 ± 3.1    −35%</span>
+  <span class="t-ai">Est. session cost      ~$4.35         ~$2.13    −51%</span>
+  <span class="t-ai">Task fidelity            5/5           5/5  ✓</span>
 
-<span class="t-pass">✔</span>  <span class="t-out">All 10 treated trials read exactly one file (σ=0).</span></pre></div>
+<span class="t-pass">✔</span>  <span class="t-out">All 5 seeded trials read exactly the 4 relevant HTTP files (σ=0).</span></pre></div>
       </div>
     </div>
   </div>
@@ -1260,7 +1260,7 @@
       </details>
       <details class="faq-item">
         <summary>Can h5i reduce AI token costs?</summary>
-        <div class="faq-answer">Yes. h5i records verified facts as content-addressed claims and snapshots agent memory, so the next session skips re-grounding. A measured A/B test (N=10 per arm) showed about <strong>77% fewer cache-read tokens</strong> and 82% fewer file reads on an identical task.</div>
+        <div class="faq-answer">Yes. h5i records verified facts as content-addressed claims and snapshots agent memory, so the next session skips re-grounding. In a reproducible N=5 experiment, seeded claims reduced <strong>estimated session cost by 51%</strong> and cache-read tokens by 35.5% with full task fidelity.</div>
       </details>
       <details class="faq-item">
         <summary>Is h5i free and open source?</summary>
@@ -1364,5 +1364,6 @@
   window.addEventListener('scroll', onScroll, { passive: true });
   onScroll();
 </script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 </body>
 </html>
