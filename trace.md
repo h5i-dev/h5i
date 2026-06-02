@@ -469,3 +469,4 @@ _[Checkpoint: 6a1e4b16 — Completed local SEO audit of 12 docs/blog posts plus 
 [03:33:56] OBSERVE: read docs/blog/content-addressed-claims-agent-memory.html
 [03:33:56] OBSERVE: searched caching|claims|context for "block|private|Anthropic|prompt"
 [03:33:56] OBSERVE: listed files under .
+[03:33:56] OBSERVE: read scripts/experiment_claims_results.md
