@@ -1,0 +1,1 @@
+{"git_oid":"3805fd8730d21ea09e546e0bd508058c0fa7480b","parent_oid":"4cbba6ba441b009a6151d6fa39fc05c975cdedf7","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"remove Features, Use Cases, and Dashboard from the top-right nav bar of index.html","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-02T21:02:36.967143184Z"}
