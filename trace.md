@@ -402,3 +402,9 @@ _[Checkpoint: 6a1e40bf — Rewrote docs/index.html <style> (monochrome+red, whit
 ---
 
 [02:33:14] ACT: edited index.html
+
+
+---
+_[Checkpoint: 6a1e40ed — edited index.html; Hero title: added one-time reduced-motion-safe 'title-sheen' — soft red glint sweeps once on load via…]_
+---
+
