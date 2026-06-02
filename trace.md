@@ -458,3 +458,4 @@ _[Checkpoint: 6a1e4268 — edited index.html; edited index.html; edited _static/
 [03:16:24] OBSERVE: read docs/blog/index.html
 [03:16:24] OBSERVE: searched docs/blog/*.html
 [03:16:24] OBSERVE: searched docs/blog/*.html
+[03:16:38] THINK: Prioritize title consistency, search-intent alignment, contextual internal links, and representative article images over meta-keywords tuning because Google may source title links from page headings, does not use meta keywords, and recommends relevant Article images.
