@@ -341,3 +341,9 @@ _[Checkpoint: 6a1e1640 — edited src/radio.rs; wrote passive-views-no-last-view
 _[Checkpoint: 6a1e181d — edited src/radio.rs; edited src/radio.rs; Fixed scroll/staircase bug: real terminals scrolled because redraw used cursor…]_
 ---
 
+
+
+---
+_[Checkpoint: 6a1e1d08 — edited src/radio.rs; edited src/radio.rs; Fixed scroll/staircase bug: real terminals scrolled because redraw used cursor…]_
+---
+
