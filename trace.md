@@ -471,3 +471,4 @@ _[Checkpoint: 6a1e4b16 — Completed local SEO audit of 12 docs/blog posts plus 
 [03:33:56] OBSERVE: listed files under .
 [03:33:56] OBSERVE: read scripts/experiment_claims_results.md
 [03:33:56] OBSERVE: read docs/blog/i5h-agent-to-agent-messaging.html
+[03:33:56] OBSERVE: searched ?10|N=10|sonnet|Sonnet|scripts/bench|retry-jitter|500,000|4×|~4' for "?="
