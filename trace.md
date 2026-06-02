@@ -575,3 +575,4 @@ _[Checkpoint: 6a1f3d0d — Added /guides/ SEO topic cluster]_
 
 [20:29:13] THINK: A few of these topics overlap with existing blog posts (blame, audit, prompt-injection, memory, i5h), so I'll make the new pages **task/how-to + FAQ oriented** (different search intent) and cross-link to the deeper blog posts to avoid canni…
 [20:29:13] THINK: Let me capture the exact `<head>` template to clone (fonts, preloads, JSON-LD scaffolding).
+[20:29:13] THINK: Let me log a context milestone, then generate the six guides + hub via a single template-driven script (keeps SEO scaffolding and design identical across all pages).
