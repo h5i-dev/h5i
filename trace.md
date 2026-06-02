@@ -401,3 +401,4 @@ _[Checkpoint: 6a1e4013 — edited pitch.html; edited index.html; Rewrote docs/in
 _[Checkpoint: 6a1e40bf — Rewrote docs/index.html <style> (monochrome+red, white-first hero stats ledger, inverted white CTA, hairline feature/ins…]_
 ---
 
+[02:33:14] ACT: edited index.html
