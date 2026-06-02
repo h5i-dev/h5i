@@ -498,3 +498,4 @@ _[Checkpoint: 6a1e4b16 — Completed local SEO audit of 12 docs/blog posts plus 
 [03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/i5h-agent-to-agent-messaging.html
 [03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/prompt-injection-in-agent-traces.html
 [03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/reduce-claude-token-costs.html
+[03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/uncertainty-heatmap.html
