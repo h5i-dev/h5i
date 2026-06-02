@@ -10,15 +10,15 @@
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
-  <link rel="canonical" href="https://h5i.dev/blog/pr-body-ai-code-review.html">
-  <link rel="icon" type="image/png" href="../_static/logo.png">
-  <link rel="apple-touch-icon" href="../_static/logo.png">
+  <link rel="canonical" href="https://h5i.dev/blog/pr-body-ai-code-review/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="The AI Pull Request Body: h5i's Review Surface for Agent Work">
   <meta property="og:description" content="The PR is one view of h5i's shared context: review focus, risk signals, reasoning highlights, tests, and provenance in the place reviewers already work.">
-  <meta property="og:url" content="https://h5i.dev/blog/pr-body-ai-code-review.html">
+  <meta property="og:url" content="https://h5i.dev/blog/pr-body-ai-code-review/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="og:image:width" content="2257">
   <meta property="og:image:height" content="1222">
@@ -43,7 +43,7 @@
     "datePublished": "2026-05-24",
     "dateModified": "2026-06-02",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/pr-body-ai-code-review.html"},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/pr-body-ai-code-review/"},
     "image": "https://h5i.dev/_static/h5i-concept.svg",
     "keywords": "AI pull request, AI code review, h5i share pr, GitHub PR comment, AI provenance"
   }
@@ -54,20 +54,20 @@
   <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
-  <link rel="stylesheet" href="../_static/blog.css">
+  <link rel="stylesheet" href="/_static/blog.css">
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "The AI Pull Request Body: h5i's Review Surface for Agent Work", "item": "https://h5i.dev/blog/pr-body-ai-code-review.html"}]}
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "The AI Pull Request Body: h5i's Review Surface for Agent Work", "item": "https://h5i.dev/blog/pr-body-ai-code-review/"}]}
   </script>
 </head>
 <body>
 <div class="bg-grid"></div>
 
 <nav class="blog-nav">
-  <a class="nav-logo" href="../index.html"><img src="../_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
   <ul class="nav-links">
-    <li><a href="../index.html">Home</a></li>
-    <li><a href="../workflows.html">Workflows</a></li>
-    <li><a href="index.html">Blog</a></li>
+    <li><a href="/">Home</a></li>
+    <li><a href="/workflows/">Workflows</a></li>
+    <li><a href="/blog/">Blog</a></li>
     <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub -&gt;</a></li>
   </ul>
 </nav>
@@ -97,7 +97,7 @@
     </p>
 
     <figure class="feature-figure">
-      <img width="774" height="1366" src="../_static/pr-demo.svg" alt="Example h5i pull request review brief with merge status, review focus, checklist, and reasoning highlights">
+      <img width="774" height="1366" src="/_static/pr-demo.svg" alt="Example h5i pull request review brief with merge status, review focus, checklist, and reasoning highlights">
       <figcaption>
         The PR body is a rendered view of h5i context: branch goal, review focus,
         checklist, reasoning highlights, audit signals, and per-commit provenance.
@@ -106,7 +106,7 @@
 
     <p>
       That is what <code>h5i share pr post</code> does. It renders h5i's
-      <a href="context-dag-versioned-agent-reasoning.html">shared context DAG</a>
+      <a href="/blog/context-dag-versioned-agent-reasoning/">shared context DAG</a>
       into a sticky GitHub comment. Re-run it and h5i updates the same comment instead
       of spraying duplicates across the thread.
     </p>
@@ -165,7 +165,7 @@
     <p>
       The PR comment is a surface, not the source of truth. h5i stores the durable
       record in Git sidecar refs such as <code>refs/h5i/context</code>, <code>refs/h5i/notes</code>,
-      and <code>refs/h5i/memory</code>. <a href="i5h-agent-to-agent-messaging.html">Agent-to-agent
+      and <code>refs/h5i/memory</code>. <a href="/blog/i5h-agent-to-agent-messaging/">Agent-to-agent
       messages</a> add durable review requests and handoffs. The same record can render as a terminal prelude,
       a local dashboard, a compliance report, a handoff prompt, or a PR comment.
     </p>
@@ -189,7 +189,7 @@
       <code>h5i codex prelude</code> at the start, <code>h5i codex sync</code> during the
       session, <code>h5i capture commit</code> for provenance, and <code>h5i audit review</code>
       before review. For a deeper risk model, see the
-      <a href="auditing-ai-generated-code.html">AI-generated code audit framework</a>.
+      <a href="/blog/auditing-ai-generated-code/">AI-generated code audit framework</a>.
     </p>
   </article>
 </main>
@@ -198,16 +198,16 @@
   <div class="blog-footer-inner">
     <div class="brand">h5i<span class="red"> / high-five</span></div>
     <nav class="links">
-      <a href="../index.html">Home</a>
-      <a href="../workflows.html">Workflows</a>
-      <a href="index.html">Blog</a>
+      <a href="/">Home</a>
+      <a href="/workflows/">Workflows</a>
+      <a href="/blog/">Blog</a>
       <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
       <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
     </nav>
     <div class="legal">Apache 2.0 · Built with Rust</div>
   </div>
 </footer>
-<script src="../_static/blog.js" defer></script>
+<script src="/_static/blog.js" defer></script>
 <!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 </body>
 </html>

@@ -13,9 +13,9 @@
   <meta name="application-name" content="h5i">
   <link rel="canonical" href="https://h5i.dev/">
   <link rel="sitemap" type="application/xml" href="/sitemap.xml">
-  <link rel="icon" type="image/png" href="_static/logo.png">
-  <link rel="apple-touch-icon" href="_static/logo.png">
-  <link rel="preload" as="image" href="_static/logo.png" fetchpriority="high">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+  <link rel="preload" as="image" href="/_static/logo.png" fetchpriority="high">
 
   <!-- Open Graph -->
   <meta property="og:type" content="website">
@@ -81,7 +81,7 @@
         "@id": "https://h5i.dev/#breadcrumb",
         "itemListElement": [
           {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"},
-          {"@type": "ListItem", "position": 2, "name": "Workflows", "item": "https://h5i.dev/workflows.html"},
+          {"@type": "ListItem", "position": 2, "name": "Workflows", "item": "https://h5i.dev/workflows/"},
           {"@type": "ListItem", "position": 3, "name": "Blog", "item": "https://h5i.dev/blog/"}
         ]
       },
@@ -721,7 +721,7 @@
 <!-- ── Nav ──────────────────────────────────────────────────── -->
 <nav>
   <a class="nav-logo" href="#">
-    <img src="_static/logo.png" alt="h5i">
+    <img src="/_static/logo.png" alt="h5i">
     <span>h5i</span>
   </a>
   <ul class="nav-links" id="nav-links">
@@ -729,9 +729,9 @@
     <li><a href="#usecases">Use Cases</a></li>
     <li><a href="#dashboard">Dashboard</a></li>
     <li><a href="#install">Install</a></li>
-    <li><a href="workflows.html">Workflows</a></li>
-    <li><a href="blog/index.html">Blog</a></li>
-    <li><a href="pitch.html">Pitch Deck</a></li>
+    <li><a href="/workflows/">Workflows</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="/pitch/">Pitch Deck</a></li>
     <li><a href="#faq">FAQ</a></li>
     <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
   </ul>
@@ -745,7 +745,7 @@
   <div class="hero-glow"></div>
   <div class="hero-inner">
     <div class="hero-logo-wrap">
-      <img src="_static/logo.png" width="1280" height="640" alt="h5i logo" fetchpriority="high">
+      <img src="/_static/logo.png" width="1280" height="640" alt="h5i logo" fetchpriority="high">
     </div>
     <div class="hero-badge">CONTEXT VERSIONING · AI PROVENANCE · OPEN SOURCE</div>
     <h1 class="hero-title">
@@ -757,7 +757,7 @@
     </p>
     <div class="hero-actions">
       <a href="#install" class="btn btn-primary">Get Started</a>
-      <a href="workflows.html" class="btn btn-ghost">See Workflows</a>
+      <a href="/workflows/" class="btn btn-ghost">See Workflows</a>
       <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-ghost">View on GitHub</a>
     </div>
     <div class="hero-install">
@@ -771,7 +771,7 @@
       <div class="hero-stat"><div class="val">refs</div><div class="lbl">GIT-NATIVE SIDECAR</div></div>
     </div>
     <div class="hero-shot">
-      <img src="_static/h5i-concept.svg" width="1240" height="380" alt="h5i concept diagram showing Codex and Claude sharing versioned context through refs/h5i">
+      <img src="/_static/h5i-concept.svg" width="1240" height="380" alt="h5i concept diagram showing Codex and Claude sharing versioned context through refs/h5i">
       <div class="hero-shot-caption">Agents capture and recall the same versioned context through <code>refs/h5i/*</code>; audits, dashboards, and PR comments are views over that shared record.</div>
     </div>
   </div>
@@ -919,8 +919,8 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i msg done 1 "LGTM — fixed one expiry edge case in 1a2b3c4."</span></pre></div>
       </div>
       <figure style="margin:1.5rem 0 0; border:1px solid var(--border); border-radius:var(--radius-lg); overflow:hidden; background:#090909;">
-        <img src="_static/h5i-msg-demo.gif" width="1200" height="824" alt="The h5i msg watch view: a live agent channel with typed messages arriving in real time over refs/h5i/msg" loading="lazy" style="width:100%; height:auto;">
-        <figcaption style="padding:0.85rem 1rem; font-size:0.82rem; color:var(--text-dim); border-top:1px solid var(--border);">Every message is a durable Git object in <code style="font-family:var(--mono);color:var(--red-text)">refs/h5i/msg</code> — shared with <code style="font-family:var(--mono);color:var(--red-text)">h5i push</code>, replayable a year later. <a href="blog/i5h-agent-to-agent-messaging.html" style="color:var(--red-text)">Read how it works →</a></figcaption>
+        <img src="/_static/h5i-msg-demo.gif" width="1200" height="824" alt="The h5i msg watch view: a live agent channel with typed messages arriving in real time over refs/h5i/msg" loading="lazy" style="width:100%; height:auto;">
+        <figcaption style="padding:0.85rem 1rem; font-size:0.82rem; color:var(--text-dim); border-top:1px solid var(--border);">Every message is a durable Git object in <code style="font-family:var(--mono);color:var(--red-text)">refs/h5i/msg</code> — shared with <code style="font-family:var(--mono);color:var(--red-text)">h5i push</code>, replayable a year later. <a href="/blog/i5h-agent-to-agent-messaging/" style="color:var(--red-text)">Read how it works →</a></figcaption>
       </figure>
     </div>
 
@@ -1159,7 +1159,7 @@
       <div class="divider"></div>
     </div>
     <div class="dashboard-wrap reveal">
-      <img src="_static/screenshot_h5i_server.png" width="2257" height="1222" alt="h5i web dashboard showing the Timeline tab with AI provenance, integrity scores, and test badges for each commit" loading="lazy" style="height:auto;">
+      <img src="/_static/screenshot_h5i_server.png" width="2257" height="1222" alt="h5i web dashboard showing the Timeline tab with AI provenance, integrity scores, and test badges for each commit" loading="lazy" style="height:auto;">
     </div>
     <p class="dashboard-caption reveal">
       Timeline tab — every commit with full AI context, test badge, integrity score, and one-click re-audit.<br>
@@ -1243,7 +1243,7 @@
     <div class="section-head reveal">
       <span class="section-tag">FAQ</span>
       <h2 class="section-title">Frequently asked questions</h2>
-      <p class="section-sub">The short answers. The <a href="blog/index.html" style="color:var(--red-text)">blog</a> and <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md" style="color:var(--red-text)">manual</a> have the long ones.</p>
+      <p class="section-sub">The short answers. The <a href="/blog/" style="color:var(--red-text)">blog</a> and <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md" style="color:var(--red-text)">manual</a> have the long ones.</p>
       <div class="divider"></div>
     </div>
     <div class="faq-list reveal">
@@ -1284,7 +1284,7 @@
       <p class="cta-sub">h5i versions the thinking behind your code — so every session resumes where the last one left off. Apache 2.0. No lock-in.</p>
       <div class="hero-actions">
         <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
-        <a href="workflows.html" class="btn btn-ghost">Read Workflows</a>
+        <a href="/workflows/" class="btn btn-ghost">Read Workflows</a>
         <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md" class="btn btn-ghost">Read the Manual</a>
       </div>
     </div>
@@ -1295,12 +1295,12 @@
 <footer>
   <div class="footer-inner">
     <div class="footer-brand">
-      <img src="_static/logo.png" alt="h5i">
+      <img src="/_static/logo.png" alt="h5i">
       <span>h5i<span class="red"> / high-five</span></span>
     </div>
     <nav class="footer-links">
       <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
-      <a href="workflows.html">Workflows</a>
+      <a href="/workflows/">Workflows</a>
       <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
       <a href="https://github.com/Koukyosyumei/h5i/issues">Issues</a>
       <a href="https://github.com/Koukyosyumei/h5i/blob/main/LICENSE">License</a>
