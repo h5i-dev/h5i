@@ -427,3 +427,4 @@ _[Checkpoint: 6a1e4131 — edited index.html; edited index.html; edited index.ht
 [02:35:55] THINK: Tell me your color pick (and whether you're open on type/scope) and I'll lock the plan.
 [02:35:55] THINK: Context is clear. I'll preserve every CSS variable and class name the 13 blog pages depend on (just remap their *values* into the monochrome+red system), and keep muted semantic colors in terminals so the demos don't lose meaning.
 [02:35:55] THINK: Let me validate structure and check for leftover old-palette clashes:
+[02:35:55] THINK: Let me record the work in the h5i context workspace (per the repo's workflow) and confirm the final file set:
