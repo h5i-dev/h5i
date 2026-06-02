@@ -409,3 +409,9 @@ _[Checkpoint: 6a1e40ed — edited index.html; Hero title: added one-time reduced
 ---
 
 [02:33:45] ACT: edited index.html
+
+
+---
+_[Checkpoint: 6a1e410f — Hero title: added one-time reduced-motion-safe 'title-sheen' — soft red glint sweeps once on load via clipped-text gradi…]_
+---
+
