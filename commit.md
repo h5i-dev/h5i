@@ -381,3 +381,16 @@ index.html, _static/blog.css (drives workflows + 13 blog pages), pitch.html rest
 
 ---
 
+## Commit 6a1e3f4f — 2026-06-02 02:26 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+index.html, _static/blog.css (drives workflows + 13 blog pages), pitch.html restyled. White promoted to first-class structural color; red = lone accent; glows/rainbow accents removed; semantic colors retained only inside terminals. Space Grotesk kept. All blog CSS var/class names preserved so the 13 dependent pages don't break.
+
+### This Commit's Contribution
+
+
+---
+

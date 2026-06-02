@@ -380,3 +380,9 @@ _[Checkpoint: 6a1e3b2b — edited src/radio.rs; edited src/radio.rs; Fixed scrol
 _[Checkpoint: 6a1e3efa — Doc-site restyle: monochrome+red dark system]_
 ---
 
+
+
+---
+_[Checkpoint: 6a1e3f4f — edited pitch.html; edited index.html; Rewrote docs/index.html <style> (monochrome+red, white-first hero stats ledger, in…]_
+---
+
