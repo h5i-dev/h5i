@@ -577,3 +577,4 @@ _[Checkpoint: 6a1f3d0d — Added /guides/ SEO topic cluster]_
 [20:29:13] THINK: Let me capture the exact `<head>` template to clone (fonts, preloads, JSON-LD scaffolding).
 [20:29:13] THINK: Let me log a context milestone, then generate the six guides + hub via a single template-driven script (keeps SEO scaffolding and design identical across all pages).
 [20:29:13] THINK: Let me validate the JSON-LD blocks parse (FAQ/TechArticle/breadcrumb) and check for any HTML issues across the new pages.
+[20:29:13] THINK: Now let me inspect the home page footer and the pitch page's nav/footer (they may differ from the shared `blog-nav`).
