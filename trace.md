@@ -367,3 +367,4 @@ _[Checkpoint: 6a1e3b2b — edited src/radio.rs; edited src/radio.rs; Fixed scrol
 [02:15:10] THINK: Direction locked: monochrome+red dark system; white as structural/inverted color; red = lone accent; muted semantic colors retained only in terminals. Preserve all blog.css var/class names.
 [02:16:58] ACT: wrote index_style.css
 [02:18:43] ACT: wrote docs/_static/blog.css
+[02:18:47] OBSERVE: read docs/pitch.html
