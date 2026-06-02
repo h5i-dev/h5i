@@ -545,3 +545,4 @@ _[Checkpoint: 6a1f346b — edited /home/koukyosyumei/Dev/h5i/docs/sitemap.xml; e
 [20:00:21] THINK: html` is ambiguous (root index vs blog index), so I'll rewrite to **root-absolute clean URLs** (the site is at a custom domain root via CNAME).
 [20:00:21] THINK: Clean to script. I'll restructure to folder/`index.
 [20:00:21] THINK: Let me spot-check a blog post's `<head>` (canonical/og) and home links to confirm correctness, and verify the `_static` image URLs were untouched.
+[20:00:21] THINK: Let me do a quick local serve test to confirm clean URLs resolve and assets load (200s).
