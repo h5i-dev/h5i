@@ -422,3 +422,4 @@ _[Checkpoint: 6a1e410f — Hero title: added one-time reduced-motion-safe 'title
 _[Checkpoint: 6a1e4131 — edited index.html; edited index.html; edited index.html]_
 ---
 
+[02:35:55] THINK: Let me invoke the frontend-design skill (this is squarely a frontend design task) and gather reference + current context in parallel.
