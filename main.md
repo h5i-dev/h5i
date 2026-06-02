@@ -325,11 +325,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Hero title: added one-time reduced-motion-safe 'title-sheen' — soft red glint sweeps once on load via clipped-text gradi…
 - [x] edited index.html; edited index.html; edited index.html
 - [x] edited index.html; edited index.html; edited index.html
+- [x] edited index.html; edited index.html; edited _static/blog.css
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-02 02:37 UTC] `update-doc-with-i5h`: edited index.html; edited index.html; edited _static/blog.css
 - [2026-06-02 02:35 UTC] `update-doc-with-i5h`: edited index.html; edited index.html; edited index.html
 - [2026-06-02 02:34 UTC] `update-doc-with-i5h`: edited index.html; edited index.html; edited index.html
 - [2026-06-02 02:33 UTC] `update-doc-with-i5h`: Hero title: added one-time reduced-motion-safe 'title-sheen' — soft red glint sweeps once on load via clipped-text gradi…
