@@ -465,3 +465,4 @@ _[Checkpoint: 6a1e4268 — edited index.html; edited index.html; edited _static/
 _[Checkpoint: 6a1e4b16 — Completed local SEO audit of 12 docs/blog posts plus blog index; identified strongest pages and prioritized metadata, intent, internal-linking, and image improvements.]_
 ---
 
+[03:33:56] OBSERVE: listed files under docs
