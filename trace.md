@@ -395,3 +395,9 @@ _[Checkpoint: 6a1e4013 — edited pitch.html; edited index.html; Rewrote docs/in
 [02:31:39] OBSERVE: read index.html
 [02:31:45] ACT: edited index.html
 [02:32:19] ACT: Hero title: added one-time reduced-motion-safe 'title-sheen' — soft red glint sweeps once on load via clipped-text gradient, rests solid white; period kept red via explicit text-fill-color.
+
+
+---
+_[Checkpoint: 6a1e40bf — Rewrote docs/index.html <style> (monochrome+red, white-first hero stats ledger, inverted white CTA, hairline feature/ins…]_
+---
+
