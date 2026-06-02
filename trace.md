@@ -364,3 +364,4 @@ _[Checkpoint: 6a1e3b0d — edited src/radio.rs; edited src/radio.rs; Fixed scrol
 _[Checkpoint: 6a1e3b2b — edited src/radio.rs; edited src/radio.rs; Fixed scroll/staircase bug: real terminals scrolled because redraw used cursor…]_
 ---
 
+[02:15:10] THINK: Direction locked: monochrome+red dark system; white as structural/inverted color; red = lone accent; muted semantic colors retained only in terminals. Preserve all blog.css var/class names.
