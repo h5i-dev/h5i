@@ -348,3 +348,4 @@ _[Checkpoint: 6a1e1d08 — edited src/radio.rs; edited src/radio.rs; Fixed scrol
 ---
 
 [02:04:15] OBSERVE: read index.html
+[02:04:15] OBSERVE: read _static/blog.css
