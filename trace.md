@@ -424,3 +424,4 @@ _[Checkpoint: 6a1e4131 — edited index.html; edited index.html; edited index.ht
 
 [02:35:55] THINK: Let me invoke the frontend-design skill (this is squarely a frontend design task) and gather reference + current context in parallel.
 [02:35:55] THINK: Now let me fetch the reference designs and read the remaining current structure in parallel.
+[02:35:55] THINK: Tell me your color pick (and whether you're open on type/scope) and I'll lock the plan.
