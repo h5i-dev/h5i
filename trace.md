@@ -482,3 +482,4 @@ _[Checkpoint: 6a1e4b16 — Completed local SEO audit of 12 docs/blog posts plus 
 [03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/persistent-memory-for-claude-code.html
 [03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/pr-body-ai-code-review.html
 [03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/prompt-injection-in-agent-traces.html
+[03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/uncertainty-heatmap.html
