@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Content-Addressed Claims: Reusable Facts for AI Coding Agents - h5i</title>
-  <meta name="description" content="How h5i content-addressed claims let AI agents reuse verified codebase facts without re-reading the same files every session.">
+  <meta name="description" content="Use h5i content-addressed claims to reuse verified codebase facts across AI agent sessions and invalidate them automatically when evidence changes.">
   <meta name="keywords" content="content-addressed claims, AI agent memory, prompt caching, Claude Code memory, Codex context, h5i claims, reusable codebase facts">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
@@ -41,7 +41,7 @@
     "description": "How h5i content-addressed claims let AI agents reuse verified codebase facts.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-05-24",
-    "dateModified": "2026-05-24",
+    "dateModified": "2026-06-02",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/content-addressed-claims-agent-memory.html"},
     "image": "https://h5i.dev/_static/h5i-concept.svg",
@@ -156,17 +156,19 @@
     <h2>Why this helps context windows</h2>
 
     <p>
-      Prompt caching helps when you send the same tokens repeatedly. Claims attack a
+      <a href="https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching">Prompt caching</a>
+      helps when you send the same tokens repeatedly. Claims attack a
       different cost: re-derivation. Instead of asking the agent to read five files to
       rediscover "auth middleware owns token refresh," the next session can receive that
       fact directly, with evidence attached.
     </p>
 
     <p>
-      The existing h5i benchmark for claims measured a large reduction in file reads and
-      cache-read tokens on a repeated task. The important product lesson is simpler than
-      the exact number: durable, invalidatable facts are more useful than dumping larger
-      transcripts into every session.
+      The <a href="reduce-claude-token-costs.html">h5i claims benchmark</a>, with
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/scripts/experiment_claims_results.md">checked-in
+      results</a>, measured fewer file reads and lower session cost on a repeated task.
+      The product lesson is simpler than the exact number: durable, invalidatable facts
+      are more useful than dumping larger transcripts into every session.
     </p>
 
     <h2>What to claim</h2>
@@ -188,10 +190,12 @@
     <h2>How claims fit the bigger h5i model</h2>
 
     <p>
-      Claims are one piece of shared context. The context DAG records the path of the work.
+      Claims are one piece of shared context. The <a href="context-dag-versioned-agent-reasoning.html">context
+      DAG</a> records the path of the work.
       Commits record prompt, model, test, and decision provenance. Memory snapshots record
       agent-local state. Claims record reusable facts that should survive beyond one
-      session, but only while the evidence is still current.
+      session, but only while the evidence is still current. For the session-restoration
+      workflow, see <a href="persistent-memory-for-claude-code.html">persistent memory for Claude Code</a>.
     </p>
 
     <div class="callout">
@@ -221,5 +225,6 @@
   </div>
 </footer>
 <script src="../_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 </body>
 </html>

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vibe Coding With Claude Is Fun — Until It Silently Ships a Risk — h5i</title>
-  <meta name="description" content="When Claude Code edits your codebase it leaves a trail of self-doubt in private thinking blocks. h5i notes uncertainty turns those hedges into a heatmap so you know exactly where to focus your code review.">
+  <title>Claude Code Uncertainty Heatmap for AI Code Review — h5i</title>
+  <meta name="description" content="Turn captured Claude Code uncertainty signals into a per-file review heatmap so human reviewers can focus on risky AI-assisted edits.">
   <meta name="keywords" content="claude code uncertainty, ai code review, vibe coding, claude code thinking blocks, h5i notes uncertainty, ai-generated code review, claude code self-doubt">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
@@ -16,27 +16,27 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="Vibe Coding With Claude Is Fun — Until It Silently Ships a Risk">
-  <meta property="og:description" content="One command to make Claude confess every line it wasn't sure about.">
+  <meta property="og:title" content="Claude Code Uncertainty Heatmap for AI Code Review">
+  <meta property="og:description" content="Turn captured uncertainty signals into a per-file heatmap for AI-assisted code review.">
   <meta property="og:url" content="https://h5i.dev/blog/uncertainty-heatmap.html">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="article:published_time" content="2026-04-15">
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Vibe Coding With Claude Is Fun — Until It Silently Ships a Risk">
-  <meta name="twitter:description" content="One command to make Claude confess every line it wasn't sure about.">
+  <meta name="twitter:title" content="Claude Code Uncertainty Heatmap for AI Code Review">
+  <meta name="twitter:description" content="Turn captured uncertainty signals into a per-file heatmap for AI-assisted code review.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "Vibe Coding With Claude Is Fun — Until It Silently Ships a Risk Into Your Git History",
-    "description": "Claude leaves a private trail of self-doubt in thinking blocks. h5i notes uncertainty turns those hedges into a review heatmap.",
+    "headline": "Claude Code Uncertainty Heatmap for AI Code Review",
+    "description": "Turn captured Claude Code uncertainty signals into a per-file heatmap for AI-assisted code review.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-04-15",
-    "dateModified": "2026-05-06",
+    "dateModified": "2026-06-02",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/uncertainty-heatmap.html"},
     "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
@@ -51,7 +51,7 @@
   <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="../_static/blog.css">
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Vibe Coding With Claude Is Fun — Until It Silently Ships a Risk", "item": "https://h5i.dev/blog/uncertainty-heatmap.html"}]}
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Claude Code Uncertainty Heatmap for AI Code Review", "item": "https://h5i.dev/blog/uncertainty-heatmap.html"}]}
   </script>
 </head>
 <body>
@@ -71,9 +71,9 @@
   <article class="post">
     <header>
       <div class="post-eyebrow">Code Review · 2026-04-15</div>
-      <h1>Vibe Coding With Claude Is Fun — Until It Silently Ships a Risk Into Your Git History</h1>
+      <h1>Claude Code Uncertainty Heatmap for AI Code Review</h1>
       <p class="post-deck">
-        One command to make Claude confess every line it wasn't sure about.
+        Turn captured uncertainty signals into a per-file heatmap for focused human review.
       </p>
       <div class="post-meta">
         <span><strong>By</strong> Koukyosyumei</span>
@@ -93,21 +93,19 @@
     </p>
 
     <p>
-      Here's what nobody tells you: <strong>the AI already knows which parts are risky.</strong> It told
-      itself, in private, while writing the code. You just never had a way to read that conversation
-      — until now.
+      AI coding sessions often contain uncertainty signals around risky edits. When those signals
+      are captured in a session trace, they can help reviewers decide where to spend their attention.
     </p>
 
-    <h2>The secret monologue inside every AI edit</h2>
+    <h2>Uncertainty signals inside AI-assisted edits</h2>
 
     <p>
-      When Claude Code works on your codebase, it doesn't just output edits. It <em>thinks</em>. Before
-      touching a file, it reasons through the problem in an internal monologue — a "thinking block"
-      — that never appears in the chat window.
+      When Claude Code works on your codebase, captured session traces can contain hedges and
+      uncertainty notes associated with the files being edited.
     </p>
 
     <p>
-      Inside those thinking blocks, you'll find sentences like:
+      Inside captured traces, you may find sentences like:
     </p>
 
     <blockquote>
@@ -122,7 +120,7 @@
     </p>
 
     <p>
-      <strong><code>h5i notes uncertainty</code> unearths every one of those flags.</strong>
+      <strong><code>h5i notes uncertainty</code> surfaces those flags for review.</strong>
     </p>
 
     <h2>What it looks like in practice</h2>
@@ -282,7 +280,7 @@
 
     <p>
       The whole thing takes ten seconds. What you get back is a prioritized review agenda, assembled
-      from the AI's own private doubts.
+      from uncertainty signals captured during the AI-assisted edit.
     </p>
 
     <h2>Under the hood</h2>
@@ -368,5 +366,6 @@
 </footer>
 
 <script src="../_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 </body>
 </html>

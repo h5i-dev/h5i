@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cutting Claude API Token Costs 77% with Content-Addressed Claims — h5i</title>
-  <meta name="description" content="Anthropic's prompt caching is great. But the agent still re-derives what it figured out last session. h5i claims pin facts to a Merkle hash of their evidence files — auto-invalidate on change, inject into the next session. A/B benchmark, N=10, shows 77% fewer cache-read tokens.">
+  <title>Cutting Claude Coding-Agent Costs 51% with Content-Addressed Claims — h5i</title>
+  <meta name="description" content="A reproducible N=5 experiment: content-addressed claims cut estimated Claude coding-agent session cost 51% while preserving task fidelity.">
   <meta name="keywords" content="reduce claude api costs, claude token optimization, prompt caching, anthropic prompt caching, claude code costs, h5i claims, content-addressed facts, agent cost reduction">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
@@ -16,27 +16,27 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="Cutting Claude API Token Costs 77% with Content-Addressed Claims">
-  <meta property="og:description" content="A/B benchmark (N=10): claims pin facts to a Merkle hash of their evidence; agent skips re-derivation. 510k → 117k cache-read tokens, 5.6× → 1.0× file reads.">
+  <meta property="og:title" content="Cutting Claude Coding-Agent Costs 51% with Content-Addressed Claims">
+  <meta property="og:description" content="Reproducible N=5 experiment: estimated session cost fell from $4.35 to $2.13 with full task fidelity.">
   <meta property="og:url" content="https://h5i.dev/blog/reduce-claude-token-costs.html">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="article:published_time" content="2026-05-06">
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Cutting Claude API Token Costs 77% with Content-Addressed Claims">
-  <meta name="twitter:description" content="510k → 117k cache-read tokens. 5.6× → 1.0× file reads. The benchmark.">
+  <meta name="twitter:title" content="Cutting Claude Coding-Agent Costs 51% with Content-Addressed Claims">
+  <meta name="twitter:description" content="Reproducible N=5 experiment: estimated session cost fell from $4.35 to $2.13 with full task fidelity.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "Cutting Claude API Token Costs 77% with Content-Addressed Claims",
-    "description": "A/B benchmark, N=10: h5i claims pin facts to a Merkle hash of their evidence files; the agent skips re-derivation in the next session.",
+    "headline": "Cutting Claude Coding-Agent Costs 51% with Content-Addressed Claims",
+    "description": "A reproducible N=5 experiment: content-addressed claims reduced estimated Claude coding-agent session cost while preserving task fidelity.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-05-06",
-    "dateModified": "2026-05-06",
+    "dateModified": "2026-06-02",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/reduce-claude-token-costs.html"},
     "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
@@ -51,7 +51,7 @@
   <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="../_static/blog.css">
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Cutting Claude API Token Costs 77% with Content-Addressed Claims", "item": "https://h5i.dev/blog/reduce-claude-token-costs.html"}]}
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Cutting Claude Coding-Agent Costs 51% with Content-Addressed Claims", "item": "https://h5i.dev/blog/reduce-claude-token-costs.html"}]}
   </script>
 </head>
 <body>
@@ -71,7 +71,7 @@
   <article class="post">
     <header>
       <div class="post-eyebrow">Benchmark · 2026-05-06</div>
-      <h1>Cutting Claude API Token Costs 77% with Content-Addressed Claims</h1>
+      <h1>Cutting Claude Coding-Agent Costs 51% with Content-Addressed Claims</h1>
       <p class="post-deck">
         Prompt caching solves the cost of re-sending. It does not solve the cost of re-deriving.
         Here's the missing layer — and the A/B benchmark that shows what happens when you stop
@@ -88,12 +88,13 @@
       Every Claude Code session that touches a non-trivial codebase begins with the same expensive
       ceremony: the agent re-discovers the codebase. It greps for the entry point. It reads the
       module that probably owns the logic. It opens three more files to verify. By the time it
-      starts answering your actual question, you've burned 500,000 input tokens on a tour of files
-      whose structure didn't change since yesterday.
+      starts answering your actual question, it may have spent a substantial part of the session
+      touring files whose structure did not change since yesterday.
     </p>
 
     <p>
-      Anthropic's <strong>prompt caching</strong> is the right tool for half this problem. It lets the agent
+      Anthropic's <a href="https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching"><strong>prompt
+      caching</strong></a> is the right tool for half this problem. It lets the agent
       re-send the same system prompt and tool definitions at a fraction of the cost. But it does
       nothing about the second half: the agent still has to <em>look at</em> the same files in the same
       order to arrive at the same conclusion. The cache makes that traversal cheaper per token. It
@@ -111,10 +112,11 @@
     <h2>The A/B benchmark</h2>
 
     <p>
-      The setup: a real Rust codebase, an identical task across both arms ("locate the retry logic
-      and add jitter"), N = 10 trials per arm, claude-sonnet-4-6, no model temperature shenanigans.
-      The control arm starts each session cold. The treatment arm starts with three pre-recorded
-      claims pointing at the relevant files.
+      The checked-in <a href="https://github.com/Koukyosyumei/h5i/blob/main/scripts/experiment_claims.sh">experiment
+      harness</a> seeds the same synthetic 28-file Python service for both arms and gives
+      <code>claude-opus-4-7</code> the same HTTP-logging task. The control arm starts cold.
+      The treatment arm starts with up to five claims curated by one <code>claude-haiku-4-5</code>
+      setup call. The published run contains N = 5 trials per arm.
     </p>
 
     <div class="tbl-wrap">
@@ -128,21 +130,23 @@
           </tr>
         </thead>
         <tbody>
-          <tr><td>Read tool calls</td><td class="num">5.6 ± 1.0</td><td class="num">1.0 ± 0</td><td class="num"><span class="tag-green">−82%</span></td></tr>
-          <tr><td>Cache-read tokens</td><td class="num">510,284</td><td class="num">117,433</td><td class="num"><span class="tag-green">−77%</span></td></tr>
-          <tr><td>Assistant turns</td><td class="num">17.1 ± 1.8</td><td class="num">4.8 ± 1.2</td><td class="num"><span class="tag-green">−72%</span></td></tr>
-          <tr><td>Wall time</td><td class="num">52s ± 9</td><td class="num">18s ± 5</td><td class="num"><span class="tag-green">−65%</span></td></tr>
-          <tr><td>Task fidelity</td><td class="num">9/10</td><td class="num">10/10</td><td class="num center"><span class="tag-green">✓</span></td></tr>
+          <tr><td>Read tool calls</td><td class="num">6.2 ± 0.4</td><td class="num">4.0 ± 0</td><td class="num"><span class="tag-green">−35%</span></td></tr>
+          <tr><td>Cache-read tokens</td><td class="num">793,425 ± 177,592</td><td class="num">511,824 ± 106,863</td><td class="num"><span class="tag-green">−35%</span></td></tr>
+          <tr><td>Assistant turns</td><td class="num">25.6 ± 3.8</td><td class="num">16.6 ± 3.1</td><td class="num"><span class="tag-green">−35%</span></td></tr>
+          <tr><td>Wall time</td><td class="num">68s ± 16</td><td class="num">57s ± 5</td><td class="num"><span class="tag-green">−16%</span></td></tr>
+          <tr><td>Estimated session cost</td><td class="num">~$4.35</td><td class="num">~$2.13</td><td class="num"><span class="tag-green">−51%</span></td></tr>
+          <tr><td>Task fidelity</td><td class="num">5/5</td><td class="num">5/5</td><td class="num center"><span class="tag-green">✓</span></td></tr>
         </tbody>
       </table>
     </div>
 
     <p>
-      The headline is the 77% reduction in cache-read tokens, which is the cost line that actually
-      shows up on the Anthropic invoice. But the read-tool-calls number is the more interesting
-      result: every treated trial read exactly one file (σ = 0). That's not a token-saving trick,
-      that's a behavioral change. The agent stopped exploring because there was nothing left to
-      explore.
+      The headline is the estimated 51% reduction in per-session cost, including the Haiku setup
+      call. The read-tool-calls result is also useful: every claims-seeded trial read exactly four
+      files, the four HTTP modules relevant to the task. The cold arm read six or seven files while
+      confirming the boundary. See the
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/scripts/experiment_claims_results.md">full
+      results, per-trial data, and caveats</a>.
     </p>
 
     <div class="callout">
@@ -227,8 +231,8 @@
     <p>
       The agent treats this block the way it treats <code>CLAUDE.md</code> instructions — high-trust context
       to use, not to re-derive. In practice, Claude reads it, accepts it, and skips the exploration
-      phase entirely. The <code>1.0 ± 0</code> read-tool-call result above is the direct consequence: the model
-      has nothing left to look up.
+      phase selectively. The <code>4.0 ± 0</code> read-tool-call result above is the direct consequence:
+      the model reads the relevant modules without exploring decoy files.
     </p>
 
     <h2>How claims compose with prompt caching</h2>
@@ -244,9 +248,9 @@
     </ul>
 
     <p>
-      The 77% number above is reduction in cache-read tokens — meaning, even after caching is
-      already doing its job, claims cut the remaining bill by another factor of ~4×. The two are
-      multiplicative. If you're using one without the other, you're leaving cost on the table.
+      In the checked-in run, claims reduced cache-read tokens by 35.5% and estimated total
+      per-session cost by 51%, including the Haiku setup call. The exact magnitude depends on the
+      task and codebase; the mechanism complements prompt caching by reducing re-derivation work.
     </p>
 
     <h2>Single-path claims as per-file orientations</h2>
@@ -297,25 +301,22 @@
     <h2>Run the benchmark on your own repo</h2>
 
     <p>
-      The harness is in the h5i repo under <code>scripts/bench/claims_ab.sh</code>. It picks a task from a
-      configurable list, runs N trials in each arm against your codebase, and writes a CSV.
-      Reproducing the numbers above on your own corpus is a 30-minute job:
+      The reproducible harness is
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/scripts/experiment_claims.sh"><code>scripts/experiment_claims.sh</code></a>.
+      It seeds its test project, runs both arms, checks fidelity, and writes raw result records:
     </p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/your-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i init</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i claims add "&lt;a fact you verified once&gt;" --path &lt;evidence&gt;</span>
-<span class="t-prompt">$</span> <span class="t-cmd">scripts/bench/claims_ab.sh --task tasks/retry-jitter.md --n 10</span>
-<span class="t-out">  arm=control     trials=10  done</span>
-<span class="t-out">  arm=treatment   trials=10  done</span>
-<span class="t-out">  results: bench/results-2026-05-06.csv</span></pre></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">cargo build</span>
+<span class="t-prompt">$</span> <span class="t-cmd">H5I_BIN=$PWD/target/debug/h5i N_TRIALS=5 ./scripts/experiment_claims.sh</span>
+<span class="t-out">  CONTROL vs AUTO_HAIKU_CLAIMS</span>
+<span class="t-out">  raw records: /tmp/h5i-claims-exp-*-results.jsonl.filtered</span></pre></div>
     </div>
 
     <p>
-      Whatever delta you measure on your own task is the delta you'll see in production. The
-      magnitude depends on your task complexity, codebase size, and how aggressively your team
-      records claims. The direction is robust.
+      Treat this as a reproducible directional result, not a universal constant. The magnitude
+      depends on task complexity, codebase size, model behavior, and claim quality.
     </p>
 
     <div class="next-up">
@@ -349,5 +350,6 @@
 </footer>
 
 <script src="../_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 </body>
 </html>

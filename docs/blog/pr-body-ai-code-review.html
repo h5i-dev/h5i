@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>The AI Pull Request Body: h5i's Review Surface for Agent Work</title>
-  <meta name="description" content="How h5i turns shared agent context into a GitHub PR body: review focus files, goal, evidence, checklist, audit signals, reasoning highlights, and AI provenance.">
+  <meta name="description" content="Turn shared AI agent context into a GitHub PR review body with focus files, evidence, test results, risk signals, and provenance.">
   <meta name="keywords" content="AI pull request, AI code review, PR body, GitHub PR comment, h5i share pr, AI provenance, Claude Code review, Codex review">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
@@ -41,7 +41,7 @@
     "description": "How h5i turns shared agent context into a GitHub PR body for AI code review.",
     "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
     "datePublished": "2026-05-24",
-    "dateModified": "2026-05-24",
+    "dateModified": "2026-06-02",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/pr-body-ai-code-review.html"},
     "image": "https://h5i.dev/_static/h5i-concept.svg",
@@ -105,7 +105,8 @@
     </figure>
 
     <p>
-      That is what <code>h5i share pr post</code> does. It renders h5i's shared context
+      That is what <code>h5i share pr post</code> does. It renders h5i's
+      <a href="context-dag-versioned-agent-reasoning.html">shared context DAG</a>
       into a sticky GitHub comment. Re-run it and h5i updates the same comment instead
       of spraying duplicates across the thread.
     </p>
@@ -164,7 +165,8 @@
     <p>
       The PR comment is a surface, not the source of truth. h5i stores the durable
       record in Git sidecar refs such as <code>refs/h5i/context</code>, <code>refs/h5i/notes</code>,
-      and <code>refs/h5i/memory</code>. The same record can render as a terminal prelude,
+      and <code>refs/h5i/memory</code>. <a href="i5h-agent-to-agent-messaging.html">Agent-to-agent
+      messages</a> add durable review requests and handoffs. The same record can render as a terminal prelude,
       a local dashboard, a compliance report, a handoff prompt, or a PR comment.
     </p>
 
@@ -186,7 +188,8 @@
       The strongest PR comments come from branches that used h5i throughout the work:
       <code>h5i codex prelude</code> at the start, <code>h5i codex sync</code> during the
       session, <code>h5i capture commit</code> for provenance, and <code>h5i audit review</code>
-      before review.
+      before review. For a deeper risk model, see the
+      <a href="auditing-ai-generated-code.html">AI-generated code audit framework</a>.
     </p>
   </article>
 </main>
@@ -205,5 +208,6 @@
   </div>
 </footer>
 <script src="../_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 </body>
 </html>
