@@ -447,3 +447,9 @@ _[Checkpoint: 6a1e41f4 — edited index.html; edited index.html; edited _static/
 [02:39:36] THINK: Let me soften it from pure `#ffffff` to a calmer off-white (and apply the same to the matching end-of-post CTA in the blog so the system stays consistent).
 [02:39:36] THINK: If it's still a touch hot I can drop it further toward a mid-grey (`#dcdce0`) or even flip it to a dark panel with a red top-rule instead; if it now feels too dim, I'll nudge it back up.
 [02:39:36] NOTE: DEFERRAL (~/Dev/h5i/docs/_static/blog.css): his tweak isn't committed yet — want me to fold it into a follow-up `h5i commit`
+
+
+---
+_[Checkpoint: 6a1e4268 — edited index.html; edited index.html; edited _static/blog.css]_
+---
+
