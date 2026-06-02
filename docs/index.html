@@ -729,6 +729,7 @@
     <li><a href="#usecases">Use Cases</a></li>
     <li><a href="#dashboard">Dashboard</a></li>
     <li><a href="#install">Install</a></li>
+    <li><a href="/guides/">Guides</a></li>
     <li><a href="/workflows/">Workflows</a></li>
     <li><a href="/blog/">Blog</a></li>
     <li><a href="/pitch/">Pitch Deck</a></li>
@@ -847,6 +848,53 @@
         <div class="feat-name">Web dashboard</div>
         <div class="feat-desc">Browse the timeline, integrity scores, intent graph, memory, and sessions in a local browser UI at localhost:7150.</div>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Guides ────────────────────────────────────────────────── -->
+<section id="guides">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">Guides</span>
+      <h2 class="section-title">Task-focused guides.</h2>
+      <p class="section-sub">Each one: the problem, the h5i fix, the commands, a worked example, and an FAQ — one page per workflow.</p>
+      <div class="divider"></div>
+    </div>
+    <div class="feat-grid">
+      <a class="feat-card reveal" href="/guides/claude-code-memory/" style="text-decoration:none">
+        <span class="feat-cmd">h5i capture memory</span>
+        <div class="feat-name">Persistent memory &amp; handoff for Claude Code</div>
+        <div class="feat-desc">Snapshot Claude Code's memory into Git, version your reasoning, and resume the next session from a briefing instead of re-grounding.</div>
+      </a>
+      <a class="feat-card reveal" href="/guides/codex-claude-code-collaboration/" style="text-decoration:none">
+        <span class="feat-cmd">h5i msg</span>
+        <div class="feat-name">Claude Code + Codex multi-agent workflow</div>
+        <div class="feat-desc">Two coding agents coordinate over a Git ref — ask, review, hand off, and reply as durable messages, no server, no shared terminal.</div>
+      </a>
+      <a class="feat-card reveal" href="/guides/ai-code-provenance/" style="text-decoration:none">
+        <span class="feat-cmd">h5i capture commit</span>
+        <div class="feat-name">Track AI-generated code in Git</div>
+        <div class="feat-desc">Attach the prompt, model, agent, tokens, and test result to every AI-assisted commit — stored in Git, queryable like git log.</div>
+      </a>
+      <a class="feat-card reveal" href="/guides/ai-code-review-audit/" style="text-decoration:none">
+        <span class="feat-cmd">h5i audit review</span>
+        <div class="feat-name">Audit &amp; risk-rank AI-generated code</div>
+        <div class="feat-desc">Rank commits by uncertainty, blind edits, churn, and scope so reviewers spend attention on the riskiest changes first.</div>
+      </a>
+      <a class="feat-card reveal" href="/guides/prompt-injection-detection-for-agents/" style="text-decoration:none">
+        <span class="feat-cmd">h5i audit scan</span>
+        <div class="feat-name">Detect prompt injection in agent traces</div>
+        <div class="feat-desc">Scan Claude Code reasoning traces for prompt-injection and exfiltration patterns — deterministic, no model in the path.</div>
+      </a>
+      <a class="feat-card reveal" href="/guides/git-blame-for-ai-code/" style="text-decoration:none">
+        <span class="feat-cmd">h5i recall blame</span>
+        <div class="feat-name">git blame for AI-generated code</div>
+        <div class="feat-desc">Per-line provenance: the prompt, the model, the agent, and the test result — same ergonomics as git blame.</div>
+      </a>
+    </div>
+    <div class="reveal" style="text-align:center;margin-top:1.8rem">
+      <a href="/guides/" class="btn btn-ghost">Browse all guides →</a>
     </div>
   </div>
 </section>
@@ -1300,6 +1348,7 @@
     </div>
     <nav class="footer-links">
       <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="/guides/">Guides</a>
       <a href="/workflows/">Workflows</a>
       <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
       <a href="https://github.com/Koukyosyumei/h5i/issues">Issues</a>

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Guides — h5i for Claude Code, Codex, provenance &amp; audit</title>
+  <meta name="description" content="Practical h5i guides: persistent memory and handoff for Claude Code, multi-agent workflows with Codex, AI code provenance, auditing AI-generated code, prompt-injection detection, and AI blame.">
+  <meta name="keywords" content="h5i guides, claude code guides, ai coding agent workflows, ai code provenance, audit ai code, prompt injection detection, git blame ai">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/guides/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="h5i Guides — memory, multi-agent, provenance, audit, blame">
+  <meta property="og:description" content="Task-focused guides for using h5i with Claude Code and Codex: memory & handoff, multi-agent coordination, provenance, audit, prompt-injection detection, and AI blame.">
+  <meta property="og:url" content="https://h5i.dev/guides/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="h5i Guides">
+  <meta name="twitter:description" content="Practical guides for AI-era version control with h5i, Claude Code, and Codex.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}]}
+  </script>
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "ItemList", "name": "h5i Guides", "itemListElement": [{"@type": "ListItem", "position": 1, "url": "https://h5i.dev/guides/claude-code-memory/"}, {"@type": "ListItem", "position": 2, "url": "https://h5i.dev/guides/codex-claude-code-collaboration/"}, {"@type": "ListItem", "position": 3, "url": "https://h5i.dev/guides/ai-code-provenance/"}, {"@type": "ListItem", "position": 4, "url": "https://h5i.dev/guides/ai-code-review-audit/"}, {"@type": "ListItem", "position": 5, "url": "https://h5i.dev/guides/prompt-injection-detection-for-agents/"}, {"@type": "ListItem", "position": 6, "url": "https://h5i.dev/guides/git-blame-for-ai-code/"}]}
+  </script>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/workflows/">Workflows</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<section class="index-hero">
+  <div class="post-eyebrow">h5i Guides</div>
+  <h1>Practical guides for AI-era version control</h1>
+  <p>
+    Task-focused walkthroughs for using h5i with Claude Code and Codex — persistent memory and
+    handoff, multi-agent coordination, AI code provenance, auditing AI-generated code,
+    prompt-injection detection, and AI blame. Each guide: the problem, the h5i fix, the commands,
+    a worked example, and an FAQ.
+  </p>
+</section>
+
+<section class="post-list">
+
+  <a class="post-card" href="/guides/claude-code-memory/">
+    <div class="card-meta">
+      <span>Guide · Memory & Handoff</span>
+    </div>
+    <h2>Persistent memory & session handoff for Claude Code</h2>
+    <p>Snapshot Claude Code's memory into Git, version your reasoning, and resume the next session from a briefing instead of re-grounding.</p>
+  </a>
+
+  <a class="post-card" href="/guides/codex-claude-code-collaboration/">
+    <div class="card-meta">
+      <span>Guide · Multi-Agent</span>
+    </div>
+    <h2>Claude Code + Codex: a multi-agent coding workflow</h2>
+    <p>Let two coding agents coordinate over a Git ref — ask, review, hand off, and reply as durable, replayable messages with no server.</p>
+  </a>
+
+  <a class="post-card" href="/guides/ai-code-provenance/">
+    <div class="card-meta">
+      <span>Guide · Provenance</span>
+    </div>
+    <h2>AI code provenance: track AI-generated code in Git</h2>
+    <p>Attach the prompt, model, agent, tokens, and test result to every AI-assisted commit — stored in Git, queryable like git log.</p>
+  </a>
+
+  <a class="post-card" href="/guides/ai-code-review-audit/">
+    <div class="card-meta">
+      <span>Guide · Audit & Review</span>
+    </div>
+    <h2>Auditing AI-generated code: risk-rank what to review</h2>
+    <p>Rank AI commits by uncertainty, blind edits, churn, and scope so reviewers spend their attention on the riskiest changes first.</p>
+  </a>
+
+  <a class="post-card" href="/guides/prompt-injection-detection-for-agents/">
+    <div class="card-meta">
+      <span>Guide · Security</span>
+    </div>
+    <h2>Detecting prompt injection in AI agent traces</h2>
+    <p>Scan Claude Code reasoning traces for prompt-injection and exfiltration patterns — deterministic, with no model in the detection path.</p>
+  </a>
+
+  <a class="post-card" href="/guides/git-blame-for-ai-code/">
+    <div class="card-meta">
+      <span>Guide · Blame</span>
+    </div>
+    <h2>git blame for AI-generated code</h2>
+    <p>Per-line provenance for AI-written code: the prompt, the model, the agent, and the test result — same ergonomics as git blame.</p>
+  </a>
+
+</section>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/guides/">Guides</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>

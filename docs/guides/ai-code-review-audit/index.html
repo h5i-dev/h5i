@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auditing AI-generated code: risk-rank what to review — h5i</title>
+  <meta name="description" content="AI agents generate more code than you can review line-by-line. h5i ranks commits by risk — uncertainty, blind edits, churn, scope — so you review the riskiest AI changes first.">
+  <meta name="keywords" content="audit ai generated code, ai code review risk, review ai generated code, ai code audit, which ai commits to review, ai code review workflow, h5i audit review">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/guides/ai-code-review-audit/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Auditing AI-generated code: risk-rank what to review">
+  <meta property="og:description" content="Rank AI commits by uncertainty, blind edits, churn, and scope so reviewers triage the riskiest changes first — then export an auditable report.">
+  <meta property="og:url" content="https://h5i.dev/guides/ai-code-review-audit/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-06-02">
+  <meta property="article:author" content="Koukyosyumei">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Auditing AI-generated code: risk-rank what to review">
+  <meta name="twitter:description" content="Don't review AI diffs evenly. h5i risk-ranks commits so you review the riskiest AI changes first.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Auditing AI-generated code: risk-rank what to review",
+    "description": "How to audit AI-generated code with h5i — ranking commits by risk signals, checking attention coverage, and exporting compliance reports.",
+    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
+    "datePublished": "2026-06-02",
+    "dateModified": "2026-06-02",
+    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/guides/ai-code-review-audit/"},
+    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+    "keywords": "audit ai generated code, ai code review risk, review ai generated code, ai code audit, which ai commits to review, ai code review workflow, h5i audit review"
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}, {"@type": "ListItem", "position": 3, "name": "Auditing AI-generated code: risk-rank what to review", "item": "https://h5i.dev/guides/ai-code-review-audit/"}]}
+  </script>
+  <script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How does h5i decide which AI commits are risky?", "acceptedAnswer": {"@type": "Answer", "text": "It scores commits from signals captured during the AI session: expressed uncertainty, blind edits (a file edited with no prior read), edit churn, and how many files the change touched. h5i audit review ranks commits by that combined score, riskiest first."}}, {"@type": "Question", "name": "What is a 'blind edit' and why does it matter?", "acceptedAnswer": {"@type": "Answer", "text": "A blind edit is a Write or Edit with no preceding Read of the same file in that session — the agent changed the file from memory rather than its current state. High blind-edit counts (visible via h5i recall notes coverage) are a strong signal a change deserves a closer look."}}, {"@type": "Question", "name": "Is a language model used to do the audit?", "acceptedAnswer": {"@type": "Answer", "text": "No. The ranking and prompt-injection scans are deterministic — derived from recorded session signals — so there's no model in the audit path and results are reproducible."}}, {"@type": "Question", "name": "Can I produce a report for compliance or an external auditor?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i audit compliance --since/--until --format html|json|text generates a date-ranged report of AI-assisted activity. Combine it with h5i share pr post to leave an auditable trail on the pull request itself."}}, {"@type": "Question", "name": "Can I enforce review rules automatically?", "acceptedAnswer": {"@type": "Answer", "text": "h5i audit policy manages .h5i/policy.toml, where you declare rules such as blocking on credential leaks or requiring an audit on authentication changes, so the gates apply at commit time."}}]}
+</script>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/workflows/">Workflows</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article>
+    <header>
+      <div class="post-eyebrow">Guide · Audit & Review</div>
+      <h1>Auditing AI-generated code: risk-rank what to review</h1>
+      <p class="post-deck">AI agents produce more diff than any reviewer can read evenly. h5i ranks commits by risk signals so your attention lands on the changes most likely to bite.</p>
+      <div class="post-meta">
+        <span><strong>Guide</strong> h5i</span>
+        <span><strong>Reading time</strong> 6 min</span>
+        <span><strong>Tags</strong> Audit · Review · Risk</span>
+      </div>
+    </header>
+
+    <p>
+      When an agent can write a thousand lines in a minute, line-by-line review stops scaling. Reviewers
+      either rubber-stamp AI diffs or burn out trying to read everything with equal care. Both fail the same
+      way: attention is spread evenly across changes that are very much not equally risky.
+    </p>
+
+    <h2>The problem: volume without prioritization</h2>
+    <p>
+      The hard question isn't "is this diff correct" — it's "of the 40 commits on this branch, which three
+      should a human actually scrutinize?" Git gives you no signal to answer that. Diff size is a poor proxy;
+      a one-line change to an auth path beats a 400-line rename.
+    </p>
+
+    <h2>How h5i solves it</h2>
+    <p>
+      h5i derives risk signals from the AI session itself — moments of expressed uncertainty, <em>blind edits</em>
+      (a file edited with no prior read in that session), edit churn, and the scope of files touched — and
+      ranks commits so the riskiest surface first. It's deterministic: no model sits in the audit path.
+    </p>
+
+    <h2>Commands</h2>
+    <p>Triage a branch before merging — riskiest commits first:</p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit review --limit 50</span>
+
+<span class="t-bold">Suggested Review Points — 2 commits flagged (scanned 50)</span>
+<span class="t-out">─────────────────────────────────────────────────────────</span>
+<span class="t-warn">  #1  a3f8c12  score 0.74  ████████░░</span>
+<span class="t-out">     add retry logic to HTTP client</span>
+<span class="t-warn">     ⚠ high uncertainty · 5 edits · 4 files · 1 blind edit</span>
+<span class="t-out">  #2  9e21b04  score 0.45  ████░░░░░░</span>
+<span class="t-out">     refactor parser  ·  moderate complexity</span></pre></div>
+    </div>
+    <p>See which files Claude edited <em>without reading first</em> (memory edits, not state-aware edits):</p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes coverage --max-ratio 0.5</span>
+<span class="t-warn">  src/auth.rs        2 blind edit(s)   coverage 0.33</span>
+<span class="t-out">  src/http_client.rs 0 blind edit(s)   coverage 1.00</span></pre></div>
+    </div>
+    <p>Export a date-ranged report for a regulated workflow, and surface it where reviewers already are:</p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit compliance --since 2026-01-01 --until 2026-03-31 \
+    --format html --output audit.html</span>
+<span class="t-pass">✔</span>  <span class="t-out">wrote audit.html — 1,204 commits, 38% AI-assisted</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post</span>      <span class="t-cmt"># sticky PR comment with provenance per AI commit</span></pre></div>
+    </div>
+    <h2>Worked example: a triage funnel</h2>
+    <p>
+      Before merging an AI-heavy branch, run the funnel: <code>h5i audit review</code> to rank, open the top two or
+      three by score, and check their attention coverage. Everything below the threshold got a normal pass;
+      your deep review went where the signals pointed. Pair the run with <code>h5i audit compliance</code> when you
+      need an auditable trail.
+    </p>
+    <div class="callout">
+      <strong>Codify it as policy.</strong> <code>h5i audit policy</code> manages <code>.h5i/policy.toml</code> rules — block on a
+      credential leak, require an audit on auth-path changes — so risk gates run on every commit instead of
+      living in a reviewer's head.
+    </div>
+
+
+<h2 id="faq">Frequently asked questions</h2>
+    <h3>How does h5i decide which AI commits are risky?</h3>
+    <p>It scores commits from signals captured during the AI session: expressed uncertainty, blind edits (a file edited with no prior read), edit churn, and how many files the change touched. h5i audit review ranks commits by that combined score, riskiest first.</p>
+    <h3>What is a 'blind edit' and why does it matter?</h3>
+    <p>A blind edit is a Write or Edit with no preceding Read of the same file in that session — the agent changed the file from memory rather than its current state. High blind-edit counts (visible via h5i recall notes coverage) are a strong signal a change deserves a closer look.</p>
+    <h3>Is a language model used to do the audit?</h3>
+    <p>No. The ranking and prompt-injection scans are deterministic — derived from recorded session signals — so there's no model in the audit path and results are reproducible.</p>
+    <h3>Can I produce a report for compliance or an external auditor?</h3>
+    <p>Yes. h5i audit compliance --since/--until --format html|json|text generates a date-ranged report of AI-assisted activity. Combine it with h5i share pr post to leave an auditable trail on the pull request itself.</p>
+    <h3>Can I enforce review rules automatically?</h3>
+    <p>h5i audit policy manages .h5i/policy.toml, where you declare rules such as blocking on credential leaks or requiring an audit on authentication changes, so the gates apply at commit time.</p>
+
+    <div class="next-up">
+      <span class="label">Go deeper</span>
+      <a href="/blog/auditing-ai-generated-code/">
+        <h3>Deep dive: auditing AI-generated code, a practical framework</h3>
+        <p>What to do with the risk ranking across hundreds of commits — the review framework behind the signals.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Try h5i in your repo</h3>
+      <p>One <code>cargo install</code>, then <code>h5i init</code>. Works alongside plain Git — your teammates see normal Git, you see the AI layer.</p>
+      <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/guides/" class="btn btn-ghost">All guides</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/guides/">Guides</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>
