@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Code Uncertainty Heatmap for AI Code Review — h5i</title>
+  <meta name="description" content="Turn captured Claude Code uncertainty signals into a per-file review heatmap so human reviewers can focus on risky AI-assisted edits.">
+  <meta name="keywords" content="claude code uncertainty, ai code review, vibe coding, claude code thinking blocks, h5i notes uncertainty, ai-generated code review, claude code self-doubt">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/uncertainty-heatmap/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Claude Code Uncertainty Heatmap for AI Code Review">
+  <meta property="og:description" content="Turn captured uncertainty signals into a per-file heatmap for AI-assisted code review.">
+  <meta property="og:url" content="https://h5i.dev/blog/uncertainty-heatmap/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-04-15">
+  <meta property="article:author" content="Koukyosyumei">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Claude Code Uncertainty Heatmap for AI Code Review">
+  <meta name="twitter:description" content="Turn captured uncertainty signals into a per-file heatmap for AI-assisted code review.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Claude Code Uncertainty Heatmap for AI Code Review",
+    "description": "Turn captured Claude Code uncertainty signals into a per-file heatmap for AI-assisted code review.",
+    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
+    "datePublished": "2026-04-15",
+    "dateModified": "2026-06-02",
+    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/uncertainty-heatmap/"},
+    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+    "keywords": "claude code uncertainty, ai code review, vibe coding, h5i notes uncertainty"
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Claude Code Uncertainty Heatmap for AI Code Review", "item": "https://h5i.dev/blog/uncertainty-heatmap/"}]}
+  </script>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Code Review · 2026-04-15</div>
+      <h1>Claude Code Uncertainty Heatmap for AI Code Review</h1>
+      <p class="post-deck">
+        Turn captured uncertainty signals into a per-file heatmap for focused human review.
+      </p>
+      <div class="post-meta">
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 7 min</span>
+        <span><strong>Tags</strong> Claude Code · Code Review · Uncertainty</span>
+      </div>
+    </header>
+
+    <p>
+      You've been doing AI-assisted code review wrong.
+    </p>
+
+    <p>
+      Not the review itself — the <em>targeting</em>. You stare at a diff that touched 23 files across
+      1,400 lines, and you start from line 1. You read the obvious stuff carefully. You skim the
+      boring stuff. You hope the risky stuff isn't buried somewhere in the middle.
+    </p>
+
+    <p>
+      AI coding sessions often contain uncertainty signals around risky edits. When those signals
+      are captured in a session trace, they can help reviewers decide where to spend their attention.
+    </p>
+
+    <h2>Uncertainty signals inside AI-assisted edits</h2>
+
+    <p>
+      When Claude Code works on your codebase, captured session traces can contain hedges and
+      uncertainty notes associated with the files being edited.
+    </p>
+
+    <p>
+      Inside captured traces, you may find sentences like:
+    </p>
+
+    <blockquote>
+      <p>"I'm not sure this is the right migration path for the foreign key constraint…"</p>
+      <p>"This might break the async flush if the buffer is partially written — need to verify."</p>
+      <p>"Tricky — the lock order here assumes single-threaded initialization, which may not hold."</p>
+    </blockquote>
+
+    <p>
+      The AI is hedging. It's expressing doubt. It's waving a tiny red flag that says <em>a human should
+      look here</em> — and then burying that flag in a log file you've never opened.
+    </p>
+
+    <p>
+      <strong><code>h5i notes uncertainty</code> surfaces those flags for review.</strong>
+    </p>
+
+    <h2>What it looks like in practice</h2>
+
+    <p>
+      Say Claude just refactored your database layer. You run two commands:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i notes analyze</span>    <span class="t-cmt"># parses the session log, links to HEAD</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i notes uncertainty</span></pre></div>
+    </div>
+
+    <p>You get this:</p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">uncertainty heatmap</span></div>
+      <div class="terminal-body"><pre><span class="t-bold">── Uncertainty Heatmap ─────────────────────────────────────────────</span>
+  <span class="t-out">9 signals  ·  session a3f8c12d  ·  4 files</span>
+
+  <span class="t-bold">Risk Map</span>
+  <span class="t-out">──────────────────────────────────────────────────────────────────────────</span>
+  <span class="t-red">src/db/migrations.rs        ████████████░░░░  ●●●  3 signals  avg  28%</span>
+  <span class="t-warn">src/db/connection_pool.rs   ██████░░░░░░░░░░  ●●   2 signals  avg  38%</span>
+  <span class="t-out">src/repository.rs           ████░░░░░░░░░░░░  ●    1 signal   avg  45%</span>
+  <span class="t-out">tests/integration_test.rs   ░░░░░░░░░░░░░░░░  ●    1 signal   avg  62%</span>
+
+  <span class="t-bold">Timeline</span>
+  <span class="t-out">t:12 ──────────────────────────────────────────────────────────── t:87</span>
+  <span class="t-out">··············█···············▓·········█··█·····················░·····</span>
+               <span class="t-out">↑t:18           ↑t:34     ↑t:52↑t:55</span>
+
+  <span class="t-bold">Signals</span>
+  <span class="t-out">──────────────────────────────────────────────────────────────────────────</span>
+  <span class="t-red">⚠ HIGH  src/db/migrations.rs · t:18 · "might break" · 20% confidence</span>
+       <span class="t-out">"…might break the rollback if the constraint was partially applied</span>
+        <span class="t-out">on a previous failed run…"</span>
+
+  <span class="t-red">⚠ HIGH  src/db/migrations.rs · t:52 · "not sure" · 25% confidence</span>
+       <span class="t-out">"…not sure whether the index creation here should be inside or</span>
+        <span class="t-out">outside the transaction boundary…"</span>
+
+  <span class="t-warn">▲ MOD   src/db/connection_pool.rs · t:34 · "assuming" · 50% confidence</span>
+       <span class="t-out">"…assuming the pool max is set before the first acquire call,</span>
+        <span class="t-out">but I should verify this…"</span></pre></div>
+    </div>
+
+    <p>
+      In under three seconds, you know exactly where to focus your review.
+    </p>
+
+    <ul>
+      <li><code>migrations.rs</code> is where the AI was genuinely nervous — two high-risk signals, average confidence 28%</li>
+      <li>The timeline shows signals clustered around turns 18, 52, and 55 — a burst of uncertainty mid-session, not at the end</li>
+      <li>The individual snippets give you the <em>reason</em> for the doubt, quoted verbatim from the AI's thinking</li>
+    </ul>
+
+    <p>
+      You didn't have to read a single line of diff to know where to start.
+    </p>
+
+    <h2>Why this changes code review</h2>
+
+    <p>
+      The standard review process is symmetric: every line costs the same amount of reviewer
+      attention. But AI-generated code isn't symmetric. Some of it the model wrote with total
+      confidence — patterns it has seen ten thousand times. Some of it the model wrote while
+      silently hedging, reaching into unfamiliar territory, making assumptions it flagged to
+      itself as unverified.
+    </p>
+
+    <p>
+      Treating those two categories identically is a waste of your most limited resource: focused
+      human attention.
+    </p>
+
+    <p>
+      <code>h5i notes uncertainty</code> makes the review process <em>asymmetric in the right direction</em>.
+      High-confidence AI code gets a lighter pass. Low-confidence AI code — the stuff the model
+      itself flagged — gets your full attention.
+    </p>
+
+    <p>
+      The result: you catch more real bugs in less time.
+    </p>
+
+    <h2>The signal table</h2>
+
+    <p>
+      h5i watches for a calibrated vocabulary of self-doubt phrases inside thinking blocks, each
+      mapped to a confidence score:
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead>
+          <tr><th>Phrase</th><th class="num">Confidence</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>"might be wrong"</code>, <code>"could be wrong"</code></td><td class="num">20%</td></tr>
+          <tr><td><code>"not sure"</code>, <code>"i'm unsure"</code>, <code>"not confident"</code></td><td class="num">25%</td></tr>
+          <tr><td><code>"unclear"</code>, <code>"not certain"</code></td><td class="num">30%</td></tr>
+          <tr><td><code>"might break"</code>, <code>"could break"</code>, <code>"risky"</code></td><td class="num">30–35%</td></tr>
+          <tr><td><code>"need to check"</code>, <code>"should verify"</code>, <code>"double-check"</code></td><td class="num">40%</td></tr>
+          <tr><td><code>"assuming"</code>, <code>"i'll assume"</code>, <code>"maybe"</code></td><td class="num">40–50%</td></tr>
+          <tr><td><code>"perhaps"</code>, <code>"let me verify"</code></td><td class="num">45%</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The lower the confidence score, the brighter the red in the heatmap. The higher the density
+      of signals on a given file, the more the risk bar fills.
+    </p>
+
+    <p>
+      This isn't sentiment analysis. It's the AI's own internal calibration — surfaced, structured,
+      and pointed at the files that deserve your eyes.
+    </p>
+
+    <h2>Filter by file</h2>
+
+    <p>
+      Already know which module worries you? You can filter signals to a specific path:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i notes uncertainty --file src/db/migrations.rs</span></pre></div>
+    </div>
+
+    <p>
+      Useful when you're reviewing a PR and want to jump straight to the model's doubts about the
+      file you're responsible for — without wading through signals from unrelated parts of the diff.
+    </p>
+
+    <h2>The workflow</h2>
+
+    <p>
+      Here's how it fits into a natural AI-assisted development cycle:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">review workflow</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># 1. Claude finishes a task and you're ready to review</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i notes analyze</span>              <span class="t-cmt"># parse the session, link to HEAD</span>
+
+<span class="t-cmt"># 2. Get the 10,000-foot view of what the AI touched</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i notes show</span>                 <span class="t-cmt"># footprint: consulted vs. edited files</span>
+
+<span class="t-cmt"># 3. Find the risky spots</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i notes uncertainty</span>          <span class="t-cmt"># heatmap + timeline + verbatim snippets</span>
+
+<span class="t-cmt"># 4. Now open your diff viewer — but start with migrations.rs, turn 18</span></pre></div>
+    </div>
+
+    <p>
+      The whole thing takes ten seconds. What you get back is a prioritized review agenda, assembled
+      from uncertainty signals captured during the AI-assisted edit.
+    </p>
+
+    <h2>Under the hood</h2>
+
+    <p>
+      h5i reads Claude Code's session logs — <code>.jsonl</code> files that record every message, tool call,
+      and thinking block in a session. It auto-detects the latest session for your repository, so
+      you rarely need to pass a path manually.
+    </p>
+
+    <p>
+      After analysis, the results are persisted in <code>.git/.h5i/</code> and linked to the commit OID, so
+      you can revisit the uncertainty map for any past commit:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i notes uncertainty --commit a3f8c12</span></pre></div>
+    </div>
+
+    <p>
+      Team members who pull your h5i data (<code>h5i pull</code>) can run the same query on sessions they
+      weren't present for.
+    </p>
+
+    <h2>Getting started</h2>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">install &amp; run</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># Install h5i (see github.com/Koukyosyumei/h5i for build instructions)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">curl -fsSL https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh | sh</span>
+
+<span class="t-cmt"># Initialize in your repo</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i init</span>
+
+<span class="t-cmt"># After your next Claude Code session:</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i notes analyze</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i notes uncertainty</span></pre></div>
+    </div>
+
+    <p>
+      That's it. The heatmap is waiting.
+    </p>
+
+    <p>
+      <em>h5i is open source. The uncertainty heatmap is one of several session-analysis features —
+      alongside causal chain reconstruction, file churn tracking, and AI-assisted review point
+      identification. If the idea resonates, star the repo and try it on your next AI-assisted PR.</em>
+    </p>
+
+    <p>
+      <em>Because if the AI was nervous about it, you probably should be too.</em>
+    </p>
+
+    <div class="next-up">
+      <span class="label">Read next</span>
+      <a href="/blog/auditing-ai-generated-code/">
+        <h3>Auditing AI-Generated Code: A Practical Framework</h3>
+        <p>Uncertainty is one of four risk vectors. Here's the full framework, with all four producing a single ranked review queue.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Read what the AI didn't tell you</h3>
+      <p>Surface every hedge in every thinking block, mapped to the file it touched.</p>
+      <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/" class="btn btn-ghost">Back to docs</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>

@@ -361,13 +361,21 @@ table.data .center { text-align: center; }
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
   background: var(--red);
 }
-.post-cta h3 {
+/* Selectors are prefixed with `article.post` so they out-specify the
+   `article.post h3 { color: var(--ink) }` rule above — without it the dark
+   CTA text loses the cascade and renders light-on-light inside this box. */
+article.post .post-cta h3 {
   font-size: 1.5rem; margin-bottom: 0.6rem;
   color: #08080b; letter-spacing: -0.02em;
 }
-.post-cta p {
+article.post .post-cta p {
   color: #3a3a42; margin-bottom: 1.5rem;
   font-size: 1rem;
+}
+article.post .post-cta code {
+  color: #08080b;
+  background: rgba(0,0,0,0.06);
+  border-color: rgba(0,0,0,0.14);
 }
 .btn {
   display: inline-flex; align-items: center; gap: 0.5rem;

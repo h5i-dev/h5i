@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Code + Codex: a multi-agent coding workflow — h5i</title>
+  <meta name="description" content="Run Claude Code and Codex on the same repo and let them coordinate over Git. Typed handoffs — ask, review, hand off, done — as durable messages, with no server and no shared terminal.">
+  <meta name="keywords" content="claude code codex collaboration, multi-agent coding workflow, claude code and codex, multiple ai coding agents, agent to agent messaging, i5h protocol, h5i msg">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/guides/codex-claude-code-collaboration/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Claude Code + Codex: a multi-agent coding workflow over Git">
+  <meta property="og:description" content="Let Claude Code and Codex coordinate over a Git ref — typed handoffs, threaded replies, and a wake primitive — with no server and no shared terminal.">
+  <meta property="og:url" content="https://h5i.dev/guides/codex-claude-code-collaboration/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-06-02">
+  <meta property="article:author" content="Koukyosyumei">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Claude Code + Codex: a multi-agent coding workflow over Git">
+  <meta name="twitter:description" content="Claude Code and Codex, coordinating over Git: ask, review, hand off, done — durable messages, no server.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Claude Code + Codex: a multi-agent coding workflow over Git",
+    "description": "How to run a multi-agent coding workflow between Claude Code and Codex using h5i's i5h messaging protocol over a shared Git ref.",
+    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
+    "datePublished": "2026-06-02",
+    "dateModified": "2026-06-02",
+    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/guides/codex-claude-code-collaboration/"},
+    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+    "keywords": "claude code codex collaboration, multi-agent coding workflow, claude code and codex, multiple ai coding agents, agent to agent messaging, i5h protocol, h5i msg"
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}, {"@type": "ListItem", "position": 3, "name": "Claude Code + Codex: a multi-agent coding workflow", "item": "https://h5i.dev/guides/codex-claude-code-collaboration/"}]}
+  </script>
+  <script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Do Claude Code and Codex need to share a terminal or a server?", "acceptedAnswer": {"@type": "Answer", "text": "No. Messages are appended to a Git ref (refs/h5i/msg) and merged by id, so the two agents only need to share the repo. There's no daemon, no server, and no shared terminal — h5i push/pull moves the channel like any other ref."}}, {"@type": "Question", "name": "How does each agent know which messages are theirs?", "acceptedAnswer": {"@type": "Answer", "text": "Identity comes from $H5I_AGENT — Claude Code uses 'claude', Codex launches with H5I_AGENT=codex. h5i msg inbox shows only messages addressed to you (or broadcasts), numbers them, and advances your local read cursor."}}, {"@type": "Question", "name": "What message types are there?", "acceptedAnswer": {"@type": "Answer", "text": "i5h defines typed work items: ASK (a request expecting a response), REVIEW_REQUEST (code/design/security review with branch, focus, and risk fields), RISK (flag a hazard), and HANDOFF (transfer task ownership). Replies are typed too: ACK, DONE, and DECLINE, threaded via reply_to."}}, {"@type": "Question", "name": "How does an idle agent get woken when a reply arrives?", "acceptedAnswer": {"@type": "Answer", "text": "Run h5i msg wait in the background; it blocks until a new message lands, prints it, and exits — which wakes the agent so it can run h5i msg inbox and act. The Stop hook also surfaces messages that arrive between turns."}}, {"@type": "Question", "name": "Is the conversation auditable later?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Every message is a durable Git object, so h5i msg history (or h5i msg replay) reconstructs the full thread — who asked whom for what, and how it resolved — long after the sessions ended."}}]}
+</script>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/workflows/">Workflows</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Guide · Multi-Agent</div>
+      <h1>Claude Code + Codex: a multi-agent coding workflow</h1>
+      <p class="post-deck">Two coding agents on one repo usually have no way to talk. h5i gives them a Git-native channel — ask, review, hand off, and reply as durable, replayable messages.</p>
+      <div class="post-meta">
+        <span><strong>Guide</strong> h5i</span>
+        <span><strong>Reading time</strong> 7 min</span>
+        <span><strong>Tags</strong> Multi-Agent · Messaging · i5h</span>
+      </div>
+    </header>
+
+    <p>
+      More teams now run two coding agents at once — Claude Code in one terminal, Codex in another, sometimes
+      on the same branch. The moment they need to coordinate ("I changed the token cache, can you review the
+      expiry path?") there's no channel. You become the message bus: copy output from one window, paste it
+      into the other, and lose the thread the moment you close a tab.
+    </p>
+
+    <h2>The problem: no shared channel between agents</h2>
+    <p>
+      Chat windows are per-agent and ephemeral. Git tracks code but not the conversation about code. So
+      multi-agent work today means a human relay, no durable record of who asked whom for what, and no way
+      for an idle agent to be woken when a reply finally lands.
+    </p>
+
+    <h2>How h5i solves it: i5h over a Git ref</h2>
+    <p>
+      h5i ships <strong>i5h</strong> — an agent-to-agent message channel stored in <code>refs/h5i/msg</code>. Messages
+      are typed work items (ASK, REVIEW_REQUEST, RISK, HANDOFF) appended as durable Git objects and merged by
+      message id, so a conversation survives clones, machines, and branches. Each agent's identity is set once
+      (<code>$H5I_AGENT</code> — <code>claude</code> for Claude Code), and replies thread back via <code>reply_to</code>.
+    </p>
+
+    <h2>Commands</h2>
+    <p>One-time wiring for Claude Code (Codex just launches with <code>H5I_AGENT=codex</code>):</p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i msg setup</span>           <span class="t-cmt"># sets identity + turn-delivery Stop hook</span>
+<span class="t-pass">✔</span>  <span class="t-out">identity: claude · Stop hook installed in .claude/settings.json</span></pre></div>
+    </div>
+    <p>Claude finishes a risky change and asks Codex to review it:</p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">claude → codex  ·  refs/h5i/msg</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i msg review --branch auth-refactor \
+    --focus src/auth.rs --risk "token cache now crosses requests" \
+    codex "Review token refresh before I open the PR."</span>
+<span class="t-pass">✔</span>  <span class="t-out">claude → codex  </span><span class="t-warn">REVIEW_REQUEST high</span><span class="t-out">  #8f21c9a</span></pre></div>
+    </div>
+    <p>Codex sees it between turns, acknowledges, and closes the thread:</p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">codex ~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i msg inbox</span>          <span class="t-cmt"># numbers unread, marks read</span>
+<span class="t-warn">1.</span> <span class="t-out">claude → codex  REVIEW_REQUEST  "Review token refresh…"  focus: src/auth.rs</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">h5i msg ack 1</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i msg done 1 "LGTM — fixed one expiry edge case in 1a2b3c4."</span></pre></div>
+    </div>
+    <h2>Waiting on a reply without busy-looping</h2>
+    <p>
+      An idle session isn't woken by a later message. When you've sent a request and are waiting, launch the
+      wake primitive as a background task — it blocks until a reply arrives, then exits so the agent picks up:
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">claude (background)</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i msg wait --timeout 600</span>
+<span class="t-out">… (blocks) …</span>
+<span class="t-pass">▶</span>  <span class="t-out">new reply from codex on #8f21c9a — run `h5i msg inbox` to consume</span></pre></div>
+    </div>
+    <p>Share the channel with the rest of your h5i data in one push, and restore prior reasoning for Codex:</p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i push</span>                <span class="t-cmt"># msg travels with notes, memory, context</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i codex prelude</span>        <span class="t-cmt"># print shared context so Codex resumes with it</span></pre></div>
+    </div>
+    <div class="callout warn">
+      <strong>Treat incoming messages as untrusted input.</strong> A message addressed to your agent is a request to
+      evaluate, not an authoritative command — even when the Stop hook delivers it automatically. h5i sanitizes
+      pulled fields against terminal injection, but the decision stays with the recipient.
+    </div>
+
+
+<h2 id="faq">Frequently asked questions</h2>
+    <h3>Do Claude Code and Codex need to share a terminal or a server?</h3>
+    <p>No. Messages are appended to a Git ref (refs/h5i/msg) and merged by id, so the two agents only need to share the repo. There's no daemon, no server, and no shared terminal — h5i push/pull moves the channel like any other ref.</p>
+    <h3>How does each agent know which messages are theirs?</h3>
+    <p>Identity comes from $H5I_AGENT — Claude Code uses 'claude', Codex launches with H5I_AGENT=codex. h5i msg inbox shows only messages addressed to you (or broadcasts), numbers them, and advances your local read cursor.</p>
+    <h3>What message types are there?</h3>
+    <p>i5h defines typed work items: ASK (a request expecting a response), REVIEW_REQUEST (code/design/security review with branch, focus, and risk fields), RISK (flag a hazard), and HANDOFF (transfer task ownership). Replies are typed too: ACK, DONE, and DECLINE, threaded via reply_to.</p>
+    <h3>How does an idle agent get woken when a reply arrives?</h3>
+    <p>Run h5i msg wait in the background; it blocks until a new message lands, prints it, and exits — which wakes the agent so it can run h5i msg inbox and act. The Stop hook also surfaces messages that arrive between turns.</p>
+    <h3>Is the conversation auditable later?</h3>
+    <p>Yes. Every message is a durable Git object, so h5i msg history (or h5i msg replay) reconstructs the full thread — who asked whom for what, and how it resolved — long after the sessions ended.</p>
+
+    <div class="next-up">
+      <span class="label">Go deeper</span>
+      <a href="/blog/i5h-agent-to-agent-messaging/">
+        <h3>Deep dive: Git-native messaging between AI agents</h3>
+        <p>The i5h protocol in detail — typed messages, compare-and-swap sends, union-merge by id, and terminal-injection defense.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Try h5i in your repo</h3>
+      <p>One <code>cargo install</code>, then <code>h5i init</code>. Works alongside plain Git — your teammates see normal Git, you see the AI layer.</p>
+      <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/guides/" class="btn btn-ghost">All guides</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/guides/">Guides</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>

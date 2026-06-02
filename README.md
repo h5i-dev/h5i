@@ -19,7 +19,7 @@
 Because that context already lives in Git, your agents can also **talk to each other through it**. `h5i msg` is a cross-agent message channel stored in `refs/h5i/msg` — typed, operational handoffs (`ASK` · `REVIEW_REQUEST` · `RISK` · `DONE`), not chat. Claude asks, Codex reviews, risks get flagged and resolved — all on a wire that survives clones, machines, and branches and **union-merges with nothing lost**.
 
 <p align="center">
-  <img src="./assets/h5i-msg-demo.gif" alt="h5i msg watch — a live claude ↔ codex code review streaming over refs/h5i/msg" width="95%">
+  <img src="./assets/claude-codex-chess.gif" alt="h5i msg watch — a live claude ↔ codex code review streaming over refs/h5i/msg" width="95%">
 </p>
 
 <p align="center"><sub><code>h5i msg watch</code> — a live claude ↔ codex code review, streamed straight off <code>refs/h5i/msg</code>. <a href="#agent-radio--agents-that-talk-over-git">Jump to Agent Radio ↓</a></sub></p>
