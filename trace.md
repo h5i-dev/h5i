@@ -588,3 +588,9 @@ _[Checkpoint: 6a1f3d19 — edited index.html; edited index.html; edited sitemap.
 
 [20:40:08] OBSERVE: read guide.png
 [20:40:12] OBSERVE: read blogpost.png
+
+
+---
+_[Checkpoint: 6a1f3fba — edited index.html; edited index.html; edited sitemap.xml]_
+---
+
