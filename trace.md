@@ -540,3 +540,4 @@ _[Checkpoint: 6a1f346b — edited /home/koukyosyumei/Dev/h5i/docs/sitemap.xml; e
 ---
 
 [19:58:30] ACT: wrote restructure_docs.py
+[20:00:21] THINK: Let me commit the current change first, then look at the docs structure to plan the clean-URL restructure.
