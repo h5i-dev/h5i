@@ -314,11 +314,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Agent Radio TUI — Codex-reviewed & approved
 - [x] edited src/radio.rs; wrote passive-views-no-last-view-write.md; edited MEMORY.md
 - [x] edited src/radio.rs; edited src/radio.rs; Fixed scroll/staircase bug: real terminals scrolled because redraw used cursor…
+- [x] edited src/radio.rs; edited src/radio.rs; Fixed scroll/staircase bug: real terminals scrolled because redraw used cursor…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-02 00:00 UTC] `update-doc-with-i5h`: edited src/radio.rs; edited src/radio.rs; Fixed scroll/staircase bug: real terminals scrolled because redraw used cursor…
 - [2026-06-01 23:39 UTC] `update-doc-with-i5h`: edited src/radio.rs; edited src/radio.rs; Fixed scroll/staircase bug: real terminals scrolled because redraw used cursor…
 - [2026-06-01 23:31 UTC] `update-doc-with-i5h`: edited src/radio.rs; wrote passive-views-no-last-view-write.md; edited MEMORY.md
 - [2026-06-01 23:30 UTC] `update-doc-with-i5h`: Agent Radio TUI — Codex-reviewed & approved
