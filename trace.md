@@ -347,3 +347,4 @@ _[Checkpoint: 6a1e181d — edited src/radio.rs; edited src/radio.rs; Fixed scrol
 _[Checkpoint: 6a1e1d08 — edited src/radio.rs; edited src/radio.rs; Fixed scroll/staircase bug: real terminals scrolled because redraw used cursor…]_
 ---
 
+[02:04:15] OBSERVE: read index.html
