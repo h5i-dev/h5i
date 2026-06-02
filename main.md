@@ -334,11 +334,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited /home/koukyosyumei/Dev/h5i/docs/sitemap.xml; edited docs/index.html; edited docs/index.html
 - [x] edited docs/index.html; edited docs/index.html; wrote restructure_docs.py
 - [x] edited docs/index.html; edited docs/index.html; wrote restructure_docs.py
+- [x] Added /guides/ SEO topic cluster
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-02 20:29 UTC] `update-doc-with-i5h`: Added /guides/ SEO topic cluster
 - [2026-06-02 20:01 UTC] `update-doc-with-i5h`: edited docs/index.html; edited docs/index.html; wrote restructure_docs.py
 - [2026-06-02 20:00 UTC] `update-doc-with-i5h`: edited docs/index.html; edited docs/index.html; wrote restructure_docs.py
 - [2026-06-02 19:52 UTC] `update-doc-with-i5h`: edited /home/koukyosyumei/Dev/h5i/docs/sitemap.xml; edited docs/index.html; edited docs/index.html
