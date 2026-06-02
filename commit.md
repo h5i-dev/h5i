@@ -602,3 +602,16 @@ Improve docs website: simplify text, add msg feature to top page, write detailed
 
 ---
 
+## Commit 6a1f3d19 — 2026-06-02 20:29 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+6 guide pages + hub under /guides/, full SEO scaffolding + FAQPage JSON-LD, wired into nav/footer/home/sitemap. All links resolve, pages serve 200 locally. Commit 45461f4.
+
+### This Commit's Contribution
+
+
+---
+

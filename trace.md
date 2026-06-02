@@ -580,3 +580,9 @@ _[Checkpoint: 6a1f3d0d — Added /guides/ SEO topic cluster]_
 [20:29:13] THINK: Now let me inspect the home page footer and the pitch page's nav/footer (they may differ from the shared `blog-nav`).
 [20:29:13] THINK: Pitch is a slide deck (no standard nav) — I'll leave it.
 [20:29:13] NOTE: DEFERRAL (/tmp/gen_guides.py): Pitch is a slide deck (no standard nav) — I'll leave it. Now the nav/footer patch across blog pages + home
+
+
+---
+_[Checkpoint: 6a1f3d19 — edited index.html; edited index.html; edited sitemap.xml]_
+---
+
