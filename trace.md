@@ -444,3 +444,4 @@ _[Checkpoint: 6a1e418b — edited index.html; edited index.html; edited index.ht
 _[Checkpoint: 6a1e41f4 — edited index.html; edited index.html; edited _static/blog.css]_
 ---
 
+[02:39:36] THINK: Let me soften it from pure `#ffffff` to a calmer off-white (and apply the same to the matching end-of-post CTA in the blog so the system stays consistent).
