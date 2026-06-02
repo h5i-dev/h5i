@@ -598,3 +598,4 @@ _[Checkpoint: 6a1f3fba — edited index.html; edited index.html; edited sitemap.
 [20:44:18] OBSERVE: read guide_full.png
 [20:49:36] OBSERVE: read _static/blog.css
 [20:49:42] ACT: edited _static/blog.css
+[20:50:09] OBSERVE: read guide_fixed.png
