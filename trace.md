@@ -546,3 +546,9 @@ _[Checkpoint: 6a1f346b — edited /home/koukyosyumei/Dev/h5i/docs/sitemap.xml; e
 [20:00:21] THINK: Clean to script. I'll restructure to folder/`index.
 [20:00:21] THINK: Let me spot-check a blog post's `<head>` (canonical/og) and home links to confirm correctness, and verify the `_static` image URLs were untouched.
 [20:00:21] THINK: Let me do a quick local serve test to confirm clean URLs resolve and assets load (200s).
+
+
+---
+_[Checkpoint: 6a1f3655 — edited docs/index.html; edited docs/index.html; wrote restructure_docs.py]_
+---
+
