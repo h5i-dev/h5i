@@ -488,3 +488,4 @@ _[Checkpoint: 6a1e4b16 — Completed local SEO audit of 12 docs/blog posts plus 
 [03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/auditing-ai-generated-code.html
 [03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/context-dag-versioned-agent-reasoning.html
 [03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/cve-2025-59536-startup-trust-dialog.html
+[03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/cve-2026-33068-bypass-permissions-settings.html
