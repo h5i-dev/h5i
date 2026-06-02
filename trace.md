@@ -529,3 +529,4 @@ _[Checkpoint: 6a1e4f5d — Validated SEO and Cloudflare Analytics update: title/
 _[Checkpoint: 6a1e4fd1 — Committed documentation SEO and Cloudflare Analytics changes with h5i provenance as 165c0610200c2d69d55cf569068bd98dd27670ab.]_
 ---
 
+[19:50:35] OBSERVE: read docs/index.html
