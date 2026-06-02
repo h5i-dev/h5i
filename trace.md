@@ -567,3 +567,9 @@ _[Checkpoint: 6a1f3694 — edited docs/index.html; edited docs/index.html; wrote
 [20:25:51] ACT: edited index.html
 [20:26:06] OBSERVE: read sitemap.xml
 [20:26:15] ACT: edited sitemap.xml
+
+
+---
+_[Checkpoint: 6a1f3d0d — Added /guides/ SEO topic cluster]_
+---
+
