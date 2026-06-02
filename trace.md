@@ -453,3 +453,4 @@ _[Checkpoint: 6a1e41f4 — edited index.html; edited index.html; edited _static/
 _[Checkpoint: 6a1e4268 — edited index.html; edited index.html; edited _static/blog.css]_
 ---
 
+[03:16:24] OBSERVE: listed files under docs
