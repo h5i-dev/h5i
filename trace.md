@@ -573,3 +573,4 @@ _[Checkpoint: 6a1f3694 — edited docs/index.html; edited docs/index.html; wrote
 _[Checkpoint: 6a1f3d0d — Added /guides/ SEO topic cluster]_
 ---
 
+[20:29:13] THINK: A few of these topics overlap with existing blog posts (blame, audit, prompt-injection, memory, i5h), so I'll make the new pages **task/how-to + FAQ oriented** (different search intent) and cross-link to the deeper blog posts to avoid canni…
