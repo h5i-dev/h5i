@@ -542,3 +542,4 @@ _[Checkpoint: 6a1f346b — edited /home/koukyosyumei/Dev/h5i/docs/sitemap.xml; e
 [19:58:30] ACT: wrote restructure_docs.py
 [20:00:21] THINK: Let me commit the current change first, then look at the docs structure to plan the clean-URL restructure.
 [20:00:21] THINK: Committed. Now let me explore the docs structure to plan the clean-URL restructure.
+[20:00:21] THINK: html` is ambiguous (root index vs blog index), so I'll rewrite to **root-absolute clean URLs** (the site is at a custom domain root via CNAME).
