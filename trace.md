@@ -509,3 +509,4 @@ _[Checkpoint: 6a1e4b16 — Completed local SEO audit of 12 docs/blog posts plus 
 [03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/prompt-injection-in-agent-traces.html
 [03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/blog/uncertainty-heatmap.html
 [03:33:56] ACT: edited /home/koukyosyumei/Dev/h5i/docs/sitemap.xml
+[03:34:20] THINK: Corrected stale SEO benchmark copy across blog, landing page, and pitch deck to the checked-in N=5 claims experiment; chose defensible reproducible metrics over the older unsupported 77% copy. Added authoritative citations, contextual internal links, consistent titles, one Cloudflare beacon per public HTML page, and 2026-06-02 freshness metadata.
