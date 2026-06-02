@@ -586,3 +586,4 @@ _[Checkpoint: 6a1f3d0d — Added /guides/ SEO topic cluster]_
 _[Checkpoint: 6a1f3d19 — edited index.html; edited index.html; edited sitemap.xml]_
 ---
 
+[20:40:08] OBSERVE: read guide.png
