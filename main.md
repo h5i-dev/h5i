@@ -332,11 +332,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Validated SEO and Cloudflare Analytics update: title/schema/H1 alignment OK for all 12 posts, descriptions 122-156 chars, JSON-LD and sitemap XML parse, local href targets resolve, diff whitespace check passes, and all 16 public HTML pages contain exactly one analytics beacon.
 - [x] Committed documentation SEO and Cloudflare Analytics changes with h5i provenance as 165c0610200c2d69d55cf569068bd98dd27670ab.
 - [x] edited /home/koukyosyumei/Dev/h5i/docs/sitemap.xml; edited docs/index.html; edited docs/index.html
+- [x] edited docs/index.html; edited docs/index.html; wrote restructure_docs.py
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-02 20:00 UTC] `update-doc-with-i5h`: edited docs/index.html; edited docs/index.html; wrote restructure_docs.py
 - [2026-06-02 19:52 UTC] `update-doc-with-i5h`: edited /home/koukyosyumei/Dev/h5i/docs/sitemap.xml; edited docs/index.html; edited docs/index.html
 - [2026-06-02 03:36 UTC] `update-doc-with-i5h`: Committed documentation SEO and Cloudflare Analytics changes with h5i provenance as 165c0610200c2d69d55cf569068bd98dd27670ab.
 - [2026-06-02 03:34 UTC] `update-doc-with-i5h`: Validated SEO and Cloudflare Analytics update: title/schema/H1 alignment OK for all 12 posts, descriptions 122-156 chars, JSON-LD and sitemap XML parse, local href targets resolve, diff whitespace check passes, and all 16 public HTML pages contain exactly one analytics beacon.
