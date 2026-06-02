@@ -594,3 +594,4 @@ _[Checkpoint: 6a1f3d19 — edited index.html; edited index.html; edited sitemap.
 _[Checkpoint: 6a1f3fba — edited index.html; edited index.html; edited sitemap.xml]_
 ---
 
+[20:43:52] OBSERVE: read guide_cta.png
