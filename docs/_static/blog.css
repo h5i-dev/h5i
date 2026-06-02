@@ -353,8 +353,8 @@ table.data .center { text-align: center; }
   padding: 2.6rem 2rem;
   text-align: center;
   border-radius: var(--radius-lg);
-  background: var(--ink);
-  color: #08080b;
+  background: #e6e6ea;
+  color: #0c0c10;
   position: relative; overflow: hidden;
 }
 .post-cta::before {
