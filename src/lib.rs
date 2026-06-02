@@ -15,6 +15,7 @@ pub mod memory;
 pub mod metadata;
 pub mod msg;
 pub mod pr;
+pub mod radio;
 pub mod recap;
 pub mod secrets;
 pub mod session_log;

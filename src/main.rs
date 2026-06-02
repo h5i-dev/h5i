@@ -1211,9 +1211,16 @@ enum MsgCommands {
         interval: u64,
     },
 
-    /// Stream messages as they arrive. Foreground loop; Ctrl+C to stop.
-    /// With an identity (`--as` / $H5I_AGENT) it streams your inbox; with `--all`
-    /// or no identity it streams the whole channel (no identity needed).
+    /// Live "Agent Radio" — watch the conversation as it happens. Ctrl+C to stop.
+    ///
+    /// On an interactive terminal this opens a full-screen cinematic dashboard
+    /// (roster with per-agent activity, a live transmission feed, and a Git
+    /// provenance ticker). When stdout is not a TTY — or with `--plain` /
+    /// `--no-tui` / `--once` — it falls back to the stable line-streaming
+    /// watcher (the format the Stop hook / Monitor tool consume). With an
+    /// identity (`--as` / $H5I_AGENT) it scopes to your conversation (sent +
+    /// received + broadcast); with `--all` or no identity it shows the whole
+    /// channel. Always passive: it never advances any agent's read cursor.
     Watch {
         /// Whose inbox to watch. Defaults to $H5I_AGENT or the stored identity.
         #[arg(long = "as")]
@@ -1228,6 +1235,10 @@ enum MsgCommands {
         /// Check once and exit (don't loop) — useful for testing.
         #[arg(long)]
         once: bool,
+        /// Force the line-streaming watcher instead of the full-screen Agent
+        /// Radio TUI (also implied when stdout is not a TTY or with `--plain`).
+        #[arg(long = "no-tui")]
+        no_tui: bool,
     },
 }
 
@@ -3868,9 +3879,9 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                Some(MsgCommands::Watch { as_agent, all, interval, once }) => {
+                Some(MsgCommands::Watch { as_agent, all, interval, once, no_tui }) => {
                     use std::collections::HashSet;
-                    use std::io::Write as _;
+                    use std::io::{IsTerminal, Write as _};
                     // Identity-scoped *conversation* stream (both directions —
                     // sent, received, and broadcasts), unless `--all` or no
                     // identity is resolvable → watch the whole channel.
@@ -3879,6 +3890,16 @@ fn main() -> anyhow::Result<()> {
                     } else {
                         msg::resolve_identity(&h5i_root, as_agent.as_deref()).ok()
                     };
+
+                    // Cinematic full-screen Agent Radio: only on a real TTY and
+                    // only for the live, interactive case. Every scripted /
+                    // piped / Monitor path (`--plain`, `--once`, `--no-tui`, or
+                    // a non-TTY stdout) keeps the stable line-streaming watcher
+                    // below untouched.
+                    if !plain && !once && !no_tui && std::io::stdout().is_terminal() {
+                        h5i_core::radio::run_watch(std::path::Path::new("."), me, all, interval)?;
+                        return Ok(());
+                    }
 
                     if !once && !plain {
                         radio_border('┌', '┐', "H5I AGENT RADIO · LIVE");
