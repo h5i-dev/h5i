@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>The h5i Blog — AI Agent Context, Provenance, and Review Workflows</title>
-  <meta name="description" content="Engineering guides for AI coding agents: context DAGs, Claude Code memory, AI code review, provenance, prompt-injection detection, and Git-native messaging.">
-  <meta name="keywords" content="claude code blog, ai engineering blog, ai code review, ai provenance, context DAG, AI pull request, content-addressed claims, prompt injection detection, h5i blog">
+  <title>The h5i Blog — AI-Aware Version Control and Agent Workflows</title>
+  <meta name="description" content="Engineering guides for AI-aware version control: AI coding agents, Claude Code prompts, Codex collaboration, provenance, audit logs, rollback, and Git-native messaging.">
+  <meta name="keywords" content="ai-aware version control, claude code blog, ai engineering blog, ai code review, ai provenance, context DAG, AI pull request, content-addressed claims, prompt injection detection, h5i blog">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -16,14 +16,14 @@
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="The h5i Blog — AI Agent Context, Provenance, and Review Workflows">
-  <meta property="og:description" content="Engineering posts on context DAGs, AI pull request bodies, claims, Claude Code workflows, AI provenance, and prompt-injection detection.">
+  <meta property="og:title" content="The h5i Blog — AI-Aware Version Control and Agent Workflows">
+  <meta property="og:description" content="Engineering posts on AI-aware version control, context DAGs, AI pull request bodies, Claude Code workflows, AI provenance, rollback, and prompt-injection detection.">
   <meta property="og:url" content="https://h5i.dev/blog/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="The h5i Blog — AI Agent Context, Provenance, and Review Workflows">
-  <meta name="twitter:description" content="Engineering posts on context DAGs, AI pull request bodies, claims, Claude Code workflows, AI provenance, and prompt injection.">
+  <meta name="twitter:title" content="The h5i Blog — AI-Aware Version Control and Agent Workflows">
+  <meta name="twitter:description" content="Engineering posts on AI-aware version control, Claude Code workflows, AI provenance, rollback, and prompt injection.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
@@ -31,10 +31,18 @@
     "@context": "https://schema.org",
     "@type": "Blog",
     "name": "The h5i Blog",
-    "description": "Engineering posts on h5i context DAGs, AI pull request bodies, content-addressed claims, Claude Code workflows, AI provenance, prompt-injection detection, and per-line AI blame.",
+    "description": "Engineering posts on AI-aware version control, h5i context DAGs, AI pull request bodies, content-addressed claims, Claude Code workflows, AI provenance, rollback, prompt-injection detection, and per-line AI blame.",
     "url": "https://h5i.dev/blog/",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "blogPost": [
+      {"@type": "BlogPosting", "headline": "What Is AI-Aware Version Control?", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/what-is-ai-aware-version-control/"},
+      {"@type": "BlogPosting", "headline": "Why Git Diffs Are Not Enough for AI-Generated Code", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/"},
+      {"@type": "BlogPosting", "headline": "How to Track Claude Code Prompts and Diffs in Git", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/track-claude-code-prompts-diffs-git/"},
+      {"@type": "BlogPosting", "headline": "How to Review Code Written by AI Agents", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/review-code-written-by-ai-agents/"},
+      {"@type": "BlogPosting", "headline": "Git Notes vs h5i for AI Coding Workflows", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/"},
+      {"@type": "BlogPosting", "headline": "Claude Code Hooks vs Git Hooks", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/"},
+      {"@type": "BlogPosting", "headline": "Intent-Based Rollback for AI-Generated Code", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/intent-based-rollback-ai-generated-code/"},
+      {"@type": "BlogPosting", "headline": "Git as the Communication Layer for AI Agents", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/git-communication-layer-ai-agents/"},
       {"@type": "BlogPosting", "headline": "Git-Native Messaging Between AI Coding Agents", "datePublished": "2026-05-31", "url": "https://h5i.dev/blog/i5h-agent-to-agent-messaging/"},
       {"@type": "BlogPosting", "headline": "Context DAG: Version-Controlled Reasoning for AI Agents", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/context-dag-versioned-agent-reasoning/"},
       {"@type": "BlogPosting", "headline": "The AI Pull Request Body: h5i's Review Surface for Agent Work", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/pr-body-ai-code-review/"},
@@ -78,14 +86,96 @@
 
 <section class="index-hero">
   <div class="post-eyebrow">The h5i Blog</div>
-  <h1>AI agent context, provenance, and review workflows</h1>
+  <h1>AI-aware version control, provenance, and review workflows</h1>
   <p>
-    Engineering posts on h5i features: context DAGs, PR surfaces, content-addressed
-    claims, AI provenance, agent memory, prompt-injection detection, and AI blame.
+    Engineering posts on h5i features: AI-aware version control, context DAGs,
+    PR surfaces, content-addressed claims, AI provenance, rollback, agent memory,
+    prompt-injection detection, and AI blame.
   </p>
 </section>
 
 <section class="post-list">
+
+  <a class="post-card" href="/blog/what-is-ai-aware-version-control/">
+    <div class="card-meta">
+      <span>Pillar · AI-aware version control</span>
+      <span>2026-06-03</span>
+      <span>9 min read</span>
+    </div>
+    <h2>What Is AI-Aware Version Control?</h2>
+    <p>Git remains the source of truth for code. AI-aware version control adds the missing layer: why an agent changed the code, what context it used, what evidence it saw, and how reviewers can audit the result.</p>
+  </a>
+
+  <a class="post-card" href="/blog/why-git-diffs-are-not-enough-for-ai-generated-code/">
+    <div class="card-meta">
+      <span>Guide · AI code review</span>
+      <span>2026-06-03</span>
+      <span>8 min read</span>
+    </div>
+    <h2>Why Git Diffs Are Not Enough for AI-Generated Code</h2>
+    <p>A diff tells you what changed. It does not tell you what the agent was asked, which files it ignored, why it chose the approach, or whether the risky part was tested.</p>
+  </a>
+
+  <a class="post-card" href="/blog/track-claude-code-prompts-diffs-git/">
+    <div class="card-meta">
+      <span>Guide · Claude Code provenance</span>
+      <span>2026-06-03</span>
+      <span>8 min read</span>
+    </div>
+    <h2>How to Track Claude Code Prompts and Diffs in Git</h2>
+    <p>Claude Code can edit real repositories. The missing workflow is durable provenance: prompt, agent identity, changed files, tests, and review context stored next to the commits.</p>
+  </a>
+
+  <a class="post-card" href="/blog/review-code-written-by-ai-agents/">
+    <div class="card-meta">
+      <span>Guide · AI code review</span>
+      <span>2026-06-03</span>
+      <span>9 min read</span>
+    </div>
+    <h2>How to Review Code Written by AI Agents</h2>
+    <p>Reviewing agent-written code is not just line-by-line inspection. Start with intent, verify context coverage, rank risky files, and require evidence for the behavior that changed.</p>
+  </a>
+
+  <a class="post-card" href="/blog/git-notes-vs-h5i-ai-coding-workflows/">
+    <div class="card-meta">
+      <span>Comparison · Git notes</span>
+      <span>2026-06-03</span>
+      <span>8 min read</span>
+    </div>
+    <h2>Git Notes vs h5i for AI Coding Workflows</h2>
+    <p>Git notes are a useful primitive for attaching metadata. h5i is the workflow layer: capture, recall, audit, share, rollback, and multi-agent context.</p>
+  </a>
+
+  <a class="post-card" href="/blog/claude-code-hooks-vs-git-hooks/">
+    <div class="card-meta">
+      <span>Comparison · Hooks</span>
+      <span>2026-06-03</span>
+      <span>8 min read</span>
+    </div>
+    <h2>Claude Code Hooks vs Git Hooks</h2>
+    <p>Git hooks protect repository operations. Claude Code hooks observe and steer the agent while it works. They are complementary, not interchangeable.</p>
+  </a>
+
+  <a class="post-card" href="/blog/intent-based-rollback-ai-generated-code/">
+    <div class="card-meta">
+      <span>Guide · Rollback</span>
+      <span>2026-06-03</span>
+      <span>8 min read</span>
+    </div>
+    <h2>Intent-Based Rollback for AI-Generated Code</h2>
+    <p>When an AI-generated change breaks production, the question is usually not &#x27;which hash?&#x27; It is &#x27;undo the OAuth retry change&#x27; or &#x27;revert the agent&#x27;s billing refactor.&#x27;</p>
+  </a>
+
+  <a class="post-card" href="/blog/git-communication-layer-ai-agents/">
+    <div class="card-meta">
+      <span>Pillar · Multi-agent collaboration</span>
+      <span>2026-06-03</span>
+      <span>8 min read</span>
+    </div>
+    <h2>Git as the Communication Layer for AI Agents</h2>
+    <p>Agents already coordinate through files and commits. h5i makes the communication explicit: typed asks, reviews, risks, handoffs, and done messages stored in a shareable Git ref.</p>
+  </a>
+
 
   <a class="post-card" href="/blog/i5h-agent-to-agent-messaging/">
     <div class="card-meta">

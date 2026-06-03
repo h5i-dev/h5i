@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Why Git Diffs Are Not Enough for AI-Generated Code — h5i</title>
+  <meta name="description" content="Git diffs show changed lines, but AI-generated code review also needs prompts, context coverage, uncertainty, tests, and intent.">
+  <meta name="keywords" content="why git diffs are not enough for ai generated code, ai generated code review, ai code audit, ai code provenance, h5i">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Why Git Diffs Are Not Enough for AI-Generated Code">
+  <meta property="og:description" content="Git diffs show changed lines, but AI-generated code review also needs prompts, context coverage, uncertainty, tests, and intent.">
+  <meta property="og:url" content="https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-06-03">
+  <meta property="article:author" content="Koukyosyumei">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Why Git Diffs Are Not Enough for AI-Generated Code">
+  <meta name="twitter:description" content="Git diffs show changed lines, but AI-generated code review also needs prompts, context coverage, uncertainty, tests, and intent.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Why Git Diffs Are Not Enough for AI-Generated Code",
+  "description": "Git diffs show changed lines, but AI-generated code review also needs prompts, context coverage, uncertainty, tests, and intent.",
+  "author": {
+    "@type": "Person",
+    "name": "Koukyosyumei",
+    "url": "https://github.com/Koukyosyumei"
+  },
+  "datePublished": "2026-06-03",
+  "dateModified": "2026-06-03",
+  "publisher": {
+    "@type": "Organization",
+    "name": "h5i",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://h5i.dev/_static/logo.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/"
+  },
+  "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+  "keywords": "why git diffs are not enough for ai generated code, ai generated code review, ai code audit, ai code provenance, h5i"
+}
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Why Git Diffs Are Not Enough for AI-Generated Code", "item": "https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/"}]}
+  </script>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/workflows/">Workflows</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Guide · AI code review</div>
+      <h1>Why Git Diffs Are Not Enough for AI-Generated Code</h1>
+      <p class="post-deck">A diff tells you what changed. It does not tell you what the agent was asked, which files it ignored, why it chose the approach, or whether the risky part was tested.</p>
+      <div class="post-meta">
+        <span><strong>Published</strong> 2026-06-03</span>
+        <span><strong>Reading time</strong> 8 min read</span>
+        <span><strong>Tags</strong> Code review · Git diff · Audit</span>
+      </div>
+    </header>
+
+<p>A Git diff is still the first thing to review. It is precise, compact, and universal. For AI-generated code, it is also incomplete. The diff shows the final text change after an agent has already compressed a long sequence of prompts, observations, tool calls, assumptions, and test attempts into a patch.</p>
+<p>That compression hides the parts reviewers most need. A human-written diff carries social context: the author understands the system, attends standup, and can answer why the change exists. An agent-written diff may have been produced from a narrow prompt, stale context, or an incorrect assumption about code it never opened.</p>
+<h2>What a diff cannot tell you</h2>
+<p>A diff cannot tell whether the agent read the policy module before editing authorization code. It cannot tell whether the original prompt asked for a quick prototype or production hardening. It cannot tell whether the agent saw a warning from the test suite and worked around it. It cannot tell whether a second agent reviewed the plan and flagged a risk.</p>
+<p>The missing data falls into five buckets: intent, evidence, uncertainty, execution, and collaboration.</p>
+<ul>
+  <li><strong>Intent:</strong> what behavior the user wanted, and what constraints were stated.</li>
+  <li><strong>Evidence:</strong> which files, docs, and prior facts the agent observed.</li>
+  <li><strong>Uncertainty:</strong> what the agent marked as unclear, risky, or assumed.</li>
+  <li><strong>Execution:</strong> which commands and tests ran, and what happened.</li>
+  <li><strong>Collaboration:</strong> what handoffs, review requests, and risk messages surrounded the work.</li>
+</ul>
+<h2>The failure mode: reviewing every line equally</h2>
+<p>When reviewers only have a diff, they often review evenly. That is expensive and ineffective. AI-generated code has uneven risk. A one-line config change made after reading the right file may be lower risk than a small auth refactor made without observing the caller. A large generated test file may be lower risk than a three-line change to token expiry.</p>
+<p>Good AI review starts by ranking attention. h5i's audit model is built around this idea: blind edits, uncertainty signals, churn, scope, and prompt-injection indicators should push a change higher in the review queue.</p>
+<h2>The minimum review packet</h2>
+<p>For each AI-assisted change, reviewers should see:</p>
+<ul>
+  <li>the ordinary Git diff;</li>
+  <li>the prompt or task summary;</li>
+  <li>the agent and model identity;</li>
+  <li>the files the agent observed before editing;</li>
+  <li>test commands and summarized results;</li>
+  <li>recorded decisions and rejected alternatives;</li>
+  <li>risk signals and review focus files.</li>
+</ul>
+<p>That packet turns review from archaeology into verification. The reviewer can ask whether the implementation matches the intent, whether the agent had enough context, and whether tests cover the changed behavior.</p>
+<h2>How h5i adds the missing layer</h2>
+<p>h5i keeps the Git diff intact and adds structured context around it. <code>h5i capture commit</code> records prompt, model, agent, tests, tokens, and decisions with the commit. <code>h5i recall context</code> shows the goal, milestones, and OBSERVE/THINK/ACT trace. <code>h5i recall blame --show-prompt</code> connects lines back to the AI prompt at commit boundaries. <code>h5i share pr</code> can turn that context into a reviewer-facing pull-request body.</p>
+<p>The point is not to make reviews longer. It is to make them narrower. Review the diff, but use provenance and context to decide where the human attention should go first.</p>
+<h2>FAQ</h2>
+<h3>Should reviewers still read the diff?</h3>
+<p>Yes. The diff remains the ground truth for code changes. AI-aware review adds the context needed to interpret the diff correctly.</p>
+<h3>Can commit messages solve this?</h3>
+<p>Commit messages help, but they are summaries. They rarely preserve prompts, tool evidence, uncertainty, test output, or multi-agent handoffs.</p>
+<h3>What is the simplest improvement?</h3>
+<p>Capture the prompt and test result for every AI-assisted commit. That alone makes later review and rollback much more practical.</p>
+
+
+    <h2>Sources and verification</h2>
+    <p>This article avoids vendor-specific claims that were not checked against primary docs or local h5i CLI behavior.</p>
+    <ul>
+        <li><a href="/guides/ai-code-provenance/">h5i capture CLI help</a></li>
+        <li><a href="/guides/ai-code-review-audit/">h5i audit guide</a></li>
+    </ul>
+
+    <div class="next-up">
+      <span class="label">Next in the cluster</span>
+      <a href="/blog/review-code-written-by-ai-agents/">
+        <h3>How to Review Code Written by AI Agents</h3>
+        <p>Continue the AI-aware version control series with the next focused workflow.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Bring AI provenance into Git</h3>
+      <p>h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
+      <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/guides/" class="btn btn-ghost">Read the guides</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/guides/">Guides</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>

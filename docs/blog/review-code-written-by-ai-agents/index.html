@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How to Review Code Written by AI Agents — h5i</title>
+  <meta name="description" content="Review AI-written code by checking intent, context coverage, risky files, tests, uncertainty, and provenance before merging.">
+  <meta name="keywords" content="how to review code written by ai agents, ai code review checklist, review ai generated code, agentic coding review">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/review-code-written-by-ai-agents/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="How to Review Code Written by AI Agents">
+  <meta property="og:description" content="Review AI-written code by checking intent, context coverage, risky files, tests, uncertainty, and provenance before merging.">
+  <meta property="og:url" content="https://h5i.dev/blog/review-code-written-by-ai-agents/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-06-03">
+  <meta property="article:author" content="Koukyosyumei">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="How to Review Code Written by AI Agents">
+  <meta name="twitter:description" content="Review AI-written code by checking intent, context coverage, risky files, tests, uncertainty, and provenance before merging.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "How to Review Code Written by AI Agents",
+  "description": "Review AI-written code by checking intent, context coverage, risky files, tests, uncertainty, and provenance before merging.",
+  "author": {
+    "@type": "Person",
+    "name": "Koukyosyumei",
+    "url": "https://github.com/Koukyosyumei"
+  },
+  "datePublished": "2026-06-03",
+  "dateModified": "2026-06-03",
+  "publisher": {
+    "@type": "Organization",
+    "name": "h5i",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://h5i.dev/_static/logo.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://h5i.dev/blog/review-code-written-by-ai-agents/"
+  },
+  "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+  "keywords": "how to review code written by ai agents, ai code review checklist, review ai generated code, agentic coding review"
+}
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "How to Review Code Written by AI Agents", "item": "https://h5i.dev/blog/review-code-written-by-ai-agents/"}]}
+  </script>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/workflows/">Workflows</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Guide · AI code review</div>
+      <h1>How to Review Code Written by AI Agents</h1>
+      <p class="post-deck">Reviewing agent-written code is not just line-by-line inspection. Start with intent, verify context coverage, rank risky files, and require evidence for the behavior that changed.</p>
+      <div class="post-meta">
+        <span><strong>Published</strong> 2026-06-03</span>
+        <span><strong>Reading time</strong> 9 min read</span>
+        <span><strong>Tags</strong> Review · Checklist · Risk</span>
+      </div>
+    </header>
+
+<p>AI coding agents can produce large, coherent patches quickly. That speed changes the review problem. The question is no longer only "is this line correct?" It is also "did the agent understand the task, inspect the right evidence, and test the behavior it changed?"</p>
+<h2>1. Start from intent</h2>
+<p>Read the original prompt or task summary before the diff. A correct-looking patch can still be wrong if it solves a broader or narrower problem than requested. The review should ask whether the implementation matches the stated intent and whether any added behavior is justified.</p>
+<h2>2. Check context coverage</h2>
+<p>Before reviewing details, ask what the agent observed. Did it read the interface it changed? Did it inspect tests? Did it look at the caller? Blind edits are one of the highest-signal risks in AI code review because agents can produce plausible changes without the repository evidence a human would naturally gather.</p>
+<h2>3. Rank the files by risk</h2>
+<p>Do not review every generated line equally. Prioritize authentication, authorization, billing, data migrations, concurrency, persistence, security boundaries, generated configuration, and public APIs. A small change in those areas can carry more risk than a large generated helper or test fixture.</p>
+<h2>4. Review uncertainty, not just confidence</h2>
+<p>Agents often expose uncertainty in their planning or trace: "assuming", "likely", "not sure", "untested", "may need". That text is review signal. It should guide the human toward areas where the agent knew it was working from incomplete evidence.</p>
+<h2>5. Verify tests against behavior</h2>
+<p>A green test run is useful but not enough. Check whether tests exercise the new behavior, the failure mode, and the edge case the prompt actually asked about. If the agent only ran formatting or type checks, say so in the review packet.</p>
+<h2>6. Look for scope creep</h2>
+<p>AI agents often clean nearby code, rename helpers, adjust formatting, or "improve" unrelated branches while solving a task. Some of that is useful. In review, unrelated edits increase the cognitive load and make rollback harder. Ask whether every touched file supports the original intent.</p>
+<h2>7. Require provenance for merges</h2>
+<p>For AI-assisted work, the minimum merge packet should include the prompt, agent identity, changed commits, test evidence, and any relevant decision notes. h5i captures those with <code>h5i capture commit</code> and makes them visible through <code>h5i recall log</code>, <code>h5i recall context</code>, and PR review bodies.</p>
+<h2>A practical checklist</h2>
+<ul>
+  <li>Does the diff match the prompt?</li>
+  <li>Were the edited files observed before editing?</li>
+  <li>Did the agent touch security, data, or API boundaries?</li>
+  <li>Are uncertainty notes linked to review focus?</li>
+  <li>Were meaningful tests run?</li>
+  <li>Can this change be rolled back by intent if it fails?</li>
+  <li>Is the provenance stored somewhere durable?</li>
+</ul>
+<h2>FAQ</h2>
+<h3>Should AI-generated code need stricter review?</h3>
+<p>It needs different review. The code may be high quality, but the reviewer needs extra evidence about intent, context, and tests because the agent's working state is otherwise invisible.</p>
+<h3>What is the biggest mistake?</h3>
+<p>Reviewing only the final diff and ignoring whether the agent had enough repository context to make the change.</p>
+<h3>How does h5i help?</h3>
+<p>h5i turns prompts, traces, risk signals, test evidence, and provenance into Git-native records that reviewers can inspect before merging.</p>
+
+
+    <h2>Sources and verification</h2>
+    <p>This article avoids vendor-specific claims that were not checked against primary docs or local h5i CLI behavior.</p>
+    <ul>
+        <li><a href="/guides/ai-code-review-audit/">h5i AI code review guide</a></li>
+        <li><a href="/blog/pr-body-ai-code-review/">h5i PR review surface</a></li>
+    </ul>
+
+    <div class="next-up">
+      <span class="label">Next in the cluster</span>
+      <a href="/blog/intent-based-rollback-ai-generated-code/">
+        <h3>Intent-Based Rollback for AI-Generated Code</h3>
+        <p>Continue the AI-aware version control series with the next focused workflow.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Bring AI provenance into Git</h3>
+      <p>h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
+      <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/guides/" class="btn btn-ghost">Read the guides</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/guides/">Guides</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>

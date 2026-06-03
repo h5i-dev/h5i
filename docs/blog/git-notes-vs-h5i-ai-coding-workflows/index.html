@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Git Notes vs h5i for AI Coding Workflows — h5i</title>
+  <meta name="description" content="Git notes can attach metadata to commits without rewriting them. h5i builds an AI coding workflow around provenance, context, audit, recall, and sharing.">
+  <meta name="keywords" content="git notes vs h5i, git notes ai coding, ai code provenance git notes, h5i provenance, git sidecar ai agents">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Git Notes vs h5i for AI Coding Workflows">
+  <meta property="og:description" content="Git notes can attach metadata to commits without rewriting them. h5i builds an AI coding workflow around provenance, context, audit, recall, and sharing.">
+  <meta property="og:url" content="https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-06-03">
+  <meta property="article:author" content="Koukyosyumei">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Git Notes vs h5i for AI Coding Workflows">
+  <meta name="twitter:description" content="Git notes can attach metadata to commits without rewriting them. h5i builds an AI coding workflow around provenance, context, audit, recall, and sharing.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Git Notes vs h5i for AI Coding Workflows",
+  "description": "Git notes can attach metadata to commits without rewriting them. h5i builds an AI coding workflow around provenance, context, audit, recall, and sharing.",
+  "author": {
+    "@type": "Person",
+    "name": "Koukyosyumei",
+    "url": "https://github.com/Koukyosyumei"
+  },
+  "datePublished": "2026-06-03",
+  "dateModified": "2026-06-03",
+  "publisher": {
+    "@type": "Organization",
+    "name": "h5i",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://h5i.dev/_static/logo.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/"
+  },
+  "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+  "keywords": "git notes vs h5i, git notes ai coding, ai code provenance git notes, h5i provenance, git sidecar ai agents"
+}
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Git Notes vs h5i for AI Coding Workflows", "item": "https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/"}]}
+  </script>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/workflows/">Workflows</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Comparison · Git notes</div>
+      <h1>Git Notes vs h5i for AI Coding Workflows</h1>
+      <p class="post-deck">Git notes are a useful primitive for attaching metadata. h5i is the workflow layer: capture, recall, audit, share, rollback, and multi-agent context.</p>
+      <div class="post-meta">
+        <span><strong>Published</strong> 2026-06-03</span>
+        <span><strong>Reading time</strong> 8 min read</span>
+        <span><strong>Tags</strong> Git notes · h5i · Comparison</span>
+      </div>
+    </header>
+
+<p>Git notes and h5i solve related but different problems. Git notes are a low-level Git feature for attaching extra information to objects without changing those objects. h5i is an AI-aware workflow layer that stores prompts, agent provenance, context traces, risk signals, memory, and messages in Git-sidecar refs.</p>
+<h2>What Git notes do well</h2>
+<p>The official Git documentation describes notes as data attached to objects without touching the objects themselves. By default, notes are stored under <code>refs/notes/commits</code>, and <code>git log</code> can display them alongside commit messages. That makes notes a good fit for lightweight commit annotations.</p>
+<p>For AI coding, you could store a prompt or test summary in a note. That is simple, Git-native, and compatible with existing repositories.</p>
+<h2>Where raw notes stop</h2>
+<p>Git notes do not define an AI provenance schema. They do not decide how to capture a Claude Code prompt, how to summarize a Codex session, how to rank review risk, how to build a PR body, or how to roll back by natural-language intent. Those are workflow problems on top of storage.</p>
+<p>Notes also require teams to design conventions: which ref to use, how to serialize metadata, how to merge conflicts, how to share notes, and how to query them. Git supports configurable note refs and merge strategies, but it does not know what an AI agent is.</p>
+<h2>What h5i adds</h2>
+<p>h5i treats Git as the durable substrate and adds AI-specific commands:</p>
+<ul>
+  <li><code>h5i capture commit</code> records prompt, model, agent, tokens, tests, and decisions.</li>
+  <li><code>h5i recall log</code> reads commit history with AI provenance.</li>
+  <li><code>h5i recall blame --show-prompt</code> connects lines back to AI-assisted commit context.</li>
+  <li><code>h5i recall context</code> restores goals, milestones, and reasoning traces.</li>
+  <li><code>h5i audit review</code> and related audit commands surface review signals.</li>
+  <li><code>h5i share push</code> and <code>h5i share pull</code> move h5i refs intentionally.</li>
+</ul>
+<h2>When Git notes are enough</h2>
+<p>Use raw Git notes if you only need small human-written annotations on commits and your team is comfortable maintaining its own schema. For example: "generated by Claude Code" or "manual review completed".</p>
+<h2>When h5i is a better fit</h2>
+<p>Use h5i when you need repeatable capture, queryable provenance, review packets, multi-agent handoff, memory snapshots, or rollback by intent. Those workflows need more than a place to put text. They need commands, conventions, and records that remain useful across sessions.</p>
+<h2>FAQ</h2>
+<h3>Does h5i replace Git notes?</h3>
+<p>No. It uses Git-native sidecar storage ideas but adds an AI workflow and command surface around them.</p>
+<h3>Can teammates ignore h5i?</h3>
+<p>Yes. The code history remains ordinary Git. Teammates who do not use h5i can still clone, branch, diff, and merge normally.</p>
+<h3>Why not put everything in commit messages?</h3>
+<p>Commit messages are user-facing summaries. AI provenance is structured data: prompt, model, tests, decisions, risk, and context often deserve their own queryable record.</p>
+
+
+    <h2>Sources and verification</h2>
+    <p>This article avoids vendor-specific claims that were not checked against primary docs or local h5i CLI behavior.</p>
+    <ul>
+        <li><a href="https://git-scm.com/docs/git-notes">Git notes documentation</a></li>
+        <li><a href="/guides/ai-code-provenance/">h5i AI provenance guide</a></li>
+    </ul>
+
+    <div class="next-up">
+      <span class="label">Next in the cluster</span>
+      <a href="/blog/what-is-ai-aware-version-control/">
+        <h3>What Is AI-Aware Version Control?</h3>
+        <p>Continue the AI-aware version control series with the next focused workflow.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Bring AI provenance into Git</h3>
+      <p>h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
+      <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/guides/" class="btn btn-ghost">Read the guides</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/guides/">Guides</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>
