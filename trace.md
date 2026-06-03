@@ -628,3 +628,4 @@ _[Checkpoint: 6a1f44f1 — edited _static/blog.css; edited docs/index.html; edit
 
 [03:34:48] THINK: Use a clustered SEO content plan with fact verification and canonicalization over one-off duplicate blog posts because the docs site already covers many proposed topics.
 [03:34:48] OBSERVE: listed files under docs
+[03:34:48] OBSERVE: searched docs/guides for "docs/blog"
