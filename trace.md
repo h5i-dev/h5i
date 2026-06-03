@@ -648,3 +648,9 @@ _[Checkpoint: 6a1fa0d8 — Assessed proposed SEO blog-post set against existing 
 [03:43:27] ACT: edited docs/blog/index.html
 [03:43:27] OBSERVE: searched pull|What for "push|h5i"
 [03:43:27] NOTE: Added eight SEO blog posts for the AI-aware version-control topic cluster; external claims verified against official Claude Code hooks docs and git-scm Git hooks/notes docs; local h5i command claims checked against target/debug/h5i help.
+
+
+---
+_[Checkpoint: 6a1fa2df — Added AI-aware version-control SEO blog cluster with eight posts, blog index entries, sitemap entries, and validation.]_
+---
+
