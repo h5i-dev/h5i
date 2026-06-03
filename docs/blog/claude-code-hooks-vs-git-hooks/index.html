@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Code Hooks vs Git Hooks — h5i</title>
+  <meta name="description" content="Claude Code hooks run during the agent lifecycle. Git hooks run during Git operations. AI coding workflows usually need both.">
+  <meta name="keywords" content="claude code hooks vs git hooks, claude code hooks, git hooks ai coding, PostToolUse, SessionStart, h5i hook">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Claude Code Hooks vs Git Hooks">
+  <meta property="og:description" content="Claude Code hooks run during the agent lifecycle. Git hooks run during Git operations. AI coding workflows usually need both.">
+  <meta property="og:url" content="https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-06-03">
+  <meta property="article:author" content="Koukyosyumei">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Claude Code Hooks vs Git Hooks">
+  <meta name="twitter:description" content="Claude Code hooks run during the agent lifecycle. Git hooks run during Git operations. AI coding workflows usually need both.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Claude Code Hooks vs Git Hooks",
+  "description": "Claude Code hooks run during the agent lifecycle. Git hooks run during Git operations. AI coding workflows usually need both.",
+  "author": {
+    "@type": "Person",
+    "name": "Koukyosyumei",
+    "url": "https://github.com/Koukyosyumei"
+  },
+  "datePublished": "2026-06-03",
+  "dateModified": "2026-06-03",
+  "publisher": {
+    "@type": "Organization",
+    "name": "h5i",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://h5i.dev/_static/logo.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/"
+  },
+  "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+  "keywords": "claude code hooks vs git hooks, claude code hooks, git hooks ai coding, PostToolUse, SessionStart, h5i hook"
+}
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Claude Code Hooks vs Git Hooks", "item": "https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/"}]}
+  </script>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/workflows/">Workflows</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Comparison · Hooks</div>
+      <h1>Claude Code Hooks vs Git Hooks</h1>
+      <p class="post-deck">Git hooks protect repository operations. Claude Code hooks observe and steer the agent while it works. They are complementary, not interchangeable.</p>
+      <div class="post-meta">
+        <span><strong>Published</strong> 2026-06-03</span>
+        <span><strong>Reading time</strong> 8 min read</span>
+        <span><strong>Tags</strong> Claude Code · Git hooks · Automation</span>
+      </div>
+    </header>
+
+<p>Claude Code hooks and Git hooks both run automation, but they fire at different layers. Git hooks run when Git performs repository operations such as commit, merge, applypatch, and push. Claude Code hooks run during the Claude Code session lifecycle and agent tool loop.</p>
+<h2>Git hooks: repository lifecycle</h2>
+<p>The official Git hooks documentation says hooks are programs placed in a hooks directory, usually <code>$GIT_DIR/hooks</code> or a path configured with <code>core.hooksPath</code>. Git invokes them at specific moments in Git operations. A <code>pre-commit</code> hook can block a commit. A <code>commit-msg</code> hook can validate the message. Server-side hooks can inspect pushes.</p>
+<p>Git hooks are excellent for repository policy: formatting, linting, secret checks, commit-message conventions, and push-time enforcement.</p>
+<h2>Claude Code hooks: agent lifecycle</h2>
+<p>Anthropic's Claude Code hooks reference describes hooks as user-defined commands, HTTP endpoints, or prompt hooks that execute at lifecycle events. Events include <code>SessionStart</code>, <code>UserPromptSubmit</code>, <code>PreToolUse</code>, <code>PostToolUse</code>, <code>Stop</code>, and others. Command hooks receive JSON context on stdin.</p>
+<p>That makes Claude Code hooks useful for agent-aware automation: inject context at session start, inspect tool calls before execution, record edits after tool use, summarize state when a turn stops, or add deterministic feedback after a file change.</p>
+<h2>The difference that matters</h2>
+<p>A Git hook sees the repository event. A Claude Code hook sees the agent event. If you only use Git hooks, you may know a commit happened but not which prompt caused it or what Claude observed while editing. If you only use Claude Code hooks, you may capture rich session context but miss enforcement at the final commit or push boundary.</p>
+<h2>How h5i combines them</h2>
+<p>h5i's Claude Code hook commands are designed for agent context. <code>h5i hook session-start</code> prints prior context into the new session. <code>h5i hook run</code> reads JSON from Claude Code as a <code>PostToolUse</code> handler and emits h5i context traces. <code>h5i hook stop</code> checkpoints recent context before the session ends.</p>
+<p>That can coexist with Git hooks for conventional repository policy. For example, Claude Code hooks can capture the prompt and tool trace, while a Git <code>pre-commit</code> hook runs tests or blocks secrets.</p>
+<h2>Practical rule</h2>
+<p>Use Claude Code hooks for agent observability and session memory. Use Git hooks for repository gates. Use h5i to connect the two into provenance that survives beyond the chat window.</p>
+<h2>FAQ</h2>
+<h3>Can a Git hook capture Claude Code prompts?</h3>
+<p>Not reliably by itself. Git hooks run at Git operations and do not naturally receive Claude Code session context.</p>
+<h3>Can a Claude Code hook replace pre-commit?</h3>
+<p>It can run checks, but repository enforcement still belongs at Git boundaries if you want the policy to apply to all contributors and tools.</p>
+<h3>Which one should I install first?</h3>
+<p>For AI provenance, install Claude Code hooks first. For enforcement, keep or add Git hooks and CI.</p>
+
+
+    <h2>Sources and verification</h2>
+    <p>This article avoids vendor-specific claims that were not checked against primary docs or local h5i CLI behavior.</p>
+    <ul>
+        <li><a href="https://code.claude.com/docs/en/hooks">Claude Code hooks reference</a></li>
+        <li><a href="https://git-scm.com/docs/githooks">Git hooks documentation</a></li>
+    </ul>
+
+    <div class="next-up">
+      <span class="label">Next in the cluster</span>
+      <a href="/blog/track-claude-code-prompts-diffs-git/">
+        <h3>How to Track Claude Code Prompts and Diffs in Git</h3>
+        <p>Continue the AI-aware version control series with the next focused workflow.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Bring AI provenance into Git</h3>
+      <p>h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
+      <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/guides/" class="btn btn-ghost">Read the guides</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/guides/">Guides</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>

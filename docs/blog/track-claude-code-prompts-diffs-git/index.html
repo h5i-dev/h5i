@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How to Track Claude Code Prompts and Diffs in Git — h5i</title>
+  <meta name="description" content="Track Claude Code prompts, file edits, diffs, and test evidence in Git using h5i provenance and Claude Code lifecycle hooks.">
+  <meta name="keywords" content="track claude code prompts, claude code diffs git, claude code provenance, claude code hooks, ai generated code tracking">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/track-claude-code-prompts-diffs-git/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="How to Track Claude Code Prompts and Diffs in Git">
+  <meta property="og:description" content="Track Claude Code prompts, file edits, diffs, and test evidence in Git using h5i provenance and Claude Code lifecycle hooks.">
+  <meta property="og:url" content="https://h5i.dev/blog/track-claude-code-prompts-diffs-git/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-06-03">
+  <meta property="article:author" content="Koukyosyumei">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="How to Track Claude Code Prompts and Diffs in Git">
+  <meta name="twitter:description" content="Track Claude Code prompts, file edits, diffs, and test evidence in Git using h5i provenance and Claude Code lifecycle hooks.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "How to Track Claude Code Prompts and Diffs in Git",
+  "description": "Track Claude Code prompts, file edits, diffs, and test evidence in Git using h5i provenance and Claude Code lifecycle hooks.",
+  "author": {
+    "@type": "Person",
+    "name": "Koukyosyumei",
+    "url": "https://github.com/Koukyosyumei"
+  },
+  "datePublished": "2026-06-03",
+  "dateModified": "2026-06-03",
+  "publisher": {
+    "@type": "Organization",
+    "name": "h5i",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://h5i.dev/_static/logo.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://h5i.dev/blog/track-claude-code-prompts-diffs-git/"
+  },
+  "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+  "keywords": "track claude code prompts, claude code diffs git, claude code provenance, claude code hooks, ai generated code tracking"
+}
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "How to Track Claude Code Prompts and Diffs in Git", "item": "https://h5i.dev/blog/track-claude-code-prompts-diffs-git/"}]}
+  </script>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/workflows/">Workflows</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Guide · Claude Code provenance</div>
+      <h1>How to Track Claude Code Prompts and Diffs in Git</h1>
+      <p class="post-deck">Claude Code can edit real repositories. The missing workflow is durable provenance: prompt, agent identity, changed files, tests, and review context stored next to the commits.</p>
+      <div class="post-meta">
+        <span><strong>Published</strong> 2026-06-03</span>
+        <span><strong>Reading time</strong> 8 min read</span>
+        <span><strong>Tags</strong> Claude Code · Prompts · Git</span>
+      </div>
+    </header>
+
+<p>Claude Code already works inside a Git repository. That means every edit can end in a normal commit and pull request. The problem is that Git does not automatically store the Claude Code prompt, the model identity, the files Claude observed, or the test evidence behind the change.</p>
+<p>h5i fills that gap by capturing AI provenance as Git-sidecar data. The repository still behaves like a normal Git repo. The AI layer gives reviewers and future maintainers a way to answer, "what did Claude Code do, and why?"</p>
+<h2>What to capture</h2>
+<p>For Claude Code work, capture at least five fields: the task prompt, the agent name, the model if known, the changed commit, and the test result. For longer sessions, also capture context traces and decisions. Those records make the diff explainable without storing an entire chat transcript in the commit message.</p>
+<h2>Manual capture</h2>
+<p>The direct workflow is simple:</p>
+<div class="terminal"><div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/repo</span></div><div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "add retry handling" \
+  --agent claude-code \
+  --model claude-sonnet-4-6 \
+  --prompt "add retry handling to the API client" \
+  --tests</span></pre></div></div>
+<p>Then inspect it later:</p>
+<div class="terminal"><div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/repo</span></div><div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --limit 5</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/api/client.py --show-prompt</span></pre></div></div>
+<h2>Hook-based capture</h2>
+<p>Claude Code hooks are user-defined commands or endpoints that run at lifecycle events. Anthropic's hooks reference documents events such as <code>SessionStart</code>, <code>UserPromptSubmit</code>, <code>PreToolUse</code>, and <code>PostToolUse</code>, with JSON context passed to hook handlers. h5i uses that mechanism to make provenance capture less manual.</p>
+<p>Run:</p>
+<div class="terminal"><div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/repo</span></div><div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup</span></pre></div></div>
+<p>The h5i hook commands are designed for three moments: <code>h5i hook session-start</code> injects prior context when a Claude Code session begins, <code>h5i hook run</code> records tool-use traces after edits, and <code>h5i hook stop</code> checkpoints the context before the session ends.</p>
+<h2>What this gives reviewers</h2>
+<p>A reviewer can see the ordinary diff and the AI context around it. That context answers whether the prompt asked for exactly this behavior, whether the agent touched files outside scope, whether tests ran, and whether the agent recorded a risky assumption.</p>
+<p>The better workflow is not "trust Claude Code because it wrote a clean diff." It is "review Claude Code with the prompt, diff, tests, and trace in one packet."</p>
+<h2>FAQ</h2>
+<h3>Does this require rewriting Git history?</h3>
+<p>No. h5i stores provenance alongside Git history rather than changing the commit object after the fact.</p>
+<h3>Should the full prompt be public?</h3>
+<p>Not always. Teams should treat prompts as potentially sensitive and decide what to share. h5i sharing is explicit through h5i refs rather than automatic through plain <code>git push</code>.</p>
+<h3>Can this track diffs without Claude Code hooks?</h3>
+<p>Yes. You can use manual <code>h5i capture commit</code> and ordinary Git diffs. Hooks reduce the chance that humans forget to capture the context.</p>
+
+
+    <h2>Sources and verification</h2>
+    <p>This article avoids vendor-specific claims that were not checked against primary docs or local h5i CLI behavior.</p>
+    <ul>
+        <li><a href="https://code.claude.com/docs/en/hooks">Claude Code hooks reference</a></li>
+        <li><a href="/guides/ai-code-provenance/">h5i AI provenance guide</a></li>
+    </ul>
+
+    <div class="next-up">
+      <span class="label">Next in the cluster</span>
+      <a href="/blog/claude-code-hooks-vs-git-hooks/">
+        <h3>Claude Code Hooks vs Git Hooks</h3>
+        <p>Continue the AI-aware version control series with the next focused workflow.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Bring AI provenance into Git</h3>
+      <p>h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
+      <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/guides/" class="btn btn-ghost">Read the guides</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/guides/">Guides</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>
