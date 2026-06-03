@@ -637,3 +637,4 @@ _[Checkpoint: 6a1fa0d8 — Assessed proposed SEO blog-post set against existing 
 
 [03:43:27] OBSERVE: read docs/guides/ai-code-provenance/index.html
 [03:43:27] OBSERVE: read docs/blog/index.html
+[03:43:27] OBSERVE: read docs/sitemap.xml
