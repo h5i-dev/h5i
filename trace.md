@@ -635,3 +635,4 @@ _[Checkpoint: 6a1f44f1 — edited _static/blog.css; edited docs/index.html; edit
 _[Checkpoint: 6a1fa0d8 — Assessed proposed SEO blog-post set against existing docs/blog and guides content; recommended clustered, verified article strategy.]_
 ---
 
+[03:43:27] OBSERVE: read docs/guides/ai-code-provenance/index.html
