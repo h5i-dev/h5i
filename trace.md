@@ -932,3 +932,9 @@ _[Checkpoint: 6a2344ce — Sent detailed RTK filter-quality review to Claude and
 [21:56:02] ACT: edited src/token_filter.rs
 [21:56:45] ACT: edited src/token_filter.rs
 [21:58:22] ACT: edited docs/token-reduction.md
+
+
+---
+_[Checkpoint: 6a23469e — phase-1.5 command-aware adapters added]_
+---
+

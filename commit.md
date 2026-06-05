@@ -888,3 +888,16 @@ Improve docs website: simplify text, add msg feature to top page, write detailed
 
 ---
 
+## Commit 6a23469e — 2026-06-05 21:58 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+summarize_command(cmd,output,cfg)->Option<FilterResult> contract; pytest/cargo/git-diff adapters with generic fallback (kind==Auto gate); cfg.cmd wired from capture run argv; 10 golden tests; 577 suite green, clippy clean; e2e verified. Deferred: git status/log, npm/vitest, TOML rules.
+
+---
+
