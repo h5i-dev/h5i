@@ -931,3 +931,4 @@ _[Checkpoint: 6a2344ce — Sent detailed RTK filter-quality review to Claude and
 [21:54:41] ACT: edited src/token_filter.rs
 [21:56:02] ACT: edited src/token_filter.rs
 [21:56:45] ACT: edited src/token_filter.rs
+[21:58:22] ACT: edited docs/token-reduction.md
