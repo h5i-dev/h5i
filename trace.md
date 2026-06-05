@@ -779,3 +779,4 @@ _[Checkpoint: 6a231192 — edited src/main.rs; edited src/msg.rs; edited .claude
 [21:22:33] NOTE: RISK: summary-only pointers like [Pasted text #3] are brittle unless they include a stable object digest and enough metadata for retrieval, GC, and cross-agent sync.
 [21:22:34] OBSERVE: read store.ts
 [21:22:34] OBSERVE: read package.json
+[21:23:59] OBSERVE: read src/main.rs
