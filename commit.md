@@ -992,3 +992,16 @@ src/filter_rules.rs = rtk 8-stage TOML engine; 59 rule configs imported to asset
 
 ---
 
+## Commit 6a234d53 — 2026-06-05 22:27 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+src/filter_rules.rs = rtk 8-stage TOML engine; 59 rule configs imported to assets/filters/ (rust-embed), Apache-2.0 attribution in NOTICE; wired as fallback after coded adapters in token_filter::filter; 145 inline golden tests pass; h5i objects filters [--verify] CLI. Suite 584 green, clippy clean. Deferred: git status/log, npm/jest/vitest, trust-gated project-local .h5i/filters.toml.
+
+### This Commit's Contribution
+
+
+---
+
