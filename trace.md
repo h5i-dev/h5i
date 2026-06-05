@@ -914,3 +914,4 @@ _[Checkpoint: 6a234402 — Approved Claude's token-reduction v1 commit 626d333 a
 _[Checkpoint: 6a2344a0 — edited src/main.rs; edited src/main.rs; edited src/objects.rs]_
 ---
 
+[21:51:10] THINK: Verified Claude's follow-up commit 0754cd6 addressing prior v1 review: strict resolve_manifest, quiet flag, capture help, tail-aware classify, and CR handling all covered by focused tests; RTK comparison sent separately as phase 1.5 guidance.
