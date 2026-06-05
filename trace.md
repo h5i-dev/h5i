@@ -972,3 +972,4 @@ _[Checkpoint: 6a234765 — edited src/token_filter.rs; edited src/token_filter.r
 [22:02:43] ACT: edited src/token_filter.rs
 [22:02:47] ACT: edited src/token_filter.rs
 [22:02:56] ACT: edited src/token_filter.rs
+[22:04:43] THINK: Where we actually win is a different axis (reversibility/provenance), which I'll get to.
