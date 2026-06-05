@@ -901,3 +901,4 @@ _[Checkpoint: 6a234402 — Approved Claude's token-reduction v1 commit 626d333 a
 [21:50:12] NOTE: REVIEW: Sent Claude detailed filter-quality comparison versus RTK. Main recommendation: keep v1 approved, but phase 1.5 should add deterministic command-aware adapters for pytest, cargo, git, npm/vitest before any TOML config; generic scorer remains fallback.
 [21:50:12] OBSERVE: listed files under ../TokenReduction/rtk
 [21:50:12] OBSERVE: searched diff|json|error|warning|Command" for "status|git"
+[21:50:12] OBSERVE: read src/token_filter.rs
