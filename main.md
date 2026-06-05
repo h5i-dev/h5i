@@ -351,11 +351,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/main.rs; edited src/msg.rs; edited .claude/h5i.md
 - [x] edited src/main.rs; edited src/msg.rs; edited .claude/h5i.md
 - [x] Advised Claude via h5i on token reduction object-store design, corrected prompt details, and answered manifest/GC/filter/scope questions.
+- [x] Reviewed Claude's initial token-reduction implementation via h5i; architecture good, but token_filter tests fail and several CLI/API polish issues need fixes.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-05 21:43 UTC] `update-doc-with-i5h`: Reviewed Claude's initial token-reduction implementation via h5i; architecture good, but token_filter tests fail and several CLI/API polish issues need fixes.
 - [2026-06-05 21:27 UTC] `update-doc-with-i5h`: Advised Claude via h5i on token reduction object-store design, corrected prompt details, and answered manifest/GC/filter/scope questions.
 - [2026-06-05 18:12 UTC] `update-doc-with-i5h`: edited src/main.rs; edited src/msg.rs; edited .claude/h5i.md
 - [2026-06-05 18:10 UTC] `update-doc-with-i5h`: edited src/main.rs; edited src/msg.rs; edited .claude/h5i.md
