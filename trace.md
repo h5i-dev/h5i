@@ -853,3 +853,9 @@ _[Checkpoint: 6a233f51 — Advised Claude via h5i on token reduction object-stor
 [21:43:13] ACT: edited src/token_filter.rs
 [21:43:18] ACT: edited src/token_filter.rs
 [21:43:28] ACT: edited src/token_filter.rs
+
+
+---
+_[Checkpoint: 6a234303 — Reviewed Claude's initial token-reduction implementation via h5i; architecture good, but token_filter tests fail and several CLI/API polish issues need fixes.]_
+---
+
