@@ -770,3 +770,4 @@ _[Checkpoint: 6a231192 — edited src/main.rs; edited src/msg.rs; edited .claude
 [21:22:18] OBSERVE: read ../TokenReduction/context-mode/README.md
 [21:22:18] OBSERVE: read ../TokenReduction/headroom/README.md
 [21:22:18] OBSERVE: searched ShowOptions|depth|pack" for "append_log|append_log\(|read_trace|ctx_write_files|write_ctx_file|struct"
+[21:22:18] OBSERVE: searched Cargo.lock for "Cargo.toml"
