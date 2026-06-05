@@ -791,3 +791,9 @@ _[Checkpoint: 6a231192 — edited src/main.rs; edited src/msg.rs; edited .claude
 [21:27:09] OBSERVE: read src/error.rs
 [21:27:09] OBSERVE: read src/msg.rs
 [21:27:26] OBSERVE: read src/main.rs
+
+
+---
+_[Checkpoint: 6a233f51 — Advised Claude via h5i on token reduction object-store design, corrected prompt details, and answered manifest/GC/filter/scope questions.]_
+---
+
