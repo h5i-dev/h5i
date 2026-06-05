@@ -1,0 +1,28 @@
+h5i declarative output filters
+================================
+
+The `*.toml` rule files in this directory, and the engine that runs them
+(`src/filter_rules.rs`), are derived from **rtk**:
+
+    rtk — https://github.com/rtk-ai/rtk
+    Copyright (c) Patrick Szymkowiak
+    Licensed under the Apache License, Version 2.0
+
+h5i is itself licensed under Apache-2.0 (see the repository LICENSE), so these
+files are redistributed under the same license. Per Apache-2.0 §4, this NOTICE
+records that the files have been **modified** for use in h5i:
+
+  - The rule files were copied from rtk's `src/filters/*.toml`. Their `[filters.*]`
+    schema and inline `[[tests.*]]` golden cases are used as-is or lightly
+    adapted; some may diverge from upstream over time.
+  - The filter engine was re-implemented in `src/filter_rules.rs` to match rtk's
+    8-stage pipeline (strip_ansi → replace → match_output → strip/keep_lines →
+    truncate_lines_at → head/tail_lines → max_lines → on_empty) and its
+    `strip_ansi`/`truncate` semantics, so the imported golden tests pass.
+  - h5i applies these rules only as a fallback within `h5i capture run`, after
+    its own coded adapters (pytest/cargo/git) and before the generic scorer;
+    h5i always filters the combined stdout+stderr blob, so the `filter_stderr`
+    field is accepted but inert.
+
+Upstream rule authorship and copyright remain with the rtk project and its
+contributors.

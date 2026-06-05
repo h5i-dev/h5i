@@ -1811,6 +1811,14 @@ enum ObjectsCommands {
 
     /// Verify manifests against the local store (absent blobs, orphans).
     Fsck,
+
+    /// List the built-in declarative command filters (the rtk-derived rule set
+    /// that `capture run` applies for tools without a coded adapter).
+    Filters {
+        /// Run every rule's inline golden tests and report pass/fail.
+        #[arg(long)]
+        verify: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -3119,7 +3127,7 @@ fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
         ],
         "audit" => &["review", "scan", "compliance", "policy", "vibe"],
         "share" => &["push", "pull", "pr", "memory", "setup-remote", "migrate-remote"],
-        "objects" => &["run", "put", "get", "list", "ls", "gc", "pin", "unpin", "fsck"],
+        "objects" => &["run", "put", "get", "list", "ls", "gc", "pin", "unpin", "fsck", "filters"],
         _ => return None,
     };
     let typo_l = typo.to_lowercase();
@@ -3225,6 +3233,8 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("objects", "pin")      => &["objects", "pin"],
         ("objects", "unpin")    => &["objects", "unpin"],
         ("objects", "fsck")     => &["objects", "fsck"],
+        ("objects", "filters")  => &["objects", "filters"],
+        ("objects", "rules")    => &["objects", "filters"],
 
         _ => return None,
     })
@@ -3485,6 +3495,12 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     summary: "Verify manifests against the local store (absent blobs, orphans).",
                     legacy: "(new)",
                     example: "h5i objects fsck",
+                },
+                NounVerb {
+                    verb: "filters",
+                    summary: "List built-in per-command filters (rtk-derived); --verify runs their golden tests.",
+                    legacy: "(new)",
+                    example: "h5i objects filters\n      h5i objects filters --verify",
                 },
             ],
             &[
@@ -6438,6 +6454,46 @@ jq -c '{
                     let m = objects::resolve_manifest(git, &id)?;
                     objects::unpin(&h5i_root, m.hex())?;
                     println!("{} unpinned {}", style("✔").green(), style(&m.id).cyan());
+                }
+
+                ObjectsCommands::Filters { verify } => {
+                    if verify {
+                        let (passed, failures) = h5i_core::filter_rules::run_golden_tests();
+                        if failures.is_empty() {
+                            println!(
+                                "{} all {} golden test(s) passed across {} rules",
+                                style("✔").green(),
+                                passed,
+                                h5i_core::filter_rules::list_filters().len()
+                            );
+                        } else {
+                            println!(
+                                "{} {} passed, {} failed",
+                                style("✗").red(),
+                                passed,
+                                failures.len()
+                            );
+                            for f in failures.iter().take(20) {
+                                println!("  {} {}/{}", style("✗").red(), f.filter, f.test);
+                            }
+                            std::process::exit(1);
+                        }
+                    } else {
+                        let rules = h5i_core::filter_rules::list_filters();
+                        println!(
+                            "{} built-in command filters (rtk-derived; applied by `h5i capture run`)\n",
+                            rules.len()
+                        );
+                        let w = rules.iter().map(|(n, _, _)| n.len()).max().unwrap_or(0);
+                        for (name, desc, _pat) in &rules {
+                            println!("  {:<w$}  {}", style(name).cyan().bold(), style(desc).dim(), w = w);
+                        }
+                        println!(
+                            "\n{} coded adapters (pytest, cargo, git diff) take precedence; \
+                             then these rules; then the generic scorer.",
+                            style("note:").dim()
+                        );
+                    }
                 }
 
                 ObjectsCommands::Fsck => {

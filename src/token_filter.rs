@@ -355,8 +355,27 @@ pub fn filter(raw: &str, cfg: &FilterConfig) -> FilterResult {
     // any adapter may decline (return None) to fall back to the generic scorer.
     if cfg.kind == OutputKind::Auto {
         if let Some(cmd) = &cfg.cmd {
+            // 1. h5i's own deep coded adapters (pytest/cargo/git diff).
             if let Some(res) = summarize_command(cmd, raw, cfg) {
                 return res;
+            }
+            // 2. Declarative per-command rules (the rtk-derived long tail).
+            if let Some((summary, _name)) = crate::filter_rules::summarize_with_rules(cmd, raw) {
+                let cleaned = strip_ansi(raw);
+                let raw_lines = cleaned.lines().count();
+                let raw_tokens = count_tokens(&cleaned);
+                let summary = apply_token_budget(summary, cfg.token_budget);
+                let summary_tokens = count_tokens(&summary);
+                let kept_lines = summary.lines().count();
+                return FilterResult {
+                    summary,
+                    kind: OutputKind::Generic,
+                    highlights: Vec::new(),
+                    raw_lines,
+                    kept_lines,
+                    raw_tokens,
+                    summary_tokens,
+                };
             }
         }
     }

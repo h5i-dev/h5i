@@ -101,8 +101,35 @@ Adapters are deterministic, dependency-light, and covered by golden-style tests
 (buried failure retained · all-pass shrinks aggressively · success never empties ·
 raw rehydrate stays exact). Each may decline (`return None`) so a malformed or
 unexpected output never produces a misleading summary — it just falls back.
-Deferred to a later pass: `git status`/`git log`, npm/jest/vitest, and a
-user-extensible (RTK-style) rule format once the built-in semantics are proven.
+
+### Declarative rules (the long tail)
+
+Beyond the three coded adapters, h5i ships **59 declarative per-command rules**
+covering gcc, make, terraform, eslint, biome, gcloud, docker, rsync, and more.
+Each rule is a small TOML pipeline matched against the command by regex:
+
+```
+strip_ansi → replace → match_output (with `unless` guard) →
+strip/keep_lines_matching → truncate_lines_at → head/tail_lines →
+max_lines → on_empty
+```
+
+```bash
+h5i objects filters            # list all built-in rules
+h5i objects filters --verify   # run every rule's inline golden tests
+```
+
+Precedence in `capture run`: **coded adapters → declarative rules → generic
+scorer**. An explicit `--kind` opts out of all of them.
+
+This engine and its rule set are ported from **rtk**
+(<https://github.com/rtk-ai/rtk>, Apache-2.0, © Patrick Szymkowiak) with
+modifications — see `assets/filters/NOTICE`. Each rule keeps its upstream inline
+`[[tests.*]]` golden cases, which run as part of h5i's test suite (145 cases) to
+prove the port stays faithful.
+
+Still deferred: `git status`/`git log` adapters, npm/jest/vitest, and a
+trust-gated project-local `.h5i/filters.toml` for user-defined rules.
 
 ## Lifetime & space
 
