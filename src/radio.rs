@@ -315,7 +315,7 @@ fn build_frame_lines(
         return (vec![clip("h5i radio — terminal too small", cols)], Vec::new());
     }
 
-    let blink = (elapsed_ms / 500) % 2 == 0; // ~2 Hz LIVE pulse
+    let blink = (elapsed_ms / 500).is_multiple_of(2); // ~2 Hz LIVE pulse
     let mut lines: Vec<String> = Vec::with_capacity(rows);
 
     // — header —
@@ -364,7 +364,7 @@ fn build_frame_lines(
     // — feed band —
     let banner = if accent_on {
         let n = accent_ids.len();
-        let txt = if (elapsed_ms / 200) % 2 == 0 {
+        let txt = if (elapsed_ms / 200).is_multiple_of(2) {
             style(format!("◢◤ {n} INCOMING ◢◤")).yellow().bold().to_string()
         } else {
             style(format!("◢◤ {n} INCOMING ◢◤")).red().bold().to_string()
@@ -475,7 +475,7 @@ fn render_message(
         paint_agent(&msg::sanitize_display(&m.to), agent_color_idx(&m.to), false)
     };
     // Pulse the arrow on a fresh arrival for a beat of motion.
-    let arrow = if fresh && accent_on && frame % 2 == 0 {
+    let arrow = if fresh && accent_on && frame.is_multiple_of(2) {
         style("━━▶").yellow().bold().to_string()
     } else {
         style("──▶").dim().to_string()
@@ -510,7 +510,7 @@ fn render_message(
     let body_raw = msg::sanitize_display(&m.body);
     let body_styled = if fresh && accent_on {
         // Bright reveal for the newly-arrived line.
-        if frame % 2 == 0 {
+        if frame.is_multiple_of(2) {
             style(body_raw).white().bold().to_string()
         } else {
             style(body_raw).yellow().bold().to_string()

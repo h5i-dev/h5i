@@ -107,7 +107,7 @@ fn print_one_message(n: usize, m: &msg::Message, viewer: &str, plain: bool) {
         arrow(&m.from, &m.to, viewer),
         kind_badge(&m.effective_kind()),
         priority_badge(&m.priority),
-        style(format!("#{}", &m.id)).dim(),
+        style(format!("#{}", m.id)).dim(),
         reply_marker(m),
     );
     println!("       {}", msg::sanitize_display(&m.body));
@@ -411,7 +411,7 @@ fn render_dashboard(
                 arrow(&m.from, &m.to, me.unwrap_or("")),
                 kind_badge(&m.effective_kind()),
                 priority_badge(&m.priority),
-                style(format!("#{}", &m.id)).dim(),
+                style(format!("#{}", m.id)).dim(),
                 reply_marker(m),
             );
             radio_row(&head);
@@ -486,7 +486,7 @@ fn report_sent(m: &msg::Message) {
         SUCCESS,
         arrow(&m.from, &m.to, &m.from),
         kind_badge(&m.effective_kind()),
-        style(format!("#{}", &m.id)).dim(),
+        style(format!("#{}", m.id)).dim(),
         style(re).dim(),
     );
     if !m.body.is_empty() {
@@ -1211,16 +1211,17 @@ enum MsgCommands {
         interval: u64,
     },
 
-    /// Live "Agent Radio" — watch the conversation as it happens. Ctrl+C to stop.
+    /// Live watcher — stream the conversation as it happens. Ctrl+C to stop.
     ///
-    /// On an interactive terminal this opens a full-screen cinematic dashboard
+    /// By default this is the stable line-streaming watcher (the format the
+    /// Stop hook / Monitor tool consume). Pass `--tui` on an interactive
+    /// terminal to open the full-screen cinematic "Agent Radio" dashboard
     /// (roster with per-agent activity, a live transmission feed, and a Git
-    /// provenance ticker). When stdout is not a TTY — or with `--plain` /
-    /// `--no-tui` / `--once` — it falls back to the stable line-streaming
-    /// watcher (the format the Stop hook / Monitor tool consume). With an
-    /// identity (`--as` / $H5I_AGENT) it scopes to your conversation (sent +
-    /// received + broadcast); with `--all` or no identity it shows the whole
-    /// channel. Always passive: it never advances any agent's read cursor.
+    /// provenance ticker); `--tui` is ignored when stdout is not a TTY or with
+    /// `--plain` / `--once`. With an identity (`--as` / $H5I_AGENT) it scopes to
+    /// your conversation (sent + received + broadcast); with `--all` or no
+    /// identity it shows the whole channel. Always passive: it never advances
+    /// any agent's read cursor.
     Watch {
         /// Whose inbox to watch. Defaults to $H5I_AGENT or the stored identity.
         #[arg(long = "as")]
@@ -1235,10 +1236,10 @@ enum MsgCommands {
         /// Check once and exit (don't loop) — useful for testing.
         #[arg(long)]
         once: bool,
-        /// Force the line-streaming watcher instead of the full-screen Agent
-        /// Radio TUI (also implied when stdout is not a TTY or with `--plain`).
-        #[arg(long = "no-tui")]
-        no_tui: bool,
+        /// Open the full-screen Agent Radio TUI instead of the line-streaming
+        /// watcher (requires a TTY; ignored with `--plain` or `--once`).
+        #[arg(long)]
+        tui: bool,
     },
 }
 
@@ -3879,7 +3880,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                Some(MsgCommands::Watch { as_agent, all, interval, once, no_tui }) => {
+                Some(MsgCommands::Watch { as_agent, all, interval, once, tui }) => {
                     use std::collections::HashSet;
                     use std::io::{IsTerminal, Write as _};
                     // Identity-scoped *conversation* stream (both directions —
@@ -3891,12 +3892,11 @@ fn main() -> anyhow::Result<()> {
                         msg::resolve_identity(&h5i_root, as_agent.as_deref()).ok()
                     };
 
-                    // Cinematic full-screen Agent Radio: only on a real TTY and
-                    // only for the live, interactive case. Every scripted /
-                    // piped / Monitor path (`--plain`, `--once`, `--no-tui`, or
-                    // a non-TTY stdout) keeps the stable line-streaming watcher
-                    // below untouched.
-                    if !plain && !once && !no_tui && std::io::stdout().is_terminal() {
+                    // Cinematic full-screen Agent Radio: opt-in via `--tui`, and
+                    // only on a real, live TTY. The default (and every scripted /
+                    // piped / Monitor path — `--plain`, `--once`, or a non-TTY
+                    // stdout) keeps the stable line-streaming watcher below.
+                    if tui && !plain && !once && std::io::stdout().is_terminal() {
                         h5i_core::radio::run_watch(std::path::Path::new("."), me, all, interval)?;
                         return Ok(());
                     }
