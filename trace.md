@@ -735,3 +735,9 @@ _[Checkpoint: 6a230eb3 — edited src/session_log.rs; edited src/session_log.rs;
 [18:10:19] ACT: edited .claude/h5i.md
 [18:10:48] THINK: Now let me find where the `History` command is dispatched (the handler) and how `history()` results are printed.
 [18:10:48] THINK: Let me run the lib unit tests specifically (the new test lives in `src/msg.
+
+
+---
+_[Checkpoint: 6a231128 — edited src/main.rs; edited src/msg.rs; edited .claude/h5i.md]_
+---
+
