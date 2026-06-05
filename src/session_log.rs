@@ -1648,7 +1648,7 @@ fn split_sentences(text: &str) -> Vec<String> {
 /// like a relative file path (contains `/` or `.` and has a known extension).
 fn extract_promised_file(lower: &str, phrase: &str) -> Option<String> {
     let pos = lower.find(phrase)? + phrase.len();
-    let window: &str = &lower[pos..floor_char_boundary(&lower, pos + 120)];
+    let window: &str = &lower[pos..floor_char_boundary(lower, pos + 120)];
     for token in window.split_whitespace() {
         // Strip surrounding punctuation
         let t = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-');
