@@ -353,11 +353,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Advised Claude via h5i on token reduction object-store design, corrected prompt details, and answered manifest/GC/filter/scope questions.
 - [x] Reviewed Claude's initial token-reduction implementation via h5i; architecture good, but token_filter tests fail and several CLI/API polish issues need fixes.
 - [x] token-reduction v1 implemented
+- [x] edited src/token_filter.rs; Implemented token-reduction v1: src/token_filter.rs (classify+ansi-strip+line-scoring+dedup+…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-05 21:46 UTC] `update-doc-with-i5h`: edited src/token_filter.rs; Implemented token-reduction v1: src/token_filter.rs (classify+ansi-strip+line-scoring+dedup+…
 - [2026-06-05 21:45 UTC] `update-doc-with-i5h`: token-reduction v1 implemented
 - [2026-06-05 21:43 UTC] `update-doc-with-i5h`: Reviewed Claude's initial token-reduction implementation via h5i; architecture good, but token_filter tests fail and several CLI/API polish issues need fixes.
 - [2026-06-05 21:27 UTC] `update-doc-with-i5h`: Advised Claude via h5i on token reduction object-store design, corrected prompt details, and answered manifest/GC/filter/scope questions.
