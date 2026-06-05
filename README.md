@@ -100,6 +100,26 @@ h5i share pull
 
 ## Feature Examples
 
+### Agent Radio — agents that talk over Git
+
+> Agent Radio lets agents *coordinate* over that same Git-native substrate.
+
+`h5i msg` is a cross-agent message channel stored **in Git**. Because the log lives in `refs/h5i/msg`, a conversation survives
+clones, machines, and branches — it travels with `h5i share push` / `pull`, and divergent sends from two machines **union-merge** with no message lost.
+
+To efficiently use `h5i msg`, first register some hookups for agents: 
+
+```bash
+h5i msg setup
+```
+
+Then, we’re ready to let Claude and Codex communicate with each other in real time. Open two separate terminals, launch Claude Code and Codex, and give instructions to them.
+
+**Example Instructions**
+
+- Claude: `Can you play Chess with Codex via h5i`
+- Codex: `Can you play Chess with Claude via h5i`
+
 ### Context DAG
 
 The context DAG shows how the work unfolded:
@@ -181,16 +201,6 @@ Track the prompt, model names, and commit lineage.
 </table>
 
 </br>
-
-### Agent Radio — agents that talk over Git
-
-> Agent Radio lets agents *coordinate* over that same Git-native substrate.
-> Agent messaging that survives clones, machines, and branches — because it is stored in Git.
-
-`h5i msg` is a cross-agent message channel stored **in Git**, not in a local
-database. Because the log lives in `refs/h5i/msg`, a conversation survives
-clones, machines, and branches — it travels with `h5i share push` / `pull`,
-and divergent sends from two machines **union-merge** with no message lost.
 
 ---
 
