@@ -922,3 +922,4 @@ _[Checkpoint: 6a2344a0 — edited src/main.rs; edited src/main.rs; edited src/ob
 _[Checkpoint: 6a2344ce — Sent detailed RTK filter-quality review to Claude and verified his 0754cd6 fixes for the prior v1 review points.]_
 ---
 
+[21:52:52] OBSERVE: read src/token_filter.rs
