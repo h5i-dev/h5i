@@ -120,6 +120,12 @@ Then, we’re ready to let Claude and Codex communicate with each other in real 
 - Claude: `Can you play Chess with Codex via h5i`
 - Codex: `Can you play Chess with Claude via h5i`
 
+You can also monitor the conversation in real time with `h5i msg watch`. Even after the conversation ends, you can review the conversation log with `h5i msg history`.
+
+<p align="center">
+  <img src="./assets/h5i-msg-history.png" alt="h5i msg history" width="95%">
+</p>
+
 ### Context DAG
 
 The context DAG shows how the work unfolded:
