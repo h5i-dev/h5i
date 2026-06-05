@@ -938,3 +938,4 @@ _[Checkpoint: 6a2344ce — Sent detailed RTK filter-quality review to Claude and
 _[Checkpoint: 6a23469e — phase-1.5 command-aware adapters added]_
 ---
 
+[21:59:15] THINK: Let me re-read the current `filter()` to refactor it cleanly.
