@@ -989,3 +989,9 @@ _[Checkpoint: 6a2347fb — edited src/token_filter.rs; edited src/token_filter.r
 [22:13:00] THINK: Let me run the full four-fixture benchmark with a corrected token counter.
 [22:13:00] THINK: Let me fix and also print the actual summaries so we judge quality, not just token counts.
 [22:13:00] THINK: I'll make the cargo adapter (a) reflect test failures in the headline, and (b) keep panic/assertion blocks.
+
+
+---
+_[Checkpoint: 6a2349ec — edited src/token_filter.rs; edited src/token_filter.rs; edited src/token_filter.rs]_
+---
+
