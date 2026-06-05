@@ -974,3 +974,9 @@ _[Checkpoint: 6a234765 — edited src/token_filter.rs; edited src/token_filter.r
 [22:02:56] ACT: edited src/token_filter.rs
 [22:04:43] THINK: Where we actually win is a different axis (reversibility/provenance), which I'll get to.
 [22:04:43] NOTE: DEFERRAL (~/Dev/h5i/docs/token-reduction.md): , each with a regex `match_command` + 8-stage pipeline | 0 (deferred) | | **Depth per parser** | `cargo_cmd.rs` = **2216 lines**, pytest = 519, git di…
+
+
+---
+_[Checkpoint: 6a2347fb — edited src/token_filter.rs; edited src/token_filter.rs; edited src/token_filter.rs]_
+---
+
