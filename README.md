@@ -30,8 +30,8 @@ h5i is a pure Git sidecar for recording and sharing AI-agent contexts, metadata,
 
 | Ref | What lives there |
 |---|---|
-| `.git/refs/h5i/notes` | Per-commit metadata: model, agent, prompt, tokens, tests, decisions, risk signals. |
-| `.git/refs/h5i/context` | The reasoning workspace as a DAG: goal, milestones, traces, branches, restores. |
+| `.git/refs/h5i/notes` | Per-commit metadata: model, agent, prompt, tests, decisions, risk signals. |
+| `.git/refs/h5i/context` | The reasoning workspace as a DAG: goal, milestones, traces, branches. |
 | `.git/refs/h5i/ast` | AST snapshots for structural blame and semantic diffs. |
 | `.git/refs/h5i/checkpoints/<agent>` | Per-agent memory snapshots. |
 | `.git/refs/h5i/msg` | Cross-agent message log (append-only, union-merged on pull). |
