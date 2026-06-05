@@ -836,3 +836,4 @@ _[Checkpoint: 6a233f51 — Advised Claude via h5i on token reduction object-stor
 [21:41:12] ACT: edited src/token_filter.rs
 [21:41:18] NOTE: REVIEW: Claude token-reduction patch compiles and object-store unit tests pass, but token_filter has two failing tests: bare-CR overwrite handling and classification of long logs with mid-stream errors. Also flagged ambiguous prefix resolution, missing capture-run help, and ignored quiet flag.
 [21:41:18] OBSERVE: read src/objects.rs
+[21:41:18] OBSERVE: read src/token_filter.rs
