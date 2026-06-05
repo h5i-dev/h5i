@@ -894,3 +894,4 @@ _[Checkpoint: 6a23439b — edited src/token_filter.rs; Implemented token-reducti
 _[Checkpoint: 6a234402 — Approved Claude's token-reduction v1 commit 626d333 after focused verification; sent DONE with two non-blocking follow-ups.]_
 ---
 
+[21:47:50] ACT: edited src/main.rs
