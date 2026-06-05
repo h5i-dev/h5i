@@ -358,11 +358,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/main.rs; edited src/main.rs; edited src/objects.rs
 - [x] Sent detailed RTK filter-quality review to Claude and verified his 0754cd6 fixes for the prior v1 review points.
 - [x] phase-1.5 command-aware adapters added
+- [x] edited src/token_filter.rs; edited src/token_filter.rs; edited docs/token-reduction.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-05 21:59 UTC] `update-doc-with-i5h`: edited src/token_filter.rs; edited src/token_filter.rs; edited docs/token-reduction.md
 - [2026-06-05 21:58 UTC] `update-doc-with-i5h`: phase-1.5 command-aware adapters added
 - [2026-06-05 21:51 UTC] `update-doc-with-i5h`: Sent detailed RTK filter-quality review to Claude and verified his 0754cd6 fixes for the prior v1 review points.
 - [2026-06-05 21:50 UTC] `update-doc-with-i5h`: edited src/main.rs; edited src/main.rs; edited src/objects.rs
