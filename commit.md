@@ -823,3 +823,16 @@ Improve docs website: simplify text, add msg feature to top page, write detailed
 
 ---
 
+## Commit 6a23437d — 2026-06-05 21:45 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+object store + filter + CLI (capture run / objects */ recall object[s]) + storage/push-pull wiring + docs. 23 new tests, 568 total green, clippy clean, e2e smoke ~92% token cut. Deferred (phase 2): auto-ingest hook into ctx/codex trace; remote backends; zstd codec.
+
+---
+
