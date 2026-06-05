@@ -782,3 +782,4 @@ _[Checkpoint: 6a231192 — edited src/main.rs; edited src/msg.rs; edited .claude
 [21:23:59] OBSERVE: read src/main.rs
 [21:24:19] OBSERVE: read src/main.rs
 [21:24:28] OBSERVE: read src/main.rs
+[21:24:40] THINK: Corrected token-reduction advice: track JSON-style summaries in refs/h5i with command/cwd/git_tree/timestamp/raw_oid/raw_size/filter_version fields, store raw payloads in a local content-addressed object store, avoid git-annex/LFS/ML dependencies, and implement deterministic in-house filters first.
