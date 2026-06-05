@@ -1021,3 +1021,4 @@ _[Checkpoint: 6a234aad — edited src/token_filter.rs; edited src/token_filter.r
 _[Checkpoint: 6a234d36 — phase-2 declarative rule engine ported from rtk]_
 ---
 
+[22:27:31] THINK: rs; I'll use `rust-embed` (already our dep).
