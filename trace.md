@@ -654,3 +654,4 @@ _[Checkpoint: 6a1fa0d8 — Assessed proposed SEO blog-post set against existing 
 _[Checkpoint: 6a1fa2df — Added AI-aware version-control SEO blog cluster with eight posts, blog index entries, sitemap entries, and validation.]_
 ---
 
+[00:58:07] OBSERVE: read src/radio.rs
