@@ -1648,7 +1648,7 @@ fn split_sentences(text: &str) -> Vec<String> {
 /// like a relative file path (contains `/` or `.` and has a known extension).
 fn extract_promised_file(lower: &str, phrase: &str) -> Option<String> {
     let pos = lower.find(phrase)? + phrase.len();
-    let window: &str = &lower[pos..(pos + 120).min(lower.len())];
+    let window: &str = &lower[pos..floor_char_boundary(lower, pos + 120)];
     for token in window.split_whitespace() {
         // Strip surrounding punctuation
         let t = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-');
@@ -1663,6 +1663,20 @@ fn extract_promised_file(lower: &str, phrase: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Largest byte index `<= idx` that lies on a UTF-8 char boundary.
+/// Lets us truncate/slice arbitrary text without panicking inside a
+/// multi-byte character (e.g. '§', which occupies bytes 149..151).
+fn floor_char_boundary(s: &str, idx: usize) -> usize {
+    if idx >= s.len() {
+        return s.len();
+    }
+    let mut i = idx;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
 }
 
 fn extract_snippet(text: &str, phrase: &str, max_len: usize) -> String {
@@ -1684,7 +1698,7 @@ fn extract_snippet(text: &str, phrase: &str, max_len: usize) -> String {
     let snippet = &text[start..end];
     let clean: String = snippet.split_whitespace().collect::<Vec<_>>().join(" ");
     if clean.len() > max_len {
-        format!("{}…", &clean[..max_len])
+        format!("{}…", &clean[..floor_char_boundary(&clean, max_len)])
     } else {
         clean
     }
@@ -1715,7 +1729,7 @@ fn shorten_path(p: &str, max: usize) -> String {
     if p.len() <= max {
         p.to_string()
     } else {
-        format!("…{}", &p[p.len().saturating_sub(max - 1)..])
+        format!("…{}", &p[floor_char_boundary(p, p.len().saturating_sub(max - 1))..])
     }
 }
 
@@ -2277,5 +2291,36 @@ mod tests {
             .find(|c| c.path.contains("auth.rs"))
             .expect("auth.rs should appear in consulted");
         assert_eq!(entry.count, 3);
+    }
+
+    // ── multi-byte / char-boundary slicing ────────────────────────────────────
+
+    #[test]
+    fn test_floor_char_boundary_inside_multibyte() {
+        // '§' is two bytes; bisecting it must round down to the boundary.
+        let s = "ab§cd"; // bytes: a(0) b(1) §(2..4) c(4) d(5)
+        assert_eq!(floor_char_boundary(s, 3), 2);
+        assert_eq!(floor_char_boundary(s, 2), 2);
+        assert_eq!(floor_char_boundary(s, 100), s.len());
+    }
+
+    #[test]
+    fn test_extract_snippet_truncates_on_char_boundary() {
+        // Regression: truncating at a byte index landing inside '§' panicked
+        // (end byte index N is not a char boundary; it is inside '§').
+        let text = format!("the marker {} tail", "§".repeat(80));
+        // Must not panic regardless of where max_len falls.
+        for max_len in 1..text.len() {
+            let snippet = extract_snippet(&text, "marker", max_len);
+            assert!(snippet.is_char_boundary(snippet.len()));
+        }
+    }
+
+    #[test]
+    fn test_shorten_path_with_multibyte() {
+        let p = "src/§§§§§§§§§§/deep/module.rs";
+        // Should not panic and stay valid UTF-8.
+        let _ = shorten_path(p, 10);
+        let _ = shorten_path(p, 7);
     }
 }
