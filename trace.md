@@ -1022,3 +1022,4 @@ _[Checkpoint: 6a234d36 — phase-2 declarative rule engine ported from rtk]_
 ---
 
 [22:27:31] THINK: rs; I'll use `rust-embed` (already our dep).
+[22:27:31] THINK: Let me set up tasks, copy the configs, and audit which fields they use.
