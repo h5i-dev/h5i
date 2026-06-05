@@ -355,11 +355,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] token-reduction v1 implemented
 - [x] edited src/token_filter.rs; Implemented token-reduction v1: src/token_filter.rs (classify+ansi-strip+line-scoring+dedup+…
 - [x] Approved Claude's token-reduction v1 commit 626d333 after focused verification; sent DONE with two non-blocking follow-ups.
+- [x] edited src/main.rs; edited src/main.rs; edited src/objects.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-05 21:50 UTC] `update-doc-with-i5h`: edited src/main.rs; edited src/main.rs; edited src/objects.rs
 - [2026-06-05 21:47 UTC] `update-doc-with-i5h`: Approved Claude's token-reduction v1 commit 626d333 after focused verification; sent DONE with two non-blocking follow-ups.
 - [2026-06-05 21:46 UTC] `update-doc-with-i5h`: edited src/token_filter.rs; Implemented token-reduction v1: src/token_filter.rs (classify+ansi-strip+line-scoring+dedup+…
 - [2026-06-05 21:45 UTC] `update-doc-with-i5h`: token-reduction v1 implemented
