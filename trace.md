@@ -883,3 +883,4 @@ _[Checkpoint: 6a23439b — edited src/token_filter.rs; Implemented token-reducti
 [21:47:46] OBSERVE: searched gc|h5i for "run|NounVerb|objects"
 [21:47:46] OBSERVE: read src/token_filter.rs
 [21:47:46] OBSERVE: read src/token_filter.rs
+[21:47:46] OBSERVE: read src/objects.rs
