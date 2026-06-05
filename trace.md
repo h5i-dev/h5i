@@ -750,3 +750,4 @@ _[Checkpoint: 6a231192 — edited src/main.rs; edited src/msg.rs; edited .claude
 ---
 
 [21:21:46] OBSERVE: read src/storage.rs
+[21:21:59] OBSERVE: read README.md
