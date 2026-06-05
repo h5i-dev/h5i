@@ -24,6 +24,8 @@ const REQUIRED_DIRS: &[&str] = &[
     "claims",
     "memory",
     "session_log",
+    // Content-addressed raw-output store for the token-reduction feature.
+    "objects",
 ];
 
 const H5I_REFS: &[&str] = &[
@@ -34,6 +36,8 @@ const H5I_REFS: &[&str] = &[
     "refs/h5i/ast",
     "refs/h5i/memory",
     "refs/h5i/msg",
+    // Token-reduction manifest log (raw-output pointers + summaries).
+    "refs/h5i/objects",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]

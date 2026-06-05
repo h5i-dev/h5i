@@ -1,0 +1,915 @@
+//! Content-addressed object store for large raw outputs (token reduction).
+//!
+//! h5i's "associative" sidecar for *bulk* data. The problem it solves: an agent
+//! that pipes a 4 MB `pytest` log or a giant JSON payload into its context burns
+//! its window on noise. This module splits such an output into two halves,
+//! borrowing the git-annex / git-lfs split between a *pointer* and the *blob*:
+//!
+//!   - **Raw blob** — the full bytes, content-addressed by sha256 and written to
+//!     a local store under `.git/.h5i/objects/ab/cd/<sha256>`. This is the
+//!     git-lfs-style "available locally" half. It is *not* pushed by a plain
+//!     `git push`; it stays local until a remote backend is configured (future).
+//!     Stored uncompressed today (`codec: "none"`); the layout reserves room for
+//!     a `.zst` codec later without a new dependency now.
+//!
+//!   - **Manifest** — a small, durable JSON record carrying the *full* digest
+//!     plus metadata (command, exit code, sizes, the filtered summary). Manifests
+//!     are appended to the git ref `refs/h5i/objects` so they travel with
+//!     `h5i share push`/`pull`. The summary is what an agent reads; the digest is
+//!     how it rehydrates the raw on demand (`h5i recall object <id>`).
+//!
+//! Lifetime: manifests are immutable and kept forever (cheap, greppable history).
+//! Only *local raw blobs* expire — [`gc`] evicts blobs that are unreferenced, or
+//! (with a TTL) referenced-but-stale, unless pinned. Eviction never rewrites a
+//! summary; a rehydrate of an evicted blob degrades gracefully with a clear
+//! "absent" message.
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
+
+use git2::{Repository, Signature};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use crate::error::H5iError;
+use crate::token_filter::{self, FilterConfig, OutputKind};
+
+/// Git ref holding the append-only manifest log (one JSON object per line).
+pub const OBJECTS_REF: &str = "refs/h5i/objects";
+/// Top-level file inside the ref's tree holding the manifest log.
+pub const MANIFESTS_FILE: &str = "manifests.jsonl";
+/// The local content-addressed store directory name, under the h5i sidecar root.
+pub const OBJECTS_DIR: &str = "objects";
+/// File (under the store dir) listing pinned digests, one per line.
+pub const PINS_FILE: &str = "pins";
+
+/// A git-tracked pointer to one stored raw output, plus its reduced summary.
+///
+/// This is the *only* thing that travels with the repo by default. It must carry
+/// everything needed to (a) display a useful summary and (b) locate/verify the
+/// raw bytes — hence the full digest, never a truncated one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Manifest {
+    /// Short, stable handle for the CLI (`h5i recall object <id>`): the first 16
+    /// hex chars of the digest. Long enough to be unambiguous in practice.
+    pub id: String,
+    /// Logical kind of the payload: "tool-output", "log", "test", "json", …
+    pub kind: String,
+    /// The command that produced it, if captured via `h5i capture run`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cmd: Option<String>,
+    /// Working directory the command ran in (relative to the repo when possible).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Process exit code, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    /// The HEAD tree the capture was taken against, for provenance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_tree: Option<String>,
+    /// RFC3339 capture time (UTC, microsecond, lexically sortable).
+    pub timestamp: String,
+    /// Full content address of the raw blob, e.g. `sha256:<64 hex>`.
+    pub raw_oid: String,
+    /// Raw payload size in bytes.
+    pub raw_size: u64,
+    /// Raw payload line count.
+    pub raw_lines: usize,
+    /// Version of the filter algorithm that produced `summary`.
+    pub filter_version: u32,
+    /// The reduced text an agent reads instead of the raw output.
+    pub summary: String,
+    /// Highest-signal lines extracted from the raw (errors, hunk headers, …).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub highlights: Vec<String>,
+    /// Which backend holds the raw bytes. Only "local" today.
+    pub store: String,
+    /// Compression codec of the stored blob. Only "none" today.
+    pub codec: String,
+    /// Best-effort token counts, for showing how much was saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_tokens: Option<usize>,
+}
+
+impl Manifest {
+    /// The bare 64-char hex digest (no `sha256:` prefix).
+    pub fn hex(&self) -> &str {
+        self.raw_oid.strip_prefix("sha256:").unwrap_or(&self.raw_oid)
+    }
+}
+
+/// A storage backend for raw blobs. Trait-shaped per the git-annex design so a
+/// remote (S3 / HTTP / LFS-like) backend can be added later; only [`LocalStore`]
+/// exists today.
+pub trait Backend {
+    fn name(&self) -> &str;
+    fn has(&self, hex: &str) -> bool;
+    fn put(&self, hex: &str, bytes: &[u8]) -> Result<(), H5iError>;
+    fn get(&self, hex: &str) -> Result<Option<Vec<u8>>, H5iError>;
+    fn remove(&self, hex: &str) -> Result<(), H5iError>;
+}
+
+/// The local filesystem backend: `<h5i_root>/objects/ab/cd/<sha256>`.
+pub struct LocalStore {
+    root: PathBuf,
+}
+
+impl LocalStore {
+    pub fn new(h5i_root: &Path) -> LocalStore {
+        LocalStore {
+            root: h5i_root.join(OBJECTS_DIR),
+        }
+    }
+
+    /// Sharded path for a digest: `objects/<a><b>/<c><d>/<full hex>`.
+    pub fn blob_path(&self, hex: &str) -> PathBuf {
+        // Defensive: callers validate, but never index out of range.
+        if hex.len() < 4 {
+            return self.root.join(hex);
+        }
+        self.root.join(&hex[0..2]).join(&hex[2..4]).join(hex)
+    }
+
+    /// Iterate every stored blob digest, with its on-disk size and mtime.
+    pub fn iter_blobs(&self) -> Result<Vec<(String, u64, SystemTime)>, H5iError> {
+        let mut out = Vec::new();
+        if !self.root.exists() {
+            return Ok(out);
+        }
+        for l1 in read_dir(&self.root)? {
+            let l1 = l1.path();
+            if !l1.is_dir() {
+                continue;
+            }
+            for l2 in read_dir(&l1)? {
+                let l2 = l2.path();
+                if !l2.is_dir() {
+                    continue;
+                }
+                for blob in read_dir(&l2)? {
+                    let p = blob.path();
+                    if !p.is_file() {
+                        continue;
+                    }
+                    let Some(name) = p.file_name().and_then(|s| s.to_str()) else {
+                        continue;
+                    };
+                    if !is_hex64(name) {
+                        continue;
+                    }
+                    let meta = std::fs::metadata(&p).map_err(|e| H5iError::with_path(e, &p))?;
+                    let mtime = meta.modified().unwrap_or_else(|_| SystemTime::now());
+                    out.push((name.to_string(), meta.len(), mtime));
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+impl Backend for LocalStore {
+    fn name(&self) -> &str {
+        "local"
+    }
+
+    fn has(&self, hex: &str) -> bool {
+        self.blob_path(hex).is_file()
+    }
+
+    fn put(&self, hex: &str, bytes: &[u8]) -> Result<(), H5iError> {
+        let path = self.blob_path(hex);
+        if path.is_file() {
+            return Ok(()); // content-addressed: identical content already stored
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+        }
+        // Write to a temp file then rename for atomicity.
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, bytes).map_err(|e| H5iError::with_path(e, &tmp))?;
+        std::fs::rename(&tmp, &path).map_err(|e| H5iError::with_path(e, &path))?;
+        Ok(())
+    }
+
+    fn get(&self, hex: &str) -> Result<Option<Vec<u8>>, H5iError> {
+        let path = self.blob_path(hex);
+        if !path.is_file() {
+            return Ok(None);
+        }
+        Ok(Some(
+            std::fs::read(&path).map_err(|e| H5iError::with_path(e, &path))?,
+        ))
+    }
+
+    fn remove(&self, hex: &str) -> Result<(), H5iError> {
+        let path = self.blob_path(hex);
+        if path.is_file() {
+            std::fs::remove_file(&path).map_err(|e| H5iError::with_path(e, &path))?;
+        }
+        Ok(())
+    }
+}
+
+/// Compute the sha256 of `bytes` as lowercase hex.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut s = String::with_capacity(64);
+    for b in digest {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+fn is_hex64(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// What a freshly captured output produced: the manifest plus the raw stats.
+pub struct CaptureOutcome {
+    pub manifest: Manifest,
+    /// True if this digest was already present locally (deduped).
+    pub deduped: bool,
+}
+
+/// Options for [`capture`].
+pub struct CaptureOptions {
+    pub kind: OutputKind,
+    pub cmd: Option<String>,
+    pub cwd: Option<String>,
+    pub exit_code: Option<i32>,
+    pub git_tree: Option<String>,
+    pub filter: FilterConfig,
+}
+
+/// Store `raw` in the local backend, build + persist a manifest, and return it.
+///
+/// This is the heart of the feature: it runs the deterministic filter, writes
+/// the blob to the content-addressed store, and appends the manifest to
+/// `refs/h5i/objects`. The caller then surfaces only `manifest.summary`.
+pub fn capture(
+    repo: &Repository,
+    h5i_root: &Path,
+    raw: &[u8],
+    opts: CaptureOptions,
+) -> Result<CaptureOutcome, H5iError> {
+    let store = LocalStore::new(h5i_root);
+    let hex = sha256_hex(raw);
+    let deduped = store.has(&hex);
+    store.put(&hex, raw)?;
+
+    // Filter on the textual view of the payload. Non-UTF8 (e.g. screenshots)
+    // still get stored; their "summary" notes that they're binary.
+    let text = String::from_utf8_lossy(raw);
+    let is_binary = raw.contains(&0);
+    let filtered = if is_binary {
+        token_filter::FilterResult {
+            summary: format!("[binary payload · {} bytes]", raw.len()),
+            kind: OutputKind::Generic,
+            highlights: Vec::new(),
+            raw_lines: 0,
+            kept_lines: 0,
+            raw_tokens: None,
+            summary_tokens: None,
+        }
+    } else {
+        token_filter::filter(&text, &opts.filter)
+    };
+
+    let kind = if opts.kind == OutputKind::Auto {
+        // Prefer the classified kind, but tag command captures as "tool-output".
+        if opts.cmd.is_some() {
+            "tool-output".to_string()
+        } else {
+            filtered.kind.as_str().to_string()
+        }
+    } else {
+        opts.kind.as_str().to_string()
+    };
+
+    let manifest = Manifest {
+        id: hex[..16].to_string(),
+        kind,
+        cmd: opts.cmd,
+        cwd: opts.cwd,
+        exit_code: opts.exit_code,
+        git_tree: opts.git_tree,
+        timestamp: now_ts(),
+        raw_oid: format!("sha256:{hex}"),
+        raw_size: raw.len() as u64,
+        raw_lines: filtered.raw_lines,
+        filter_version: token_filter::FILTER_VERSION,
+        summary: filtered.summary,
+        highlights: filtered.highlights,
+        store: store.name().to_string(),
+        codec: "none".to_string(),
+        raw_tokens: filtered.raw_tokens,
+        summary_tokens: filtered.summary_tokens,
+    };
+
+    append_manifest(repo, &manifest)?;
+    Ok(CaptureOutcome { manifest, deduped })
+}
+
+/// Append `manifest` to `refs/h5i/objects` with compare-and-swap semantics,
+/// mirroring the i5h message log: build a commit off the current tip, then move
+/// the ref only if it hasn't moved under us. Retries on a lost race.
+pub fn append_manifest(repo: &Repository, manifest: &Manifest) -> Result<(), H5iError> {
+    const MAX_ATTEMPTS: usize = 64;
+    let line = serde_json::to_string(manifest)?;
+    let message = format!("h5i objects: {} ({})", manifest.id, manifest.kind);
+
+    for _ in 0..MAX_ATTEMPTS {
+        let tip = repo.refname_to_id(OBJECTS_REF).ok();
+        let parent = match tip {
+            Some(oid) => Some(repo.find_commit(oid)?),
+            None => None,
+        };
+        let base_tree = parent.as_ref().and_then(|c| c.tree().ok());
+
+        let mut log = read_blob_from_tree(repo, base_tree.as_ref(), MANIFESTS_FILE)
+            .unwrap_or_default();
+        if !log.is_empty() && !log.ends_with('\n') {
+            log.push('\n');
+        }
+        log.push_str(&line);
+        log.push('\n');
+
+        let tree_oid = build_tree(repo, base_tree.as_ref(), &[(MANIFESTS_FILE, &log)])?;
+        let tree = repo.find_tree(tree_oid)?;
+        let sig = signature(repo)?;
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+        let new_oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
+
+        let cas_ok = match tip {
+            None => repo.reference(OBJECTS_REF, new_oid, false, &message).is_ok(),
+            Some(old) => repo
+                .reference_matching(OBJECTS_REF, new_oid, true, old, &message)
+                .is_ok(),
+        };
+        if cas_ok {
+            return Ok(());
+        }
+    }
+    Err(H5iError::Internal(format!(
+        "h5i objects: manifest {} could not be appended after {MAX_ATTEMPTS} attempts",
+        manifest.id
+    )))
+}
+
+/// Reconcile two divergent `refs/h5i/objects` tips into one merge commit.
+///
+/// The manifest log is strictly append-only, so a divergence is just two
+/// disjoint sets of appended manifests. We union them (deduping on the full
+/// `(raw_oid, timestamp)` key so a manifest present on both sides appears once)
+/// and re-sort by timestamp, then commit with both tips as parents (local
+/// first, so the result stays a descendant of the local ref). Mirrors
+/// [`crate::msg::union_merge_commits`] so `h5i pull` never drops a pointer.
+pub fn union_merge_commits(
+    repo: &Repository,
+    local_oid: git2::Oid,
+    incoming_oid: git2::Oid,
+) -> Result<git2::Oid, H5iError> {
+    let local_commit = repo.find_commit(local_oid)?;
+    let incoming_commit = repo.find_commit(incoming_oid)?;
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut merged: Vec<Manifest> = Vec::new();
+    for oid in [local_oid, incoming_oid] {
+        let raw = read_file_from_commit(repo, oid, MANIFESTS_FILE).unwrap_or_default();
+        for line in raw.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(m) = serde_json::from_str::<Manifest>(line) {
+                let key = format!("{}|{}", m.raw_oid, m.timestamp);
+                if seen.insert(key) {
+                    merged.push(m);
+                }
+            }
+        }
+    }
+    merged.sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then(a.id.cmp(&b.id)));
+
+    let mut log = String::new();
+    for m in &merged {
+        log.push_str(&serde_json::to_string(m)?);
+        log.push('\n');
+    }
+
+    let base_tree = local_commit.tree().ok();
+    let tree_oid = build_tree(repo, base_tree.as_ref(), &[(MANIFESTS_FILE, &log)])?;
+    let tree = repo.find_tree(tree_oid)?;
+    let sig = signature(repo)?;
+    let parents = [&local_commit, &incoming_commit];
+    let oid = repo.commit(
+        None,
+        &sig,
+        &sig,
+        "h5i pull: union-merge of refs/h5i/objects",
+        &tree,
+        &parents,
+    )?;
+    Ok(oid)
+}
+
+fn read_file_from_commit(repo: &Repository, oid: git2::Oid, path: &str) -> Option<String> {
+    let commit = repo.find_commit(oid).ok()?;
+    let tree = commit.tree().ok()?;
+    let entry = tree.get_path(Path::new(path)).ok()?;
+    let blob = repo.find_blob(entry.id()).ok()?;
+    std::str::from_utf8(blob.content()).ok().map(str::to_owned)
+}
+
+/// Read every manifest from the ref, oldest-first.
+pub fn read_manifests(repo: &Repository) -> Vec<Manifest> {
+    let Some(raw) = read_ref_blob(repo, MANIFESTS_FILE) else {
+        return Vec::new();
+    };
+    raw.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<Manifest>(l).ok())
+        .collect()
+}
+
+/// Resolve a user-supplied handle to a manifest. Accepts the short id, the full
+/// `sha256:<hex>` form, or any unambiguous hex prefix. Returns the most recent
+/// match when an id repeats (same content captured twice).
+pub fn find_manifest(repo: &Repository, handle: &str) -> Option<Manifest> {
+    let needle = handle.strip_prefix("sha256:").unwrap_or(handle).to_lowercase();
+    let manifests = read_manifests(repo);
+    // Exact id, full hex, or prefix — search newest-first.
+    manifests.into_iter().rev().find(|m| {
+        m.id == needle || m.hex() == needle || (needle.len() >= 4 && m.hex().starts_with(&needle))
+    })
+}
+
+/// Load the raw bytes for a manifest from the local backend. `Ok(None)` means
+/// the manifest exists but the blob was evicted / never fetched ("absent").
+pub fn load_raw(h5i_root: &Path, manifest: &Manifest) -> Result<Option<Vec<u8>>, H5iError> {
+    LocalStore::new(h5i_root).get(manifest.hex())
+}
+
+// ── Pinning ──────────────────────────────────────────────────────────────────
+
+fn pins_path(h5i_root: &Path) -> PathBuf {
+    h5i_root.join(OBJECTS_DIR).join(PINS_FILE)
+}
+
+/// Read the set of pinned digests (full hex).
+pub fn read_pins(h5i_root: &Path) -> HashSet<String> {
+    let path = pins_path(h5i_root);
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return HashSet::new();
+    };
+    raw.lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| is_hex64(l))
+        .collect()
+}
+
+fn write_pins(h5i_root: &Path, pins: &HashSet<String>) -> Result<(), H5iError> {
+    let path = pins_path(h5i_root);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+    }
+    let mut sorted: Vec<&String> = pins.iter().collect();
+    sorted.sort();
+    let body = sorted.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n");
+    std::fs::write(&path, body).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(())
+}
+
+/// Pin a blob so [`gc`] never evicts it. Returns the resolved hex.
+pub fn pin(h5i_root: &Path, hex: &str) -> Result<(), H5iError> {
+    let mut pins = read_pins(h5i_root);
+    pins.insert(hex.to_string());
+    write_pins(h5i_root, &pins)
+}
+
+/// Remove a pin.
+pub fn unpin(h5i_root: &Path, hex: &str) -> Result<(), H5iError> {
+    let mut pins = read_pins(h5i_root);
+    pins.remove(hex);
+    write_pins(h5i_root, &pins)
+}
+
+// ── Garbage collection ───────────────────────────────────────────────────────
+
+/// One blob considered for eviction.
+#[derive(Debug, Clone, Serialize)]
+pub struct EvictedBlob {
+    pub hex: String,
+    pub size: u64,
+    pub reason: String,
+}
+
+/// The result of a GC pass.
+#[derive(Debug, Clone, Serialize)]
+pub struct GcReport {
+    pub dry_run: bool,
+    pub evicted: Vec<EvictedBlob>,
+    pub freed_bytes: u64,
+    pub kept_referenced: usize,
+    pub kept_pinned: usize,
+    pub total_blobs: usize,
+}
+
+/// Evict local raw blobs to reclaim space, **never** touching manifests.
+///
+/// Policy:
+///   - A blob with no manifest referencing it is an *orphan* → always evictable
+///     (unless pinned). This is the safe default with no TTL.
+///   - With `ttl`, a *referenced* blob older than the TTL is also evictable
+///     (the git-annex "drop" — its summary stays, the raw becomes absent and can
+///     be rehydrated later from a remote, once backends exist).
+///   - Pinned blobs are never evicted.
+pub fn gc(
+    repo: &Repository,
+    h5i_root: &Path,
+    ttl: Option<Duration>,
+    dry_run: bool,
+) -> Result<GcReport, H5iError> {
+    let store = LocalStore::new(h5i_root);
+    let referenced: HashSet<String> = read_manifests(repo)
+        .iter()
+        .map(|m| m.hex().to_string())
+        .collect();
+    let pinned = read_pins(h5i_root);
+    let now = SystemTime::now();
+
+    let blobs = store.iter_blobs()?;
+    let total_blobs = blobs.len();
+    let mut evicted = Vec::new();
+    let mut freed_bytes = 0u64;
+    let mut kept_referenced = 0usize;
+    let mut kept_pinned = 0usize;
+
+    for (hex, size, mtime) in blobs {
+        if pinned.contains(&hex) {
+            kept_pinned += 1;
+            continue;
+        }
+        let is_ref = referenced.contains(&hex);
+        let age = now.duration_since(mtime).unwrap_or_default();
+
+        let reason = if !is_ref {
+            Some("orphan (no manifest)".to_string())
+        } else if let Some(ttl) = ttl {
+            if age >= ttl {
+                Some(format!("referenced but older than TTL ({}s)", age.as_secs()))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        match reason {
+            Some(reason) => {
+                if !dry_run {
+                    store.remove(&hex)?;
+                }
+                freed_bytes += size;
+                evicted.push(EvictedBlob { hex, size, reason });
+            }
+            None => {
+                if is_ref {
+                    kept_referenced += 1;
+                }
+            }
+        }
+    }
+
+    Ok(GcReport {
+        dry_run,
+        evicted,
+        freed_bytes,
+        kept_referenced,
+        kept_pinned,
+        total_blobs,
+    })
+}
+
+/// One row of an fsck report: a manifest and whether its raw blob is present.
+#[derive(Debug, Clone, Serialize)]
+pub struct FsckRow {
+    pub id: String,
+    pub raw_oid: String,
+    pub present: bool,
+    pub pinned: bool,
+}
+
+/// Cross-check every manifest against the local store. Also reports orphan
+/// blobs (present locally but referenced by no manifest).
+#[derive(Debug, Clone, Serialize)]
+pub struct FsckReport {
+    pub rows: Vec<FsckRow>,
+    pub absent: usize,
+    pub orphans: Vec<String>,
+}
+
+/// Verify the integrity of the object store against the manifest log.
+pub fn fsck(repo: &Repository, h5i_root: &Path) -> Result<FsckReport, H5iError> {
+    let store = LocalStore::new(h5i_root);
+    let pinned = read_pins(h5i_root);
+    let manifests = read_manifests(repo);
+    let referenced: HashSet<String> = manifests.iter().map(|m| m.hex().to_string()).collect();
+
+    let mut rows = Vec::new();
+    let mut absent = 0;
+    for m in &manifests {
+        let present = store.has(m.hex());
+        if !present {
+            absent += 1;
+        }
+        rows.push(FsckRow {
+            id: m.id.clone(),
+            raw_oid: m.raw_oid.clone(),
+            present,
+            pinned: pinned.contains(m.hex()),
+        });
+    }
+
+    let orphans: Vec<String> = store
+        .iter_blobs()?
+        .into_iter()
+        .map(|(hex, _, _)| hex)
+        .filter(|hex| !referenced.contains(hex))
+        .collect();
+
+    Ok(FsckReport {
+        rows,
+        absent,
+        orphans,
+    })
+}
+
+// ── Duration parsing ─────────────────────────────────────────────────────────
+
+/// Parse a human duration like `30d`, `12h`, `90m`, `45s`, `2w`. Bare numbers
+/// are treated as seconds.
+pub fn parse_duration(s: &str) -> Result<Duration, H5iError> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err(H5iError::Metadata("empty duration".into()));
+    }
+    let (num, unit) = s.split_at(
+        s.find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(s.len()),
+    );
+    let n: u64 = num
+        .parse()
+        .map_err(|_| H5iError::Metadata(format!("invalid duration: {s}")))?;
+    let secs = match unit.trim() {
+        "" | "s" | "sec" | "secs" => n,
+        "m" | "min" | "mins" => n * 60,
+        "h" | "hr" | "hrs" => n * 3600,
+        "d" | "day" | "days" => n * 86_400,
+        "w" | "wk" | "wks" => n * 604_800,
+        other => {
+            return Err(H5iError::Metadata(format!(
+                "unknown duration unit '{other}' (use s/m/h/d/w)"
+            )))
+        }
+    };
+    Ok(Duration::from_secs(secs))
+}
+
+// ── git ref tree helpers (mirroring src/msg.rs) ──────────────────────────────
+
+fn read_ref_blob(repo: &Repository, path: &str) -> Option<String> {
+    let reference = repo.find_reference(OBJECTS_REF).ok()?;
+    let commit = reference.peel_to_commit().ok()?;
+    let tree = commit.tree().ok()?;
+    let entry = tree.get_path(Path::new(path)).ok()?;
+    let blob = repo.find_blob(entry.id()).ok()?;
+    std::str::from_utf8(blob.content()).ok().map(str::to_owned)
+}
+
+fn read_blob_from_tree(repo: &Repository, tree: Option<&git2::Tree>, path: &str) -> Option<String> {
+    let entry = tree?.get_path(Path::new(path)).ok()?;
+    let blob = repo.find_blob(entry.id()).ok()?;
+    std::str::from_utf8(blob.content()).ok().map(str::to_owned)
+}
+
+fn build_tree(
+    repo: &Repository,
+    base: Option<&git2::Tree>,
+    files: &[(&str, &str)],
+) -> Result<git2::Oid, H5iError> {
+    let mut builder = repo.treebuilder(base)?;
+    for (name, content) in files {
+        let blob = repo.blob(content.as_bytes())?;
+        builder.insert(name, blob, 0o100644)?;
+    }
+    Ok(builder.write()?)
+}
+
+fn signature(repo: &Repository) -> Result<Signature<'static>, H5iError> {
+    repo.signature()
+        .or_else(|_| Signature::now("h5i", "h5i@local"))
+        .map_err(H5iError::Git)
+}
+
+fn now_ts() -> String {
+    chrono::Utc::now()
+        .format("%Y-%m-%dT%H:%M:%S%.6fZ")
+        .to_string()
+}
+
+fn read_dir(p: &Path) -> Result<Vec<std::fs::DirEntry>, H5iError> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(p).map_err(|e| H5iError::with_path(e, p))? {
+        out.push(e.map_err(|e| H5iError::with_path(e, p))?);
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn setup() -> (tempfile::TempDir, Repository, PathBuf) {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let h5i_root = dir.path().join(".git").join(".h5i");
+        std::fs::create_dir_all(&h5i_root).unwrap();
+        (dir, repo, h5i_root)
+    }
+
+    fn opts() -> CaptureOptions {
+        CaptureOptions {
+            kind: OutputKind::Auto,
+            cmd: Some("pytest -q".into()),
+            cwd: None,
+            exit_code: Some(1),
+            git_tree: None,
+            filter: FilterConfig::default(),
+        }
+    }
+
+    #[test]
+    fn sha256_is_stable() {
+        assert_eq!(
+            sha256_hex(b"hello"),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+    }
+
+    #[test]
+    fn blob_path_is_sharded() {
+        let dir = tempdir().unwrap();
+        let store = LocalStore::new(dir.path());
+        let p = store.blob_path("abcdef0000000000000000000000000000000000000000000000000000000000");
+        assert!(p.ends_with(
+            "ab/cd/abcdef0000000000000000000000000000000000000000000000000000000000"
+        ));
+    }
+
+    #[test]
+    fn capture_stores_raw_and_restores_exact_bytes() {
+        let (_d, repo, h5i_root) = setup();
+        let mut raw = String::new();
+        for i in 0..1000 {
+            raw.push_str(&format!("log line {i}\n"));
+        }
+        raw.push_str("error: boom at src/x.rs:9\n");
+        let out = capture(&repo, &h5i_root, raw.as_bytes(), opts()).unwrap();
+        assert!(!out.deduped);
+
+        // Manifest carries the full digest and a much smaller summary.
+        assert!(out.manifest.raw_oid.starts_with("sha256:"));
+        assert_eq!(out.manifest.hex().len(), 64);
+        assert!(out.manifest.summary.len() < raw.len());
+        assert!(out.manifest.summary.contains("error: boom"));
+
+        // get restores exact bytes.
+        let restored = load_raw(&h5i_root, &out.manifest).unwrap().unwrap();
+        assert_eq!(restored, raw.as_bytes());
+
+        // Manifest is in the ref log and resolvable by id / prefix.
+        let found = find_manifest(&repo, &out.manifest.id).unwrap();
+        assert_eq!(found.raw_oid, out.manifest.raw_oid);
+        let by_prefix = find_manifest(&repo, &out.manifest.hex()[..8]).unwrap();
+        assert_eq!(by_prefix.raw_oid, out.manifest.raw_oid);
+    }
+
+    #[test]
+    fn identical_content_dedupes() {
+        let (_d, repo, h5i_root) = setup();
+        let raw = b"same content";
+        let a = capture(&repo, &h5i_root, raw, opts()).unwrap();
+        let b = capture(&repo, &h5i_root, raw, opts()).unwrap();
+        assert!(!a.deduped);
+        assert!(b.deduped);
+        assert_eq!(a.manifest.raw_oid, b.manifest.raw_oid);
+        // Two manifests, one blob.
+        assert_eq!(read_manifests(&repo).len(), 2);
+        let store = LocalStore::new(&h5i_root);
+        assert_eq!(store.iter_blobs().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn absent_blob_degrades_gracefully() {
+        let (_d, repo, h5i_root) = setup();
+        let out = capture(&repo, &h5i_root, b"hello world", opts()).unwrap();
+        // Manually remove the blob to simulate eviction.
+        LocalStore::new(&h5i_root).remove(out.manifest.hex()).unwrap();
+        let restored = load_raw(&h5i_root, &out.manifest).unwrap();
+        assert!(restored.is_none(), "evicted blob should read as absent");
+        // Manifest (summary) is still intact.
+        assert!(find_manifest(&repo, &out.manifest.id).is_some());
+    }
+
+    #[test]
+    fn gc_removes_orphans_but_keeps_referenced() {
+        let (_d, repo, h5i_root) = setup();
+        let out = capture(&repo, &h5i_root, b"referenced", opts()).unwrap();
+        // Write an orphan blob with no manifest.
+        let store = LocalStore::new(&h5i_root);
+        let orphan_hex = sha256_hex(b"orphan");
+        store.put(&orphan_hex, b"orphan").unwrap();
+
+        let report = gc(&repo, &h5i_root, None, false).unwrap();
+        assert_eq!(report.evicted.len(), 1);
+        assert_eq!(report.evicted[0].hex, orphan_hex);
+        assert_eq!(report.kept_referenced, 1);
+        assert!(store.has(out.manifest.hex()));
+        assert!(!store.has(&orphan_hex));
+    }
+
+    #[test]
+    fn gc_dry_run_evicts_nothing() {
+        let (_d, repo, h5i_root) = setup();
+        let store = LocalStore::new(&h5i_root);
+        let orphan = sha256_hex(b"orphan2");
+        store.put(&orphan, b"orphan2").unwrap();
+        let report = gc(&repo, &h5i_root, None, true).unwrap();
+        assert!(report.dry_run);
+        assert_eq!(report.evicted.len(), 1);
+        assert!(store.has(&orphan), "dry-run must not delete");
+    }
+
+    #[test]
+    fn pinned_referenced_blob_survives_ttl_gc() {
+        let (_d, repo, h5i_root) = setup();
+        let out = capture(&repo, &h5i_root, b"pin me", opts()).unwrap();
+        pin(&h5i_root, out.manifest.hex()).unwrap();
+        // TTL of 0 would normally evict every referenced blob.
+        let report = gc(&repo, &h5i_root, Some(Duration::from_secs(0)), false).unwrap();
+        assert_eq!(report.kept_pinned, 1);
+        assert!(report.evicted.is_empty());
+        assert!(LocalStore::new(&h5i_root).has(out.manifest.hex()));
+    }
+
+    #[test]
+    fn ttl_gc_evicts_referenced_but_stale() {
+        let (_d, repo, h5i_root) = setup();
+        let out = capture(&repo, &h5i_root, b"stale", opts()).unwrap();
+        // TTL of 0s: any referenced blob is "older than TTL".
+        let report = gc(&repo, &h5i_root, Some(Duration::from_secs(0)), false).unwrap();
+        assert_eq!(report.evicted.len(), 1);
+        assert!(!LocalStore::new(&h5i_root).has(out.manifest.hex()));
+        // Summary survives eviction.
+        assert!(find_manifest(&repo, &out.manifest.id).is_some());
+    }
+
+    #[test]
+    fn fsck_flags_absent_and_orphans() {
+        let (_d, repo, h5i_root) = setup();
+        let out = capture(&repo, &h5i_root, b"present", opts()).unwrap();
+        let store = LocalStore::new(&h5i_root);
+        store.put(&sha256_hex(b"orphan3"), b"orphan3").unwrap();
+        store.remove(out.manifest.hex()).unwrap(); // make the referenced one absent
+
+        let report = fsck(&repo, &h5i_root).unwrap();
+        assert_eq!(report.absent, 1);
+        assert_eq!(report.orphans.len(), 1);
+    }
+
+    #[test]
+    fn binary_payload_is_stored_with_marker_summary() {
+        let (_d, repo, h5i_root) = setup();
+        let raw = vec![0u8, 1, 2, 3, 0, 255];
+        let out = capture(&repo, &h5i_root, &raw, opts()).unwrap();
+        assert!(out.manifest.summary.contains("binary"));
+        assert_eq!(load_raw(&h5i_root, &out.manifest).unwrap().unwrap(), raw);
+    }
+
+    #[test]
+    fn parse_duration_units() {
+        assert_eq!(parse_duration("30s").unwrap(), Duration::from_secs(30));
+        assert_eq!(parse_duration("5m").unwrap(), Duration::from_secs(300));
+        assert_eq!(parse_duration("2h").unwrap(), Duration::from_secs(7200));
+        assert_eq!(parse_duration("1d").unwrap(), Duration::from_secs(86_400));
+        assert_eq!(parse_duration("1w").unwrap(), Duration::from_secs(604_800));
+        assert_eq!(parse_duration("90").unwrap(), Duration::from_secs(90));
+        assert!(parse_duration("5y").is_err());
+    }
+}

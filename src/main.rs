@@ -845,6 +845,14 @@ enum Commands {
         action: MemoryCommands,
     },
 
+    /// Token-reduction object store: capture huge tool outputs out-of-band and
+    /// surface only a filtered summary (git-annex / git-lfs style).
+    #[command(hide = true)]
+    Objects {
+        #[command(subcommand)]
+        action: ObjectsCommands,
+    },
+
     /// Record and query content-addressed claims about the codebase.
     /// Each claim pins (path, blob_oid) evidence at HEAD; it stays "live"
     /// until any evidence blob changes, then auto-invalidates.
@@ -1723,6 +1731,89 @@ enum MemoryCommands {
 }
 
 #[derive(Subcommand)]
+enum ObjectsCommands {
+    /// Run a command, store its full raw output out-of-band, and print only a
+    /// filtered summary. The exit code is passed through, so this is a
+    /// transparent wrapper: `h5i capture run -- pytest -q`.
+    Run {
+        /// Force a content kind instead of auto-detecting
+        /// (test|log|json|diff|generic).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Max lines to keep in the summary.
+        #[arg(long)]
+        budget: Option<usize>,
+        /// Best-effort cap on summary tokens (uses tiktoken when available).
+        #[arg(long)]
+        token_budget: Option<usize>,
+        /// Also echo the summary's pointer line even on success (default: yes).
+        #[arg(long)]
+        quiet: bool,
+        /// The command to run, after `--`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+
+    /// Store raw bytes read from a file (or stdin with `-`) and print a summary.
+    Put {
+        /// File to ingest; use `-` to read stdin.
+        path: String,
+        /// Force a content kind (test|log|json|diff|generic).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Max lines to keep in the summary.
+        #[arg(long)]
+        budget: Option<usize>,
+    },
+
+    /// Rehydrate the full raw bytes for a stored object to stdout.
+    /// Accepts a short id, a `sha256:<hex>`, or any unambiguous hex prefix.
+    Get {
+        /// Object handle (id / sha256:<hex> / prefix).
+        id: String,
+        /// Print the filtered summary instead of the raw bytes.
+        #[arg(long)]
+        summary: bool,
+        /// Print the full manifest JSON record.
+        #[arg(long)]
+        manifest: bool,
+    },
+
+    /// List stored objects (most recent first), showing their summaries.
+    List {
+        /// Maximum number of objects to show.
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+    },
+
+    /// Evict local raw blobs to reclaim space. Manifests/summaries are kept.
+    /// Without --ttl, only orphan blobs (no manifest) are removed.
+    Gc {
+        /// Also evict referenced blobs older than this (e.g. 30d, 12h, 90m).
+        #[arg(long, value_name = "DURATION")]
+        ttl: Option<String>,
+        /// Report what would be evicted without deleting anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Pin an object so `gc` never evicts its raw blob.
+    Pin {
+        /// Object handle (id / sha256:<hex> / prefix).
+        id: String,
+    },
+
+    /// Remove a pin.
+    Unpin {
+        /// Object handle (id / sha256:<hex> / prefix).
+        id: String,
+    },
+
+    /// Verify manifests against the local store (absent blobs, orphans).
+    Fsck,
+}
+
+#[derive(Subcommand)]
 enum HookCommands {
     /// Print install instructions for all Claude Code hooks
     Setup,
@@ -2574,6 +2665,7 @@ const H5I_REF_PATTERNS: &[&str] = &[
     "refs/h5i/context/*",
     "refs/h5i/ast",
     "refs/h5i/msg",
+    "refs/h5i/objects",
 ];
 
 /// Whether `remote` still hosts the pre-redesign single context ref
@@ -2960,14 +3052,14 @@ fn rewrite_noun_argv(argv: Vec<String>) -> Vec<String> {
     if argv[1] == "help"
         && argv
             .get(2)
-            .map(|t| matches!(t.as_str(), "capture" | "recall" | "audit" | "share"))
+            .map(|t| matches!(t.as_str(), "capture" | "recall" | "audit" | "share" | "objects"))
             .unwrap_or(false)
     {
         print_noun_help(&argv[2]);
         std::process::exit(0);
     }
     let noun = match argv[1].as_str() {
-        "capture" | "recall" | "audit" | "share" => argv[1].clone(),
+        "capture" | "recall" | "audit" | "share" | "objects" => argv[1].clone(),
         _ => return argv,
     };
 
@@ -3020,13 +3112,14 @@ fn rewrite_noun_argv(argv: Vec<String>) -> Vec<String> {
 /// Return the verb under `noun` whose name is closest (Levenshtein ≤ 2) to `typo`.
 fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
     let candidates: &[&'static str] = match noun {
-        "capture" => &["commit", "claim", "memory"],
+        "capture" => &["commit", "claim", "memory", "run"],
         "recall" => &[
             "log", "blame", "diff", "context", "claims", "notes", "memory", "recap", "resume",
-            "vibe",
+            "vibe", "object", "objects",
         ],
         "audit" => &["review", "scan", "compliance", "policy", "vibe"],
         "share" => &["push", "pull", "pr", "memory", "setup-remote", "migrate-remote"],
+        "objects" => &["run", "put", "get", "list", "ls", "gc", "pin", "unpin", "fsck"],
         _ => return None,
     };
     let typo_l = typo.to_lowercase();
@@ -3064,6 +3157,22 @@ fn levenshtein(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+/// Format a byte count as a short human string (B / KiB / MiB / GiB).
+fn humanize_bytes(n: u64) -> String {
+    const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut size = n as f64;
+    let mut unit = 0;
+    while size >= 1024.0 && unit < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{n} B")
+    } else {
+        format!("{size:.1} {}", UNITS[unit])
+    }
+}
+
 /// Map `(noun, verb)` to the legacy argv tokens that implement it.
 fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
     Some(match (noun, verb) {
@@ -3072,6 +3181,8 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("capture", "claim")    => &["claims", "add"],
         ("capture", "claims")   => &["claims", "add"],
         ("capture", "memory")   => &["memory", "snapshot"],
+        ("capture", "run")      => &["objects", "run"],
+        ("capture", "output")   => &["objects", "run"],
 
         // ── recall ──────────────────────────────────────────────────────
         ("recall",  "log")      => &["log"],
@@ -3085,6 +3196,8 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("recall",  "recap")    => &["context", "recap"],
         ("recall",  "resume")   => &["resume"],
         ("recall",  "vibe")     => &["vibe"],
+        ("recall",  "object")   => &["objects", "get"],
+        ("recall",  "objects")  => &["objects", "list"],
 
         // ── audit ───────────────────────────────────────────────────────
         ("audit",   "review")   => &["notes", "review"],
@@ -3101,6 +3214,17 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("share",   "memory")   => &["memory"],
         ("share",   "setup-remote")   => &["setup-remote"],
         ("share",   "migrate-remote") => &["migrate-remote"],
+
+        // ── objects (token-reduction store maintenance) ──────────────────
+        ("objects", "run")      => &["objects", "run"],
+        ("objects", "put")      => &["objects", "put"],
+        ("objects", "get")      => &["objects", "get"],
+        ("objects", "list")     => &["objects", "list"],
+        ("objects", "ls")       => &["objects", "list"],
+        ("objects", "gc")       => &["objects", "gc"],
+        ("objects", "pin")      => &["objects", "pin"],
+        ("objects", "unpin")    => &["objects", "unpin"],
+        ("objects", "fsck")     => &["objects", "fsck"],
 
         _ => return None,
     })
@@ -3137,10 +3261,17 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     legacy: "h5i memory snapshot",
                     example: "h5i capture memory --agent claude",
                 },
+                NounVerb {
+                    verb: "run",
+                    summary: "Run a command, store its huge raw output out-of-band, surface only a filtered summary.",
+                    legacy: "(new)",
+                    example: "h5i capture run -- pytest -q\n      h5i capture run --kind log -- cargo build",
+                },
             ],
             &[
                 "Tip: `h5i commit` and `h5i claims add` still work but emit a deprecation hint.",
                 "MCP equivalents: h5i_commit, h5i_claims_add, h5i_memory_snapshot.",
+                "`h5i capture run` keeps test/build logs out of your context — rehydrate via `h5i recall object`.",
             ],
         ),
         "recall" => (
@@ -3205,6 +3336,18 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     summary: "Quick AI-footprint audit (also under `audit`).",
                     legacy: "h5i vibe",
                     example: "h5i recall vibe",
+                },
+                NounVerb {
+                    verb: "object",
+                    summary: "Rehydrate a captured raw output (full bytes, or --summary / --manifest).",
+                    legacy: "(new)",
+                    example: "h5i recall object a1b2c3d4\n      h5i recall object a1b2 --summary",
+                },
+                NounVerb {
+                    verb: "objects",
+                    summary: "List captured raw outputs (newest first) with summaries.",
+                    legacy: "(new)",
+                    example: "h5i recall objects --limit 20",
                 },
             ],
             &[
@@ -3296,6 +3439,58 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                 "The PR comment is idempotent — re-running upserts in place via an HTML marker.",
                 "Run `h5i share setup-remote` once after cloning so `git fetch` brings h5i refs for free.",
                 "Hit a `directory/file conflict` pushing context? Run `h5i share migrate-remote` once.",
+            ],
+        ),
+        "objects" => (
+            "token reduction — store huge raw output, surface only a summary",
+            &[
+                NounVerb {
+                    verb: "run",
+                    summary: "Run a command, store its full output out-of-band, print only a filtered summary (exit code passed through).",
+                    legacy: "(new)",
+                    example: "h5i capture run -- pytest -q\n      h5i objects run --kind log -- cargo test",
+                },
+                NounVerb {
+                    verb: "put",
+                    summary: "Ingest raw bytes from a file (or `-` for stdin) and print a summary.",
+                    legacy: "(new)",
+                    example: "h5i objects put build.log\n      some-tool | h5i objects put -",
+                },
+                NounVerb {
+                    verb: "get",
+                    summary: "Rehydrate the full raw bytes for an object (or its --summary / --manifest).",
+                    legacy: "(new)",
+                    example: "h5i recall object a1b2c3d4\n      h5i objects get a1b2 --summary",
+                },
+                NounVerb {
+                    verb: "list",
+                    summary: "List stored objects (newest first) with their summaries and local availability.",
+                    legacy: "(new)",
+                    example: "h5i recall objects --limit 20",
+                },
+                NounVerb {
+                    verb: "gc",
+                    summary: "Reclaim space: evict orphan (or, with --ttl, stale) raw blobs. Summaries are kept.",
+                    legacy: "(new)",
+                    example: "h5i objects gc --ttl 30d\n      h5i objects gc --dry-run",
+                },
+                NounVerb {
+                    verb: "pin",
+                    summary: "Pin / unpin an object so gc never evicts its raw blob.",
+                    legacy: "(new)",
+                    example: "h5i objects pin a1b2c3d4\n      h5i objects unpin a1b2c3d4",
+                },
+                NounVerb {
+                    verb: "fsck",
+                    summary: "Verify manifests against the local store (absent blobs, orphans).",
+                    legacy: "(new)",
+                    example: "h5i objects fsck",
+                },
+            ],
+            &[
+                "Only the small summary/pointer records travel with `h5i share push`; raw blobs stay local.",
+                "`h5i capture run` is the everyday entry point; the `objects` verbs are for maintenance.",
+                "An absent (○) object means its raw was evicted or never fetched — the summary still works.",
             ],
         ),
         _ => ("", &[], &[]),
@@ -5575,6 +5770,15 @@ jq -c '{
                 "no messages yet",
             )?;
 
+            // Push the token-reduction manifest log (refs/h5i/objects).
+            // Only the small pointer records travel; raw blobs stay local
+            // until a remote object backend exists (git-lfs style).
+            try_push(
+                h5i_core::objects::OBJECTS_REF,
+                style("h5i capture run").bold(),
+                "no captured objects yet",
+            )?;
+
             // Bind to the original variable name so the existing "Tip:" footer
             // (gated on notes_status.success()) keeps working unchanged.
             let notes_status_success = notes_pushed;
@@ -5832,6 +6036,48 @@ jq -c '{
                                     false
                                 }
                             }
+                        } else if refname == h5i_core::objects::OBJECTS_REF {
+                            // The object-manifest log is append-only too: union
+                            // the two disjoint sets of pointers so a captured
+                            // summary is never lost when two clones diverge.
+                            let g2 = git2::Repository::open(&workdir)
+                                .map_err(|e| anyhow::anyhow!("open git2 repo: {e}"))?;
+                            let local_git2 = git2::Oid::from_str(local_oid_str)
+                                .map_err(|e| anyhow::anyhow!("parse local oid: {e}"))?;
+                            let incoming_git2 = git2::Oid::from_str(&incoming_oid)
+                                .map_err(|e| anyhow::anyhow!("parse incoming oid: {e}"))?;
+                            match h5i_core::objects::union_merge_commits(
+                                &g2,
+                                local_git2,
+                                incoming_git2,
+                            ) {
+                                Ok(new_oid) => {
+                                    let new_oid_str = new_oid.to_string();
+                                    let st = git(&[
+                                        "update-ref",
+                                        refname,
+                                        &new_oid_str,
+                                        local_oid_str,
+                                    ])?;
+                                    if st.status.success() {
+                                        println!(
+                                            "{} ({})",
+                                            style("ok").green(),
+                                            style("merged (union)").dim()
+                                        );
+                                        true
+                                    } else {
+                                        println!("{}", style("failed").red());
+                                        eprint!("{}", String::from_utf8_lossy(&st.stderr));
+                                        false
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("{}", style("failed").red());
+                                    eprintln!("union-merge of objects refs failed: {e}");
+                                    false
+                                }
+                            }
                         } else if force {
                             install("forced over divergent local")?
                         } else {
@@ -5916,6 +6162,7 @@ jq -c '{
 
             sync_one("refs/h5i/ast")?;
             sync_one(msg::MSG_REF)?;
+            sync_one(h5i_core::objects::OBJECTS_REF)?;
 
             if notes_changed {
                 println!(
@@ -5928,6 +6175,295 @@ jq -c '{
                     style("h5i notes show").bold(),
                     style("h5i memory log").bold(),
                 );
+            }
+        }
+
+        Commands::Objects { action } => {
+            use h5i_core::objects::{self, Backend};
+            use h5i_core::token_filter::{FilterConfig, OutputKind};
+
+            let repo = H5iRepository::open(".")?;
+            let h5i_root = repo.h5i_root.clone();
+            let git = repo.git();
+
+            // HEAD tree, recorded on each capture for provenance.
+            let head_tree = git
+                .head()
+                .ok()
+                .and_then(|h| h.peel_to_tree().ok())
+                .map(|t| t.id().to_string());
+
+            // Build a FilterConfig from the CLI knobs.
+            let make_cfg = |kind: OutputKind, budget: Option<usize>, token_budget: Option<usize>| {
+                let mut cfg = FilterConfig {
+                    kind,
+                    token_budget,
+                    ..Default::default()
+                };
+                if let Some(b) = budget {
+                    cfg.max_lines = b;
+                }
+                cfg
+            };
+
+            // Print the agent-facing summary plus a durable pointer line.
+            let print_summary = |m: &objects::Manifest, deduped: bool| {
+                println!("{}", m.summary);
+                let savings = match (m.raw_tokens, m.summary_tokens) {
+                    (Some(r), Some(s)) if r > 0 => {
+                        let pct = 100 - (s.min(r) * 100 / r);
+                        format!(" · ~{pct}% fewer tokens ({r}→{s})")
+                    }
+                    _ => String::new(),
+                };
+                eprintln!(
+                    "\n{} {} · {} · {} bytes · {} lines{}{}",
+                    style("▢ h5i object").dim(),
+                    style(&m.id).cyan().bold(),
+                    style(&m.kind).yellow(),
+                    m.raw_size,
+                    m.raw_lines,
+                    style(savings).green(),
+                    if deduped { style(" · deduped").dim().to_string() } else { String::new() },
+                );
+                eprintln!(
+                    "  {} {}",
+                    style("rehydrate:").dim(),
+                    style(format!("h5i recall object {}", m.id)).dim(),
+                );
+            };
+
+            match action {
+                ObjectsCommands::Run {
+                    kind,
+                    budget,
+                    token_budget,
+                    quiet,
+                    command,
+                } => {
+                    if command.is_empty() {
+                        anyhow::bail!(
+                            "usage: h5i capture run [--kind K] [--budget N] -- <command> [args…]"
+                        );
+                    }
+                    let kind_opt = kind.as_deref().map(OutputKind::parse).unwrap_or(OutputKind::Auto);
+                    let cfg = make_cfg(kind_opt, budget, token_budget);
+                    let cwd = std::env::current_dir().ok().map(|p| p.display().to_string());
+
+                    // Run the command, capturing stdout + stderr (stdin inherited
+                    // so interactive prompts still work).
+                    let output = std::process::Command::new(&command[0])
+                        .args(&command[1..])
+                        .stdin(std::process::Stdio::inherit())
+                        .output();
+                    let output = match output {
+                        Ok(o) => o,
+                        Err(e) => anyhow::bail!("failed to run `{}`: {e}", command.join(" ")),
+                    };
+                    let exit_code = output.status.code();
+
+                    // Compose the raw payload: stdout, then a labeled stderr block.
+                    let mut raw: Vec<u8> =
+                        Vec::with_capacity(output.stdout.len() + output.stderr.len() + 32);
+                    raw.extend_from_slice(&output.stdout);
+                    if !output.stderr.is_empty() {
+                        if !raw.is_empty() && !raw.ends_with(b"\n") {
+                            raw.push(b'\n');
+                        }
+                        raw.extend_from_slice(b"\n----- stderr -----\n");
+                        raw.extend_from_slice(&output.stderr);
+                    }
+
+                    let opts = objects::CaptureOptions {
+                        kind: kind_opt,
+                        cmd: Some(command.join(" ")),
+                        cwd,
+                        exit_code,
+                        git_tree: head_tree.clone(),
+                        filter: cfg,
+                    };
+                    let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
+                    print_summary(&outcome.manifest, outcome.deduped);
+                    let _ = quiet; // reserved: suppress pointer line in a future pass
+
+                    // Transparent wrapper: pass the child's exit code through.
+                    if let Some(code) = exit_code {
+                        if code != 0 {
+                            std::process::exit(code);
+                        }
+                    }
+                }
+
+                ObjectsCommands::Put { path, kind, budget } => {
+                    let raw = if path == "-" {
+                        use std::io::Read;
+                        let mut buf = Vec::new();
+                        std::io::stdin().read_to_end(&mut buf)?;
+                        buf
+                    } else {
+                        std::fs::read(&path)
+                            .map_err(|e| anyhow::anyhow!("read {path}: {e}"))?
+                    };
+                    let kind_opt = kind.as_deref().map(OutputKind::parse).unwrap_or(OutputKind::Auto);
+                    let cfg = make_cfg(kind_opt, budget, None);
+                    let opts = objects::CaptureOptions {
+                        kind: kind_opt,
+                        cmd: None,
+                        cwd: None,
+                        exit_code: None,
+                        git_tree: head_tree.clone(),
+                        filter: cfg,
+                    };
+                    let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
+                    print_summary(&outcome.manifest, outcome.deduped);
+                }
+
+                ObjectsCommands::Get { id, summary, manifest } => {
+                    let Some(m) = objects::find_manifest(git, &id) else {
+                        anyhow::bail!("no object matching '{id}' (try `h5i recall objects`)");
+                    };
+                    if manifest {
+                        println!("{}", serde_json::to_string_pretty(&m)?);
+                    } else if summary {
+                        println!("{}", m.summary);
+                    } else {
+                        match objects::load_raw(&h5i_root, &m)? {
+                            Some(bytes) => {
+                                use std::io::Write;
+                                std::io::stdout().write_all(&bytes)?;
+                            }
+                            None => anyhow::bail!(
+                                "raw blob for {} is absent locally (evicted or never fetched).\n\
+                                 Its summary is still available: h5i recall object {} --summary",
+                                m.raw_oid,
+                                m.id
+                            ),
+                        }
+                    }
+                }
+
+                ObjectsCommands::List { limit } => {
+                    let manifests = objects::read_manifests(git);
+                    if manifests.is_empty() {
+                        println!(
+                            "No captured objects yet. Try: {}",
+                            style("h5i capture run -- <command>").bold()
+                        );
+                    } else {
+                        let store = objects::LocalStore::new(&h5i_root);
+                        let total = manifests.len();
+                        println!(
+                            "{} captured object{} (newest first){}\n",
+                            total,
+                            if total == 1 { "" } else { "s" },
+                            if total > limit {
+                                format!(" — showing {limit}")
+                            } else {
+                                String::new()
+                            }
+                        );
+                        for m in manifests.iter().rev().take(limit) {
+                            let present = store.has(m.hex());
+                            let dot = if present {
+                                style("●").green()
+                            } else {
+                                style("○").red()
+                            };
+                            let first_line =
+                                m.summary.lines().next().unwrap_or("").trim();
+                            println!(
+                                "{} {}  {}  {} bytes · {} lines",
+                                dot,
+                                style(&m.id).cyan().bold(),
+                                style(&m.kind).yellow(),
+                                m.raw_size,
+                                m.raw_lines
+                            );
+                            if let Some(cmd) = &m.cmd {
+                                println!("    {} {}", style("$").dim(), style(cmd).dim());
+                            }
+                            println!("    {}", style(first_line).dim());
+                        }
+                        println!(
+                            "\n{} = raw present locally · {} = absent (rehydrate from a remote)",
+                            style("●").green(),
+                            style("○").red()
+                        );
+                    }
+                }
+
+                ObjectsCommands::Gc { ttl, dry_run } => {
+                    let ttl = match ttl {
+                        Some(s) => Some(objects::parse_duration(&s)?),
+                        None => None,
+                    };
+                    let report = objects::gc(git, &h5i_root, ttl, dry_run)?;
+                    let verb = if report.dry_run { "would evict" } else { "evicted" };
+                    println!(
+                        "{} {} blob{} ({} freed) · kept {} referenced, {} pinned · {} total",
+                        if report.dry_run {
+                            style("DRY RUN:").yellow().bold()
+                        } else {
+                            style("GC:").green().bold()
+                        },
+                        report.evicted.len(),
+                        if report.evicted.len() == 1 { "" } else { "s" },
+                        humanize_bytes(report.freed_bytes),
+                        report.kept_referenced,
+                        report.kept_pinned,
+                        report.total_blobs,
+                    );
+                    for e in report.evicted.iter().take(50) {
+                        println!(
+                            "  {} {}  {} bytes  ({})",
+                            style(verb).dim(),
+                            style(&e.hex[..16.min(e.hex.len())]).dim(),
+                            e.size,
+                            e.reason
+                        );
+                    }
+                }
+
+                ObjectsCommands::Pin { id } => {
+                    let Some(m) = objects::find_manifest(git, &id) else {
+                        anyhow::bail!("no object matching '{id}'");
+                    };
+                    objects::pin(&h5i_root, m.hex())?;
+                    println!("{} pinned {}", style("✔").green(), style(&m.id).cyan());
+                }
+
+                ObjectsCommands::Unpin { id } => {
+                    let Some(m) = objects::find_manifest(git, &id) else {
+                        anyhow::bail!("no object matching '{id}'");
+                    };
+                    objects::unpin(&h5i_root, m.hex())?;
+                    println!("{} unpinned {}", style("✔").green(), style(&m.id).cyan());
+                }
+
+                ObjectsCommands::Fsck => {
+                    let report = objects::fsck(git, &h5i_root)?;
+                    println!(
+                        "{} manifests · {} absent · {} orphan blob{}",
+                        report.rows.len(),
+                        report.absent,
+                        report.orphans.len(),
+                        if report.orphans.len() == 1 { "" } else { "s" }
+                    );
+                    for row in report.rows.iter().filter(|r| !r.present) {
+                        println!(
+                            "  {} {} absent{}",
+                            style("✗").red(),
+                            style(&row.id).cyan(),
+                            if row.pinned { " (pinned!)" } else { "" }
+                        );
+                    }
+                    if !report.orphans.is_empty() {
+                        println!(
+                            "  {} run `h5i objects gc` to remove orphan blobs",
+                            style("tip:").dim()
+                        );
+                    }
+                }
             }
         }
 
