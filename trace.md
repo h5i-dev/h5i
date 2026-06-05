@@ -760,3 +760,4 @@ _[Checkpoint: 6a231192 — edited src/main.rs; edited src/msg.rs; edited .claude
 [21:22:13] OBSERVE: read snapshot.ts
 [21:22:18] OBSERVE: listed files under .
 [21:22:18] OBSERVE: listed files under ../TokenReduction
+[21:22:18] OBSERVE: searched sync|zstd|zst|flate2|sha256|Sha256|objects|store" for "trace|codex"
