@@ -718,3 +718,4 @@ _[Checkpoint: 6a22cda3 — edited src/session_log.rs; edited src/session_log.rs;
 _[Checkpoint: 6a230eb3 — edited src/session_log.rs; edited src/session_log.rs; edited src/session_log.rs]_
 ---
 
+[18:02:20] OBSERVE: read src/msg.rs
