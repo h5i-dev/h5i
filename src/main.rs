@@ -342,7 +342,7 @@ fn render_dashboard(
         Some(m) => {
             let unread = msg::inbox(git, h5i_root, m, false)?; // peek — glancing never consumes
             if unread.is_empty() {
-                let recent = msg::history(git, None, 5)?;
+                let recent = msg::history(git, None, None, 5)?;
                 ("RECENT".to_string(), recent)
             } else {
                 (format!("INBOX — {} unread", unread.len()), unread)
@@ -1152,6 +1152,10 @@ enum MsgCommands {
         /// Restrict to a conversation with this agent (sender or recipient).
         #[arg(long)]
         with: Option<String>,
+        /// Restrict to the conversation tied to this git branch (whole threads
+        /// that have at least one message tagged with the branch).
+        #[arg(long)]
+        branch: Option<String>,
     },
 
     /// Replay the conversation like a live feed — print each message in turn
@@ -1164,6 +1168,10 @@ enum MsgCommands {
         /// Restrict to a conversation with this agent (sender or recipient).
         #[arg(long)]
         with: Option<String>,
+        /// Restrict to the conversation tied to this git branch (whole threads
+        /// that have at least one message tagged with the branch).
+        #[arg(long)]
+        branch: Option<String>,
         /// Seconds to pause between messages (fractional allowed, e.g. 0.5).
         #[arg(short, long, default_value_t = 1.0)]
         interval: f64,
@@ -3667,17 +3675,19 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                Some(MsgCommands::History { limit, with }) => {
-                    let msgs = msg::history(git, with.as_deref(), limit)?;
+                Some(MsgCommands::History { limit, with, branch }) => {
+                    let msgs = msg::history(git, with.as_deref(), branch.as_deref(), limit)?;
                     if msgs.is_empty() {
                         if !plain {
                             println!("{} No messages yet.", WARN);
                         }
                     } else {
                         if !plain {
-                            let header = match &with {
-                                Some(w) => format!("Conversation with {w}"),
-                                None => "Message history".to_string(),
+                            let header = match (&with, &branch) {
+                                (Some(w), Some(b)) => format!("Conversation with {w} on {b}"),
+                                (Some(w), None) => format!("Conversation with {w}"),
+                                (None, Some(b)) => format!("Conversation on {b}"),
+                                (None, None) => "Message history".to_string(),
                             };
                             println!("{}\n", style(header).bold().underlined());
                         }
@@ -3686,9 +3696,9 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                Some(MsgCommands::Replay { limit, with, interval }) => {
+                Some(MsgCommands::Replay { limit, with, branch, interval }) => {
                     use std::io::Write as _;
-                    let msgs = msg::history(git, with.as_deref(), limit)?;
+                    let msgs = msg::history(git, with.as_deref(), branch.as_deref(), limit)?;
                     if msgs.is_empty() {
                         if !plain {
                             println!("{} No messages yet.", WARN);
@@ -3696,9 +3706,11 @@ fn main() -> anyhow::Result<()> {
                     } else {
                         if !plain {
                             radio_border('┌', '┐', "H5I AGENT RADIO · REPLAY");
-                            let scope = match &with {
-                                Some(w) => format!("conversation with {w}"),
-                                None => "message history".to_string(),
+                            let scope = match (&with, &branch) {
+                                (Some(w), Some(b)) => format!("conversation with {w} on {b}"),
+                                (Some(w), None) => format!("conversation with {w}"),
+                                (None, Some(b)) => format!("conversation on {b}"),
+                                (None, None) => "message history".to_string(),
                             };
                             radio_row(&format!(
                                 "replaying {} {} {} message{} {} {:.3}s between",
@@ -3833,7 +3845,7 @@ fn main() -> anyhow::Result<()> {
                     // arrival. Inbox mode: peek unread (existing or new) — returns
                     // immediately if mail is already waiting.
                     let mut baseline: HashSet<String> = if me.is_none() {
-                        msg::history(git, None, usize::MAX)?
+                        msg::history(git, None, None, usize::MAX)?
                             .into_iter()
                             .map(|m| m.id)
                             .collect()
@@ -3850,7 +3862,7 @@ fn main() -> anyhow::Result<()> {
                             Some(name) => msg::inbox(repo.git(), &repo.h5i_root, name, false)?,
                             None => {
                                 let fresh: Vec<msg::Message> =
-                                    msg::history(repo.git(), None, usize::MAX)?
+                                    msg::history(repo.git(), None, None, usize::MAX)?
                                         .into_iter()
                                         .filter(|m| !baseline.contains(&m.id))
                                         .collect();
@@ -3925,7 +3937,7 @@ fn main() -> anyhow::Result<()> {
                     // (no identity) we seed it with the current log so we stream
                     // only messages that arrive AFTER launch.
                     let mut seen: HashSet<String> = if me.is_none() {
-                        msg::history(git, None, usize::MAX)?
+                        msg::history(git, None, None, usize::MAX)?
                             .into_iter()
                             .map(|m| m.id)
                             .collect()
@@ -3942,13 +3954,13 @@ fn main() -> anyhow::Result<()> {
                         // — like `history`, not just the inbox. Read from the full
                         // log and filter; never touch the per-agent read cursor.
                         let candidates: Vec<msg::Message> = match &me {
-                            Some(name) => msg::history(repo.git(), None, usize::MAX)?
+                            Some(name) => msg::history(repo.git(), None, None, usize::MAX)?
                                 .into_iter()
                                 .filter(|m| {
                                     &m.from == name || &m.to == name || m.to == msg::BROADCAST
                                 })
                                 .collect(),
-                            None => msg::history(repo.git(), None, usize::MAX)?,
+                            None => msg::history(repo.git(), None, None, usize::MAX)?,
                         };
                         let batch: Vec<msg::Message> = candidates
                             .into_iter()

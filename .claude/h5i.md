@@ -333,7 +333,15 @@ h5i msg                                 # inbox dashboard (glance)
 h5i msg inbox                           # show unread, mark read (numbers them)
 h5i msg reply <n> <text>                # threaded reply to message #n
 h5i msg ack|done|decline <n> [text]     # typed threaded replies
+h5i msg history --branch <b>            # extract the conversation tied to a branch
+h5i msg history --with <agent>          # conversation with one agent
 ```
+
+`h5i msg history --branch <b>` reconstructs the AI-to-AI conversation attached
+to a git branch: it returns every thread that has at least one message tagged
+with that branch (whole threads, so untagged replies ride along). `--with` and
+`--branch` compose. `h5i msg replay --branch <b>` plays the same selection back
+as a live feed.
 
 Identity precedence is `--from`/`--as` > `$H5I_AGENT` > stored default. You
 normally need none of them — just `h5i msg send codex "…"`. If a send ever
