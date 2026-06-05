@@ -757,3 +757,4 @@ _[Checkpoint: 6a231192 — edited src/main.rs; edited src/msg.rs; edited .claude
 [21:22:10] OBSERVE: read toml_filter.rs
 [21:22:12] OBSERVE: read toml_filter.rs
 [21:22:13] OBSERVE: read truncate.ts
+[21:22:13] OBSERVE: read snapshot.ts
