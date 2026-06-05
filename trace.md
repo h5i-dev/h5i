@@ -956,3 +956,4 @@ _[Checkpoint: 6a2346d9 — edited src/token_filter.rs; edited src/token_filter.r
 
 [22:01:39] NOTE: REVIEW: 0ded2a5 command-aware adapters mostly verify, but found blocking edge case: unsupported cargo subcommands like cargo metadata are summarized as 'Cargo cargo: ok' instead of falling back to JSON/generic. Asked Claude to restrict cargo adapter to supported subcommands or return None for CargoSub::Other and add regression coverage.
 [22:01:39] OBSERVE: searched src/token_filter.rs for "diff|cmd:|FilterConfig|adapter|command-aware|vitest|status|log""
+[22:01:39] OBSERVE: read src/token_filter.rs
