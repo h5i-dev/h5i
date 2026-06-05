@@ -986,3 +986,4 @@ _[Checkpoint: 6a2347fb — edited src/token_filter.rs; edited src/token_filter.r
 [22:10:54] ACT: edited src/token_filter.rs
 [22:11:09] ACT: edited src/token_filter.rs
 [22:13:00] THINK: No prebuilt binary. Let me build rtk (debug, faster) in the background while I prepare the test fixtures.
+[22:13:00] THINK: Let me run the full four-fixture benchmark with a corrected token counter.
