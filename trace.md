@@ -775,3 +775,4 @@ _[Checkpoint: 6a231192 — edited src/main.rs; edited src/msg.rs; edited .claude
 [21:22:25] OBSERVE: read content_router.py
 [21:22:25] OBSERVE: read log_compressor.py
 [21:22:27] OBSERVE: read tee.rs
+[21:22:28] THINK: Advise Claude to implement token reduction as local-first content-addressed reversible raw object storage plus deterministic filter summaries before adding remote backends, because durable retrieval and trace stability are higher-risk than compression ratio.
