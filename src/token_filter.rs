@@ -203,8 +203,17 @@ pub fn classify(text: &str) -> OutputKind {
     {
         return OutputKind::Diff;
     }
+    // Sample a bounded prefix AND tail: a failure that only shows up late in a
+    // huge log (the summary line, the final panic) must still drive
+    // classification — head-only sampling would miss it.
+    let all: Vec<&str> = text.lines().collect();
+    let mut sample: Vec<&str> = all.iter().take(80).copied().collect();
+    if all.len() > 80 {
+        sample.extend(all.iter().skip(all.len().saturating_sub(80)).copied());
+    }
+
     // Test output: pytest/cargo/jest/go vocabulary.
-    let lower = head.to_ascii_lowercase();
+    let sample_lower = sample.join("\n").to_ascii_lowercase();
     let test_markers = [
         "test result",
         "passed",
@@ -218,17 +227,29 @@ pub fn classify(text: &str) -> OutputKind {
         "tests passed",
         "failures:",
     ];
-    let hits = test_markers.iter().filter(|m| lower.contains(**m)).count();
+    let hits = test_markers
+        .iter()
+        .filter(|m| sample_lower.contains(**m))
+        .count();
     if hits >= 2 {
         return OutputKind::Test;
     }
-    // Logs: lines that look like log records (level tags / timestamps).
-    let log_hits = text
-        .lines()
-        .take(80)
-        .filter(|l| line_score(l) >= 0.7)
-        .count();
-    if log_hits >= 2 {
+    // A critical failure anywhere in the sample, or several log-level lines,
+    // makes this a log rather than opaque generic text. (Mid-log failures
+    // outside the sample are still preserved by the scored summarizer, which
+    // generic output also routes through — classification only sets the label.)
+    let mut crit = 0;
+    let mut log_hits = 0;
+    for l in &sample {
+        let s = line_score(l);
+        if s >= 1.0 {
+            crit += 1;
+        }
+        if s >= 0.7 {
+            log_hits += 1;
+        }
+    }
+    if crit >= 1 || log_hits >= 2 {
         return OutputKind::Log;
     }
     OutputKind::Generic

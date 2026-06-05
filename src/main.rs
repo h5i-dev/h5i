@@ -6207,8 +6207,12 @@ jq -c '{
             };
 
             // Print the agent-facing summary plus a durable pointer line.
-            let print_summary = |m: &objects::Manifest, deduped: bool| {
+            // `quiet` suppresses the pointer/status line (summary only).
+            let print_summary = |m: &objects::Manifest, deduped: bool, quiet: bool| {
                 println!("{}", m.summary);
+                if quiet {
+                    return;
+                }
                 let savings = match (m.raw_tokens, m.summary_tokens) {
                     (Some(r), Some(s)) if r > 0 => {
                         let pct = 100 - (s.min(r) * 100 / r);
@@ -6283,8 +6287,7 @@ jq -c '{
                         filter: cfg,
                     };
                     let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
-                    print_summary(&outcome.manifest, outcome.deduped);
-                    let _ = quiet; // reserved: suppress pointer line in a future pass
+                    print_summary(&outcome.manifest, outcome.deduped, quiet);
 
                     // Transparent wrapper: pass the child's exit code through.
                     if let Some(code) = exit_code {
@@ -6315,13 +6318,11 @@ jq -c '{
                         filter: cfg,
                     };
                     let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
-                    print_summary(&outcome.manifest, outcome.deduped);
+                    print_summary(&outcome.manifest, outcome.deduped, false);
                 }
 
                 ObjectsCommands::Get { id, summary, manifest } => {
-                    let Some(m) = objects::find_manifest(git, &id) else {
-                        anyhow::bail!("no object matching '{id}' (try `h5i recall objects`)");
-                    };
+                    let m = objects::resolve_manifest(git, &id)?;
                     if manifest {
                         println!("{}", serde_json::to_string_pretty(&m)?);
                     } else if summary {
@@ -6425,17 +6426,13 @@ jq -c '{
                 }
 
                 ObjectsCommands::Pin { id } => {
-                    let Some(m) = objects::find_manifest(git, &id) else {
-                        anyhow::bail!("no object matching '{id}'");
-                    };
+                    let m = objects::resolve_manifest(git, &id)?;
                     objects::pin(&h5i_root, m.hex())?;
                     println!("{} pinned {}", style("✔").green(), style(&m.id).cyan());
                 }
 
                 ObjectsCommands::Unpin { id } => {
-                    let Some(m) = objects::find_manifest(git, &id) else {
-                        anyhow::bail!("no object matching '{id}'");
-                    };
+                    let m = objects::resolve_manifest(git, &id)?;
                     objects::unpin(&h5i_root, m.hex())?;
                     println!("{} unpinned {}", style("✔").green(), style(&m.id).cyan());
                 }

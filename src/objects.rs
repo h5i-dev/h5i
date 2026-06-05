@@ -448,6 +448,50 @@ pub fn find_manifest(repo: &Repository, handle: &str) -> Option<Manifest> {
     })
 }
 
+/// Resolve a user handle to exactly one manifest, erroring on no match or an
+/// **ambiguous** prefix (one that matches two or more *distinct* digests).
+///
+/// This is the strict resolver the CLI uses: unlike [`find_manifest`], which
+/// quietly returns the newest match, it refuses to guess when a short prefix is
+/// ambiguous. An exact id / full hex always wins outright (and the same content
+/// captured twice shares one digest, so that is never "ambiguous").
+pub fn resolve_manifest(repo: &Repository, handle: &str) -> Result<Manifest, H5iError> {
+    let needle = handle.strip_prefix("sha256:").unwrap_or(handle).to_lowercase();
+    let manifests = read_manifests(repo);
+
+    // Exact id or full hex match wins (newest such, if duplicated).
+    if let Some(m) = manifests
+        .iter()
+        .rev()
+        .find(|m| m.id == needle || m.hex() == needle)
+    {
+        return Ok(m.clone());
+    }
+
+    if needle.len() < 4 {
+        return Err(H5iError::Metadata(format!(
+            "object handle '{handle}' is too short — use at least 4 hex chars, the full id, or sha256:<hex>"
+        )));
+    }
+
+    // Prefix match: collect distinct digests that share the prefix.
+    let mut distinct: Vec<Manifest> = Vec::new();
+    for m in manifests.iter().rev() {
+        if m.hex().starts_with(&needle) && !distinct.iter().any(|d| d.hex() == m.hex()) {
+            distinct.push(m.clone());
+        }
+    }
+    match distinct.len() {
+        0 => Err(H5iError::Metadata(format!(
+            "no object matches '{handle}' (try `h5i recall objects`)"
+        ))),
+        1 => Ok(distinct.into_iter().next().unwrap()),
+        n => Err(H5iError::Metadata(format!(
+            "object handle '{handle}' is ambiguous — it matches {n} distinct objects; use more characters or the full id"
+        ))),
+    }
+}
+
 /// Load the raw bytes for a manifest from the local backend. `Ok(None)` means
 /// the manifest exists but the blob was evicted / never fetched ("absent").
 pub fn load_raw(h5i_root: &Path, manifest: &Manifest) -> Result<Option<Vec<u8>>, H5iError> {
@@ -900,6 +944,59 @@ mod tests {
         let out = capture(&repo, &h5i_root, &raw, opts()).unwrap();
         assert!(out.manifest.summary.contains("binary"));
         assert_eq!(load_raw(&h5i_root, &out.manifest).unwrap().unwrap(), raw);
+    }
+
+    fn manifest_with_oid(hex: &str) -> Manifest {
+        Manifest {
+            id: hex[..16].to_string(),
+            kind: "test".into(),
+            cmd: None,
+            cwd: None,
+            exit_code: None,
+            git_tree: None,
+            timestamp: now_ts(),
+            raw_oid: format!("sha256:{hex}"),
+            raw_size: 0,
+            raw_lines: 0,
+            filter_version: 1,
+            summary: String::new(),
+            highlights: Vec::new(),
+            store: "local".into(),
+            codec: "none".into(),
+            raw_tokens: None,
+            summary_tokens: None,
+        }
+    }
+
+    #[test]
+    fn resolve_manifest_errors_on_ambiguous_prefix() {
+        let (_d, repo, _h5i_root) = setup();
+        // Two distinct digests sharing the "abcd" prefix.
+        let a = format!("abcd{}", "0".repeat(60));
+        let b = format!("abcd{}", "1".repeat(60));
+        append_manifest(&repo, &manifest_with_oid(&a)).unwrap();
+        append_manifest(&repo, &manifest_with_oid(&b)).unwrap();
+
+        // Ambiguous prefix → error.
+        let err = resolve_manifest(&repo, "abcd").unwrap_err();
+        assert!(err.to_string().contains("ambiguous"), "{err}");
+
+        // Full hex (and sha256: form) resolve to exactly one.
+        assert_eq!(resolve_manifest(&repo, &a).unwrap().hex(), a);
+        assert_eq!(
+            resolve_manifest(&repo, &format!("sha256:{b}")).unwrap().hex(),
+            b
+        );
+
+        // A prefix unique to one digest resolves; an unknown one errors.
+        assert_eq!(resolve_manifest(&repo, "abcd0000").unwrap().hex(), a);
+        assert!(resolve_manifest(&repo, "ffff").unwrap_err().to_string().contains("no object"));
+
+        // Too-short handles are rejected outright.
+        assert!(resolve_manifest(&repo, "ab")
+            .unwrap_err()
+            .to_string()
+            .contains("too short"));
     }
 
     #[test]
