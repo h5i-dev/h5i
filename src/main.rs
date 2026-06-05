@@ -107,7 +107,7 @@ fn print_one_message(n: usize, m: &msg::Message, viewer: &str, plain: bool) {
         arrow(&m.from, &m.to, viewer),
         kind_badge(&m.effective_kind()),
         priority_badge(&m.priority),
-        style(format!("#{}", &m.id)).dim(),
+        style(format!("#{}", m.id)).dim(),
         reply_marker(m),
     );
     println!("       {}", msg::sanitize_display(&m.body));
@@ -411,7 +411,7 @@ fn render_dashboard(
                 arrow(&m.from, &m.to, me.unwrap_or("")),
                 kind_badge(&m.effective_kind()),
                 priority_badge(&m.priority),
-                style(format!("#{}", &m.id)).dim(),
+                style(format!("#{}", m.id)).dim(),
                 reply_marker(m),
             );
             radio_row(&head);
@@ -486,7 +486,7 @@ fn report_sent(m: &msg::Message) {
         SUCCESS,
         arrow(&m.from, &m.to, &m.from),
         kind_badge(&m.effective_kind()),
-        style(format!("#{}", &m.id)).dim(),
+        style(format!("#{}", m.id)).dim(),
         style(re).dim(),
     );
     if !m.body.is_empty() {
@@ -1211,9 +1211,17 @@ enum MsgCommands {
         interval: u64,
     },
 
-    /// Stream messages as they arrive. Foreground loop; Ctrl+C to stop.
-    /// With an identity (`--as` / $H5I_AGENT) it streams your inbox; with `--all`
-    /// or no identity it streams the whole channel (no identity needed).
+    /// Live watcher — stream the conversation as it happens. Ctrl+C to stop.
+    ///
+    /// By default this is the stable line-streaming watcher (the format the
+    /// Stop hook / Monitor tool consume). Pass `--tui` on an interactive
+    /// terminal to open the full-screen cinematic "Agent Radio" dashboard
+    /// (roster with per-agent activity, a live transmission feed, and a Git
+    /// provenance ticker); `--tui` is ignored when stdout is not a TTY or with
+    /// `--plain` / `--once`. With an identity (`--as` / $H5I_AGENT) it scopes to
+    /// your conversation (sent + received + broadcast); with `--all` or no
+    /// identity it shows the whole channel. Always passive: it never advances
+    /// any agent's read cursor.
     Watch {
         /// Whose inbox to watch. Defaults to $H5I_AGENT or the stored identity.
         #[arg(long = "as")]
@@ -1228,6 +1236,10 @@ enum MsgCommands {
         /// Check once and exit (don't loop) — useful for testing.
         #[arg(long)]
         once: bool,
+        /// Open the full-screen Agent Radio TUI instead of the line-streaming
+        /// watcher (requires a TTY; ignored with `--plain` or `--once`).
+        #[arg(long)]
+        tui: bool,
     },
 }
 
@@ -3868,9 +3880,9 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                Some(MsgCommands::Watch { as_agent, all, interval, once }) => {
+                Some(MsgCommands::Watch { as_agent, all, interval, once, tui }) => {
                     use std::collections::HashSet;
-                    use std::io::Write as _;
+                    use std::io::{IsTerminal, Write as _};
                     // Identity-scoped *conversation* stream (both directions —
                     // sent, received, and broadcasts), unless `--all` or no
                     // identity is resolvable → watch the whole channel.
@@ -3879,6 +3891,15 @@ fn main() -> anyhow::Result<()> {
                     } else {
                         msg::resolve_identity(&h5i_root, as_agent.as_deref()).ok()
                     };
+
+                    // Cinematic full-screen Agent Radio: opt-in via `--tui`, and
+                    // only on a real, live TTY. The default (and every scripted /
+                    // piped / Monitor path — `--plain`, `--once`, or a non-TTY
+                    // stdout) keeps the stable line-streaming watcher below.
+                    if tui && !plain && !once && std::io::stdout().is_terminal() {
+                        h5i_core::radio::run_watch(std::path::Path::new("."), me, all, interval)?;
+                        return Ok(());
+                    }
 
                     if !once && !plain {
                         radio_border('┌', '┐', "H5I AGENT RADIO · LIVE");
