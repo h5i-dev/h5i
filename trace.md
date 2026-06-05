@@ -940,3 +940,9 @@ _[Checkpoint: 6a23469e — phase-1.5 command-aware adapters added]_
 
 [21:59:15] THINK: Let me re-read the current `filter()` to refactor it cleanly.
 [21:59:15] THINK: Let me reorder so summary lines are handled (and not counted) first.
+
+
+---
+_[Checkpoint: 6a2346b3 — edited src/token_filter.rs; edited src/token_filter.rs; edited docs/token-reduction.md]_
+---
+
