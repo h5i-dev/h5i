@@ -413,7 +413,6 @@ enum CargoSub {
     Check,
     Clippy,
     Build,
-    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -473,16 +472,16 @@ fn detect_tool(cmd: &[String]) -> Option<Tool> {
     if words.iter().any(|w| w == "pytest" || w == "py.test") {
         return Some(Tool::Pytest);
     }
-    // cargo <sub>.
+    // cargo <sub> — only the build/test subcommands, whose output the adapter
+    // actually understands. Others (metadata/tree/run/…) often emit JSON or
+    // program output, so we decline and let the generic path handle them.
     if let Some(i) = words.iter().position(|w| w == "cargo") {
-        let sub = words.get(i + 1).map(|s| s.as_str()).unwrap_or("");
-        let sub = match sub {
+        let sub = match words.get(i + 1).map(|s| s.as_str()).unwrap_or("") {
             "test" | "t" | "nextest" => CargoSub::Test,
             "check" | "c" => CargoSub::Check,
             "clippy" => CargoSub::Clippy,
             "build" | "b" => CargoSub::Build,
-            "" => return None,
-            _ => CargoSub::Other,
+            _ => return None,
         };
         return Some(Tool::Cargo(sub));
     }
@@ -711,7 +710,6 @@ fn cargo_summary(
         CargoSub::Check => "check",
         CargoSub::Clippy => "clippy",
         CargoSub::Build => "build",
-        CargoSub::Other => "cargo",
     };
     let mut headline = format!("Cargo {sub_name}:");
     match (errors, warnings) {
@@ -1283,6 +1281,22 @@ mod tests {
         assert!(res.summary.contains("src/main.rs:10:5"));
         assert!(res.summary.contains("could not compile"));
         assert!(!res.summary.contains("Compiling foo"), "noise should be stripped");
+    }
+
+    #[test]
+    fn cargo_metadata_json_falls_back_to_generic() {
+        // `cargo metadata` emits JSON — the cargo adapter must NOT claim it and
+        // flatten it to "Cargo cargo: ok"; it should reach the generic JSON path.
+        let cmd = argv(&["cargo", "metadata", "--format-version", "1"]);
+        assert_eq!(detect_tool(&cmd), None);
+        assert!(summarize_command(&cmd, "{\"packages\":[]}", &FilterConfig::default()).is_none());
+
+        let raw = r#"{"packages":[{"name":"foo","version":"0.1.0"}],"version":1}"#;
+        let cfg = FilterConfig { cmd: Some(cmd), ..Default::default() };
+        let res = filter(raw, &cfg);
+        assert!(!res.summary.contains("Cargo"), "must not be claimed by cargo adapter");
+        assert_eq!(res.kind, OutputKind::Json);
+        assert!(res.summary.contains("packages"));
     }
 
     #[test]
