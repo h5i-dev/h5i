@@ -836,3 +836,16 @@ object store + filter + CLI (capture run / objects */ recall object[s]) + storag
 
 ---
 
+## Commit 6a23439b — 2026-06-05 21:46 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+object store + filter + CLI (capture run / objects */ recall object[s]) + storage/push-pull wiring + docs. 23 new tests, 568 total green, clippy clean, e2e smoke ~92% token cut. Deferred (phase 2): auto-ingest hook into ctx/codex trace; remote backends; zstd codec.
+
+### This Commit's Contribution
+
+
+---
+

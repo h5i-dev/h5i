@@ -869,3 +869,9 @@ _[Checkpoint: 6a23437d — token-reduction v1 implemented]_
 
 [21:46:03] THINK: Let me set up the context workspace (per project rules) and send the design proposal to Codex for advice in parallel.
 [21:46:03] THINK: Let me set up tracking and read the few remaining integration points I need (lib.
+
+
+---
+_[Checkpoint: 6a23439b — edited src/token_filter.rs; Implemented token-reduction v1: src/token_filter.rs (classify+ansi-strip+line-scoring+dedup+…]_
+---
+
