@@ -946,3 +946,4 @@ _[Checkpoint: 6a23469e — phase-1.5 command-aware adapters added]_
 _[Checkpoint: 6a2346b3 — edited src/token_filter.rs; edited src/token_filter.rs; edited docs/token-reduction.md]_
 ---
 
+[21:59:53] NOTE: DEFERRAL (~/Dev/h5i/docs/token-reduction.md): **Its DONE on `626d333`:** approval, with two non-blocking follow-ups (prefix ambiguity docs, `--quiet`) — both already fixed in `0754cd6`. **Its ne…
