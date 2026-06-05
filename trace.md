@@ -741,3 +741,4 @@ _[Checkpoint: 6a230eb3 — edited src/session_log.rs; edited src/session_log.rs;
 _[Checkpoint: 6a231128 — edited src/main.rs; edited src/msg.rs; edited .claude/h5i.md]_
 ---
 
+[18:12:34] THINK: I haven't committed — say the word and I'll `h5i commit` it with provenance (and run `h5i notes analyze`).
