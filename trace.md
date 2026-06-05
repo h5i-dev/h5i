@@ -875,3 +875,4 @@ _[Checkpoint: 6a23437d — token-reduction v1 implemented]_
 _[Checkpoint: 6a23439b — edited src/token_filter.rs; Implemented token-reduction v1: src/token_filter.rs (classify+ansi-strip+line-scoring+dedup+…]_
 ---
 
+[21:47:17] ACT: edited src/token_filter.rs
