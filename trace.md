@@ -802,3 +802,4 @@ _[Checkpoint: 6a233f51 — Advised Claude via h5i on token reduction object-stor
 [21:28:52] OBSERVE: read src/metadata.rs
 [21:30:53] ACT: wrote src/token_filter.rs
 [21:33:02] ACT: wrote src/objects.rs
+[21:33:15] ACT: edited src/lib.rs
