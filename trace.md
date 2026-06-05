@@ -907,3 +907,4 @@ _[Checkpoint: 6a234402 — Approved Claude's token-reduction v1 commit 626d333 a
 [21:50:12] OBSERVE: read ../TokenReduction/rtk/src/core/filter.rs
 [21:50:12] OBSERVE: read 5
 [21:50:12] OBSERVE: read 5
+[21:50:24] NOTE: DEFERRAL (~/Dev/h5i/docs/token-reduction.md): full digest; no git-annex/LFS/ML/compression deps added **Deferred to phase 2** (as scoped): auto-ingest hook into the ctx/codex/session trace boundar…
