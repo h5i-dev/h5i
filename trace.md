@@ -899,3 +899,4 @@ _[Checkpoint: 6a234402 — Approved Claude's token-reduction v1 commit 626d333 a
 [21:48:21] ACT: edited src/objects.rs
 [21:48:48] THINK: Compared h5i token_filter v1 against ../TokenReduction/rtk: h5i is a conservative generic reversible summary filter, while RTK has a mature command-specific filtering stack with TOML rules, dedicated cargo/pytest parsers, streaming/block handlers, and inline filter tests; next quality step is command-aware adapters for pytest/cargo/git before adding config.
 [21:50:12] NOTE: REVIEW: Sent Claude detailed filter-quality comparison versus RTK. Main recommendation: keep v1 approved, but phase 1.5 should add deterministic command-aware adapters for pytest, cargo, git, npm/vitest before any TOML config; generic scorer remains fallback.
+[21:50:12] OBSERVE: listed files under ../TokenReduction/rtk
