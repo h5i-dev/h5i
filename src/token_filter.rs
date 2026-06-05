@@ -690,9 +690,17 @@ fn cargo_summary(
             keep.push(t.to_string());
             continue;
         }
-        // Per-test failure listing.
-        if tl.starts_with("---- ") && tl.ends_with("----") {
+        // A test-failure block: the "---- <test> stdout ----" header and the
+        // panic that follows. Open a keep-block so the panic message and
+        // assertion values (the actual reason) are preserved, not dropped.
+        if (tl.starts_with("---- ") && tl.ends_with("----"))
+            || (tl.starts_with("thread '") && tl.contains("panicked"))
+        {
+            in_block = true;
             keep.push(t.to_string());
+            if highlights.len() < 20 {
+                highlights.push(tl.to_string());
+            }
             continue;
         }
         if in_block {
@@ -705,6 +713,20 @@ fn cargo_summary(
         }
     }
 
+    // Count failing tests from the "test result:" tallies so the headline never
+    // claims "ok" when tests failed.
+    let failed_re = regex::Regex::new(r"(\d+)\s+failed").unwrap();
+    let mut test_failed = 0usize;
+    let mut saw_test_fail = false;
+    for tr in &test_results {
+        if tr.contains("FAILED") {
+            saw_test_fail = true;
+        }
+        if let Some(c) = failed_re.captures(tr) {
+            test_failed += c[1].parse::<usize>().unwrap_or(0);
+        }
+    }
+
     let sub_name = match sub {
         CargoSub::Test => "test",
         CargoSub::Check => "check",
@@ -712,11 +734,23 @@ fn cargo_summary(
         CargoSub::Build => "build",
     };
     let mut headline = format!("Cargo {sub_name}:");
-    match (errors, warnings) {
-        (0, 0) => headline.push_str(" ok"),
-        (e, 0) => headline.push_str(&format!(" {e} error{}", plural(e))),
-        (0, w) => headline.push_str(&format!(" {w} warning{}", plural(w))),
-        (e, w) => headline.push_str(&format!(" {e} error{}, {w} warning{}", plural(e), plural(w))),
+    let mut parts: Vec<String> = Vec::new();
+    if test_failed > 0 {
+        parts.push(format!("{test_failed} test{} failed", plural(test_failed)));
+    } else if saw_test_fail {
+        parts.push("tests failed".to_string());
+    }
+    if errors > 0 {
+        parts.push(format!("{errors} error{}", plural(errors)));
+    }
+    if warnings > 0 {
+        parts.push(format!("{warnings} warning{}", plural(warnings)));
+    }
+    if parts.is_empty() {
+        headline.push_str(" ok");
+    } else {
+        headline.push(' ');
+        headline.push_str(&parts.join(", "));
     }
 
     let mut summary = headline;
@@ -1281,6 +1315,22 @@ mod tests {
         assert!(res.summary.contains("src/main.rs:10:5"));
         assert!(res.summary.contains("could not compile"));
         assert!(!res.summary.contains("Compiling foo"), "noise should be stripped");
+    }
+
+    #[test]
+    fn cargo_test_failure_keeps_panic_and_is_not_labeled_ok() {
+        let raw = "   Compiling app v0.1.0\n    Finished test target(s)\nrunning 88 tests\ntest mod::a ... ok\ntest mod::auth ... FAILED\n\nfailures:\n\n---- mod::auth stdout ----\nthread 'mod::auth' panicked at src/auth.rs:55:9:\nassertion `left == right` failed\n  left: 401\n  right: 200\n\nfailures:\n    mod::auth\n\ntest result: FAILED. 87 passed; 1 failed; 0 ignored\nerror: test failed, to get more output, run again\n";
+        let res = summarize_command(&argv(&["cargo", "test"]), raw, &FilterConfig::default()).unwrap();
+        // Must NOT claim ok when a test failed.
+        assert!(!res.summary.contains("Cargo test: ok"), "got: {}", res.summary);
+        assert!(res.summary.contains("Cargo test: 1 test failed"));
+        // Must preserve the actual failure reason (panic + assertion values).
+        assert!(res.summary.contains("panicked at src/auth.rs:55:9"));
+        assert!(res.summary.contains("left: 401"));
+        assert!(res.summary.contains("right: 200"));
+        assert!(res.summary.contains("test result: FAILED"));
+        // Compiler noise still stripped.
+        assert!(!res.summary.contains("Compiling app"));
     }
 
     #[test]
