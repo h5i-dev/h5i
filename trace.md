@@ -789,3 +789,4 @@ _[Checkpoint: 6a231192 — edited src/main.rs; edited src/msg.rs; edited .claude
 [21:25:50] THINK: Codex advises: object store first, then filter, then remotes. Hook at ingest boundary. Manifest must carry FULL sha256+metadata. git-tracked summaries immutable; GC only evicts unreferenced/unpinned local raw by TTL. LocalStore now, RemoteStore trait later. Deterministic per-kind filters (test/log/json/diff/generic). Store uncompressed first, codec field reserved.
 [21:27:08] OBSERVE: read src/lib.rs
 [21:27:09] OBSERVE: read src/error.rs
+[21:27:09] OBSERVE: read src/msg.rs
