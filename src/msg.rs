@@ -561,16 +561,41 @@ fn migrate_legacy_seen(h5i_root: &Path, me: &str, addressed: &[Message]) -> BTre
 
 /// Return up to `limit` most-recent messages (oldest-first within the window).
 /// When `with` is set, restrict to messages where that agent is the sender or
-/// recipient (a conversation view).
+/// recipient (a conversation view). When `branch` is set, restrict to the
+/// conversation tied to that git branch using thread-closure semantics: a
+/// thread qualifies iff at least one of its messages is tagged
+/// `branch == Some(branch)` (exact match), and the *entire* thread is then kept
+/// — including replies that omitted the branch field — so an `ACK`/`DONE` that
+/// only set `reply_to` still travels with its `REVIEW_REQUEST`. This mirrors the
+/// rule used by [`threads_for_branch`] for PR bodies. `with` and `branch`
+/// compose (both filters apply).
 pub fn history(
     repo: &Repository,
     with: Option<&str>,
+    branch: Option<&str>,
     limit: usize,
 ) -> Result<Vec<Message>, H5iError> {
-    let mut all: Vec<Message> = read_messages(repo)
+    let all_msgs = read_messages(repo);
+
+    // Thread roots that have at least one message explicitly tagged with the
+    // requested branch. Computed once over the full set so the closure picks up
+    // untagged replies in the same thread.
+    let branch_roots: Option<std::collections::HashSet<String>> = branch.map(|b| {
+        all_msgs
+            .iter()
+            .filter(|m| m.branch.as_deref() == Some(b))
+            .map(|m| m.thread_root())
+            .collect()
+    });
+
+    let mut all: Vec<Message> = all_msgs
         .into_iter()
         .filter(|m| match with {
             Some(w) => m.from == w || m.to == w,
+            None => true,
+        })
+        .filter(|m| match &branch_roots {
+            Some(roots) => roots.contains(&m.thread_root()),
             None => true,
         })
         .collect();
@@ -1332,15 +1357,40 @@ mod tests {
         send(&repo, &root, "bob", "alice", "2", None).unwrap();
         send(&repo, &root, "carol", "dave", "3", None).unwrap();
 
-        let all = history(&repo, None, 10).unwrap();
+        let all = history(&repo, None, None, 10).unwrap();
         assert_eq!(all.len(), 3);
 
-        let with_alice = history(&repo, Some("alice"), 10).unwrap();
+        let with_alice = history(&repo, Some("alice"), None, 10).unwrap();
         assert_eq!(with_alice.len(), 2);
 
-        let limited = history(&repo, None, 1).unwrap();
+        let limited = history(&repo, None, None, 1).unwrap();
         assert_eq!(limited.len(), 1);
         assert_eq!(limited[0].body, "3"); // most recent
+    }
+
+    #[test]
+    fn history_filters_by_branch_with_thread_closure() {
+        let (_d, repo, root) = fixture();
+
+        // Thread on `feature-x`, with a reply that omits the branch tag.
+        let a_root = send_on(&repo, &root, "codex", "claude", "review feature-x", Some("feature-x"), None);
+        send_on(&repo, &root, "claude", "codex", "done", None, Some(&a_root.id));
+        // A different branch and an untagged message — both excluded.
+        send_on(&repo, &root, "codex", "claude", "review other", Some("other-branch"), None);
+        send_on(&repo, &root, "claude", "codex", "fyi", None, None);
+
+        // Branch filter keeps the whole thread (the untagged reply rides along).
+        let on_branch = history(&repo, None, Some("feature-x"), 10).unwrap();
+        assert_eq!(on_branch.len(), 2);
+        assert_eq!(on_branch[0].body, "review feature-x");
+        assert_eq!(on_branch[1].body, "done");
+
+        // No match → empty.
+        assert!(history(&repo, None, Some("nonexistent"), 10).unwrap().is_empty());
+
+        // `with` and `branch` compose: restrict the branch thread to one agent.
+        let scoped = history(&repo, Some("codex"), Some("feature-x"), 10).unwrap();
+        assert_eq!(scoped.len(), 2, "both messages involve codex");
     }
 
     #[test]

@@ -147,7 +147,7 @@ pub fn run_watch(
 fn fetch(workdir: &Path, me: Option<&str>) -> anyhow::Result<(Vec<Message>, msg::Stats)> {
     let repo = H5iRepository::open(workdir)?;
     let stats = msg::stats(repo.git());
-    let all = msg::history(repo.git(), None, usize::MAX)?;
+    let all = msg::history(repo.git(), None, None, usize::MAX)?;
     let msgs = match me {
         Some(name) => all
             .into_iter()
