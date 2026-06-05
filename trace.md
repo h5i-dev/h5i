@@ -698,3 +698,9 @@ _[Checkpoint: 6a22cd76 — edited src/session_log.rs; edited src/session_log.rs;
 ---
 
 [13:22:43] THINK: On `fix-hook-crush` branch (not main), so I'll commit directly using `h5i commit` per project conventions:
+
+
+---
+_[Checkpoint: 6a22cda3 — edited src/session_log.rs; edited src/session_log.rs; edited src/session_log.rs]_
+---
+
