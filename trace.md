@@ -1029,3 +1029,4 @@ _[Checkpoint: 6a234d36 — phase-2 declarative rule engine ported from rtk]_
 _[Checkpoint: 6a234d53 — edited src/main.rs; edited src/filter_rules.rs; edited docs/token-reduction.md]_
 ---
 
+[23:54:17] OBSERVE: read src/token_filter.rs
