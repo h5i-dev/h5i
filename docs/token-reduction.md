@@ -80,6 +80,30 @@ hunk headers plus a bounded window of changed lines per hunk.
 The filter **never invents text**. Elisions are always marked, and the raw is
 always retrievable.
 
+### Command-aware adapters
+
+When `h5i capture run` knows the command argv, a thin **adapter layer** produces
+a semantic summary for a few high-traffic tools, falling back to the generic
+scorer for everything else (and whenever you pass an explicit `--kind`):
+
+| Tool | All-pass | On failure |
+| --- | --- | --- |
+| **pytest** (`pytest`, `python -m pytest`) | `Pytest: 184 passed in 2.5s` | counts + the `FAILURES` headers, `E   ` assertion lines, and `FAILED`/`ERROR`/`XFAIL` summary lines (capped at 10 failures) |
+| **cargo** (`test`/`check`/`clippy`/`build`) | `Cargo test: ok` + `test result:` tallies | strips `Compiling`/`Finished` noise, keeps each `error[...]`/`warning:` block with its `-->` span, aggregates results |
+| **git diff** / `git show` | — | `git diff: N files changed, +A -B` header + file/hunk headers + bounded changed lines |
+
+```text
+$ h5i capture run -- pytest -q
+Pytest: 184 passed in 2.53s        # 186 raw lines → 1
+```
+
+Adapters are deterministic, dependency-light, and covered by golden-style tests
+(buried failure retained · all-pass shrinks aggressively · success never empties ·
+raw rehydrate stays exact). Each may decline (`return None`) so a malformed or
+unexpected output never produces a misleading summary — it just falls back.
+Deferred to a later pass: `git status`/`git log`, npm/jest/vitest, and a
+user-extensible (RTK-style) rule format once the built-in semantics are proven.
+
 ## Lifetime & space
 
 Manifests are immutable and kept forever — they're tiny and greppable. Only the

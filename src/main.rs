@@ -6251,7 +6251,10 @@ jq -c '{
                         );
                     }
                     let kind_opt = kind.as_deref().map(OutputKind::parse).unwrap_or(OutputKind::Auto);
-                    let cfg = make_cfg(kind_opt, budget, token_budget);
+                    let mut cfg = make_cfg(kind_opt, budget, token_budget);
+                    // Hand the argv to the filter so command-aware adapters
+                    // (pytest/cargo/git) can produce a semantic summary.
+                    cfg.cmd = Some(command.clone());
                     let cwd = std::env::current_dir().ok().map(|p| p.display().to_string());
 
                     // Run the command, capturing stdout + stderr (stdin inherited

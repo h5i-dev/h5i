@@ -91,6 +91,11 @@ pub struct FilterConfig {
     pub max_lines: usize,
     /// Optional cap on summary tokens (best-effort; uses tiktoken when available).
     pub token_budget: Option<usize>,
+    /// The command argv that produced the output, when known. Enables the
+    /// command-aware adapter layer (pytest/cargo/git) for higher-quality
+    /// summaries; falls back to the generic scorer when no adapter matches.
+    /// Only consulted when `kind` is `Auto` (an explicit `--kind` opts out).
+    pub cmd: Option<Vec<String>>,
 }
 
 impl Default for FilterConfig {
@@ -101,6 +106,7 @@ impl Default for FilterConfig {
             tail_lines: DEFAULT_TAIL,
             max_lines: DEFAULT_MAX_LINES,
             token_budget: None,
+            cmd: None,
         }
     }
 }
@@ -344,6 +350,17 @@ fn looks_like_path_with_line(l: &str) -> bool {
 
 /// Filter `raw` according to `cfg`, returning a small summary.
 pub fn filter(raw: &str, cfg: &FilterConfig) -> FilterResult {
+    // Command-aware adapters (pytest/cargo/git) produce materially better
+    // summaries for known tools. They only run when the kind isn't forced, and
+    // any adapter may decline (return None) to fall back to the generic scorer.
+    if cfg.kind == OutputKind::Auto {
+        if let Some(cmd) = &cfg.cmd {
+            if let Some(res) = summarize_command(cmd, raw, cfg) {
+                return res;
+            }
+        }
+    }
+
     let cleaned = strip_ansi(raw);
     let kind = match cfg.kind {
         OutputKind::Auto => classify(&cleaned),
@@ -375,6 +392,388 @@ pub fn filter(raw: &str, cfg: &FilterConfig) -> FilterResult {
         raw_tokens,
         summary_tokens,
     }
+}
+
+// ── Command-aware adapters ──────────────────────────────────────────────────
+//
+// A thin layer that recognizes a handful of high-traffic commands and produces
+// a semantic summary (e.g. "Pytest: 184 passed, 2 failed in 3.21s" + the failure
+// blocks) rather than a generic head/tail+errors reduction. The contract is
+// deliberately simple — each adapter is deterministic, dependency-light, and may
+// decline by returning `None`, in which case the generic scorer takes over.
+//
+// This is phase 1.5 of the token-reduction feature: it captures the proven RTK
+// idea of per-command parsers without adopting a config format yet. Adapters
+// implemented: pytest, cargo (test/check/clippy/build), git diff. Deferred:
+// git status/log, npm/jest/vitest.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CargoSub {
+    Test,
+    Check,
+    Clippy,
+    Build,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tool {
+    Pytest,
+    Cargo(CargoSub),
+    GitDiff,
+}
+
+/// Command-aware summary for known tools. Returns `None` to fall back to the
+/// generic scorer. Mirrors the contract proposed for phase 1.5:
+/// `summarize_command(cmd, stdout_stderr, cfg) -> Option<FilterResult>`.
+pub fn summarize_command(cmd: &[String], output: &str, cfg: &FilterConfig) -> Option<FilterResult> {
+    let tool = detect_tool(cmd)?;
+    let cleaned = strip_ansi(output);
+    let (summary, highlights, kind, kept_lines) = match tool {
+        Tool::Pytest => pytest_summary(&cleaned, cfg)?,
+        Tool::Cargo(sub) => cargo_summary(&cleaned, sub, cfg)?,
+        Tool::GitDiff => git_diff_summary(&cleaned, cfg)?,
+    };
+    let raw_lines = cleaned.lines().count();
+    let raw_tokens = count_tokens(&cleaned);
+    let summary = apply_token_budget(summary, cfg.token_budget);
+    let summary_tokens = count_tokens(&summary);
+    Some(FilterResult {
+        summary,
+        kind,
+        highlights,
+        raw_lines,
+        kept_lines,
+        raw_tokens,
+        summary_tokens,
+    })
+}
+
+/// Tokenize an argv into bare words, splitting embedded shell strings
+/// (`bash -c "pytest -q"`) and stripping path prefixes + surrounding quotes.
+fn argv_words(cmd: &[String]) -> Vec<String> {
+    cmd.iter()
+        .flat_map(|a| a.split_whitespace())
+        .map(|w| {
+            let w = w.trim_matches(|c| c == '"' || c == '\'');
+            // Basename: drop any path prefix (e.g. /usr/bin/cargo → cargo).
+            w.rsplit('/').next().unwrap_or(w).to_string()
+        })
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Identify a known tool from the command argv, or `None`.
+fn detect_tool(cmd: &[String]) -> Option<Tool> {
+    let words = argv_words(cmd);
+    if words.is_empty() {
+        return None;
+    }
+    // pytest, however invoked (`pytest`, `python -m pytest`, `uv run pytest`).
+    if words.iter().any(|w| w == "pytest" || w == "py.test") {
+        return Some(Tool::Pytest);
+    }
+    // cargo <sub>.
+    if let Some(i) = words.iter().position(|w| w == "cargo") {
+        let sub = words.get(i + 1).map(|s| s.as_str()).unwrap_or("");
+        let sub = match sub {
+            "test" | "t" | "nextest" => CargoSub::Test,
+            "check" | "c" => CargoSub::Check,
+            "clippy" => CargoSub::Clippy,
+            "build" | "b" => CargoSub::Build,
+            "" => return None,
+            _ => CargoSub::Other,
+        };
+        return Some(Tool::Cargo(sub));
+    }
+    // git diff / git show.
+    if let Some(i) = words.iter().position(|w| w == "git") {
+        if let Some(sub) = words.get(i + 1) {
+            if sub == "diff" || sub == "show" {
+                return Some(Tool::GitDiff);
+            }
+        }
+    }
+    None
+}
+
+/// Cap a list of kept lines to the configured budget, appending an explicit
+/// elision marker when truncated.
+fn cap_block(mut lines: Vec<String>, max: usize) -> Vec<String> {
+    if lines.len() > max && max > 0 {
+        let dropped = lines.len() - max;
+        lines.truncate(max);
+        lines.push(format!("… [{dropped} more line{} elided] …", plural(dropped)));
+    }
+    lines
+}
+
+/// Parse pytest's count summary line ("=== 2 failed, 184 passed in 3.2s ===")
+/// into a compact "184 passed, 2 failed in 3.2s".
+fn parse_pytest_counts(line: &str) -> String {
+    let re = regex::Regex::new(
+        r"(\d+)\s+(passed|failed|error|errors|skipped|deselected|xfailed|xpassed|warning|warnings)",
+    )
+    .unwrap();
+    let mut parts: Vec<String> = Vec::new();
+    for cap in re.captures_iter(line) {
+        parts.push(format!("{} {}", &cap[1], &cap[2]));
+    }
+    if let Some(t) = regex::Regex::new(r"in\s+([0-9.]+)s")
+        .unwrap()
+        .captures(line)
+        .map(|c| c[1].to_string())
+    {
+        if parts.is_empty() {
+            return format!("finished in {t}s");
+        }
+        return format!("{} in {t}s", parts.join(", "));
+    }
+    parts.join(", ")
+}
+
+fn is_pytest_failure_header(t: &str) -> bool {
+    // "_________ test_name _________"
+    t.starts_with('_') && t.ends_with('_') && !t.trim_matches('_').trim().is_empty()
+}
+
+fn pytest_summary(
+    text: &str,
+    cfg: &FilterConfig,
+) -> Option<(String, Vec<String>, OutputKind, usize)> {
+    let lines: Vec<&str> = text.lines().collect();
+    // The summary line: a "=== … in <time>s ===" near the end mentioning a
+    // pytest count keyword. Its presence is what confirms this is pytest output.
+    let summary_line = lines.iter().rev().find(|l| {
+        let t = l.trim().trim_matches('=').trim();
+        (t.contains(" in ") || t.starts_with("no tests ran"))
+            && (t.contains("passed")
+                || t.contains("failed")
+                || t.contains("error")
+                || t.contains("skipped")
+                || t.contains("no tests ran"))
+    })?;
+
+    let counts = parse_pytest_counts(summary_line.trim().trim_matches('=').trim());
+    let headline = format!("Pytest: {counts}");
+
+    let mut keep: Vec<String> = Vec::new();
+    let mut highlights: Vec<String> = Vec::new();
+    let mut failures = 0usize;
+    let mut in_failures = false;
+    const MAX_FAILURES: usize = 10;
+
+    for l in &lines {
+        let t = l.trim();
+        if t.starts_with('=') && t.contains("FAILURES") {
+            in_failures = true;
+            continue;
+        }
+        if t.starts_with('=') && (t.contains("short test summary") || t.contains("warnings summary"))
+        {
+            in_failures = false;
+        }
+        // Short-summary lines are the highest-signal, keep them regardless.
+        if t.starts_with("FAILED ")
+            || t.starts_with("ERROR ")
+            || t.starts_with("XFAIL")
+            || t.starts_with("XPASS")
+        {
+            keep.push(t.to_string());
+            highlights.push(t.to_string());
+            continue;
+        }
+        if in_failures {
+            if is_pytest_failure_header(t) {
+                failures += 1;
+                if failures <= MAX_FAILURES {
+                    keep.push(t.to_string());
+                }
+                continue;
+            }
+            // Assertion error lines ("E   assert 1 == 2") and locations.
+            if failures <= MAX_FAILURES && (t.starts_with("E   ") || t.starts_with("E\t")) {
+                keep.push(t.to_string());
+                if highlights.len() < 20 {
+                    highlights.push(t.to_string());
+                }
+            }
+        }
+    }
+
+    let mut summary = headline;
+    if !keep.is_empty() {
+        // Dedup consecutive identical lines, then cap.
+        keep.dedup();
+        let keep = cap_block(keep, cfg.max_lines);
+        summary.push_str("\n\n");
+        summary.push_str(&keep.join("\n"));
+    }
+    if failures > MAX_FAILURES {
+        summary.push_str(&format!(
+            "\n… [{} more failing test{} — see raw] …",
+            failures - MAX_FAILURES,
+            plural(failures - MAX_FAILURES)
+        ));
+    }
+    let kept = summary.lines().count();
+    Some((summary, highlights, OutputKind::Test, kept))
+}
+
+fn cargo_summary(
+    text: &str,
+    sub: CargoSub,
+    cfg: &FilterConfig,
+) -> Option<(String, Vec<String>, OutputKind, usize)> {
+    // Cargo progress noise that carries no signal once a run is done.
+    const NOISE: &[&str] = &[
+        "Compiling",
+        "Checking",
+        "Downloading",
+        "Downloaded",
+        "Updating",
+        "Finished",
+        "Blocking",
+        "Locking",
+        "Installing",
+        "Fresh",
+        "Adding",
+    ];
+    let lines: Vec<&str> = text.lines().collect();
+    let mut keep: Vec<String> = Vec::new();
+    let mut highlights: Vec<String> = Vec::new();
+    let mut errors = 0usize;
+    let mut warnings = 0usize;
+    let mut test_results: Vec<String> = Vec::new();
+    let mut in_block = false;
+
+    for l in &lines {
+        let t = l.trim_end();
+        let tl = t.trim_start();
+        if NOISE.iter().any(|n| tl.starts_with(n)) {
+            in_block = false;
+            continue;
+        }
+        // Aggregate test result tallies.
+        if tl.starts_with("test result:") {
+            test_results.push(tl.to_string());
+            in_block = false;
+            continue;
+        }
+        // Cargo's trailing roll-up lines ("error: could not compile … due to N
+        // previous errors", "error: test failed", "error: aborting …") are
+        // summaries, not new diagnostics — keep them but don't double-count.
+        if tl.starts_with("error: ")
+            && (tl.contains("could not compile")
+                || tl.contains("test failed")
+                || tl.contains("build failed")
+                || tl.contains("aborting")
+                || tl.contains("due to"))
+        {
+            in_block = false;
+            keep.push(t.to_string());
+            highlights.push(tl.to_string());
+            continue;
+        }
+        // rustc diagnostic block starts.
+        if tl.starts_with("error[") || tl == "error" || tl.starts_with("error:") {
+            errors += 1;
+            in_block = true;
+            keep.push(t.to_string());
+            if highlights.len() < 20 {
+                highlights.push(tl.to_string());
+            }
+            continue;
+        }
+        if tl.starts_with("warning:") {
+            warnings += 1;
+            in_block = true;
+            keep.push(t.to_string());
+            continue;
+        }
+        // Per-test failure listing.
+        if tl.starts_with("---- ") && tl.ends_with("----") {
+            keep.push(t.to_string());
+            continue;
+        }
+        if in_block {
+            if t.trim().is_empty() {
+                in_block = false;
+                keep.push(String::new()); // preserve the block separator
+            } else {
+                keep.push(t.to_string());
+            }
+        }
+    }
+
+    let sub_name = match sub {
+        CargoSub::Test => "test",
+        CargoSub::Check => "check",
+        CargoSub::Clippy => "clippy",
+        CargoSub::Build => "build",
+        CargoSub::Other => "cargo",
+    };
+    let mut headline = format!("Cargo {sub_name}:");
+    match (errors, warnings) {
+        (0, 0) => headline.push_str(" ok"),
+        (e, 0) => headline.push_str(&format!(" {e} error{}", plural(e))),
+        (0, w) => headline.push_str(&format!(" {w} warning{}", plural(w))),
+        (e, w) => headline.push_str(&format!(" {e} error{}, {w} warning{}", plural(e), plural(w))),
+    }
+
+    let mut summary = headline;
+    for tr in &test_results {
+        summary.push('\n');
+        summary.push_str(tr);
+    }
+    if !keep.is_empty() {
+        // Trim leading/trailing blank lines, collapse runs, and cap.
+        while keep.first().map(|s| s.is_empty()).unwrap_or(false) {
+            keep.remove(0);
+        }
+        while keep.last().map(|s| s.is_empty()).unwrap_or(false) {
+            keep.pop();
+        }
+        let keep = cap_block(keep, cfg.max_lines);
+        if !keep.is_empty() {
+            summary.push_str("\n\n");
+            summary.push_str(&keep.join("\n"));
+        }
+    }
+    let kept = summary.lines().count();
+    Some((summary, highlights, OutputKind::Test, kept))
+}
+
+fn git_diff_summary(
+    text: &str,
+    cfg: &FilterConfig,
+) -> Option<(String, Vec<String>, OutputKind, usize)> {
+    // Confirm this looks like a diff before claiming it.
+    if !text.contains("diff --git") && !(text.contains("\n+++ ") || text.starts_with("+++ ")) {
+        return None;
+    }
+    let mut files = 0usize;
+    let mut adds = 0usize;
+    let mut dels = 0usize;
+    for l in text.lines() {
+        if l.starts_with("diff --git") {
+            files += 1;
+        } else if l.starts_with('+') && !l.starts_with("+++") {
+            adds += 1;
+        } else if l.starts_with('-') && !l.starts_with("---") {
+            dels += 1;
+        }
+    }
+    let headline = format!(
+        "git diff: {files} file{} changed, +{adds} -{dels}",
+        plural(files)
+    );
+    // Reuse the structural diff reducer for the body.
+    let (body, mut highlights, _kept) = summarize_diff(text, cfg);
+    highlights.insert(0, headline.clone());
+    let summary = format!("{headline}\n\n{body}");
+    let kept = summary.lines().count();
+    Some((summary, highlights, OutputKind::Diff, kept))
 }
 
 /// Score-based summarization for tests and logs: keep head + tail + every
@@ -793,6 +1192,124 @@ mod tests {
         }
         let res = filter(&raw, &FilterConfig { kind: OutputKind::Log, ..Default::default() });
         assert!(res.summary.contains("(×"));
+    }
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn detect_tool_handles_wrappers_and_subcommands() {
+        assert_eq!(detect_tool(&argv(&["pytest", "-q"])), Some(Tool::Pytest));
+        assert_eq!(
+            detect_tool(&argv(&["bash", "-c", "pytest -q tests/"])),
+            Some(Tool::Pytest)
+        );
+        assert_eq!(
+            detect_tool(&argv(&["python", "-m", "pytest"])),
+            Some(Tool::Pytest)
+        );
+        assert_eq!(
+            detect_tool(&argv(&["/usr/bin/cargo", "test", "--lib"])),
+            Some(Tool::Cargo(CargoSub::Test))
+        );
+        assert_eq!(
+            detect_tool(&argv(&["cargo", "clippy"])),
+            Some(Tool::Cargo(CargoSub::Clippy))
+        );
+        assert_eq!(detect_tool(&argv(&["git", "diff", "--cached"])), Some(Tool::GitDiff));
+        assert_eq!(detect_tool(&argv(&["ls", "-la"])), None);
+        assert_eq!(detect_tool(&argv(&["echo", "hi"])), None);
+    }
+
+    #[test]
+    fn pytest_all_pass_shrinks_to_one_line() {
+        let mut raw = String::from("============ test session starts ============\n");
+        for i in 0..184 {
+            raw.push_str(&format!("tests/test_mod.py::test_{i} PASSED\n"));
+        }
+        raw.push_str("====================== 184 passed in 2.53s ======================\n");
+        let res = summarize_command(&argv(&["pytest", "-q"]), &raw, &FilterConfig::default()).unwrap();
+        assert!(res.summary.contains("Pytest: 184 passed in 2.53s"));
+        // Aggressive: success collapses to a single semantic line.
+        assert_eq!(res.summary.lines().count(), 1);
+        assert!(res.raw_lines > 100);
+    }
+
+    #[test]
+    fn pytest_keeps_buried_failures() {
+        let mut raw = String::from("============ test session starts ============\n");
+        for i in 0..300 {
+            raw.push_str(&format!("tests/test_mod.py::test_{i} PASSED\n"));
+        }
+        raw.push_str("=================== FAILURES ===================\n");
+        raw.push_str("__________________ test_thing __________________\n");
+        raw.push_str("    assert add(1, 2) == 4\n");
+        raw.push_str("E   assert 3 == 4\n");
+        raw.push_str("=============== short test summary info ===============\n");
+        raw.push_str("FAILED tests/test_mod.py::test_thing - assert 3 == 4\n");
+        raw.push_str("============ 1 failed, 300 passed in 4.10s ============\n");
+        let res = summarize_command(&argv(&["pytest"]), &raw, &FilterConfig::default()).unwrap();
+        assert!(res.summary.contains("1 failed, 300 passed"));
+        assert!(res.summary.contains("FAILED tests/test_mod.py::test_thing"));
+        assert!(res.summary.contains("E   assert 3 == 4"));
+        // Still a big reduction.
+        assert!(res.summary.lines().count() < res.raw_lines / 5);
+    }
+
+    #[test]
+    fn pytest_summary_line_required_else_none() {
+        // Output without a pytest summary line should decline (fall back).
+        let raw = "random text\nno pytest here\n";
+        assert!(summarize_command(&argv(&["pytest"]), raw, &FilterConfig::default()).is_none());
+    }
+
+    #[test]
+    fn cargo_all_pass_shrinks_but_not_empty() {
+        let raw = "   Compiling foo v0.1.0\n    Checking foo v0.1.0\n    Finished test [unoptimized] target(s) in 3.2s\n     Running unittests src/lib.rs\ntest result: ok. 569 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n";
+        let res = summarize_command(&argv(&["cargo", "test"]), raw, &FilterConfig::default()).unwrap();
+        assert!(res.summary.contains("Cargo test: ok"));
+        assert!(res.summary.contains("test result: ok. 569 passed"));
+        assert!(!res.summary.trim().is_empty());
+        assert!(res.summary.lines().count() <= 3);
+    }
+
+    #[test]
+    fn cargo_keeps_error_blocks() {
+        let raw = "   Compiling foo v0.1.0\nerror[E0382]: borrow of moved value: `x`\n  --> src/main.rs:10:5\n   |\n10 |     x;\n   |     ^ value borrowed here after move\n\nerror: could not compile `foo` due to previous error\n";
+        let res = summarize_command(&argv(&["cargo", "build"]), raw, &FilterConfig::default()).unwrap();
+        assert!(res.summary.contains("Cargo build: 1 error"));
+        assert!(res.summary.contains("error[E0382]"));
+        assert!(res.summary.contains("src/main.rs:10:5"));
+        assert!(res.summary.contains("could not compile"));
+        assert!(!res.summary.contains("Compiling foo"), "noise should be stripped");
+    }
+
+    #[test]
+    fn git_diff_adds_file_count_header() {
+        let raw = "diff --git a/x.rs b/x.rs\n--- a/x.rs\n+++ b/x.rs\n@@ -1,2 +1,2 @@\n-old line\n+new line\n context\n";
+        let res = summarize_command(&argv(&["git", "diff"]), raw, &FilterConfig::default()).unwrap();
+        assert!(res.summary.starts_with("git diff: 1 file changed, +1 -1"));
+        assert_eq!(res.kind, OutputKind::Diff);
+    }
+
+    #[test]
+    fn filter_routes_through_adapter_when_cmd_set() {
+        let raw = "============ 5 passed in 0.10s ============\n";
+        let cfg = FilterConfig {
+            cmd: Some(argv(&["pytest", "-q"])),
+            ..Default::default()
+        };
+        let res = filter(raw, &cfg);
+        assert!(res.summary.contains("Pytest: 5 passed"));
+        // An explicit --kind opts out of adapters.
+        let cfg2 = FilterConfig {
+            cmd: Some(argv(&["pytest", "-q"])),
+            kind: OutputKind::Generic,
+            ..Default::default()
+        };
+        let res2 = filter(raw, &cfg2);
+        assert!(!res2.summary.contains("Pytest:"));
     }
 
     #[test]
