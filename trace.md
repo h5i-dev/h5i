@@ -768,3 +768,4 @@ _[Checkpoint: 6a231192 — edited src/main.rs; edited src/msg.rs; edited .claude
 [21:22:18] OBSERVE: read src/main.rs
 [21:22:18] OBSERVE: read ../TokenReduction/rtk/README.md
 [21:22:18] OBSERVE: read ../TokenReduction/context-mode/README.md
+[21:22:18] OBSERVE: read ../TokenReduction/headroom/README.md
