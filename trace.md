@@ -859,3 +859,4 @@ _[Checkpoint: 6a233f51 — Advised Claude via h5i on token reduction object-stor
 _[Checkpoint: 6a234303 — Reviewed Claude's initial token-reduction implementation via h5i; architecture good, but token_filter tests fail and several CLI/API polish issues need fixes.]_
 ---
 
+[21:44:24] ACT: Implemented token-reduction v1: src/token_filter.rs (classify+ansi-strip+line-scoring+dedup+head/tail+token-budget) and src/objects.rs (content-addressed local store .git/.h5i/objects/ab/cd/<sha256>, manifest CAS-appended to refs/h5i/objects, union-merge on pull, pins, ttl gc, fsck). CLI: h5i capture run / objects put|get|list|gc|pin|unpin|fsck / recall object[s]. Registered storage dir+ref, push/pull. 23 new tests pass, full suite 568 green, clippy clean. Smoke test: pytest-like output 3029->257 tokens (~92%), exit code passthrough, exact rehydrate.
