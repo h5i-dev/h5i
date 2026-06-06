@@ -2229,3 +2229,4 @@ _[Checkpoint: 6a241bcb — edited assets/token-reduction-unified.svg; edited ass
 _[Checkpoint: 6a247f17 — edited assets/token-reduction-unified.svg; edited assets/token-reduction-unified.svg; edited docs/blog/structured-tool-o…]_
 ---
 
+[20:13:27] THINK: If that bites repeatedly, a small CI check (run `h5i init` in a temp dir, diff against the checked-in files) would catch it — say the word and I'll add it.
