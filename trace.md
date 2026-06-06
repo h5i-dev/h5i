@@ -1068,3 +1068,4 @@ _[Checkpoint: 6a23645f — trust-gated project rules + headroom log folding]_
 _[Checkpoint: 6a23646e — edited docs/token-reduction.md; edited docs/token-reduction.md; edited assets/filters/NOTICE]_
 ---
 
+[00:09:07] OBSERVE: read tests/msg_integration.rs
