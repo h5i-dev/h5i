@@ -2222,3 +2222,4 @@ _[Checkpoint: 6a241bcb — edited assets/token-reduction-unified.svg; edited ass
 [20:10:36] OBSERVE: read AGENTS.md
 [20:12:07] THINK: I'll start by understanding the task and finding where these instruction files are generated.
 [20:12:07] THINK: Let me build (in background) and meanwhile inspect `AGENTS.
+[20:12:07] THINK: Now I'll sync the repo's two stale dogfood files (`.
