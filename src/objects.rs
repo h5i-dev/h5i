@@ -39,6 +39,11 @@ use crate::token_filter::{self, FilterConfig, OutputKind};
 pub const OBJECTS_REF: &str = "refs/h5i/objects";
 /// Top-level file inside the ref's tree holding the manifest log.
 pub const MANIFESTS_FILE: &str = "manifests.jsonl";
+/// Git ref holding shareable raw blobs (the optional [`GitRefStore`] backend):
+/// a flat tree keyed by the full sha256 hex → a git blob of the raw bytes.
+/// Content-addressed, so merging two sides is a set union. Pushed/pulled
+/// on demand (raw output can be large) — see `h5i objects push`/`pull`.
+pub const OBJECTS_DATA_REF: &str = "refs/h5i/objects-data";
 /// The local content-addressed store directory name, under the h5i sidecar root.
 pub const OBJECTS_DIR: &str = "objects";
 /// File (under the store dir) listing pinned digests, one per line.
@@ -646,6 +651,28 @@ pub fn load_raw(h5i_root: &Path, manifest: &Manifest) -> Result<Option<Vec<u8>>,
     LocalStore::new(h5i_root).get(manifest.hex())
 }
 
+/// Like [`load_raw`], but falls back to the [`GitRefStore`] when the blob is
+/// absent locally (e.g. pulled metadata, evicted blob). A blob fetched from the
+/// git-ref store is cached into the local store so subsequent reads are fast.
+pub fn load_raw_with_remote(
+    repo: &Repository,
+    h5i_root: &Path,
+    manifest: &Manifest,
+) -> Result<Option<Vec<u8>>, H5iError> {
+    let hex = manifest.hex();
+    let local = LocalStore::new(h5i_root);
+    if let Some(bytes) = local.get(hex)? {
+        return Ok(Some(bytes));
+    }
+    match GitRefStore::new(repo).get(hex)? {
+        Some(bytes) => {
+            let _ = local.put(hex, &bytes); // best-effort cache
+            Ok(Some(bytes))
+        }
+        None => Ok(None),
+    }
+}
+
 // ── Pinning ──────────────────────────────────────────────────────────────────
 
 fn pins_path(h5i_root: &Path) -> PathBuf {
@@ -906,6 +933,185 @@ fn signature(repo: &Repository) -> Result<Signature<'static>, H5iError> {
     repo.signature()
         .or_else(|_| Signature::now("h5i", "h5i@local"))
         .map_err(H5iError::Git)
+}
+
+// ── GitRefStore: shareable raw-blob backend (the git-ref store) ────────────────
+
+/// A [`Backend`] that stores raw blobs in the [`OBJECTS_DATA_REF`] git ref as a
+/// flat tree (`<full-hex>` → git blob). Reuses the repo's existing remote, auth,
+/// and transfer (`git push`/`fetch`), so sharing raw output needs no extra
+/// service and no new dependency. Because entries are content-addressed,
+/// reconciling two sides is a plain set-union of tree entries.
+pub struct GitRefStore<'a> {
+    repo: &'a Repository,
+}
+
+impl<'a> GitRefStore<'a> {
+    pub fn new(repo: &'a Repository) -> Self {
+        GitRefStore { repo }
+    }
+
+    fn tip_tree(&self) -> Option<git2::Tree<'a>> {
+        let reference = self.repo.find_reference(OBJECTS_DATA_REF).ok()?;
+        reference.peel_to_commit().ok()?.tree().ok()
+    }
+
+    /// Insert/remove one entry and commit the new tree (CAS-retried).
+    fn mutate(&self, hex: &str, blob: Option<git2::Oid>) -> Result<(), H5iError> {
+        const MAX_ATTEMPTS: usize = 64;
+        let msg = match blob {
+            Some(_) => format!("h5i objects-data: + {hex}"),
+            None => format!("h5i objects-data: - {hex}"),
+        };
+        for _ in 0..MAX_ATTEMPTS {
+            let tip = self.repo.refname_to_id(OBJECTS_DATA_REF).ok();
+            let parent = match tip {
+                Some(oid) => Some(self.repo.find_commit(oid)?),
+                None => None,
+            };
+            let base_tree = parent.as_ref().and_then(|c| c.tree().ok());
+            let mut builder = self.repo.treebuilder(base_tree.as_ref())?;
+            match blob {
+                Some(oid) => builder.insert(hex, oid, 0o100644).map(|_| ())?,
+                None => {
+                    if builder.get(hex)?.is_some() {
+                        builder.remove(hex)?;
+                    }
+                }
+            }
+            let tree = self.repo.find_tree(builder.write()?)?;
+            let sig = signature(self.repo)?;
+            let parents: Vec<&git2::Commit> = parent.iter().collect();
+            let new_oid = self.repo.commit(None, &sig, &sig, &msg, &tree, &parents)?;
+            let cas_ok = match tip {
+                None => self.repo.reference(OBJECTS_DATA_REF, new_oid, false, &msg).is_ok(),
+                Some(old) => self
+                    .repo
+                    .reference_matching(OBJECTS_DATA_REF, new_oid, true, old, &msg)
+                    .is_ok(),
+            };
+            if cas_ok {
+                return Ok(());
+            }
+        }
+        Err(H5iError::Internal(format!(
+            "h5i objects-data: could not update {hex} after {MAX_ATTEMPTS} attempts"
+        )))
+    }
+}
+
+impl Backend for GitRefStore<'_> {
+    fn name(&self) -> &str {
+        "git-ref"
+    }
+
+    fn has(&self, hex: &str) -> bool {
+        self.tip_tree()
+            .and_then(|t| t.get_name(hex).map(|_| ()))
+            .is_some()
+    }
+
+    fn put(&self, hex: &str, bytes: &[u8]) -> Result<(), H5iError> {
+        if self.has(hex) {
+            return Ok(()); // content-addressed → idempotent
+        }
+        let blob = self.repo.blob(bytes)?;
+        self.mutate(hex, Some(blob))
+    }
+
+    fn get(&self, hex: &str) -> Result<Option<Vec<u8>>, H5iError> {
+        let Some(tree) = self.tip_tree() else {
+            return Ok(None);
+        };
+        let Some(entry) = tree.get_name(hex) else {
+            return Ok(None);
+        };
+        let blob = self.repo.find_blob(entry.id())?;
+        Ok(Some(blob.content().to_vec()))
+    }
+
+    fn remove(&self, hex: &str) -> Result<(), H5iError> {
+        if !self.has(hex) {
+            return Ok(());
+        }
+        self.mutate(hex, None)
+    }
+}
+
+/// Copy every locally-stored blob referenced by a manifest into the git-ref
+/// store, so the next `git push` of [`OBJECTS_DATA_REF`] shares them. Returns
+/// the number newly mirrored (already-present blobs are skipped). This is the
+/// "stage blobs for sharing" step behind `h5i objects push`.
+pub fn mirror_local_to_gitref(repo: &Repository, h5i_root: &Path) -> Result<usize, H5iError> {
+    let local = LocalStore::new(h5i_root);
+    let remote = GitRefStore::new(repo);
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut mirrored = 0;
+    for m in read_manifests(repo) {
+        let hex = m.hex().to_string();
+        if !seen.insert(hex.clone()) || remote.has(&hex) {
+            continue;
+        }
+        if let Some(bytes) = local.get(&hex)? {
+            remote.put(&hex, &bytes)?;
+            mirrored += 1;
+        }
+    }
+    Ok(mirrored)
+}
+
+/// Copy every blob in the git-ref store into the local store (so `recall` is
+/// fast and works offline). Returns the number newly written locally.
+pub fn mirror_gitref_to_local(repo: &Repository, h5i_root: &Path) -> Result<usize, H5iError> {
+    let local = LocalStore::new(h5i_root);
+    let Some(tree) = GitRefStore::new(repo).tip_tree() else {
+        return Ok(0);
+    };
+    let mut written = 0;
+    for entry in tree.iter() {
+        let Some(hex) = entry.name() else { continue };
+        if !is_hex64(hex) || local.has(hex) {
+            continue;
+        }
+        if let Ok(blob) = repo.find_blob(entry.id()) {
+            local.put(hex, blob.content())?;
+            written += 1;
+        }
+    }
+    Ok(written)
+}
+
+/// Union two divergent [`OBJECTS_DATA_REF`] tips: blobs are content-addressed,
+/// so the merge is just the set union of tree entries (both sides agree on any
+/// shared key). Returns the merge commit oid. Mirrors [`union_merge_commits`].
+pub fn union_merge_data_commits(
+    repo: &Repository,
+    local_oid: git2::Oid,
+    incoming_oid: git2::Oid,
+) -> Result<git2::Oid, H5iError> {
+    let local_commit = repo.find_commit(local_oid)?;
+    let incoming_commit = repo.find_commit(incoming_oid)?;
+    let mut builder = repo.treebuilder(local_commit.tree().ok().as_ref())?;
+    if let Ok(inc_tree) = incoming_commit.tree() {
+        for entry in inc_tree.iter() {
+            if let Some(name) = entry.name() {
+                if builder.get(name)?.is_none() {
+                    builder.insert(name, entry.id(), 0o100644)?;
+                }
+            }
+        }
+    }
+    let tree = repo.find_tree(builder.write()?)?;
+    let sig = signature(repo)?;
+    let oid = repo.commit(
+        None,
+        &sig,
+        &sig,
+        "h5i pull: union-merge of refs/h5i/objects-data",
+        &tree,
+        &[&local_commit, &incoming_commit],
+    )?;
+    Ok(oid)
 }
 
 fn now_ts() -> String {
@@ -1344,5 +1550,42 @@ mod tests {
         assert_eq!(parse_duration("1w").unwrap(), Duration::from_secs(604_800));
         assert_eq!(parse_duration("90").unwrap(), Duration::from_secs(90));
         assert!(parse_duration("5y").is_err());
+    }
+
+    #[test]
+    fn git_ref_store_round_trips() {
+        let (_dir, repo, _root) = setup();
+        let store = GitRefStore::new(&repo);
+        let hex = sha256_hex(b"shared raw output");
+        assert!(!store.has(&hex));
+        assert!(store.get(&hex).unwrap().is_none());
+        store.put(&hex, b"shared raw output").unwrap();
+        assert!(store.has(&hex));
+        assert_eq!(store.get(&hex).unwrap().unwrap(), b"shared raw output");
+        // Idempotent: a second put of identical content is a no-op.
+        store.put(&hex, b"shared raw output").unwrap();
+        assert!(store.has(&hex));
+        store.remove(&hex).unwrap();
+        assert!(!store.has(&hex));
+    }
+
+    #[test]
+    fn mirror_local_to_gitref_then_recover_after_local_eviction() {
+        let (_dir, repo, root) = setup();
+        // Capture stores the raw locally + writes a manifest.
+        let m = capture(&repo, &root, b"a huge log\n".repeat(50).as_slice(), opts())
+            .unwrap()
+            .manifest;
+        let hex = m.hex().to_string();
+        // Stage into the git-ref store (what `objects push` mirrors).
+        assert_eq!(mirror_local_to_gitref(&repo, &root).unwrap(), 1);
+        assert!(GitRefStore::new(&repo).has(&hex));
+        // Evict the local blob → load_raw can't find it…
+        LocalStore::new(&root).remove(&hex).unwrap();
+        assert!(load_raw(&root, &m).unwrap().is_none());
+        // …but the remote-aware path recovers it from the git-ref store and caches.
+        let bytes = load_raw_with_remote(&repo, &root, &m).unwrap().unwrap();
+        assert_eq!(bytes, b"a huge log\n".repeat(50));
+        assert!(LocalStore::new(&root).has(&hex), "blob should be cached back locally");
     }
 }

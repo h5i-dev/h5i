@@ -1861,6 +1861,24 @@ enum ObjectsCommands {
     /// Verify manifests against the local store (absent blobs, orphans).
     Fsck,
 
+    /// Share raw blobs: mirror local raw output into the `refs/h5i/objects-data`
+    /// git ref and push it to a remote (the optional git-ref store backend).
+    /// Raw output can be large, so this is a deliberate step separate from the
+    /// metadata `h5i push`.
+    Push {
+        /// Remote to push to (default: origin).
+        #[arg(long, default_value = "origin")]
+        remote: String,
+    },
+
+    /// Fetch shared raw blobs from a remote's `refs/h5i/objects-data` (union-
+    /// merging with any local blobs) and cache them into the local store.
+    Pull {
+        /// Remote to fetch from (default: origin).
+        #[arg(long, default_value = "origin")]
+        remote: String,
+    },
+
     /// List the built-in declarative command filters (the rtk-derived rule set
     /// that `capture run` applies for tools without a coded adapter).
     Filters {
@@ -3273,8 +3291,8 @@ fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
         "audit" => &["review", "scan", "compliance", "policy", "vibe"],
         "share" => &["push", "pull", "pr", "memory", "setup-remote", "migrate-remote"],
         "objects" => &[
-            "run", "put", "get", "list", "ls", "gc", "pin", "unpin", "fsck", "filters", "trust",
-            "setup",
+            "run", "put", "get", "list", "ls", "gc", "pin", "unpin", "fsck", "push", "pull",
+            "filters", "trust", "setup",
         ],
         _ => return None,
     };
@@ -3386,6 +3404,8 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("objects", "pin")      => &["objects", "pin"],
         ("objects", "unpin")    => &["objects", "unpin"],
         ("objects", "fsck")     => &["objects", "fsck"],
+        ("objects", "push")     => &["objects", "push"],
+        ("objects", "pull")     => &["objects", "pull"],
         ("objects", "filters")  => &["objects", "filters"],
         ("objects", "rules")    => &["objects", "filters"],
         ("objects", "trust")    => &["objects", "trust"],
@@ -6581,14 +6601,16 @@ jq -c '{
                     } else if summary {
                         println!("{}", m.summary);
                     } else {
-                        match objects::load_raw(&h5i_root, &m)? {
+                        // Local first, then the git-ref store (shared blobs).
+                        match objects::load_raw_with_remote(git, &h5i_root, &m)? {
                             Some(bytes) => {
                                 use std::io::Write;
                                 std::io::stdout().write_all(&bytes)?;
                             }
                             None => anyhow::bail!(
-                                "raw blob for {} is absent locally (evicted or never fetched).\n\
-                                 Its summary is still available: h5i recall object {} --summary",
+                                "raw blob for {} is absent (evicted, or never fetched).\n\
+                                 Its summary is still available: h5i recall object {} --summary\n\
+                                 If a teammate shared it, run: h5i objects pull",
                                 m.raw_oid,
                                 m.id
                             ),
@@ -6955,6 +6977,76 @@ jq -c '{
                             style("tip:").dim()
                         );
                     }
+                }
+
+                ObjectsCommands::Push { remote } => {
+                    use std::io::Write as _;
+                    let workdir = git
+                        .workdir()
+                        .ok_or_else(|| anyhow::anyhow!("h5i objects push requires a working tree"))?;
+                    let staged = objects::mirror_local_to_gitref(git, &h5i_root)?;
+                    println!(
+                        "{} {} blob{} staged into {}",
+                        style("◈").cyan(),
+                        staged,
+                        if staged == 1 { "" } else { "s" },
+                        style(objects::OBJECTS_DATA_REF).yellow(),
+                    );
+                    if git.refname_to_id(objects::OBJECTS_DATA_REF).is_err() {
+                        println!(
+                            "  {} no raw blobs to share yet (capture some, then re-run)",
+                            style("ℹ").dim()
+                        );
+                    } else {
+                        print!("  {} {} … ", style("→").dim(), style(&remote).cyan());
+                        std::io::stdout().flush()?;
+                        let spec = format!("+{0}:{0}", objects::OBJECTS_DATA_REF);
+                        let ok = std::process::Command::new("git")
+                            .args(["push", &remote, &spec])
+                            .current_dir(workdir)
+                            .status()
+                            .map(|s| s.success())
+                            .unwrap_or(false);
+                        println!("{}", if ok { style("ok").green() } else { style("failed").red() });
+                    }
+                }
+
+                ObjectsCommands::Pull { remote } => {
+                    let workdir = git
+                        .workdir()
+                        .ok_or_else(|| anyhow::anyhow!("h5i objects pull requires a working tree"))?;
+                    // Fetch the remote data ref into a temp ref, then union-merge
+                    // (content-addressed → set union) and cache blobs locally.
+                    let tmp = "refs/h5i/_incoming/objects-data";
+                    let spec = format!("+{}:{}", objects::OBJECTS_DATA_REF, tmp);
+                    let fetched = std::process::Command::new("git")
+                        .args(["fetch", &remote, &spec])
+                        .current_dir(workdir)
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false);
+                    if !fetched {
+                        anyhow::bail!("git fetch of {} from {remote} failed", objects::OBJECTS_DATA_REF);
+                    }
+                    if let Ok(incoming) = git.refname_to_id(tmp) {
+                        match git.refname_to_id(objects::OBJECTS_DATA_REF).ok() {
+                            None => {
+                                git.reference(objects::OBJECTS_DATA_REF, incoming, true, "h5i objects pull")?;
+                            }
+                            Some(local) if local != incoming => {
+                                let merged = objects::union_merge_data_commits(git, local, incoming)?;
+                                git.reference(objects::OBJECTS_DATA_REF, merged, true, "h5i objects pull (union)")?;
+                            }
+                            Some(_) => {}
+                        }
+                        let _ = git.find_reference(tmp).and_then(|mut r| r.delete());
+                    }
+                    let cached = objects::mirror_gitref_to_local(git, &h5i_root)?;
+                    println!(
+                        "{} pulled raw blobs · {} cached locally",
+                        style("✔").green(),
+                        cached,
+                    );
                 }
             }
         }

@@ -26,6 +26,7 @@ Command reference for all h5i subcommands and flags.
   - [h5i recall object / objects](#h5i-recall-object--objects)
   - [Structured output](#structured-output)
   - [h5i objects gc / pin / fsck](#h5i-objects-gc--pin--fsck)
+  - [h5i objects push / pull (share raw blobs)](#h5i-objects-push--pull--sharing-raw-blobs-optional)
   - [h5i objects filters / trust](#h5i-objects-filters--trust)
   - [h5i objects setup](#h5i-objects-setup)
 - [h5i commit](#h5i-commit) — _alias of `h5i capture commit`_
@@ -121,7 +122,7 @@ legacy equivalents, and the corresponding MCP tool names.
 | `h5i recall` | `log`, `blame`, `diff`, `context`, `claims`, `notes`, `memory`, `recap`, `resume`, `vibe`, `object`, `objects` | Read history, context, and captured tool output. |
 | `h5i audit` | `review`, `scan`, `compliance`, `policy`, `vibe` | Assess risk on AI-generated changes. |
 | `h5i share` | `push`, `pull`, `pr`, `memory` | Publish: push refs, pull refs, post a GitHub PR comment. |
-| `h5i objects` | `run`, `put`, `get`, `list`, `gc`, `pin`, `unpin`, `fsck`, `filters`, `trust`, `setup` | Token-reduction object store: capture huge output, surface a summary, maintain the store. See [h5i objects](#h5i-objects-token-reduction). |
+| `h5i objects` | `run`, `put`, `get`, `list`, `gc`, `pin`, `unpin`, `fsck`, `push`, `pull`, `filters`, `trust`, `setup` | Token-reduction object store: capture huge output, surface a summary, share raw blobs, maintain the store. See [h5i objects](#h5i-objects-token-reduction). |
 
 All four nouns route through a pre-clap argv rewriter into the legacy
 verbs — so the noun form and the legacy form are functionally identical;
@@ -617,8 +618,9 @@ raw output out-of-band** (content-addressed) and surfaces only a small filtered,
 
 | Artifact | Location | Travels with `h5i push`? |
 |---|---|---|
-| Raw blob (full bytes, uncompressed) | `.git/.h5i/objects/ab/cd/<sha256>` (local) | No — local until a remote backend exists |
+| Raw blob (full bytes, uncompressed) | `.git/.h5i/objects/ab/cd/<sha256>` (local) | Only via `h5i objects push` (the git-ref store) |
 | Manifest (pointer + structured summary) | `refs/h5i/objects` (git ref, JSONL) | Yes |
+| Shared raw blobs (optional) | `refs/h5i/objects-data` (git ref, content-addressed tree) | Yes — pushed/pulled on demand |
 
 The everyday entry point is `h5i capture run`; the `h5i objects` verbs are for
 maintenance. Only the small summary travels with `h5i push`; raw blobs stay
@@ -709,6 +711,30 @@ h5i objects fsck               # verify manifests against the local store (absen
 
 GC never rewrites a summary — it only reclaims raw bytes; an evicted blob's
 summary still works.
+
+### h5i objects push / pull — sharing raw blobs (optional)
+
+The manifest+summary travel with `h5i push` automatically; the **raw bytes are
+local-only** by default (they can be large). To share them, h5i has an optional
+**git-ref store** backend that keeps raw blobs in the `refs/h5i/objects-data`
+git ref — content-addressed by sha256, reusing your existing remote, auth, and
+transfer (no extra service, no new dependency).
+
+```bash
+h5i objects push          # mirror local raw blobs into refs/h5i/objects-data, then git-push it
+h5i objects pull          # fetch + union-merge refs/h5i/objects-data, cache blobs locally
+h5i objects push --remote upstream
+```
+
+These are deliberate, separate from the metadata `h5i push` (raw output is
+heavy). After a teammate runs `h5i objects push`, `h5i recall object <id>`
+**falls back to the git-ref store** when the blob is absent locally — fetching
+and caching it transparently. Because blobs are content-addressed, pulling two
+divergent sides is a simple set-union; nothing is ever overwritten.
+
+> The `Backend` trait (`has`/`put`/`get`/`remove` by sha256) is the extension
+> point: the git-ref store is the built-in shareable backend; an S3/HTTP or
+> git-lfs backend can slot in the same way.
 
 ### h5i objects filters / trust
 

@@ -697,6 +697,16 @@ Aliases/peers of
 .BR "h5i recall object" ,
 .BR "h5i recall objects" .
 .TP
+.B push [\-\-remote \fIR\fR], pull [\-\-remote \fIR\fR]
+Share raw blobs via the optional git-ref store: mirror local raw output into the
+.I refs/h5i/objects-data
+git ref and push/fetch it (content-addressed; union-merged on pull). Separate
+from the metadata
+.BR "h5i push" ,
+because raw output is heavy. After a peer pushes,
+.B h5i recall object
+falls back to this store when a blob is absent locally.
+.TP
 .B gc [\-\-ttl \fIDUR\fR] [\-\-dry\-run]
 Evict local raw blobs to reclaim space. Without
 .BR \-\-ttl ,
@@ -1673,6 +1683,14 @@ summary. Append-only; pushed/pulled by
 .B h5i share
 and union-merged on divergence. Raw blobs stay local (see
 .IR .git/.h5i/objects/ ).
+.TP
+.I refs/h5i/objects-data
+Optional git-ref store for shareable raw blobs: a content-addressed tree
+(\fI<sha256>\fR \(-> git blob). Pushed/pulled on demand via
+.B h5i objects push
+/
+.BR "h5i objects pull" ,
+union-merged (set union) on divergence.
 .TP
 .I ~/.claude/projects/<repo>/memory/
 Claude Code's default per-project memory directory (source for snapshots).

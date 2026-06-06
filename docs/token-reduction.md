@@ -123,6 +123,27 @@ h5i recall objects --limit 20     # list captures, newest first
 
 Handles accept the short id, a full `sha256:<hex>`, or any unambiguous prefix.
 
+### Sharing raw output (optional)
+
+By default the manifest + summary travel with `h5i push`, but the **raw bytes
+stay local** (they can be large). To share them, h5i has an optional **git-ref
+store** backend: raw blobs live in the `refs/h5i/objects-data` git ref —
+content-addressed by sha256, reusing your existing remote and auth (no extra
+service, no new dependency).
+
+```bash
+h5i objects push     # mirror local raw blobs into refs/h5i/objects-data, then push it
+h5i objects pull     # fetch + union-merge that ref, cache blobs locally
+```
+
+This is deliberately separate from the metadata `h5i push` (raw output is
+heavy). Once a teammate has pushed, `h5i recall object <id>` **falls back to the
+git-ref store** when the blob is missing locally — fetching and caching it
+transparently. Blobs are content-addressed, so reconciling two clones is a plain
+set-union; nothing is overwritten. The `Backend` trait (`has`/`put`/`get`/
+`remove` by sha256) is the extension point — an S3/HTTP or git-lfs backend can
+plug in the same way.
+
 ### Tracking captures by branch / files / diff
 
 Every capture is automatically associated with **the branch** it was taken on,
