@@ -372,11 +372,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited tests/filter_quality.rs; wrote tests/objects_e2e.rs; edited tests/cli_integration.rs
 - [x] captures associated with branch/files/diff
 - [x] edited tests/objects_e2e.rs; edited docs/token-reduction.md; edited docs/token-reduction.md
+- [x] Reviewed Claude's expanded token-reduction implementation; verified checks/tests; sent h5i review #b57d32d4aef3ffb8 with Gradle routing, rule precedence, project-filter error, and attribution findings.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 00:33 UTC] `update-doc-with-i5h`: Reviewed Claude's expanded token-reduction implementation; verified checks/tests; sent h5i review #b57d32d4aef3ffb8 with Gradle routing, rule precedence, project-filter error, and attribution findings.
 - [2026-06-06 00:25 UTC] `update-doc-with-i5h`: edited tests/objects_e2e.rs; edited docs/token-reduction.md; edited docs/token-reduction.md
 - [2026-06-06 00:25 UTC] `update-doc-with-i5h`: captures associated with branch/files/diff
 - [2026-06-06 00:15 UTC] `update-doc-with-i5h`: edited tests/filter_quality.rs; wrote tests/objects_e2e.rs; edited tests/cli_integration.rs
