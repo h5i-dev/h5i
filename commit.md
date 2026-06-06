@@ -1499,3 +1499,16 @@ capture builds ToolResult (parser or generic-body), Manifest.structured serde-sk
 
 ---
 
+## Commit 6a2387d6 — 2026-06-06 02:37 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+capture builds ToolResult (parser or generic-body), Manifest.structured serde-skip; capture run --format structured(default YAML)|json|summary; recall objects --status/--tool; MCP returns structured as primary. Tests + e2e. ALL_GREEN, clippy clean. Slice 2 NEXT: go/tsc/eslint/ruff/mypy parsers + per-tool golden corpus.
+
+### This Commit's Contribution
+
+
+---
+

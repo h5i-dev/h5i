@@ -1516,3 +1516,9 @@ _[Checkpoint: 6a238525 — Reviewed structured-output foundation commits 806cfb2
 _[Checkpoint: 6a2387bf — structured integration slice 1 wired]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2387d6 — edited src/mcp.rs; edited src/objects.rs; edited tests/objects_e2e.rs]_
+---
+
