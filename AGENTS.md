@@ -34,6 +34,17 @@ git add <exact paths>
 h5i commit -m "…" --agent codex --prompt "…"
 ```
 
+Capturing large command output (token reduction) — wrap commands that produce
+large/noisy output (tests, builds, linters, big JSON, long logs) so only a
+filtered summary enters context; the full raw is stored out-of-band and stays
+recoverable. Small output (<~2 KB) passes through unstored, so it is safe to wrap:
+```bash
+h5i capture run -- <command> [args…]     # e.g. h5i capture run -- cargo test
+h5i capture run --file <path> -- <cmd>   # tag the files it relates to
+h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall object <id>                   # rehydrate full raw (only if needed)
+```
+
 Messaging other agents (i5h) — a cross-agent channel in `refs/h5i/msg`, shared
 via `h5i push`/`pull`. Claude and Codex can share one clone, so **run Codex with
 `H5I_AGENT=codex`** to keep your identity distinct from `claude` (precedence:

@@ -1749,6 +1749,11 @@ enum ObjectsCommands {
         /// Also echo the summary's pointer line even on success (default: yes).
         #[arg(long)]
         quiet: bool,
+        /// Only store + summarize when the output is at least this many bytes;
+        /// smaller output passes straight through unstored. Makes it safe to wrap
+        /// any command. Use 0 to always capture.
+        #[arg(long, default_value_t = DEFAULT_CAPTURE_MIN_BYTES)]
+        min_bytes: u64,
         /// Associate this capture with a file (repeatable). The branch and the
         /// working-tree diff are recorded automatically.
         #[arg(long = "file", value_name = "PATH", action = clap::ArgAction::Append)]
@@ -1836,6 +1841,10 @@ enum ObjectsCommands {
         #[arg(long)]
         verify: bool,
     },
+
+    /// Wire token-reduction guidance into this project's agent instruction files
+    /// (.claude/h5i.md, AGENTS.md) so agents know to wrap large-output commands.
+    Setup,
 
     /// Review and trust a project-local `.h5i/filters.toml` so its rules are
     /// applied by `capture run`. Untrusted/changed files are never applied.
@@ -2231,6 +2240,56 @@ h5i push   # push all h5i refs to origin
 h5i pull   # pull h5i refs from origin
 ```
 "#;
+
+/// Marker used to keep `h5i objects setup` idempotent.
+const CAPTURE_GUIDANCE_MARKER: &str = "<!-- h5i:capture-guidance -->";
+
+/// The token-reduction guidance block appended by `h5i objects setup`.
+const CAPTURE_GUIDANCE_BLOCK: &str = r#"<!-- h5i:capture-guidance -->
+### Capturing large command output (token reduction)
+
+Wrap commands that may produce **large or noisy output** — test suites, builds,
+linters, big JSON, long logs — so only a filtered summary enters context:
+
+```bash
+h5i capture run -- <command> [args…]            # e.g. h5i capture run -- pytest -q
+h5i capture run --file <path> -- <command>      # tag the files it relates to
+```
+
+It prints only the summary (errors/failures/counts), passes the exit code
+through, and stores the full raw output out-of-band. Output under ~2 KB passes
+through unstored, so it is safe to wrap. Rehydrate the full raw only if needed:
+
+```bash
+h5i recall objects [--branch <b>|--file <p>]    # list captures
+h5i recall object <id>                          # full raw bytes
+```
+
+Prefer the `h5i_capture_run` MCP tool when available. Don't wrap trivial commands
+you need to read in full.
+"#;
+
+/// Append `block` to `path` (creating it) unless `marker` is already present.
+/// Returns true if it wrote.
+fn append_block_if_missing(path: &Path, marker: &str, block: &str) -> anyhow::Result<bool> {
+    use std::io::Write as _;
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    if existing.contains(marker) {
+        return Ok(false);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(f)?;
+    }
+    writeln!(f, "\n{block}")?;
+    Ok(true)
+}
 
 fn write_claude_instructions(workdir: &Path) -> anyhow::Result<()> {
     use std::io::Write as _;
@@ -3157,6 +3216,7 @@ fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
         "share" => &["push", "pull", "pr", "memory", "setup-remote", "migrate-remote"],
         "objects" => &[
             "run", "put", "get", "list", "ls", "gc", "pin", "unpin", "fsck", "filters", "trust",
+            "setup",
         ],
         _ => return None,
     };
@@ -3194,6 +3254,10 @@ fn levenshtein(a: &str, b: &str) -> usize {
     }
     prev[b.len()]
 }
+
+/// Default `capture run --min-bytes`: below this, output passes through unstored
+/// so wrapping a command is a no-op when there's nothing worth reducing.
+const DEFAULT_CAPTURE_MIN_BYTES: u64 = 2048;
 
 /// Format a byte count as a short human string (B / KiB / MiB / GiB).
 fn humanize_bytes(n: u64) -> String {
@@ -3266,6 +3330,7 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("objects", "filters")  => &["objects", "filters"],
         ("objects", "rules")    => &["objects", "filters"],
         ("objects", "trust")    => &["objects", "trust"],
+        ("objects", "setup")    => &["objects", "setup"],
 
         _ => return None,
     })
@@ -3538,6 +3603,12 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     summary: "Review & trust a project-local .h5i/filters.toml so its rules apply (untrusted files are ignored).",
                     legacy: "(new)",
                     example: "h5i objects trust\n      h5i objects trust --status",
+                },
+                NounVerb {
+                    verb: "setup",
+                    summary: "Wire token-reduction guidance into .claude/h5i.md + AGENTS.md so agents use capture run.",
+                    legacy: "(new)",
+                    example: "h5i objects setup",
                 },
             ],
             &[
@@ -6296,6 +6367,7 @@ jq -c '{
                     budget,
                     token_budget,
                     quiet,
+                    min_bytes,
                     files,
                     command,
                 } => {
@@ -6366,17 +6438,25 @@ jq -c '{
                         raw.extend_from_slice(&output.stderr);
                     }
 
-                    let opts = objects::CaptureOptions {
-                        kind: kind_opt,
-                        cmd: Some(command.join(" ")),
-                        cwd,
-                        exit_code,
-                        git_tree: head_tree.clone(),
-                        files,
-                        filter: cfg,
-                    };
-                    let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
-                    print_summary(&outcome.manifest, outcome.deduped, quiet);
+                    // Small output isn't worth a stored object: pass it straight
+                    // through so wrapping any command is safe and a no-op when
+                    // there's nothing to reduce.
+                    if (raw.len() as u64) < min_bytes {
+                        use std::io::Write;
+                        std::io::stdout().write_all(&raw)?;
+                    } else {
+                        let opts = objects::CaptureOptions {
+                            kind: kind_opt,
+                            cmd: Some(command.join(" ")),
+                            cwd,
+                            exit_code,
+                            git_tree: head_tree.clone(),
+                            files,
+                            filter: cfg,
+                        };
+                        let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
+                        print_summary(&outcome.manifest, outcome.deduped, quiet);
+                    }
 
                     // Transparent wrapper: pass the child's exit code through.
                     if let Some(code) = exit_code {
@@ -6622,6 +6702,52 @@ jq -c '{
                             style("note:").dim()
                         );
                     }
+                }
+
+                ObjectsCommands::Setup => {
+                    let workdir = git
+                        .workdir()
+                        .ok_or_else(|| anyhow::anyhow!("bare repository not supported"))?;
+                    let mut wrote = Vec::new();
+                    let mut skipped = Vec::new();
+
+                    // Always ensure .claude/h5i.md carries the guidance.
+                    let h5i_md = workdir.join(".claude").join("h5i.md");
+                    if append_block_if_missing(&h5i_md, CAPTURE_GUIDANCE_MARKER, CAPTURE_GUIDANCE_BLOCK)? {
+                        wrote.push(".claude/h5i.md");
+                    } else {
+                        skipped.push(".claude/h5i.md");
+                    }
+                    // Update AGENTS.md only if the project already uses one.
+                    let agents = workdir.join("AGENTS.md");
+                    if agents.exists() {
+                        if append_block_if_missing(&agents, CAPTURE_GUIDANCE_MARKER, CAPTURE_GUIDANCE_BLOCK)? {
+                            wrote.push("AGENTS.md");
+                        } else {
+                            skipped.push("AGENTS.md");
+                        }
+                    }
+
+                    if wrote.is_empty() {
+                        println!(
+                            "{} capture guidance already present in {}",
+                            style("✓").green(),
+                            skipped.join(", ")
+                        );
+                    } else {
+                        println!(
+                            "{} wired token-reduction guidance into {}",
+                            style("✔").green(),
+                            wrote.join(", ")
+                        );
+                        if !skipped.is_empty() {
+                            println!("  (already present in {})", skipped.join(", "));
+                        }
+                    }
+                    println!(
+                        "\nAgents will now wrap large-output commands with {}.",
+                        style("h5i capture run").bold()
+                    );
                 }
 
                 ObjectsCommands::Trust { status, remove } => {

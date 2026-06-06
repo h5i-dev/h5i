@@ -133,7 +133,7 @@ fn capture_run_stores_manifest_and_rehydrates_losslessly() {
 
     // Deterministic output we can compare byte-for-byte.
     let prog = "for i in $(seq 1 50); do echo \"row $i\"; done";
-    let cap = a.h5i_ok(&["capture", "run", "--", "bash", "-c", prog]);
+    let cap = a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", prog]);
     // The pointer line (stderr) carries the object id.
     let id = first_id(&stderr(&cap)).expect("object id in capture output");
 
@@ -153,7 +153,7 @@ fn capture_run_stores_manifest_and_rehydrates_losslessly() {
 #[test]
 fn capture_run_passes_through_exit_code() {
     let (_root, a) = single();
-    let out = a.h5i(&["capture", "run", "--", "bash", "-c", "echo boom; exit 7"]);
+    let out = a.h5i(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", "echo boom; exit 7"]);
     assert_eq!(out.status.code(), Some(7), "child exit code must pass through");
     // ...and it was still captured.
     assert_eq!(a.manifest_count(), 1);
@@ -165,7 +165,7 @@ fn capture_run_passes_through_exit_code() {
 fn manifest_travels_via_push_pull_but_raw_stays_local() {
     let (_root, a, b) = two_clones();
 
-    a.h5i_ok(&["capture", "run", "--", "bash", "-c", "echo hello-from-a"]);
+    a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", "echo hello-from-a"]);
     a.h5i_ok(&["push", "--remote", "origin"]);
 
     b.h5i_ok(&["pull", "--remote", "origin"]);
@@ -193,15 +193,15 @@ fn divergent_object_logs_union_merge_on_pull() {
     let (_root, a, b) = two_clones();
 
     // Shared history: X captured by a and pulled by b.
-    a.h5i_ok(&["capture", "run", "--", "bash", "-c", "echo X"]);
+    a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", "echo X"]);
     a.h5i_ok(&["push", "--remote", "origin"]);
     b.h5i_ok(&["pull", "--remote", "origin"]);
     assert_eq!(b.manifest_count(), 1);
 
     // Now both capture "offline": a pushes Y, b holds Z → divergence.
-    a.h5i_ok(&["capture", "run", "--", "bash", "-c", "echo Y"]);
+    a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", "echo Y"]);
     a.h5i_ok(&["push", "--remote", "origin"]);
-    b.h5i_ok(&["capture", "run", "--", "bash", "-c", "echo Z"]);
+    b.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", "echo Z"]);
 
     // b pulls the divergent remote → union-merge keeps all three.
     let pull = b.h5i_ok(&["pull", "--remote", "origin"]);
@@ -222,7 +222,7 @@ fn divergent_object_logs_union_merge_on_pull() {
 #[test]
 fn ttl_gc_evicts_raw_but_keeps_summary() {
     let (_root, a) = single();
-    a.h5i_ok(&["capture", "run", "--", "bash", "-c", "echo keep-this-summary"]);
+    a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", "echo keep-this-summary"]);
     let id = first_id(&stdout(&a.h5i_ok(&["recall", "objects"]))).expect("id");
 
     // Raw present before gc.
@@ -242,6 +242,27 @@ fn ttl_gc_evicts_raw_but_keeps_summary() {
     assert!(fsck.contains("absent"), "fsck should report the absent blob: {fsck}");
 }
 
+// ── min-bytes threshold: small output passes through unstored ─────────────────
+
+#[test]
+fn small_output_below_threshold_is_not_stored() {
+    let (_root, a) = single();
+
+    // Tiny output with the default threshold → passed through, no object created.
+    let out = a.h5i_ok(&["capture", "run", "--", "bash", "-c", "echo hi"]);
+    assert!(stdout(&out).contains("hi"), "raw should pass through: {}", stdout(&out));
+    assert_eq!(a.manifest_count(), 0, "small output must not create a manifest");
+
+    // Large output (over the default threshold) → stored.
+    let big = "for i in $(seq 1 400); do echo \"line $i has some content here\"; done";
+    a.h5i_ok(&["capture", "run", "--", "bash", "-c", big]);
+    assert_eq!(a.manifest_count(), 1, "large output should be captured");
+
+    // --min-bytes 0 forces capture even of tiny output.
+    a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", "echo tiny"]);
+    assert_eq!(a.manifest_count(), 2);
+}
+
 // ── branch / file association + filtered recall ──────────────────────────────
 
 #[test]
@@ -249,11 +270,11 @@ fn captures_are_filterable_by_branch_and_file() {
     let (_root, a) = single();
 
     // Capture on the default branch, tagged with a file.
-    a.h5i_ok(&["capture", "run", "--file", "src/api.rs", "--", "bash", "-c", "echo on-default"]);
+    a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--file", "src/api.rs", "--", "bash", "-c", "echo on-default"]);
 
     // Switch to a feature branch and capture there.
     git(&a.dir, &["checkout", "-b", "feature-x"]);
-    a.h5i_ok(&["capture", "run", "--file", "src/auth.rs", "--", "bash", "-c", "echo on-feature"]);
+    a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--file", "src/auth.rs", "--", "bash", "-c", "echo on-feature"]);
 
     // --branch filters to just that branch's captures.
     let feat = stdout(&a.h5i_ok(&["recall", "objects", "--branch", "feature-x"]));
@@ -275,7 +296,7 @@ fn captures_are_filterable_by_branch_and_file() {
 fn manifests_persist_and_accumulate() {
     let (_root, a) = single();
     for word in ["one", "two", "three"] {
-        a.h5i_ok(&["capture", "run", "--", "bash", "-c", &format!("echo {word}")]);
+        a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", &format!("echo {word}")]);
     }
     // A brand-new invocation (fresh process) still sees all three.
     assert_eq!(a.manifest_count(), 3);

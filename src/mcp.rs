@@ -663,6 +663,43 @@ pub fn tool_definitions() -> Value {
                 "properties": {}
             }
         },
+        // ── capture run (token reduction) ──────────────────────────────────────
+        {
+            "name": "h5i_capture_run",
+            "description": "Run a command and return ONLY a filtered summary of its \
+                output (errors, failures, counts), storing the full raw output \
+                out-of-band so it never floods your context. Use this instead of \
+                running large-output commands (test suites, builds, linters, big \
+                JSON, long logs) via the shell. The exit code is reported; the full \
+                raw output is recoverable later by its object id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Command argv, e.g. [\"pytest\", \"-q\"]. A single \
+                            string is also accepted and run via the shell."
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": ["test", "log", "json", "diff", "generic"],
+                        "description": "Force a content kind instead of auto-detecting."
+                    },
+                    "budget": {
+                        "type": "integer",
+                        "description": "Max lines to keep in the summary."
+                    },
+                    "files": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Files to associate with this capture (for later \
+                            `recall objects --file`)."
+                    }
+                },
+                "required": ["command"]
+            }
+        },
     ])
 }
 
@@ -1248,6 +1285,91 @@ fn tool_claims_prune(_params: &Value, workdir: &Path) -> Result<Value> {
     })))
 }
 
+fn tool_capture_run(params: &Value, workdir: &Path) -> Result<Value> {
+    use crate::token_filter::{FilterConfig, OutputKind};
+
+    // Accept `command` as an argv array (preferred) or a single shell string.
+    let argv: Vec<String> = match params.get("command") {
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect(),
+        Some(Value::String(s)) => vec!["bash".into(), "-c".into(), s.clone()],
+        _ => anyhow::bail!("missing required param: command (array of strings, or a string)"),
+    };
+    if argv.is_empty() {
+        anyhow::bail!("command must not be empty");
+    }
+
+    let kind = params
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(OutputKind::parse)
+        .unwrap_or(OutputKind::Auto);
+    let budget = params.get("budget").and_then(Value::as_u64).map(|n| n as usize);
+    let files: Vec<String> = params
+        .get("files")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+        .unwrap_or_default();
+
+    // Run the command in the workdir, capturing stdout + stderr.
+    let output = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .current_dir(workdir)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run `{}`: {e}", argv.join(" ")))?;
+    let exit_code = output.status.code();
+
+    let mut raw: Vec<u8> = Vec::with_capacity(output.stdout.len() + output.stderr.len() + 32);
+    raw.extend_from_slice(&output.stdout);
+    if !output.stderr.is_empty() {
+        if !raw.is_empty() && !raw.ends_with(b"\n") {
+            raw.push(b'\n');
+        }
+        raw.extend_from_slice(b"\n----- stderr -----\n");
+        raw.extend_from_slice(&output.stderr);
+    }
+
+    let repo = H5iRepository::open(workdir)?;
+    let git_tree = repo
+        .git()
+        .head()
+        .ok()
+        .and_then(|h| h.peel_to_tree().ok())
+        .map(|t| t.id().to_string());
+    let mut cfg = FilterConfig { kind, ..Default::default() };
+    if let Some(b) = budget {
+        cfg.max_lines = b;
+    }
+    cfg.cmd = Some(argv.clone());
+
+    let opts = crate::objects::CaptureOptions {
+        kind,
+        cmd: Some(argv.join(" ")),
+        cwd: Some(workdir.display().to_string()),
+        exit_code,
+        git_tree,
+        files,
+        filter: cfg,
+    };
+    let outcome = crate::objects::capture(repo.git(), &repo.h5i_root, &raw, opts)?;
+    let m = &outcome.manifest;
+    Ok(json_content(json!({
+        "id": m.id,
+        "kind": m.kind,
+        "exit_code": exit_code,
+        "branch": m.branch,
+        "files": m.files,
+        "raw_size": m.raw_size,
+        "raw_lines": m.raw_lines,
+        "raw_tokens": m.raw_tokens,
+        "summary_tokens": m.summary_tokens,
+        "summary": m.summary,
+        "hint": format!("Full raw output recoverable via: h5i recall object {}", m.id),
+    })))
+}
+
 // ── Tool call dispatch ────────────────────────────────────────────────────────
 
 /// Dispatch a `tools/call` invocation to the appropriate handler.
@@ -1284,6 +1406,7 @@ pub fn call_tool(name: &str, params: &Value, workdir: &Path) -> Result<Value> {
         "h5i_claims_add" => tool_claims_add(params, workdir),
         "h5i_claims_list" => tool_claims_list(params, workdir),
         "h5i_claims_prune" => tool_claims_prune(params, workdir),
+        "h5i_capture_run" => tool_capture_run(params, workdir),
         other => anyhow::bail!("Unknown tool: {}", other),
     }
 }
@@ -1763,6 +1886,29 @@ mod tests {
         (dir, path)
     }
 
+    #[test]
+    fn capture_run_tool_runs_and_returns_summary() {
+        let (_dir, path) = make_repo();
+        // A command whose output is large enough to be worth summarizing.
+        let prog = "for i in $(seq 1 300); do echo \"compiling unit $i\"; done; echo 'error: boom at x.rs:1'";
+        let res = call_tool(
+            "h5i_capture_run",
+            &json!({ "command": ["bash", "-c", prog], "files": ["x.rs"] }),
+            &path,
+        )
+        .expect("capture_run tool");
+        let text = res["content"][0]["text"].as_str().unwrap();
+        let v: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(v["exit_code"], 0);
+        assert!(v["id"].as_str().unwrap().len() == 16);
+        assert!(v["summary"].as_str().unwrap().contains("error: boom"));
+        assert!(v["files"].as_array().unwrap().iter().any(|f| f == "x.rs"));
+        // Reduction actually happened.
+        let raw_t = v["raw_tokens"].as_u64().unwrap();
+        let sum_t = v["summary_tokens"].as_u64().unwrap();
+        assert!(sum_t < raw_t, "summary should be smaller than raw");
+    }
+
     fn make_req(method: &str, params: Value) -> JsonRpcRequest {
         JsonRpcRequest {
             jsonrpc: "2.0".into(),
@@ -1893,6 +2039,7 @@ mod tests {
             "h5i_claims_add",
             "h5i_claims_list",
             "h5i_claims_prune",
+            "h5i_capture_run",
         ];
         for name in &expected {
             assert!(names.contains(name), "missing tool: {}", name);

@@ -38,6 +38,16 @@ h5i capture run --kind log -- cargo build
 h5i capture run --budget 40 -- ./flaky-integration-test.sh
 ```
 
+Output below `--min-bytes` (default 2 KB) just passes through unstored, so it's
+safe to wrap *any* command — wrapping is a no-op when there's nothing to reduce.
+Use `--min-bytes 0` to force capture of small output.
+
+**Making agents use it.** Run `h5i objects setup` once to wire token-reduction
+guidance into the project's `.claude/h5i.md` and `AGENTS.md`, so agents know to
+wrap large-output commands. In Claude Code, the **`h5i_capture_run` MCP tool**
+exposes the same behavior with no shell-quoting — agents call it instead of the
+Bash tool and get back just the summary + object id.
+
 Ingest output you already have:
 
 ```bash
