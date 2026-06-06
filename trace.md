@@ -1304,3 +1304,4 @@ _[Checkpoint: 6a237547 — addressed codex review of usability/caps]_
 _[Checkpoint: 6a237555 — edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md]_
 ---
 
+[01:18:50] OBSERVE: read src/mcp.rs
