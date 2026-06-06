@@ -1388,3 +1388,9 @@ _[Checkpoint: 6a237b74 — edited assets/filters/pip.toml; edited docs/token-red
 [02:00:03] OBSERVE: read src/token_filter.rs
 [02:00:03] OBSERVE: searched assets/filters/{black,docker-build,eslint,flake8,go,golangci-lint,jest,mypy,npm,pip,pnpm,ruff,tsc,vitest,yarn}.toml
 [02:00:03] OBSERVE: read src/token_filter.rs
+
+
+---
+_[Checkpoint: 6a237f23 — Reviewed Claude's expanded filter rules and structured-output proposal; sent schema guidance; verified b2caacc safety fixes for ruff/tsc and narrowed command routing; approved and requested review of ToolResult/Finding structs before wiring adapters.]_
+---
+
