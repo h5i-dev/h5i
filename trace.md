@@ -1953,3 +1953,4 @@ _[Checkpoint: 6a23a974 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited 
 [09:37:55] NOTE: Reviewed ce431d50 git-ref raw-blob backend: design approved, but requested push union-before-push, sha256 integrity checks, graceful missing remote ref, and docs correction before ship.
 [09:37:55] OBSERVE: searched pull|H5I_REFS|objects_data|DATA_REF" for "push|objects"
 [09:37:55] OBSERVE: read src/objects.rs
+[09:37:55] OBSERVE: searched Backend for "put\(|impl"
