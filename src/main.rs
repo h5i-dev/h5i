@@ -3452,7 +3452,10 @@ fn fetch_merge_objects_data(
     if let Ok(incoming) = git.refname_to_id(tmp) {
         match git.refname_to_id(h5i_core::objects::OBJECTS_DATA_REF).ok() {
             None => {
-                git.reference(h5i_core::objects::OBJECTS_DATA_REF, incoming, true, "h5i objects pull")?;
+                // No local ref yet: sanitize the incoming tree (drop corrupt
+                // entries) instead of trusting it wholesale.
+                let clean = h5i_core::objects::sanitize_data_commit(git, incoming)?;
+                git.reference(h5i_core::objects::OBJECTS_DATA_REF, clean, true, "h5i objects pull")?;
             }
             Some(local) if local != incoming => {
                 let merged = h5i_core::objects::union_merge_data_commits(git, local, incoming)?;

@@ -956,6 +956,16 @@ impl<'a> GitRefStore<'a> {
         reference.peel_to_commit().ok()?.tree().ok()
     }
 
+    /// The blob oid stored under `hex` ONLY IF its content hashes to `hex`.
+    /// A corrupt/tampered entry (name present, bytes wrong) returns `None` —
+    /// this is the content-validated notion of "present" used by [`Self::has`].
+    fn valid_blob_oid(&self, hex: &str) -> Option<git2::Oid> {
+        let tree = self.tip_tree()?;
+        let entry = tree.get_name(hex)?;
+        let blob = self.repo.find_blob(entry.id()).ok()?;
+        (sha256_hex(blob.content()) == hex).then(|| entry.id())
+    }
+
     /// Insert/remove one entry and commit the new tree (CAS-retried).
     fn mutate(&self, hex: &str, blob: Option<git2::Oid>) -> Result<(), H5iError> {
         const MAX_ATTEMPTS: usize = 64;
@@ -1006,9 +1016,9 @@ impl Backend for GitRefStore<'_> {
     }
 
     fn has(&self, hex: &str) -> bool {
-        self.tip_tree()
-            .and_then(|t| t.get_name(hex).map(|_| ()))
-            .is_some()
+        // "Present" means VALID content exists — a corrupt entry doesn't count,
+        // so callers (put/mirror) can heal it instead of being blocked by it.
+        self.valid_blob_oid(hex).is_some()
     }
 
     fn put(&self, hex: &str, bytes: &[u8]) -> Result<(), H5iError> {
@@ -1021,8 +1031,10 @@ impl Backend for GitRefStore<'_> {
             )));
         }
         if self.has(hex) {
-            return Ok(()); // content-addressed → idempotent
+            return Ok(()); // a VALID entry already exists → idempotent
         }
+        // Either absent or corrupt: insert overwrites the entry name, so this
+        // also REPAIRS a tampered entry with the correct bytes.
         let blob = self.repo.blob(bytes)?;
         self.mutate(hex, Some(blob))
     }
@@ -1113,23 +1125,15 @@ pub fn union_merge_data_commits(
 ) -> Result<git2::Oid, H5iError> {
     let local_commit = repo.find_commit(local_oid)?;
     let incoming_commit = repo.find_commit(incoming_oid)?;
-    let mut builder = repo.treebuilder(local_commit.tree().ok().as_ref())?;
-    if let Ok(inc_tree) = incoming_commit.tree() {
-        for entry in inc_tree.iter() {
-            let Some(name) = entry.name() else { continue };
-            if builder.get(name)?.is_some() {
-                continue; // already have this digest (content-addressed → identical)
-            }
-            // Only union in incoming entries that actually hash to their name —
-            // never let a corrupt/tampered side poison the merged store.
-            if let Ok(blob) = repo.find_blob(entry.id()) {
-                if is_hex64(name) && sha256_hex(blob.content()) == name {
-                    builder.insert(name, entry.id(), 0o100644)?;
-                }
-            }
-        }
-    }
-    let tree = repo.find_tree(builder.write()?)?;
+    // Rebuild from scratch keeping only VALID entries from EITHER side — so a
+    // corrupt local entry can't win over a valid incoming one (or vice versa),
+    // and an entry corrupt on both sides is dropped entirely.
+    let trees: Vec<git2::Tree> = [local_commit.tree(), incoming_commit.tree()]
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect();
+    let tree_oid = rebuild_valid_data_tree(repo, &trees)?;
+    let tree = repo.find_tree(tree_oid)?;
     let sig = signature(repo)?;
     let oid = repo.commit(
         None,
@@ -1140,6 +1144,49 @@ pub fn union_merge_data_commits(
         &[&local_commit, &incoming_commit],
     )?;
     Ok(oid)
+}
+
+/// Build a fresh `objects-data` commit from `incoming` keeping only entries
+/// whose bytes hash to their name — used when installing a remote data ref where
+/// no local one exists, so corrupt/tampered entries are truly rejected (not just
+/// skipped during local caching). The result descends from `incoming` so a later
+/// push fast-forwards.
+pub fn sanitize_data_commit(repo: &Repository, incoming_oid: git2::Oid) -> Result<git2::Oid, H5iError> {
+    let incoming_commit = repo.find_commit(incoming_oid)?;
+    let trees: Vec<git2::Tree> = incoming_commit.tree().into_iter().collect();
+    let tree_oid = rebuild_valid_data_tree(repo, &trees)?;
+    let tree = repo.find_tree(tree_oid)?;
+    let sig = signature(repo)?;
+    let oid = repo.commit(
+        None,
+        &sig,
+        &sig,
+        "h5i objects pull: sanitize refs/h5i/objects-data",
+        &tree,
+        &[&incoming_commit],
+    )?;
+    Ok(oid)
+}
+
+/// Rebuild a flat tree from `trees` (in priority order) keeping only entries
+/// whose name is a sha256 hex AND whose blob content hashes to that name. The
+/// first valid occurrence of a name wins; corrupt occurrences are skipped.
+fn rebuild_valid_data_tree(repo: &Repository, trees: &[git2::Tree]) -> Result<git2::Oid, H5iError> {
+    let mut builder = repo.treebuilder(None)?;
+    for tree in trees {
+        for entry in tree.iter() {
+            let Some(name) = entry.name() else { continue };
+            if !is_hex64(name) || builder.get(name)?.is_some() {
+                continue;
+            }
+            if let Ok(blob) = repo.find_blob(entry.id()) {
+                if sha256_hex(blob.content()) == name {
+                    builder.insert(name, entry.id(), 0o100644)?;
+                }
+            }
+        }
+    }
+    Ok(builder.write()?)
 }
 
 fn now_ts() -> String {
@@ -1648,6 +1695,68 @@ mod tests {
         let mtree = repo.find_commit(merged).unwrap().tree().unwrap();
         assert!(mtree.get_name(&good).is_some(), "valid entry must be kept");
         assert!(mtree.get_name(&bad).is_none(), "corrupt entry must be dropped");
+    }
+
+    #[test]
+    fn put_repairs_a_corrupt_existing_entry() {
+        let (_dir, repo, _root) = setup();
+        let good = sha256_hex(b"payload");
+        craft_corrupt_data_ref(&repo, &good, b"WRONG bytes"); // right name, wrong content
+        let store = GitRefStore::new(&repo);
+        assert!(!store.has(&good), "corrupt entry must not count as present");
+        store.put(&good, b"payload").unwrap(); // correct bytes → repair
+        assert!(store.has(&good), "put must heal the corrupt entry");
+        assert_eq!(store.get(&good).unwrap().unwrap(), b"payload");
+    }
+
+    #[test]
+    fn mirror_local_heals_a_corrupt_gitref_entry() {
+        let (_dir, repo, root) = setup();
+        let m = capture(&repo, &root, b"big payload\n".repeat(40).as_slice(), opts())
+            .unwrap()
+            .manifest;
+        let hex = m.hex().to_string();
+        craft_corrupt_data_ref(&repo, &hex, b"corrupt"); // plant a bad entry under the name
+        assert!(!GitRefStore::new(&repo).has(&hex));
+        // mirror has the correct local blob → repairs rather than skipping.
+        assert_eq!(mirror_local_to_gitref(&repo, &root).unwrap(), 1);
+        assert!(GitRefStore::new(&repo).has(&hex), "mirror healed the corrupt entry");
+    }
+
+    #[test]
+    fn merge_prefers_valid_incoming_over_corrupt_local() {
+        let (_dir, repo, _root) = setup();
+        let hex = sha256_hex(b"V");
+        craft_corrupt_data_ref(&repo, &hex, b"corrupt-local"); // local corrupt under hex
+        let local = repo.refname_to_id(OBJECTS_DATA_REF).unwrap();
+        // incoming: the VALID entry for the same key.
+        let blob = repo.blob(b"V").unwrap();
+        let mut b = repo.treebuilder(None).unwrap();
+        b.insert(&hex, blob, 0o100644).unwrap();
+        let tree = repo.find_tree(b.write().unwrap()).unwrap();
+        let sig = git2::Signature::now("t", "t@t").unwrap();
+        let incoming = repo.commit(None, &sig, &sig, "valid", &tree, &[]).unwrap();
+
+        let merged = union_merge_data_commits(&repo, local, incoming).unwrap();
+        repo.reference(OBJECTS_DATA_REF, merged, true, "m").unwrap();
+        assert!(GitRefStore::new(&repo).has(&hex), "valid incoming must beat corrupt local");
+        assert_eq!(GitRefStore::new(&repo).get(&hex).unwrap().unwrap(), b"V");
+    }
+
+    #[test]
+    fn pull_install_sanitizes_corrupt_only_incoming() {
+        let (_dir, repo, _root) = setup();
+        let name = "1".repeat(64);
+        craft_corrupt_data_ref(&repo, &name, b"corrupt"); // incoming = corrupt-only commit
+        let incoming = repo.refname_to_id(OBJECTS_DATA_REF).unwrap();
+        let clean = sanitize_data_commit(&repo, incoming).unwrap();
+        repo.reference(OBJECTS_DATA_REF, clean, true, "clean").unwrap();
+        assert!(
+            !GitRefStore::new(&repo).has(&name),
+            "a corrupt-only pull must not leave the key has()==true"
+        );
+        let ctree = repo.find_commit(clean).unwrap().tree().unwrap();
+        assert!(ctree.get_name(&name).is_none(), "corrupt entry dropped from sanitized tree");
     }
 
     #[test]
