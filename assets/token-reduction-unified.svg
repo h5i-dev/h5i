@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 500" font-family="'Space Grotesk', system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-label="Two differently shaped tool outputs (pytest and cargo test) pass through h5i capture run and come out as two ToolResults in the same structured format, using far fewer tokens; the raw output is kept out-of-band and recoverable.">
+  <defs>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1.2" cy="1.2" r="1.2" fill="#ffffff" opacity="0.035"/>
+    </pattern>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#D21C1C"/>
+    </marker>
+    <style>
+      .mono { font-family: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .cap  { letter-spacing: 2px; }
+    </style>
+  </defs>
+
+  <!-- backdrop -->
+  <rect x="1" y="1" width="1058" height="498" rx="20" fill="#0d0d11" stroke="#26262e"/>
+  <rect x="1" y="1" width="1058" height="498" rx="20" fill="url(#dots)"/>
+
+  <!-- title -->
+  <text x="530" y="46" text-anchor="middle" font-size="25" font-weight="600" fill="#ECECEC">One Structured Format for Every Tool</text>
+  <text x="530" y="73" text-anchor="middle" font-size="14.5" fill="#8b8b97">different tools in&#160;&#160;&#8594;&#160;&#160;the same ToolResult out&#160;&#160;&#8594;&#160;&#160;far fewer tokens</text>
+
+  <!-- column captions -->
+  <text x="181" y="116" text-anchor="middle" class="cap" font-size="11.5" fill="#7e7e8b">RAW&#160;OUTPUT</text>
+  <text x="903" y="116" text-anchor="middle" class="cap" font-size="11.5" fill="#7e7e8b">ONE&#160;SCHEMA&#160;·&#160;EVERY&#160;TOOL</text>
+
+  <!-- ============ INPUTS: two different, noisy shapes ============ -->
+  <!-- pytest (teal) -->
+  <g>
+    <rect x="56" y="140" width="250" height="120" rx="11" fill="#15151b" stroke="#2c2c35"/>
+    <circle cx="76" cy="166" r="4.5" fill="#2dd4bf"/>
+    <text x="89" y="170" class="mono" font-size="13" fill="#d7d7de">$ pytest -q</text>
+    <rect x="72" y="188" width="196" height="7" rx="3.5" fill="#3a3a44"/>
+    <rect x="72" y="202" width="168" height="7" rx="3.5" fill="#3a3a44"/>
+    <rect x="72" y="216" width="150" height="7" rx="3.5" fill="#2dd4bf" opacity="0.85"/>
+    <rect x="72" y="230" width="182" height="7" rx="3.5" fill="#3a3a44"/>
+    <text x="290" y="251" text-anchor="end" class="mono" font-size="11.5" fill="#9a9aa6">1,424 tok</text>
+  </g>
+  <!-- cargo test (amber) -->
+  <g>
+    <rect x="56" y="300" width="250" height="120" rx="11" fill="#15151b" stroke="#2c2c35"/>
+    <circle cx="76" cy="326" r="4.5" fill="#f0a020"/>
+    <text x="89" y="330" class="mono" font-size="13" fill="#d7d7de">$ cargo test</text>
+    <rect x="72" y="348" width="184" height="7" rx="3.5" fill="#3a3a44"/>
+    <rect x="72" y="362" width="200" height="7" rx="3.5" fill="#3a3a44"/>
+    <rect x="72" y="376" width="160" height="7" rx="3.5" fill="#f0a020" opacity="0.85"/>
+    <rect x="72" y="390" width="176" height="7" rx="3.5" fill="#3a3a44"/>
+    <text x="290" y="411" text-anchor="end" class="mono" font-size="11.5" fill="#9a9aa6">1,397 tok</text>
+  </g>
+
+  <!-- ============ converge into the h5i chip, then diverge to the results ============ -->
+  <g fill="none" stroke="#6f6f7e" stroke-width="2.2" opacity="0.9">
+    <path d="M306 200 C 400 200, 430 280, 484 280"/>
+    <path d="M306 360 C 400 360, 430 280, 484 280"/>
+  </g>
+  <g fill="none" stroke="#D21C1C" stroke-width="2.2">
+    <path d="M576 280 C 660 280, 690 200, 756 200" marker-end="url(#arrow)"/>
+    <path d="M576 280 C 660 280, 690 360, 756 360" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- h5i chip (the unifier) -->
+  <g>
+    <rect x="488" y="240" width="84" height="80" rx="16" fill="#1b1b22" stroke="#D21C1C" stroke-width="1.6" filter="url(#glow)"/>
+    <text x="530" y="278" text-anchor="middle" font-size="20" font-weight="700" fill="#ECECEC">h5i</text>
+    <text x="530" y="300" text-anchor="middle" class="mono" font-size="9.5" fill="#D21C1C">parse</text>
+    <text x="530" y="340" text-anchor="middle" class="mono" font-size="11.5" fill="#8b8b97">capture run</text>
+  </g>
+
+  <!-- ============ OUTPUTS: two results, identical shape ============ -->
+  <!-- result: pytest -->
+  <g>
+    <rect x="762" y="140" width="282" height="120" rx="12" fill="#14140f" stroke="#3fb95a" stroke-opacity="0.45"/>
+    <circle cx="784" cy="168" r="4.5" fill="#3fb95a"/>
+    <text x="797" y="172" class="mono" font-size="12.5" fill="#e7e7ee">ToolResult</text>
+    <rect x="942" y="156" width="92" height="22" rx="11" fill="#11210f" stroke="#3fb95a" stroke-opacity="0.5"/>
+    <text x="988" y="171" text-anchor="middle" class="mono" font-size="11" fill="#7fe39a">47 tok ·97%&#8595;</text>
+    <line x1="778" y1="186" x2="1028" y2="186" stroke="#2c2c35"/>
+    <text x="778" y="208" class="mono" font-size="12.5" fill="#7e8b7a">tool:</text>
+    <text x="850" y="208" class="mono" font-size="12.5" fill="#cdd6c8">pytest</text>
+    <text x="778" y="230" class="mono" font-size="12.5" fill="#7e8b7a">status:</text>
+    <text x="850" y="230" class="mono" font-size="12.5" fill="#ff6a6a" font-weight="700">failed</text>
+    <text x="778" y="250" class="mono" font-size="11.5" fill="#9aa595">tests/t.py:42  assert 0 == 100</text>
+  </g>
+  <!-- result: cargo (same fields, different values) -->
+  <g>
+    <rect x="762" y="300" width="282" height="120" rx="12" fill="#14140f" stroke="#3fb95a" stroke-opacity="0.45"/>
+    <circle cx="784" cy="328" r="4.5" fill="#3fb95a"/>
+    <text x="797" y="332" class="mono" font-size="12.5" fill="#e7e7ee">ToolResult</text>
+    <rect x="942" y="316" width="92" height="22" rx="11" fill="#11210f" stroke="#3fb95a" stroke-opacity="0.5"/>
+    <text x="988" y="331" text-anchor="middle" class="mono" font-size="11" fill="#7fe39a">73 tok ·95%&#8595;</text>
+    <line x1="778" y1="346" x2="1028" y2="346" stroke="#2c2c35"/>
+    <text x="778" y="368" class="mono" font-size="12.5" fill="#7e8b7a">tool:</text>
+    <text x="850" y="368" class="mono" font-size="12.5" fill="#cdd6c8">cargo</text>
+    <text x="778" y="390" class="mono" font-size="12.5" fill="#7e8b7a">status:</text>
+    <text x="850" y="390" class="mono" font-size="12.5" fill="#ff6a6a" font-weight="700">failed</text>
+    <text x="778" y="410" class="mono" font-size="11.5" fill="#9aa595">src/auth.rs:55  left 401 != 200</text>
+  </g>
+
+  <!-- footnote -->
+  <text x="530" y="470" text-anchor="middle" font-size="11.5" fill="#6f6f7c">raw output kept out-of-band&#160;&#160;·&#160;&#160;recoverable with h5i recall object</text>
+</svg>
