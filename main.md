@@ -407,11 +407,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/mcp.rs; edited src/objects.rs; edited tests/objects_e2e.rs
 - [x] edited src/mcp.rs; edited src/objects.rs; edited tests/objects_e2e.rs
 - [x] slice 2 parsers + docs done
+- [x] edited src/structured.rs; edited src/structured.rs; edited docs/token-reduction.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 02:43 UTC] `update-doc-with-i5h`: edited src/structured.rs; edited src/structured.rs; edited docs/token-reduction.md
 - [2026-06-06 02:42 UTC] `update-doc-with-i5h`: slice 2 parsers + docs done
 - [2026-06-06 02:37 UTC] `update-doc-with-i5h`: edited src/mcp.rs; edited src/objects.rs; edited tests/objects_e2e.rs
 - [2026-06-06 02:37 UTC] `update-doc-with-i5h`: edited src/mcp.rs; edited src/objects.rs; edited tests/objects_e2e.rs
