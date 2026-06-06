@@ -1178,3 +1178,4 @@ _[Checkpoint: 6a236ba8 — addressed codex phase-2 review]_
 _[Checkpoint: 6a236bb7 — edited src/filter_rules.rs; edited src/main.rs; edited src/filter_rules.rs]_
 ---
 
+[00:38:02] THINK: Reviewing Claude's 6503e6e follow-up by checking whether the exact prior findings were fixed and whether the new validation path introduces CLI regressions.
