@@ -1564,3 +1564,16 @@ Improve docs website: simplify text, add msg feature to top page, write detailed
 
 ---
 
+## Commit 6a238c24 — 2026-06-06 02:55 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Fixed: non-command captures get no structured (recall queries clean); --format clap ValueEnum (typos rejected); --status validated vs canonical set; truncated.raw includes summary_clamped. Tests + CLI smokes. ALL_GREEN, clippy -D warnings clean. 33 commits.
+
+---
+
