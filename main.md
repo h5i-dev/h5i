@@ -366,11 +366,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/token_filter.rs; edited src/token_filter.rs; edited src/token_filter.rs
 - [x] phase-2 declarative rule engine ported from rtk
 - [x] edited src/main.rs; edited src/filter_rules.rs; edited docs/token-reduction.md
+- [x] trust-gated project rules + headroom log folding
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 00:05 UTC] `update-doc-with-i5h`: trust-gated project rules + headroom log folding
 - [2026-06-05 22:27 UTC] `update-doc-with-i5h`: edited src/main.rs; edited src/filter_rules.rs; edited docs/token-reduction.md
 - [2026-06-05 22:27 UTC] `update-doc-with-i5h`: phase-2 declarative rule engine ported from rtk
 - [2026-06-05 22:16 UTC] `update-doc-with-i5h`: edited src/token_filter.rs; edited src/token_filter.rs; edited src/token_filter.rs
