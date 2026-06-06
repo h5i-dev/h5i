@@ -1291,3 +1291,9 @@ _[Checkpoint: 6a237358 — edited src/main.rs; edited src/main.rs; edited src/ma
 [01:14:53] ACT: edited src/mcp.rs
 [01:15:04] ACT: edited src/mcp.rs
 [01:15:57] ACT: edited docs/token-reduction.md
+
+
+---
+_[Checkpoint: 6a237547 — addressed codex review of usability/caps]_
+---
+

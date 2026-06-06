@@ -1239,3 +1239,16 @@ Added the 'Capturing large command output' section to H5I_CLAUDE_INSTRUCTIONS (â
 
 ---
 
+## Commit 6a237547 â€” 2026-06-06 01:17 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Fixed: clamp_highlights reserves ellipsis (final<=500, tests tightened); MCP h5i_capture_run honors shared DEFAULT_CAPTURE_MIN_BYTES (passthrough below threshold, stored flag, no id) = parity with CLI; MCP requires argv array (no string/shell), new rejection+passthrough tests; documented stdout+stderr composition. ~600 tests green, clippy -D warnings clean. 16 commits.
+
+---
+
