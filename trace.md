@@ -1879,3 +1879,4 @@ _[Checkpoint: 6a239d89 — Reviewed Claude's compact default output and PR token
 _[Checkpoint: 6a239d8f — edited MANUAL.md; edited src/pr.rs]_
 ---
 
+[04:13:11] OBSERVE: read src/storage.rs
