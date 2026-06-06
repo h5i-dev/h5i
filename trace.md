@@ -2072,3 +2072,9 @@ _[Checkpoint: 6a23ee92 — edited src/objects.rs; edited src/main.rs; edited src
 _[Checkpoint: 6a23f4db — native Git LFS backend, default for objects push/pull]_
 ---
 
+
+
+---
+_[Checkpoint: 6a23f4ee — edited MANUAL.md; edited src/lfs.rs; edited man/man1/h5i.1]_
+---
+
