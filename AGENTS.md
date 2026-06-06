@@ -83,6 +83,7 @@ Wrap commands that produce large/noisy output (tests, builds, linters, big JSON,
 h5i capture run -- <command> [args…]     # e.g. h5i capture run -- cargo test
 h5i capture run --file <path> -- <cmd>   # tag the files it relates to
 h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall search <query> [--rule|--path|--severity|--fingerprint]  # query findings across captures
 h5i recall object <id>                   # rehydrate full raw (only if needed)
 ```
 

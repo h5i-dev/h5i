@@ -69,10 +69,12 @@ It prints only the summary (errors/failures/counts), passes the exit code throug
 
 ```bash
 h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall search <query> [--severity|--rule|--path|--fingerprint|--tool|--since]
+                                               # query findings across captures
 h5i recall object <id>                         # full raw bytes
 ```
 
-The `h5i_capture_run` MCP tool does the same thing without shell-quoting if the MCP server is configured. Don't wrap trivial commands you need to read in full.
+`recall search` looks *inside* captures — it matches the normalized findings (message, rule, path, severity) across every captured tool, so `recall search --fingerprint <fp>` answers "has this exact failure happened before?". The `h5i_capture_run` MCP tool does the same capture without shell-quoting if the MCP server is configured. Don't wrap trivial commands you need to read in full.
 
 ---
 

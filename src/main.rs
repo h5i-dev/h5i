@@ -533,6 +533,16 @@ fn truncate(s: &str, max_chars: usize) -> String {
     result
 }
 
+/// A short colored severity glyph for `objects search` output.
+fn objects_severity_label(sev: &h5i_core::structured::Severity) -> String {
+    use h5i_core::structured::Severity;
+    match sev {
+        Severity::Error => style("✘ err ").red().to_string(),
+        Severity::Failure => style("✘ fail").red().to_string(),
+        Severity::Warning => style("⚠ warn").yellow().to_string(),
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "h5i", about = "Advanced Git for the AI Era", version)]
 struct Cli {
@@ -1846,6 +1856,46 @@ enum ObjectsCommands {
         tool: Option<String>,
     },
 
+    /// Search captured objects by their normalized findings (and metadata).
+    /// Goes deeper than `list`: queries finding message/rule/path/severity/kind
+    /// and fingerprints across every captured tool. `--fingerprint` answers
+    /// "has this exact failure happened before?".
+    Search {
+        /// Free-text query (case-insensitive) matched against finding
+        /// message/rule/id/detail/location — or the summary for older captures.
+        query: Option<String>,
+        /// Only findings of this severity (error|warning|failure).
+        #[arg(long)]
+        severity: Option<String>,
+        /// Only findings of this kind (test_failure|diagnostic|build_error|panic|generic).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Only findings whose rule / error code equals this (case-insensitive, e.g. TS2322).
+        #[arg(long)]
+        rule: Option<String>,
+        /// Only findings whose location matches this path fragment (suffix/equality).
+        #[arg(long)]
+        path: Option<String>,
+        /// Only findings whose fingerprint starts with this (recurrence tracking).
+        #[arg(long)]
+        fingerprint: Option<String>,
+        /// Only captures taken on this branch.
+        #[arg(long)]
+        branch: Option<String>,
+        /// Only captures with this structured status (passed|ok|failed|error|unknown).
+        #[arg(long)]
+        status: Option<String>,
+        /// Only captures from this tool (e.g. pytest, cargo, npm).
+        #[arg(long)]
+        tool: Option<String>,
+        /// Only captures at most this old (e.g. 7d, 12h, 90m).
+        #[arg(long, value_name = "DURATION")]
+        since: Option<String>,
+        /// Maximum number of matching captures to show.
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+    },
+
     /// Evict local raw blobs to reclaim space. Manifests/summaries are kept.
     /// Without --ttl, only orphan blobs (no manifest) are removed.
     Gc {
@@ -2040,10 +2090,12 @@ It prints only the summary (errors/failures/counts), passes the exit code throug
 
 ```bash
 h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall search <query> [--severity|--rule|--path|--fingerprint|--tool|--since]
+                                               # query findings across captures
 h5i recall object <id>                         # full raw bytes
 ```
 
-The `h5i_capture_run` MCP tool does the same thing without shell-quoting if the MCP server is configured. Don't wrap trivial commands you need to read in full.
+`recall search` looks *inside* captures — it matches the normalized findings (message, rule, path, severity) across every captured tool, so `recall search --fingerprint <fp>` answers "has this exact failure happened before?". The `h5i_capture_run` MCP tool does the same capture without shell-quoting if the MCP server is configured. Don't wrap trivial commands you need to read in full.
 
 ---
 
@@ -2281,6 +2333,7 @@ Wrap commands that produce large/noisy output (tests, builds, linters, big JSON,
 h5i capture run -- <command> [args…]     # e.g. h5i capture run -- cargo test
 h5i capture run --file <path> -- <cmd>   # tag the files it relates to
 h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall search <query> [--rule|--path|--severity|--fingerprint]  # query findings across captures
 h5i recall object <id>                   # rehydrate full raw (only if needed)
 ```
 
@@ -2344,6 +2397,7 @@ through unstored, so it is safe to wrap. Rehydrate the full raw only if needed:
 
 ```bash
 h5i recall objects [--branch <b>|--file <p>]    # list captures
+h5i recall search <query> [--rule|--path|--severity|--fingerprint]  # query findings
 h5i recall object <id>                          # full raw bytes
 ```
 
@@ -3292,13 +3346,13 @@ fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
         "capture" => &["commit", "claim", "memory", "run"],
         "recall" => &[
             "log", "blame", "diff", "context", "claims", "notes", "memory", "recap", "resume",
-            "vibe", "object", "objects",
+            "vibe", "object", "objects", "search",
         ],
         "audit" => &["review", "scan", "compliance", "policy", "vibe"],
         "share" => &["push", "pull", "pr", "memory", "setup-remote", "migrate-remote"],
         "objects" => &[
-            "run", "put", "get", "list", "ls", "gc", "pin", "unpin", "fsck", "push", "pull",
-            "filters", "trust", "setup",
+            "run", "put", "get", "list", "ls", "search", "gc", "pin", "unpin", "fsck", "push",
+            "pull", "filters", "trust", "setup",
         ],
         _ => return None,
     };
@@ -3383,6 +3437,7 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("recall",  "vibe")     => &["vibe"],
         ("recall",  "object")   => &["objects", "get"],
         ("recall",  "objects")  => &["objects", "list"],
+        ("recall",  "search")   => &["objects", "search"],
 
         // ── audit ───────────────────────────────────────────────────────
         ("audit",   "review")   => &["notes", "review"],
@@ -3406,6 +3461,7 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("objects", "get")      => &["objects", "get"],
         ("objects", "list")     => &["objects", "list"],
         ("objects", "ls")       => &["objects", "list"],
+        ("objects", "search")   => &["objects", "search"],
         ("objects", "gc")       => &["objects", "gc"],
         ("objects", "pin")      => &["objects", "pin"],
         ("objects", "unpin")    => &["objects", "unpin"],
@@ -6940,6 +6996,173 @@ jq -c '{
                             "\n{} = raw present locally · {} = absent (rehydrate from a remote)",
                             style("●").green(),
                             style("○").red()
+                        );
+                    }
+                }
+
+                ObjectsCommands::Search {
+                    query,
+                    severity,
+                    kind,
+                    rule,
+                    path,
+                    fingerprint,
+                    branch,
+                    status,
+                    tool,
+                    since,
+                    limit,
+                } => {
+                    // Validate enum-valued filters up front against the canonical
+                    // vocabularies, case-insensitively (mirrors `list --status`).
+                    let validate = |val: Option<String>, name: &str, valid: &[&str]| -> anyhow::Result<Option<String>> {
+                        match val {
+                            Some(s) => {
+                                let sl = s.to_lowercase();
+                                if !valid.contains(&sl.as_str()) {
+                                    anyhow::bail!(
+                                        "invalid --{name} '{s}' (expected one of: {})",
+                                        valid.join(", ")
+                                    );
+                                }
+                                Ok(Some(sl))
+                            }
+                            None => Ok(None),
+                        }
+                    };
+                    let severity = validate(severity, "severity", &["error", "warning", "failure"])?;
+                    let kind = validate(
+                        kind,
+                        "kind",
+                        &["test_failure", "diagnostic", "build_error", "panic", "generic"],
+                    )?;
+                    let status = validate(
+                        status,
+                        "status",
+                        &["passed", "ok", "failed", "error", "unknown"],
+                    )?;
+
+                    // `--since 7d` → an absolute RFC3339 cutoff in the manifest's
+                    // timestamp format, so the pure matcher only does a lexical compare.
+                    let since = match since {
+                        Some(s) => {
+                            let dur = objects::parse_duration(&s)?;
+                            let cutoff = chrono::Utc::now()
+                                - chrono::Duration::from_std(dur)
+                                    .map_err(|e| anyhow::anyhow!("duration too large: {e}"))?;
+                            Some(cutoff.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string())
+                        }
+                        None => None,
+                    };
+
+                    let filters = objects::SearchFilters {
+                        query: query.clone(),
+                        severity,
+                        kind,
+                        rule: rule.clone(),
+                        path: path.clone(),
+                        fingerprint: fingerprint.clone(),
+                        branch: branch.clone(),
+                        status,
+                        tool: tool.clone(),
+                        since,
+                    };
+
+                    let all = objects::read_manifests(git);
+                    // read_manifests is oldest-first; search preserves order, so
+                    // reverse to newest-first for display.
+                    let newest: Vec<objects::Manifest> = all.into_iter().rev().collect();
+                    let hits = objects::search_manifests(&newest, &filters);
+
+                    if hits.is_empty() {
+                        println!("No captured findings match that search.");
+                    } else {
+                        let store = objects::LocalStore::new(&h5i_root);
+                        let total = hits.len();
+                        let total_findings: usize = hits.iter().map(|h| h.findings.len()).sum();
+                        println!(
+                            "{} capture{} matched · {} finding{} (newest first){}\n",
+                            total,
+                            if total == 1 { "" } else { "s" },
+                            total_findings,
+                            if total_findings == 1 { "" } else { "s" },
+                            if total > limit {
+                                format!(" — showing {limit}")
+                            } else {
+                                String::new()
+                            }
+                        );
+                        for hit in hits.iter().take(limit) {
+                            let m = hit.manifest;
+                            let present = store.has(m.hex());
+                            let dot = if present {
+                                style("●").green()
+                            } else {
+                                style("○").red()
+                            };
+                            let tool_tag = m
+                                .structured
+                                .as_ref()
+                                .map(|s| s.tool.clone())
+                                .unwrap_or_else(|| m.kind.clone());
+                            let branch_tag = m
+                                .branch
+                                .as_deref()
+                                .map(|b| format!("  ⎇ {b}"))
+                                .unwrap_or_default();
+                            println!(
+                                "{} {}  {}{}",
+                                dot,
+                                style(&m.id).cyan().bold(),
+                                style(tool_tag).yellow(),
+                                style(branch_tag).magenta()
+                            );
+                            if let Some(cmd) = &m.cmd {
+                                println!("    {} {}", style("$").dim(), style(cmd).dim());
+                            }
+                            // Cap findings shown per capture to stay token-light;
+                            // the full set is one `recall object <id>` away.
+                            const PER_CAPTURE: usize = 8;
+                            for f in hit.findings.iter().take(PER_CAPTURE) {
+                                let loc = f
+                                    .location
+                                    .as_ref()
+                                    .map(|l| l.shorthand())
+                                    .unwrap_or_default();
+                                let rule = f
+                                    .rule
+                                    .as_deref()
+                                    .map(|r| format!("[{r}] "))
+                                    .unwrap_or_default();
+                                let sev = objects_severity_label(&f.severity);
+                                let msg = f.message.lines().next().unwrap_or("").trim();
+                                let msg = truncate(msg, 100);
+                                if loc.is_empty() {
+                                    println!("    {sev} {}{}", style(rule).dim(), msg);
+                                } else {
+                                    println!(
+                                        "    {sev} {}{}  {}",
+                                        style(rule).dim(),
+                                        msg,
+                                        style(loc).blue()
+                                    );
+                                }
+                            }
+                            let more = hit.findings.len().saturating_sub(PER_CAPTURE);
+                            if more > 0 {
+                                println!("    {}", style(format!("… +{more} more finding(s)")).dim());
+                            }
+                            if hit.findings.is_empty() {
+                                // Capture-level (textual/metadata) match — show the summary head.
+                                let first = m.summary.lines().next().unwrap_or("").trim();
+                                if !first.is_empty() {
+                                    println!("    {}", style(first).dim());
+                                }
+                            }
+                        }
+                        println!(
+                            "\nRehydrate full output with {}",
+                            style("h5i recall object <id>").bold()
                         );
                     }
                 }
