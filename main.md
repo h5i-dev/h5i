@@ -423,11 +423,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
 - [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
 - [x] edited scripts/experiment_token_reduction.sh; edited scripts/experiment_token_reduction.sh; wrote scripts/experiment_tok…
+- [x] edited scripts/experiment_token_reduction.sh; edited scripts/experiment_token_reduction.sh; wrote scripts/experiment_tok…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 03:31 UTC] `update-doc-with-i5h`: edited scripts/experiment_token_reduction.sh; edited scripts/experiment_token_reduction.sh; wrote scripts/experiment_tok…
 - [2026-06-06 03:30 UTC] `update-doc-with-i5h`: edited scripts/experiment_token_reduction.sh; edited scripts/experiment_token_reduction.sh; wrote scripts/experiment_tok…
 - [2026-06-06 03:17 UTC] `update-doc-with-i5h`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
 - [2026-06-06 03:14 UTC] `update-doc-with-i5h`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
