@@ -1160,3 +1160,4 @@ _[Checkpoint: 6a236ac0 — Reviewed Claude's expanded token-reduction implementa
 
 [00:33:08] ACT: edited assets/filters/NOTICE
 [00:33:13] ACT: edited docs/token-reduction.md
+[00:33:21] ACT: edited src/filter_rules.rs
