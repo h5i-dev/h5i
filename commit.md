@@ -1174,3 +1174,16 @@ objects::capture now clamps git-tracked text: summary<=16KiB (clamp_text, UTF-8 
 
 ---
 
+## Commit 6a236e7e — 2026-06-06 00:49 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+objects::capture now clamps git-tracked text: summary<=16KiB (clamp_text, UTF-8 boundary + marker), highlights<=20 each<=500B (clamp_highlights). Enforced at the single choke point so adapters/rules/generic/binary all bounded. summary_tokens recomputed when clamped; path-mining uses full text first. Consts MAX_SUMMARY_BYTES/MAX_HIGHLIGHTS/MAX_HIGHLIGHT_BYTES. 3 new tests. Suite 593 lib green.
+
+### This Commit's Contribution
+
+
+---
+
