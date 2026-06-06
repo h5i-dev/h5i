@@ -2099,3 +2099,9 @@ _[Checkpoint: 6a23f4ee — edited MANUAL.md; edited src/lfs.rs; edited man/man1/
 [10:33:54] ACT: edited src/lfs.rs
 [10:34:59] OBSERVE: read MANUAL.md
 [10:35:05] ACT: edited MANUAL.md
+
+
+---
+_[Checkpoint: 6a23f836 — LFS hardening — codex #7230a76d (cred scoping, fallback classification)]_
+---
+

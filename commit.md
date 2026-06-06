@@ -2149,3 +2149,16 @@ src/lfs.rs: LFS Batch API over reqwest (no git lfs CLI), git credential auth, sh
 
 ---
 
+## Commit 6a23f836 — 2026-06-06 10:36 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+same-origin Basic auth (no leak to presigned URLs); LfsError Unsupported|Fatal so auto only falls back on 404/501; broadened recall guidance; one-blob-at-a-time wording; download (fetched,missing) reporting. +3 lfs tests (10 total). ALL_GREEN, clippy clean. 46 commits.
+
+---
+
