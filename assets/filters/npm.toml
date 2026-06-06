@@ -1,6 +1,6 @@
 [filters.npm]
 description = "Compact npm output — strip lifecycle banners, progress, npm WARN/notice, install tallies"
-match_command = "^npm\\b"
+match_command = "^npm\\s+(install|ci|i|run|test|build|exec)\\b"
 strip_ansi = true
 strip_lines_matching = [
   "^\\s*$",

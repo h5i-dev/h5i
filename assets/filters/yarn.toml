@@ -1,6 +1,6 @@
 [filters.yarn]
 description = "Compact yarn output — strip resolution/fetch/link progress, keep errors and script output"
-match_command = "^yarn\\b"
+match_command = "^yarn$|^yarn\\s+(install|add|run|test|build)\\b"
 strip_ansi = true
 strip_lines_matching = [
   "^\\s*$",

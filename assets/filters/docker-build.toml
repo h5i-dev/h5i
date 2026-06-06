@@ -1,6 +1,6 @@
 [filters.docker-build]
 description = "Compact docker build output — strip BuildKit step/layer noise, keep ERROR and the result"
-match_command = "^docker\\b"
+match_command = "^docker\\s+(build|buildx\\s+build)\\b"
 strip_ansi = true
 strip_lines_matching = [
   "^\\s*$",

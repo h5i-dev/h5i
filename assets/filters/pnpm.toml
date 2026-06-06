@@ -1,6 +1,6 @@
 [filters.pnpm]
 description = "Compact pnpm output — strip progress, resolution/lockfile/peer noise, keep errors"
-match_command = "^pnpm\\b"
+match_command = "^pnpm\\s+(install|i|add|run|test|build|exec|dlx)\\b"
 strip_ansi = true
 strip_lines_matching = [
   "^\\s*$",

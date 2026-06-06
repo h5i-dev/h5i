@@ -1,11 +1,15 @@
 [filters.tsc]
-description = "Compact TypeScript compiler output — keep TS errors/warnings and the error count"
+description = "Compact TypeScript compiler output — keep diagnostics/errors, drop watch/compile chatter"
 match_command = "\\btsc\\b"
 strip_ansi = true
-keep_lines_matching = [
-  "error TS\\d+",
-  "warning TS\\d+",
-  "^Found \\d+ error",
+# Keep-by-default (strip only chatter) so an unrecognized usage/tool error is
+# never turned into a false "ok".
+strip_lines_matching = [
+  "^\\s*$",
+  "^Starting compilation",
+  "^\\[[^]]*\\] Starting compilation",
+  "^Watching for file changes",
+  "^File change detected",
 ]
 max_lines = 80
 on_empty = "tsc: ok"
@@ -31,3 +35,10 @@ Starting compilation...
 Found 0 errors. Watching for file changes.
 """
 expected = "Found 0 errors. Watching for file changes."
+
+[[tests.tsc]]
+name = "usage/tool error is NOT turned into ok"
+input = """
+error TS5023: Unknown compiler option '--bad'.
+"""
+expected = "error TS5023: Unknown compiler option '--bad'."

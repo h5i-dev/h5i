@@ -701,6 +701,14 @@ mod tests {
             (&["./gradlew", "build"], "gradle"),
             (&["gcc", "-O2", "main.c"], "gcc"),
             (&["make", "all"], "make"),
+            // Narrowed ecosystem rules: noisy subcommands route…
+            (&["npm", "run", "build"], "npm"),
+            (&["pnpm", "install"], "pnpm"),
+            (&["yarn"], "yarn"),
+            (&["go", "test", "./..."], "go"),
+            (&["docker", "build", "."], "docker-build"),
+            (&["tsc", "--noEmit"], "tsc"),
+            (&["ruff", "check", "."], "ruff"),
         ];
         for (cmd, expected) in cases {
             let argv: Vec<String> = cmd.iter().map(|s| s.to_string()).collect();
@@ -709,6 +717,32 @@ mod tests {
                 hit.map(|f| f.name.as_str()),
                 Some(*expected),
                 "command {cmd:?} should route to rule {expected:?}"
+            );
+        }
+    }
+
+    /// JSON/info subcommands must NOT be claimed by the noisy-subcommand rules —
+    /// otherwise large JSON would be line-capped instead of structurally
+    /// summarized by the generic JSON path.
+    #[test]
+    fn json_and_info_subcommands_fall_through() {
+        let none: &[&[&str]] = &[
+            &["go", "list", "-json", "./..."],
+            &["go", "env"],
+            &["go", "mod", "tidy"],
+            &["docker", "ps"],
+            &["docker", "inspect", "--format", "json"],
+            &["npm", "ls", "--json"],
+            &["pnpm", "list", "--json"],
+            &["yarn", "info", "react", "--json"],
+        ];
+        for cmd in none {
+            let argv: Vec<String> = cmd.iter().map(|s| s.to_string()).collect();
+            let hit = registry().find(&command_string(&argv));
+            assert!(
+                hit.is_none(),
+                "command {cmd:?} should NOT match a rule (got {:?})",
+                hit.map(|f| f.name.as_str())
             );
         }
     }

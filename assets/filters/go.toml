@@ -1,6 +1,6 @@
 [filters.go]
 description = "Compact `go build`/`go test`/`go vet` output — keep failures and build errors, drop passing noise"
-match_command = "^go\\b"
+match_command = "^go\\s+(test|build|vet)\\b"
 strip_ansi = true
 strip_lines_matching = [
   "^\\s*$",
