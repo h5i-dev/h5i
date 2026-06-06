@@ -1422,3 +1422,4 @@ _[Checkpoint: 6a238134 — edited src/structured.rs; edited src/structured.rs; e
 [02:12:20] ACT: edited src/structured.rs
 [02:12:30] ACT: edited src/structured.rs
 [02:12:38] ACT: edited src/structured.rs
+[02:13:47] NOTE: DEFERRAL (~/Dev/h5i/src/structured.rs): t "findings" — it's files+hunks; best left as `body` text for now | ## The honest verdict The unified `Finding` model **covers the entire diagnostic…
