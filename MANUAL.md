@@ -736,7 +736,8 @@ require the `git lfs` CLI and does not use LFS pointer files; auth is resolved
 via `git credential`. The manifest's `raw_oid` is the pointer, the bytes live in
 LFS. With LFS, **`h5i recall object <id>` lazily fetches** a blob from the server
 on demand (and caches it) — no explicit `objects pull` needed. Uploads/downloads
-stream one blob at a time, so huge objects aren't all held in memory.
+process **one blob at a time** (the whole set is never held in memory at once).
+Lazy recall only tries the `origin` remote.
 
 **git-ref store (fallback).** Blobs live in `refs/h5i/objects-data`. `objects
 push` fetches + union-merges the remote ref before a **non-force** push (so it

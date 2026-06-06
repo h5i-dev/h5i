@@ -25,6 +25,53 @@ use std::time::Duration;
 
 const LFS_MIME: &str = "application/vnd.git-lfs+json";
 
+/// Outcome of an LFS operation, split so callers can decide on fallback safely.
+#[derive(Debug, thiserror::Error)]
+pub enum LfsError {
+    /// The remote clearly does not speak LFS (batch endpoint 404/501). The ONLY
+    /// case where `--backend auto` may quietly fall back to the git-ref store.
+    #[error("remote does not support LFS: {0}")]
+    Unsupported(String),
+    /// Auth/permission, content-address, malformed-response, or network/timeout
+    /// failure — must be surfaced, NEVER silently routed to the git-ref store
+    /// (that would defeat the reason LFS is the default for huge objects).
+    #[error(transparent)]
+    Fatal(#[from] H5iError),
+}
+
+impl LfsError {
+    pub fn is_unsupported(&self) -> bool {
+        matches!(self, LfsError::Unsupported(_))
+    }
+    pub fn fatal(msg: impl Into<String>) -> Self {
+        LfsError::Fatal(H5iError::Internal(msg.into()))
+    }
+}
+
+/// Classify a batch-endpoint HTTP status. Only a missing/not-implemented
+/// endpoint counts as "LFS unsupported"; everything else (incl. 401/403) is
+/// fatal so auto-fallback can't mask an auth/permission problem.
+fn classify_batch_status(status: u16) -> LfsError {
+    if status == 404 || status == 501 {
+        LfsError::Unsupported(format!("batch endpoint returned HTTP {status}"))
+    } else {
+        LfsError::Fatal(H5iError::Internal(format!(
+            "LFS batch returned HTTP {status} (auth/permission or server error)"
+        )))
+    }
+}
+
+/// Whether two URLs share scheme + host + port (so reusing the git host's Basic
+/// credentials is safe — they must never go to a presigned third-party URL).
+fn same_origin(a: &str, b: &str) -> bool {
+    match (split_url(a), split_url(b)) {
+        (Some((pa, ha, _)), Some((pb, hb, _))) => {
+            pa.eq_ignore_ascii_case(&pb) && ha.eq_ignore_ascii_case(&hb)
+        }
+        _ => false,
+    }
+}
+
 /// Derive the LFS API endpoint from a git remote URL, or `None` for non-HTTP(S)
 /// remotes (which fall back to the git-ref store). GitHub/GitLab/Gitea all
 /// expose `<repo>.git/info/lfs`.
@@ -157,7 +204,7 @@ impl LfsClient {
         Some(LfsClient { endpoint, http, auth })
     }
 
-    fn batch(&self, operation: &str, objects: Vec<ObjId>) -> Result<Vec<BatchObject>, H5iError> {
+    fn batch(&self, operation: &str, objects: Vec<ObjId>) -> Result<Vec<BatchObject>, LfsError> {
         if objects.is_empty() {
             return Ok(Vec::new());
         }
@@ -176,18 +223,16 @@ impl LfsClient {
         if let Some((u, p)) = &self.auth {
             req = req.basic_auth(u, Some(p));
         }
-        let resp = req
-            .send()
-            .map_err(|e| H5iError::Internal(format!("LFS batch request failed: {e}")))?;
+        let resp = req.send().map_err(|e| {
+            // A transport failure is fatal — do NOT let it trigger git-ref fallback.
+            LfsError::Fatal(H5iError::Internal(format!("LFS batch request failed: {e}")))
+        })?;
         if !resp.status().is_success() {
-            return Err(H5iError::Internal(format!(
-                "LFS batch {operation} returned HTTP {} (check remote LFS support / credentials)",
-                resp.status()
-            )));
+            return Err(classify_batch_status(resp.status().as_u16()));
         }
-        let parsed: BatchResponse = resp
-            .json()
-            .map_err(|e| H5iError::Internal(format!("LFS batch response parse failed: {e}")))?;
+        let parsed: BatchResponse = resp.json().map_err(|e| {
+            LfsError::Fatal(H5iError::Internal(format!("LFS batch response parse failed: {e}")))
+        })?;
         Ok(parsed.objects)
     }
 
@@ -205,7 +250,10 @@ impl LfsClient {
             }
             req = req.header(k, v);
         }
-        if !had_authz {
+        // Only reuse the git host's Basic credentials when the transfer URL is
+        // the SAME ORIGIN as the LFS endpoint. LFS commonly returns presigned
+        // third-party URLs (S3/GCS/Azure) — never leak git creds to those.
+        if !had_authz && same_origin(&self.endpoint, &action.href) {
             if let Some((u, p)) = &self.auth {
                 req = req.basic_auth(u, Some(p));
             }
@@ -218,7 +266,7 @@ impl LfsClient {
     /// **lazily, one at a time**, so huge blobs are never all held in memory.
     /// Already-present objects (no `upload` action in the batch) are skipped.
     /// Returns the number actually transferred. Idempotent.
-    pub fn upload<F>(&self, objs: &[ObjId], load: F) -> Result<usize, H5iError>
+    pub fn upload<F>(&self, objs: &[ObjId], load: F) -> Result<usize, LfsError>
     where
         F: Fn(&str) -> Result<Option<Vec<u8>>, H5iError>,
     {
@@ -226,32 +274,32 @@ impl LfsClient {
         let mut uploaded = 0;
         for o in resp {
             if let Some(e) = &o.error {
-                return Err(H5iError::Internal(format!(
+                return Err(LfsError::Fatal(H5iError::Internal(format!(
                     "LFS upload of {} rejected: {}",
                     o.oid, e.message
-                )));
+                ))));
             }
             let Some(action) = o.actions.as_ref().and_then(|a| a.upload.as_ref()) else {
                 continue; // no upload action ⇒ already present on the server
             };
             let Some(bytes) = load(&o.oid)? else { continue };
             if sha256_hex(&bytes) != o.oid {
-                return Err(H5iError::Internal(format!(
+                return Err(LfsError::Fatal(H5iError::Internal(format!(
                     "LFS upload of {} aborted: local bytes fail content-address check",
                     o.oid
-                )));
+                ))));
             }
             let req = self.http.put(&action.href).body(bytes);
             let req = self.auth_for_action(req, action);
-            let r = req
-                .send()
-                .map_err(|e| H5iError::Internal(format!("LFS upload transfer failed: {e}")))?;
+            let r = req.send().map_err(|e| {
+                LfsError::Fatal(H5iError::Internal(format!("LFS upload transfer failed: {e}")))
+            })?;
             if !r.status().is_success() {
-                return Err(H5iError::Internal(format!(
+                return Err(LfsError::Fatal(H5iError::Internal(format!(
                     "LFS upload of {} returned HTTP {}",
                     o.oid,
                     r.status()
-                )));
+                ))));
             }
             uploaded += 1;
         }
@@ -259,62 +307,60 @@ impl LfsClient {
     }
 
     /// Download the requested objects, verifying each against its oid and handing
-    /// it to `sink(oid, bytes)` **one at a time** (so huge blobs stream straight
-    /// to disk). Missing/errored objects are omitted. Returns the count handed
-    /// to the sink.
-    pub fn download<F>(&self, want: &[ObjId], mut sink: F) -> Result<usize, H5iError>
+    /// it to `sink(oid, bytes)` **one blob at a time** (the whole set is never
+    /// held in memory at once; each blob is buffered fully then handed off).
+    /// Returns `(fetched, missing)` — `missing` counts requested objects the
+    /// server reported an error for or couldn't transfer (so the caller can
+    /// report it rather than silently succeeding with zero).
+    pub fn download<F>(&self, want: &[ObjId], mut sink: F) -> Result<(usize, usize), LfsError>
     where
         F: FnMut(&str, &[u8]) -> Result<(), H5iError>,
     {
         let resp = self.batch("download", want.to_vec())?;
         let mut got = 0;
+        let mut missing = 0;
         for o in resp {
             if o.error.is_some() {
+                missing += 1; // per-object error (e.g. 404) — NOT "LFS unavailable"
                 continue;
             }
             let Some(action) = o.actions.as_ref().and_then(|a| a.download.as_ref()) else {
+                missing += 1;
                 continue;
             };
             let req = self.http.get(&action.href);
             let req = self.auth_for_action(req, action);
-            let r = req
-                .send()
-                .map_err(|e| H5iError::Internal(format!("LFS download transfer failed: {e}")))?;
+            let r = req.send().map_err(|e| {
+                LfsError::Fatal(H5iError::Internal(format!("LFS download transfer failed: {e}")))
+            })?;
             if !r.status().is_success() {
+                missing += 1;
                 continue;
             }
-            let bytes = r
-                .bytes()
-                .map_err(|e| H5iError::Internal(format!("LFS download read failed: {e}")))?;
+            let bytes = r.bytes().map_err(|e| {
+                LfsError::Fatal(H5iError::Internal(format!("LFS download read failed: {e}")))
+            })?;
             // Content-address check — never trust the transferred bytes blindly.
             if sha256_hex(&bytes) != o.oid {
-                return Err(H5iError::Internal(format!(
+                return Err(LfsError::Fatal(H5iError::Internal(format!(
                     "LFS download of {} failed content-address check",
                     o.oid
-                )));
+                ))));
             }
             sink(&o.oid, &bytes)?;
             got += 1;
         }
-        Ok(got)
+        Ok((got, missing))
     }
 
     /// Convenience: download a single object's bytes (used by lazy `recall`).
-    pub fn download_one(&self, oid: &str, size: u64) -> Result<Option<Vec<u8>>, H5iError> {
+    pub fn download_one(&self, oid: &str, size: u64) -> Result<Option<Vec<u8>>, LfsError> {
         let mut found = None;
         self.download(&[ObjId { oid: oid.to_string(), size }], |_, b| {
             found = Some(b.to_vec());
             Ok(())
         })?;
         Ok(found)
-    }
-
-    /// True if `endpoint` is reachable for a single object download (used to
-    /// detect whether the remote actually supports LFS before relying on it).
-    pub fn has(&self, oid: &str, size: u64) -> bool {
-        self.batch("download", vec![ObjId { oid: oid.to_string(), size }])
-            .map(|objs| objs.iter().any(|o| o.oid == oid && o.error.is_none()))
-            .unwrap_or(false)
     }
 }
 
@@ -368,6 +414,65 @@ mod tests {
         assert_eq!(j["hash_algo"], "sha256");
         assert_eq!(j["objects"][0]["oid"], "abc");
         assert_eq!(j["objects"][0]["size"], 12);
+    }
+
+    fn client_with_auth(endpoint: &str) -> LfsClient {
+        LfsClient {
+            endpoint: endpoint.to_string(),
+            http: Client::new(),
+            auth: Some(("u".into(), "p".into())),
+        }
+    }
+
+    fn authz_of(req: reqwest::blocking::RequestBuilder) -> Option<String> {
+        let r = req.build().unwrap();
+        r.headers()
+            .get("authorization")
+            .map(|v| v.to_str().unwrap().to_string())
+    }
+
+    fn action(href: &str, hdr: &[(&str, &str)]) -> Action {
+        Action {
+            href: href.to_string(),
+            header: hdr.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        }
+    }
+
+    #[test]
+    fn basic_auth_only_leaks_to_same_origin() {
+        let c = client_with_auth("https://git.example.com/o/r.git/info/lfs");
+
+        // Same origin as the endpoint → reuse git Basic creds.
+        let a = action("https://git.example.com/transfer/abc", &[]);
+        let req = c.auth_for_action(c.http.get(&a.href), &a);
+        assert!(authz_of(req).unwrap().starts_with("Basic "));
+
+        // Presigned third-party URL → MUST NOT carry the git credentials.
+        let a = action("https://s3.amazonaws.com/bucket/abc?sig=x", &[]);
+        let req = c.auth_for_action(c.http.get(&a.href), &a);
+        assert!(authz_of(req).is_none(), "git creds leaked to a third-party URL");
+
+        // Action carries its own Authorization → use it, don't add Basic.
+        let a = action("https://s3.amazonaws.com/bucket/abc", &[("Authorization", "Bearer t123")]);
+        let req = c.auth_for_action(c.http.get(&a.href), &a);
+        assert_eq!(authz_of(req).unwrap(), "Bearer t123");
+    }
+
+    #[test]
+    fn same_origin_compares_scheme_host_port() {
+        assert!(same_origin("https://h/x", "https://h/y"));
+        assert!(!same_origin("https://h/x", "http://h/y")); // scheme
+        assert!(!same_origin("https://h:1/x", "https://h:2/y")); // port (host carries it)
+        assert!(!same_origin("https://a/x", "https://b/y")); // host
+    }
+
+    #[test]
+    fn only_404_501_are_unsupported() {
+        assert!(classify_batch_status(404).is_unsupported());
+        assert!(classify_batch_status(501).is_unsupported());
+        for s in [400u16, 401, 403, 409, 500, 503] {
+            assert!(!classify_batch_status(s).is_unsupported(), "HTTP {s} must be fatal");
+        }
     }
 
     #[test]

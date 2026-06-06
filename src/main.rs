@@ -3556,17 +3556,18 @@ fn git_ref_pull(
     Ok(())
 }
 
-/// Upload local raw blobs to the remote's LFS server (bytes loaded lazily, one
-/// at a time). Returns the number transferred.
+/// Upload local raw blobs to the remote's LFS server (bytes loaded one blob at a
+/// time). Returns the number transferred. Errors are typed so the caller can
+/// distinguish "remote lacks LFS" from auth/network/content failures.
 fn lfs_push(
     git: &git2::Repository,
     workdir: &std::path::Path,
     h5i_root: &std::path::Path,
     url: &str,
-) -> anyhow::Result<usize> {
+) -> Result<usize, h5i_core::lfs::LfsError> {
     use h5i_core::objects::Backend as _;
     let client = h5i_core::lfs::LfsClient::for_remote(workdir, url)
-        .ok_or_else(|| anyhow::anyhow!("LFS requires an http(s) remote; got {url}"))?;
+        .ok_or_else(|| h5i_core::lfs::LfsError::fatal(format!("LFS requires an http(s) remote; got {url}")))?;
     let store = h5i_core::objects::LocalStore::new(h5i_root);
     let mut seen = std::collections::HashSet::new();
     let mut objs = Vec::new();
@@ -3577,20 +3578,20 @@ fn lfs_push(
             objs.push(h5i_core::lfs::ObjId { oid: hex, size: m.raw_size });
         }
     }
-    Ok(client.upload(&objs, |oid| store.get(oid))?)
+    client.upload(&objs, |oid| store.get(oid))
 }
 
 /// Download every manifest blob missing locally from the remote's LFS server,
-/// streaming each into the local store. Returns the number cached.
+/// caching each into the local store. Returns `(fetched, missing)`.
 fn lfs_pull(
     git: &git2::Repository,
     workdir: &std::path::Path,
     h5i_root: &std::path::Path,
     url: &str,
-) -> anyhow::Result<usize> {
+) -> Result<(usize, usize), h5i_core::lfs::LfsError> {
     use h5i_core::objects::Backend as _;
     let client = h5i_core::lfs::LfsClient::for_remote(workdir, url)
-        .ok_or_else(|| anyhow::anyhow!("LFS requires an http(s) remote; got {url}"))?;
+        .ok_or_else(|| h5i_core::lfs::LfsError::fatal(format!("LFS requires an http(s) remote; got {url}")))?;
     let store = h5i_core::objects::LocalStore::new(h5i_root);
     let mut seen = std::collections::HashSet::new();
     let mut want = Vec::new();
@@ -3600,7 +3601,7 @@ fn lfs_pull(
             want.push(h5i_core::lfs::ObjId { oid: hex, size: m.raw_size });
         }
     }
-    Ok(client.download(&want, |oid, bytes| store.put(oid, bytes))?)
+    client.download(&want, |oid, bytes| store.put(oid, bytes))
 }
 
 /// Resolve `origin`/`<remote>`'s URL, if any.
@@ -6803,7 +6804,9 @@ jq -c '{
                             None => anyhow::bail!(
                                 "raw blob for {} is absent (evicted, or never fetched).\n\
                                  Its summary is still available: h5i recall object {} --summary\n\
-                                 If a teammate shared it, run: h5i objects pull",
+                                 If it was shared, run `h5i objects pull` (for an LFS/HTTP(S) \
+                                 remote, check the remote/credentials). Note: lazy recall only \
+                                 tries the `origin` remote.",
                                 m.raw_oid,
                                 m.id
                             ),
@@ -7197,15 +7200,18 @@ jq -c '{
                                 if n == 1 { "" } else { "s" },
                                 style(&remote).cyan()
                             ),
-                            // Auto: a remote without LFS support → fall back.
-                            Err(e) if backend == ObjectsBackend::Auto => {
+                            // Auto falls back to the git-ref store ONLY when the
+                            // remote clearly lacks LFS — never on auth/network/
+                            // content failures (those must surface).
+                            Err(e) if backend == ObjectsBackend::Auto && e.is_unsupported() => {
                                 eprintln!(
-                                    "  {} LFS unavailable ({e}); falling back to the git-ref store",
-                                    style("ℹ").dim()
+                                    "  {} {}; falling back to the git-ref store",
+                                    style("ℹ").dim(),
+                                    e
                                 );
                                 git_ref_push(git, workdir, &h5i_root, &remote)?;
                             }
-                            Err(e) => return Err(e),
+                            Err(e) => return Err(e.into()),
                         }
                     } else {
                         git_ref_push(git, workdir, &h5i_root, &remote)?;
@@ -7230,20 +7236,26 @@ jq -c '{
                             .clone()
                             .ok_or_else(|| anyhow::anyhow!("remote '{remote}' has no URL"))?;
                         match lfs_pull(git, workdir, &h5i_root, &u) {
-                            Ok(n) => println!(
-                                "{} {} blob{} fetched from LFS · cached locally",
+                            Ok((got, missing)) => println!(
+                                "{} {} blob{} fetched from LFS · cached locally{}",
                                 style("✔").green(),
-                                n,
-                                if n == 1 { "" } else { "s" }
+                                got,
+                                if got == 1 { "" } else { "s" },
+                                if missing > 0 {
+                                    format!(" · {missing} not available on the server")
+                                } else {
+                                    String::new()
+                                }
                             ),
-                            Err(e) if backend == ObjectsBackend::Auto => {
+                            Err(e) if backend == ObjectsBackend::Auto && e.is_unsupported() => {
                                 eprintln!(
-                                    "  {} LFS unavailable ({e}); falling back to the git-ref store",
-                                    style("ℹ").dim()
+                                    "  {} {}; falling back to the git-ref store",
+                                    style("ℹ").dim(),
+                                    e
                                 );
                                 git_ref_pull(git, workdir, &h5i_root, &remote)?;
                             }
-                            Err(e) => return Err(e),
+                            Err(e) => return Err(e.into()),
                         }
                     } else {
                         git_ref_pull(git, workdir, &h5i_root, &remote)?;
