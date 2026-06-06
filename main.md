@@ -419,11 +419,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/structured.rs; edited docs/token-reduction.md; edited src/token_filter.rs
 - [x] edited src/token_filter.rs
 - [x] Advised Claude through token-reduction structured-output implementation; reviewed and approved slice-1 integration, slice-2 parsers, follow-up fixes, and final clippy cleanup.
+- [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 03:14 UTC] `update-doc-with-i5h`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
 - [2026-06-06 03:06 UTC] `update-doc-with-i5h`: Advised Claude through token-reduction structured-output implementation; reviewed and approved slice-1 integration, slice-2 parsers, follow-up fixes, and final clippy cleanup.
 - [2026-06-06 03:06 UTC] `update-doc-with-i5h`: edited src/token_filter.rs
 - [2026-06-06 03:05 UTC] `update-doc-with-i5h`: edited src/structured.rs; edited docs/token-reduction.md; edited src/token_filter.rs
