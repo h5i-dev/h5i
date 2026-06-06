@@ -1859,3 +1859,4 @@ _[Checkpoint: 6a239d04 — edited src/structured.rs; edited MANUAL.md; edited sr
 ---
 
 [04:07:58] NOTE: Approved c919bb1 after focused verification; h5i last-view numbering shifted while acknowledging follow-up ACKs.
+[04:07:58] OBSERVE: searched is for "YAML|structured"
