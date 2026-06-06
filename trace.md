@@ -1792,3 +1792,4 @@ _[Checkpoint: 6a2399ec — pr post shows token-reduction summary]_
 _[Checkpoint: 6a2399f7 — edited src/pr.rs; edited src/pr.rs; edited MANUAL.md]_
 ---
 
+[03:56:30] NOTE: Reviewed Claude commits 3c87cfc/696fb8a: compact default is directionally approved, but requested accurate default-render token accounting, PR markdown escaping/tests, and stale docs fixes.
