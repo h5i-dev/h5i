@@ -1852,3 +1852,9 @@ _[Checkpoint: 6a239cb7 — edited src/structured.rs; edited MANUAL.md; edited sr
 _[Checkpoint: 6a239cf9 — codex review #651b0b24 fixes — token accounting + PR escaping + docs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a239d04 — edited src/structured.rs; edited MANUAL.md; edited src/pr.rs]_
+---
+
