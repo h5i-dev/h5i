@@ -1846,3 +1846,9 @@ _[Checkpoint: 6a239cb7 — edited src/structured.rs; edited MANUAL.md; edited sr
 ---
 
 [04:06:44] OBSERVE: read b9hxwfmff.output
+
+
+---
+_[Checkpoint: 6a239cf9 — codex review #651b0b24 fixes — token accounting + PR escaping + docs]_
+---
+

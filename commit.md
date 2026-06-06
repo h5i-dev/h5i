@@ -1863,3 +1863,16 @@ Improve docs website: simplify text, add msg feature to top page, write detailed
 
 ---
 
+## Commit 6a239cf9 — 2026-06-06 04:07 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+agent_facing_tokens() (compact when structured) for pointer+PR; escape_md(tool)+tests; structured.rs/MANUAL compact-YAML docs fixed; pure token_reduction_section_from with 3 tests. ALL_GREEN, clippy -D warnings clean. 41 commits.
+
+---
+
