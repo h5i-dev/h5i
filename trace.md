@@ -1394,3 +1394,4 @@ _[Checkpoint: 6a237b74 — edited assets/filters/pip.toml; edited docs/token-red
 _[Checkpoint: 6a237f23 — Reviewed Claude's expanded filter rules and structured-output proposal; sent schema guidance; verified b2caacc safety fixes for ruff/tsc and narrowed command routing; approved and requested review of ToolResult/Finding structs before wiring adapters.]_
 ---
 
+[02:01:03] ACT: edited src/structured.rs
