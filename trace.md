@@ -1480,3 +1480,4 @@ _[Checkpoint: 6a2384bb — edited src/structured.rs; edited src/structured.rs; e
 _[Checkpoint: 6a238525 — Reviewed structured-output foundation commits 806cfb29 and 2cdb416; requested and verified schema fixes; approved schema for integration while requiring review of capture/manifest/MCP/recall wiring before default use.]_
 ---
 
+[02:25:42] ACT: edited src/objects.rs
