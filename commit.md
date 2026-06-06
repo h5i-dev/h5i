@@ -2162,3 +2162,16 @@ same-origin Basic auth (no leak to presigned URLs); LfsError Unsupported|Fatal s
 
 ---
 
+## Commit 6a23f853 — 2026-06-06 10:37 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+same-origin Basic auth (no leak to presigned URLs); LfsError Unsupported|Fatal so auto only falls back on 404/501; broadened recall guidance; one-blob-at-a-time wording; download (fetched,missing) reporting. +3 lfs tests (10 total). ALL_GREEN, clippy clean. 46 commits.
+
+### This Commit's Contribution
+
+
+---
+
