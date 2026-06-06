@@ -1330,3 +1330,16 @@ Authored 15 new declarative TOML rules with golden tests: npm pnpm yarn tsc esli
 
 ---
 
+## Commit 6a237a86 — 2026-06-06 01:40 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+Authored 15 new declarative TOML rules with golden tests: npm pnpm yarn tsc eslint jest vitest (JS); pip ruff mypy black flake8 (Python); go golangci-lint (Go); docker-build. Strip-noise/keep-errors model, inspired by rtk's coded parsers (Apache-2.0). 175 golden cases pass; registry unambiguous. Coverage now ~77 commands (74 rules + 3 coded adapters). Suite green, clippy clean. 18 commits.
+
+### This Commit's Contribution
+
+
+---
+
