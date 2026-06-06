@@ -1489,3 +1489,4 @@ _[Checkpoint: 6a238525 — Reviewed structured-output foundation commits 806cfb2
 [02:26:39] OBSERVE: read src/objects.rs
 [02:26:46] ACT: edited src/objects.rs
 [02:26:53] OBSERVE: read src/objects.rs
+[02:27:01] OBSERVE: read src/mcp.rs
