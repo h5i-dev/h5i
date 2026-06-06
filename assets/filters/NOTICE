@@ -38,7 +38,3 @@ is additionally derived from **headroom**:
 specifically the normalized "dedupe similar" idea (collapse lines that differ
 only by numbers/ids into one representative with a count). Only the technique was
 reimplemented in Rust; no headroom code was copied.
-
-No code is derived from **context-mode**, which is under the Elastic License 2.0
-(source-available, not a permissive OSS license); only generic techniques that
-h5i implements independently were considered.
