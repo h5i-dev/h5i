@@ -1,6 +1,10 @@
 ## h5i Integration
 
-This repository uses **h5i** (a Git sidecar for AI-era version control). Prefer h5i commands over raw git equivalents. h5i stores metadata in `refs/h5i/notes` and `refs/h5i/memory`; these refs are NOT included in a plain `git push` — use `h5i push` to share them.
+This repository uses **h5i** (a Git sidecar for AI-era version control).
+
+**Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, `h5i_claims_add`, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
+
+h5i metadata lives in `refs/h5i/*` and is NOT pushed by plain `git push`. Use `h5i push` to share it.
 
 ---
 
@@ -10,329 +14,145 @@ Apply these automatically, without being asked.
 
 ### Context workspace
 
-**At the start of every non-trivial task**, run:
+**At the start of every non-trivial task:**
 ```bash
 h5i context status
 # If no workspace exists yet, initialize one:
 h5i context init --goal "<one-line summary of what you are about to do>"
 ```
 
-**While working**, emit a trace entry after each logical step:
+**You do not need to call `h5i context trace` yourself.** h5i's hooks derive
+the trace automatically:
+
+- `PostToolUse` → OBSERVE for every `Read`, ACT for every `Edit` / `Write`.
+- `Stop` → THINK entries mined from your own reasoning in the session
+  transcript, plus NOTE entries for any deferrals / placeholders / unfulfilled
+  promises detected.
+
+The only trace entry worth emitting by hand is an explicit flag you want a
+future reviewer to see *immediately* (not at next Stop). For that, use:
+
 ```bash
-# After reading / grepping files to understand the codebase:
-h5i context trace --kind OBSERVE "<what you found>"
-
-# After deciding on an approach or making a design choice:
-h5i context trace --kind THINK "<the decision and why>"
-
-# After editing or writing a file:
-h5i context trace --kind ACT "<what you changed and where>"
+h5i context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 ```
 
 **After completing a logical milestone** (analysis done, feature implemented, bug fixed):
 ```bash
-h5i context commit "<milestone summary>" \
-  --detail "<what was done and what is left>"
+h5i context commit "<milestone summary>" --detail "<what was done and what is left>"
 ```
 
-### Notes
-
-After every `h5i commit`, immediately run:
+**Branch your reasoning** when you want to explore an alternative without losing the current thread:
 ```bash
-h5i notes analyze   # links the just-completed Claude Code session to HEAD
+h5i context branch experiment/sync-retry --purpose "try sync retry as a simpler fallback"
+# ... explore ...
+h5i context checkout main                   # return to main reasoning branch
+h5i context merge experiment/sync-retry     # merge findings back if useful
+```
+
+**Before editing a non-trivial file**, surface prior reasoning that mentions it:
+```bash
+h5i context relevant src/repository.rs
 ```
 
 ---
 
 ### Capturing large command output (token reduction)
 
-When you run a command that may produce **large or noisy output** — test suites,
-builds, linters, big JSON, long logs — wrap it so only a filtered summary enters
-your context instead of thousands of lines:
+Wrap commands that may produce **large or noisy output** — test suites, builds, linters, big JSON, long logs — so only a filtered summary enters context:
 
 ```bash
-h5i capture run -- <command> [args…]      # e.g. h5i capture run -- pytest -q
+h5i capture run -- <command> [args…]          # e.g. h5i capture run -- pytest -q
+h5i capture run --file <path> -- <command>    # tag the files it relates to
 ```
 
-It runs the command, prints **only** a deterministic summary (errors, failures,
-counts — the signal), passes the exit code through, and stores the full raw
-output out-of-band. Small output (under ~2 KB) just passes through unstored, so
-it is always safe to wrap. Tag the work it relates to with `--file`:
+It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Output under ~2 KB passes through unstored, so it is safe to wrap. Rehydrate the full raw only if the summary isn't enough:
 
 ```bash
-h5i capture run --file src/auth.rs -- pytest tests/test_auth.py
+h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall object <id>                         # full raw bytes
 ```
 
-When you need the **full** raw output back (rare — only if the summary isn't
-enough), rehydrate it instead of re-running:
-
-```bash
-h5i recall objects                 # list captures (newest first, with branch/files)
-h5i recall object <id>             # full raw bytes
-h5i recall objects --branch <b>    # captures for a branch
-h5i recall objects --file <path>   # captures touching a file
-```
-
-Prefer the `h5i_capture_run` MCP tool when available (same behavior, no
-shell-quoting). Do **not** wrap trivial commands you need to read in full (a
-short `git status`, a single `cat`).
+The `h5i_capture_run` MCP tool does the same thing without shell-quoting if the MCP server is configured. Don't wrap trivial commands you need to read in full.
 
 ---
 
-### Committing
+### Committing code
 
-Always use `h5i commit` instead of `git commit`.
+**Always stage files before committing.** `h5i commit` only commits what is staged and errors if nothing is staged.
 
-When **you** (Claude) made or assisted with the change, always record AI provenance:
-
-```
-h5i commit -m "add retry logic to HTTP client" \
-  --model claude-sonnet-4-6 \
-  --agent claude-code \
-  --prompt "add exponential backoff to the HTTP client"
+```bash
+git add <file1> <file2> …   # never `git add .`
 ```
 
-Additional flags to add when relevant:
-- `--tests`  — when tests were added or modified (captures test metrics)
-- `--audit`  — on security-sensitive, authentication, or high-risk changes
-- `--decisions <FILE>` — when you made non-obvious design tradeoffs (see Design Decisions below)
+Then commit via Bash:
+```bash
+h5i commit -m "…" --model claude-sonnet-4-6 --agent claude-code --prompt "…"
+```
 
-**Example output:**
-```
-✔  Committed a3f8c12  add retry logic to HTTP client
-   model: claude-sonnet-4-6 · agent: claude-code · 312 tokens
-```
+(Or the `h5i_commit` MCP tool if the MCP server is configured.)
+
+Add flags when relevant:
+- `--tests`  — tests were added or modified (captures test metrics)
+- `--audit`  — security-sensitive, authentication, or high-risk changes
+
+Every `h5i commit` automatically snapshots the context workspace and links it to the git commit SHA, so the workspace state is recoverable per code commit (`h5i context restore <sha>`, `h5i context diff <sha1> <sha2>`).
 
 ---
 
-### Understanding History
+### Claims — pin reusable facts
 
-```
-h5i log --limit 10                        # recent commits with AI metadata
-h5i log --ancestry src/main.rs:42        # full prompt history for a specific line
-h5i blame src/main.rs                    # line-level blame with AI provenance
-h5i blame src/main.rs --show-prompt      # annotate each commit boundary with its prompt
-```
+`h5i claims` records content-addressed facts so future sessions don't re-derive them. Each claim pins a Merkle hash over its evidence files at HEAD; it stays **live** until any evidence blob changes, then auto-invalidates. Live claims are injected into the SessionStart prelude / `h5i context prompt` as pre-verified facts.
 
-**Example `h5i log` output:**
-```
-● a3f8c12  add retry logic to HTTP client
-  2026-03-27 14:02  Alice <alice@example.com>
-  model: claude-sonnet-4-6 · agent: claude-code · 312 tokens
-  prompt: "add exponential backoff to the HTTP client"
+**Two flavors, both stored as plain claims (only the length and path-count differ):**
+- **Cross-cutting fact** (~30 tokens, multiple paths). Example: *"HTTP only src/api/{client,auth,billing}.py."*
+- **Per-file orientation** (~80 tokens, single path) — replaces the deprecated `h5i summary`. Example: *"src/api/client.py | HTTP. fetch_user(id: int)→dict GET, create_post(...)→dict POST, delete_post(id: int)→bool DELETE. Logger \`log\` top."*
 
-● 9e21b04  fix off-by-one in parser
-  2026-03-26 11:45  Bob <bob@example.com>
-  (no AI metadata)
-```
+**Record a claim when you have just established a non-obvious fact a future session would otherwise re-derive** — "X lives only in Y", "module M owns concern N", a subtle invariant, the public API of a struct, where *not* to look. Don't pin trivia a quick grep would answer.
 
----
-
-### Notes — Session Analysis
-
-`h5i notes` parses Claude Code session logs and stores enriched metadata (exploration footprint, causal chain, uncertainty moments, file churn) linked to a commit.
-
-**Typical workflow after finishing a task:**
-
+Via Bash:
 ```bash
-# 1. Analyze the just-completed Claude Code session and link to HEAD
-h5i notes analyze
-
-# 2. Inspect what files Claude consulted vs edited
-h5i notes show
-
-# 3. See where Claude expressed uncertainty
-h5i notes uncertainty
-
-# 4. See where Claude expressed uncertainty while editing a specific file
-h5i notes uncertainty --file src/repository.rs
-
-# 5. View cumulative edit-churn across all analyzed sessions
-h5i notes churn
-
-# 6. Visualize the chain of intents across recent commits
-h5i notes graph --limit 20
-
-# 7. Identify commits that most need human review
-h5i notes review --limit 50
-
-# 8. Show per-file attention coverage (blind edits = edits with no prior Read)
-h5i notes coverage
+h5i claims add "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
+  --path src/api/client.py
+h5i claims list                  # all claims, flat
+h5i claims list --group-by-path  # claims grouped by file ("what's known about each file")
+h5i claims prune                 # drop claims whose evidence changed
 ```
 
-**Example `h5i notes show` output:**
-```
-── Exploration Footprint ──────────────────────────────────
-  Session a3f8c12d  ·  42 messages  ·  138 tool calls
+(Or the `h5i_claims_add` / `h5i_claims_list` / `h5i_claims_prune` MCP tools if the MCP server is configured.)
 
-  Files Consulted:
-    📖 src/repository.rs  ×4  (Read,Grep)
-    📖 src/metadata.rs    ×2  (Read)
+**Evidence-path rule — the single most important thing to get right:**
+Pick the *minimum* set of files whose content, if edited, should cause the claim to be re-checked. Ask: *"If I changed file X, would this claim's truth be in doubt?"* If no, do not include X — even if you read X while establishing the claim.
 
-  Files Edited:
-    ✏ src/repository.rs  ×3 edit(s)
-    ✏ src/main.rs         ×1 edit(s)
+Why: the claim auto-invalidates the moment *any* evidence blob changes. Over-listing guarantees rapid staleness from unrelated edits and trains future sessions to distrust claims.
 
-── Causal Chain ─────────────────────────────────────────────
-  Trigger:
-    "add exponential backoff to the HTTP client"
+Concrete example. Claim: *"HTTP only in `src/api/client.py`"*.
+- ✔ Good: `--path src/api/client.py` (one path). If client.py changes, re-check. Edits to formatters/validators/main.py do not affect the truth of this claim.
+- ✖ Bad: `--path src/api/client.py --path src/utils/format.py --path main.py`. Goes stale the next time someone touches an unrelated helper — even though the claim was still true.
 
-  Key Decisions:
-    1. Used tokio::time::sleep for async-compatible delay
-    2. Capped retries at 5 to avoid infinite loops
+Rule of thumb: **most good claims cite 1 file; >3 is a red flag** you're confusing "files I read" with "files that back the claim".
 
-  Considered / Rejected:
-    - Synchronous std::thread::sleep (incompatible with async runtime)
-```
+**Other rules:**
+- Evidence paths must be tracked in HEAD.
+- If the SessionStart prelude already shows a claim covering what you were about to investigate, trust it — don't re-read the files unless the user asks.
+- If a live claim is wrong, fix it: `h5i claims prune` removes only stale ones; you can also delete the JSON in `.git/.h5i/claims/` directly to remove a wrong-but-live claim.
 
-**Example `h5i notes review` output:**
-```
-Suggested Review Points — 2 commits flagged (scanned 50, min_score=0.40)
-──────────────────────────────────────────────────────────────
-  #1  a3f8c12  score 0.74  ████████░░
-     Alice · 2026-03-27 14:02 UTC
-     add retry logic to HTTP client
-     ⚠ high uncertainty · 5 edits · 4 files touched
+**Write claim text in caveman style.**
+- Cross-cutting: ~30 tokens. Per-file orientation: ~80 tokens.
+- Drop articles, copulas, fluff. Keep paths, identifier names, types, numeric constants exact.
+- Live claims are re-read on every cached-prefix turn forever — every word costs forever.
 
-  #2  9e21b04  score 0.45  ████░░░░░░
-     Bob · 2026-03-26 11:45 UTC
-     refactor parser
-     moderate complexity
-```
+| | Bloated (don't) | Caveman (do) |
+|---|---|---|
+| Cross-cutting | "All HTTP-making functions in this project live only in src/api/client.py (fetch_user, create_post, delete_post). main.py and src/utils/* contain no direct HTTP." | "HTTP only src/api/client.py: fetch_user, create_post, delete_post. main.py + utils/* no HTTP." |
+| Per-file | "The src/api/client.py file is an HTTP client module that uses the requests library to call the example API. It exports three functions and a logger." | "src/api/client.py \\| HTTP. requests to api.example.com. fetch_user(id: int)→dict GET, create_post(...)→dict POST, delete_post(id: int)→bool DELETE. Logger \\`log\\` top." |
+| Invariant | "The session token must be validated using a constant-time comparison to avoid timing attacks." | "Session token: constant-time compare. Timing attack risk." |
 
----
+**Frequency knob (`$H5I_CLAIMS_FREQUENCY`)** — the user can tune how eagerly you record claims:
+- `off` — do not record any this session, even if one would normally be warranted.
+- `low` (default) — only non-obvious, genuinely reusable facts.
+- `high` — record liberally; pin any reusable codebase insight. The evidence-path rule applies *especially* here.
 
-### Design Decisions
-
-When you make a non-obvious design choice — picking one approach over alternatives — record it with `--decisions`:
-
-```bash
-cat > /tmp/decisions.json << 'EOF'
-[
-  {
-    "location": "src/http_client.rs:88",
-    "choice": "exponential backoff with jitter",
-    "alternatives": ["fixed delay", "linear backoff"],
-    "reason": "reduces thundering herd under high load"
-  }
-]
-EOF
-
-h5i commit -m "add retry logic" \
-  --model claude-sonnet-4-6 \
-  --agent claude-code \
-  --prompt "add exponential backoff to the HTTP client" \
-  --decisions /tmp/decisions.json
-```
-
-Decisions appear in `h5i log` under a `Decisions:` block, showing location, choice, alternatives, and reasoning. This captures *why* an approach was chosen — context that never fits in a commit message.
-
-**Decision schema:** array of `{ "location", "choice", "alternatives"?, "reason" }`.
-
----
-
-### Attention Coverage
-
-After `h5i notes analyze`, check which files were edited without being read first:
-
-```bash
-h5i notes coverage          # all edited files, by blind-edit count
-h5i notes coverage --max-ratio 0.5   # only files below 50% coverage
-```
-
-A **blind edit** is a Write or Edit call that had no preceding Read for the same file in that session. High blind-edit counts appear as `BLIND_EDIT` signals in `h5i notes review` and mean the AI modified a file from memory rather than reading its current state.
-
----
-
-### Context — Reasoning Workspace
-
-`h5i context` manages a `.h5i-ctx/` workspace that lets you checkpoint, branch, and review your own reasoning across sessions — analogous to git but for *agent thinking* rather than code.
-
-**Initialize once per project (or per major task):**
-
-```bash
-h5i context init --goal "refactor the HTTP client to support retries and timeouts"
-```
-
-**During a task, use these commands to structure your reasoning:**
-
-```bash
-# Checkpoint progress after completing a logical step
-h5i context commit "analyzed existing HTTP client" \
-  --detail "read repository.rs and metadata.rs; identified retry entry points"
-
-# Log individual OTA (Observe–Think–Act) steps as you work
-h5i context trace --kind OBSERVE "HttpClient::send has no retry logic"
-h5i context trace --kind THINK   "exponential backoff with jitter is safest"
-h5i context trace --kind ACT     "added retry loop in send() with 5-attempt cap"
-
-# Explore an alternative approach without losing your current thread
-h5i context branch experiment/sync-retry --purpose "try sync retry as a simpler fallback"
-# ... explore ...
-h5i context checkout main   # return to main reasoning branch
-h5i context merge experiment/sync-retry  # merge findings back if useful
-
-# Review current state before continuing a task
-h5i context show --trace --window 5
-h5i context status
-```
-
-**Example `h5i context show` output:**
-```
-── h5i-ctx · branch: main ──────────────────────────────────
-  Goal: refactor the HTTP client to support retries and timeouts
-
-  Recent commits (3):
-    [c1a2b3] analyzed existing HTTP client
-    [d4e5f6] implemented retry loop
-    [g7h8i9] added timeout parameter
-
-── Trace (last 10 lines) ────────────────────────────────────
-  [OBSERVE] HttpClient::send has no retry logic
-  [THINK]   exponential backoff with jitter is safest
-  [ACT]     added retry loop in send() with 5-attempt cap
-  [NOTE]    TODO: add integration test for timeout path
-```
-
-Use `h5i context prompt` to get a ready-made system prompt you can prepend to an agent session to inject full context awareness.
-
-### Context versioning
-
-Every `h5i commit` automatically snapshots the context workspace state and links it to the git commit SHA. This makes context a first-class versioned artifact alongside code.
-
-```bash
-# Restore context to the state it was in at a given git commit
-h5i context restore <sha>
-
-# See how the context workspace changed between two code commits
-h5i context diff <sha1> <sha2>
-
-# Before editing a file, retrieve context entries that mention it
-h5i context relevant src/repository.rs
-
-# Compact old context history (run git gc afterwards to free space)
-h5i context pack
-```
-
-**`h5i context diff` shows:**
-- New reasoning milestones added between the two commits
-- New OTA trace steps
-- Whether the project goal changed
-
-**`h5i context relevant` shows:**
-- Milestone contributions that mention the file
-- Trace entries (OBSERVE/THINK/ACT) that mention the file, with surrounding context
-- Cross-branch mentions from other reasoning branches
-
-**Example workflow:**
-```bash
-# After a new git commit, the snapshot is automatic — nothing extra to do.
-# To continue from where a previous session left off:
-h5i context restore a3f8c12
-
-# Before touching a complex file:
-h5i context relevant src/repository.rs
-```
+The SessionStart prelude prints the active policy when it is `off` or `high`. Follow the most recent policy line you see, even if it contradicts this base guidance.
 
 ---
 
@@ -368,15 +188,7 @@ h5i msg                                 # inbox dashboard (glance)
 h5i msg inbox                           # show unread, mark read (numbers them)
 h5i msg reply <n> <text>                # threaded reply to message #n
 h5i msg ack|done|decline <n> [text]     # typed threaded replies
-h5i msg history --branch <b>            # extract the conversation tied to a branch
-h5i msg history --with <agent>          # conversation with one agent
 ```
-
-`h5i msg history --branch <b>` reconstructs the AI-to-AI conversation attached
-to a git branch: it returns every thread that has at least one message tagged
-with that branch (whole threads, so untagged replies ride along). `--with` and
-`--branch` compose. `h5i msg replay --branch <b>` plays the same selection back
-as a live feed.
 
 Identity precedence is `--from`/`--as` > `$H5I_AGENT` > stored default. You
 normally need none of them — just `h5i msg send codex "…"`. If a send ever
@@ -409,6 +221,6 @@ Monitor tool is experimental/host-dependent — don't rely on it.
 ### Sharing h5i Data
 
 ```bash
-h5i push   # push all h5i refs (notes, memory, context, ast, msg) to origin
+h5i push   # push all h5i refs (notes, context, memory, ast, msg) to origin
 h5i pull   # pull h5i refs from origin
 ```

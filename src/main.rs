@@ -1973,7 +1973,7 @@ const H5I_CLAUDE_INSTRUCTIONS: &str = r#"## h5i Integration
 
 This repository uses **h5i** (a Git sidecar for AI-era version control).
 
-**Prefer MCP tools over Bash commands wherever possible.** h5i exposes native MCP tools (`h5i_context_trace`, `h5i_context_commit`, `h5i_commit`, `h5i_claims_add`, …) — they're faster and avoid shell-quoting pitfalls. Use `Bash: h5i …` only when no MCP tool covers the operation.
+**Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, `h5i_claims_add`, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
 
 h5i metadata lives in `refs/h5i/*` and is NOT pushed by plain `git push`. Use `h5i push` to share it.
 
@@ -2043,27 +2043,24 @@ h5i recall objects [--branch <b>|--file <p>]   # list captures
 h5i recall object <id>                         # full raw bytes
 ```
 
-Prefer the `h5i_capture_run` MCP tool when available (same behavior, no shell-quoting). Don't wrap trivial commands you need to read in full.
+The `h5i_capture_run` MCP tool does the same thing without shell-quoting if the MCP server is configured. Don't wrap trivial commands you need to read in full.
 
 ---
 
 ### Committing code
 
-**Always stage files before committing.** `h5i_commit` only commits what is staged and errors if nothing is staged.
+**Always stage files before committing.** `h5i commit` only commits what is staged and errors if nothing is staged.
 
 ```bash
 git add <file1> <file2> …   # never `git add .`
 ```
 
-Then commit via MCP (preferred):
-```
-h5i_commit(message="…", model="claude-sonnet-4-6", agent="claude-code", prompt="…")
-```
-
-Or via Bash if MCP is unavailable:
+Then commit via Bash:
 ```bash
 h5i commit -m "…" --model claude-sonnet-4-6 --agent claude-code --prompt "…"
 ```
+
+(Or the `h5i_commit` MCP tool if the MCP server is configured.)
 
 Add flags when relevant:
 - `--tests`  — tests were added or modified (captures test metrics)
@@ -2083,17 +2080,7 @@ Every `h5i commit` automatically snapshots the context workspace and links it to
 
 **Record a claim when you have just established a non-obvious fact a future session would otherwise re-derive** — "X lives only in Y", "module M owns concern N", a subtle invariant, the public API of a struct, where *not* to look. Don't pin trivia a quick grep would answer.
 
-Prefer the MCP tool:
-```
-h5i_claims_add(
-  text="HTTP only src/api/client.py: fetch_user, create_post, delete_post.",
-  paths=["src/api/client.py"]
-)
-h5i_claims_list()       # → {claims: [...], live: N, stale: M}
-h5i_claims_prune()      # → {removed: N}
-```
-
-Or via Bash:
+Via Bash:
 ```bash
 h5i claims add "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
   --path src/api/client.py
@@ -2101,6 +2088,8 @@ h5i claims list                  # all claims, flat
 h5i claims list --group-by-path  # claims grouped by file ("what's known about each file")
 h5i claims prune                 # drop claims whose evidence changed
 ```
+
+(Or the `h5i_claims_add` / `h5i_claims_list` / `h5i_claims_prune` MCP tools if the MCP server is configured.)
 
 **Evidence-path rule — the single most important thing to get right:**
 Pick the *minimum* set of files whose content, if edited, should cause the claim to be re-checked. Ask: *"If I changed file X, would this claim's truth be in doubt?"* If no, do not include X — even if you read X while establishing the claim.
@@ -2358,8 +2347,8 @@ h5i recall objects [--branch <b>|--file <p>]    # list captures
 h5i recall object <id>                          # full raw bytes
 ```
 
-Prefer the `h5i_capture_run` MCP tool when available. Don't wrap trivial commands
-you need to read in full.
+The `h5i_capture_run` MCP tool does the same thing without shell-quoting if the
+MCP server is configured. Don't wrap trivial commands you need to read in full.
 "#;
 
 /// Append `block` to `path` (creating it) unless `marker` is already present.
