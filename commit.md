@@ -1070,3 +1070,16 @@ Manifest gained branch + files (explicit ∪ mentioned path:line) + diff_files (
 
 ---
 
+## Commit 6a2368f1 — 2026-06-06 00:25 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+Manifest gained branch + files (explicit ∪ mentioned path:line) + diff_files (working-tree changes at capture). objects::{current_branch,working_diff_files,extract_paths}. CLI: capture run/put --file (repeatable); recall objects --branch/--file(suffix)/--diff filters; listing shows ⎇ branch + ⊞ files. Tests: 2 unit (extract_paths, branch+mentioned recording) + e2e branch/file filter. Suite green (~597).
+
+### This Commit's Contribution
+
+
+---
+
