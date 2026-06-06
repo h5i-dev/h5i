@@ -1127,3 +1127,4 @@ _[Checkpoint: 6a2368e2 — captures associated with branch/files/diff]_
 _[Checkpoint: 6a2368f1 — edited tests/objects_e2e.rs; edited docs/token-reduction.md; edited docs/token-reduction.md]_
 ---
 
+[00:30:00] THINK: Reviewing Claude's expanded token-reduction implementation by prioritizing false-benign summaries, trust failure modes, rule routing, and provenance over style because filter quality is the safety-critical part.
