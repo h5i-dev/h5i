@@ -28,6 +28,3 @@ the same license.
   representative with a count). Only the technique was reimplemented in Rust; no
   headroom code was copied.
 
-No code is derived from context-mode (Elastic License 2.0, source-available and
-not a permissive OSS license); only generic techniques h5i implements
-independently were considered.
