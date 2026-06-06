@@ -2203,3 +2203,4 @@ _[Checkpoint: 6a2413c7 — edited blog/index.html; edited blog/index.html; edite
 _[Checkpoint: 6a241a55 — edited assets/token-reduction-unified.svg; edited assets/token-reduction-unified.svg; edited docs/blog/structured-tool-o…]_
 ---
 
+[13:06:59] ACT: wrote assets/token-reduction-unified.svg
