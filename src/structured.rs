@@ -434,7 +434,328 @@ pub fn parse(cmd: &[String], output: &str, exit_code: Option<i32>) -> Option<Too
             return parse_cargo_test(output, exit_code);
         }
     }
+    if let Some(i) = words.iter().position(|w| w == "go") {
+        if words.get(i + 1).map(String::as_str) == Some("test") {
+            return parse_go_test(output, exit_code);
+        }
+    }
+    if has("tsc") {
+        return parse_tsc(output, exit_code);
+    }
+    if has("eslint") {
+        return parse_eslint(output, exit_code);
+    }
+    if has("ruff") {
+        return parse_ruff(output, exit_code);
+    }
+    if has("mypy") {
+        return parse_mypy(output, exit_code);
+    }
     None
+}
+
+/// Build a diagnostic-style result (compilers/linters/type checkers): status
+/// from exit + presence of error-severity findings (never passes on nonzero).
+fn diag_result(
+    tool: &str,
+    kind: ResultKind,
+    exit_code: Option<i32>,
+    findings: Vec<Finding>,
+) -> ToolResult {
+    let errors = findings.iter().filter(|f| f.severity == Severity::Error).count() as u64;
+    let warnings = findings.iter().filter(|f| f.severity == Severity::Warning).count() as u64;
+    let mut counts = std::collections::BTreeMap::new();
+    if errors > 0 {
+        counts.insert("error".to_string(), errors);
+    }
+    if warnings > 0 {
+        counts.insert("warning".to_string(), warnings);
+    }
+    let mut r = ToolResult {
+        schema_version: SCHEMA_VERSION,
+        tool: tool.to_string(),
+        kind,
+        status: Status::from_exit(exit_code, errors > 0),
+        exit_code,
+        duration_ms: None,
+        counts,
+        parser_confidence: ParserConfidence::Parsed,
+        raw_oid: None,
+        findings,
+        suppressed: Vec::new(),
+        truncated: Truncated::default(),
+        body: None,
+        extra: serde_json::Map::new(),
+    };
+    r.cap();
+    r
+}
+
+fn parse_go_test(output: &str, exit_code: Option<i32>) -> Option<ToolResult> {
+    let lines: Vec<&str> = output.lines().collect();
+    // Anchor: go test markers.
+    if !lines.iter().any(|l| {
+        let t = l.trim_start();
+        t.starts_with("--- FAIL")
+            || t.starts_with("--- PASS")
+            || t.starts_with("ok ")
+            || t.starts_with("ok\t")
+            || t.starts_with("FAIL")
+    }) {
+        return None;
+    }
+    let mut passed = 0u64;
+    let mut failed = 0u64;
+    let mut findings = Vec::new();
+    let loc_re = regex::Regex::new(r"^\s+([\w./-]+\.go):(\d+):").unwrap();
+    let fail_re = regex::Regex::new(r"^--- FAIL: (\S+)").unwrap();
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim_start();
+        if t.starts_with("--- PASS") {
+            passed += 1;
+        } else if let Some(c) = fail_re.captures(t) {
+            failed += 1;
+            let test = c[1].to_string();
+            // The next indented "file.go:line:" line is the location/message.
+            let (loc, msg) = lines.get(i + 1).and_then(|n| {
+                loc_re.captures(n.trim_end()).map(|lc| {
+                    let l = Location {
+                        path: lc[1].to_string(),
+                        line: lc[2].parse().ok(),
+                        ..Default::default()
+                    };
+                    (Some(l), n.trim().to_string())
+                })
+            }).unwrap_or((None, test.clone()));
+            findings.push(Finding {
+                kind: FindingKind::TestFailure,
+                severity: Severity::Failure,
+                id: Some(test.clone()),
+                rule: None,
+                message: msg,
+                location: loc.clone(),
+                locations: vec![],
+                expected: None,
+                actual: None,
+                detail: None,
+                fixable: false,
+                suggestions: vec![],
+                fingerprint: fingerprint(
+                    "go",
+                    "",
+                    &loc.map(|l| l.shorthand()).unwrap_or_else(|| test.clone()),
+                    &test,
+                ),
+            });
+        }
+        i += 1;
+    }
+    let mut counts = std::collections::BTreeMap::new();
+    if passed > 0 {
+        counts.insert("passed".to_string(), passed);
+    }
+    if failed > 0 {
+        counts.insert("failed".to_string(), failed);
+    }
+    let mut r = ToolResult {
+        schema_version: SCHEMA_VERSION,
+        tool: "go".into(),
+        kind: ResultKind::Test,
+        status: Status::from_test(exit_code, failed > 0),
+        exit_code,
+        duration_ms: None,
+        counts,
+        parser_confidence: ParserConfidence::Parsed,
+        raw_oid: None,
+        findings,
+        suppressed: Vec::new(),
+        truncated: Truncated::default(),
+        body: None,
+        extra: serde_json::Map::new(),
+    };
+    r.cap();
+    Some(r)
+}
+
+fn parse_tsc(output: &str, exit_code: Option<i32>) -> Option<ToolResult> {
+    let re = regex::Regex::new(r"^(.+?)\((\d+),(\d+)\): (error|warning) (TS\d+): (.+)$").unwrap();
+    let mut findings = Vec::new();
+    for l in output.lines() {
+        if let Some(c) = re.captures(l.trim()) {
+            let severity = if &c[4] == "warning" { Severity::Warning } else { Severity::Error };
+            let loc = Location {
+                path: c[1].to_string(),
+                line: c[2].parse().ok(),
+                column: c[3].parse().ok(),
+                ..Default::default()
+            };
+            findings.push(Finding {
+                kind: FindingKind::Diagnostic,
+                severity,
+                id: None,
+                rule: Some(c[5].to_string()),
+                message: c[6].to_string(),
+                location: Some(loc.clone()),
+                locations: vec![],
+                expected: None,
+                actual: None,
+                detail: None,
+                fixable: false,
+                suggestions: vec![],
+                fingerprint: fingerprint("tsc", &c[5], &loc.shorthand(), &c[6]),
+            });
+        }
+    }
+    let found = output.lines().any(|l| l.trim_start().starts_with("Found ") && l.contains("error"));
+    if findings.is_empty() && !found {
+        return None;
+    }
+    Some(diag_result("tsc", ResultKind::Typecheck, exit_code, findings))
+}
+
+fn parse_ruff(output: &str, exit_code: Option<i32>) -> Option<ToolResult> {
+    // "path.py:line:col: CODE message"  (CODE like F401, E711)
+    let re = regex::Regex::new(r"^(.+?):(\d+):(\d+): ([A-Z]+\d+) (.+)$").unwrap();
+    let mut findings = Vec::new();
+    for l in output.lines() {
+        if let Some(c) = re.captures(l.trim()) {
+            let loc = Location {
+                path: c[1].to_string(),
+                line: c[2].parse().ok(),
+                column: c[3].parse().ok(),
+                ..Default::default()
+            };
+            let msg = c[5].to_string();
+            let fixable = msg.contains("[*]");
+            findings.push(Finding {
+                kind: FindingKind::Diagnostic,
+                severity: Severity::Error,
+                id: None,
+                rule: Some(c[4].to_string()),
+                message: msg.clone(),
+                location: Some(loc.clone()),
+                locations: vec![],
+                expected: None,
+                actual: None,
+                detail: None,
+                fixable,
+                suggestions: vec![],
+                fingerprint: fingerprint("ruff", &c[4], &loc.shorthand(), &msg),
+            });
+        }
+    }
+    let clean = output.lines().any(|l| l.trim() == "All checks passed!");
+    if findings.is_empty() && !clean {
+        return None;
+    }
+    Some(diag_result("ruff", ResultKind::Lint, exit_code, findings))
+}
+
+fn parse_mypy(output: &str, exit_code: Option<i32>) -> Option<ToolResult> {
+    // "path.py:line: error: message [code]"  (column optional)
+    let re = regex::Regex::new(r"^(.+?):(\d+):(?:(\d+):)? (error|note|warning): (.+)$").unwrap();
+    let mut findings = Vec::new();
+    for l in output.lines() {
+        if let Some(c) = re.captures(l.trim()) {
+            let kind_word = &c[4];
+            if kind_word == "note" {
+                continue; // notes are context, not findings
+            }
+            let severity = if kind_word == "warning" { Severity::Warning } else { Severity::Error };
+            let mut msg = c[5].to_string();
+            // Pull a trailing "[code]" into rule.
+            let rule = msg
+                .rfind('[')
+                .filter(|_| msg.ends_with(']'))
+                .map(|b| {
+                    let code = msg[b + 1..msg.len() - 1].to_string();
+                    msg = msg[..b].trim_end().to_string();
+                    code
+                });
+            let loc = Location {
+                path: c[1].to_string(),
+                line: c[2].parse().ok(),
+                column: c.get(3).and_then(|m| m.as_str().parse().ok()),
+                ..Default::default()
+            };
+            findings.push(Finding {
+                kind: FindingKind::Diagnostic,
+                severity,
+                id: None,
+                rule: rule.clone(),
+                message: msg.clone(),
+                location: Some(loc.clone()),
+                locations: vec![],
+                expected: None,
+                actual: None,
+                detail: None,
+                fixable: false,
+                suggestions: vec![],
+                fingerprint: fingerprint("mypy", rule.as_deref().unwrap_or(""), &loc.shorthand(), &msg),
+            });
+        }
+    }
+    let resolved = output.lines().any(|l| {
+        let t = l.trim_start();
+        t.starts_with("Success:") || (t.starts_with("Found ") && t.contains("error"))
+    });
+    if findings.is_empty() && !resolved {
+        return None;
+    }
+    Some(diag_result("mypy", ResultKind::Typecheck, exit_code, findings))
+}
+
+fn parse_eslint(output: &str, exit_code: Option<i32>) -> Option<ToolResult> {
+    // Stylish format: a file header line, then "  L:C  severity  message  rule".
+    let row = regex::Regex::new(r"^(\d+):(\d+)\s+(error|warning)\s+(.+?)\s{2,}(\S+)$").unwrap();
+    let mut findings = Vec::new();
+    let mut current_file: Option<String> = None;
+    for l in output.lines() {
+        let t = l.trim_end();
+        let tl = t.trim_start();
+        if let Some(c) = row.captures(tl) {
+            let severity = if &c[3] == "warning" { Severity::Warning } else { Severity::Error };
+            let loc = current_file.clone().map(|p| Location {
+                path: p,
+                line: c[1].parse().ok(),
+                column: c[2].parse().ok(),
+                ..Default::default()
+            });
+            let msg = c[4].trim().to_string();
+            let rule = c[5].to_string();
+            findings.push(Finding {
+                kind: FindingKind::Diagnostic,
+                severity,
+                id: None,
+                rule: Some(rule.clone()),
+                message: msg.clone(),
+                location: loc.clone(),
+                locations: vec![],
+                expected: None,
+                actual: None,
+                detail: None,
+                fixable: false,
+                suggestions: vec![],
+                fingerprint: fingerprint(
+                    "eslint",
+                    &rule,
+                    &loc.map(|l| l.shorthand()).unwrap_or_default(),
+                    &msg,
+                ),
+            });
+        } else if !tl.is_empty() && !tl.starts_with('✖') && !tl.starts_with('✔') && row.captures(tl).is_none() {
+            // A non-row, non-summary line is a file header (path).
+            if tl.contains('/') || tl.contains('.') {
+                current_file = Some(tl.to_string());
+            }
+        }
+    }
+    let summary = output.lines().any(|l| l.contains("problem") || l.trim_start().starts_with('✖'));
+    if findings.is_empty() && !summary {
+        return None;
+    }
+    Some(diag_result("eslint", ResultKind::Lint, exit_code, findings))
 }
 
 fn count_kv(line: &str) -> std::collections::BTreeMap<String, u64> {
@@ -765,6 +1086,82 @@ mod tests {
         assert_eq!(f.location.as_ref().unwrap().shorthand(), "src/auth.rs:55:9");
         assert_eq!(f.actual.as_deref(), Some("401"));
         assert_eq!(f.expected.as_deref(), Some("200"));
+    }
+
+    #[test]
+    fn go_test_parser_extracts_failures() {
+        let raw = "=== RUN   TestAdd\n--- PASS: TestAdd (0.00s)\nok  \tex/m\t0.01s\n=== RUN   TestSub\n--- FAIL: TestSub (0.00s)\n    sub_test.go:10: got 1, want 2\nFAIL\nFAIL\tex/m2\t0.00s\n";
+        let r = parse(&argv(&["go", "test", "./..."]), raw, Some(1)).unwrap();
+        assert_eq!(r.tool, "go");
+        assert_eq!(r.status, Status::Failed);
+        assert_eq!(r.counts.get("failed"), Some(&1));
+        assert_eq!(r.findings.len(), 1);
+        assert_eq!(r.findings[0].id.as_deref(), Some("TestSub"));
+        assert_eq!(r.findings[0].location.as_ref().unwrap().shorthand(), "sub_test.go:10");
+    }
+
+    #[test]
+    fn tsc_parser_extracts_diagnostics() {
+        let raw = "src/a.ts(12,5): error TS2322: Type 'string' is not assignable.\nsrc/b.tsx(8,3): warning TS6133: 'x' is declared but never used.\nFound 1 error.\n";
+        let r = parse(&argv(&["tsc", "--noEmit"]), raw, Some(2)).unwrap();
+        assert_eq!(r.tool, "tsc");
+        assert_eq!(r.kind, ResultKind::Typecheck);
+        assert_eq!(r.status, Status::Failed);
+        assert_eq!(r.findings.len(), 2);
+        assert_eq!(r.findings[0].rule.as_deref(), Some("TS2322"));
+        assert_eq!(r.findings[0].location.as_ref().unwrap().shorthand(), "src/a.ts:12:5");
+        assert_eq!(r.findings[1].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn ruff_parser_extracts_diagnostics_and_fixable() {
+        let raw = "app.py:1:1: F401 [*] `os` imported but unused\napp.py:5:5: E711 comparison to `None`\nFound 2 errors.\n";
+        let r = parse(&argv(&["ruff", "check", "."]), raw, Some(1)).unwrap();
+        assert_eq!(r.tool, "ruff");
+        assert_eq!(r.kind, ResultKind::Lint);
+        assert_eq!(r.findings.len(), 2);
+        assert_eq!(r.findings[0].rule.as_deref(), Some("F401"));
+        assert!(r.findings[0].fixable);
+        assert_eq!(r.findings[1].rule.as_deref(), Some("E711"));
+    }
+
+    #[test]
+    fn ruff_clean_is_ok() {
+        let r = parse(&argv(&["ruff", "check", "."]), "All checks passed!\n", Some(0)).unwrap();
+        assert_eq!(r.status, Status::Ok);
+        assert!(r.findings.is_empty());
+    }
+
+    #[test]
+    fn mypy_parser_extracts_errors_with_codes() {
+        let raw = "src/a.py:12: error: Incompatible return value type [return-value]\nsrc/a.py:12: note: ignore this\nsrc/b.py:3:5: error: Name 'foo' is not defined [name-defined]\nFound 2 errors in 2 files\n";
+        let r = parse(&argv(&["mypy", "src"]), raw, Some(1)).unwrap();
+        assert_eq!(r.tool, "mypy");
+        assert_eq!(r.findings.len(), 2, "notes are not findings");
+        assert_eq!(r.findings[0].rule.as_deref(), Some("return-value"));
+        assert_eq!(r.findings[1].location.as_ref().unwrap().shorthand(), "src/b.py:3:5");
+        assert_eq!(r.findings[1].rule.as_deref(), Some("name-defined"));
+    }
+
+    #[test]
+    fn eslint_parser_extracts_problems_with_file() {
+        let raw = "/app/src/index.ts\n  1:7   error    'x' is assigned a value but never used  no-unused-vars\n  3:1   warning  Unexpected console statement              no-console\n\n✖ 2 problems (1 error, 1 warning)\n";
+        let r = parse(&argv(&["eslint", "."]), raw, Some(1)).unwrap();
+        assert_eq!(r.tool, "eslint");
+        assert_eq!(r.findings.len(), 2);
+        assert_eq!(r.findings[0].rule.as_deref(), Some("no-unused-vars"));
+        assert_eq!(r.findings[0].location.as_ref().unwrap().path, "/app/src/index.ts");
+        assert_eq!(r.findings[1].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn diagnostic_parsers_decline_on_garbage() {
+        // No anchors → decline so the caller uses the generic fallback.
+        assert!(parse(&argv(&["tsc"]), "hello world", Some(0)).is_none());
+        assert!(parse(&argv(&["ruff", "check"]), "hello world", Some(0)).is_none());
+        assert!(parse(&argv(&["mypy"]), "hello world", Some(0)).is_none());
+        assert!(parse(&argv(&["eslint"]), "hello world", Some(0)).is_none());
+        assert!(parse(&argv(&["go", "test"]), "hello world", Some(0)).is_none());
     }
 
     #[test]
