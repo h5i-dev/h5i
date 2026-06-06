@@ -155,6 +155,10 @@ pub struct Manifest {
     pub raw_tokens: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary_tokens: Option<usize>,
+    /// Normalized structured result (the AI-friendly schema). Present for command
+    /// captures; serde-skipped when absent so old manifests stay valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured: Option<crate::structured::ToolResult>,
 }
 
 impl Manifest {
@@ -309,6 +313,9 @@ pub struct CaptureOptions {
     /// Files the caller explicitly associates with this capture (`--file`).
     /// The branch and the working-tree diff are detected automatically.
     pub files: Vec<String>,
+    /// The command argv, used to pick a structured parser (pytest/cargo/…).
+    /// Empty for non-command captures (`objects put`).
+    pub cmd_argv: Vec<String>,
     pub filter: FilterConfig,
 }
 
@@ -376,6 +383,8 @@ pub fn capture(
     // Backstop the git-tracked text fields. The filter already budgets lines and
     // tokens, but these manifests travel via `h5i push`, so a pathological
     // summary must never bloat the ref. (Path-mining above used the full text.)
+    let raw_lines = filtered.raw_lines;
+    let kept_lines = filtered.kept_lines;
     let (summary, summary_clamped) = clamp_text(filtered.summary, MAX_SUMMARY_BYTES);
     let highlights = clamp_highlights(filtered.highlights);
     // If we truncated the summary, the recorded token count must reflect it.
@@ -384,6 +393,33 @@ pub fn capture(
     } else {
         filtered.summary_tokens
     };
+
+    // Build the normalized structured result: a dedicated parser if one matches,
+    // else a generic envelope carrying the reduced text as `body`. Never claims
+    // success it can't see (status derives from exit code).
+    let raw_oid_str = format!("sha256:{hex}");
+    let mut structured = if is_binary {
+        let mut g = crate::structured::ToolResult::generic(
+            opts.cmd_argv.first().map(String::as_str).unwrap_or("output"),
+            opts.exit_code,
+        );
+        g.body = Some(summary.clone());
+        g
+    } else {
+        crate::structured::parse(&opts.cmd_argv, &text, opts.exit_code).unwrap_or_else(|| {
+            let tool = opts
+                .cmd_argv
+                .first()
+                .map(|p| p.rsplit('/').next().unwrap_or(p).to_string())
+                .unwrap_or_else(|| "output".to_string());
+            let mut g = crate::structured::ToolResult::generic(&tool, opts.exit_code);
+            g.body = Some(summary.clone());
+            g
+        })
+    };
+    structured.raw_oid = Some(raw_oid_str);
+    structured.truncated.raw = raw_lines > kept_lines;
+    structured.cap();
 
     let manifest = Manifest {
         id: hex[..16].to_string(),
@@ -406,6 +442,7 @@ pub fn capture(
         codec: "none".to_string(),
         raw_tokens: filtered.raw_tokens,
         summary_tokens,
+        structured: Some(structured),
     };
 
     append_manifest(repo, &manifest)?;
@@ -953,6 +990,7 @@ mod tests {
             exit_code: Some(1),
             git_tree: None,
             files: Vec::new(),
+            cmd_argv: vec!["pytest".into(), "-q".into()],
             filter: FilterConfig::default(),
         }
     }
@@ -1127,6 +1165,7 @@ mod tests {
             codec: "none".into(),
             raw_tokens: None,
             summary_tokens: None,
+            structured: None,
         }
     }
 
@@ -1205,6 +1244,35 @@ mod tests {
         }
         // The raw is still fully recoverable despite the clamped summary.
         assert_eq!(load_raw(&h5i_root, &out.manifest).unwrap().unwrap(), raw.as_bytes());
+    }
+
+    #[test]
+    fn capture_populates_structured_result() {
+        let (_d, repo, h5i_root) = setup();
+        // opts() uses cmd_argv ["pytest","-q"]; give it pytest-shaped output.
+        let raw = "=== FAILURES ===\nFAILED tests/t.py::test_x - assert 0 == 1\n=== 1 failed, 9 passed in 0.5s ===\n";
+        let out = capture(&repo, &h5i_root, raw.as_bytes(), opts()).unwrap();
+        let s = out.manifest.structured.as_ref().expect("structured present");
+        assert_eq!(s.tool, "pytest");
+        assert_eq!(s.parser_confidence, crate::structured::ParserConfidence::Parsed);
+        assert_eq!(s.status, crate::structured::Status::Failed);
+        assert_eq!(s.findings.len(), 1);
+        assert_eq!(s.raw_oid.as_deref(), Some(out.manifest.raw_oid.as_str()));
+    }
+
+    #[test]
+    fn capture_without_parser_falls_back_to_generic_structured() {
+        let (_d, repo, h5i_root) = setup();
+        let mut o = opts();
+        o.cmd_argv = vec!["make".into(), "all".into()];
+        o.exit_code = Some(0);
+        let raw = "gcc -c a.c\ngcc -c b.c\nlinking\n";
+        let out = capture(&repo, &h5i_root, raw.as_bytes(), o).unwrap();
+        let s = out.manifest.structured.as_ref().unwrap();
+        assert_eq!(s.tool, "make");
+        assert_eq!(s.parser_confidence, crate::structured::ParserConfidence::Generic);
+        assert_eq!(s.status, crate::structured::Status::Ok); // exit 0, non-test
+        assert!(s.body.is_some());
     }
 
     #[test]

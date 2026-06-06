@@ -1754,6 +1754,10 @@ enum ObjectsCommands {
         /// any command. Use 0 to always capture.
         #[arg(long, default_value_t = DEFAULT_CAPTURE_MIN_BYTES)]
         min_bytes: u64,
+        /// Output format for the summary: structured (default, compact YAML),
+        /// json (structured as JSON), or summary (the legacy filtered text).
+        #[arg(long, default_value = "structured")]
+        format: String,
         /// Associate this capture with a file (repeatable). The branch and the
         /// working-tree diff are recorded automatically.
         #[arg(long = "file", value_name = "PATH", action = clap::ArgAction::Append)]
@@ -1806,6 +1810,12 @@ enum ObjectsCommands {
         /// changes — i.e. captures relevant to what you're editing now.
         #[arg(long)]
         diff: bool,
+        /// Only objects with this structured status (passed|ok|failed|error|unknown).
+        #[arg(long)]
+        status: Option<String>,
+        /// Only objects from this tool (e.g. pytest, cargo, npm).
+        #[arg(long)]
+        tool: Option<String>,
     },
 
     /// Evict local raw blobs to reclaim space. Manifests/summaries are kept.
@@ -6364,8 +6374,9 @@ jq -c '{
 
             // Print the agent-facing summary plus a durable pointer line.
             // `quiet` suppresses the pointer/status line (summary only).
-            let print_summary = |m: &objects::Manifest, deduped: bool, quiet: bool| {
-                println!("{}", m.summary);
+            // Prints the durable pointer line (stderr) — the body is printed
+            // separately per --format. `quiet` suppresses it.
+            let print_pointer = |m: &objects::Manifest, deduped: bool, quiet: bool| {
                 if quiet {
                     return;
                 }
@@ -6400,6 +6411,7 @@ jq -c '{
                     token_budget,
                     quiet,
                     min_bytes,
+                    format,
                     files,
                     command,
                 } => {
@@ -6484,10 +6496,31 @@ jq -c '{
                             exit_code,
                             git_tree: head_tree.clone(),
                             files,
+                            cmd_argv: command.clone(),
                             filter: cfg,
                         };
                         let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
-                        print_summary(&outcome.manifest, outcome.deduped, quiet);
+                        let m = &outcome.manifest;
+                        // Render the body per --format (structured is the default).
+                        match format.as_str() {
+                            "summary" | "text" => println!("{}", m.summary),
+                            "json" => {
+                                if let Some(s) = &m.structured {
+                                    println!("{}", h5i_core::structured::render_json_pretty(s));
+                                } else {
+                                    println!("{}", m.summary);
+                                }
+                            }
+                            _ => {
+                                // "structured" (default) → compact YAML
+                                if let Some(s) = &m.structured {
+                                    println!("{}", h5i_core::structured::render_yaml(s));
+                                } else {
+                                    println!("{}", m.summary);
+                                }
+                            }
+                        }
+                        print_pointer(m, outcome.deduped, quiet);
                     }
 
                     // Transparent wrapper: pass the child's exit code through.
@@ -6517,10 +6550,12 @@ jq -c '{
                         exit_code: None,
                         git_tree: head_tree.clone(),
                         files,
+                        cmd_argv: Vec::new(),
                         filter: cfg,
                     };
                     let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
-                    print_summary(&outcome.manifest, outcome.deduped, false);
+                    println!("{}", outcome.manifest.summary);
+                    print_pointer(&outcome.manifest, outcome.deduped, false);
                 }
 
                 ObjectsCommands::Get { id, summary, manifest } => {
@@ -6545,7 +6580,7 @@ jq -c '{
                     }
                 }
 
-                ObjectsCommands::List { limit, branch, file, diff } => {
+                ObjectsCommands::List { limit, branch, file, diff, status, tool } => {
                     let all = objects::read_manifests(git);
 
                     // Build the optional filters.
@@ -6574,9 +6609,26 @@ jq -c '{
                                     .chain(m.diff_files.iter())
                                     .any(|f| cur_diff.iter().any(|c| c == f))
                         })
+                        .filter(|m| {
+                            status.as_deref().is_none_or(|want| {
+                                m.structured.as_ref().is_some_and(|s| {
+                                    serde_json::to_value(s.status)
+                                        .ok()
+                                        .and_then(|v| v.as_str().map(str::to_string))
+                                        .as_deref()
+                                        == Some(want)
+                                })
+                            })
+                        })
+                        .filter(|m| {
+                            tool.as_deref().is_none_or(|want| {
+                                m.structured.as_ref().map(|s| s.tool.as_str()) == Some(want)
+                            })
+                        })
                         .collect();
 
-                    let filtered = branch.is_some() || file.is_some() || diff;
+                    let filtered =
+                        branch.is_some() || file.is_some() || diff || status.is_some() || tool.is_some();
                     if manifests.is_empty() {
                         if filtered {
                             println!("No captured objects match that filter.");

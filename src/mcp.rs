@@ -1376,22 +1376,21 @@ fn tool_capture_run(params: &Value, workdir: &Path) -> Result<Value> {
         exit_code,
         git_tree,
         files,
+        cmd_argv: argv.clone(),
         filter: cfg,
     };
     let outcome = crate::objects::capture(repo.git(), &repo.h5i_root, &raw, opts)?;
     let m = &outcome.manifest;
+    // The structured result is the primary payload (the AI-friendly schema);
+    // id/raw_* are metadata for rehydration.
     Ok(json_content(json!({
         "stored": true,
         "id": m.id,
-        "kind": m.kind,
-        "exit_code": exit_code,
-        "branch": m.branch,
-        "files": m.files,
+        "structured": m.structured,
         "raw_size": m.raw_size,
         "raw_lines": m.raw_lines,
         "raw_tokens": m.raw_tokens,
         "summary_tokens": m.summary_tokens,
-        "summary": m.summary,
         "hint": format!("Full raw output recoverable via: h5i recall object {}", m.id),
     })))
 }
@@ -1926,10 +1925,14 @@ mod tests {
         let text = res["content"][0]["text"].as_str().unwrap();
         let v: Value = serde_json::from_str(text).unwrap();
         assert_eq!(v["stored"], true);
-        assert_eq!(v["exit_code"], 0);
         assert!(v["id"].as_str().unwrap().len() == 16);
-        assert!(v["summary"].as_str().unwrap().contains("error: boom"));
-        assert!(v["files"].as_array().unwrap().iter().any(|f| f == "x.rs"));
+        // The structured result is the primary payload.
+        let s = &v["structured"];
+        assert_eq!(s["tool"], "bash"); // no dedicated parser → generic envelope
+        assert_eq!(s["status"], "ok"); // exit 0
+        assert_eq!(s["exit_code"], 0);
+        assert!(s["body"].as_str().unwrap().contains("error: boom"));
+        assert!(s["raw_oid"].as_str().unwrap().starts_with("sha256:"));
         // Reduction actually happened.
         let raw_t = v["raw_tokens"].as_u64().unwrap();
         let sum_t = v["summary_tokens"].as_u64().unwrap();

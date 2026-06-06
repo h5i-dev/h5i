@@ -242,6 +242,45 @@ fn ttl_gc_evicts_raw_but_keeps_summary() {
     assert!(fsck.contains("absent"), "fsck should report the absent blob: {fsck}");
 }
 
+// ── structured output: default render + status/tool filters ───────────────────
+
+#[test]
+fn capture_emits_structured_default_and_is_queryable() {
+    let (_root, a) = single();
+    // Fake pytest with a failure, large enough to store.
+    std::fs::create_dir_all(a.dir.join("bin")).unwrap();
+    let pytest = a.dir.join("bin/pytest");
+    std::fs::write(
+        &pytest,
+        "#!/bin/bash\necho '=== test session starts ==='\nfor i in $(seq 1 200); do echo \"tests/t.py::test_$i PASSED\"; done\necho 'FAILED tests/t.py::test_pay - assert 0 == 100'\necho '=== 1 failed, 200 passed in 4.1s ==='\nexit 1\n",
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&pytest).unwrap().permissions();
+    use std::os::unix::fs::PermissionsExt;
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&pytest, perms).unwrap();
+
+    let path = format!("{}:{}", a.dir.join("bin").display(), std::env::var("PATH").unwrap_or_default());
+    let out = Command::new(H5I)
+        .args(["capture", "run", "--", "pytest", "-q"])
+        .env("PATH", &path)
+        .env_remove("H5I_AGENT")
+        .current_dir(&a.dir)
+        .output()
+        .expect("run");
+    let summary = stdout(&out);
+    // Default output is structured YAML.
+    assert!(summary.contains("tool: pytest"), "expected structured YAML:\n{summary}");
+    assert!(summary.contains("status: failed"));
+    assert!(summary.contains("kind: test_failure"));
+
+    // Queryable by structured status and tool.
+    let by_status = stdout(&a.h5i_ok(&["recall", "objects", "--status", "failed"]));
+    assert!(by_status.contains("1 object matched"), "{by_status}");
+    let by_tool = stdout(&a.h5i_ok(&["recall", "objects", "--tool", "pytest"]));
+    assert!(by_tool.contains("1 object matched"), "{by_tool}");
+}
+
 // ── min-bytes threshold: small output passes through unstored ─────────────────
 
 #[test]
