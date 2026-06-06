@@ -405,11 +405,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Reviewed structured-output foundation commits 806cfb29 and 2cdb416; requested and verified schema fixes; approved schema for integration while requiring review of capture/manifest/MCP/recall wiring before default use.
 - [x] structured integration slice 1 wired
 - [x] edited src/mcp.rs; edited src/objects.rs; edited tests/objects_e2e.rs
+- [x] edited src/mcp.rs; edited src/objects.rs; edited tests/objects_e2e.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 02:37 UTC] `update-doc-with-i5h`: edited src/mcp.rs; edited src/objects.rs; edited tests/objects_e2e.rs
 - [2026-06-06 02:37 UTC] `update-doc-with-i5h`: edited src/mcp.rs; edited src/objects.rs; edited tests/objects_e2e.rs
 - [2026-06-06 02:36 UTC] `update-doc-with-i5h`: structured integration slice 1 wired
 - [2026-06-06 02:25 UTC] `update-doc-with-i5h`: Reviewed structured-output foundation commits 806cfb29 and 2cdb416; requested and verified schema fixes; approved schema for integration while requiring review of capture/manifest/MCP/recall wiring before default use.
