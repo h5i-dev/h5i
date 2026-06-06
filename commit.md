@@ -1005,3 +1005,16 @@ src/filter_rules.rs = rtk 8-stage TOML engine; 59 rule configs imported to asset
 
 ---
 
+## Commit 6a23645f — 2026-06-06 00:05 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+src/filter_rules.rs trust_status/trust/untrust/describe_file (content-hash gate in .git/.h5i/trusted_filters.json; H5I_TRUST_FILTERS override); h5i objects trust [--status|--remove] with risky-rule review. token_filter::summarize_scored now folds near-identical lines by normalized template (headroom Apache-2.0): generic log 17223->74 tokens. context-mode (ELv2) deliberately not copied. Suite 586 green, clippy clean.
+
+---
+
