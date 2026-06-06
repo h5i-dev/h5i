@@ -42,6 +42,10 @@ Output below `--min-bytes` (default 2 KB) just passes through unstored, so it's
 safe to wrap *any* command — wrapping is a no-op when there's nothing to reduce.
 Use `--min-bytes 0` to force capture of small output.
 
+`capture run` combines the command's stdout and stderr into one blob (stderr,
+when present, follows a `----- stderr -----` marker) before filtering/storing —
+so it is *not* a stream-separated passthrough. The exit code is always preserved.
+
 **Making agents use it.** Run `h5i objects setup` once to wire token-reduction
 guidance into the project's `.claude/h5i.md` and `AGENTS.md`, so agents know to
 wrap large-output commands. In Claude Code, the **`h5i_capture_run` MCP tool**

@@ -3286,9 +3286,10 @@ fn levenshtein(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
-/// Default `capture run --min-bytes`: below this, output passes through unstored
-/// so wrapping a command is a no-op when there's nothing worth reducing.
-const DEFAULT_CAPTURE_MIN_BYTES: u64 = 2048;
+/// Default `capture run --min-bytes` (shared with the MCP tool): below this,
+/// output passes through unstored so wrapping a command is a no-op when there's
+/// nothing worth reducing.
+use h5i_core::objects::DEFAULT_CAPTURE_MIN_BYTES;
 
 /// Format a byte count as a short human string (B / KiB / MiB / GiB).
 fn humanize_bytes(n: u64) -> String {

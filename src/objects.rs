@@ -44,6 +44,11 @@ pub const OBJECTS_DIR: &str = "objects";
 /// File (under the store dir) listing pinned digests, one per line.
 pub const PINS_FILE: &str = "pins";
 
+/// Default capture threshold (bytes): output below this passes through unstored,
+/// so wrapping a command is a no-op when there's nothing worth reducing. Shared
+/// by `h5i capture run --min-bytes` and the `h5i_capture_run` MCP tool.
+pub const DEFAULT_CAPTURE_MIN_BYTES: u64 = 2048;
+
 /// Hard cap on a manifest's `summary` field (bytes). The filter already budgets
 /// lines/tokens; this is a backstop so a pathological summary can never bloat
 /// `refs/h5i/objects` (which is shared via `h5i push`). The full output is always
@@ -75,15 +80,17 @@ fn clamp_text(s: String, max: usize) -> (String, bool) {
 /// Cap the highlight list to [`MAX_HIGHLIGHTS`] entries and each entry to
 /// [`MAX_HIGHLIGHT_BYTES`] bytes (UTF-8 safe).
 fn clamp_highlights(mut hs: Vec<String>) -> Vec<String> {
+    const ELLIPSIS: &str = "…"; // 3 bytes
     hs.truncate(MAX_HIGHLIGHTS);
     for h in hs.iter_mut() {
         if h.len() > MAX_HIGHLIGHT_BYTES {
-            let mut end = MAX_HIGHLIGHT_BYTES;
+            // Reserve room for the marker so the final string is <= the cap.
+            let mut end = MAX_HIGHLIGHT_BYTES - ELLIPSIS.len();
             while end > 0 && !h.is_char_boundary(end) {
                 end -= 1;
             }
             h.truncate(end);
-            h.push('…');
+            h.push_str(ELLIPSIS);
         }
     }
     hs
@@ -1174,7 +1181,7 @@ mod tests {
         let out = clamp_highlights(hs);
         assert_eq!(out.len(), MAX_HIGHLIGHTS);
         for h in &out {
-            assert!(h.len() <= MAX_HIGHLIGHT_BYTES + 4, "highlight too long: {}", h.len());
+            assert!(h.len() <= MAX_HIGHLIGHT_BYTES, "highlight too long: {}", h.len());
         }
     }
 
@@ -1194,7 +1201,7 @@ mod tests {
         );
         assert!(out.manifest.highlights.len() <= MAX_HIGHLIGHTS);
         for h in &out.manifest.highlights {
-            assert!(h.len() <= MAX_HIGHLIGHT_BYTES + 4);
+            assert!(h.len() <= MAX_HIGHLIGHT_BYTES);
         }
         // The raw is still fully recoverable despite the clamped summary.
         assert_eq!(load_raw(&h5i_root, &out.manifest).unwrap().unwrap(), raw.as_bytes());
