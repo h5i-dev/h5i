@@ -1252,3 +1252,16 @@ Fixed: clamp_highlights reserves ellipsis (final<=500, tests tightened); MCP h5i
 
 ---
 
+## Commit 6a237555 — 2026-06-06 01:18 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+Fixed: clamp_highlights reserves ellipsis (final<=500, tests tightened); MCP h5i_capture_run honors shared DEFAULT_CAPTURE_MIN_BYTES (passthrough below threshold, stored flag, no id) = parity with CLI; MCP requires argv array (no string/shell), new rejection+passthrough tests; documented stdout+stderr composition. ~600 tests green, clippy -D warnings clean. 16 commits.
+
+### This Commit's Contribution
+
+
+---
+
