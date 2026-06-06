@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cutting Agent Token Usage 95% by Keeping Tool Output Out of Context — h5i</title>
   <meta name="description" content="A reproducible experiment: a content-addressed object store + structured summaries keep raw tool output (test logs, builds, big JSON) out of an agent's context, cutting tokens ~95% while staying losslessly recoverable.">
-  <meta name="keywords" content="reduce agent token usage, claude code context, tool output filtering, token reduction, content-addressed store, structured tool output, h5i capture run, rtk alternative, agent context window">
+  <meta name="keywords" content="reduce agent token usage, claude code context, tool output filtering, token reduction, content-addressed store, structured tool output, h5i capture run, rtk alternative, agent context window, git lfs, git-lfs backend, git lfs batch api">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -111,7 +111,7 @@
       <table class="data">
         <thead><tr><th>Artifact</th><th>Where it lives</th><th>Size</th><th>Travels with <code>h5i push</code>?</th></tr></thead>
         <tbody>
-          <tr><td>Raw blob (full bytes)</td><td><code>.git/.h5i/objects/ab/cd/&lt;sha256&gt;</code> (local)</td><td>huge</td><td>No — local, recoverable on demand</td></tr>
+          <tr><td>Raw blob (full bytes)</td><td><code>.git/.h5i/objects/ab/cd/&lt;sha256&gt;</code> (local)</td><td>huge</td><td>No by default — only via <code>h5i objects push</code> (Git LFS / git ref)</td></tr>
           <tr><td>Manifest (pointer + structured summary)</td><td><code>refs/h5i/objects</code> (git ref, JSONL)</td><td>tiny</td><td>Yes</td></tr>
         </tbody>
       </table>
@@ -205,6 +205,36 @@ $ h5i recall object 0bb827e4               # the full raw bytes, exactly</pre></
       where it buys machine-actionability, not on already-compact output.
     </p>
 
+    <h2>Sharing the raw bytes — Git LFS by default</h2>
+
+    <p>
+      The split has a nice consequence for teams: <code>h5i push</code> carries only the tiny
+      <em>manifests</em> (pointers + summaries) — the huge raw bytes <strong>never travel by
+      default</strong>. When you do want to share them, <code>h5i objects push</code> uploads them,
+      and the backend is chosen automatically:
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th><code>--backend</code></th><th>Stores raw blobs in</th><th>When</th></tr></thead>
+        <tbody>
+          <tr><td><code>lfs</code></td><td>the remote's <strong>Git LFS</strong> server (by sha256)</td><td>default for HTTP(S) remotes</td></tr>
+          <tr><td><code>git-ref</code></td><td><code>refs/h5i/objects-data</code> (a content-addressed git ref)</td><td>fallback for SSH / <code>file://</code> remotes</td></tr>
+          <tr><td><code>auto</code></td><td>LFS when the remote is HTTP(S), else git-ref</td><td>the default</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The LFS backend is <strong>native</strong> — h5i speaks the LFS Batch API directly (no
+      <code>git lfs</code> CLI, no pointer files), reusing your git host's LFS storage and auth, and
+      keyed by the same sha256 as everything else. So huge tool output lives on the LFS server and
+      never bloats the git object database. With LFS, <code>h5i recall object &lt;id&gt;</code>
+      <strong>lazily fetches</strong> a blob from the server only when it's actually needed — and
+      every transfer is content-address-verified, so a tampered or mismatched blob is rejected, never
+      cached. Credentials are scoped to the LFS host, never leaked to presigned transfer URLs.
+    </p>
+
     <h2>It shows up in the PR, too</h2>
 
     <p>
@@ -225,6 +255,10 @@ h5i capture run --file src/auth.rs -- pytest tests/test_auth.py
 # come back to anything later — by status, tool, branch, or file
 h5i recall objects --status failed
 h5i recall object &lt;id&gt;        # full raw output, byte-for-byte
+
+# share the raw blobs with the team (Git LFS by default on HTTP(S) remotes)
+h5i objects push               # h5i push already carried the summaries
+h5i objects pull               # fetch shared blobs you don't have locally
 
 # wire it into a project so agents do it automatically
 h5i objects setup</pre></div>

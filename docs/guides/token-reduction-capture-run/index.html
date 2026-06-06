@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Keep tool output out of your agent's context (h5i capture run) — h5i</title>
   <meta name="description" content="A practical guide to h5i capture run: wrap noisy commands so only a structured summary reaches the agent, recover the full output on demand, and query captures by status, tool, branch, or file.">
-  <meta name="keywords" content="h5i capture run, reduce agent tokens, tool output filtering, claude code context, structured tool output, recall object, token reduction guide">
+  <meta name="keywords" content="h5i capture run, reduce agent tokens, tool output filtering, claude code context, structured tool output, recall object, token reduction guide, git lfs, share raw blobs">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -136,7 +136,28 @@ $ h5i recall object 0bb827e4             # the full raw bytes, exactly</pre></di
       exactly the test/build output tied to it.
     </p>
 
-    <h2>4. Reclaim space (the raw is local-only)</h2>
+    <h2>4. Share raw blobs with the team (optional)</h2>
+    <p>
+      <code>h5i push</code> carries the manifests (summaries + pointers) but <strong>not</strong> the
+      huge raw bytes — so nothing large is shared implicitly. To share the bytes, run
+      <code>h5i objects push</code>; the backend is chosen by <code>--backend auto|lfs|git-ref</code>
+      (default <code>auto</code>):
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div></div>
+      <div class="terminal-body"><pre>$ h5i objects push              # upload local raw blobs (Git LFS by default on HTTP(S) remotes)
+$ h5i objects pull              # fetch shared blobs you don't have locally
+$ h5i objects push --backend git-ref   # force the refs/h5i/objects-data git ref instead</pre></div>
+    </div>
+    <p>
+      The LFS path is <strong>native</strong> (h5i speaks the LFS Batch API directly — no
+      <code>git lfs</code> CLI, no pointer files), so huge output lives on your git host's LFS server
+      and never bloats the git object database. With LFS, <code>h5i recall object &lt;id&gt;</code>
+      <strong>lazily fetches</strong> a blob on demand. The <code>git-ref</code> store is the fallback
+      for SSH/<code>file://</code> remotes. Both verify the content address on every read.
+    </p>
+
+    <h2>5. Reclaim space (raw is local until shared)</h2>
     <p>
       Manifests are kept forever (they're tiny and travel with <code>h5i push</code>); only the
       local raw blobs expire, and only when you ask:
@@ -150,7 +171,7 @@ $ h5i objects fsck              # verify manifests against the local store</pre>
     </div>
     <p>GC never rewrites a summary — an evicted blob's summary still works; it just reads as absent.</p>
 
-    <h2>5. Make agents use it automatically</h2>
+    <h2>6. Make agents use it automatically</h2>
     <p>
       Run <code>h5i objects setup</code> once to wire token-reduction guidance into the project's
       <code>.claude/h5i.md</code> and <code>AGENTS.md</code> (a fresh <code>h5i init</code> already
