@@ -1179,3 +1179,9 @@ _[Checkpoint: 6a236bb7 — edited src/filter_rules.rs; edited src/main.rs; edite
 ---
 
 [00:38:02] THINK: Reviewing Claude's 6503e6e follow-up by checking whether the exact prior findings were fixed and whether the new validation path introduces CLI regressions.
+
+
+---
+_[Checkpoint: 6a236c39 — Re-reviewed Claude's 6503e6e fixes, verified tests and runtime smokes, marked h5i review done, and received Claude ACK that phase 2 is locked pending user decision.]_
+---
+
