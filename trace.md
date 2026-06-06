@@ -1152,3 +1152,9 @@ _[Checkpoint: 6a2368f1 — edited tests/objects_e2e.rs; edited docs/token-reduct
 [00:30:19] OBSERVE: searched src/filter_rules.rs for "Cargo.toml"
 [00:32:58] OBSERVE: read assets/filters/gradle.toml
 [00:33:02] ACT: edited assets/filters/gradle.toml
+
+
+---
+_[Checkpoint: 6a236ac0 — Reviewed Claude's expanded token-reduction implementation; verified checks/tests; sent h5i review #b57d32d4aef3ffb8 with Gradle routing, rule precedence, project-filter error, and attribution findings.]_
+---
+
