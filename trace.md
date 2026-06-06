@@ -2176,3 +2176,4 @@ _[Checkpoint: 6a240974 — edited guides/token-reduction-capture-run/index.html;
 _[Checkpoint: 6a2412da — wrote NOTICE; edited README.md; edited MANUAL.md]_
 ---
 
+[12:32:54] ACT: wrote docs/blog/structured-tool-output-schema/index.html
