@@ -182,6 +182,13 @@ pub struct ToolResult {
     /// parser) and as a supplement. The full raw is always via `raw_oid`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
+    /// Parser-specific structured data that doesn't fit `findings` — the escape
+    /// hatch that lets any tool carry its own shape: install tallies, coverage
+    /// %, diff `+/-` stats, benchmark numbers, a VCS file list, etc. Bounded by
+    /// the caller; values are arbitrary JSON. Keeps the core schema small while
+    /// supporting tools whose output isn't diagnostic-shaped.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ToolResult {
@@ -201,6 +208,7 @@ impl ToolResult {
             suppressed: Vec::new(),
             truncated: Truncated::default(),
             body: None,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -346,6 +354,13 @@ pub fn render_yaml(r: &ToolResult) -> String {
             .collect();
         out.push_str(&format!("suppressed: {{ {} }}\n", parts.join(", ")));
     }
+    if !r.extra.is_empty() {
+        out.push_str("extra:\n");
+        for (k, v) in &r.extra {
+            // Compact JSON value on one line; keeps tool-specific data readable.
+            out.push_str(&format!("  {k}: {}\n", serde_json::to_string(v).unwrap_or_default()));
+        }
+    }
     if let Some(body) = &r.body {
         if !body.trim().is_empty() {
             let indented: String = body.lines().map(|l| format!("  {l}\n")).collect();
@@ -463,6 +478,7 @@ fn parse_pytest(output: &str, exit_code: Option<i32>) -> Option<ToolResult> {
         suppressed: Vec::new(),
         truncated: Truncated::default(),
         body: None,
+        extra: serde_json::Map::new(),
     };
     r.cap();
     Some(r)
@@ -550,6 +566,7 @@ fn parse_cargo_test(output: &str, exit_code: Option<i32>) -> Option<ToolResult> 
         suppressed: Vec::new(),
         truncated: Truncated::default(),
         body: None,
+        extra: serde_json::Map::new(),
     };
     r.cap();
     Some(r)
@@ -700,6 +717,22 @@ mod tests {
     #[test]
     fn cargo_unknown_subcommand_declines() {
         assert!(parse(&argv(&["cargo", "metadata"]), "{\"x\":1}", Some(0)).is_none());
+    }
+
+    #[test]
+    fn extra_carries_non_diagnostic_tool_data() {
+        // The escape hatch: data that isn't a finding (coverage, diff stats, …).
+        let mut r = ToolResult::generic("git", Some(0));
+        r.kind = ResultKind::Vcs;
+        r.extra.insert("files_changed".into(), serde_json::json!(3));
+        r.extra.insert("insertions".into(), serde_json::json!(42));
+        r.extra.insert("deletions".into(), serde_json::json!(7));
+        let y = render_yaml(&r);
+        assert!(y.contains("extra:"));
+        assert!(y.contains("files_changed: 3"));
+        // round-trips through canonical JSON
+        let back: ToolResult = serde_json::from_str(&render_json(&r)).unwrap();
+        assert_eq!(back.extra.get("insertions"), Some(&serde_json::json!(42)));
     }
 
     #[test]
