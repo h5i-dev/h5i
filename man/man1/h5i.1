@@ -1,4 +1,4 @@
-.TH H5I 1 "2026-05-30" "h5i 0.1.6" "h5i Manual"
+.TH H5I 1 "2026-06-05" "h5i 0.1.6" "h5i Manual"
 .
 .SH NAME
 h5i \- Advanced Git sidecar for the AI era
@@ -61,7 +61,8 @@ for the verb table with runnable examples and the corresponding MCP tool names.
 \(em record provenance:
 .BR commit ,
 .BR claim ,
-.BR memory .
+.BR memory ,
+.BR run .
 .IP \(bu 2
 .B h5i recall
 \(em read history:
@@ -74,7 +75,9 @@ for the verb table with runnable examples and the corresponding MCP tool names.
 .BR memory ,
 .BR recap ,
 .BR resume ,
-.BR vibe .
+.BR vibe ,
+.BR object ,
+.BR objects .
 .IP \(bu 2
 .B h5i audit
 \(em assess risk:
@@ -100,6 +103,20 @@ signals appear as supplementary context.
 .BR pull ,
 .BR pr ,
 .BR memory .
+.IP \(bu 2
+.B h5i objects
+\(em token-reduction object store:
+.BR run ,
+.BR put ,
+.BR get ,
+.BR list ,
+.BR gc ,
+.BR pin ,
+.BR unpin ,
+.BR fsck ,
+.BR filters ,
+.BR trust ,
+.BR setup .
 .RE
 .PP
 The legacy top-level verbs
@@ -578,6 +595,138 @@ above for descriptions.
 Control the 💬 Agent coordination section, exactly as for
 .BR "h5i share pr post" .
 .RE
+.
+.\" ─── objects / token reduction ──────────────────────────────────────────────
+.SS h5i capture run [\fIOPTIONS\fR] \-\- \fICOMMAND\fR [\fIARGS\fR...]
+Run
+.I COMMAND
+and surface only a filtered, structured summary of its output; the full raw
+output is stored content-addressed under
+.I .git/.h5i/objects/
+and a small manifest (pointer + structured summary) is appended to
+.IR refs/h5i/objects .
+The child's exit code is passed through, so this is a transparent wrapper.
+.TP
+.B \-\-format \fIstructured\fR|\fIjson\fR|\fIsummary\fR
+Output format. Default
+.B structured
+(compact YAML rendered from the typed result);
+.B json
+emits the canonical
+.B ToolResult
+JSON;
+.B summary
+emits the legacy filtered text. Invalid values are rejected.
+.TP
+.B \-\-min\-bytes \fIN\fR
+Only store + summarize when the output is at least
+.I N
+bytes (default 2048); smaller output passes through unstored, making it safe to
+wrap any command.
+.B 0
+always captures.
+.TP
+.B \-\-kind \fITEST\fR|\fILOG\fR|\fIJSON\fR|\fIDIFF\fR|\fIGENERIC\fR
+Force a content kind instead of auto-detecting.
+.TP
+.B \-\-budget \fIN\fR, \-\-token\-budget \fIN\fR
+Cap the summary to
+.I N
+lines / tokens.
+.TP
+.B \-\-file \fIPATH\fR
+Associate the capture with a file (repeatable). The branch and working-tree
+diff are recorded automatically.
+.PP
+The structured result is the AI-friendly schema: an envelope
+.RB ( tool ,
+.BR kind ,
+.B status
+\(em never
+.B passed/ok
+on a nonzero exit \(em
+.BR exit_code ,
+.BR counts ,
+.BR parser_confidence )
+plus a unified
+.B findings
+list (a test failure, compile error, and lint diagnostic share one shape, each
+with a deterministic
+.BR fingerprint ).
+Dedicated parsers: pytest, cargo test, go test, tsc, eslint, ruff, mypy; every
+other tool gets a generic result.
+.
+.SS h5i recall objects [\fIOPTIONS\fR]
+List captured outputs (newest first) with their summaries and local
+availability.
+.TP
+.B \-\-status \fIpassed\fR|\fIok\fR|\fIfailed\fR|\fIerror\fR|\fIunknown\fR
+Filter by structured status.
+.TP
+.B \-\-tool \fINAME\fR
+Filter by tool (e.g.
+.IR pytest ).
+.TP
+.B \-\-branch \fIB\fR, \-\-file \fIPATH\fR, \-\-diff
+Filter by the branch, an associated file, or intersection with the current
+working-tree diff.
+.
+.SS h5i recall object \fIID\fR [\fIOPTIONS\fR]
+Rehydrate a captured output by short id,
+.IR sha256:<hex> ,
+or unambiguous prefix. Default prints the full raw bytes;
+.B \-\-summary
+prints the reduced summary,
+.B \-\-manifest
+the full manifest JSON. An evicted/absent blob is reported clearly.
+.
+.SS h5i objects \fISUBCOMMAND\fR
+Maintenance for the object store.
+.TP
+.B run, put, get, list
+Aliases/peers of
+.BR "h5i capture run" ,
+.IR "objects put <file|->" ,
+.BR "h5i recall object" ,
+.BR "h5i recall objects" .
+.TP
+.B gc [\-\-ttl \fIDUR\fR] [\-\-dry\-run]
+Evict local raw blobs to reclaim space. Without
+.BR \-\-ttl ,
+removes only orphan blobs (no manifest); with it, also evicts referenced blobs
+older than
+.I DUR
+(e.g.
+.IR 30d ).
+Manifests/summaries are never rewritten; pinned blobs are never evicted.
+.TP
+.B pin \fIID\fR, unpin \fIID\fR
+Protect a blob from
+.BR gc ,
+or release it.
+.TP
+.B fsck
+Verify manifests against the local store (absent blobs, orphans).
+.TP
+.B filters [\-\-verify]
+List the built-in declarative command filters;
+.B \-\-verify
+runs their inline golden tests.
+.TP
+.B trust [\-\-status] [\-\-remove]
+Review and trust a project-local
+.I .h5i/filters.toml
+so its rules apply. Untrusted or changed files are never applied (any edit
+re-arms the gate);
+.B H5I_TRUST_FILTERS=1
+overrides for CI.
+.TP
+.B setup
+Wire token-reduction guidance into
+.I .claude/h5i.md
+and
+.I AGENTS.md
+so agents wrap large-output commands. Idempotent.
 .
 .\" ─── hook ───────────────────────────────────────────────────────────────────
 .SS h5i hook \fISUBCOMMAND\fR
@@ -1422,6 +1571,14 @@ each agent (Claude Code, Codex) a distinct name when sharing one clone.
 .B H5I_TEST_RESULTS
 Default path to a test results JSON file.
 .TP
+.B H5I_TRUST_FILTERS
+When
+.BR 1 / true ,
+apply a project-local
+.I .h5i/filters.toml
+without the content-hash trust gate (for CI). See
+.BR "h5i objects trust" .
+.TP
 .B ANTHROPIC_API_KEY
 When set, enables semantic search in
 .B h5i rollback
@@ -1445,6 +1602,17 @@ Each directory contains memory files plus
 .I .git/.h5i/session_log/<commit-oid>/analysis.json
 Structured session log analysis produced by
 .BR "h5i notes analyze" .
+.TP
+.I .git/.h5i/objects/ab/cd/<sha256>
+Token-reduction raw-output store: the full captured output, content-addressed
+and uncompressed (git-lfs style). Local only;
+.I pins
+alongside it lists digests protected from
+.BR "h5i objects gc" .
+.TP
+.I .git/.h5i/trusted_filters.json
+Content hash of a trusted project-local
+.IR .h5i/filters.toml .
 .TP
 .I .git/.h5i/pending_context.json
 Transient file written by the Claude Code hook; consumed and deleted
@@ -1489,6 +1657,15 @@ Git ref storing the cross-agent message log
 Append-only; pushed/pulled by
 .B h5i share
 and union-merged by message id on divergence.
+.TP
+.I refs/h5i/objects
+Git ref storing token-reduction manifests
+(\fImanifests.jsonl\fR): per-capture pointer + structured
+.B ToolResult
+summary. Append-only; pushed/pulled by
+.B h5i share
+and union-merged on divergence. Raw blobs stay local (see
+.IR .git/.h5i/objects/ ).
 .TP
 .I ~/.claude/projects/<repo>/memory/
 Claude Code's default per-project memory directory (source for snapshots).
