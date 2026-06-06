@@ -2000,3 +2000,4 @@ _[Checkpoint: 6a23ecd5 — edited MANUAL.md; edited docs/token-reduction.md; edi
 _[Checkpoint: 6a23ece4 — edited MANUAL.md; edited docs/token-reduction.md; edited man/man1/h5i.1]_
 ---
 
+[09:48:33] NOTE: Re-reviewed 4e08a35: push clobber/docs/missing-ref fixed, but requested final integrity hardening so corrupt local objects-data entries do not make has() true or block repair/valid incoming merges.
