@@ -563,6 +563,17 @@ enum CaptureFormat {
     Text,
 }
 
+/// Backend selection for `h5i objects push`/`pull`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum ObjectsBackend {
+    /// LFS when the remote is HTTP(S), else the git-ref store (default).
+    Auto,
+    /// Force the native Git LFS backend (requires an HTTP(S) remote w/ LFS).
+    Lfs,
+    /// Force the git-ref store (`refs/h5i/objects-data`).
+    GitRef,
+}
+
 impl AgentRuntime {
     fn to_memory_agent(self) -> memory::MemoryAgent {
         match self {
@@ -1869,14 +1880,20 @@ enum ObjectsCommands {
         /// Remote to push to (default: origin).
         #[arg(long, default_value = "origin")]
         remote: String,
+        /// Storage backend: auto (LFS for HTTP(S) remotes, else git-ref) | lfs | git-ref.
+        #[arg(long, value_enum, default_value_t = ObjectsBackend::Auto)]
+        backend: ObjectsBackend,
     },
 
-    /// Fetch shared raw blobs from a remote's `refs/h5i/objects-data` (union-
-    /// merging with any local blobs) and cache them into the local store.
+    /// Fetch shared raw blobs from a remote (LFS or `refs/h5i/objects-data`) and
+    /// cache them into the local store.
     Pull {
         /// Remote to fetch from (default: origin).
         #[arg(long, default_value = "origin")]
         remote: String,
+        /// Storage backend: auto (LFS for HTTP(S) remotes, else git-ref) | lfs | git-ref.
+        #[arg(long, value_enum, default_value_t = ObjectsBackend::Auto)]
+        backend: ObjectsBackend,
     },
 
     /// List the built-in declarative command filters (the rtk-derived rule set
@@ -3471,6 +3488,124 @@ fn fetch_merge_objects_data(
         let _ = git.find_reference(tmp).and_then(|mut r| r.delete());
     }
     Ok(true)
+}
+
+// ── objects push/pull backend implementations ─────────────────────────────────
+
+/// Share raw blobs via the git-ref store (`refs/h5i/objects-data`): stage local
+/// blobs, fetch+union-merge the remote (no-clobber), then a non-force push.
+fn git_ref_push(
+    git: &git2::Repository,
+    workdir: &std::path::Path,
+    h5i_root: &std::path::Path,
+    remote: &str,
+) -> anyhow::Result<()> {
+    use std::io::Write as _;
+    let staged = h5i_core::objects::mirror_local_to_gitref(git, h5i_root)?;
+    println!(
+        "{} {} blob{} staged into {}",
+        style("◈").cyan(),
+        staged,
+        if staged == 1 { "" } else { "s" },
+        style(h5i_core::objects::OBJECTS_DATA_REF).yellow(),
+    );
+    if git.refname_to_id(h5i_core::objects::OBJECTS_DATA_REF).is_err() {
+        println!("  {} no raw blobs to share yet (capture some, then re-run)", style("ℹ").dim());
+        return Ok(());
+    }
+    fetch_merge_objects_data(git, workdir, remote)?;
+    print!("  {} {} … ", style("→").dim(), style(remote).cyan());
+    std::io::stdout().flush()?;
+    let spec = format!("{0}:{0}", h5i_core::objects::OBJECTS_DATA_REF);
+    let ok = std::process::Command::new("git")
+        .args(["push", remote, &spec])
+        .current_dir(workdir)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        println!("{}", style("ok").green());
+    } else {
+        println!("{} (remote moved? run `h5i objects pull`, then push again)", style("failed").red());
+    }
+    Ok(())
+}
+
+/// Pull shared raw blobs from the git-ref store and cache them locally.
+fn git_ref_pull(
+    git: &git2::Repository,
+    workdir: &std::path::Path,
+    h5i_root: &std::path::Path,
+    remote: &str,
+) -> anyhow::Result<()> {
+    if !fetch_merge_objects_data(git, workdir, remote)? {
+        println!("{} no shared raw blobs found on {}", style("ℹ").dim(), style(remote).cyan());
+    } else {
+        let (cached, skipped) = h5i_core::objects::mirror_gitref_to_local(git, h5i_root)?;
+        println!(
+            "{} pulled raw blobs · {} cached locally{}",
+            style("✔").green(),
+            cached,
+            if skipped > 0 {
+                format!(" · {skipped} skipped (failed content-address check)")
+            } else {
+                String::new()
+            }
+        );
+    }
+    Ok(())
+}
+
+/// Upload local raw blobs to the remote's LFS server (bytes loaded lazily, one
+/// at a time). Returns the number transferred.
+fn lfs_push(
+    git: &git2::Repository,
+    workdir: &std::path::Path,
+    h5i_root: &std::path::Path,
+    url: &str,
+) -> anyhow::Result<usize> {
+    use h5i_core::objects::Backend as _;
+    let client = h5i_core::lfs::LfsClient::for_remote(workdir, url)
+        .ok_or_else(|| anyhow::anyhow!("LFS requires an http(s) remote; got {url}"))?;
+    let store = h5i_core::objects::LocalStore::new(h5i_root);
+    let mut seen = std::collections::HashSet::new();
+    let mut objs = Vec::new();
+    for m in h5i_core::objects::read_manifests(git) {
+        let hex = m.hex().to_string();
+        // Only offer blobs we actually hold locally.
+        if seen.insert(hex.clone()) && store.has(&hex) {
+            objs.push(h5i_core::lfs::ObjId { oid: hex, size: m.raw_size });
+        }
+    }
+    Ok(client.upload(&objs, |oid| store.get(oid))?)
+}
+
+/// Download every manifest blob missing locally from the remote's LFS server,
+/// streaming each into the local store. Returns the number cached.
+fn lfs_pull(
+    git: &git2::Repository,
+    workdir: &std::path::Path,
+    h5i_root: &std::path::Path,
+    url: &str,
+) -> anyhow::Result<usize> {
+    use h5i_core::objects::Backend as _;
+    let client = h5i_core::lfs::LfsClient::for_remote(workdir, url)
+        .ok_or_else(|| anyhow::anyhow!("LFS requires an http(s) remote; got {url}"))?;
+    let store = h5i_core::objects::LocalStore::new(h5i_root);
+    let mut seen = std::collections::HashSet::new();
+    let mut want = Vec::new();
+    for m in h5i_core::objects::read_manifests(git) {
+        let hex = m.hex().to_string();
+        if seen.insert(hex.clone()) && !store.has(&hex) {
+            want.push(h5i_core::lfs::ObjId { oid: hex, size: m.raw_size });
+        }
+    }
+    Ok(client.download(&want, |oid, bytes| store.put(oid, bytes))?)
+}
+
+/// Resolve `origin`/`<remote>`'s URL, if any.
+fn remote_url(git: &git2::Repository, remote: &str) -> Option<String> {
+    git.find_remote(remote).ok()?.url().map(str::to_string)
 }
 
 /// One row in a noun-group help table.
@@ -7037,74 +7172,81 @@ jq -c '{
                     }
                 }
 
-                ObjectsCommands::Push { remote } => {
-                    use std::io::Write as _;
+                ObjectsCommands::Push { remote, backend } => {
                     let workdir = git
                         .workdir()
                         .ok_or_else(|| anyhow::anyhow!("h5i objects push requires a working tree"))?;
-                    let staged = objects::mirror_local_to_gitref(git, &h5i_root)?;
-                    println!(
-                        "{} {} blob{} staged into {}",
-                        style("◈").cyan(),
-                        staged,
-                        if staged == 1 { "" } else { "s" },
-                        style(objects::OBJECTS_DATA_REF).yellow(),
-                    );
-                    if git.refname_to_id(objects::OBJECTS_DATA_REF).is_err() {
-                        println!(
-                            "  {} no raw blobs to share yet (capture some, then re-run)",
-                            style("ℹ").dim()
-                        );
-                    } else {
-                        // Incorporate any remote blobs FIRST (union-merge), so a
-                        // force-free push can't clobber a peer's blobs.
-                        fetch_merge_objects_data(git, workdir, &remote)?;
-                        print!("  {} {} … ", style("→").dim(), style(&remote).cyan());
-                        std::io::stdout().flush()?;
-                        // Non-force: after the merge our ref descends from the
-                        // remote tip, so a fast-forward push succeeds; a reject
-                        // means the remote moved under us — re-run, don't clobber.
-                        let spec = format!("{0}:{0}", objects::OBJECTS_DATA_REF);
-                        let ok = std::process::Command::new("git")
-                            .args(["push", &remote, &spec])
-                            .current_dir(workdir)
-                            .status()
-                            .map(|s| s.success())
-                            .unwrap_or(false);
-                        if ok {
-                            println!("{}", style("ok").green());
-                        } else {
-                            println!(
-                                "{} (remote moved? run `h5i objects pull`, then push again)",
-                                style("failed").red()
-                            );
+                    let url = remote_url(git, &remote);
+                    let use_lfs = match backend {
+                        ObjectsBackend::GitRef => false,
+                        ObjectsBackend::Lfs => true,
+                        ObjectsBackend::Auto => url
+                            .as_deref()
+                            .and_then(h5i_core::lfs::endpoint_for_remote)
+                            .is_some(),
+                    };
+                    if use_lfs {
+                        let u = url
+                            .clone()
+                            .ok_or_else(|| anyhow::anyhow!("remote '{remote}' has no URL"))?;
+                        match lfs_push(git, workdir, &h5i_root, &u) {
+                            Ok(n) => println!(
+                                "{} {} blob{} uploaded to LFS on {}",
+                                style("✔").green(),
+                                n,
+                                if n == 1 { "" } else { "s" },
+                                style(&remote).cyan()
+                            ),
+                            // Auto: a remote without LFS support → fall back.
+                            Err(e) if backend == ObjectsBackend::Auto => {
+                                eprintln!(
+                                    "  {} LFS unavailable ({e}); falling back to the git-ref store",
+                                    style("ℹ").dim()
+                                );
+                                git_ref_push(git, workdir, &h5i_root, &remote)?;
+                            }
+                            Err(e) => return Err(e),
                         }
+                    } else {
+                        git_ref_push(git, workdir, &h5i_root, &remote)?;
                     }
                 }
 
-                ObjectsCommands::Pull { remote } => {
+                ObjectsCommands::Pull { remote, backend } => {
                     let workdir = git
                         .workdir()
                         .ok_or_else(|| anyhow::anyhow!("h5i objects pull requires a working tree"))?;
-                    // Graceful when nobody has shared raw blobs yet (optional backend).
-                    if !fetch_merge_objects_data(git, workdir, &remote)? {
-                        println!(
-                            "{} no shared raw blobs found on {}",
-                            style("ℹ").dim(),
-                            style(&remote).cyan()
-                        );
-                    } else {
-                        let (cached, skipped) = objects::mirror_gitref_to_local(git, &h5i_root)?;
-                        println!(
-                            "{} pulled raw blobs · {} cached locally{}",
-                            style("✔").green(),
-                            cached,
-                            if skipped > 0 {
-                                format!(" · {skipped} skipped (failed content-address check)")
-                            } else {
-                                String::new()
+                    let url = remote_url(git, &remote);
+                    let use_lfs = match backend {
+                        ObjectsBackend::GitRef => false,
+                        ObjectsBackend::Lfs => true,
+                        ObjectsBackend::Auto => url
+                            .as_deref()
+                            .and_then(h5i_core::lfs::endpoint_for_remote)
+                            .is_some(),
+                    };
+                    if use_lfs {
+                        let u = url
+                            .clone()
+                            .ok_or_else(|| anyhow::anyhow!("remote '{remote}' has no URL"))?;
+                        match lfs_pull(git, workdir, &h5i_root, &u) {
+                            Ok(n) => println!(
+                                "{} {} blob{} fetched from LFS · cached locally",
+                                style("✔").green(),
+                                n,
+                                if n == 1 { "" } else { "s" }
+                            ),
+                            Err(e) if backend == ObjectsBackend::Auto => {
+                                eprintln!(
+                                    "  {} LFS unavailable ({e}); falling back to the git-ref store",
+                                    style("ℹ").dim()
+                                );
+                                git_ref_pull(git, workdir, &h5i_root, &remote)?;
                             }
-                        );
+                            Err(e) => return Err(e),
+                        }
+                    } else {
+                        git_ref_pull(git, workdir, &h5i_root, &remote)?;
                     }
                 }
             }

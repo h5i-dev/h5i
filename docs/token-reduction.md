@@ -126,26 +126,34 @@ Handles accept the short id, a full `sha256:<hex>`, or any unambiguous prefix.
 ### Sharing raw output (optional)
 
 By default the manifest + summary travel with `h5i push`, but the **raw bytes
-stay local** (they can be large). To share them, h5i has an optional **git-ref
-store** backend: raw blobs live in the `refs/h5i/objects-data` git ref —
-content-addressed by sha256, reusing your existing remote and auth (no extra
-service, no new dependency).
+stay local** (they can be large). To share them:
 
 ```bash
-h5i objects push     # mirror local raw blobs into refs/h5i/objects-data, then push it
-h5i objects pull     # fetch + union-merge that ref, cache blobs locally
+h5i objects push     # upload local raw blobs to the remote
+h5i objects pull     # fetch shared blobs missing locally, cache them
 ```
 
-This is deliberately separate from the metadata `h5i push` (raw output is
-heavy). `h5i objects pull` fetches shared blobs, caches them locally, and
-union-merges your local `refs/h5i/objects-data`. After that, `h5i recall object
-<id>` **falls back to the local git-ref store** if a cached blob was evicted — it
-does *not* reach out to the remote on demand, so run `h5i objects pull` first
-(the "absent" error tells you to). Blobs are content-addressed, so reconciling
-two clones is a plain set-union and any tampered entry (bytes that don't hash to
-their key) is rejected on get/merge/cache; nothing is overwritten. The `Backend`
-trait (`has`/`put`/`get`/`remove` by sha256) is the extension point — an S3/HTTP
-or git-lfs backend can plug in the same way.
+Two backends, selected with `--backend auto|lfs|git-ref` (default `auto`):
+
+- **Git LFS** (default for HTTP(S) remotes) — raw blobs are stored on the
+  remote's LFS server, content-addressed by sha256. This is built **natively**
+  (it speaks the LFS Batch API directly; it does *not* require the `git lfs`
+  CLI, and does not use LFS pointer files), reusing your git host's LFS storage
+  and auth (`git credential`). Best when objects are large/numerous — they never
+  enter the git object database. With LFS, **`h5i recall object <id>` lazily
+  fetches** a blob from the server on demand and caches it (no explicit pull
+  needed).
+- **git-ref store** (`refs/h5i/objects-data`, the fallback for SSH/file remotes
+  or `--backend git-ref`) — blobs live in a content-addressed git ref. `objects
+  push` fetches + union-merges before a non-force push (never clobbers a peer);
+  `objects pull` union-merges and caches locally; `recall` then falls back to
+  the *local* git-ref store.
+
+Both are deliberately separate from the metadata `h5i push` (raw output is
+heavy), both verify the content address on every read (tampered bytes are
+rejected, never cached), and both are reachable through one `Backend` trait
+(`has`/`put`/`get`/`remove` by sha256) — so an S3/HTTP backend could slot in the
+same way.
 
 ### Tracking captures by branch / files / diff
 

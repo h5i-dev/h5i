@@ -664,13 +664,28 @@ pub fn load_raw_with_remote(
     if let Some(bytes) = local.get(hex)? {
         return Ok(Some(bytes));
     }
-    match GitRefStore::new(repo).get(hex)? {
-        Some(bytes) => {
-            let _ = local.put(hex, &bytes); // best-effort cache
-            Ok(Some(bytes))
-        }
-        None => Ok(None),
+    // Already-fetched shared blobs (git-ref store).
+    if let Some(bytes) = GitRefStore::new(repo).get(hex)? {
+        let _ = local.put(hex, &bytes); // best-effort cache
+        return Ok(Some(bytes));
     }
+    // Lazy LFS fetch (network, best-effort): the whole point of LFS is to pull a
+    // huge blob only when it's actually needed.
+    if let Some(bytes) = try_lfs_fetch(repo, manifest) {
+        let _ = local.put(hex, &bytes);
+        return Ok(Some(bytes));
+    }
+    Ok(None)
+}
+
+/// Best-effort single-object fetch from the `origin` LFS server. Any failure
+/// (non-HTTP remote, no LFS support, network/auth error) returns `None` so
+/// `recall` falls through to its "absent" guidance rather than erroring.
+fn try_lfs_fetch(repo: &Repository, manifest: &Manifest) -> Option<Vec<u8>> {
+    let workdir = repo.workdir()?;
+    let url = repo.find_remote("origin").ok()?.url()?.to_string();
+    let client = crate::lfs::LfsClient::for_remote(workdir, &url)?;
+    client.download_one(manifest.hex(), manifest.raw_size).ok().flatten()
 }
 
 // ── Pinning ──────────────────────────────────────────────────────────────────

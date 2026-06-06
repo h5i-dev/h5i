@@ -715,29 +715,43 @@ summary still works.
 ### h5i objects push / pull — sharing raw blobs (optional)
 
 The manifest+summary travel with `h5i push` automatically; the **raw bytes are
-local-only** by default (they can be large). To share them, h5i has an optional
-**git-ref store** backend that keeps raw blobs in the `refs/h5i/objects-data`
-git ref — content-addressed by sha256, reusing your existing remote, auth, and
-transfer (no extra service, no new dependency).
+local-only** by default (they can be large). To share them:
 
 ```bash
-h5i objects push          # mirror local raw blobs into refs/h5i/objects-data, then git-push it
-h5i objects pull          # fetch + union-merge refs/h5i/objects-data, cache blobs locally
-h5i objects push --remote upstream
+h5i objects push                       # upload local raw blobs to the remote
+h5i objects pull                       # fetch shared blobs missing locally, cache them
+h5i objects push --remote upstream --backend lfs
 ```
 
-These are deliberate, separate from the metadata `h5i push` (raw output is
-heavy). `h5i objects pull` fetches the shared blobs, caches them into the local
-store, and union-merges the local `refs/h5i/objects-data`. After that,
-`h5i recall object <id>` **falls back to the local git-ref store** if a cached
-blob was later evicted — it does *not* fetch from the remote on demand, so you
-must `h5i objects pull` first (the "absent" error says so). Because blobs are
-content-addressed, merging two divergent sides is a simple set-union and
-content-address checks reject any tampered entry; nothing is ever overwritten.
+Two backends, chosen by `--backend auto|lfs|git-ref` (default **`auto`**):
+
+| `--backend` | Storage | When |
+|---|---|---|
+| `lfs` | Remote **Git LFS** server (content-addressed by sha256) | default for HTTP(S) remotes — large/numerous objects never touch the git object DB |
+| `git-ref` | `refs/h5i/objects-data` (content-addressed git ref) | fallback for SSH/`file://` remotes, or forced |
+| `auto` | LFS when the remote is HTTP(S), else git-ref | the default |
+
+**Git LFS (default).** h5i speaks the **LFS Batch API natively** — it does *not*
+require the `git lfs` CLI and does not use LFS pointer files; auth is resolved
+via `git credential`. The manifest's `raw_oid` is the pointer, the bytes live in
+LFS. With LFS, **`h5i recall object <id>` lazily fetches** a blob from the server
+on demand (and caches it) — no explicit `objects pull` needed. Uploads/downloads
+stream one blob at a time, so huge objects aren't all held in memory.
+
+**git-ref store (fallback).** Blobs live in `refs/h5i/objects-data`. `objects
+push` fetches + union-merges the remote ref before a **non-force** push (so it
+never clobbers a peer's blobs); `objects pull` union-merges and caches locally;
+then `recall` falls back to the *local* git-ref store (it does not fetch on
+demand — the "absent" error says to run `objects pull`).
+
+Both are deliberately separate from the metadata `h5i push` (raw output is
+heavy), and both **verify the content address on every read** — bytes that don't
+hash to their key are rejected and never cached; the git-ref store additionally
+self-heals corrupt entries on `put`/`pull`.
 
 > The `Backend` trait (`has`/`put`/`get`/`remove` by sha256) is the extension
-> point: the git-ref store is the built-in shareable backend; an S3/HTTP or
-> git-lfs backend can slot in the same way.
+> point: LFS and the git-ref store are the built-ins; an S3/HTTP backend can slot
+> in the same way.
 
 ### h5i objects filters / trust
 

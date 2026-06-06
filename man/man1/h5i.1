@@ -697,20 +697,38 @@ Aliases/peers of
 .BR "h5i recall object" ,
 .BR "h5i recall objects" .
 .TP
-.B push [\-\-remote \fIR\fR], pull [\-\-remote \fIR\fR]
-Share raw blobs via the optional git-ref store: mirror local raw output into the
-.I refs/h5i/objects-data
-git ref and push/fetch it (content-addressed; union-merged, and tampered entries
-rejected, on pull). Separate from the metadata
+.B push [\-\-remote \fIR\fR] [\-\-backend \fIB\fR], pull [\-\-remote \fIR\fR] [\-\-backend \fIB\fR]
+Share raw blobs (separate from the metadata
 .BR "h5i push" ,
-because raw output is heavy.
-.B objects push
-fetches and union-merges the remote first, so it never force-clobbers a peer's
-blobs. After
-.BR "h5i objects pull" ,
+because raw output is heavy).
+.B \-\-backend
+is
+.IR auto | lfs | git-ref
+(default
+.IR auto ).
+.IP \(bu 3
+.B Git LFS
+(default for HTTP(S) remotes) \(em stores blobs on the remote's LFS server,
+content-addressed by sha256. Spoken natively over the LFS Batch API (no
+.B git lfs
+CLI, no pointer files; auth via
+.BR "git credential" ).
+With LFS,
 .B h5i recall object
-falls back to the local git-ref store when a cached blob is absent (it does not
-fetch from the remote on demand).
+lazily fetches a blob on demand and caches it.
+.IP \(bu 3
+.B git-ref store
+.RI ( refs/h5i/objects-data ,
+fallback for SSH/file remotes) \(em
+.B objects push
+fetches and union-merges first, so a non-force push never clobbers a peer's
+blobs; after
+.BR "objects pull" ,
+.B recall
+falls back to the local git-ref store.
+.IP "" 3
+Both verify the content address on every read; tampered bytes are rejected and
+never cached.
 .TP
 .B gc [\-\-ttl \fIDUR\fR] [\-\-dry\-run]
 Evict local raw blobs to reclaim space. Without

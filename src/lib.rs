@@ -12,6 +12,7 @@ pub use ctx as gcc;
 pub mod claude;
 pub mod error;
 pub mod filter_rules;
+pub mod lfs;
 pub mod memory;
 pub mod metadata;
 pub mod msg;
