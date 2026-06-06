@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cutting Agent Token Usage 95% by Keeping Tool Output Out of Context — h5i</title>
+  <meta name="description" content="A reproducible experiment: a content-addressed object store + structured summaries keep raw tool output (test logs, builds, big JSON) out of an agent's context, cutting tokens ~95% while staying losslessly recoverable.">
+  <meta name="keywords" content="reduce agent token usage, claude code context, tool output filtering, token reduction, content-addressed store, structured tool output, h5i capture run, rtk alternative, agent context window">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/token-reduction-object-store/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Cutting Agent Token Usage 95% by Keeping Tool Output Out of Context">
+  <meta property="og:description" content="A content-addressed object store + structured summaries keep raw tool output out of context — ~95% fewer tokens, fully recoverable.">
+  <meta property="og:url" content="https://h5i.dev/blog/token-reduction-object-store/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-06-05">
+  <meta property="article:author" content="Koukyosyumei">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Cutting Agent Token Usage 95% by Keeping Tool Output Out of Context">
+  <meta name="twitter:description" content="A content-addressed object store + structured summaries keep raw tool output out of context — ~95% fewer tokens, fully recoverable.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Cutting Agent Token Usage 95% by Keeping Tool Output Out of Context",
+    "description": "A reproducible experiment: a content-addressed object store plus structured summaries keep raw tool output out of an agent's context while staying losslessly recoverable.",
+    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
+    "datePublished": "2026-06-05",
+    "dateModified": "2026-06-05",
+    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/token-reduction-object-store/"},
+    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+    "keywords": "agent token usage, tool output, context window, content-addressed store, structured output, h5i capture run"
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Cutting Agent Token Usage 95% by Keeping Tool Output Out of Context", "item": "https://h5i.dev/blog/token-reduction-object-store/"}]}
+  </script>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Benchmark · 2026-06-05</div>
+      <h1>Cutting Agent Token Usage 95% by Keeping Tool Output Out of Context</h1>
+      <p class="post-deck">
+        A 4&nbsp;MB <code>pytest</code> log is mostly noise: the agent needs the two failures and the
+        summary line, not the 3,000 <code>PASSED</code> rows. h5i keeps the full raw output
+        out-of-band, hands the agent a small structured summary, and keeps the original one command
+        away. Here's the design — and the reproducible experiment that measures it.
+      </p>
+      <div class="post-meta">
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 8 min</span>
+        <span><strong>Tags</strong> Token reduction · Context window · Tooling</span>
+      </div>
+    </header>
+
+    <p>
+      Coding agents drown in their own tool output. A test run, a build, a linter, a
+      <code>kubectl get -o json</code> — each can dump thousands of lines into the context window,
+      and the agent pays for every one on every subsequent turn (the prompt cache makes re-sending
+      cheaper, not the original ingestion). The signal an agent actually needs — <em>which test
+      failed, on what line, with what assertion</em> — is usually a few lines buried in a flood of
+      progress bars and passing rows.
+    </p>
+
+    <p>
+      The fix is structural, and it borrows from a solved problem: large files in Git. Tools like
+      <strong>git-annex</strong> and <strong>git-lfs</strong> split a big file into a small tracked
+      <em>pointer</em> and an out-of-band <em>blob</em>. h5i does the same for tool output.
+    </p>
+
+    <h2>The design: a pointer and a blob</h2>
+
+    <p>
+      <code>h5i capture run -- &lt;command&gt;</code> runs the command and splits its output in two:
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Artifact</th><th>Where it lives</th><th>Size</th><th>Travels with <code>h5i push</code>?</th></tr></thead>
+        <tbody>
+          <tr><td>Raw blob (full bytes)</td><td><code>.git/.h5i/objects/ab/cd/&lt;sha256&gt;</code> (local)</td><td>huge</td><td>No — local, recoverable on demand</td></tr>
+          <tr><td>Manifest (pointer + structured summary)</td><td><code>refs/h5i/objects</code> (git ref, JSONL)</td><td>tiny</td><td>Yes</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The agent reads only the manifest's summary. The full bytes are content-addressed by SHA-256
+      and one command away (<code>h5i recall object &lt;id&gt;</code>) — so the output is
+      <strong>reduced and losslessly recoverable at the same time</strong>. Output below a size
+      threshold passes straight through unstored, so wrapping any command is safe.
+    </p>
+
+    <div class="callout">
+      <p><strong>Why not just truncate?</strong> Truncation throws information away. The object
+      store keeps every byte; it just moves the bulk out of the context window and leaves a durable
+      address behind. An evicted blob degrades to a clear "absent" message, never a silent loss.</p>
+    </div>
+
+    <h2>Structured output, not a log excerpt</h2>
+
+    <p>
+      The summary isn't a trimmed log — it's a normalized, machine-actionable result. One schema
+      across test runners, compilers, linters, and type checkers, so an agent learns
+      <em>one</em> shape instead of N. The default render is compact (one line per finding):
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>
+      <div class="terminal-body"><pre>$ h5i capture run -- pytest -q
+pytest test failed · 1 failed, 120 passed (exit 1)
+  F tests/test_auth.py::test_refresh  assert 0 == 100</pre></div>
+    </div>
+
+    <p>
+      The agent can branch on <code>status</code>, jump to the <code>location</code>, and dedupe by
+      a stable <code>fingerprint</code>. A failing run is never reported as <code>passed</code> — the
+      status is derived from the exit code, never guessed from text — and a parser that can't find
+      its anchors <em>declines</em> to a generic result rather than inventing structure. The full
+      typed result is available with <code>--format structured</code> (YAML) or <code>--format
+      json</code>, and is stored in the manifest so captures are queryable:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>
+      <div class="terminal-body"><pre>$ h5i recall objects --status failed --tool pytest
+$ h5i recall object 0bb827e4 --summary     # the reduced summary
+$ h5i recall object 0bb827e4               # the full raw bytes, exactly</pre></div>
+    </div>
+
+    <h2>The experiment</h2>
+
+    <p>
+      <code>scripts/experiment_token_reduction.sh</code> runs realistic tool output through
+      <code>h5i capture run</code> and measures four properties against the default agent-facing
+      output, tokenized with h5i's own tokenizer: token cut, signal retained, correct status, and
+      lossless recovery. A representative run:
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Fixture</th><th>Raw (tok)</th><th>Summary (tok)</th><th>Cut</th></tr></thead>
+        <tbody>
+          <tr><td>pytest (1 fail / 124)</td><td>1424</td><td>30</td><td>98%</td></tr>
+          <tr><td>cargo test (1 fail)</td><td>1397</td><td>39</td><td>97%</td></tr>
+          <tr><td>tsc (2 errors)</td><td>544</td><td>63</td><td>88%</td></tr>
+          <tr><td>go build failure</td><td>624</td><td>21</td><td>97%</td></tr>
+          <tr><td>noisy service log (1 buried error)</td><td>17223</td><td>79</td><td>100%</td></tr>
+          <tr><td>big JSON (402-item array)</td><td>5625</td><td>61</td><td>99%</td></tr>
+          <tr><td><strong>Total</strong></td><td><strong>27942</strong></td><td><strong>1176</strong></td><td><strong>95.8%</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Across the matrix, <strong>~95% of tokens never enter the context window</strong> — and in
+      every case the failing test, the error, and its location survive into the summary, the status
+      is honest, and <code>recall object</code> returns the raw bytes exactly.
+    </p>
+
+    <h2>An honest limit: signal-dense output</h2>
+
+    <p>
+      Token reduction works by dropping noise — so its ceiling is set by how much noise there is.
+      Tests, builds, and logs are mostly noise around a little signal, which is why they reduce
+      90–100%. A linter or type-checker with many issues is the opposite: <em>every</em> line is a
+      real diagnostic, with nothing to drop. There the compact render still beats raw (by capping
+      the list and dropping summary chatter), but only modestly — and the full structured YAML is
+      actually <em>larger</em> than raw, because it adds a keyed field per finding. That's why the
+      compact format is the default, and why <code>--format summary</code> exists for the
+      absolute-smallest text when you only want the diagnostics. Structure has a cost; h5i spends it
+      where it buys machine-actionability, not on already-compact output.
+    </p>
+
+    <h2>It shows up in the PR, too</h2>
+
+    <p>
+      When a branch has captures, <code>h5i share pr post</code> folds in a one-line scorecard —
+      how many tokens of raw tool output the agent kept out of context on this branch, with a
+      per-tool breakdown — so reviewers can see the saving without running anything.
+    </p>
+
+    <h2>Try it</h2>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>
+      <div class="terminal-body"><pre># wrap the noisy commands an agent runs
+h5i capture run -- pytest -q
+h5i capture run -- cargo build
+h5i capture run --file src/auth.rs -- pytest tests/test_auth.py
+
+# come back to anything later — by status, tool, branch, or file
+h5i recall objects --status failed
+h5i recall object &lt;id&gt;        # full raw output, byte-for-byte
+
+# wire it into a project so agents do it automatically
+h5i objects setup</pre></div>
+    </div>
+
+    <p>
+      In Claude Code the same behavior is a native MCP tool (<code>h5i_capture_run</code>) that
+      returns the structured result directly — no shell, no quoting. The declarative filter engine
+      (ported from <a href="https://github.com/rtk-ai/rtk">rtk</a>, Apache-2.0) and the
+      log line-folding (from <a href="https://github.com/chopratejas/headroom">headroom</a>,
+      Apache-2.0) cover the long tail of commands; h5i adds what they don't: the raw stays
+      content-addressed, recoverable, and queryable across captures and machines.
+    </p>
+
+    <div class="next-up">
+      <span class="label">Read next</span>
+      <a href="/guides/token-reduction-capture-run/">
+        <h3>Guide: keep tool output out of your agent's context</h3>
+        <p>A task-oriented walkthrough of <code>h5i capture run</code>, recall, GC, trust, and project setup.</p>
+      </a>
+      <a href="/blog/reduce-claude-token-costs/">
+        <h3>Cutting Claude Coding-Agent Costs 51% with Content-Addressed Claims</h3>
+        <p>The complementary half: stop paying tokens to re-derive facts the agent already figured out.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Stop paying for tool output your agent reads once and forgets</h3>
+      <p>h5i is open source, the store is a content-addressed directory + a git ref, and there's no service to subscribe to.</p>
+      <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/" class="btn btn-ghost">Back to docs</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>

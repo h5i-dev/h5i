@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keep tool output out of your agent's context (h5i capture run) — h5i</title>
+  <meta name="description" content="A practical guide to h5i capture run: wrap noisy commands so only a structured summary reaches the agent, recover the full output on demand, and query captures by status, tool, branch, or file.">
+  <meta name="keywords" content="h5i capture run, reduce agent tokens, tool output filtering, claude code context, structured tool output, recall object, token reduction guide">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/guides/token-reduction-capture-run/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Keep tool output out of your agent's context (h5i capture run)">
+  <meta property="og:description" content="Wrap noisy commands so only a structured summary reaches the agent; recover the full output on demand.">
+  <meta property="og:url" content="https://h5i.dev/guides/token-reduction-capture-run/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Keep tool output out of your agent's context (h5i capture run)">
+  <meta name="twitter:description" content="Wrap noisy commands so only a structured summary reaches the agent; recover the full output on demand.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Keep tool output out of your agent's context with h5i capture run",
+    "description": "A practical guide to h5i capture run: wrap noisy commands so only a structured summary reaches the agent, recover the full output on demand, and query captures.",
+    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
+    "datePublished": "2026-06-05",
+    "dateModified": "2026-06-05",
+    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/guides/token-reduction-capture-run/"},
+    "keywords": "h5i capture run, token reduction, tool output, recall object, structured output"
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}, {"@type": "ListItem", "position": 3, "name": "Keep tool output out of your agent's context", "item": "https://h5i.dev/guides/token-reduction-capture-run/"}]}
+  </script>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Guide · Token reduction</div>
+      <h1>Keep tool output out of your agent's context</h1>
+      <p class="post-deck">
+        Wrap the noisy commands an agent runs — tests, builds, linters, big JSON — so only a small
+        structured summary reaches its context. The full output is stored out-of-band and
+        recoverable on demand. Same ergonomics as running the command directly.
+      </p>
+      <div class="post-meta">
+        <span><strong>Guide</strong> h5i</span>
+        <span><strong>Reading time</strong> 6 min</span>
+        <span><strong>Tags</strong> Token reduction · Context · Tooling</span>
+      </div>
+    </header>
+
+    <h2>1. Wrap a command</h2>
+    <p>
+      Prefix any command with <code>h5i capture run --</code>. It runs the command, prints a
+      filtered structured summary, and passes the exit code straight through:
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div></div>
+      <div class="terminal-body"><pre>$ h5i capture run -- pytest -q
+pytest test failed · 1 failed, 120 passed (exit 1)
+  F tests/test_auth.py::test_refresh  assert 0 == 100</pre></div>
+    </div>
+    <p>
+      Output below <code>--min-bytes</code> (default 2&nbsp;KB) passes straight through unstored, so
+      wrapping a quick command is a harmless no-op. Use <code>--min-bytes 0</code> to always
+      capture. The full raw output is stored content-addressed in
+      <code>.git/.h5i/objects/</code>; a tiny pointer + the summary go to the
+      <code>refs/h5i/objects</code> git ref.
+    </p>
+
+    <h2>2. Choose the format</h2>
+    <p>
+      The default is <code>compact</code> (one line per finding). Switch when you want more or less:
+    </p>
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Flag</th><th>Output</th></tr></thead>
+        <tbody>
+          <tr><td><code>--format compact</code> (default)</td><td>One line per finding — token-minimal.</td></tr>
+          <tr><td><code>--format structured</code></td><td>The full normalized result as YAML.</td></tr>
+          <tr><td><code>--format json</code></td><td>The canonical <code>ToolResult</code> as JSON.</td></tr>
+          <tr><td><code>--format summary</code></td><td>The legacy filtered free-text.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>3. Recover and query</h2>
+    <p>
+      Every capture is stored, queryable by status / tool / branch / file, and rehydratable
+      byte-for-byte:
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div></div>
+      <div class="terminal-body"><pre>$ h5i recall objects                     # list captures (newest first)
+$ h5i recall objects --status failed     # only failures
+$ h5i recall objects --tool pytest       # by tool (compose with --branch/--file)
+$ h5i recall object 0bb827e4 --summary   # the reduced summary
+$ h5i recall object 0bb827e4             # the full raw bytes, exactly</pre></div>
+    </div>
+    <p>
+      Tag a capture with the files it concerns using <code>--file</code> (repeatable); the branch
+      and working-tree diff are recorded automatically, so an agent resuming a branch can pull up
+      exactly the test/build output tied to it.
+    </p>
+
+    <h2>4. Reclaim space (the raw is local-only)</h2>
+    <p>
+      Manifests are kept forever (they're tiny and travel with <code>h5i push</code>); only the
+      local raw blobs expire, and only when you ask:
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div></div>
+      <div class="terminal-body"><pre>$ h5i objects gc                # remove orphan blobs (no manifest references them)
+$ h5i objects gc --ttl 30d      # also evict referenced blobs older than 30 days
+$ h5i objects pin 0bb827e4      # protect a blob from gc
+$ h5i objects fsck              # verify manifests against the local store</pre></div>
+    </div>
+    <p>GC never rewrites a summary — an evicted blob's summary still works; it just reads as absent.</p>
+
+    <h2>5. Make agents use it automatically</h2>
+    <p>
+      Run <code>h5i objects setup</code> once to wire token-reduction guidance into the project's
+      <code>.claude/h5i.md</code> and <code>AGENTS.md</code> (a fresh <code>h5i init</code> already
+      includes it). In Claude Code, the <code>h5i_capture_run</code> MCP tool exposes the same
+      behavior with no shell-quoting — the agent calls it instead of the Bash tool and gets the
+      structured result back directly.
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div></div>
+      <div class="terminal-body"><pre>$ h5i objects setup
+✔ wired token-reduction guidance into .claude/h5i.md, AGENTS.md</pre></div>
+    </div>
+
+    <h2>Custom rules (optional)</h2>
+    <p>
+      h5i ships dedicated parsers for pytest, cargo, go test, tsc, eslint, ruff, and mypy, plus
+      dozens of declarative filter rules. A repo can add its own in
+      <code>.h5i/filters.toml</code> — but because that file could mask failures, it's applied only
+      after you trust its current content:
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div></div>
+      <div class="terminal-body"><pre>$ h5i objects filters          # list built-in command filters
+$ h5i objects trust            # review + trust a project-local .h5i/filters.toml</pre></div>
+    </div>
+
+    <div class="next-up">
+      <span class="label">Read next</span>
+      <a href="/blog/token-reduction-object-store/">
+        <h3>Cutting Agent Token Usage 95% by Keeping Tool Output Out of Context</h3>
+        <p>The design and the reproducible benchmark behind <code>h5i capture run</code>.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Stop flooding your agent's context with tool output</h3>
+      <p>h5i is open source — the store is a content-addressed directory plus a git ref, no service to subscribe to.</p>
+      <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md" class="btn btn-ghost">Read the manual</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/guides/">Guides</a>
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>
