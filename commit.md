@@ -1057,3 +1057,16 @@ tests/filter_quality.rs (8): token-cut ratios + info-retention across pytest/car
 
 ---
 
+## Commit 6a2368e2 — 2026-06-06 00:25 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Manifest gained branch + files (explicit ∪ mentioned path:line) + diff_files (working-tree changes at capture). objects::{current_branch,working_diff_files,extract_paths}. CLI: capture run/put --file (repeatable); recall objects --branch/--file(suffix)/--diff filters; listing shows ⎇ branch + ⊞ files. Tests: 2 unit (extract_paths, branch+mentioned recording) + e2e branch/file filter. Suite green (~597).
+
+---
+
