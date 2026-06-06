@@ -453,11 +453,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/objects.rs; edited src/main.rs; edited src/objects.rs
 - [x] edited src/objects.rs; edited src/main.rs; edited src/objects.rs
 - [x] native Git LFS backend, default for objects push/pull
+- [x] edited MANUAL.md; edited src/lfs.rs; edited man/man1/h5i.1
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 10:22 UTC] `update-doc-with-i5h`: edited MANUAL.md; edited src/lfs.rs; edited man/man1/h5i.1
 - [2026-06-06 10:22 UTC] `update-doc-with-i5h`: native Git LFS backend, default for objects push/pull
 - [2026-06-06 09:55 UTC] `update-doc-with-i5h`: edited src/objects.rs; edited src/main.rs; edited src/objects.rs
 - [2026-06-06 09:54 UTC] `update-doc-with-i5h`: edited src/objects.rs; edited src/main.rs; edited src/objects.rs
