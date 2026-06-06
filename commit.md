@@ -1616,3 +1616,16 @@ go build-failure → build_error findings + decline-on-bare-FAIL (2 golden tests
 
 ---
 
+## Commit 6a238d93 — 2026-06-06 03:01 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+go build-failure → build_error findings + decline-on-bare-FAIL (2 golden tests); docs MCP wording; lowercase tool detection. slice-1 blockers already in 9508a4e. 27 structured tests, ALL_GREEN, clippy clean. 34 commits.
+
+### This Commit's Contribution
+
+
+---
+
