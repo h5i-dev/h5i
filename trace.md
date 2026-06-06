@@ -2020,3 +2020,4 @@ _[Checkpoint: 6a23edeb — git-ref store self-heals corrupt entries — codex #9
 _[Checkpoint: 6a23edfa — edited src/objects.rs; edited src/main.rs; edited src/objects.rs]_
 ---
 
+[09:53:52] NOTE: Approved fc4ed599: git-ref raw-blob backend now self-heals corrupt entries and passes focused plus full test suite; no remaining Codex blockers.
