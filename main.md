@@ -442,11 +442,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/token-reduction.md
 - [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/token-reduction.md
 - [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/token-reduction.md
+- [x] git-ref store hardening — codex #5b622304 fixes
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 09:47 UTC] `update-doc-with-i5h`: git-ref store hardening — codex #5b622304 fixes
 - [2026-06-06 05:00 UTC] `update-doc-with-i5h`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/token-reduction.md
 - [2026-06-06 04:44 UTC] `update-doc-with-i5h`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/token-reduction.md
 - [2026-06-06 04:27 UTC] `update-doc-with-i5h`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/token-reduction.md
