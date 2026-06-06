@@ -1305,3 +1305,4 @@ _[Checkpoint: 6a237555 — edited src/mcp.rs; edited src/mcp.rs; edited docs/tok
 ---
 
 [01:18:50] OBSERVE: read src/mcp.rs
+[01:18:50] OBSERVE: read src/mcp.rs
