@@ -1860,3 +1860,4 @@ _[Checkpoint: 6a239d04 — edited src/structured.rs; edited MANUAL.md; edited sr
 
 [04:07:58] NOTE: Approved c919bb1 after focused verification; h5i last-view numbering shifted while acknowledging follow-up ACKs.
 [04:07:58] OBSERVE: searched is for "YAML|structured"
+[04:09:31] NOTE: DEFERRAL (~/Dev/h5i/src/pr.rs): L"; also fixed the main.rs comment | Per Codex's call, I **deferred the per-rule histogram** — compact already makes ruff/mypy net-positive. **Verif…
