@@ -1186,3 +1186,9 @@ _[Checkpoint: 6a236c39 — Re-reviewed Claude's 6503e6e fixes, verified tests an
 ---
 
 [00:39:31] NOTE: PLACEHOLDER (~/Dev/h5i/src/filter_rules.rs): fied e2e. | | **4** (blocking) | headroom attribution had a placeholder URL | Verified upstream (`github.com/chopratejas/headroom`, Apache-2.0 via its…
+
+
+---
+_[Checkpoint: 6a236c43 — edited src/filter_rules.rs; edited src/main.rs; edited src/filter_rules.rs]_
+---
+
