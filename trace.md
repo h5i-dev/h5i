@@ -2250,3 +2250,4 @@ _[Checkpoint: 6a247f67 — edited assets/token-reduction-unified.svg; edited ass
 _[Checkpoint: 6a248cbb — edited src/main.rs; edited src/main.rs; edited src/main.rs]_
 ---
 
+[21:11:44] THINK: Let me confirm the artifacts exactly match what `h5i init` now produces (they should, since I copied them from a fresh `h5i init`), then commit.
