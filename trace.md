@@ -2040,3 +2040,9 @@ _[Checkpoint: 6a23ee49 — edited src/objects.rs; edited src/main.rs; edited src
 _[Checkpoint: 6a23ee50 — edited src/objects.rs; edited src/main.rs; edited src/objects.rs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a23ee92 — edited src/objects.rs; edited src/main.rs; edited src/objects.rs]_
+---
+
