@@ -1752,3 +1752,9 @@ _[Checkpoint: 6a23959f — edited scripts/experiment_token_reduction.sh; edited 
 [03:46:05] ACT: edited scripts/experiment_token_reduction_results.md
 [03:46:11] OBSERVE: read b3fj12phw.output
 [03:46:32] OBSERVE: read b3fj12phw.output
+
+
+---
+_[Checkpoint: 6a239837 — compact format default — closes ruff/mypy token gap with rtk]_
+---
+
