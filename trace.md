@@ -2082,3 +2082,4 @@ _[Checkpoint: 6a23f4ee — edited MANUAL.md; edited src/lfs.rs; edited man/man1/
 [10:29:29] OBSERVE: searched pull|reqwest|authorization|Basic|same-host|fallback" for "push|objects"
 [10:29:29] OBSERVE: read src/lfs.rs
 [10:29:29] OBSERVE: read src/lfs.rs
+[10:29:29] OBSERVE: read src/main.rs
