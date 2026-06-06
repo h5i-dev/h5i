@@ -1528,3 +1528,4 @@ _[Checkpoint: 6a2387d6 — edited src/mcp.rs; edited src/objects.rs; edited test
 _[Checkpoint: 6a2387e0 — edited src/mcp.rs; edited src/objects.rs; edited tests/objects_e2e.rs]_
 ---
 
+[02:37:49] THINK: Reviewing structured integration slice 35ec7c5 by checking persistence compatibility, default CLI format, legacy summary behavior, MCP payload shape, recall filters, and false-success guardrails.
