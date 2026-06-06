@@ -1642,3 +1642,4 @@ _[Checkpoint: 6a238dc6 — edited src/structured.rs; edited src/structured.rs; e
 _[Checkpoint: 6a238e96 — edited src/structured.rs; edited docs/token-reduction.md; edited src/token_filter.rs]_
 ---
 
+[03:06:27] NOTE: DEFERRAL (~/Dev/h5i/src/token_filter.rs): are accepted; jest/vitest/ruff-full-format are non-blocking follow-ups. Let me ack (noting the one trivial commit since)
