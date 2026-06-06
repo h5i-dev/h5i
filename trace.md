@@ -1435,3 +1435,4 @@ _[Checkpoint: 6a23825b — edited src/structured.rs; edited src/structured.rs; e
 _[Checkpoint: 6a2382b8 — edited src/structured.rs; edited src/structured.rs; edited src/structured.rs]_
 ---
 
+[02:16:18] THINK: Reviewing Claude's structured-output foundation before integration, focusing on schema stability, status safety, parser decline behavior, rendering correctness, and whether stored results will support future queries.
