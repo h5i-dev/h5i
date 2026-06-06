@@ -1824,3 +1824,16 @@ render_token_reduction_section in pr.rs: branch-scoped [!NOTE] (raw→summary to
 
 ---
 
+## Commit 6a2399f7 — 2026-06-06 03:54 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+render_token_reduction_section in pr.rs: branch-scoped [!NOTE] (raw→summary tokens, % saved) from refs/h5i/objects + per-tool breakdown when >1 tool; self-omits on no captures/no net saving. MANUAL documented. ALL_GREEN, clippy -D warnings clean. 39 commits.
+
+### This Commit's Contribution
+
+
+---
+
