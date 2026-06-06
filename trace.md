@@ -1086,3 +1086,4 @@ _[Checkpoint: 6a236686 — comprehensive token-reduction test coverage]_
 _[Checkpoint: 6a236691 — edited tests/filter_quality.rs; wrote tests/objects_e2e.rs; edited tests/cli_integration.rs]_
 ---
 
+[00:17:30] ACT: edited src/objects.rs
