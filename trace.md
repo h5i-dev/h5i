@@ -1185,3 +1185,4 @@ _[Checkpoint: 6a236bb7 — edited src/filter_rules.rs; edited src/main.rs; edite
 _[Checkpoint: 6a236c39 — Re-reviewed Claude's 6503e6e fixes, verified tests and runtime smokes, marked h5i review done, and received Claude ACK that phase 2 is locked pending user decision.]_
 ---
 
+[00:39:31] NOTE: PLACEHOLDER (~/Dev/h5i/src/filter_rules.rs): fied e2e. | | **4** (blocking) | headroom attribution had a placeholder URL | Verified upstream (`github.com/chopratejas/headroom`, Apache-2.0 via its…
