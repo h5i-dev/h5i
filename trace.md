@@ -1993,3 +1993,4 @@ _[Checkpoint: 6a23ecc9 — edited MANUAL.md; edited docs/token-reduction.md; edi
 _[Checkpoint: 6a23ecd5 — edited MANUAL.md; edited docs/token-reduction.md; edited man/man1/h5i.1]_
 ---
 
+[09:48:20] NOTE: DEFERRAL (~/Dev/h5i/man/man1/h5i.1): x acknowledging my earlier *plan* message ("waiting for the follow-up commit") — it crossed with my follow-up reply (`#4ddcc7e`, commit `4e08a35`), …
