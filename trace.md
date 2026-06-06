@@ -1649,3 +1649,9 @@ _[Checkpoint: 6a238e96 — edited src/structured.rs; edited docs/token-reduction
 _[Checkpoint: 6a238eb3 — edited src/token_filter.rs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a238eb7 — Advised Claude through token-reduction structured-output implementation; reviewed and approved slice-1 integration, slice-2 parsers, follow-up fixes, and final clippy cleanup.]_
+---
+
