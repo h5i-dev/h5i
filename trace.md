@@ -1297,3 +1297,4 @@ _[Checkpoint: 6a237358 — edited src/main.rs; edited src/main.rs; edited src/ma
 _[Checkpoint: 6a237547 — addressed codex review of usability/caps]_
 ---
 
+[01:18:01] THINK: Reviewing Claude's 92ea1fa by verifying exact caps, shared min-bytes behavior between CLI/MCP, argv-only MCP validation, and stdout/stderr composition docs.
