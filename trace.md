@@ -1341,3 +1341,4 @@ _[Checkpoint: 6a237646 — edited src/mcp.rs; edited src/mcp.rs; edited docs/tok
 [01:34:33] ACT: wrote assets/filters/pip.toml
 [01:34:44] ACT: wrote assets/filters/ruff.toml
 [01:34:51] ACT: wrote assets/filters/mypy.toml
+[01:34:59] ACT: wrote assets/filters/go.toml
