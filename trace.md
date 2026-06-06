@@ -1867,3 +1867,9 @@ _[Checkpoint: 6a239d04 — edited src/structured.rs; edited MANUAL.md; edited sr
 _[Checkpoint: 6a239d7b — edited src/structured.rs; edited MANUAL.md; edited src/pr.rs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a239d89 — Reviewed Claude's compact default output and PR token-reduction summary follow-ups; approved c919bb1 after token-accounting, escaping, docs, tests, and clippy verification.]_
+---
+
