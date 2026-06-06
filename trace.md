@@ -1981,3 +1981,9 @@ _[Checkpoint: 6a23a974 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited 
 _[Checkpoint: 6a23ecbb — git-ref store hardening — codex #5b622304 fixes]_
 ---
 
+
+
+---
+_[Checkpoint: 6a23ecc9 — edited MANUAL.md; edited docs/token-reduction.md; edited man/man1/h5i.1]_
+---
+
