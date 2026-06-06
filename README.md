@@ -232,6 +232,18 @@ If the idea matters to you, starring the repo is the fastest way to help more AI
 
 ---
 
+## Acknowledgements
+
+h5i's token-reduction filters build on prior art, both Apache-2.0:
+
+- **[rtk](https://github.com/rtk-ai/rtk)** (© Patrick Szymkowiak) — the declarative
+  output-filter rule files and the engine that runs them are derived from rtk.
+- **[headroom](https://github.com/chopratejas/headroom)** — the log line-folding
+  technique (collapse near-identical lines into one with a count) is reimplemented
+  from headroom.
+
+See [`NOTICE`](NOTICE) and [`assets/filters/NOTICE`](assets/filters/NOTICE) for full attribution.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
