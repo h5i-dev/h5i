@@ -1364,3 +1364,4 @@ _[Checkpoint: 6a237a73 — expanded rule coverage 59->74 (JS/Python/Go/container
 _[Checkpoint: 6a237a86 — edited assets/filters/pip.toml; edited docs/token-reduction.md; edited docs/token-reduction.md]_
 ---
 
+[01:44:02] THINK: User proposes a unified structured output schema for tool results (normalize per-tool parsers into one AI-friendly format). Assessed promising: one schema vs N, token-efficient, machine-actionable, synergizes with content-addressed raw (structured + lossless) and enables cross-capture queries. Key insight: unify test-failure/compile-error/lint-diagnostic into one findings[] shape. Co-designing schema with codex before implementing.
