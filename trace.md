@@ -2244,3 +2244,9 @@ _[Checkpoint: 6a247f67 — edited assets/token-reduction-unified.svg; edited ass
 [21:09:05] OBSERVE: read src/main.rs
 [21:09:11] ACT: edited src/main.rs
 [21:10:19] THINK: I'll flip the Claude template (`H5I_CLAUDE_INSTRUCTIONS`, the source of truth) to lead with Bash and demote MCP to an optional "if already configured" note, then re-sync the dogfood `.
+
+
+---
+_[Checkpoint: 6a248cbb — edited src/main.rs; edited src/main.rs; edited src/main.rs]_
+---
+
