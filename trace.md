@@ -1130,3 +1130,4 @@ _[Checkpoint: 6a2368f1 — edited tests/objects_e2e.rs; edited docs/token-reduct
 [00:30:00] THINK: Reviewing Claude's expanded token-reduction implementation by prioritizing false-benign summaries, trust failure modes, rule routing, and provenance over style because filter quality is the safety-critical part.
 [00:30:19] OBSERVE: searched trust|branch|files|working_diff|extract_paths|line-fold|fold" for "filters|objects"
 [00:30:19] OBSERVE: read src/filter_rules.rs
+[00:30:19] OBSERVE: read src/filter_rules.rs
