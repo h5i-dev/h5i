@@ -56,6 +56,25 @@ h5i recall objects --limit 20     # list captures, newest first
 
 Handles accept the short id, a full `sha256:<hex>`, or any unambiguous prefix.
 
+### Tracking captures by branch / files / diff
+
+Every capture is automatically associated with **the branch** it was taken on,
+**the files it concerns** (explicit `--file` flags plus paths mentioned in the
+output, e.g. `src/auth.rs:55` in a panic), and **the working-tree diff** at
+capture time (the files you were editing). That makes captures queryable by the
+work they belong to:
+
+```bash
+h5i capture run --file src/auth.rs -- pytest tests/test_auth.py   # tag explicitly
+h5i recall objects --branch feature/login   # captures taken on a branch
+h5i recall objects --file auth.rs           # captures touching a file (suffix match)
+h5i recall objects --diff                    # captures relevant to your CURRENT edits
+```
+
+The listing shows each capture's branch (`⎇`) and associated files (`⊞`). This
+lets an agent resuming work on a branch pull up exactly the test/build output
+relevant to it, without rerunning anything.
+
 ## The filter
 
 Deterministic and dependency-free (no model, no network) — the same input always
@@ -211,6 +230,9 @@ A manifest record:
   "cmd": "pytest -q",
   "exit_code": 1,
   "git_tree": "…",
+  "branch": "feature/login",
+  "files": ["src/auth.rs"],
+  "diff_files": ["src/auth.rs", "tests/test_auth.py"],
   "timestamp": "2026-06-05T…Z",
   "raw_oid": "sha256:82bf…",
   "raw_size": 7485,

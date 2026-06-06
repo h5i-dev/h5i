@@ -242,6 +242,33 @@ fn ttl_gc_evicts_raw_but_keeps_summary() {
     assert!(fsck.contains("absent"), "fsck should report the absent blob: {fsck}");
 }
 
+// ── branch / file association + filtered recall ──────────────────────────────
+
+#[test]
+fn captures_are_filterable_by_branch_and_file() {
+    let (_root, a) = single();
+
+    // Capture on the default branch, tagged with a file.
+    a.h5i_ok(&["capture", "run", "--file", "src/api.rs", "--", "bash", "-c", "echo on-default"]);
+
+    // Switch to a feature branch and capture there.
+    git(&a.dir, &["checkout", "-b", "feature-x"]);
+    a.h5i_ok(&["capture", "run", "--file", "src/auth.rs", "--", "bash", "-c", "echo on-feature"]);
+
+    // --branch filters to just that branch's captures.
+    let feat = stdout(&a.h5i_ok(&["recall", "objects", "--branch", "feature-x"]));
+    assert!(feat.contains("⎇ feature-x"), "should show feature-x captures:\n{feat}");
+    assert!(feat.contains("1 object matched"), "exactly one on feature-x:\n{feat}");
+
+    // --file filters by associated file (suffix match too).
+    let by_file = stdout(&a.h5i_ok(&["recall", "objects", "--file", "auth.rs"]));
+    assert!(by_file.contains("1 object matched"), "one capture touches auth.rs:\n{by_file}");
+
+    // A file nobody touched matches nothing.
+    let none = stdout(&a.h5i_ok(&["recall", "objects", "--file", "nope.rs"]));
+    assert!(none.contains("No captured objects match"), "{none}");
+}
+
 // ── manifests persist across a fresh process / repo reopen ────────────────────
 
 #[test]
@@ -253,5 +280,5 @@ fn manifests_persist_and_accumulate() {
     // A brand-new invocation (fresh process) still sees all three.
     assert_eq!(a.manifest_count(), 3);
     let list = stdout(&a.h5i_ok(&["recall", "objects"]));
-    assert!(list.contains("3 captured object"), "expected 3 listed: {list}");
+    assert!(list.contains("3 objects captured"), "expected 3 listed: {list}");
 }

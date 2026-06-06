@@ -1749,6 +1749,10 @@ enum ObjectsCommands {
         /// Also echo the summary's pointer line even on success (default: yes).
         #[arg(long)]
         quiet: bool,
+        /// Associate this capture with a file (repeatable). The branch and the
+        /// working-tree diff are recorded automatically.
+        #[arg(long = "file", value_name = "PATH", action = clap::ArgAction::Append)]
+        files: Vec<String>,
         /// The command to run, after `--`.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
@@ -1764,6 +1768,9 @@ enum ObjectsCommands {
         /// Max lines to keep in the summary.
         #[arg(long)]
         budget: Option<usize>,
+        /// Associate this capture with a file (repeatable).
+        #[arg(long = "file", value_name = "PATH", action = clap::ArgAction::Append)]
+        files: Vec<String>,
     },
 
     /// Rehydrate the full raw bytes for a stored object to stdout.
@@ -1784,6 +1791,16 @@ enum ObjectsCommands {
         /// Maximum number of objects to show.
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
+        /// Only objects captured on this branch.
+        #[arg(long)]
+        branch: Option<String>,
+        /// Only objects associated with this file (matches files & diff context).
+        #[arg(long)]
+        file: Option<String>,
+        /// Only objects whose diff context intersects the *current* working-tree
+        /// changes — i.e. captures relevant to what you're editing now.
+        #[arg(long)]
+        diff: bool,
     },
 
     /// Evict local raw blobs to reclaim space. Manifests/summaries are kept.
@@ -6279,6 +6296,7 @@ jq -c '{
                     budget,
                     token_budget,
                     quiet,
+                    files,
                     command,
                 } => {
                     if command.is_empty() {
@@ -6344,6 +6362,7 @@ jq -c '{
                         cwd,
                         exit_code,
                         git_tree: head_tree.clone(),
+                        files,
                         filter: cfg,
                     };
                     let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
@@ -6357,7 +6376,7 @@ jq -c '{
                     }
                 }
 
-                ObjectsCommands::Put { path, kind, budget } => {
+                ObjectsCommands::Put { path, kind, budget, files } => {
                     let raw = if path == "-" {
                         use std::io::Read;
                         let mut buf = Vec::new();
@@ -6375,6 +6394,7 @@ jq -c '{
                         cwd: None,
                         exit_code: None,
                         git_tree: head_tree.clone(),
+                        files,
                         filter: cfg,
                     };
                     let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
@@ -6403,20 +6423,55 @@ jq -c '{
                     }
                 }
 
-                ObjectsCommands::List { limit } => {
-                    let manifests = objects::read_manifests(git);
+                ObjectsCommands::List { limit, branch, file, diff } => {
+                    let all = objects::read_manifests(git);
+
+                    // Build the optional filters.
+                    let cur_diff: Vec<String> = if diff {
+                        objects::working_diff_files(git)
+                    } else {
+                        Vec::new()
+                    };
+                    let file_matches = |m: &objects::Manifest, needle: &str| {
+                        m.files.iter().chain(m.diff_files.iter()).any(|f| {
+                            f == needle || f.ends_with(needle) || needle.ends_with(f.as_str())
+                        })
+                    };
+                    let manifests: Vec<&objects::Manifest> = all
+                        .iter()
+                        .filter(|m| {
+                            branch
+                                .as_deref()
+                                .is_none_or(|b| m.branch.as_deref() == Some(b))
+                        })
+                        .filter(|m| file.as_deref().is_none_or(|f| file_matches(m, f)))
+                        .filter(|m| {
+                            !diff
+                                || m.files
+                                    .iter()
+                                    .chain(m.diff_files.iter())
+                                    .any(|f| cur_diff.iter().any(|c| c == f))
+                        })
+                        .collect();
+
+                    let filtered = branch.is_some() || file.is_some() || diff;
                     if manifests.is_empty() {
-                        println!(
-                            "No captured objects yet. Try: {}",
-                            style("h5i capture run -- <command>").bold()
-                        );
+                        if filtered {
+                            println!("No captured objects match that filter.");
+                        } else {
+                            println!(
+                                "No captured objects yet. Try: {}",
+                                style("h5i capture run -- <command>").bold()
+                            );
+                        }
                     } else {
                         let store = objects::LocalStore::new(&h5i_root);
                         let total = manifests.len();
                         println!(
-                            "{} captured object{} (newest first){}\n",
+                            "{} object{}{} (newest first){}\n",
                             total,
                             if total == 1 { "" } else { "s" },
+                            if filtered { " matched" } else { " captured" },
                             if total > limit {
                                 format!(" — showing {limit}")
                             } else {
@@ -6430,18 +6485,40 @@ jq -c '{
                             } else {
                                 style("○").red()
                             };
-                            let first_line =
-                                m.summary.lines().next().unwrap_or("").trim();
+                            let first_line = m.summary.lines().next().unwrap_or("").trim();
+                            let branch_tag = m
+                                .branch
+                                .as_deref()
+                                .map(|b| format!("  ⎇ {b}"))
+                                .unwrap_or_default();
                             println!(
-                                "{} {}  {}  {} bytes · {} lines",
+                                "{} {}  {}  {} bytes · {} lines{}",
                                 dot,
                                 style(&m.id).cyan().bold(),
                                 style(&m.kind).yellow(),
                                 m.raw_size,
-                                m.raw_lines
+                                m.raw_lines,
+                                style(branch_tag).magenta()
                             );
                             if let Some(cmd) = &m.cmd {
                                 println!("    {} {}", style("$").dim(), style(cmd).dim());
+                            }
+                            // Show the files this capture is about (subject ∪ diff).
+                            let mut shown: Vec<&String> =
+                                m.files.iter().chain(m.diff_files.iter()).collect();
+                            shown.sort();
+                            shown.dedup();
+                            if !shown.is_empty() {
+                                let preview: Vec<&str> =
+                                    shown.iter().take(4).map(|s| s.as_str()).collect();
+                                let more = shown.len().saturating_sub(4);
+                                let extra = if more > 0 { format!(" +{more}") } else { String::new() };
+                                println!(
+                                    "    {} {}{}",
+                                    style("⊞").dim(),
+                                    style(preview.join(", ")).dim(),
+                                    style(extra).dim()
+                                );
                             }
                             println!("    {}", style(first_line).dim());
                         }

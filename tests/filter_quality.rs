@@ -219,6 +219,7 @@ fn aggressive_summary_still_has_lossless_raw_in_store() {
             cwd: None,
             exit_code: None,
             git_tree: None,
+            files: Vec::new(),
             filter: cfg(OutputKind::Log, None),
         },
     )

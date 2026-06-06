@@ -68,6 +68,17 @@ pub struct Manifest {
     /// The HEAD tree the capture was taken against, for provenance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_tree: Option<String>,
+    /// The git branch checked out when the capture was taken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Files this capture is *about*: explicit `--file` args plus paths
+    /// mentioned in the output (e.g. `src/x.rs:10` in an error). Repo-relative.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+    /// The working-tree diff at capture time (changed/untracked files) — the
+    /// "what I was working on" context. Repo-relative.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diff_files: Vec<String>,
     /// RFC3339 capture time (UTC, microsecond, lexically sortable).
     pub timestamp: String,
     /// Full content address of the raw blob, e.g. `sha256:<64 hex>`.
@@ -243,6 +254,9 @@ pub struct CaptureOptions {
     pub cwd: Option<String>,
     pub exit_code: Option<i32>,
     pub git_tree: Option<String>,
+    /// Files the caller explicitly associates with this capture (`--file`).
+    /// The branch and the working-tree diff are detected automatically.
+    pub files: Vec<String>,
     pub filter: FilterConfig,
 }
 
@@ -291,6 +305,22 @@ pub fn capture(
         opts.kind.as_str().to_string()
     };
 
+    // Associate the capture with the branch and the files it concerns: the
+    // explicit `--file` set, paths mentioned in the output, and the working-tree
+    // diff at capture time.
+    let branch = current_branch(repo);
+    let mut diff_files = working_diff_files(repo);
+    dedup_sorted(&mut diff_files);
+    let mut files = opts.files.clone();
+    // Mine the summary + highlights for `path:line` references.
+    let mut path_src = filtered.summary.clone();
+    for h in &filtered.highlights {
+        path_src.push('\n');
+        path_src.push_str(h);
+    }
+    files.extend(extract_paths(&path_src));
+    dedup_sorted(&mut files);
+
     let manifest = Manifest {
         id: hex[..16].to_string(),
         kind,
@@ -298,6 +328,9 @@ pub fn capture(
         cwd: opts.cwd,
         exit_code: opts.exit_code,
         git_tree: opts.git_tree,
+        branch,
+        files,
+        diff_files,
         timestamp: now_ts(),
         raw_oid: format!("sha256:{hex}"),
         raw_size: raw.len() as u64,
@@ -766,6 +799,67 @@ fn now_ts() -> String {
         .to_string()
 }
 
+/// The checked-out branch name, or `None` when detached / on an unborn HEAD.
+fn current_branch(repo: &Repository) -> Option<String> {
+    let head = repo.head().ok()?;
+    if !head.is_branch() {
+        return None;
+    }
+    head.shorthand().map(str::to_owned)
+}
+
+/// Repo-relative paths of files changed in the working tree (modified, staged,
+/// or untracked) at the moment of capture — the "diff" the work belongs to.
+pub fn working_diff_files(repo: &Repository) -> Vec<String> {
+    let mut opts = git2::StatusOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .include_ignored(false);
+    let Ok(statuses) = repo.statuses(Some(&mut opts)) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for e in statuses.iter() {
+        // Skip purely-ignored / unmodified entries.
+        if e.status().is_empty() || e.status() == git2::Status::IGNORED {
+            continue;
+        }
+        if let Some(p) = e.path() {
+            out.push(p.to_string());
+        }
+    }
+    out
+}
+
+/// Extract `path:line` file references from text (e.g. `src/auth.rs:55:9`),
+/// returning the path portion. Used to tag a capture with the files its output
+/// points at, even when they weren't in the diff.
+fn extract_paths(text: &str) -> Vec<String> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        // A path with an extension, followed by :<line>. Conservative to avoid
+        // matching timestamps / URLs.
+        regex::Regex::new(r"([A-Za-z0-9_][A-Za-z0-9_./\-]*\.[A-Za-z0-9]+):\d+").unwrap()
+    });
+    let mut out = Vec::new();
+    for cap in re.captures_iter(text) {
+        let p = cap[1].trim_start_matches("./");
+        if !p.is_empty() {
+            out.push(p.to_string());
+        }
+    }
+    out
+}
+
+fn dedup_sorted(v: &mut Vec<String>) {
+    v.sort();
+    v.dedup();
+    const CAP: usize = 50;
+    if v.len() > CAP {
+        v.truncate(CAP);
+    }
+}
+
 fn read_dir(p: &Path) -> Result<Vec<std::fs::DirEntry>, H5iError> {
     let mut out = Vec::new();
     for e in std::fs::read_dir(p).map_err(|e| H5iError::with_path(e, p))? {
@@ -794,6 +888,7 @@ mod tests {
             cwd: None,
             exit_code: Some(1),
             git_tree: None,
+            files: Vec::new(),
             filter: FilterConfig::default(),
         }
     }
@@ -954,6 +1049,9 @@ mod tests {
             cwd: None,
             exit_code: None,
             git_tree: None,
+            branch: None,
+            files: Vec::new(),
+            diff_files: Vec::new(),
             timestamp: now_ts(),
             raw_oid: format!("sha256:{hex}"),
             raw_size: 0,
@@ -997,6 +1095,41 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("too short"));
+    }
+
+    #[test]
+    fn extract_paths_finds_file_line_refs() {
+        let text = "thread panicked at src/auth.rs:55:9:\nsee tests/x.py:10 and ./lib/util.rs:3\nno match here 12:30:00";
+        let mut got = extract_paths(text);
+        got.sort();
+        assert_eq!(got, vec!["lib/util.rs", "src/auth.rs", "tests/x.py"]);
+    }
+
+    #[test]
+    fn capture_records_branch_and_mentioned_files() {
+        let (dir, repo, h5i_root) = setup();
+        // Make a branch + a commit so HEAD is born and on a named branch.
+        let sig = git2::Signature::now("t", "t@t").unwrap();
+        let tree_id = {
+            let mut idx = repo.index().unwrap();
+            idx.write_tree().unwrap()
+        };
+        let tree = repo.find_tree(tree_id).unwrap();
+        let oid = repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+        let commit = repo.find_commit(oid).unwrap();
+        repo.branch("feature-x", &commit, true).unwrap();
+        repo.set_head("refs/heads/feature-x").unwrap();
+
+        let raw = b"running\nerror at src/widget.rs:42: boom\n";
+        let mut o = opts();
+        o.files = vec!["src/explicit.rs".to_string()];
+        let out = capture(&repo, &h5i_root, raw, o).unwrap();
+
+        assert_eq!(out.manifest.branch.as_deref(), Some("feature-x"));
+        // explicit + mentioned (from the error line) both recorded.
+        assert!(out.manifest.files.contains(&"src/explicit.rs".to_string()));
+        assert!(out.manifest.files.contains(&"src/widget.rs".to_string()));
+        let _ = dir;
     }
 
     #[test]
