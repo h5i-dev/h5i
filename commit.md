@@ -1434,3 +1434,16 @@ Improve docs website: simplify text, add msg feature to top page, write detailed
 
 ---
 
+## Commit 6a238497 — 2026-06-06 02:23 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+structured.rs fixes (commit 2cdb416): detail cap reserves ellipsis + detail_bytes_omitted; Location end_line/end_column; Finding suggestions[]; render_json compact + render_json_pretty; Status::Ok (from_exit→Ok, from_test→Passed); pytest no-tests-ran handled. 15 structured tests. Schema now FINAL for persistence. NEXT: integration (capture default + --format + Manifest.structured + recall --status/--tool + MCP) and the per-tool parser golden corpus (go/tsc/eslint/ruff/mypy/jest/vitest + generic fallback) for table-wide coverage.
+
+---
+
