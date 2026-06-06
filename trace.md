@@ -2022,3 +2022,9 @@ _[Checkpoint: 6a23edfa — edited src/objects.rs; edited src/main.rs; edited src
 
 [09:53:52] NOTE: Approved fc4ed599: git-ref raw-blob backend now self-heals corrupt entries and passes focused plus full test suite; no remaining Codex blockers.
 [09:53:52] OBSERVE: searched put|union_merge_data_commits" for "has|fn"
+
+
+---
+_[Checkpoint: 6a23ee48 — Completed multi-round review of token-reduction raw-blob git-ref backend; approved final integrity/no-clobber fixes at fc4ed599 with full test suite green.]_
+---
+
