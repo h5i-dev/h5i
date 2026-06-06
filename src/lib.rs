@@ -22,6 +22,7 @@ pub mod recap;
 pub mod secrets;
 pub mod session_log;
 pub mod storage;
+pub mod structured;
 pub mod token_filter;
 pub mod repository;
 pub mod resume;
