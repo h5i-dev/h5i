@@ -2079,3 +2079,4 @@ _[Checkpoint: 6a23f4ee — edited MANUAL.md; edited src/lfs.rs; edited man/man1/
 ---
 
 [10:29:29] NOTE: Reviewed e2b99307 native LFS backend: direction approved, blockers are action-href credential leakage and over-broad auto fallback to git-ref on auth/network/content errors.
+[10:29:29] OBSERVE: searched pull|reqwest|authorization|Basic|same-host|fallback" for "push|objects"
