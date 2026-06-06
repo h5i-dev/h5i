@@ -1802,3 +1802,4 @@ _[Checkpoint: 6a2399f7 — edited src/pr.rs; edited src/pr.rs; edited MANUAL.md]
 [03:56:30] OBSERVE: read src/pr.rs
 [03:56:30] OBSERVE: searched YAML|default for "\*\*YAML\*\*|compact"
 [03:56:30] OBSERVE: read src/objects.rs
+[03:56:30] OBSERVE: searched src/main.rs for "src/objects.rs"
