@@ -269,10 +269,10 @@ fn capture_emits_structured_default_and_is_queryable() {
         .output()
         .expect("run");
     let summary = stdout(&out);
-    // Default output is structured YAML.
-    assert!(summary.contains("tool: pytest"), "expected structured YAML:\n{summary}");
-    assert!(summary.contains("status: failed"));
-    assert!(summary.contains("kind: test_failure"));
+    // Default output is the compact one-line-per-finding render.
+    assert!(summary.contains("pytest test failed"), "expected compact header:\n{summary}");
+    assert!(summary.contains("tests/t.py::test_pay"), "expected the failing finding:\n{summary}");
+    assert!(summary.contains("1 failed"), "expected counts:\n{summary}");
 
     // Queryable by structured status and tool.
     let by_status = stdout(&a.h5i_ok(&["recall", "objects", "--status", "failed"]));

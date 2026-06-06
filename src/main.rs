@@ -549,7 +549,9 @@ enum AgentRuntime {
 /// Output format for `h5i capture run`. Invalid values fail loudly (clap).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum CaptureFormat {
-    /// Normalized structured result as compact YAML (default).
+    /// One line per finding — token-minimal structured text (default).
+    Compact,
+    /// Normalized structured result as full YAML.
     Structured,
     /// Alias for `structured`.
     Yaml,
@@ -1769,9 +1771,9 @@ enum ObjectsCommands {
         /// any command. Use 0 to always capture.
         #[arg(long, default_value_t = DEFAULT_CAPTURE_MIN_BYTES)]
         min_bytes: u64,
-        /// Output format: structured (default, compact YAML) | json | summary
-        /// (legacy text). Invalid values are rejected.
-        #[arg(long, value_enum, default_value_t = CaptureFormat::Structured)]
+        /// Output format: compact (default, one line per finding) | structured
+        /// (full YAML) | json | summary (legacy text). Invalid values are rejected.
+        #[arg(long, value_enum, default_value_t = CaptureFormat::Compact)]
         format: CaptureFormat,
         /// Associate this capture with a file (repeatable). The branch and the
         /// working-tree diff are recorded automatically.
@@ -6527,6 +6529,9 @@ jq -c '{
                             }
                             (CaptureFormat::Structured | CaptureFormat::Yaml, Some(s)) => {
                                 println!("{}", h5i_core::structured::render_yaml(s))
+                            }
+                            (CaptureFormat::Compact, Some(s)) => {
+                                println!("{}", h5i_core::structured::render_compact(s))
                             }
                         }
                         print_pointer(m, outcome.deduped, quiet);

@@ -607,10 +607,12 @@ and a small manifest (pointer + structured summary) is appended to
 .IR refs/h5i/objects .
 The child's exit code is passed through, so this is a transparent wrapper.
 .TP
-.B \-\-format \fIstructured\fR|\fIjson\fR|\fIsummary\fR
+.B \-\-format \fIcompact\fR|\fIstructured\fR|\fIjson\fR|\fIsummary\fR
 Output format. Default
+.B compact
+(one line per finding \(em token-minimal text);
 .B structured
-(compact YAML rendered from the typed result);
+emits the full YAML;
 .B json
 emits the canonical
 .B ToolResult
@@ -638,7 +640,12 @@ lines / tokens.
 Associate the capture with a file (repeatable). The branch and working-tree
 diff are recorded automatically.
 .PP
-The structured result is the AI-friendly schema: an envelope
+The default
+.B compact
+format prints one line per finding
+.RI ( "<sev> <location> <rule> <message>" );
+.B \-\-format structured
+shows the full schema below. The structured result is the AI-friendly schema: an envelope
 .RB ( tool ,
 .BR kind ,
 .B status

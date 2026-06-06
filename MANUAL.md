@@ -632,7 +632,7 @@ h5i capture run --file src/auth.rs -- pytest tests/test_auth.py   # tag related 
 | `--budget <N>` | Max lines in the summary. |
 | `--token-budget <N>` | Best-effort cap on summary tokens (tiktoken). |
 | `--min-bytes <N>` | Only store + summarize when output ≥ N bytes (default 2048); smaller output passes through unstored, so wrapping any command is safe. `0` = always capture. |
-| `--format <structured\|json\|summary>` | Output format. Default `structured` (compact YAML). `json` = the structured `ToolResult` as JSON; `summary` = the legacy filtered text. |
+| `--format <compact\|structured\|json\|summary>` | Output format. Default `compact` (one line per finding — token-minimal). `structured` = full YAML; `json` = the `ToolResult` as JSON; `summary` = the legacy filtered text. |
 | `--file <path>` | Associate the capture with a file (repeatable). Branch + working-tree diff are recorded automatically. |
 | `--quiet` | Suppress the trailing pointer/status line. |
 

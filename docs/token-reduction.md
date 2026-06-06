@@ -28,9 +28,19 @@ away (`h5i recall object <id>`) but never sit in context unless asked for.
 
 ## Structured output (the default)
 
-`h5i capture run` emits a **normalized, AI-friendly structured result** by default —
+`h5i capture run` emits a **normalized, AI-friendly structured result** —
 one predictable schema across test runners, compilers, linters, and type checkers,
-so an agent learns *one* shape instead of N free-text formats:
+so an agent learns *one* shape instead of N free-text formats.
+
+The **default render is `--format compact`**: one line per finding, token-minimal
+(rtk-style), e.g.
+
+```text
+pytest test failed · 1 failed, 120 passed (exit 1)
+  F tests/t.py::test_pay  assert 0 == 100
+```
+
+`--format structured` gives the full YAML (every field, for inspection):
 
 ```yaml
 tool: pytest
@@ -50,9 +60,11 @@ findings:
 ```
 
 `--format json` returns the canonical JSON `ToolResult`; `--format summary` keeps
-the legacy filtered text. (The `h5i_capture_run` MCP tool returns the same
-`ToolResult` under a `structured` field, alongside `id`/`raw_*`/`hint`.) The
-structured result is stored in the manifest, so captures are **queryable**:
+the legacy filtered text. (The `h5i_capture_run` MCP tool returns the full
+`ToolResult` under a `structured` field, alongside `id`/`raw_*`/`hint`.) On
+diagnostic-dense output (linters/type-checkers) `compact` is ~3× smaller than the
+full YAML — the difference between a token *loss* and a *win*. The structured
+result is stored in the manifest, so captures are **queryable**:
 
 ```bash
 h5i recall objects --status failed     # everything that failed

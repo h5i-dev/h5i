@@ -988,6 +988,81 @@ fn parse_cargo_test(output: &str, exit_code: Option<i32>) -> Option<ToolResult> 
     Some(r)
 }
 
+/// Collapse a message to a single line and cap its length.
+fn one_line(s: &str, max: usize) -> String {
+    let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() > max {
+        let t: String = flat.chars().take(max.saturating_sub(1)).collect();
+        format!("{t}…")
+    } else {
+        flat
+    }
+}
+
+/// One-line-per-finding render — token-minimal text (rtk-style) that keeps the
+/// structured signal (status, counts, each finding's severity/rule/location/
+/// message) WITHOUT the per-field YAML overhead. This is the default for
+/// `capture run`: on diagnostic-dense output it is ~3× smaller than the full
+/// YAML while staying scannable and parseable.
+pub fn render_compact(r: &ToolResult) -> String {
+    let mut out = String::new();
+    // Header: "<tool> <kind> <status> · <counts> (exit N)"
+    out.push_str(&format!("{} {} {}", r.tool, serde_plain(&r.kind), serde_plain(&r.status)));
+    if !r.counts.is_empty() {
+        let parts: Vec<String> = r.counts.iter().map(|(k, v)| format!("{v} {k}")).collect();
+        out.push_str(&format!(" · {}", parts.join(", ")));
+    }
+    if let Some(c) = r.exit_code {
+        if c != 0 {
+            out.push_str(&format!(" (exit {c})"));
+        }
+    }
+    out.push('\n');
+
+    // One line per finding: "  <sev> <location|id>  <rule> <message>[ (fix)]"
+    for f in &r.findings {
+        let sev = match f.severity {
+            Severity::Error => "E",
+            Severity::Warning => "W",
+            Severity::Failure => "F",
+        };
+        // Primary locator: the id (test nodeid/target) when present, else the
+        // location. Append `file:line` when an id is paired with a precise
+        // location (so test failures show both the test name and where).
+        let loc_short = f.location.as_ref().map(Location::shorthand).filter(|s| !s.is_empty());
+        let primary = f.id.clone().or_else(|| loc_short.clone()).unwrap_or_default();
+        let loc_suffix = match (&f.id, &f.location) {
+            (Some(_), Some(l)) if l.line.is_some() => format!(" ({})", l.shorthand()),
+            _ => String::new(),
+        };
+        let rule = f.rule.as_deref().map(|r| format!("{r} ")).unwrap_or_default();
+        let fix = if f.fixable { " (fixable)" } else { "" };
+        let msg = one_line(&f.message, 160);
+        if primary.is_empty() {
+            out.push_str(&format!("  {sev} {rule}{msg}{fix}\n"));
+        } else {
+            out.push_str(&format!("  {sev} {primary}{loc_suffix}  {rule}{msg}{fix}\n"));
+        }
+    }
+    if r.truncated.findings_total > r.truncated.findings_shown {
+        out.push_str(&format!(
+            "  … +{} more findings ({} total)\n",
+            r.truncated.findings_total - r.truncated.findings_shown,
+            r.truncated.findings_total
+        ));
+    }
+
+    // Generic results (no parser) carry the reduced text in `body`.
+    if let Some(b) = &r.body {
+        if !b.trim().is_empty() {
+            out.push('\n');
+            out.push_str(b.trim_end());
+            out.push('\n');
+        }
+    }
+    out.trim_end().to_string()
+}
+
 /// Lowercase variant name (mirrors the serde rename_all = "snake_case").
 fn serde_plain<T: Serialize>(v: &T) -> String {
     serde_json::to_string(v)
@@ -1274,6 +1349,31 @@ mod tests {
     #[test]
     fn cargo_unknown_subcommand_declines() {
         assert!(parse(&argv(&["cargo", "metadata"]), "{\"x\":1}", Some(0)).is_none());
+    }
+
+    #[test]
+    fn compact_render_is_one_line_per_finding_and_smaller() {
+        let raw = "app/models.py:1:1: F401 [*] `os` imported but unused\napp/views.py:42:5: E711 comparison to `None`\nFound 2 errors.\n";
+        let r = parse(&argv(&["ruff", "check", "."]), raw, Some(1)).unwrap();
+        let compact = render_compact(&r);
+        let yaml = render_yaml(&r);
+        // Header + 2 finding lines (no blank-line padding, no per-field keys).
+        let lines: Vec<&str> = compact.lines().collect();
+        assert!(lines[0].starts_with("ruff lint failed"), "header: {}", lines[0]);
+        assert_eq!(lines.iter().filter(|l| l.starts_with("  ")).count(), 2);
+        assert!(compact.contains("F401") && compact.contains("app/models.py:1:1"));
+        assert!(compact.contains("(fixable)")); // F401 had [*]
+        // Compact is materially smaller than the full YAML for diagnostics.
+        assert!(compact.len() < yaml.len() / 2, "compact {} vs yaml {}", compact.len(), yaml.len());
+    }
+
+    #[test]
+    fn compact_render_shows_truncation_and_generic_body() {
+        let mut r = ToolResult::generic("make", Some(0));
+        r.body = Some("build line 1\nbuild line 2".into());
+        let c = render_compact(&r);
+        assert!(c.starts_with("make generic ok"));
+        assert!(c.contains("build line 1"));
     }
 
     #[test]
