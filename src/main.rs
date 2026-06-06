@@ -1819,6 +1819,17 @@ enum ObjectsCommands {
         #[arg(long)]
         verify: bool,
     },
+
+    /// Review and trust a project-local `.h5i/filters.toml` so its rules are
+    /// applied by `capture run`. Untrusted/changed files are never applied.
+    Trust {
+        /// Show the current trust status without changing it.
+        #[arg(long)]
+        status: bool,
+        /// Remove trust (project rules will stop being applied).
+        #[arg(long)]
+        remove: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -3127,7 +3138,9 @@ fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
         ],
         "audit" => &["review", "scan", "compliance", "policy", "vibe"],
         "share" => &["push", "pull", "pr", "memory", "setup-remote", "migrate-remote"],
-        "objects" => &["run", "put", "get", "list", "ls", "gc", "pin", "unpin", "fsck", "filters"],
+        "objects" => &[
+            "run", "put", "get", "list", "ls", "gc", "pin", "unpin", "fsck", "filters", "trust",
+        ],
         _ => return None,
     };
     let typo_l = typo.to_lowercase();
@@ -3235,6 +3248,7 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("objects", "fsck")     => &["objects", "fsck"],
         ("objects", "filters")  => &["objects", "filters"],
         ("objects", "rules")    => &["objects", "filters"],
+        ("objects", "trust")    => &["objects", "trust"],
 
         _ => return None,
     })
@@ -3501,6 +3515,12 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     summary: "List built-in per-command filters (rtk-derived); --verify runs their golden tests.",
                     legacy: "(new)",
                     example: "h5i objects filters\n      h5i objects filters --verify",
+                },
+                NounVerb {
+                    verb: "trust",
+                    summary: "Review & trust a project-local .h5i/filters.toml so its rules apply (untrusted files are ignored).",
+                    legacy: "(new)",
+                    example: "h5i objects trust\n      h5i objects trust --status",
                 },
             ],
             &[
@@ -6271,6 +6291,27 @@ jq -c '{
                     // Hand the argv to the filter so command-aware adapters
                     // (pytest/cargo/git) can produce a semantic summary.
                     cfg.cmd = Some(command.clone());
+                    // Project-local rules are applied only if the user has
+                    // trusted the current `.h5i/filters.toml` (it's untrusted
+                    // input that could otherwise mask failures).
+                    if let Some(workdir) = git.workdir() {
+                        use h5i_core::filter_rules::{self, TrustStatus};
+                        match filter_rules::trust_status(workdir, &h5i_root) {
+                            TrustStatus::Trusted | TrustStatus::EnvOverride => {
+                                cfg.project_filters =
+                                    Some(filter_rules::project_filters_path(workdir));
+                            }
+                            TrustStatus::Untrusted => eprintln!(
+                                "{} project .h5i/filters.toml is untrusted — not applied. Review with `h5i objects trust`.",
+                                style("warning:").yellow().bold()
+                            ),
+                            TrustStatus::Changed => eprintln!(
+                                "{} .h5i/filters.toml changed since trusted — not applied. Re-review with `h5i objects trust`.",
+                                style("warning:").yellow().bold()
+                            ),
+                            TrustStatus::NoFile => {}
+                        }
+                    }
                     let cwd = std::env::current_dir().ok().map(|p| p.display().to_string());
 
                     // Run the command, capturing stdout + stderr (stdin inherited
@@ -6492,6 +6533,71 @@ jq -c '{
                             "\n{} coded adapters (pytest, cargo, git diff) take precedence; \
                              then these rules; then the generic scorer.",
                             style("note:").dim()
+                        );
+                    }
+                }
+
+                ObjectsCommands::Trust { status, remove } => {
+                    use h5i_core::filter_rules::{self, TrustStatus};
+                    let workdir = git
+                        .workdir()
+                        .ok_or_else(|| anyhow::anyhow!("bare repository not supported"))?;
+                    let path = filter_rules::project_filters_path(workdir);
+                    let st = filter_rules::trust_status(workdir, &h5i_root);
+
+                    if remove {
+                        filter_rules::untrust(&h5i_root).map_err(|e| anyhow::anyhow!(e))?;
+                        println!("{} project filters untrusted", style("✔").green());
+                    } else if status {
+                        let label = match st {
+                            TrustStatus::NoFile => "no .h5i/filters.toml present",
+                            TrustStatus::Untrusted => "present, NOT trusted",
+                            TrustStatus::Changed => "changed since trusted (re-review)",
+                            TrustStatus::Trusted => "trusted",
+                            TrustStatus::EnvOverride => "applied via H5I_TRUST_FILTERS override",
+                        };
+                        println!("{}  ({})", style(label).bold(), path.display());
+                    } else {
+                        if st == TrustStatus::NoFile {
+                            anyhow::bail!("no {} to trust — create it first", path.display());
+                        }
+                        // Review: show the rules and flag any that could hide output.
+                        let rules = filter_rules::describe_file(&path)
+                            .map_err(|e| anyhow::anyhow!(e))?;
+                        println!(
+                            "Reviewing {} ({} rule{}):\n",
+                            style(path.display()).bold(),
+                            rules.len(),
+                            if rules.len() == 1 { "" } else { "s" }
+                        );
+                        let mut risky = false;
+                        for r in &rules {
+                            let flag = if r.can_hide_output {
+                                risky = true;
+                                style(" ⚠ can short-circuit output").red().to_string()
+                            } else {
+                                String::new()
+                            };
+                            println!(
+                                "  {}  {}{}",
+                                style(&r.name).cyan().bold(),
+                                style(&r.match_pattern).dim(),
+                                flag
+                            );
+                        }
+                        if risky {
+                            println!(
+                                "\n{} one or more rules use match_output without an `unless` guard — they can replace real output with a fixed message.",
+                                style("note:").yellow().bold()
+                            );
+                        }
+                        let hash = filter_rules::trust(workdir, &h5i_root)
+                            .map_err(|e| anyhow::anyhow!(e))?;
+                        println!(
+                            "\n{} trusted {} (sha256:{})",
+                            style("✔").green(),
+                            path.display(),
+                            &hash[..12]
                         );
                     }
                 }

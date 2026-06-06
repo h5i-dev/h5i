@@ -26,3 +26,18 @@ records that the files have been **modified** for use in h5i:
 
 Upstream rule authorship and copyright remain with the rtk project and its
 contributors.
+
+----
+
+h5i's log line-folding (`token_filter::normalize_template` / `summarize_scored`)
+is additionally derived from **headroom**:
+
+    headroom — https://github.com/ (Apache License, Version 2.0)
+
+specifically the normalized "dedupe similar" idea (collapse lines that differ
+only by numbers/ids into one representative with a count). Only the technique was
+reimplemented in Rust; no headroom code was copied.
+
+No code is derived from **context-mode**, which is under the Elastic License 2.0
+(source-available, not a permissive OSS license); only generic techniques that
+h5i implements independently were considered.

@@ -96,6 +96,10 @@ pub struct FilterConfig {
     /// summaries; falls back to the generic scorer when no adapter matches.
     /// Only consulted when `kind` is `Auto` (an explicit `--kind` opts out).
     pub cmd: Option<Vec<String>>,
+    /// Path to a *trust-verified* project-local `.h5i/filters.toml`, if any.
+    /// Set by the CLI only after the trust check passes; its rules are tried
+    /// before the built-ins. `None` means built-ins only.
+    pub project_filters: Option<std::path::PathBuf>,
 }
 
 impl Default for FilterConfig {
@@ -107,6 +111,7 @@ impl Default for FilterConfig {
             max_lines: DEFAULT_MAX_LINES,
             token_budget: None,
             cmd: None,
+            project_filters: None,
         }
     }
 }
@@ -359,8 +364,13 @@ pub fn filter(raw: &str, cfg: &FilterConfig) -> FilterResult {
             if let Some(res) = summarize_command(cmd, raw, cfg) {
                 return res;
             }
-            // 2. Declarative per-command rules (the rtk-derived long tail).
-            if let Some((summary, _name)) = crate::filter_rules::summarize_with_rules(cmd, raw) {
+            // 2. Declarative per-command rules (the rtk-derived long tail), plus
+            //    any trust-verified project-local rules.
+            if let Some((summary, _name)) = crate::filter_rules::summarize_with_rules(
+                cmd,
+                raw,
+                cfg.project_filters.as_deref(),
+            ) {
                 let cleaned = strip_ansi(raw);
                 let raw_lines = cleaned.lines().count();
                 let raw_tokens = count_tokens(&cleaned);
@@ -827,61 +837,162 @@ fn git_diff_summary(
     Some((summary, highlights, OutputKind::Diff, kept))
 }
 
-/// Score-based summarization for tests and logs: keep head + tail + every
-/// high-signal line, dedup identical runs, cap to the line budget.
+/// Normalize a line into a template so near-identical lines fold together:
+/// runs of digits/hex collapse to `#`. Borrowed from headroom's `_dedupe_similar`
+/// (Apache-2.0) — "request 1 in 4ms" and "request 2 in 7ms" share one template.
+fn normalize_template(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let mut out = String::with_capacity(line.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            // Consume a numeric/hex run (timestamps, ids, durations, addrs).
+            while i < bytes.len() && bytes[i].is_ascii_hexdigit() {
+                i += 1;
+            }
+            out.push('#');
+            continue;
+        }
+        let len = utf8_len(bytes[i]);
+        let end = (i + len).min(bytes.len());
+        if let Ok(s) = std::str::from_utf8(&bytes[i..end]) {
+            out.push_str(s);
+        }
+        i = end;
+    }
+    out
+}
+
+/// One folded output unit: a representative line plus how many raw lines it
+/// stands for.
+struct Fold {
+    text: String,
+    count: usize,
+    high: bool,
+    score: f32,
+}
+
+/// Score-based summarization for tests and logs. Keeps every high-signal line
+/// verbatim, and folds runs of low-signal near-duplicate lines (by normalized
+/// template) into one representative `(×N)`, then caps to the line budget —
+/// preserving head, tail, and all high-signal lines.
 fn summarize_scored(text: &str, cfg: &FilterConfig) -> (String, Vec<String>, usize) {
     let lines: Vec<&str> = text.lines().collect();
     let n = lines.len();
-    let threshold = 0.6_f32;
+    // Keep verbatim only genuinely high-signal lines (errors/warnings/panics,
+    // score ≥ 0.7). Summary/status lines (0.6) and noise are foldable, so a log
+    // full of "… ok" lines still collapses.
+    let threshold = 0.7_f32;
 
-    // Indices we must keep: head, tail, and every high-signal line.
-    let mut keep = vec![false; n];
-    let head_end = cfg.head_lines.min(n);
-    keep[..head_end].fill(true);
-    keep[n.saturating_sub(cfg.tail_lines)..].fill(true);
+    // 1. Fold: high-signal lines pass through one-per-item; consecutive
+    //    low-signal lines that share a template collapse into one item.
+    let mut items: Vec<Fold> = Vec::new();
     let mut highlights = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        if line_score(line) >= threshold {
-            keep[i] = true;
-            if highlights.len() < 20 && line_score(line) >= 0.85 {
+    let mut i = 0;
+    while i < n {
+        let line = lines[i];
+        let sc = line_score(line);
+        if sc >= threshold {
+            if sc >= 0.85 && highlights.len() < 20 {
                 let h = line.trim();
                 if !h.is_empty() {
                     highlights.push(h.to_string());
                 }
             }
-        }
-    }
-
-    // If we're still over budget, drop the lowest-signal kept lines that are
-    // neither head nor tail until we fit.
-    let mut kept_idx: Vec<usize> = (0..n).filter(|&i| keep[i]).collect();
-    if kept_idx.len() > cfg.max_lines {
-        let tail_start = n.saturating_sub(cfg.tail_lines);
-        // Candidates eligible for dropping (middle, lower score first).
-        let mut middle: Vec<usize> = kept_idx
-            .iter()
-            .copied()
-            .filter(|&i| i >= head_end && i < tail_start)
-            .collect();
-        middle.sort_by(|&a, &b| {
-            line_score(lines[a])
-                .partial_cmp(&line_score(lines[b]))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        let mut to_drop = kept_idx.len().saturating_sub(cfg.max_lines);
-        for &i in &middle {
-            if to_drop == 0 {
-                break;
+            // Collapse consecutive *exactly identical* high-signal lines (e.g.
+            // a warning emitted 50×) but keep distinct errors separate.
+            let mut j = i + 1;
+            while j < n && lines[j] == line {
+                j += 1;
             }
-            keep[i] = false;
-            to_drop -= 1;
+            items.push(Fold { text: line.to_string(), count: j - i, high: true, score: sc });
+            i = j;
+        } else {
+            let tmpl = normalize_template(line);
+            let mut j = i + 1;
+            while j < n && line_score(lines[j]) < threshold && normalize_template(lines[j]) == tmpl
+            {
+                j += 1;
+            }
+            items.push(Fold { text: line.to_string(), count: j - i, high: false, score: sc });
+            i = j;
         }
-        kept_idx = (0..n).filter(|&i| keep[i]).collect();
     }
 
-    // Emit, inserting elision markers for gaps and deduping identical runs.
-    let out = render_with_gaps(&lines, &kept_idx);
-    (out, highlights, kept_idx.len())
+    // 2. Cap: if the folded set still exceeds the budget, keep head + tail +
+    //    every high-signal item, dropping the lowest-signal middle items.
+    let m = items.len();
+    let mut keep = vec![true; m];
+    if m > cfg.max_lines {
+        let head_end = cfg.head_lines.min(m);
+        let tail_start = m.saturating_sub(cfg.tail_lines);
+        for (idx, slot) in keep.iter_mut().enumerate() {
+            if idx >= head_end && idx < tail_start && !items[idx].high {
+                *slot = false;
+            }
+        }
+        // If high-signal items alone still blow the budget, drop the
+        // lowest-score middle ones too.
+        let mut kept: Vec<usize> = (0..m).filter(|&i| keep[i]).collect();
+        if kept.len() > cfg.max_lines {
+            let mut middle: Vec<usize> = kept
+                .iter()
+                .copied()
+                .filter(|&i| i >= head_end && i < tail_start)
+                .collect();
+            middle.sort_by(|&a, &b| {
+                items[a]
+                    .score
+                    .partial_cmp(&items[b].score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let mut to_drop = kept.len() - cfg.max_lines;
+            for &idx in &middle {
+                if to_drop == 0 {
+                    break;
+                }
+                keep[idx] = false;
+                to_drop -= 1;
+            }
+            kept = (0..m).filter(|&i| keep[i]).collect();
+            let _ = kept;
+        }
+    }
+
+    // 3. Render, inserting elision markers for dropped spans (counting the raw
+    //    lines each dropped item represented).
+    let mut out = String::new();
+    let mut pending_elided = 0usize;
+    let mut emitted = 0usize;
+    for (idx, it) in items.iter().enumerate() {
+        if !keep[idx] {
+            pending_elided += it.count;
+            continue;
+        }
+        if pending_elided > 0 {
+            out.push_str(&format!(
+                "… [{pending_elided} line{} elided] …\n",
+                plural(pending_elided)
+            ));
+            pending_elided = 0;
+        }
+        out.push_str(&it.text);
+        if it.count > 1 {
+            out.push_str(&format!("  (×{})", it.count));
+        }
+        out.push('\n');
+        emitted += 1;
+    }
+    if pending_elided > 0 {
+        out.push_str(&format!(
+            "… [{pending_elided} line{} elided] …",
+            plural(pending_elided)
+        ));
+    }
+    while out.ends_with('\n') {
+        out.pop();
+    }
+    (out, highlights, emitted)
 }
 
 /// Generic summarization: head + tail with a gap marker.
@@ -1211,9 +1322,10 @@ mod tests {
         let res = filter(&raw, &cfg);
         // A buried error must survive even when the bulk classifies as generic.
         assert!(res.summary.contains("error: something broke"));
-        assert!(res.summary.contains("elided"));
+        // The 1000 noise lines fold into a couple of templated representatives.
+        assert!(res.summary.contains("(×"));
         assert!(res.kept_lines <= cfg.max_lines);
-        assert!(res.raw_lines > res.kept_lines);
+        assert!(res.raw_lines > res.kept_lines * 10);
         assert!(res.highlights.iter().any(|h| h.contains("something broke")));
     }
 
@@ -1393,6 +1505,32 @@ mod tests {
         };
         let res2 = filter(raw, &cfg2);
         assert!(!res2.summary.contains("Pytest:"));
+    }
+
+    #[test]
+    fn template_folding_collapses_parameterized_log_lines() {
+        // 800 near-identical lines differing only by numbers, one buried error.
+        let mut raw = String::new();
+        for i in 0..400 {
+            raw.push_str(&format!("2026-06-05T10:00:{} INFO handled request {i} in {}ms\n", i % 60, i % 9));
+        }
+        raw.push_str("2026-06-05T10:05:01 ERROR db pool exhausted at pool.rs:88\n");
+        for i in 400..800 {
+            raw.push_str(&format!("2026-06-05T10:06:{} INFO handled request {i} ok\n", i % 60));
+        }
+        let res = filter(&raw, &FilterConfig { kind: OutputKind::Log, ..Default::default() });
+        // Error preserved; the two big runs fold to a couple of lines.
+        assert!(res.summary.contains("ERROR db pool exhausted"));
+        assert!(res.summary.contains("(×"));
+        // Massive reduction: from 801 lines to a handful.
+        assert!(res.kept_lines < 8, "expected tiny summary, got {} lines", res.kept_lines);
+        assert!(res.raw_lines == 801);
+    }
+
+    #[test]
+    fn normalize_template_collapses_numbers() {
+        assert_eq!(normalize_template("request 12 in 4ms"), normalize_template("request 999 in 7ms"));
+        assert_ne!(normalize_template("get /users"), normalize_template("get /posts"));
     }
 
     #[test]

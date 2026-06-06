@@ -69,9 +69,17 @@ meaningful. The pipeline:
    stack frames next, warnings, then summary/status lines, then file paths.
 4. **Select** the head, the tail, and *every high-signal line* — so an error
    buried deep in otherwise-noisy output is never silently dropped.
-5. **Dedup** runs of identical lines into a `(×N)` marker.
+5. **Fold** near-identical lines by *normalized template* (digits/hex → `#`)
+   into one representative `(×N)` — so 800 `handled request <n> in <m>ms`
+   log lines collapse to a single line. (Borrowed from headroom's
+   `_dedupe_similar`, Apache-2.0.)
 6. **Cap** to a line budget (`--budget`) and an optional token budget
    (`--token-budget`), marking elided spans explicitly: `… [N lines elided] …`.
+
+High-signal lines (errors/warnings/panics) are always kept verbatim; only
+lower-signal noise is folded, so a failure buried in a flood of logs survives.
+On a 17k-token, 800-line service log with one buried error, this yields a
+~70-token, 3-line summary.
 
 `json` payloads get a structural skeleton (shape, key types, array lengths) with
 error/status/message/code fields surfaced verbatim. `diff` payloads keep file and
@@ -128,8 +136,36 @@ modifications — see `assets/filters/NOTICE`. Each rule keeps its upstream inli
 `[[tests.*]]` golden cases, which run as part of h5i's test suite (145 cases) to
 prove the port stays faithful.
 
-Still deferred: `git status`/`git log` adapters, npm/jest/vitest, and a
-trust-gated project-local `.h5i/filters.toml` for user-defined rules.
+#### Project-local rules (trust-gated)
+
+A repo can ship its own rules in `.h5i/filters.toml` (same schema), applied
+*before* the built-ins so a project can override. Because that file is untrusted
+input — a malicious rule could `match_output` a fixed `"ok"` and hide a real
+failure — it is applied **only after you trust its current content**:
+
+```bash
+h5i objects trust            # review the rules (risky ones flagged) + trust them
+h5i objects trust --status   # show: NoFile / Untrusted / Changed / Trusted
+h5i objects trust --remove   # stop applying project rules
+```
+
+`capture run` prints a warning and falls back to built-ins when the file is
+untrusted or has changed since it was trusted (any edit re-arms the gate). The
+trusted content hash is stored in `.git/.h5i/trusted_filters.json` (local, never
+shared). `H5I_TRUST_FILTERS=1` overrides the gate for CI. The review step flags
+rules whose `match_output` lacks an `unless` guard, since those can replace real
+output with a fixed message.
+
+Still deferred: `git status`/`git log` adapters and npm/jest/vitest.
+
+#### Provenance of borrowed ideas
+
+The declarative engine and rule set come from **rtk** (Apache-2.0); the log
+template-folding is from **headroom** (Apache-2.0). Both are license-compatible
+with h5i (Apache-2.0) and credited in `assets/filters/NOTICE` / module docs.
+**context-mode** is under the Elastic License 2.0 (source-available, not
+permissive), so no code was copied from it — only generic techniques h5i already
+implements independently (byte-safe truncation, retrieval pointers).
 
 ## Lifetime & space
 

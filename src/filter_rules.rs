@@ -25,11 +25,12 @@
 //! executes every one, which is how we prove the port matches rtk's behavior.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use regex::{Regex, RegexSet};
 use rust_embed::RustEmbed;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The built-in rule files, embedded at compile time from `assets/filters/`.
 #[derive(RustEmbed)]
@@ -405,15 +406,157 @@ fn command_string(cmd: &[String]) -> String {
     }
 }
 
-/// Summarize `output` using the first built-in rule that matches `cmd`.
-/// Returns `(summary, matched_filter_name)`, or `None` to fall back.
-pub fn summarize_with_rules(cmd: &[String], output: &str) -> Option<(String, String)> {
+/// Summarize `output` using the first matching rule. `trusted_project_file`, when
+/// `Some`, is a path to a *trust-verified* `.h5i/filters.toml` whose rules are
+/// tried **before** the built-ins (so a project can override). The caller is
+/// responsible for the trust check (see [`trust_status`]); this function never
+/// loads an untrusted file. Returns `(summary, matched_name)`, or `None`.
+pub fn summarize_with_rules(
+    cmd: &[String],
+    output: &str,
+    trusted_project_file: Option<&Path>,
+) -> Option<(String, String)> {
     let command = command_string(cmd);
     if command.is_empty() {
         return None;
     }
+    // Project-local rules first (already trust-checked by the caller).
+    if let Some(pf) = trusted_project_file {
+        if let Ok(text) = std::fs::read_to_string(pf) {
+            if let Ok(filters) = parse_file(&text) {
+                if let Some(f) = filters.iter().find(|f| f.match_regex.is_match(&command)) {
+                    return Some((apply_filter(f, output), format!("{} (project)", f.name)));
+                }
+            }
+        }
+    }
     let filter = registry().find(&command)?;
     Some((apply_filter(filter, output), filter.name.clone()))
+}
+
+// ── Trust-gated project-local rules ──────────────────────────────────────────
+//
+// A repo may ship `.h5i/filters.toml` with its own rules. That file is untrusted
+// input: a malicious rule could use `match_output` to hide real failures (e.g.
+// always print "ok"), tricking an agent. So project rules are applied ONLY after
+// the user has explicitly trusted the file's *current* content; any later edit
+// re-arms the gate. Set `H5I_TRUST_FILTERS=1` to override (CI/automation).
+
+/// Path to a project's local rule file (in the working tree, not `.git`).
+pub fn project_filters_path(workdir: &Path) -> PathBuf {
+    workdir.join(".h5i").join("filters.toml")
+}
+
+fn trust_record_path(h5i_root: &Path) -> PathBuf {
+    h5i_root.join("trusted_filters.json")
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct TrustRecord {
+    path: String,
+    sha256: String,
+}
+
+/// Trust state of a project's `.h5i/filters.toml`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustStatus {
+    /// No project rule file present.
+    NoFile,
+    /// File present but never trusted.
+    Untrusted,
+    /// File changed since it was trusted (re-review required).
+    Changed,
+    /// File matches the trusted hash.
+    Trusted,
+    /// `H5I_TRUST_FILTERS` is set — applied without a stored hash.
+    EnvOverride,
+}
+
+fn env_trust_override() -> bool {
+    std::env::var("H5I_TRUST_FILTERS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Compute the current trust status of the project rule file.
+pub fn trust_status(workdir: &Path, h5i_root: &Path) -> TrustStatus {
+    let p = project_filters_path(workdir);
+    if !p.is_file() {
+        return TrustStatus::NoFile;
+    }
+    if env_trust_override() {
+        return TrustStatus::EnvOverride;
+    }
+    let Ok(content) = std::fs::read(&p) else {
+        return TrustStatus::Untrusted;
+    };
+    let hash = crate::objects::sha256_hex(&content);
+    match read_trust_record(h5i_root) {
+        Some(rec) if rec.sha256 == hash => TrustStatus::Trusted,
+        Some(_) => TrustStatus::Changed,
+        None => TrustStatus::Untrusted,
+    }
+}
+
+fn read_trust_record(h5i_root: &Path) -> Option<TrustRecord> {
+    let raw = std::fs::read_to_string(trust_record_path(h5i_root)).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// Record the current content of the project rule file as trusted. Returns the
+/// hash that was pinned.
+pub fn trust(workdir: &Path, h5i_root: &Path) -> Result<String, String> {
+    let p = project_filters_path(workdir);
+    let content = std::fs::read(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
+    // Validate it parses before trusting, so a broken file can't be pinned.
+    let text = String::from_utf8_lossy(&content);
+    parse_file(&text).map_err(|e| format!("{} is not a valid rule file: {e}", p.display()))?;
+    let hash = crate::objects::sha256_hex(&content);
+    let rec = TrustRecord {
+        path: p.display().to_string(),
+        sha256: hash.clone(),
+    };
+    let json = serde_json::to_string_pretty(&rec).map_err(|e| e.to_string())?;
+    std::fs::write(trust_record_path(h5i_root), json)
+        .map_err(|e| format!("write trust record: {e}"))?;
+    Ok(hash)
+}
+
+/// Remove the trust record (project rules will no longer be applied).
+pub fn untrust(h5i_root: &Path) -> Result<(), String> {
+    let p = trust_record_path(h5i_root);
+    if p.exists() {
+        std::fs::remove_file(&p).map_err(|e| format!("remove trust record: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Summary of one rule in a project file, for the `trust` review prompt.
+pub struct RuleSummary {
+    pub name: String,
+    pub match_pattern: String,
+    /// True if the rule has a `match_output` that can short-circuit to a fixed
+    /// message *without* an `unless` guard — i.e. it could mask real failures.
+    pub can_hide_output: bool,
+}
+
+/// Parse a project rule file and describe its rules (for human review before
+/// trusting). Returns an error if the file doesn't parse.
+pub fn describe_file(path: &Path) -> Result<Vec<RuleSummary>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let file: FilterFile = toml::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(file
+        .filters
+        .into_iter()
+        .map(|(name, def)| {
+            let can_hide_output = def.match_output.iter().any(|r| r.unless.is_none());
+            RuleSummary {
+                name,
+                match_pattern: def.match_command,
+                can_hide_output,
+            }
+        })
+        .collect())
 }
 
 /// `(name, description, match_pattern)` for every built-in rule, name-sorted.
@@ -529,7 +672,7 @@ mod tests {
         // gcc is one of the imported rules; an include-chain note is stripped,
         // the error is kept.
         let out = "In file included from /usr/include/stdio.h:42:\nmain.c:10:5: error: use of undeclared identifier 'foo'\n";
-        let res = summarize_with_rules(&["gcc".into(), "main.c".into()], out);
+        let res = summarize_with_rules(&["gcc".into(), "main.c".into()], out, None);
         let (summary, name) = res.expect("gcc rule should match");
         assert_eq!(name, "gcc");
         assert!(summary.contains("error: use of undeclared identifier 'foo'"));
@@ -538,6 +681,6 @@ mod tests {
 
     #[test]
     fn unknown_command_returns_none() {
-        assert!(summarize_with_rules(&["totally-unknown-tool-xyz".into()], "hi").is_none());
+        assert!(summarize_with_rules(&["totally-unknown-tool-xyz".into()], "hi", None).is_none());
     }
 }
