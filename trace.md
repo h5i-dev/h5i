@@ -1357,3 +1357,4 @@ _[Checkpoint: 6a237646 — edited src/mcp.rs; edited src/mcp.rs; edited docs/tok
 _[Checkpoint: 6a237a73 — expanded rule coverage 59->74 (JS/Python/Go/container)]_
 ---
 
+[01:40:08] OBSERVE: read bm6h2eh9p.output
