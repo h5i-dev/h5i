@@ -1546,3 +1546,9 @@ _[Checkpoint: 6a2387e0 — edited src/mcp.rs; edited src/objects.rs; edited test
 _[Checkpoint: 6a238924 — slice 2 parsers + docs done]_
 ---
 
+
+
+---
+_[Checkpoint: 6a238941 — edited src/structured.rs; edited src/structured.rs; edited docs/token-reduction.md]_
+---
+
