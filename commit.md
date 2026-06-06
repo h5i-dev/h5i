@@ -1382,3 +1382,16 @@ src/structured.rs: ToolResult/Finding/Location + Status/Severity/FindingKind/Par
 
 ---
 
+## Commit 6a23811a — 2026-06-06 02:08 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+src/structured.rs: ToolResult/Finding/Location + Status/Severity/FindingKind/ParserConfidence enums; render_json (canonical) + render_yaml (compact, dep-free); fingerprint (digit-normalized, stable across line shifts); Status::from_exit never passes on nonzero; cap 20 findings/4KiB. Parsers pytest + cargo test, decline-to-None when anchors absent. 11 tests, ALL_GREEN, clippy clean. NEXT: wire capture run (structured default + --format json|summary), Manifest.structured + recall --status/--tool, MCP returns structured; add go/tsc/ruff/eslint/mypy parsers + generic fallback.
+
+### This Commit's Contribution
+
+
+---
+
