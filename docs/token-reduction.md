@@ -137,12 +137,15 @@ h5i objects pull     # fetch + union-merge that ref, cache blobs locally
 ```
 
 This is deliberately separate from the metadata `h5i push` (raw output is
-heavy). Once a teammate has pushed, `h5i recall object <id>` **falls back to the
-git-ref store** when the blob is missing locally — fetching and caching it
-transparently. Blobs are content-addressed, so reconciling two clones is a plain
-set-union; nothing is overwritten. The `Backend` trait (`has`/`put`/`get`/
-`remove` by sha256) is the extension point — an S3/HTTP or git-lfs backend can
-plug in the same way.
+heavy). `h5i objects pull` fetches shared blobs, caches them locally, and
+union-merges your local `refs/h5i/objects-data`. After that, `h5i recall object
+<id>` **falls back to the local git-ref store** if a cached blob was evicted — it
+does *not* reach out to the remote on demand, so run `h5i objects pull` first
+(the "absent" error tells you to). Blobs are content-addressed, so reconciling
+two clones is a plain set-union and any tampered entry (bytes that don't hash to
+their key) is rejected on get/merge/cache; nothing is overwritten. The `Backend`
+trait (`has`/`put`/`get`/`remove` by sha256) is the extension point — an S3/HTTP
+or git-lfs backend can plug in the same way.
 
 ### Tracking captures by branch / files / diff
 

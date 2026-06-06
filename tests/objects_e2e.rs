@@ -217,6 +217,51 @@ fn divergent_object_logs_union_merge_on_pull() {
     assert_eq!(b.manifest_count(), 3, "re-pull must not duplicate manifests");
 }
 
+// ── git-ref blob store: share raw, merge-before-push (no clobber) ──────────────
+
+#[test]
+fn objects_push_merges_and_shares_blobs_across_clones() {
+    let (_root, a, b) = two_clones();
+
+    // a shares X (manifest + raw blob).
+    let cx = a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", "echo XXXX"]);
+    let idx = first_id(&stderr(&cx)).expect("id x");
+    a.h5i_ok(&["push", "--remote", "origin"]);
+    a.h5i_ok(&["objects", "push", "--remote", "origin"]);
+
+    // b learns of X, captures Y, and shares Y's blob. `objects push` must
+    // fetch+union-merge the remote first, so it CANNOT clobber a's blob X.
+    b.h5i_ok(&["pull", "--remote", "origin"]);
+    let cy = b.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", "echo YYYY"]);
+    let idy = first_id(&stderr(&cy)).expect("id y");
+    b.h5i_ok(&["push", "--remote", "origin"]);
+    b.h5i_ok(&["objects", "push", "--remote", "origin"]);
+
+    // b never had X's raw locally; the merge-before-push brought it in, so b can
+    // recall X — proof the push did not clobber the remote set.
+    let rx = b.h5i_ok(&["recall", "object", &idx]);
+    assert_eq!(stdout(&rx), "XXXX\n", "X must survive b's objects push (no clobber)");
+
+    // a pulls manifests + blobs and can now recall Y, which it never captured.
+    a.h5i_ok(&["pull", "--remote", "origin"]);
+    a.h5i_ok(&["objects", "pull", "--remote", "origin"]);
+    let ry = a.h5i_ok(&["recall", "object", &idy]);
+    assert_eq!(stdout(&ry), "YYYY\n", "Y must be recoverable on a after objects pull");
+}
+
+#[test]
+fn objects_pull_is_graceful_when_nothing_shared() {
+    let (_root, a) = single();
+    // Nobody has pushed refs/h5i/objects-data → pull should succeed (exit 0)
+    // with a friendly note rather than failing on a missing remote ref.
+    let out = a.h5i_ok(&["objects", "pull", "--remote", "origin"]);
+    assert!(
+        stdout(&out).to_lowercase().contains("no shared raw blobs"),
+        "expected a friendly empty-store message, got: {}",
+        stdout(&out)
+    );
+}
+
 // ── gc lifetime: raw evicted, summary kept ────────────────────────────────────
 
 #[test]

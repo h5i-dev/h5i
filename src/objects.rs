@@ -1012,6 +1012,14 @@ impl Backend for GitRefStore<'_> {
     }
 
     fn put(&self, hex: &str, bytes: &[u8]) -> Result<(), H5iError> {
+        // Enforce the content address: never store bytes under a digest that
+        // isn't their sha256 (a corrupt store would poison `recall`).
+        let actual = sha256_hex(bytes);
+        if actual != hex {
+            return Err(H5iError::Internal(format!(
+                "objects-data put: content hash {actual} != key {hex}"
+            )));
+        }
         if self.has(hex) {
             return Ok(()); // content-addressed → idempotent
         }
@@ -1027,7 +1035,15 @@ impl Backend for GitRefStore<'_> {
             return Ok(None);
         };
         let blob = self.repo.find_blob(entry.id())?;
-        Ok(Some(blob.content().to_vec()))
+        let bytes = blob.content().to_vec();
+        // Verify before returning — a tampered ref must never yield bytes that
+        // don't match the requested digest (and must not be cached downstream).
+        if sha256_hex(&bytes) != hex {
+            return Err(H5iError::Internal(format!(
+                "objects-data get: stored bytes for {hex} fail content-address check (corrupt ref)"
+            )));
+        }
+        Ok(Some(bytes))
     }
 
     fn remove(&self, hex: &str) -> Result<(), H5iError> {
@@ -1061,24 +1077,30 @@ pub fn mirror_local_to_gitref(repo: &Repository, h5i_root: &Path) -> Result<usiz
 }
 
 /// Copy every blob in the git-ref store into the local store (so `recall` is
-/// fast and works offline). Returns the number newly written locally.
-pub fn mirror_gitref_to_local(repo: &Repository, h5i_root: &Path) -> Result<usize, H5iError> {
+/// fast and works offline). Returns `(written, skipped_corrupt)` — an entry
+/// whose bytes don't hash to its name is skipped, never cached under the
+/// trusted digest path.
+pub fn mirror_gitref_to_local(repo: &Repository, h5i_root: &Path) -> Result<(usize, usize), H5iError> {
     let local = LocalStore::new(h5i_root);
     let Some(tree) = GitRefStore::new(repo).tip_tree() else {
-        return Ok(0);
+        return Ok((0, 0));
     };
-    let mut written = 0;
+    let (mut written, mut skipped) = (0, 0);
     for entry in tree.iter() {
         let Some(hex) = entry.name() else { continue };
         if !is_hex64(hex) || local.has(hex) {
             continue;
         }
         if let Ok(blob) = repo.find_blob(entry.id()) {
+            if sha256_hex(blob.content()) != hex {
+                skipped += 1; // corrupt/tampered entry — do not cache
+                continue;
+            }
             local.put(hex, blob.content())?;
             written += 1;
         }
     }
-    Ok(written)
+    Ok((written, skipped))
 }
 
 /// Union two divergent [`OBJECTS_DATA_REF`] tips: blobs are content-addressed,
@@ -1094,8 +1116,14 @@ pub fn union_merge_data_commits(
     let mut builder = repo.treebuilder(local_commit.tree().ok().as_ref())?;
     if let Ok(inc_tree) = incoming_commit.tree() {
         for entry in inc_tree.iter() {
-            if let Some(name) = entry.name() {
-                if builder.get(name)?.is_none() {
+            let Some(name) = entry.name() else { continue };
+            if builder.get(name)?.is_some() {
+                continue; // already have this digest (content-addressed → identical)
+            }
+            // Only union in incoming entries that actually hash to their name —
+            // never let a corrupt/tampered side poison the merged store.
+            if let Ok(blob) = repo.find_blob(entry.id()) {
+                if is_hex64(name) && sha256_hex(blob.content()) == name {
                     builder.insert(name, entry.id(), 0o100644)?;
                 }
             }
@@ -1567,6 +1595,59 @@ mod tests {
         assert!(store.has(&hex));
         store.remove(&hex).unwrap();
         assert!(!store.has(&hex));
+    }
+
+    #[test]
+    fn git_ref_store_put_rejects_mismatched_digest() {
+        let (_dir, repo, _root) = setup();
+        let store = GitRefStore::new(&repo);
+        // The key isn't sha256(bytes) → must be refused, never stored.
+        let err = store.put(&"a".repeat(64), b"some bytes").unwrap_err();
+        assert!(format!("{err}").contains("content hash"), "{err}");
+        assert!(!store.has(&"a".repeat(64)));
+    }
+
+    // Build a tampered objects-data ref: a valid-looking hex name whose bytes
+    // do NOT hash to it.
+    fn craft_corrupt_data_ref(repo: &Repository, name: &str, bytes: &[u8]) {
+        let blob = repo.blob(bytes).unwrap();
+        let mut b = repo.treebuilder(None).unwrap();
+        b.insert(name, blob, 0o100644).unwrap();
+        let tree = repo.find_tree(b.write().unwrap()).unwrap();
+        let sig = git2::Signature::now("t", "t@t").unwrap();
+        let oid = repo.commit(None, &sig, &sig, "tamper", &tree, &[]).unwrap();
+        repo.reference(OBJECTS_DATA_REF, oid, true, "tamper").unwrap();
+    }
+
+    #[test]
+    fn git_ref_store_get_rejects_corrupt_entry() {
+        let (_dir, repo, _root) = setup();
+        let name = "0".repeat(64); // valid hex64, but not the hash of the bytes
+        craft_corrupt_data_ref(&repo, &name, b"tampered bytes");
+        let err = GitRefStore::new(&repo).get(&name).unwrap_err();
+        assert!(format!("{err}").contains("content-address"), "{err}");
+    }
+
+    #[test]
+    fn union_merge_drops_corrupt_incoming_entries() {
+        let (_dir, repo, _root) = setup();
+        // local: one valid blob.
+        let good = sha256_hex(b"good");
+        GitRefStore::new(&repo).put(&good, b"good").unwrap();
+        let local = repo.refname_to_id(OBJECTS_DATA_REF).unwrap();
+        // incoming: a separate commit carrying only a corrupt (name != hash) entry.
+        let bad = "f".repeat(64);
+        let blob = repo.blob(b"evil").unwrap();
+        let mut b = repo.treebuilder(None).unwrap();
+        b.insert(&bad, blob, 0o100644).unwrap();
+        let tree = repo.find_tree(b.write().unwrap()).unwrap();
+        let sig = git2::Signature::now("t", "t@t").unwrap();
+        let incoming = repo.commit(None, &sig, &sig, "evil", &tree, &[]).unwrap();
+
+        let merged = union_merge_data_commits(&repo, local, incoming).unwrap();
+        let mtree = repo.find_commit(merged).unwrap().tree().unwrap();
+        assert!(mtree.get_name(&good).is_some(), "valid entry must be kept");
+        assert!(mtree.get_name(&bad).is_none(), "corrupt entry must be dropped");
     }
 
     #[test]

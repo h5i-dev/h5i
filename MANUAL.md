@@ -727,10 +727,13 @@ h5i objects push --remote upstream
 ```
 
 These are deliberate, separate from the metadata `h5i push` (raw output is
-heavy). After a teammate runs `h5i objects push`, `h5i recall object <id>`
-**falls back to the git-ref store** when the blob is absent locally — fetching
-and caching it transparently. Because blobs are content-addressed, pulling two
-divergent sides is a simple set-union; nothing is ever overwritten.
+heavy). `h5i objects pull` fetches the shared blobs, caches them into the local
+store, and union-merges the local `refs/h5i/objects-data`. After that,
+`h5i recall object <id>` **falls back to the local git-ref store** if a cached
+blob was later evicted — it does *not* fetch from the remote on demand, so you
+must `h5i objects pull` first (the "absent" error says so). Because blobs are
+content-addressed, merging two divergent sides is a simple set-union and
+content-address checks reject any tampered entry; nothing is ever overwritten.
 
 > The `Backend` trait (`has`/`put`/`get`/`remove` by sha256) is the extension
 > point: the git-ref store is the built-in shareable backend; an S3/HTTP or

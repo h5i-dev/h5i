@@ -3415,6 +3415,61 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
     })
 }
 
+/// True if `remote` advertises the [`objects::OBJECTS_DATA_REF`] ref.
+fn remote_has_objects_data(workdir: &std::path::Path, remote: &str) -> bool {
+    std::process::Command::new("git")
+        .args(["ls-remote", remote, h5i_core::objects::OBJECTS_DATA_REF])
+        .current_dir(workdir)
+        .output()
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+/// Fetch the remote `objects-data` ref and union-merge it into the local one
+/// (content-addressed → set union; corrupt incoming entries are dropped by
+/// [`h5i_core::objects::union_merge_data_commits`]). Returns `false` (no-op) when the
+/// remote has no such ref yet. Shared by `objects push` (merge-before-push, so a
+/// non-force push can't clobber a peer) and `objects pull`.
+fn fetch_merge_objects_data(
+    git: &git2::Repository,
+    workdir: &std::path::Path,
+    remote: &str,
+) -> anyhow::Result<bool> {
+    if !remote_has_objects_data(workdir, remote) {
+        return Ok(false);
+    }
+    let tmp = "refs/h5i/_incoming/objects-data";
+    let spec = format!("+{}:{}", h5i_core::objects::OBJECTS_DATA_REF, tmp);
+    let fetched = std::process::Command::new("git")
+        .args(["fetch", remote, &spec])
+        .current_dir(workdir)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !fetched {
+        anyhow::bail!("git fetch of {} from {remote} failed", h5i_core::objects::OBJECTS_DATA_REF);
+    }
+    if let Ok(incoming) = git.refname_to_id(tmp) {
+        match git.refname_to_id(h5i_core::objects::OBJECTS_DATA_REF).ok() {
+            None => {
+                git.reference(h5i_core::objects::OBJECTS_DATA_REF, incoming, true, "h5i objects pull")?;
+            }
+            Some(local) if local != incoming => {
+                let merged = h5i_core::objects::union_merge_data_commits(git, local, incoming)?;
+                git.reference(
+                    h5i_core::objects::OBJECTS_DATA_REF,
+                    merged,
+                    true,
+                    "h5i objects pull (union)",
+                )?;
+            }
+            Some(_) => {}
+        }
+        let _ = git.find_reference(tmp).and_then(|mut r| r.delete());
+    }
+    Ok(true)
+}
+
 /// One row in a noun-group help table.
 struct NounVerb {
     verb: &'static str,
@@ -6998,16 +7053,29 @@ jq -c '{
                             style("ℹ").dim()
                         );
                     } else {
+                        // Incorporate any remote blobs FIRST (union-merge), so a
+                        // force-free push can't clobber a peer's blobs.
+                        fetch_merge_objects_data(git, workdir, &remote)?;
                         print!("  {} {} … ", style("→").dim(), style(&remote).cyan());
                         std::io::stdout().flush()?;
-                        let spec = format!("+{0}:{0}", objects::OBJECTS_DATA_REF);
+                        // Non-force: after the merge our ref descends from the
+                        // remote tip, so a fast-forward push succeeds; a reject
+                        // means the remote moved under us — re-run, don't clobber.
+                        let spec = format!("{0}:{0}", objects::OBJECTS_DATA_REF);
                         let ok = std::process::Command::new("git")
                             .args(["push", &remote, &spec])
                             .current_dir(workdir)
                             .status()
                             .map(|s| s.success())
                             .unwrap_or(false);
-                        println!("{}", if ok { style("ok").green() } else { style("failed").red() });
+                        if ok {
+                            println!("{}", style("ok").green());
+                        } else {
+                            println!(
+                                "{} (remote moved? run `h5i objects pull`, then push again)",
+                                style("failed").red()
+                            );
+                        }
                     }
                 }
 
@@ -7015,38 +7083,26 @@ jq -c '{
                     let workdir = git
                         .workdir()
                         .ok_or_else(|| anyhow::anyhow!("h5i objects pull requires a working tree"))?;
-                    // Fetch the remote data ref into a temp ref, then union-merge
-                    // (content-addressed → set union) and cache blobs locally.
-                    let tmp = "refs/h5i/_incoming/objects-data";
-                    let spec = format!("+{}:{}", objects::OBJECTS_DATA_REF, tmp);
-                    let fetched = std::process::Command::new("git")
-                        .args(["fetch", &remote, &spec])
-                        .current_dir(workdir)
-                        .status()
-                        .map(|s| s.success())
-                        .unwrap_or(false);
-                    if !fetched {
-                        anyhow::bail!("git fetch of {} from {remote} failed", objects::OBJECTS_DATA_REF);
-                    }
-                    if let Ok(incoming) = git.refname_to_id(tmp) {
-                        match git.refname_to_id(objects::OBJECTS_DATA_REF).ok() {
-                            None => {
-                                git.reference(objects::OBJECTS_DATA_REF, incoming, true, "h5i objects pull")?;
+                    // Graceful when nobody has shared raw blobs yet (optional backend).
+                    if !fetch_merge_objects_data(git, workdir, &remote)? {
+                        println!(
+                            "{} no shared raw blobs found on {}",
+                            style("ℹ").dim(),
+                            style(&remote).cyan()
+                        );
+                    } else {
+                        let (cached, skipped) = objects::mirror_gitref_to_local(git, &h5i_root)?;
+                        println!(
+                            "{} pulled raw blobs · {} cached locally{}",
+                            style("✔").green(),
+                            cached,
+                            if skipped > 0 {
+                                format!(" · {skipped} skipped (failed content-address check)")
+                            } else {
+                                String::new()
                             }
-                            Some(local) if local != incoming => {
-                                let merged = objects::union_merge_data_commits(git, local, incoming)?;
-                                git.reference(objects::OBJECTS_DATA_REF, merged, true, "h5i objects pull (union)")?;
-                            }
-                            Some(_) => {}
-                        }
-                        let _ = git.find_reference(tmp).and_then(|mut r| r.delete());
+                        );
                     }
-                    let cached = objects::mirror_gitref_to_local(git, &h5i_root)?;
-                    println!(
-                        "{} pulled raw blobs · {} cached locally",
-                        style("✔").green(),
-                        cached,
-                    );
                 }
             }
         }
