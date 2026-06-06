@@ -1080,3 +1080,9 @@ _[Checkpoint: 6a23646e — edited docs/token-reduction.md; edited docs/token-red
 _[Checkpoint: 6a236686 — comprehensive token-reduction test coverage]_
 ---
 
+
+
+---
+_[Checkpoint: 6a236691 — edited tests/filter_quality.rs; wrote tests/objects_e2e.rs; edited tests/cli_integration.rs]_
+---
+

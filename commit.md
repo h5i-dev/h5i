@@ -1044,3 +1044,16 @@ tests/filter_quality.rs (8): token-cut ratios + info-retention across pytest/car
 
 ---
 
+## Commit 6a236691 — 2026-06-06 00:15 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+tests/filter_quality.rs (8): token-cut ratios + info-retention across pytest/cargo/json/noisy-log/gcc-rule/generic + lossless-raw-in-store guarantee. tests/objects_e2e.rs (6): capture→ref+rehydrate, exit-code passthrough, push/pull manifest travel w/ raw local-only absent, divergent union-merge idempotent, ttl-gc evicts raw keeps summary, persistence. Fixed setup-remote refspec count (5→6). All suites green (~729 tests).
+
+### This Commit's Contribution
+
+
+---
+
