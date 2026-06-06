@@ -1561,3 +1561,4 @@ _[Checkpoint: 6a238941 — edited src/structured.rs; edited src/structured.rs; e
 [02:44:56] ACT: edited src/main.rs
 [02:45:01] NOTE: Reviewed structured parser slice 2: tests pass, but requested go-test build-failure guard and reiterated slice 1 structured/CLI/truncation blockers.
 [02:45:01] OBSERVE: searched src/structured.rs for "test|tsc|eslint|ruff|mypy|diag_result|parse_""
+[02:45:01] OBSERVE: read src/structured.rs
