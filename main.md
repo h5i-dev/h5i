@@ -439,11 +439,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited MANUAL.md; edited src/pr.rs
 - [x] git-ref store: optional shareable raw-blob backend
 - [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/token-reduction.md
+- [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/token-reduction.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 04:27 UTC] `update-doc-with-i5h`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/token-reduction.md
 - [2026-06-06 04:26 UTC] `update-doc-with-i5h`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/token-reduction.md
 - [2026-06-06 04:26 UTC] `update-doc-with-i5h`: git-ref store: optional shareable raw-blob backend
 - [2026-06-06 04:09 UTC] `update-doc-with-i5h`: edited MANUAL.md; edited src/pr.rs
