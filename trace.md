@@ -2132,3 +2132,4 @@ _[Checkpoint: 6a23f8da — edited src/main.rs; edited src/lfs.rs; edited MANUAL.
 _[Checkpoint: 6a23f8e2 — edited src/main.rs; edited src/lfs.rs; edited MANUAL.md]_
 ---
 
+[11:45:03] NOTE: DEFERRAL (~/Dev/h5i/MANUAL.md): lean at 46 commits, with only the live-LFS integration test deferred until a real remote is available. Nothing to reply to; the review cycle is fully …
