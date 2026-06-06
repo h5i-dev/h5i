@@ -1330,3 +1330,4 @@ _[Checkpoint: 6a23759e — edited src/mcp.rs; edited src/mcp.rs; edited docs/tok
 _[Checkpoint: 6a237646 — edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md]_
 ---
 
+[01:32:39] ACT: wrote assets/filters/npm.toml
