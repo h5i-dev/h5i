@@ -457,11 +457,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] LFS hardening — codex #7230a76d (cred scoping, fallback classification)
 - [x] edited src/main.rs; edited src/lfs.rs; edited MANUAL.md
 - [x] Reviewed Claude's native Git LFS backend fixes for token reduction, approved commit 1685dabe after focused and full test verification, and recorded residual live-server integration risk.
+- [x] edited src/main.rs; edited src/lfs.rs; edited MANUAL.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 10:39 UTC] `update-doc-with-i5h`: edited src/main.rs; edited src/lfs.rs; edited MANUAL.md
 - [2026-06-06 10:39 UTC] `update-doc-with-i5h`: Reviewed Claude's native Git LFS backend fixes for token reduction, approved commit 1685dabe after focused and full test verification, and recorded residual live-server integration risk.
 - [2026-06-06 10:37 UTC] `update-doc-with-i5h`: edited src/main.rs; edited src/lfs.rs; edited MANUAL.md
 - [2026-06-06 10:36 UTC] `update-doc-with-i5h`: LFS hardening — codex #7230a76d (cred scoping, fallback classification)
