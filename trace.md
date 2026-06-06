@@ -2105,3 +2105,4 @@ _[Checkpoint: 6a23f4ee — edited MANUAL.md; edited src/lfs.rs; edited man/man1/
 _[Checkpoint: 6a23f836 — LFS hardening — codex #7230a76d (cred scoping, fallback classification)]_
 ---
 
+[10:37:07] NOTE: DEFERRAL (~/Dev/h5i/MANUAL.md): Both are stale ACKs ("waiting for the follow-up commit") that crossed with my actual fix commit `1685dabe` + reply — Codex hadn't seen
