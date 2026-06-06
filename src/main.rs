@@ -6316,8 +6316,18 @@ jq -c '{
                         use h5i_core::filter_rules::{self, TrustStatus};
                         match filter_rules::trust_status(workdir, &h5i_root) {
                             TrustStatus::Trusted | TrustStatus::EnvOverride => {
-                                cfg.project_filters =
-                                    Some(filter_rules::project_filters_path(workdir));
+                                // We've decided to apply project rules — make sure
+                                // they actually load, rather than silently falling
+                                // back to built-ins on a parse error (possible
+                                // under H5I_TRUST_FILTERS or a filesystem race).
+                                let pf = filter_rules::project_filters_path(workdir);
+                                match filter_rules::describe_file(&pf) {
+                                    Ok(_) => cfg.project_filters = Some(pf),
+                                    Err(e) => eprintln!(
+                                        "{} trusted .h5i/filters.toml failed to load — using built-ins only: {e}",
+                                        style("warning:").yellow().bold()
+                                    ),
+                                }
                             }
                             TrustStatus::Untrusted => eprintln!(
                                 "{} project .h5i/filters.toml is untrusted — not applied. Review with `h5i objects trust`.",

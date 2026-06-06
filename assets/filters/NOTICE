@@ -32,7 +32,8 @@ contributors.
 h5i's log line-folding (`token_filter::normalize_template` / `summarize_scored`)
 is additionally derived from **headroom**:
 
-    headroom — https://github.com/ (Apache License, Version 2.0)
+    headroom — https://github.com/chopratejas/headroom
+    Licensed under the Apache License, Version 2.0
 
 specifically the normalized "dedupe similar" idea (collapse lines that differ
 only by numbers/ids into one representative with a count). Only the technique was

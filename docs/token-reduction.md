@@ -179,8 +179,10 @@ Still deferred: `git status`/`git log` adapters and npm/jest/vitest.
 
 #### Provenance of borrowed ideas
 
-The declarative engine and rule set come from **rtk** (Apache-2.0); the log
-template-folding is from **headroom** (Apache-2.0). Both are license-compatible
+The declarative engine and rule set come from **rtk**
+(<https://github.com/rtk-ai/rtk>, Apache-2.0); the log template-folding technique
+is from **headroom** (<https://github.com/chopratejas/headroom>, Apache-2.0). Both
+are license-compatible
 with h5i (Apache-2.0) and credited in `assets/filters/NOTICE` / module docs.
 **context-mode** is under the Elastic License 2.0 (source-available, not
 permissive), so no code was copied from it — only generic techniques h5i already

@@ -350,8 +350,13 @@ impl Registry {
     fn load() -> Registry {
         let mut filters = Vec::new();
         let mut errors = Vec::new();
-        // Deterministic order: sort embedded files by path so first-match-wins
-        // is stable across runs/platforms.
+        // Iterate files in a stable (path-sorted) order, then — below — sort all
+        // compiled filters by name. This reproduces rtk's effective match order:
+        // rtk concatenates every rule file into one TOML parsed into a single
+        // `BTreeMap<name, _>`, so its first-match-wins is global-alphabetical by
+        // filter name. We match that exactly. (Built-in `match_command` patterns
+        // are anchored per tool — `^gcc\b`, `^make\b`, … — so cross-rule overlap
+        // is rare; the name order only matters if two patterns ever overlap.)
         for path in rule_paths() {
             let Some(file) = BuiltinFilters::get(&path) else {
                 continue;
@@ -365,7 +370,7 @@ impl Registry {
                 Err(e) => errors.push((path.clone(), e)),
             }
         }
-        // Stable order by filter name (each file may define more than one).
+        // Global name-sort = rtk's concatenated-BTreeMap order (see above).
         filters.sort_by(|a, b| a.name.cmp(&b.name));
         Registry { filters, errors }
     }
@@ -682,5 +687,46 @@ mod tests {
     #[test]
     fn unknown_command_returns_none() {
         assert!(summarize_with_rules(&["totally-unknown-tool-xyz".into()], "hi", None).is_none());
+    }
+
+    /// `match_command` routing for common invocations — guards against a broken
+    /// regex (e.g. the gradle rule once required `gradlew` twice and matched
+    /// nothing). Golden tests exercise `apply_filter` only, so routing needs its
+    /// own coverage.
+    #[test]
+    fn known_commands_route_to_expected_rules() {
+        let cases: &[(&[&str], &str)] = &[
+            (&["gradle", "build"], "gradle"),
+            (&["gradlew", "build"], "gradle"),
+            (&["./gradlew", "build"], "gradle"),
+            (&["gcc", "-O2", "main.c"], "gcc"),
+            (&["make", "all"], "make"),
+        ];
+        for (cmd, expected) in cases {
+            let argv: Vec<String> = cmd.iter().map(|s| s.to_string()).collect();
+            let hit = registry().find(&command_string(&argv));
+            assert_eq!(
+                hit.map(|f| f.name.as_str()),
+                Some(*expected),
+                "command {cmd:?} should route to rule {expected:?}"
+            );
+        }
+    }
+
+    /// The registry is name-sorted (= rtk's concatenated-BTreeMap order) and has
+    /// no two rules whose `match_command` both match the same sample command —
+    /// i.e. no silent first-match ambiguity for the common cases.
+    #[test]
+    fn registry_is_name_sorted_and_unambiguous() {
+        let reg = registry();
+        let names: Vec<&str> = reg.filters.iter().map(|f| f.name.as_str()).collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "filters must be globally name-sorted");
+
+        for sample in ["gradle build", "gcc main.c", "make all", "terraform plan", "docker build ."] {
+            let n = reg.filters.iter().filter(|f| f.match_regex.is_match(sample)).count();
+            assert!(n <= 1, "command {sample:?} matched {n} rules (ambiguous routing)");
+        }
     }
 }
