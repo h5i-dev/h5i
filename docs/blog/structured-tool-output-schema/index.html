@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>One Schema for Every Tool: Structured Output for AI Agents — h5i</title>
+  <meta name="description" content="Token reduction shrinks tool output; it doesn't make it machine-actionable. h5i adds a unified JSON/YAML result schema — one shape for tests, compilers, linters, and type checkers — so an agent can branch on status, iterate findings, dedupe by fingerprint, and query captures.">
+  <meta name="keywords" content="structured tool output, ai agent tool output schema, unified test result schema, json yaml tool output, machine-readable lint output, h5i toolresult, finding fingerprint, parser confidence, claude code structured output">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/structured-tool-output-schema/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="One Schema for Every Tool: Structured Output for AI Agents">
+  <meta property="og:description" content="A unified JSON/YAML result schema — one shape for tests, compilers, linters, type checkers — that an agent can branch on, dedupe, and query.">
+  <meta property="og:url" content="https://h5i.dev/blog/structured-tool-output-schema/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-06-06">
+  <meta property="article:author" content="Koukyosyumei">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="One Schema for Every Tool: Structured Output for AI Agents">
+  <meta name="twitter:description" content="A unified JSON/YAML result schema — one shape for tests, compilers, linters, type checkers — that an agent can branch on, dedupe, and query.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "One Schema for Every Tool: Structured Output for AI Agents",
+    "description": "h5i adds a unified JSON/YAML result schema on top of token reduction — one shape across tests, compilers, linters, and type checkers — so tool output becomes machine-actionable.",
+    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
+    "datePublished": "2026-06-06",
+    "dateModified": "2026-06-06",
+    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/structured-tool-output-schema/"},
+    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+    "keywords": "structured tool output, unified result schema, json yaml, finding fingerprint, parser confidence, h5i"
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "One Schema for Every Tool: Structured Output for AI Agents", "item": "https://h5i.dev/blog/structured-tool-output-schema/"}]}
+  </script>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/Koukyosyumei/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Design · 2026-06-06</div>
+      <h1>One Schema for Every Tool: Structured Output for AI Agents</h1>
+      <p class="post-deck">
+        Filtering shrinks tool output. It doesn't make it <em>machine-actionable</em>: the agent
+        still has to parse a different free-text shape for pytest, cargo, tsc, eslint, mypy… h5i
+        adds a unified JSON/YAML result schema on top of reduction — one shape across every tool —
+        so the agent can branch on a status, iterate findings, dedupe by fingerprint, and query
+        captures. That schema is what sets h5i apart from text-only reducers.
+      </p>
+      <div class="post-meta">
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 7 min</span>
+        <span><strong>Tags</strong> Structured output · Schema · Tooling</span>
+      </div>
+    </header>
+
+    <p>
+      Token reduction is a real win (see <a href="/blog/token-reduction-object-store/">the object-store
+      post</a>): keep the raw output out-of-band, hand the agent a small summary. Tools like
+      <a href="https://github.com/rtk-ai/rtk">rtk</a> and
+      <a href="https://github.com/chopratejas/headroom">headroom</a> (both Apache-2.0, and the prior
+      art h5i's <em>text</em> filters build on) do this well. But a filtered summary is still
+      <strong>text</strong> — and every tool's text is shaped differently. The agent that wants to
+      know "did it pass, and if not, which test, on what line?" must re-learn pytest's layout, then
+      cargo's, then tsc's. There's nothing to branch on, nothing to dedupe, nothing to query.
+    </p>
+
+    <h2>The idea: one result, every tool</h2>
+
+    <p>
+      h5i parses each tool into a single typed <code>ToolResult</code>. The key realization is that a
+      <strong>failing test, a compile error, and a lint diagnostic are the same shape</strong>: a
+      thing, somewhere, with a message and a severity. So they all become a unified
+      <code>Finding</code>, under one envelope:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>
+      <div class="terminal-body"><pre>tool: pytest
+kind: test            # test | lint | typecheck | build | vcs | generic
+status: failed        # passed | ok | failed | error | unknown
+exit_code: 1
+counts: { failed: 1, passed: 120 }
+parser_confidence: parsed     # parsed | heuristic | generic
+raw_oid: sha256:934f…         # the full output, always recoverable
+findings:
+  - kind: test_failure        # test_failure | diagnostic | build_error | panic | generic
+    severity: failure
+    id: tests/test_auth.py::test_refresh
+    message: assert 0 == 100
+    location: tests/test_auth.py:42
+    fingerprint: 0bb827e4e61a  # stable across line shifts → dedupe / track</pre></div>
+    </div>
+
+    <p>
+      Swap <code>pytest</code> for <code>cargo test</code>, <code>tsc</code>, <code>eslint</code>,
+      <code>ruff</code>, <code>mypy</code>, or <code>go test</code> and you get the
+      <em>same fields</em> — a `rule` for a linter, `expected`/`actual` for an assertion, a
+      `build_error` kind for a compile failure. An agent learns the schema once.
+    </p>
+
+    <h2>Three renders, one source of truth</h2>
+
+    <p>
+      The typed result drives every output format, so they never drift:
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Format</th><th>Shape</th><th>For</th></tr></thead>
+        <tbody>
+          <tr><td><code>compact</code> (default)</td><td>one line per finding</td><td>token-minimal agent reading</td></tr>
+          <tr><td><code>structured</code></td><td>full YAML</td><td>inspection</td></tr>
+          <tr><td><code>json</code></td><td>canonical JSON</td><td>programmatic / the <code>h5i_capture_run</code> MCP tool</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      JSON is canonical — it's what's stored in the git-tracked manifest and what the MCP tool
+      returns — and the compact text and YAML are renders of the same struct. So a capture is a
+      <em>record</em>, not a one-shot log line.
+    </p>
+
+    <h2>What the schema buys an agent</h2>
+
+    <p>Because every capture is the same typed object, an agent (or a human) can <em>act</em> on it:</p>
+
+    <ul>
+      <li><strong>Branch on a field.</strong> <code>status: failed</code> is a boolean decision, not a
+        regex over prose. And it's honest — <code>status</code> is derived from the exit code, never
+        guessed from text, so a passing-looking log on a nonzero exit is still <code>failed</code>.</li>
+      <li><strong>Iterate findings.</strong> Each carries a precise <code>location</code> and
+        <code>message</code> — jump straight to <code>tests/test_auth.py:42</code>.</li>
+      <li><strong>Dedupe / track by fingerprint.</strong> Each finding has a stable
+        <code>fingerprint</code> (a hash of tool + rule + digit-normalized location + message), so
+        "the same failure" is recognizable across runs even as line numbers shift.</li>
+      <li><strong>Query the store.</strong> The result lives in the manifest, so
+        <code>h5i recall objects --status failed --tool pytest</code> works across every capture.</li>
+      <li><strong>Know how much to trust it.</strong> <code>parser_confidence</code> says whether the
+        result was <code>parsed</code> by a dedicated adapter or is a <code>generic</code> fallback.</li>
+    </ul>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>
+      <div class="terminal-body"><pre>$ h5i capture run --format json -- pytest -q | jq '.status, .findings[0].location'
+"failed"
+"tests/test_auth.py:42"
+
+$ h5i recall objects --status failed --tool mypy   # every mypy failure, ever</pre></div>
+    </div>
+
+    <h2>Honest by construction</h2>
+
+    <p>
+      A schema that lies is worse than text. Two rules keep it honest. First, <strong>status comes
+      from the exit code</strong>, never from scraping words like "passed". Second, a parser that
+      can't find its anchors <strong>declines to a <code>generic</code> result</strong> (status from
+      the exit code, the reduced text in <code>body</code>) rather than inventing structure — and
+      says so via <code>parser_confidence: generic</code>. The raw bytes are always one
+      <code>h5i recall object</code> away, so the structure is a <em>view</em>, never the only copy.
+    </p>
+
+    <h2>Where this sits relative to rtk / headroom</h2>
+
+    <p>
+      Credit where it's due: rtk's declarative per-command filters and headroom's log line-folding
+      are excellent at the <em>reduction</em> problem, and h5i reuses both for its text path (see the
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/NOTICE">NOTICE</a>). The unified
+      <code>ToolResult</code> / <code>Finding</code> schema — typed, fingerprinted, queryable, honest
+      about confidence, and identical across tools — is the layer h5i adds on top. Reduction makes
+      the output <em>small</em>; the schema makes it <em>actionable</em>.
+    </p>
+
+    <h2>Coverage</h2>
+
+    <p>
+      Dedicated parsers (rich findings) ship for <strong>pytest, cargo test, go test, tsc, eslint,
+      ruff, and mypy</strong>; every other command gets a valid generic result (honest status +
+      reduced <code>body</code>). Each parser carries golden tests so the schema stays faithful, and
+      adding a tool is just another parser feeding the same shape.
+    </p>
+
+    <div class="next-up">
+      <span class="label">Read next</span>
+      <a href="/blog/token-reduction-object-store/">
+        <h3>Cutting Agent Token Usage 95% by Keeping Tool Output Out of Context</h3>
+        <p>The other half: the content-addressed object store that keeps the raw bytes out of the window.</p>
+      </a>
+      <a href="/guides/token-reduction-capture-run/">
+        <h3>Guide: keep tool output out of your agent's context</h3>
+        <p>Wrap commands, choose a format, recover and query captures, share via LFS.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Give your agent one shape for every tool</h3>
+      <p>h5i is open source — the schema, the parsers, and the object store are all in the repo, no service to subscribe to.</p>
+      <a href="https://github.com/Koukyosyumei/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/" class="btn btn-ghost">Back to docs</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/Koukyosyumei/h5i">GitHub</a>
+      <a href="https://github.com/Koukyosyumei/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>
