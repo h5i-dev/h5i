@@ -26,6 +26,46 @@ away (`h5i recall object <id>`) but never sit in context unless asked for.
         ▼ stored at .git/.h5i/objects/82/bf/82bf…  (rehydrate any time)
 ```
 
+## Structured output (the default)
+
+`h5i capture run` emits a **normalized, AI-friendly structured result** by default —
+one predictable schema across test runners, compilers, linters, and type checkers,
+so an agent learns *one* shape instead of N free-text formats:
+
+```yaml
+tool: pytest
+kind: test
+status: failed          # passed (tests) | ok (other tools) | failed | error | unknown
+exit_code: 1
+counts: { failed: 1, passed: 120 }
+parser_confidence: parsed   # parsed | heuristic | generic
+raw_oid: sha256:934f…       # full output, always recoverable
+findings:
+  - kind: test_failure      # test_failure | diagnostic | build_error | panic | generic
+    severity: failure
+    id: tests/t.py::test_pay
+    message: assert 0 == 100
+    location: tests/t.py:42
+    fingerprint: 0bb827e4e61a   # stable across line shifts → dedupe/query
+```
+
+`--format json` returns the canonical JSON (also what the `h5i_capture_run` MCP
+tool returns); `--format summary` keeps the legacy filtered text. The structured
+result is stored in the manifest, so captures are **queryable**:
+
+```bash
+h5i recall objects --status failed     # everything that failed
+h5i recall objects --tool pytest       # by tool  (compose with --branch/--file)
+```
+
+**Parser coverage.** Dedicated structured parsers (rich `findings`): **pytest,
+cargo test, go test, tsc, eslint, ruff, mypy**. Every other tool falls back to a
+**generic** result — correct `status` from the exit code (never claims success on
+a nonzero exit) plus the reduced text in `body`. Each parser **declines to
+generic when its anchors are missing**, so it never invents structure
+(`parser_confidence` tells the agent how much to trust it). Safety, lossless raw,
+and field caps from the object store all still apply.
+
 ## Everyday use
 
 Wrap any command. h5i runs it, stores the full output, and prints **only** the
