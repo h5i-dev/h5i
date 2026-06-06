@@ -687,7 +687,8 @@ findings:
 
 - **JSON is canonical** — the manifest stores the `ToolResult` as JSON (and the
   `h5i_capture_run` MCP tool returns it under a `structured` field); the CLI
-  default renders compact **YAML** from the same typed struct.
+  **default render is `compact`** (one line per finding), with `--format
+  structured` for the full YAML — all from the same typed struct.
 - **Safety**: `status` is never `passed`/`ok` on a nonzero exit; a parser
   **declines to a generic result** when its anchors are missing (`parser_confidence`
   tells you how much to trust the structure); the raw is always recoverable.

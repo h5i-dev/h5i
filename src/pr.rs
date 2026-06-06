@@ -307,18 +307,25 @@ fn render_duplicate_pass_note() -> String {
 /// run` kept out of the agent's context on this branch (from `refs/h5i/objects`).
 /// Self-omits when there were no captures on the branch or no net saving.
 fn render_token_reduction_section(git: &git2::Repository, branch: &str) -> String {
-    let manifests = crate::objects::read_manifests(git);
+    token_reduction_section_from(&crate::objects::read_manifests(git), branch)
+}
+
+/// Pure core of [`render_token_reduction_section`] — takes the manifests
+/// directly so it can be unit-tested without a git repo.
+fn token_reduction_section_from(manifests: &[crate::objects::Manifest], branch: &str) -> String {
     let mut n = 0usize;
     let mut raw: u64 = 0;
     let mut sum: u64 = 0;
     // tool → (raw, summary, count)
     let mut by_tool: std::collections::BTreeMap<String, (u64, u64, usize)> = Default::default();
-    for m in &manifests {
+    for m in manifests {
         // Only captures taken on this branch.
         if m.branch.as_deref() != Some(branch) {
             continue;
         }
-        let (Some(r), Some(s)) = (m.raw_tokens, m.summary_tokens) else {
+        // Use the DEFAULT agent-facing token count (compact render when
+        // structured), so "kept out of context" matches what the agent saw.
+        let (Some(r), Some(s)) = (m.raw_tokens, m.agent_facing_tokens()) else {
             continue;
         };
         n += 1;
@@ -356,6 +363,9 @@ fn render_token_reduction_section(git: &git2::Repository, branch: &str) -> Strin
         for (tool, (tr, ts, tc)) in rows {
             let tsaved = tr.saturating_sub(*ts);
             let tpct = if *tr > 0 { tsaved * 100 / tr } else { 0 };
+            // Tool names come from argv/basename or manifest kind — untrusted,
+            // so escape like all other PR comment cells.
+            let tool = escape_md(tool);
             s.push_str(&format!("| {tool} | {tc} | {tr} | {ts} | {tpct}% |\n"));
         }
         s.push_str("\n</details>\n\n");
@@ -3640,5 +3650,69 @@ mod tests {
         let line = render_message_line(&m, false, false);
         assert!(!line.contains(&token), "reassembled token leaked: {line}");
         assert!(!line.contains('\u{1b}'), "control byte must be gone: {line}");
+    }
+
+    // ── Token-reduction section ────────────────────────────────────────────────
+    fn manifest_json(branch: &str, kind: &str, raw: u64, summary: u64) -> crate::objects::Manifest {
+        // structured=None → agent_facing_tokens() == summary_tokens (deterministic,
+        // no tokenizer needed); tool falls back to `kind`.
+        serde_json::from_value(serde_json::json!({
+            "id": "deadbeefdeadbeef",
+            "kind": kind,
+            "branch": branch,
+            "timestamp": "2026-06-05T00:00:00Z",
+            "raw_oid": "sha256:abc",
+            "raw_size": 10,
+            "raw_lines": 1,
+            "filter_version": 1,
+            "summary": "s",
+            "store": "local",
+            "codec": "none",
+            "raw_tokens": raw,
+            "summary_tokens": summary,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn token_section_omits_when_no_captures_or_no_saving() {
+        // No manifests on the branch → omit.
+        assert_eq!(token_reduction_section_from(&[], "feat"), "");
+        // Captures exist but on another branch → omit.
+        let other = vec![manifest_json("main", "pytest", 1000, 20)];
+        assert_eq!(token_reduction_section_from(&other, "feat"), "");
+        // On-branch but no net saving (summary >= raw) → omit (don't advertise a loss).
+        let loss = vec![manifest_json("feat", "ruff", 40, 80)];
+        assert_eq!(token_reduction_section_from(&loss, "feat"), "");
+    }
+
+    #[test]
+    fn token_section_reports_branch_savings() {
+        let ms = vec![
+            manifest_json("feat", "pytest", 1000, 20),
+            manifest_json("feat", "cargo", 600, 30),
+            manifest_json("main", "pytest", 9999, 1), // other branch — excluded
+        ];
+        let out = token_reduction_section_from(&ms, "feat");
+        assert!(out.contains("2 captured tool outputs"), "{out}");
+        assert!(out.contains("1600 → 50 tokens"), "{out}"); // only the feat captures
+        assert!(out.contains("96% saved"), "{out}");
+        assert!(out.contains("<details><summary>By tool</summary>"));
+    }
+
+    #[test]
+    fn token_section_escapes_tool_names_in_table() {
+        // Tool names are untrusted (argv/kind) — a pipe must not break the table.
+        let ms = vec![
+            manifest_json("feat", "ev|il`x`", 1000, 10),
+            manifest_json("feat", "pytest", 500, 10),
+        ];
+        let out = token_reduction_section_from(&ms, "feat");
+        assert!(out.contains("ev\\|il"), "pipe must be escaped in table: {out}");
+        // Every table data row keeps exactly the 5 columns (6 pipes), so an
+        // unescaped pipe can't smuggle an extra cell.
+        for row in out.lines().filter(|l| l.starts_with("| ") && !l.contains("---")) {
+            assert_eq!(row.matches('|').count() - row.matches("\\|").count(), 6, "row: {row}");
+        }
     }
 }

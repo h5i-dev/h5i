@@ -6397,7 +6397,9 @@ jq -c '{
                 if quiet {
                     return;
                 }
-                let savings = match (m.raw_tokens, m.summary_tokens) {
+                // Report tokens for the DEFAULT agent-facing output (compact
+                // render when structured), not the git-tracked summary field.
+                let savings = match (m.raw_tokens, m.agent_facing_tokens()) {
                     (Some(r), Some(s)) if r > 0 => {
                         let pct = 100 - (s.min(r) * 100 / r);
                         format!(" · ~{pct}% fewer tokens ({r}→{s})")
@@ -6518,7 +6520,7 @@ jq -c '{
                         };
                         let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
                         let m = &outcome.manifest;
-                        // Render the body per --format (structured is the default).
+                        // Render the body per --format (compact is the default).
                         // Falls back to the text summary if no structured record.
                         match (format, &m.structured) {
                             (CaptureFormat::Summary | CaptureFormat::Text, _) | (_, None) => {

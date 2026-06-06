@@ -166,6 +166,19 @@ impl Manifest {
     pub fn hex(&self) -> &str {
         self.raw_oid.strip_prefix("sha256:").unwrap_or(&self.raw_oid)
     }
+
+    /// Token count of the **default agent-facing output** for this capture: the
+    /// compact render of the structured result (what `capture run` emits by
+    /// default), or the legacy text-summary token count for older /
+    /// non-command captures that have no structured result. This is the honest
+    /// denominator for "tokens kept out of context" — it matches what an agent
+    /// actually sees, not the git-tracked `summary` field's size.
+    pub fn agent_facing_tokens(&self) -> Option<usize> {
+        match &self.structured {
+            Some(s) => crate::token_filter::count_tokens(&crate::structured::render_compact(s)),
+            None => self.summary_tokens,
+        }
+    }
 }
 
 /// A storage backend for raw blobs. Trait-shaped per the git-annex design so a

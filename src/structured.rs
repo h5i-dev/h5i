@@ -7,9 +7,10 @@
 //! all the same shape.
 //!
 //! Design (converged with the codex advisor):
-//!   - **JSON is canonical** (stored in the manifest, returned over MCP); the CLI
-//!     renders a compact YAML-subset for readability. Both come from the typed
-//!     struct, so there's a single source of truth.
+//!   - **JSON is canonical** (stored in the manifest, returned over MCP). The CLI
+//!     default renders a compact one-line-per-finding text ([`render_compact`]);
+//!     `--format structured` renders YAML. All come from the typed struct, so
+//!     there's a single source of truth.
 //!   - **Never claim success it can't see.** [`Status::from_exit`] never returns
 //!     `passed`/`ok` when `exit_code != 0`.
 //!   - **No false precision.** Each result records [`ParserConfidence`]; a parser
