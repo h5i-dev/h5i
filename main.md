@@ -427,11 +427,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited scripts/experiment_token_reduction.sh; edited scripts/experiment_token_reduction.sh; wrote scripts/experiment_tok…
 - [x] compact format default — closes ruff/mypy token gap with rtk
 - [x] edited src/structured.rs; edited scripts/experiment_token_reduction_results.md; edited scripts/experiment_token_reductio…
+- [x] edited src/pr.rs; edited src/pr.rs; edited MANUAL.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 03:53 UTC] `update-doc-with-i5h`: edited src/pr.rs; edited src/pr.rs; edited MANUAL.md
 - [2026-06-06 03:47 UTC] `update-doc-with-i5h`: edited src/structured.rs; edited scripts/experiment_token_reduction_results.md; edited scripts/experiment_token_reductio…
 - [2026-06-06 03:47 UTC] `update-doc-with-i5h`: compact format default — closes ruff/mypy token gap with rtk
 - [2026-06-06 03:35 UTC] `update-doc-with-i5h`: edited scripts/experiment_token_reduction.sh; edited scripts/experiment_token_reduction.sh; wrote scripts/experiment_tok…
