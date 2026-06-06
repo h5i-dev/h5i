@@ -434,11 +434,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/structured.rs; edited MANUAL.md; edited src/pr.rs
 - [x] codex review #651b0b24 fixes — token accounting + PR escaping + docs
 - [x] edited src/structured.rs; edited MANUAL.md; edited src/pr.rs
+- [x] edited src/structured.rs; edited MANUAL.md; edited src/pr.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 04:09 UTC] `update-doc-with-i5h`: edited src/structured.rs; edited MANUAL.md; edited src/pr.rs
 - [2026-06-06 04:07 UTC] `update-doc-with-i5h`: edited src/structured.rs; edited MANUAL.md; edited src/pr.rs
 - [2026-06-06 04:07 UTC] `update-doc-with-i5h`: codex review #651b0b24 fixes — token accounting + PR escaping + docs
 - [2026-06-06 04:06 UTC] `update-doc-with-i5h`: edited src/structured.rs; edited MANUAL.md; edited src/pr.rs
