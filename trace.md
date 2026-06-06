@@ -1248,3 +1248,9 @@ _[Checkpoint: 6a236e7e — edited src/objects.rs; edited src/objects.rs; edited 
 _[Checkpoint: 6a237254 — usability: threshold + instructions + MCP tool + setup]_
 ---
 
+
+
+---
+_[Checkpoint: 6a237260 — edited src/main.rs; edited src/mcp.rs; edited docs/token-reduction.md]_
+---
+
