@@ -1242,3 +1242,9 @@ _[Checkpoint: 6a236e7e — edited src/objects.rs; edited src/objects.rs; edited 
 [01:02:08] OBSERVE: read src/mcp.rs
 [01:02:17] ACT: edited src/mcp.rs
 [01:05:02] ACT: edited docs/token-reduction.md
+
+
+---
+_[Checkpoint: 6a237254 — usability: threshold + instructions + MCP tool + setup]_
+---
+

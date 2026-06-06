@@ -1187,3 +1187,16 @@ objects::capture now clamps git-tracked text: summary<=16KiB (clamp_text, UTF-8 
 
 ---
 
+## Commit 6a237254 — 2026-06-06 01:05 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+capture run --min-bytes (default 2KB, passthrough below); capture guidance in .claude/h5i.md + AGENTS.md; h5i_capture_run MCP tool (mcp.rs def+dispatch+allowlist+impl+test); h5i objects setup (idempotent wiring via marker). Closes the rtk adoption-ergonomics gap. ~600 tests green, clippy clean. 13 commits.
+
+---
+
