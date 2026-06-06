@@ -463,11 +463,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited MANUAL.md; edited src/main.rs
 - [x] edited guides/token-reduction-capture-run/index.html; edited blog/token-reduction-object-store/index.html; edited guides…
 - [x] wrote NOTICE; edited README.md; edited MANUAL.md
+- [x] edited blog/index.html; edited blog/index.html; edited sitemap.xml
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 12:34 UTC] `update-doc-with-i5h`: edited blog/index.html; edited blog/index.html; edited sitemap.xml
 - [2026-06-06 12:30 UTC] `update-doc-with-i5h`: wrote NOTICE; edited README.md; edited MANUAL.md
 - [2026-06-06 11:50 UTC] `update-doc-with-i5h`: edited guides/token-reduction-capture-run/index.html; edited blog/token-reduction-object-store/index.html; edited guides…
 - [2026-06-06 11:47 UTC] `update-doc-with-i5h`: edited MANUAL.md; edited src/main.rs
