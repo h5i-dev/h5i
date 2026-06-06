@@ -2301,3 +2301,4 @@ _[Checkpoint: 6a249875 — edited src/main.rs; edited src/main.rs; edited src/ma
 [22:03:28] ACT: edited src/objects.rs
 [22:03:47] OBSERVE: read tests/objects_e2e.rs
 [22:05:55] ACT: edited tests/objects_e2e.rs
+[22:07:19] THINK: Let me empirically check what fields the pytest parser populates (so my e2e assertions aren't brittle) using the same fake-tool trick:
