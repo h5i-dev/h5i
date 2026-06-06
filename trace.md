@@ -1395,3 +1395,4 @@ _[Checkpoint: 6a237f23 — Reviewed Claude's expanded filter rules and structure
 ---
 
 [02:01:03] ACT: edited src/structured.rs
+[02:01:22] ACT: edited src/structured.rs
