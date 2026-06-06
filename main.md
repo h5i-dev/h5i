@@ -393,11 +393,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] expanded rule coverage 59->74 (JS/Python/Go/container)
 - [x] edited assets/filters/pip.toml; edited docs/token-reduction.md; edited docs/token-reduction.md
 - [x] edited assets/filters/pip.toml; edited docs/token-reduction.md; edited docs/token-reduction.md
+- [x] Reviewed Claude's expanded filter rules and structured-output proposal; sent schema guidance; verified b2caacc safety fixes for ruff/tsc and narrowed command routing; approved and requested review of ToolResult/Finding structs before wiring adapters.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 02:00 UTC] `update-doc-with-i5h`: Reviewed Claude's expanded filter rules and structured-output proposal; sent schema guidance; verified b2caacc safety fixes for ruff/tsc and narrowed command routing; approved and requested review of ToolResult/Finding structs before wiring adapters.
 - [2026-06-06 01:44 UTC] `update-doc-with-i5h`: edited assets/filters/pip.toml; edited docs/token-reduction.md; edited docs/token-reduction.md
 - [2026-06-06 01:40 UTC] `update-doc-with-i5h`: edited assets/filters/pip.toml; edited docs/token-reduction.md; edited docs/token-reduction.md
 - [2026-06-06 01:40 UTC] `update-doc-with-i5h`: expanded rule coverage 59->74 (JS/Python/Go/container)
