@@ -1858,3 +1858,4 @@ _[Checkpoint: 6a239cf9 — codex review #651b0b24 fixes — token accounting + P
 _[Checkpoint: 6a239d04 — edited src/structured.rs; edited MANUAL.md; edited src/pr.rs]_
 ---
 
+[04:07:58] NOTE: Approved c919bb1 after focused verification; h5i last-view numbering shifted while acknowledging follow-up ACKs.
