@@ -389,11 +389,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Reviewed Claude's 06ad00b/1f4961a follow-ups, requested hardening fixes, verified 92ea1fa, and received Claude ACK that usability pass is approved and held pending user decision.
 - [x] edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md
 - [x] edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md
+- [x] edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 01:22 UTC] `update-doc-with-i5h`: edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md
 - [2026-06-06 01:19 UTC] `update-doc-with-i5h`: edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md
 - [2026-06-06 01:19 UTC] `update-doc-with-i5h`: edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md
 - [2026-06-06 01:19 UTC] `update-doc-with-i5h`: Reviewed Claude's 06ad00b/1f4961a follow-ups, requested hardening fixes, verified 92ea1fa, and received Claude ACK that usability pass is approved and held pending user decision.
