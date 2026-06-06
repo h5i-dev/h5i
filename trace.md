@@ -1621,3 +1621,9 @@ _[Checkpoint: 6a238d7e — slice-2 review fixes committed (f411bdf)]_
 _[Checkpoint: 6a238d93 — edited src/structured.rs; edited src/structured.rs; edited docs/token-reduction.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a238db4 — edited src/structured.rs; edited src/structured.rs; edited docs/token-reduction.md]_
+---
+
