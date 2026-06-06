@@ -430,11 +430,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/pr.rs; edited src/pr.rs; edited MANUAL.md
 - [x] pr post shows token-reduction summary
 - [x] edited src/pr.rs; edited src/pr.rs; edited MANUAL.md
+- [x] edited blog/index.html; edited guides/index.html; edited sitemap.xml
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 04:00 UTC] `update-doc-with-i5h`: edited blog/index.html; edited guides/index.html; edited sitemap.xml
 - [2026-06-06 03:54 UTC] `update-doc-with-i5h`: edited src/pr.rs; edited src/pr.rs; edited MANUAL.md
 - [2026-06-06 03:54 UTC] `update-doc-with-i5h`: pr post shows token-reduction summary
 - [2026-06-06 03:53 UTC] `update-doc-with-i5h`: edited src/pr.rs; edited src/pr.rs; edited MANUAL.md
