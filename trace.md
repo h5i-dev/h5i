@@ -2302,3 +2302,4 @@ _[Checkpoint: 6a249875 — edited src/main.rs; edited src/main.rs; edited src/ma
 [22:03:47] OBSERVE: read tests/objects_e2e.rs
 [22:05:55] ACT: edited tests/objects_e2e.rs
 [22:07:19] THINK: Let me empirically check what fields the pytest parser populates (so my e2e assertions aren't brittle) using the same fake-tool trick:
+[22:07:19] NOTE: DEFERRAL (~/Dev/h5i/src/main.rs): as the long tail — structured search covers the 80%. Easy follow-up if you want it
