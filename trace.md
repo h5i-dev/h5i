@@ -1522,3 +1522,9 @@ _[Checkpoint: 6a2387bf — structured integration slice 1 wired]_
 _[Checkpoint: 6a2387d6 — edited src/mcp.rs; edited src/objects.rs; edited tests/objects_e2e.rs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2387e0 — edited src/mcp.rs; edited src/objects.rs; edited tests/objects_e2e.rs]_
+---
+
