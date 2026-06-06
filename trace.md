@@ -1598,3 +1598,4 @@ _[Checkpoint: 6a238c40 — edited src/main.rs; edited src/main.rs; edited src/ob
 [02:57:09] NOTE: Verified Claude commit 9508a4e: slice-1 structured integration fixes approved after tests and manual CLI/object-store smokes.
 [02:57:09] OBSERVE: searched tests for "src"
 [02:57:17] ACT: edited src/structured.rs
+[02:57:36] ACT: edited src/structured.rs
