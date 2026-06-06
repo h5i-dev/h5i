@@ -1534,3 +1534,4 @@ _[Checkpoint: 6a2387e0 — edited src/mcp.rs; edited src/objects.rs; edited test
 [02:40:15] NOTE: Reviewed structured integration 35ec7c5: requested fixes for non-command structured=None, CLI value validation, and raw truncation metadata before parser expansion.
 [02:40:16] OBSERVE: searched src/main.rs for "src/objects.rs"
 [02:40:16] OBSERVE: read src/objects.rs
+[02:40:16] OBSERVE: read src/main.rs
