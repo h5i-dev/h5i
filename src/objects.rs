@@ -394,32 +394,33 @@ pub fn capture(
         filtered.summary_tokens
     };
 
-    // Build the normalized structured result: a dedicated parser if one matches,
-    // else a generic envelope carrying the reduced text as `body`. Never claims
-    // success it can't see (status derives from exit code).
-    let raw_oid_str = format!("sha256:{hex}");
-    let mut structured = if is_binary {
-        let mut g = crate::structured::ToolResult::generic(
-            opts.cmd_argv.first().map(String::as_str).unwrap_or("output"),
-            opts.exit_code,
-        );
-        g.body = Some(summary.clone());
-        g
+    // Build the normalized structured result — but ONLY for command captures.
+    // A non-command ingest (`objects put`) has no tool/exit semantics, so it gets
+    // no structured record (keeps `recall --tool/--status` queries clean).
+    let structured = if opts.cmd_argv.is_empty() {
+        None
     } else {
-        crate::structured::parse(&opts.cmd_argv, &text, opts.exit_code).unwrap_or_else(|| {
-            let tool = opts
-                .cmd_argv
-                .first()
-                .map(|p| p.rsplit('/').next().unwrap_or(p).to_string())
-                .unwrap_or_else(|| "output".to_string());
+        // A dedicated parser if one matches, else a generic envelope carrying the
+        // reduced text as `body`. Never claims success it can't see.
+        let mut s = if is_binary {
+            let tool = opts.cmd_argv[0].rsplit('/').next().unwrap_or(&opts.cmd_argv[0]).to_string();
             let mut g = crate::structured::ToolResult::generic(&tool, opts.exit_code);
             g.body = Some(summary.clone());
             g
-        })
+        } else {
+            crate::structured::parse(&opts.cmd_argv, &text, opts.exit_code).unwrap_or_else(|| {
+                let tool = opts.cmd_argv[0].rsplit('/').next().unwrap_or(&opts.cmd_argv[0]).to_string();
+                let mut g = crate::structured::ToolResult::generic(&tool, opts.exit_code);
+                g.body = Some(summary.clone());
+                g
+            })
+        };
+        s.raw_oid = Some(format!("sha256:{hex}"));
+        // raw isn't fully represented if we dropped lines OR byte-clamped the summary.
+        s.truncated.raw = raw_lines > kept_lines || summary_clamped;
+        s.cap();
+        Some(s)
     };
-    structured.raw_oid = Some(raw_oid_str);
-    structured.truncated.raw = raw_lines > kept_lines;
-    structured.cap();
 
     let manifest = Manifest {
         id: hex[..16].to_string(),
@@ -442,7 +443,7 @@ pub fn capture(
         codec: "none".to_string(),
         raw_tokens: filtered.raw_tokens,
         summary_tokens,
-        structured: Some(structured),
+        structured,
     };
 
     append_manifest(repo, &manifest)?;
@@ -1258,6 +1259,17 @@ mod tests {
         assert_eq!(s.status, crate::structured::Status::Failed);
         assert_eq!(s.findings.len(), 1);
         assert_eq!(s.raw_oid.as_deref(), Some(out.manifest.raw_oid.as_str()));
+    }
+
+    #[test]
+    fn non_command_capture_has_no_structured() {
+        // `objects put` (empty cmd_argv) must not produce a structured record,
+        // so recall --tool/--status stays clean of manual ingests.
+        let (_d, repo, h5i_root) = setup();
+        let mut o = opts();
+        o.cmd_argv = Vec::new();
+        let out = capture(&repo, &h5i_root, b"some pasted log content here", o).unwrap();
+        assert!(out.manifest.structured.is_none());
     }
 
     #[test]

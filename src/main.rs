@@ -546,6 +546,21 @@ enum AgentRuntime {
     Codex,
 }
 
+/// Output format for `h5i capture run`. Invalid values fail loudly (clap).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum CaptureFormat {
+    /// Normalized structured result as compact YAML (default).
+    Structured,
+    /// Alias for `structured`.
+    Yaml,
+    /// Normalized structured result as JSON.
+    Json,
+    /// The legacy filtered free-text summary.
+    Summary,
+    /// Alias for `summary`.
+    Text,
+}
+
 impl AgentRuntime {
     fn to_memory_agent(self) -> memory::MemoryAgent {
         match self {
@@ -1754,10 +1769,10 @@ enum ObjectsCommands {
         /// any command. Use 0 to always capture.
         #[arg(long, default_value_t = DEFAULT_CAPTURE_MIN_BYTES)]
         min_bytes: u64,
-        /// Output format for the summary: structured (default, compact YAML),
-        /// json (structured as JSON), or summary (the legacy filtered text).
-        #[arg(long, default_value = "structured")]
-        format: String,
+        /// Output format: structured (default, compact YAML) | json | summary
+        /// (legacy text). Invalid values are rejected.
+        #[arg(long, value_enum, default_value_t = CaptureFormat::Structured)]
+        format: CaptureFormat,
         /// Associate this capture with a file (repeatable). The branch and the
         /// working-tree diff are recorded automatically.
         #[arg(long = "file", value_name = "PATH", action = clap::ArgAction::Append)]
@@ -6502,22 +6517,16 @@ jq -c '{
                         let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
                         let m = &outcome.manifest;
                         // Render the body per --format (structured is the default).
-                        match format.as_str() {
-                            "summary" | "text" => println!("{}", m.summary),
-                            "json" => {
-                                if let Some(s) = &m.structured {
-                                    println!("{}", h5i_core::structured::render_json_pretty(s));
-                                } else {
-                                    println!("{}", m.summary);
-                                }
+                        // Falls back to the text summary if no structured record.
+                        match (format, &m.structured) {
+                            (CaptureFormat::Summary | CaptureFormat::Text, _) | (_, None) => {
+                                println!("{}", m.summary)
                             }
-                            _ => {
-                                // "structured" (default) → compact YAML
-                                if let Some(s) = &m.structured {
-                                    println!("{}", h5i_core::structured::render_yaml(s));
-                                } else {
-                                    println!("{}", m.summary);
-                                }
+                            (CaptureFormat::Json, Some(s)) => {
+                                println!("{}", h5i_core::structured::render_json_pretty(s))
+                            }
+                            (CaptureFormat::Structured | CaptureFormat::Yaml, Some(s)) => {
+                                println!("{}", h5i_core::structured::render_yaml(s))
                             }
                         }
                         print_pointer(m, outcome.deduped, quiet);
@@ -6582,6 +6591,23 @@ jq -c '{
 
                 ObjectsCommands::List { limit, branch, file, diff, status, tool } => {
                     let all = objects::read_manifests(git);
+
+                    // Validate --status against the canonical vocabulary (the
+                    // structured status enum), case-insensitively.
+                    let status = match status {
+                        Some(s) => {
+                            let sl = s.to_lowercase();
+                            const VALID: &[&str] = &["passed", "ok", "failed", "error", "unknown"];
+                            if !VALID.contains(&sl.as_str()) {
+                                anyhow::bail!(
+                                    "invalid --status '{s}' (expected one of: {})",
+                                    VALID.join(", ")
+                                );
+                            }
+                            Some(sl)
+                        }
+                        None => None,
+                    };
 
                     // Build the optional filters.
                     let cur_diff: Vec<String> = if diff {
