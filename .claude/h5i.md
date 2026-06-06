@@ -58,7 +58,7 @@ h5i context relevant src/repository.rs
 
 ### Capturing large command output (token reduction)
 
-Wrap commands that may produce **large or noisy output** — test suites, builds, linters, big JSON, long logs — so only a filtered summary enters context:
+Prefer wrapping all shell commands, so the agent receives compact, token-efficient output while preserving the original command behavior.
 
 ```bash
 h5i capture run -- <command> [args…]          # e.g. h5i capture run -- pytest -q
