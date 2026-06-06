@@ -1736,3 +1736,4 @@ _[Checkpoint: 6a23959f — edited scripts/experiment_token_reduction.sh; edited 
 [03:38:57] ACT: edited src/main.rs
 [03:39:06] ACT: edited src/main.rs
 [03:39:15] ACT: edited src/main.rs
+[03:41:31] OBSERVE: read docs/token-reduction.md
