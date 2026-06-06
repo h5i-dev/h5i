@@ -1635,3 +1635,4 @@ _[Checkpoint: 6a238dc6 — edited src/structured.rs; edited src/structured.rs; e
 
 [03:02:36] NOTE: Approved combined structured-output state after f411bdf; full cargo test and clippy pass, slice-1 and slice-2 blockers resolved.
 [03:02:36] OBSERVE: searched returns|structured for "failed|MCP"
+[03:04:51] ACT: edited src/token_filter.rs
