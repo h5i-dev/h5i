@@ -1215,3 +1215,4 @@ _[Checkpoint: 6a236e74 — hard-cap manifest summary/highlights]_
 _[Checkpoint: 6a236e7e — edited src/objects.rs; edited src/objects.rs; edited docs/token-reduction.md]_
 ---
 
+[00:53:53] OBSERVE: read src/mcp.rs
