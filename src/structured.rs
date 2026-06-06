@@ -422,7 +422,13 @@ pub fn parse(cmd: &[String], output: &str, exit_code: Option<i32>) -> Option<Too
     let words: Vec<String> = cmd
         .iter()
         .flat_map(|a| a.split_whitespace())
-        .map(|w| w.rsplit('/').next().unwrap_or(w).trim_matches('"').to_string())
+        .map(|w| {
+            w.rsplit('/')
+                .next()
+                .unwrap_or(w)
+                .trim_matches('"')
+                .to_ascii_lowercase()
+        })
         .collect();
     let has = |t: &str| words.iter().any(|w| w == t);
 
@@ -507,14 +513,51 @@ fn parse_go_test(output: &str, exit_code: Option<i32>) -> Option<ToolResult> {
     let mut passed = 0u64;
     let mut failed = 0u64;
     let mut findings = Vec::new();
+    let mut saw_test_event = false;
     let loc_re = regex::Regex::new(r"^\s+([\w./-]+\.go):(\d+):").unwrap();
     let fail_re = regex::Regex::new(r"^--- FAIL: (\S+)").unwrap();
+    // Non-indented "file.go:line:col?: message" → a build/compile diagnostic.
+    let build_re = regex::Regex::new(r"^([\w./-]+\.go):(\d+):(?:(\d+):)?\s+(.+)$").unwrap();
     let mut i = 0;
     while i < lines.len() {
-        let t = lines[i].trim_start();
+        let raw_line = lines[i];
+        let t = raw_line.trim_start();
+        // A `go build`/compile diagnostic (not indented under a test).
+        if !raw_line.starts_with(char::is_whitespace) {
+            if let Some(c) = build_re.captures(raw_line.trim_end()) {
+                let loc = Location {
+                    path: c[1].trim_start_matches("./").to_string(),
+                    line: c[2].parse().ok(),
+                    column: c.get(3).and_then(|m| m.as_str().parse().ok()),
+                    ..Default::default()
+                };
+                let msg = c[4].to_string();
+                findings.push(Finding {
+                    kind: FindingKind::BuildError,
+                    severity: Severity::Error,
+                    id: None,
+                    rule: None,
+                    message: msg.clone(),
+                    location: Some(loc.clone()),
+                    locations: vec![],
+                    expected: None,
+                    actual: None,
+                    detail: None,
+                    fixable: false,
+                    suggestions: vec![],
+                    fingerprint: fingerprint("go", "build", &loc.shorthand(), &msg),
+                });
+                i += 1;
+                continue;
+            }
+        }
         if t.starts_with("--- PASS") {
             passed += 1;
+            saw_test_event = true;
+        } else if t.starts_with("ok ") || t.starts_with("ok\t") {
+            saw_test_event = true;
         } else if let Some(c) = fail_re.captures(t) {
+            saw_test_event = true;
             failed += 1;
             let test = c[1].to_string();
             // The next indented "file.go:line:" line is the location/message.
@@ -551,6 +594,12 @@ fn parse_go_test(output: &str, exit_code: Option<i32>) -> Option<ToolResult> {
         }
         i += 1;
     }
+    // Only package-level FAIL with nothing useful extracted → decline so the
+    // generic fallback shows the raw (don't emit a parsed-but-empty result).
+    if !saw_test_event && findings.is_empty() {
+        return None;
+    }
+    let has_build_error = findings.iter().any(|f| f.kind == FindingKind::BuildError);
     let mut counts = std::collections::BTreeMap::new();
     if passed > 0 {
         counts.insert("passed".to_string(), passed);
@@ -562,7 +611,7 @@ fn parse_go_test(output: &str, exit_code: Option<i32>) -> Option<ToolResult> {
         schema_version: SCHEMA_VERSION,
         tool: "go".into(),
         kind: ResultKind::Test,
-        status: Status::from_test(exit_code, failed > 0),
+        status: Status::from_test(exit_code, failed > 0 || has_build_error),
         exit_code,
         duration_ms: None,
         counts,
@@ -1098,6 +1147,25 @@ mod tests {
         assert_eq!(r.findings.len(), 1);
         assert_eq!(r.findings[0].id.as_deref(), Some("TestSub"));
         assert_eq!(r.findings[0].location.as_ref().unwrap().shorthand(), "sub_test.go:10");
+    }
+
+    #[test]
+    fn go_build_failure_surfaces_compiler_diagnostic() {
+        // A compile failure has no "--- FAIL" test case; the diagnostic must
+        // still reach the agent (as a build_error finding), not vanish.
+        let raw = "# example/pkg\n./main.go:6:2: undefined: missing\nFAIL\texample/pkg [build failed]\n";
+        let r = parse(&argv(&["go", "test", "./..."]), raw, Some(2)).unwrap();
+        assert_eq!(r.status, Status::Failed);
+        assert_eq!(r.findings.len(), 1);
+        assert_eq!(r.findings[0].kind, FindingKind::BuildError);
+        assert_eq!(r.findings[0].location.as_ref().unwrap().shorthand(), "main.go:6:2");
+        assert!(r.findings[0].message.contains("undefined: missing"));
+    }
+
+    #[test]
+    fn go_bare_package_fail_declines_to_generic() {
+        // Package-level FAIL with nothing extractable → decline (generic shows raw).
+        assert!(parse(&argv(&["go", "test"]), "FAIL\texample/pkg [build failed]\n", Some(2)).is_none());
     }
 
     #[test]

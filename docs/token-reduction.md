@@ -49,9 +49,10 @@ findings:
     fingerprint: 0bb827e4e61a   # stable across line shifts → dedupe/query
 ```
 
-`--format json` returns the canonical JSON (also what the `h5i_capture_run` MCP
-tool returns); `--format summary` keeps the legacy filtered text. The structured
-result is stored in the manifest, so captures are **queryable**:
+`--format json` returns the canonical JSON `ToolResult`; `--format summary` keeps
+the legacy filtered text. (The `h5i_capture_run` MCP tool returns the same
+`ToolResult` under a `structured` field, alongside `id`/`raw_*`/`hint`.) The
+structured result is stored in the manifest, so captures are **queryable**:
 
 ```bash
 h5i recall objects --status failed     # everything that failed
