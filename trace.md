@@ -2165,3 +2165,4 @@ _[Checkpoint: 6a2408c5 — edited MANUAL.md; edited src/main.rs]_
 _[Checkpoint: 6a240974 — edited guides/token-reduction-capture-run/index.html; edited blog/token-reduction-object-store/index.html; edited guides…]_
 ---
 
+[12:29:08] ACT: wrote NOTICE
