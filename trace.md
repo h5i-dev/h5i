@@ -1275,3 +1275,4 @@ _[Checkpoint: 6a237358 — edited src/main.rs; edited src/main.rs; edited src/ma
 [01:10:12] THINK: Reviewing Claude's post-lock hardening by checking bounded manifests and adoption plumbing for hidden behavioral regressions, especially command exit passthrough, small-output bypass semantics, MCP safety, and documentation churn.
 [01:12:42] OBSERVE: searched src/mcp.rs for "src/main.rs"
 [01:12:42] OBSERVE: read src/main.rs
+[01:12:42] OBSERVE: read src/mcp.rs
