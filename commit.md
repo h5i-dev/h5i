@@ -1226,3 +1226,16 @@ Added the 'Capturing large command output' section to H5I_CLAUDE_INSTRUCTIONS (�
 
 ---
 
+## Commit 6a237358 — 2026-06-06 01:09 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+Added the 'Capturing large command output' section to H5I_CLAUDE_INSTRUCTIONS (→.claude/h5i.md) and H5I_CODEX_INSTRUCTIONS (→AGENTS.md) so fresh h5i init includes it. objects setup now keys idempotency off the section heading, so it never duplicates guidance on an init'd project. Verified: init emits it once in both files; setup is a no-op afterward. Suite green, clippy clean. 14 commits.
+
+### This Commit's Contribution
+
+
+---
+
