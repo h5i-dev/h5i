@@ -2058,3 +2058,16 @@ content-validated has() (valid_blob_oid), put repairs, merge rebuilds from valid
 
 ---
 
+## Commit 6a23edfa — 2026-06-06 09:52 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+content-validated has() (valid_blob_oid), put repairs, merge rebuilds from valid-both-sides, sanitize_data_commit for no-local pull. 4 new tests (30 objects unit total). ALL_GREEN, clippy clean. 44 commits.
+
+### This Commit's Contribution
+
+
+---
+
