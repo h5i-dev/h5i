@@ -259,3 +259,9 @@ A manifest record:
   remote store can be added later; only `LocalStore` exists today.
 - **Pointers carry the full digest.** Truncated digests would make cross-clone
   retrieval and sync brittle; every manifest records `sha256:<64 hex>`.
+- **Manifest text is hard-capped.** Since manifests travel via `h5i push`, the
+  git-tracked `summary` and `highlights` fields are bounded as a backstop on top
+  of the filter's line/token budget: `summary` ≤ 16 KiB (UTF-8-safe, with a
+  `… [summary truncated] …` marker), at most 20 `highlights`, each ≤ 500 bytes
+  (`objects::MAX_SUMMARY_BYTES` / `MAX_HIGHLIGHTS` / `MAX_HIGHLIGHT_BYTES`). The
+  full output is always recoverable from the raw blob regardless.

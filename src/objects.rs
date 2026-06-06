@@ -44,6 +44,51 @@ pub const OBJECTS_DIR: &str = "objects";
 /// File (under the store dir) listing pinned digests, one per line.
 pub const PINS_FILE: &str = "pins";
 
+/// Hard cap on a manifest's `summary` field (bytes). The filter already budgets
+/// lines/tokens; this is a backstop so a pathological summary can never bloat
+/// `refs/h5i/objects` (which is shared via `h5i push`). The full output is always
+/// recoverable from the raw blob regardless.
+pub const MAX_SUMMARY_BYTES: usize = 16 * 1024;
+/// Hard cap on the number of `highlights` entries kept in a manifest.
+pub const MAX_HIGHLIGHTS: usize = 20;
+/// Hard cap on the length (bytes) of each `highlights` entry.
+pub const MAX_HIGHLIGHT_BYTES: usize = 500;
+
+const SUMMARY_TRUNC_MARK: &str = "\n… [summary truncated] …";
+
+/// Truncate `s` to at most `max` bytes on a UTF-8 boundary, appending a marker
+/// when truncated. Returns `(text, was_truncated)`.
+fn clamp_text(s: String, max: usize) -> (String, bool) {
+    if s.len() <= max {
+        return (s, false);
+    }
+    let budget = max.saturating_sub(SUMMARY_TRUNC_MARK.len());
+    let mut end = budget.min(s.len());
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut out = s[..end].to_string();
+    out.push_str(SUMMARY_TRUNC_MARK);
+    (out, true)
+}
+
+/// Cap the highlight list to [`MAX_HIGHLIGHTS`] entries and each entry to
+/// [`MAX_HIGHLIGHT_BYTES`] bytes (UTF-8 safe).
+fn clamp_highlights(mut hs: Vec<String>) -> Vec<String> {
+    hs.truncate(MAX_HIGHLIGHTS);
+    for h in hs.iter_mut() {
+        if h.len() > MAX_HIGHLIGHT_BYTES {
+            let mut end = MAX_HIGHLIGHT_BYTES;
+            while end > 0 && !h.is_char_boundary(end) {
+                end -= 1;
+            }
+            h.truncate(end);
+            h.push('…');
+        }
+    }
+    hs
+}
+
 /// A git-tracked pointer to one stored raw output, plus its reduced summary.
 ///
 /// This is the *only* thing that travels with the repo by default. It must carry
@@ -321,6 +366,18 @@ pub fn capture(
     files.extend(extract_paths(&path_src));
     dedup_sorted(&mut files);
 
+    // Backstop the git-tracked text fields. The filter already budgets lines and
+    // tokens, but these manifests travel via `h5i push`, so a pathological
+    // summary must never bloat the ref. (Path-mining above used the full text.)
+    let (summary, summary_clamped) = clamp_text(filtered.summary, MAX_SUMMARY_BYTES);
+    let highlights = clamp_highlights(filtered.highlights);
+    // If we truncated the summary, the recorded token count must reflect it.
+    let summary_tokens = if summary_clamped {
+        token_filter::count_tokens(&summary)
+    } else {
+        filtered.summary_tokens
+    };
+
     let manifest = Manifest {
         id: hex[..16].to_string(),
         kind,
@@ -336,12 +393,12 @@ pub fn capture(
         raw_size: raw.len() as u64,
         raw_lines: filtered.raw_lines,
         filter_version: token_filter::FILTER_VERSION,
-        summary: filtered.summary,
-        highlights: filtered.highlights,
+        summary,
+        highlights,
         store: store.name().to_string(),
         codec: "none".to_string(),
         raw_tokens: filtered.raw_tokens,
-        summary_tokens: filtered.summary_tokens,
+        summary_tokens,
     };
 
     append_manifest(repo, &manifest)?;
@@ -1095,6 +1152,52 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("too short"));
+    }
+
+    #[test]
+    fn clamp_text_truncates_on_char_boundary() {
+        let (short, t) = clamp_text("hello".into(), 100);
+        assert_eq!(short, "hello");
+        assert!(!t);
+        // Multi-byte chars must not be split.
+        let s = "é".repeat(20_000); // 2 bytes each → 40 KB
+        let (out, t) = clamp_text(s, MAX_SUMMARY_BYTES);
+        assert!(t);
+        assert!(out.len() <= MAX_SUMMARY_BYTES);
+        assert!(out.ends_with("truncated] …"));
+        assert!(std::str::from_utf8(out.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn clamp_highlights_caps_count_and_length() {
+        let hs: Vec<String> = (0..50).map(|i| format!("h{i} ") + &"x".repeat(1000)).collect();
+        let out = clamp_highlights(hs);
+        assert_eq!(out.len(), MAX_HIGHLIGHTS);
+        for h in &out {
+            assert!(h.len() <= MAX_HIGHLIGHT_BYTES + 4, "highlight too long: {}", h.len());
+        }
+    }
+
+    #[test]
+    fn capture_clamps_oversized_summary_and_highlights() {
+        let (_d, repo, h5i_root) = setup();
+        // 40 distinct long error lines → kept verbatim (high-signal), ~40 KB summary.
+        let mut raw = String::new();
+        for i in 0..40 {
+            raw.push_str(&format!("error[E{i:04}]: {}\n", "x".repeat(1200)));
+        }
+        let out = capture(&repo, &h5i_root, raw.as_bytes(), opts()).unwrap();
+        assert!(
+            out.manifest.summary.len() <= MAX_SUMMARY_BYTES,
+            "summary not clamped: {} bytes",
+            out.manifest.summary.len()
+        );
+        assert!(out.manifest.highlights.len() <= MAX_HIGHLIGHTS);
+        for h in &out.manifest.highlights {
+            assert!(h.len() <= MAX_HIGHLIGHT_BYTES + 4);
+        }
+        // The raw is still fully recoverable despite the clamped summary.
+        assert_eq!(load_raw(&h5i_root, &out.manifest).unwrap().unwrap(), raw.as_bytes());
     }
 
     #[test]
