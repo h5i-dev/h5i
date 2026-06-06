@@ -2166,3 +2166,4 @@ _[Checkpoint: 6a240974 — edited guides/token-reduction-capture-run/index.html;
 ---
 
 [12:29:08] ACT: wrote NOTICE
+[12:29:26] OBSERVE: read README.md
