@@ -2223,3 +2223,9 @@ _[Checkpoint: 6a241bcb — edited assets/token-reduction-unified.svg; edited ass
 [20:12:07] THINK: I'll start by understanding the task and finding where these instruction files are generated.
 [20:12:07] THINK: Let me build (in background) and meanwhile inspect `AGENTS.
 [20:12:07] THINK: Now I'll sync the repo's two stale dogfood files (`.
+
+
+---
+_[Checkpoint: 6a247f17 — edited assets/token-reduction-unified.svg; edited assets/token-reduction-unified.svg; edited docs/blog/structured-tool-o…]_
+---
+
