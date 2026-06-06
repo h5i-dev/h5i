@@ -1590,3 +1590,16 @@ Fixed: non-command captures get no structured (recall queries clean); --format c
 
 ---
 
+## Commit 6a238d37 — 2026-06-06 03:00 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
