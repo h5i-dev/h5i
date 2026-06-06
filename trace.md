@@ -1780,3 +1780,9 @@ _[Checkpoint: 6a2399d0 — edited src/pr.rs; edited src/pr.rs; edited MANUAL.md]
 ---
 
 [03:53:57] OBSERVE: read b3jpksk4s.output
+
+
+---
+_[Checkpoint: 6a2399ec — pr post shows token-reduction summary]_
+---
+
