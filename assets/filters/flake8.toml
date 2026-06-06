@@ -1,0 +1,26 @@
+[filters.flake8]
+description = "Compact flake8 output — keep diagnostics, drop blank lines"
+match_command = "\\bflake8\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+]
+truncate_lines_at = 200
+max_lines = 80
+on_empty = "flake8: clean"
+
+[[tests.flake8]]
+name = "keeps diagnostics"
+input = """
+src/a.py:1:1: F401 'os' imported but unused
+src/a.py:10:80: E501 line too long (88 > 79 characters)
+"""
+expected = """
+src/a.py:1:1: F401 'os' imported but unused
+src/a.py:10:80: E501 line too long (88 > 79 characters)
+"""
+
+[[tests.flake8]]
+name = "clean run collapses to message"
+input = ""
+expected = "flake8: clean"

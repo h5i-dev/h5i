@@ -44,6 +44,41 @@ h5i notes analyze   # links the just-completed Claude Code session to HEAD
 
 ---
 
+### Capturing large command output (token reduction)
+
+When you run a command that may produce **large or noisy output** — test suites,
+builds, linters, big JSON, long logs — wrap it so only a filtered summary enters
+your context instead of thousands of lines:
+
+```bash
+h5i capture run -- <command> [args…]      # e.g. h5i capture run -- pytest -q
+```
+
+It runs the command, prints **only** a deterministic summary (errors, failures,
+counts — the signal), passes the exit code through, and stores the full raw
+output out-of-band. Small output (under ~2 KB) just passes through unstored, so
+it is always safe to wrap. Tag the work it relates to with `--file`:
+
+```bash
+h5i capture run --file src/auth.rs -- pytest tests/test_auth.py
+```
+
+When you need the **full** raw output back (rare — only if the summary isn't
+enough), rehydrate it instead of re-running:
+
+```bash
+h5i recall objects                 # list captures (newest first, with branch/files)
+h5i recall object <id>             # full raw bytes
+h5i recall objects --branch <b>    # captures for a branch
+h5i recall objects --file <path>   # captures touching a file
+```
+
+Prefer the `h5i_capture_run` MCP tool when available (same behavior, no
+shell-quoting). Do **not** wrap trivial commands you need to read in full (a
+short `git status`, a single `cat`).
+
+---
+
 ### Committing
 
 Always use `h5i commit` instead of `git commit`.

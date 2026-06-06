@@ -1,0 +1,47 @@
+[filters.go]
+description = "Compact `go build`/`go test`/`go vet` output — keep failures and build errors, drop passing noise"
+match_command = "^go\\s+(test|build|vet)\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^=== RUN ",
+  "^=== CONT ",
+  "^=== PAUSE ",
+  "^--- PASS: ",
+  "^\\s+--- PASS: ",
+  "^ok \\s",
+  "^ok  \\s",
+  "^PASS$",
+  "^go: downloading ",
+]
+max_lines = 80
+on_empty = "go: ok"
+
+[[tests.go]]
+name = "keeps failures and build errors, drops passes"
+input = """
+=== RUN   TestAdd
+--- PASS: TestAdd (0.00s)
+ok  \texample/m\t0.012s
+=== RUN   TestSub
+--- FAIL: TestSub (0.00s)
+    sub_test.go:10: got 1, want 2
+FAIL
+FAIL\texample/m2\t0.008s
+"""
+expected = """
+--- FAIL: TestSub (0.00s)
+    sub_test.go:10: got 1, want 2
+FAIL
+FAIL\texample/m2\t0.008s
+"""
+
+[[tests.go]]
+name = "clean test run collapses to ok"
+input = """
+=== RUN   TestAdd
+--- PASS: TestAdd (0.00s)
+PASS
+ok  \texample/m\t0.012s
+"""
+expected = "go: ok"

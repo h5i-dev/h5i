@@ -1,0 +1,45 @@
+[filters.npm]
+description = "Compact npm output — strip lifecycle banners, progress, npm WARN/notice, install tallies"
+match_command = "^npm\\s+(install|ci|i|run|test|build|exec)\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^npm warn",
+  "^npm WARN",
+  "^npm notice",
+  "^> [^ ]+@",
+  "^added \\d+ package",
+  "^changed \\d+ package",
+  "^removed \\d+ package",
+  "^up to date",
+  "^audited \\d+ package",
+  "found 0 vulnerabilities",
+  "packages are looking for funding",
+  "run `npm fund`",
+]
+max_lines = 60
+on_empty = "npm: ok"
+
+[[tests.npm]]
+name = "strips boilerplate, keeps npm ERR!"
+input = """
+> myapp@1.0.0 build
+npm WARN deprecated foo@1.0.0
+added 200 packages in 3s
+npm ERR! code ELIFECYCLE
+npm ERR! Failed at the build script
+"""
+expected = """
+npm ERR! code ELIFECYCLE
+npm ERR! Failed at the build script
+"""
+
+[[tests.npm]]
+name = "clean install collapses to ok"
+input = """
+added 50 packages in 2s
+up to date
+audited 50 packages in 1s
+found 0 vulnerabilities
+"""
+expected = "npm: ok"

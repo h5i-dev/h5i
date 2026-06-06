@@ -1,0 +1,41 @@
+[filters.ruff]
+description = "Compact Ruff output — keep diagnostics/result and any error, drop only the fixable hint"
+match_command = "\\bruff\\b"
+strip_ansi = true
+# Keep-by-default (strip only noise) so an unrecognized tool/usage error is never
+# turned into a false "clean".
+strip_lines_matching = [
+  "^\\s*$",
+  "fixable with the",
+  "^\\[\\*\\] \\d+ fixable",
+]
+max_lines = 80
+on_empty = "ruff: clean"
+
+[[tests.ruff]]
+name = "keeps diagnostics and count, drops fixable hint"
+input = """
+src/app.py:1:1: F401 [*] `os` imported but unused
+src/app.py:5:5: E711 comparison to `None`
+Found 2 errors.
+[*] 1 fixable with the `--fix` option.
+"""
+expected = """
+src/app.py:1:1: F401 [*] `os` imported but unused
+src/app.py:5:5: E711 comparison to `None`
+Found 2 errors.
+"""
+
+[[tests.ruff]]
+name = "clean keeps the all-passed line"
+input = """
+All checks passed!
+"""
+expected = "All checks passed!"
+
+[[tests.ruff]]
+name = "usage/tool error is NOT turned into clean"
+input = """
+error: invalid value '--bad' for '--select'
+"""
+expected = "error: invalid value '--bad' for '--select'"

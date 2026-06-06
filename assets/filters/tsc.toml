@@ -1,0 +1,44 @@
+[filters.tsc]
+description = "Compact TypeScript compiler output — keep diagnostics/errors, drop watch/compile chatter"
+match_command = "\\btsc\\b"
+strip_ansi = true
+# Keep-by-default (strip only chatter) so an unrecognized usage/tool error is
+# never turned into a false "ok".
+strip_lines_matching = [
+  "^\\s*$",
+  "^Starting compilation",
+  "^\\[[^]]*\\] Starting compilation",
+  "^Watching for file changes",
+  "^File change detected",
+]
+max_lines = 80
+on_empty = "tsc: ok"
+
+[[tests.tsc]]
+name = "keeps TS errors and count, strips chatter"
+input = """
+Starting compilation in watch mode...
+src/api/auth.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.
+src/components/Button.tsx(8,3): error TS2339: Property 'onClick' does not exist.
+Found 2 errors in 2 files.
+"""
+expected = """
+src/api/auth.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.
+src/components/Button.tsx(8,3): error TS2339: Property 'onClick' does not exist.
+Found 2 errors in 2 files.
+"""
+
+[[tests.tsc]]
+name = "clean compile shows the zero-error line"
+input = """
+Starting compilation...
+Found 0 errors. Watching for file changes.
+"""
+expected = "Found 0 errors. Watching for file changes."
+
+[[tests.tsc]]
+name = "usage/tool error is NOT turned into ok"
+input = """
+error TS5023: Unknown compiler option '--bad'.
+"""
+expected = "error TS5023: Unknown compiler option '--bad'."

@@ -121,6 +121,18 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://h5i.dev/blog/token-reduction-object-store/</loc>
+    <lastmod>2026-06-05</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://h5i.dev/guides/token-reduction-capture-run/</loc>
+    <lastmod>2026-06-05</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://h5i.dev/blog/auditing-ai-generated-code/</loc>
     <lastmod>2026-06-02</lastmod>
     <changefreq>monthly</changefreq>

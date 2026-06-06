@@ -1,0 +1,42 @@
+[filters.pnpm]
+description = "Compact pnpm output — strip progress, resolution/lockfile/peer noise, keep errors"
+match_command = "^pnpm\\s+(install|i|add|run|test|build|exec|dlx)\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^Progress: ",
+  "^Packages: ",
+  "^Lockfile is up to date",
+  "^Already up to date",
+  "^Done in ",
+  "^> [^ ]+@",
+  "^\\.\\.\\. ",
+  "resolved \\d+, reused \\d+",
+  "^WARN ",
+  "deprecated subdependencies",
+]
+max_lines = 60
+on_empty = "pnpm: ok"
+
+[[tests.pnpm]]
+name = "keeps ERR_PNPM errors, strips progress"
+input = """
+Progress: resolved 120, reused 118, downloaded 2, added 0
+Packages: +5
+Done in 4.2s
+ ERR_PNPM_LIFECYCLE_FAILED  Command failed with exit code 1
+At path: /app
+"""
+expected = """
+ ERR_PNPM_LIFECYCLE_FAILED  Command failed with exit code 1
+At path: /app
+"""
+
+[[tests.pnpm]]
+name = "clean run collapses to ok"
+input = """
+Already up to date
+Progress: resolved 100, reused 100, downloaded 0, added 0
+Done in 1.1s
+"""
+expected = "pnpm: ok"

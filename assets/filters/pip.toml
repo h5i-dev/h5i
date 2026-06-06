@@ -1,0 +1,40 @@
+[filters.pip]
+description = "Compact pip output — strip download/cache/already-satisfied noise, keep result and errors"
+match_command = "^pip3?\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^Requirement already satisfied",
+  "^Collecting ",
+  "^\\s*Downloading ",
+  "^\\s*Using cached ",
+  "^\\s*\\|+.*\\| ",
+  "^Installing collected packages",
+  "^\\s*Preparing metadata",
+  "^\\s*Building wheel",
+]
+max_lines = 60
+on_empty = "pip: ok"
+
+[[tests.pip]]
+name = "keeps Successfully installed, strips fetch noise"
+input = """
+Collecting requests
+  Downloading requests-2.31.0-py3-none-any.whl (62 kB)
+Requirement already satisfied: idna in /usr/lib/python3
+Installing collected packages: requests
+Successfully installed requests-2.31.0
+"""
+expected = "Successfully installed requests-2.31.0"
+
+[[tests.pip]]
+name = "keeps ERROR lines"
+input = """
+Collecting nope
+ERROR: Could not find a version that satisfies the requirement nope
+ERROR: No matching distribution found for nope
+"""
+expected = """
+ERROR: Could not find a version that satisfies the requirement nope
+ERROR: No matching distribution found for nope
+"""

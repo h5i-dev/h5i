@@ -1,0 +1,42 @@
+[filters.docker-build]
+description = "Compact docker build output — strip BuildKit step/layer noise, keep ERROR and the result"
+match_command = "^docker\\s+(build|buildx\\s+build)\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^#\\d+ ",
+  "^ ---> ",
+  "^Step \\d+/\\d+ ",
+  "^Removing intermediate container",
+  "^Sending build context",
+  "^ *--->",
+  "Pulling from ",
+  "^Digest: ",
+  "^Status: ",
+]
+max_lines = 60
+on_empty = "docker: ok"
+
+[[tests.docker-build]]
+name = "keeps ERROR, strips step/layer noise"
+input = """
+Sending build context to Docker daemon  2.1MB
+Step 1/4 : FROM node:20
+ ---> abc123
+Step 2/4 : RUN npm ci
+#5 [2/4] RUN npm ci
+ERROR: failed to solve: process "/bin/sh -c npm ci" did not complete
+"""
+expected = """
+ERROR: failed to solve: process "/bin/sh -c npm ci" did not complete
+"""
+
+[[tests.docker-build]]
+name = "successful build collapses to ok"
+input = """
+Step 1/2 : FROM scratch
+ ---> abc123
+Step 2/2 : COPY . /
+ ---> def456
+"""
+expected = "docker: ok"

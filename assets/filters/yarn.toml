@@ -1,0 +1,41 @@
+[filters.yarn]
+description = "Compact yarn output — strip resolution/fetch/link progress, keep errors and script output"
+match_command = "^yarn$|^yarn\\s+(install|add|run|test|build)\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^yarn install",
+  "^\\[\\d/\\d\\] ",
+  "Resolving packages",
+  "Fetching packages",
+  "Linking dependencies",
+  "Building fresh packages",
+  "Done in ",
+  "success Already up-to-date",
+  "success Saved lockfile",
+  "^\\$ ",
+  "^warning ",
+]
+max_lines = 60
+on_empty = "yarn: ok"
+
+[[tests.yarn]]
+name = "keeps error, strips phases"
+input = """
+yarn install v1.22.19
+[1/4] Resolving packages...
+[2/4] Fetching packages...
+Done in 5.31s
+error Command failed with exit code 1.
+"""
+expected = "error Command failed with exit code 1."
+
+[[tests.yarn]]
+name = "clean install collapses to ok"
+input = """
+yarn install v1.22.19
+[1/4] Resolving packages...
+success Already up-to-date.
+Done in 0.5s
+"""
+expected = "yarn: ok"

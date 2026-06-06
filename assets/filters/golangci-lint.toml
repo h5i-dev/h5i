@@ -1,0 +1,28 @@
+[filters.golangci-lint]
+description = "Compact golangci-lint output — keep diagnostics, drop blank lines and run banners"
+match_command = "\\bgolangci-lint\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^level=",
+  "^Running ",
+]
+truncate_lines_at = 200
+max_lines = 80
+on_empty = "golangci-lint: clean"
+
+[[tests.golangci-lint]]
+name = "keeps diagnostics"
+input = """
+main.go:10:2: `err` is unchecked (errcheck)
+util.go:3:1: exported function Foo should have comment (golint)
+"""
+expected = """
+main.go:10:2: `err` is unchecked (errcheck)
+util.go:3:1: exported function Foo should have comment (golint)
+"""
+
+[[tests.golangci-lint]]
+name = "clean run collapses to message"
+input = ""
+expected = "golangci-lint: clean"

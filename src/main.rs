@@ -546,6 +546,34 @@ enum AgentRuntime {
     Codex,
 }
 
+/// Output format for `h5i capture run`. Invalid values fail loudly (clap).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum CaptureFormat {
+    /// One line per finding — token-minimal structured text (default).
+    Compact,
+    /// Normalized structured result as full YAML.
+    Structured,
+    /// Alias for `structured`.
+    Yaml,
+    /// Normalized structured result as JSON.
+    Json,
+    /// The legacy filtered free-text summary.
+    Summary,
+    /// Alias for `summary`.
+    Text,
+}
+
+/// Backend selection for `h5i objects push`/`pull`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum ObjectsBackend {
+    /// LFS when the remote is HTTP(S), else the git-ref store (default).
+    Auto,
+    /// Force the native Git LFS backend (requires an HTTP(S) remote w/ LFS).
+    Lfs,
+    /// Force the git-ref store (`refs/h5i/objects-data`).
+    GitRef,
+}
+
 impl AgentRuntime {
     fn to_memory_agent(self) -> memory::MemoryAgent {
         match self {
@@ -843,6 +871,14 @@ enum Commands {
     Memory {
         #[command(subcommand)]
         action: MemoryCommands,
+    },
+
+    /// Token-reduction object store: capture huge tool outputs out-of-band and
+    /// surface only a filtered summary (git-annex / git-lfs style).
+    #[command(hide = true)]
+    Objects {
+        #[command(subcommand)]
+        action: ObjectsCommands,
     },
 
     /// Record and query content-addressed claims about the codebase.
@@ -1723,6 +1759,168 @@ enum MemoryCommands {
 }
 
 #[derive(Subcommand)]
+enum ObjectsCommands {
+    /// Run a command, store its full raw output out-of-band, and print only a
+    /// filtered summary. The exit code is passed through, so this is a
+    /// transparent wrapper: `h5i capture run -- pytest -q`.
+    Run {
+        /// Force a content kind instead of auto-detecting
+        /// (test|log|json|diff|generic).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Max lines to keep in the summary.
+        #[arg(long)]
+        budget: Option<usize>,
+        /// Best-effort cap on summary tokens (uses tiktoken when available).
+        #[arg(long)]
+        token_budget: Option<usize>,
+        /// Also echo the summary's pointer line even on success (default: yes).
+        #[arg(long)]
+        quiet: bool,
+        /// Only store + summarize when the output is at least this many bytes;
+        /// smaller output passes straight through unstored. Makes it safe to wrap
+        /// any command. Use 0 to always capture.
+        #[arg(long, default_value_t = DEFAULT_CAPTURE_MIN_BYTES)]
+        min_bytes: u64,
+        /// Output format: compact (default, one line per finding) | structured
+        /// (full YAML) | json | summary (legacy text). Invalid values are rejected.
+        #[arg(long, value_enum, default_value_t = CaptureFormat::Compact)]
+        format: CaptureFormat,
+        /// Associate this capture with a file (repeatable). The branch and the
+        /// working-tree diff are recorded automatically.
+        #[arg(long = "file", value_name = "PATH", action = clap::ArgAction::Append)]
+        files: Vec<String>,
+        /// The command to run, after `--`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+
+    /// Store raw bytes read from a file (or stdin with `-`) and print a summary.
+    Put {
+        /// File to ingest; use `-` to read stdin.
+        path: String,
+        /// Force a content kind (test|log|json|diff|generic).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Max lines to keep in the summary.
+        #[arg(long)]
+        budget: Option<usize>,
+        /// Associate this capture with a file (repeatable).
+        #[arg(long = "file", value_name = "PATH", action = clap::ArgAction::Append)]
+        files: Vec<String>,
+    },
+
+    /// Rehydrate the full raw bytes for a stored object to stdout.
+    /// Accepts a short id, a `sha256:<hex>`, or any unambiguous hex prefix.
+    Get {
+        /// Object handle (id / sha256:<hex> / prefix).
+        id: String,
+        /// Print the filtered summary instead of the raw bytes.
+        #[arg(long)]
+        summary: bool,
+        /// Print the full manifest JSON record.
+        #[arg(long)]
+        manifest: bool,
+    },
+
+    /// List stored objects (most recent first), showing their summaries.
+    List {
+        /// Maximum number of objects to show.
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+        /// Only objects captured on this branch.
+        #[arg(long)]
+        branch: Option<String>,
+        /// Only objects associated with this file (matches files & diff context).
+        #[arg(long)]
+        file: Option<String>,
+        /// Only objects whose diff context intersects the *current* working-tree
+        /// changes — i.e. captures relevant to what you're editing now.
+        #[arg(long)]
+        diff: bool,
+        /// Only objects with this structured status (passed|ok|failed|error|unknown).
+        #[arg(long)]
+        status: Option<String>,
+        /// Only objects from this tool (e.g. pytest, cargo, npm).
+        #[arg(long)]
+        tool: Option<String>,
+    },
+
+    /// Evict local raw blobs to reclaim space. Manifests/summaries are kept.
+    /// Without --ttl, only orphan blobs (no manifest) are removed.
+    Gc {
+        /// Also evict referenced blobs older than this (e.g. 30d, 12h, 90m).
+        #[arg(long, value_name = "DURATION")]
+        ttl: Option<String>,
+        /// Report what would be evicted without deleting anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Pin an object so `gc` never evicts its raw blob.
+    Pin {
+        /// Object handle (id / sha256:<hex> / prefix).
+        id: String,
+    },
+
+    /// Remove a pin.
+    Unpin {
+        /// Object handle (id / sha256:<hex> / prefix).
+        id: String,
+    },
+
+    /// Verify manifests against the local store (absent blobs, orphans).
+    Fsck,
+
+    /// Share raw blobs: mirror local raw output into the `refs/h5i/objects-data`
+    /// git ref and push it to a remote (the optional git-ref store backend).
+    /// Raw output can be large, so this is a deliberate step separate from the
+    /// metadata `h5i push`.
+    Push {
+        /// Remote to push to (default: origin).
+        #[arg(long, default_value = "origin")]
+        remote: String,
+        /// Storage backend: auto (LFS for HTTP(S) remotes, else git-ref) | lfs | git-ref.
+        #[arg(long, value_enum, default_value_t = ObjectsBackend::Auto)]
+        backend: ObjectsBackend,
+    },
+
+    /// Fetch shared raw blobs from a remote (LFS or `refs/h5i/objects-data`) and
+    /// cache them into the local store.
+    Pull {
+        /// Remote to fetch from (default: origin).
+        #[arg(long, default_value = "origin")]
+        remote: String,
+        /// Storage backend: auto (LFS for HTTP(S) remotes, else git-ref) | lfs | git-ref.
+        #[arg(long, value_enum, default_value_t = ObjectsBackend::Auto)]
+        backend: ObjectsBackend,
+    },
+
+    /// List the built-in declarative command filters (the rtk-derived rule set
+    /// that `capture run` applies for tools without a coded adapter).
+    Filters {
+        /// Run every rule's inline golden tests and report pass/fail.
+        #[arg(long)]
+        verify: bool,
+    },
+
+    /// Wire token-reduction guidance into this project's agent instruction files
+    /// (.claude/h5i.md, AGENTS.md) so agents know to wrap large-output commands.
+    Setup,
+
+    /// Review and trust a project-local `.h5i/filters.toml` so its rules are
+    /// applied by `capture run`. Untrusted/changed files are never applied.
+    Trust {
+        /// Show the current trust status without changing it.
+        #[arg(long)]
+        status: bool,
+        /// Remove trust (project rules will stop being applied).
+        #[arg(long)]
+        remove: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum HookCommands {
     /// Print install instructions for all Claude Code hooks
     Setup,
@@ -1826,6 +2024,26 @@ h5i context merge experiment/sync-retry     # merge findings back if useful
 ```bash
 h5i context relevant src/repository.rs
 ```
+
+---
+
+### Capturing large command output (token reduction)
+
+Wrap commands that may produce **large or noisy output** — test suites, builds, linters, big JSON, long logs — so only a filtered summary enters context:
+
+```bash
+h5i capture run -- <command> [args…]          # e.g. h5i capture run -- pytest -q
+h5i capture run --file <path> -- <command>    # tag the files it relates to
+```
+
+It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Output under ~2 KB passes through unstored, so it is safe to wrap. Rehydrate the full raw only if the summary isn't enough:
+
+```bash
+h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall object <id>                         # full raw bytes
+```
+
+Prefer the `h5i_capture_run` MCP tool when available (same behavior, no shell-quoting). Don't wrap trivial commands you need to read in full.
 
 ---
 
@@ -2067,6 +2285,16 @@ Add flags when relevant:
 - `--tests`  — tests were added or modified
 - `--audit`  — security-sensitive or high-risk changes
 
+### Capturing large command output (token reduction)
+
+Wrap commands that produce large/noisy output (tests, builds, linters, big JSON, long logs) so only a filtered summary enters context; the full raw is stored out-of-band and stays recoverable. Output under ~2 KB passes through unstored, so it is safe to wrap:
+```bash
+h5i capture run -- <command> [args…]     # e.g. h5i capture run -- cargo test
+h5i capture run --file <path> -- <cmd>   # tag the files it relates to
+h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall object <id>                   # rehydrate full raw (only if needed)
+```
+
 ### Messaging other agents (i5h)
 
 `h5i msg` is a cross-agent message channel stored in `refs/h5i/msg` (shared via
@@ -2104,6 +2332,57 @@ h5i push   # push all h5i refs to origin
 h5i pull   # pull h5i refs from origin
 ```
 "#;
+
+/// Detection string that keeps `h5i objects setup` idempotent. It is the section
+/// heading, which is also what `h5i init` writes into the templates — so setup
+/// never duplicates guidance an init'd project already has.
+const CAPTURE_GUIDANCE_MARKER: &str = "### Capturing large command output";
+
+/// The token-reduction guidance block appended by `h5i objects setup`.
+const CAPTURE_GUIDANCE_BLOCK: &str = r#"### Capturing large command output (token reduction)
+
+Wrap commands that may produce **large or noisy output** — test suites, builds,
+linters, big JSON, long logs — so only a filtered summary enters context:
+
+```bash
+h5i capture run -- <command> [args…]            # e.g. h5i capture run -- pytest -q
+h5i capture run --file <path> -- <command>      # tag the files it relates to
+```
+
+It prints only the summary (errors/failures/counts), passes the exit code
+through, and stores the full raw output out-of-band. Output under ~2 KB passes
+through unstored, so it is safe to wrap. Rehydrate the full raw only if needed:
+
+```bash
+h5i recall objects [--branch <b>|--file <p>]    # list captures
+h5i recall object <id>                          # full raw bytes
+```
+
+Prefer the `h5i_capture_run` MCP tool when available. Don't wrap trivial commands
+you need to read in full.
+"#;
+
+/// Append `block` to `path` (creating it) unless `marker` is already present.
+/// Returns true if it wrote.
+fn append_block_if_missing(path: &Path, marker: &str, block: &str) -> anyhow::Result<bool> {
+    use std::io::Write as _;
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    if existing.contains(marker) {
+        return Ok(false);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(f)?;
+    }
+    writeln!(f, "\n{block}")?;
+    Ok(true)
+}
 
 fn write_claude_instructions(workdir: &Path) -> anyhow::Result<()> {
     use std::io::Write as _;
@@ -2574,6 +2853,7 @@ const H5I_REF_PATTERNS: &[&str] = &[
     "refs/h5i/context/*",
     "refs/h5i/ast",
     "refs/h5i/msg",
+    "refs/h5i/objects",
 ];
 
 /// Whether `remote` still hosts the pre-redesign single context ref
@@ -2960,14 +3240,14 @@ fn rewrite_noun_argv(argv: Vec<String>) -> Vec<String> {
     if argv[1] == "help"
         && argv
             .get(2)
-            .map(|t| matches!(t.as_str(), "capture" | "recall" | "audit" | "share"))
+            .map(|t| matches!(t.as_str(), "capture" | "recall" | "audit" | "share" | "objects"))
             .unwrap_or(false)
     {
         print_noun_help(&argv[2]);
         std::process::exit(0);
     }
     let noun = match argv[1].as_str() {
-        "capture" | "recall" | "audit" | "share" => argv[1].clone(),
+        "capture" | "recall" | "audit" | "share" | "objects" => argv[1].clone(),
         _ => return argv,
     };
 
@@ -3020,13 +3300,17 @@ fn rewrite_noun_argv(argv: Vec<String>) -> Vec<String> {
 /// Return the verb under `noun` whose name is closest (Levenshtein ≤ 2) to `typo`.
 fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
     let candidates: &[&'static str] = match noun {
-        "capture" => &["commit", "claim", "memory"],
+        "capture" => &["commit", "claim", "memory", "run"],
         "recall" => &[
             "log", "blame", "diff", "context", "claims", "notes", "memory", "recap", "resume",
-            "vibe",
+            "vibe", "object", "objects",
         ],
         "audit" => &["review", "scan", "compliance", "policy", "vibe"],
         "share" => &["push", "pull", "pr", "memory", "setup-remote", "migrate-remote"],
+        "objects" => &[
+            "run", "put", "get", "list", "ls", "gc", "pin", "unpin", "fsck", "push", "pull",
+            "filters", "trust", "setup",
+        ],
         _ => return None,
     };
     let typo_l = typo.to_lowercase();
@@ -3064,6 +3348,27 @@ fn levenshtein(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+/// Default `capture run --min-bytes` (shared with the MCP tool): below this,
+/// output passes through unstored so wrapping a command is a no-op when there's
+/// nothing worth reducing.
+use h5i_core::objects::DEFAULT_CAPTURE_MIN_BYTES;
+
+/// Format a byte count as a short human string (B / KiB / MiB / GiB).
+fn humanize_bytes(n: u64) -> String {
+    const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut size = n as f64;
+    let mut unit = 0;
+    while size >= 1024.0 && unit < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{n} B")
+    } else {
+        format!("{size:.1} {}", UNITS[unit])
+    }
+}
+
 /// Map `(noun, verb)` to the legacy argv tokens that implement it.
 fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
     Some(match (noun, verb) {
@@ -3072,6 +3377,8 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("capture", "claim")    => &["claims", "add"],
         ("capture", "claims")   => &["claims", "add"],
         ("capture", "memory")   => &["memory", "snapshot"],
+        ("capture", "run")      => &["objects", "run"],
+        ("capture", "output")   => &["objects", "run"],
 
         // ── recall ──────────────────────────────────────────────────────
         ("recall",  "log")      => &["log"],
@@ -3085,6 +3392,8 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("recall",  "recap")    => &["context", "recap"],
         ("recall",  "resume")   => &["resume"],
         ("recall",  "vibe")     => &["vibe"],
+        ("recall",  "object")   => &["objects", "get"],
+        ("recall",  "objects")  => &["objects", "list"],
 
         // ── audit ───────────────────────────────────────────────────────
         ("audit",   "review")   => &["notes", "review"],
@@ -3102,8 +3411,202 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("share",   "setup-remote")   => &["setup-remote"],
         ("share",   "migrate-remote") => &["migrate-remote"],
 
+        // ── objects (token-reduction store maintenance) ──────────────────
+        ("objects", "run")      => &["objects", "run"],
+        ("objects", "put")      => &["objects", "put"],
+        ("objects", "get")      => &["objects", "get"],
+        ("objects", "list")     => &["objects", "list"],
+        ("objects", "ls")       => &["objects", "list"],
+        ("objects", "gc")       => &["objects", "gc"],
+        ("objects", "pin")      => &["objects", "pin"],
+        ("objects", "unpin")    => &["objects", "unpin"],
+        ("objects", "fsck")     => &["objects", "fsck"],
+        ("objects", "push")     => &["objects", "push"],
+        ("objects", "pull")     => &["objects", "pull"],
+        ("objects", "filters")  => &["objects", "filters"],
+        ("objects", "rules")    => &["objects", "filters"],
+        ("objects", "trust")    => &["objects", "trust"],
+        ("objects", "setup")    => &["objects", "setup"],
+
         _ => return None,
     })
+}
+
+/// True if `remote` advertises the [`objects::OBJECTS_DATA_REF`] ref.
+fn remote_has_objects_data(workdir: &std::path::Path, remote: &str) -> bool {
+    std::process::Command::new("git")
+        .args(["ls-remote", remote, h5i_core::objects::OBJECTS_DATA_REF])
+        .current_dir(workdir)
+        .output()
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+/// Fetch the remote `objects-data` ref and union-merge it into the local one
+/// (content-addressed → set union; corrupt incoming entries are dropped by
+/// [`h5i_core::objects::union_merge_data_commits`]). Returns `false` (no-op) when the
+/// remote has no such ref yet. Shared by `objects push` (merge-before-push, so a
+/// non-force push can't clobber a peer) and `objects pull`.
+fn fetch_merge_objects_data(
+    git: &git2::Repository,
+    workdir: &std::path::Path,
+    remote: &str,
+) -> anyhow::Result<bool> {
+    if !remote_has_objects_data(workdir, remote) {
+        return Ok(false);
+    }
+    let tmp = "refs/h5i/_incoming/objects-data";
+    let spec = format!("+{}:{}", h5i_core::objects::OBJECTS_DATA_REF, tmp);
+    let fetched = std::process::Command::new("git")
+        .args(["fetch", remote, &spec])
+        .current_dir(workdir)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !fetched {
+        anyhow::bail!("git fetch of {} from {remote} failed", h5i_core::objects::OBJECTS_DATA_REF);
+    }
+    if let Ok(incoming) = git.refname_to_id(tmp) {
+        match git.refname_to_id(h5i_core::objects::OBJECTS_DATA_REF).ok() {
+            None => {
+                // No local ref yet: sanitize the incoming tree (drop corrupt
+                // entries) instead of trusting it wholesale.
+                let clean = h5i_core::objects::sanitize_data_commit(git, incoming)?;
+                git.reference(h5i_core::objects::OBJECTS_DATA_REF, clean, true, "h5i objects pull")?;
+            }
+            Some(local) if local != incoming => {
+                let merged = h5i_core::objects::union_merge_data_commits(git, local, incoming)?;
+                git.reference(
+                    h5i_core::objects::OBJECTS_DATA_REF,
+                    merged,
+                    true,
+                    "h5i objects pull (union)",
+                )?;
+            }
+            Some(_) => {}
+        }
+        let _ = git.find_reference(tmp).and_then(|mut r| r.delete());
+    }
+    Ok(true)
+}
+
+// ── objects push/pull backend implementations ─────────────────────────────────
+
+/// Share raw blobs via the git-ref store (`refs/h5i/objects-data`): stage local
+/// blobs, fetch+union-merge the remote (no-clobber), then a non-force push.
+fn git_ref_push(
+    git: &git2::Repository,
+    workdir: &std::path::Path,
+    h5i_root: &std::path::Path,
+    remote: &str,
+) -> anyhow::Result<()> {
+    use std::io::Write as _;
+    let staged = h5i_core::objects::mirror_local_to_gitref(git, h5i_root)?;
+    println!(
+        "{} {} blob{} staged into {}",
+        style("◈").cyan(),
+        staged,
+        if staged == 1 { "" } else { "s" },
+        style(h5i_core::objects::OBJECTS_DATA_REF).yellow(),
+    );
+    if git.refname_to_id(h5i_core::objects::OBJECTS_DATA_REF).is_err() {
+        println!("  {} no raw blobs to share yet (capture some, then re-run)", style("ℹ").dim());
+        return Ok(());
+    }
+    fetch_merge_objects_data(git, workdir, remote)?;
+    print!("  {} {} … ", style("→").dim(), style(remote).cyan());
+    std::io::stdout().flush()?;
+    let spec = format!("{0}:{0}", h5i_core::objects::OBJECTS_DATA_REF);
+    let ok = std::process::Command::new("git")
+        .args(["push", remote, &spec])
+        .current_dir(workdir)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        println!("{}", style("ok").green());
+    } else {
+        println!("{} (remote moved? run `h5i objects pull`, then push again)", style("failed").red());
+    }
+    Ok(())
+}
+
+/// Pull shared raw blobs from the git-ref store and cache them locally.
+fn git_ref_pull(
+    git: &git2::Repository,
+    workdir: &std::path::Path,
+    h5i_root: &std::path::Path,
+    remote: &str,
+) -> anyhow::Result<()> {
+    if !fetch_merge_objects_data(git, workdir, remote)? {
+        println!("{} no shared raw blobs found on {}", style("ℹ").dim(), style(remote).cyan());
+    } else {
+        let (cached, skipped) = h5i_core::objects::mirror_gitref_to_local(git, h5i_root)?;
+        println!(
+            "{} pulled raw blobs · {} cached locally{}",
+            style("✔").green(),
+            cached,
+            if skipped > 0 {
+                format!(" · {skipped} skipped (failed content-address check)")
+            } else {
+                String::new()
+            }
+        );
+    }
+    Ok(())
+}
+
+/// Upload local raw blobs to the remote's LFS server (bytes loaded one blob at a
+/// time). Returns the number transferred. Errors are typed so the caller can
+/// distinguish "remote lacks LFS" from auth/network/content failures.
+fn lfs_push(
+    git: &git2::Repository,
+    workdir: &std::path::Path,
+    h5i_root: &std::path::Path,
+    url: &str,
+) -> Result<usize, h5i_core::lfs::LfsError> {
+    use h5i_core::objects::Backend as _;
+    let client = h5i_core::lfs::LfsClient::for_remote(workdir, url)
+        .ok_or_else(|| h5i_core::lfs::LfsError::fatal(format!("LFS requires an http(s) remote; got {url}")))?;
+    let store = h5i_core::objects::LocalStore::new(h5i_root);
+    let mut seen = std::collections::HashSet::new();
+    let mut objs = Vec::new();
+    for m in h5i_core::objects::read_manifests(git) {
+        let hex = m.hex().to_string();
+        // Only offer blobs we actually hold locally.
+        if seen.insert(hex.clone()) && store.has(&hex) {
+            objs.push(h5i_core::lfs::ObjId { oid: hex, size: m.raw_size });
+        }
+    }
+    client.upload(&objs, |oid| store.get(oid))
+}
+
+/// Download every manifest blob missing locally from the remote's LFS server,
+/// caching each into the local store. Returns `(fetched, missing)`.
+fn lfs_pull(
+    git: &git2::Repository,
+    workdir: &std::path::Path,
+    h5i_root: &std::path::Path,
+    url: &str,
+) -> Result<(usize, usize), h5i_core::lfs::LfsError> {
+    use h5i_core::objects::Backend as _;
+    let client = h5i_core::lfs::LfsClient::for_remote(workdir, url)
+        .ok_or_else(|| h5i_core::lfs::LfsError::fatal(format!("LFS requires an http(s) remote; got {url}")))?;
+    let store = h5i_core::objects::LocalStore::new(h5i_root);
+    let mut seen = std::collections::HashSet::new();
+    let mut want = Vec::new();
+    for m in h5i_core::objects::read_manifests(git) {
+        let hex = m.hex().to_string();
+        if seen.insert(hex.clone()) && !store.has(&hex) {
+            want.push(h5i_core::lfs::ObjId { oid: hex, size: m.raw_size });
+        }
+    }
+    client.download(&want, |oid, bytes| store.put(oid, bytes))
+}
+
+/// Resolve `origin`/`<remote>`'s URL, if any.
+fn remote_url(git: &git2::Repository, remote: &str) -> Option<String> {
+    git.find_remote(remote).ok()?.url().map(str::to_string)
 }
 
 /// One row in a noun-group help table.
@@ -3137,10 +3640,17 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     legacy: "h5i memory snapshot",
                     example: "h5i capture memory --agent claude",
                 },
+                NounVerb {
+                    verb: "run",
+                    summary: "Run a command, store its huge raw output out-of-band, surface only a filtered summary.",
+                    legacy: "(new)",
+                    example: "h5i capture run -- pytest -q\n      h5i capture run --kind log -- cargo build",
+                },
             ],
             &[
                 "Tip: `h5i commit` and `h5i claims add` still work but emit a deprecation hint.",
                 "MCP equivalents: h5i_commit, h5i_claims_add, h5i_memory_snapshot.",
+                "`h5i capture run` keeps test/build logs out of your context — rehydrate via `h5i recall object`.",
             ],
         ),
         "recall" => (
@@ -3206,6 +3716,18 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     legacy: "h5i vibe",
                     example: "h5i recall vibe",
                 },
+                NounVerb {
+                    verb: "object",
+                    summary: "Rehydrate a captured raw output (full bytes, or --summary / --manifest).",
+                    legacy: "(new)",
+                    example: "h5i recall object a1b2c3d4\n      h5i recall object a1b2 --summary",
+                },
+                NounVerb {
+                    verb: "objects",
+                    summary: "List captured raw outputs (newest first) with summaries.",
+                    legacy: "(new)",
+                    example: "h5i recall objects --limit 20",
+                },
             ],
             &[
                 "Tip: legacy top-level forms (`h5i log`, `h5i blame`, …) still work — they print a one-line deprecation hint.",
@@ -3256,7 +3778,7 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
             &[
                 NounVerb {
                     verb: "push",
-                    summary: "Push all refs/h5i/* (notes, context, memory, ast, msg) to a remote in one shot.",
+                    summary: "Push all refs/h5i/* (notes, context, memory, ast, msg, object manifests) to a remote. Raw blobs are NOT shared — use `h5i objects push`.",
                     legacy: "h5i push",
                     example: "h5i share push",
                 },
@@ -3296,6 +3818,76 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                 "The PR comment is idempotent — re-running upserts in place via an HTML marker.",
                 "Run `h5i share setup-remote` once after cloning so `git fetch` brings h5i refs for free.",
                 "Hit a `directory/file conflict` pushing context? Run `h5i share migrate-remote` once.",
+            ],
+        ),
+        "objects" => (
+            "token reduction — store huge raw output, surface only a summary",
+            &[
+                NounVerb {
+                    verb: "run",
+                    summary: "Run a command, store its full output out-of-band, print only a filtered summary (exit code passed through).",
+                    legacy: "(new)",
+                    example: "h5i capture run -- pytest -q\n      h5i objects run --kind log -- cargo test",
+                },
+                NounVerb {
+                    verb: "put",
+                    summary: "Ingest raw bytes from a file (or `-` for stdin) and print a summary.",
+                    legacy: "(new)",
+                    example: "h5i objects put build.log\n      some-tool | h5i objects put -",
+                },
+                NounVerb {
+                    verb: "get",
+                    summary: "Rehydrate the full raw bytes for an object (or its --summary / --manifest).",
+                    legacy: "(new)",
+                    example: "h5i recall object a1b2c3d4\n      h5i objects get a1b2 --summary",
+                },
+                NounVerb {
+                    verb: "list",
+                    summary: "List stored objects (newest first) with their summaries and local availability.",
+                    legacy: "(new)",
+                    example: "h5i recall objects --limit 20",
+                },
+                NounVerb {
+                    verb: "gc",
+                    summary: "Reclaim space: evict orphan (or, with --ttl, stale) raw blobs. Summaries are kept.",
+                    legacy: "(new)",
+                    example: "h5i objects gc --ttl 30d\n      h5i objects gc --dry-run",
+                },
+                NounVerb {
+                    verb: "pin",
+                    summary: "Pin / unpin an object so gc never evicts its raw blob.",
+                    legacy: "(new)",
+                    example: "h5i objects pin a1b2c3d4\n      h5i objects unpin a1b2c3d4",
+                },
+                NounVerb {
+                    verb: "fsck",
+                    summary: "Verify manifests against the local store (absent blobs, orphans).",
+                    legacy: "(new)",
+                    example: "h5i objects fsck",
+                },
+                NounVerb {
+                    verb: "filters",
+                    summary: "List built-in per-command filters (rtk-derived); --verify runs their golden tests.",
+                    legacy: "(new)",
+                    example: "h5i objects filters\n      h5i objects filters --verify",
+                },
+                NounVerb {
+                    verb: "trust",
+                    summary: "Review & trust a project-local .h5i/filters.toml so its rules apply (untrusted files are ignored).",
+                    legacy: "(new)",
+                    example: "h5i objects trust\n      h5i objects trust --status",
+                },
+                NounVerb {
+                    verb: "setup",
+                    summary: "Wire token-reduction guidance into .claude/h5i.md + AGENTS.md so agents use capture run.",
+                    legacy: "(new)",
+                    example: "h5i objects setup",
+                },
+            ],
+            &[
+                "Only the small summary/pointer records travel with `h5i share push`; raw blobs stay local.",
+                "`h5i capture run` is the everyday entry point; the `objects` verbs are for maintenance.",
+                "An absent (○) object means its raw was evicted or never fetched — the summary still works.",
             ],
         ),
         _ => ("", &[], &[]),
@@ -5575,6 +6167,15 @@ jq -c '{
                 "no messages yet",
             )?;
 
+            // Push the token-reduction manifest log (refs/h5i/objects).
+            // Only the small pointer records travel; raw blobs stay local
+            // until a remote object backend exists (git-lfs style).
+            try_push(
+                h5i_core::objects::OBJECTS_REF,
+                style("h5i capture run").bold(),
+                "no captured objects yet",
+            )?;
+
             // Bind to the original variable name so the existing "Tip:" footer
             // (gated on notes_status.success()) keeps working unchanged.
             let notes_status_success = notes_pushed;
@@ -5832,6 +6433,48 @@ jq -c '{
                                     false
                                 }
                             }
+                        } else if refname == h5i_core::objects::OBJECTS_REF {
+                            // The object-manifest log is append-only too: union
+                            // the two disjoint sets of pointers so a captured
+                            // summary is never lost when two clones diverge.
+                            let g2 = git2::Repository::open(&workdir)
+                                .map_err(|e| anyhow::anyhow!("open git2 repo: {e}"))?;
+                            let local_git2 = git2::Oid::from_str(local_oid_str)
+                                .map_err(|e| anyhow::anyhow!("parse local oid: {e}"))?;
+                            let incoming_git2 = git2::Oid::from_str(&incoming_oid)
+                                .map_err(|e| anyhow::anyhow!("parse incoming oid: {e}"))?;
+                            match h5i_core::objects::union_merge_commits(
+                                &g2,
+                                local_git2,
+                                incoming_git2,
+                            ) {
+                                Ok(new_oid) => {
+                                    let new_oid_str = new_oid.to_string();
+                                    let st = git(&[
+                                        "update-ref",
+                                        refname,
+                                        &new_oid_str,
+                                        local_oid_str,
+                                    ])?;
+                                    if st.status.success() {
+                                        println!(
+                                            "{} ({})",
+                                            style("ok").green(),
+                                            style("merged (union)").dim()
+                                        );
+                                        true
+                                    } else {
+                                        println!("{}", style("failed").red());
+                                        eprint!("{}", String::from_utf8_lossy(&st.stderr));
+                                        false
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("{}", style("failed").red());
+                                    eprintln!("union-merge of objects refs failed: {e}");
+                                    false
+                                }
+                            }
                         } else if force {
                             install("forced over divergent local")?
                         } else {
@@ -5916,6 +6559,7 @@ jq -c '{
 
             sync_one("refs/h5i/ast")?;
             sync_one(msg::MSG_REF)?;
+            sync_one(h5i_core::objects::OBJECTS_REF)?;
 
             if notes_changed {
                 println!(
@@ -5928,6 +6572,695 @@ jq -c '{
                     style("h5i notes show").bold(),
                     style("h5i memory log").bold(),
                 );
+            }
+        }
+
+        Commands::Objects { action } => {
+            use h5i_core::objects::{self, Backend};
+            use h5i_core::token_filter::{FilterConfig, OutputKind};
+
+            let repo = H5iRepository::open(".")?;
+            let h5i_root = repo.h5i_root.clone();
+            let git = repo.git();
+
+            // HEAD tree, recorded on each capture for provenance.
+            let head_tree = git
+                .head()
+                .ok()
+                .and_then(|h| h.peel_to_tree().ok())
+                .map(|t| t.id().to_string());
+
+            // Build a FilterConfig from the CLI knobs.
+            let make_cfg = |kind: OutputKind, budget: Option<usize>, token_budget: Option<usize>| {
+                let mut cfg = FilterConfig {
+                    kind,
+                    token_budget,
+                    ..Default::default()
+                };
+                if let Some(b) = budget {
+                    cfg.max_lines = b;
+                }
+                cfg
+            };
+
+            // Print the agent-facing summary plus a durable pointer line.
+            // `quiet` suppresses the pointer/status line (summary only).
+            // Prints the durable pointer line (stderr) — the body is printed
+            // separately per --format. `quiet` suppresses it.
+            let print_pointer = |m: &objects::Manifest, deduped: bool, quiet: bool| {
+                if quiet {
+                    return;
+                }
+                // Report tokens for the DEFAULT agent-facing output (compact
+                // render when structured), not the git-tracked summary field.
+                let savings = match (m.raw_tokens, m.agent_facing_tokens()) {
+                    (Some(r), Some(s)) if r > 0 => {
+                        let pct = 100 - (s.min(r) * 100 / r);
+                        format!(" · ~{pct}% fewer tokens ({r}→{s})")
+                    }
+                    _ => String::new(),
+                };
+                eprintln!(
+                    "\n{} {} · {} · {} bytes · {} lines{}{}",
+                    style("▢ h5i object").dim(),
+                    style(&m.id).cyan().bold(),
+                    style(&m.kind).yellow(),
+                    m.raw_size,
+                    m.raw_lines,
+                    style(savings).green(),
+                    if deduped { style(" · deduped").dim().to_string() } else { String::new() },
+                );
+                eprintln!(
+                    "  {} {}",
+                    style("rehydrate:").dim(),
+                    style(format!("h5i recall object {}", m.id)).dim(),
+                );
+            };
+
+            match action {
+                ObjectsCommands::Run {
+                    kind,
+                    budget,
+                    token_budget,
+                    quiet,
+                    min_bytes,
+                    format,
+                    files,
+                    command,
+                } => {
+                    if command.is_empty() {
+                        anyhow::bail!(
+                            "usage: h5i capture run [--kind K] [--budget N] -- <command> [args…]"
+                        );
+                    }
+                    let kind_opt = kind.as_deref().map(OutputKind::parse).unwrap_or(OutputKind::Auto);
+                    let mut cfg = make_cfg(kind_opt, budget, token_budget);
+                    // Hand the argv to the filter so command-aware adapters
+                    // (pytest/cargo/git) can produce a semantic summary.
+                    cfg.cmd = Some(command.clone());
+                    // Project-local rules are applied only if the user has
+                    // trusted the current `.h5i/filters.toml` (it's untrusted
+                    // input that could otherwise mask failures).
+                    if let Some(workdir) = git.workdir() {
+                        use h5i_core::filter_rules::{self, TrustStatus};
+                        match filter_rules::trust_status(workdir, &h5i_root) {
+                            TrustStatus::Trusted | TrustStatus::EnvOverride => {
+                                // We've decided to apply project rules — make sure
+                                // they actually load, rather than silently falling
+                                // back to built-ins on a parse error (possible
+                                // under H5I_TRUST_FILTERS or a filesystem race).
+                                let pf = filter_rules::project_filters_path(workdir);
+                                match filter_rules::describe_file(&pf) {
+                                    Ok(_) => cfg.project_filters = Some(pf),
+                                    Err(e) => eprintln!(
+                                        "{} trusted .h5i/filters.toml failed to load — using built-ins only: {e}",
+                                        style("warning:").yellow().bold()
+                                    ),
+                                }
+                            }
+                            TrustStatus::Untrusted => eprintln!(
+                                "{} project .h5i/filters.toml is untrusted — not applied. Review with `h5i objects trust`.",
+                                style("warning:").yellow().bold()
+                            ),
+                            TrustStatus::Changed => eprintln!(
+                                "{} .h5i/filters.toml changed since trusted — not applied. Re-review with `h5i objects trust`.",
+                                style("warning:").yellow().bold()
+                            ),
+                            TrustStatus::NoFile => {}
+                        }
+                    }
+                    let cwd = std::env::current_dir().ok().map(|p| p.display().to_string());
+
+                    // Run the command, capturing stdout + stderr (stdin inherited
+                    // so interactive prompts still work).
+                    let output = std::process::Command::new(&command[0])
+                        .args(&command[1..])
+                        .stdin(std::process::Stdio::inherit())
+                        .output();
+                    let output = match output {
+                        Ok(o) => o,
+                        Err(e) => anyhow::bail!("failed to run `{}`: {e}", command.join(" ")),
+                    };
+                    let exit_code = output.status.code();
+
+                    // Compose the raw payload: stdout, then a labeled stderr block.
+                    let mut raw: Vec<u8> =
+                        Vec::with_capacity(output.stdout.len() + output.stderr.len() + 32);
+                    raw.extend_from_slice(&output.stdout);
+                    if !output.stderr.is_empty() {
+                        if !raw.is_empty() && !raw.ends_with(b"\n") {
+                            raw.push(b'\n');
+                        }
+                        raw.extend_from_slice(b"\n----- stderr -----\n");
+                        raw.extend_from_slice(&output.stderr);
+                    }
+
+                    // Small output isn't worth a stored object: pass it straight
+                    // through so wrapping any command is safe and a no-op when
+                    // there's nothing to reduce.
+                    if (raw.len() as u64) < min_bytes {
+                        use std::io::Write;
+                        std::io::stdout().write_all(&raw)?;
+                    } else {
+                        let opts = objects::CaptureOptions {
+                            kind: kind_opt,
+                            cmd: Some(command.join(" ")),
+                            cwd,
+                            exit_code,
+                            git_tree: head_tree.clone(),
+                            files,
+                            cmd_argv: command.clone(),
+                            filter: cfg,
+                        };
+                        let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
+                        let m = &outcome.manifest;
+                        // Render the body per --format (compact is the default).
+                        // Falls back to the text summary if no structured record.
+                        match (format, &m.structured) {
+                            (CaptureFormat::Summary | CaptureFormat::Text, _) | (_, None) => {
+                                println!("{}", m.summary)
+                            }
+                            (CaptureFormat::Json, Some(s)) => {
+                                println!("{}", h5i_core::structured::render_json_pretty(s))
+                            }
+                            (CaptureFormat::Structured | CaptureFormat::Yaml, Some(s)) => {
+                                println!("{}", h5i_core::structured::render_yaml(s))
+                            }
+                            (CaptureFormat::Compact, Some(s)) => {
+                                println!("{}", h5i_core::structured::render_compact(s))
+                            }
+                        }
+                        print_pointer(m, outcome.deduped, quiet);
+                    }
+
+                    // Transparent wrapper: pass the child's exit code through.
+                    if let Some(code) = exit_code {
+                        if code != 0 {
+                            std::process::exit(code);
+                        }
+                    }
+                }
+
+                ObjectsCommands::Put { path, kind, budget, files } => {
+                    let raw = if path == "-" {
+                        use std::io::Read;
+                        let mut buf = Vec::new();
+                        std::io::stdin().read_to_end(&mut buf)?;
+                        buf
+                    } else {
+                        std::fs::read(&path)
+                            .map_err(|e| anyhow::anyhow!("read {path}: {e}"))?
+                    };
+                    let kind_opt = kind.as_deref().map(OutputKind::parse).unwrap_or(OutputKind::Auto);
+                    let cfg = make_cfg(kind_opt, budget, None);
+                    let opts = objects::CaptureOptions {
+                        kind: kind_opt,
+                        cmd: None,
+                        cwd: None,
+                        exit_code: None,
+                        git_tree: head_tree.clone(),
+                        files,
+                        cmd_argv: Vec::new(),
+                        filter: cfg,
+                    };
+                    let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
+                    println!("{}", outcome.manifest.summary);
+                    print_pointer(&outcome.manifest, outcome.deduped, false);
+                }
+
+                ObjectsCommands::Get { id, summary, manifest } => {
+                    let m = objects::resolve_manifest(git, &id)?;
+                    if manifest {
+                        println!("{}", serde_json::to_string_pretty(&m)?);
+                    } else if summary {
+                        println!("{}", m.summary);
+                    } else {
+                        // Local first, then the git-ref store (shared blobs).
+                        match objects::load_raw_with_remote(git, &h5i_root, &m)? {
+                            Some(bytes) => {
+                                use std::io::Write;
+                                std::io::stdout().write_all(&bytes)?;
+                            }
+                            None => anyhow::bail!(
+                                "raw blob for {} is absent (evicted, or never fetched).\n\
+                                 Its summary is still available: h5i recall object {} --summary\n\
+                                 If it was shared, run `h5i objects pull` (for an LFS/HTTP(S) \
+                                 remote, check the remote/credentials). Note: lazy recall only \
+                                 tries the `origin` remote.",
+                                m.raw_oid,
+                                m.id
+                            ),
+                        }
+                    }
+                }
+
+                ObjectsCommands::List { limit, branch, file, diff, status, tool } => {
+                    let all = objects::read_manifests(git);
+
+                    // Validate --status against the canonical vocabulary (the
+                    // structured status enum), case-insensitively.
+                    let status = match status {
+                        Some(s) => {
+                            let sl = s.to_lowercase();
+                            const VALID: &[&str] = &["passed", "ok", "failed", "error", "unknown"];
+                            if !VALID.contains(&sl.as_str()) {
+                                anyhow::bail!(
+                                    "invalid --status '{s}' (expected one of: {})",
+                                    VALID.join(", ")
+                                );
+                            }
+                            Some(sl)
+                        }
+                        None => None,
+                    };
+
+                    // Build the optional filters.
+                    let cur_diff: Vec<String> = if diff {
+                        objects::working_diff_files(git)
+                    } else {
+                        Vec::new()
+                    };
+                    let file_matches = |m: &objects::Manifest, needle: &str| {
+                        m.files.iter().chain(m.diff_files.iter()).any(|f| {
+                            f == needle || f.ends_with(needle) || needle.ends_with(f.as_str())
+                        })
+                    };
+                    let manifests: Vec<&objects::Manifest> = all
+                        .iter()
+                        .filter(|m| {
+                            branch
+                                .as_deref()
+                                .is_none_or(|b| m.branch.as_deref() == Some(b))
+                        })
+                        .filter(|m| file.as_deref().is_none_or(|f| file_matches(m, f)))
+                        .filter(|m| {
+                            !diff
+                                || m.files
+                                    .iter()
+                                    .chain(m.diff_files.iter())
+                                    .any(|f| cur_diff.iter().any(|c| c == f))
+                        })
+                        .filter(|m| {
+                            status.as_deref().is_none_or(|want| {
+                                m.structured.as_ref().is_some_and(|s| {
+                                    serde_json::to_value(s.status)
+                                        .ok()
+                                        .and_then(|v| v.as_str().map(str::to_string))
+                                        .as_deref()
+                                        == Some(want)
+                                })
+                            })
+                        })
+                        .filter(|m| {
+                            tool.as_deref().is_none_or(|want| {
+                                m.structured.as_ref().map(|s| s.tool.as_str()) == Some(want)
+                            })
+                        })
+                        .collect();
+
+                    let filtered =
+                        branch.is_some() || file.is_some() || diff || status.is_some() || tool.is_some();
+                    if manifests.is_empty() {
+                        if filtered {
+                            println!("No captured objects match that filter.");
+                        } else {
+                            println!(
+                                "No captured objects yet. Try: {}",
+                                style("h5i capture run -- <command>").bold()
+                            );
+                        }
+                    } else {
+                        let store = objects::LocalStore::new(&h5i_root);
+                        let total = manifests.len();
+                        println!(
+                            "{} object{}{} (newest first){}\n",
+                            total,
+                            if total == 1 { "" } else { "s" },
+                            if filtered { " matched" } else { " captured" },
+                            if total > limit {
+                                format!(" — showing {limit}")
+                            } else {
+                                String::new()
+                            }
+                        );
+                        for m in manifests.iter().rev().take(limit) {
+                            let present = store.has(m.hex());
+                            let dot = if present {
+                                style("●").green()
+                            } else {
+                                style("○").red()
+                            };
+                            let first_line = m.summary.lines().next().unwrap_or("").trim();
+                            let branch_tag = m
+                                .branch
+                                .as_deref()
+                                .map(|b| format!("  ⎇ {b}"))
+                                .unwrap_or_default();
+                            println!(
+                                "{} {}  {}  {} bytes · {} lines{}",
+                                dot,
+                                style(&m.id).cyan().bold(),
+                                style(&m.kind).yellow(),
+                                m.raw_size,
+                                m.raw_lines,
+                                style(branch_tag).magenta()
+                            );
+                            if let Some(cmd) = &m.cmd {
+                                println!("    {} {}", style("$").dim(), style(cmd).dim());
+                            }
+                            // Show the files this capture is about (subject ∪ diff).
+                            let mut shown: Vec<&String> =
+                                m.files.iter().chain(m.diff_files.iter()).collect();
+                            shown.sort();
+                            shown.dedup();
+                            if !shown.is_empty() {
+                                let preview: Vec<&str> =
+                                    shown.iter().take(4).map(|s| s.as_str()).collect();
+                                let more = shown.len().saturating_sub(4);
+                                let extra = if more > 0 { format!(" +{more}") } else { String::new() };
+                                println!(
+                                    "    {} {}{}",
+                                    style("⊞").dim(),
+                                    style(preview.join(", ")).dim(),
+                                    style(extra).dim()
+                                );
+                            }
+                            println!("    {}", style(first_line).dim());
+                        }
+                        println!(
+                            "\n{} = raw present locally · {} = absent (rehydrate from a remote)",
+                            style("●").green(),
+                            style("○").red()
+                        );
+                    }
+                }
+
+                ObjectsCommands::Gc { ttl, dry_run } => {
+                    let ttl = match ttl {
+                        Some(s) => Some(objects::parse_duration(&s)?),
+                        None => None,
+                    };
+                    let report = objects::gc(git, &h5i_root, ttl, dry_run)?;
+                    let verb = if report.dry_run { "would evict" } else { "evicted" };
+                    println!(
+                        "{} {} blob{} ({} freed) · kept {} referenced, {} pinned · {} total",
+                        if report.dry_run {
+                            style("DRY RUN:").yellow().bold()
+                        } else {
+                            style("GC:").green().bold()
+                        },
+                        report.evicted.len(),
+                        if report.evicted.len() == 1 { "" } else { "s" },
+                        humanize_bytes(report.freed_bytes),
+                        report.kept_referenced,
+                        report.kept_pinned,
+                        report.total_blobs,
+                    );
+                    for e in report.evicted.iter().take(50) {
+                        println!(
+                            "  {} {}  {} bytes  ({})",
+                            style(verb).dim(),
+                            style(&e.hex[..16.min(e.hex.len())]).dim(),
+                            e.size,
+                            e.reason
+                        );
+                    }
+                }
+
+                ObjectsCommands::Pin { id } => {
+                    let m = objects::resolve_manifest(git, &id)?;
+                    objects::pin(&h5i_root, m.hex())?;
+                    println!("{} pinned {}", style("✔").green(), style(&m.id).cyan());
+                }
+
+                ObjectsCommands::Unpin { id } => {
+                    let m = objects::resolve_manifest(git, &id)?;
+                    objects::unpin(&h5i_root, m.hex())?;
+                    println!("{} unpinned {}", style("✔").green(), style(&m.id).cyan());
+                }
+
+                ObjectsCommands::Filters { verify } => {
+                    if verify {
+                        let (passed, failures) = h5i_core::filter_rules::run_golden_tests();
+                        if failures.is_empty() {
+                            println!(
+                                "{} all {} golden test(s) passed across {} rules",
+                                style("✔").green(),
+                                passed,
+                                h5i_core::filter_rules::list_filters().len()
+                            );
+                        } else {
+                            println!(
+                                "{} {} passed, {} failed",
+                                style("✗").red(),
+                                passed,
+                                failures.len()
+                            );
+                            for f in failures.iter().take(20) {
+                                println!("  {} {}/{}", style("✗").red(), f.filter, f.test);
+                            }
+                            std::process::exit(1);
+                        }
+                    } else {
+                        let rules = h5i_core::filter_rules::list_filters();
+                        println!(
+                            "{} built-in command filters (rtk-derived; applied by `h5i capture run`)\n",
+                            rules.len()
+                        );
+                        let w = rules.iter().map(|(n, _, _)| n.len()).max().unwrap_or(0);
+                        for (name, desc, _pat) in &rules {
+                            println!("  {:<w$}  {}", style(name).cyan().bold(), style(desc).dim(), w = w);
+                        }
+                        println!(
+                            "\n{} coded adapters (pytest, cargo, git diff) take precedence; \
+                             then these rules; then the generic scorer.",
+                            style("note:").dim()
+                        );
+                    }
+                }
+
+                ObjectsCommands::Setup => {
+                    let workdir = git
+                        .workdir()
+                        .ok_or_else(|| anyhow::anyhow!("bare repository not supported"))?;
+                    let mut wrote = Vec::new();
+                    let mut skipped = Vec::new();
+
+                    // Always ensure .claude/h5i.md carries the guidance.
+                    let h5i_md = workdir.join(".claude").join("h5i.md");
+                    if append_block_if_missing(&h5i_md, CAPTURE_GUIDANCE_MARKER, CAPTURE_GUIDANCE_BLOCK)? {
+                        wrote.push(".claude/h5i.md");
+                    } else {
+                        skipped.push(".claude/h5i.md");
+                    }
+                    // Update AGENTS.md only if the project already uses one.
+                    let agents = workdir.join("AGENTS.md");
+                    if agents.exists() {
+                        if append_block_if_missing(&agents, CAPTURE_GUIDANCE_MARKER, CAPTURE_GUIDANCE_BLOCK)? {
+                            wrote.push("AGENTS.md");
+                        } else {
+                            skipped.push("AGENTS.md");
+                        }
+                    }
+
+                    if wrote.is_empty() {
+                        println!(
+                            "{} capture guidance already present in {}",
+                            style("✓").green(),
+                            skipped.join(", ")
+                        );
+                    } else {
+                        println!(
+                            "{} wired token-reduction guidance into {}",
+                            style("✔").green(),
+                            wrote.join(", ")
+                        );
+                        if !skipped.is_empty() {
+                            println!("  (already present in {})", skipped.join(", "));
+                        }
+                    }
+                    println!(
+                        "\nAgents will now wrap large-output commands with {}.",
+                        style("h5i capture run").bold()
+                    );
+                }
+
+                ObjectsCommands::Trust { status, remove } => {
+                    use h5i_core::filter_rules::{self, TrustStatus};
+                    let workdir = git
+                        .workdir()
+                        .ok_or_else(|| anyhow::anyhow!("bare repository not supported"))?;
+                    let path = filter_rules::project_filters_path(workdir);
+                    let st = filter_rules::trust_status(workdir, &h5i_root);
+
+                    if remove {
+                        filter_rules::untrust(&h5i_root).map_err(|e| anyhow::anyhow!(e))?;
+                        println!("{} project filters untrusted", style("✔").green());
+                    } else if status {
+                        let label = match st {
+                            TrustStatus::NoFile => "no .h5i/filters.toml present",
+                            TrustStatus::Untrusted => "present, NOT trusted",
+                            TrustStatus::Changed => "changed since trusted (re-review)",
+                            TrustStatus::Trusted => "trusted",
+                            TrustStatus::EnvOverride => "applied via H5I_TRUST_FILTERS override",
+                        };
+                        println!("{}  ({})", style(label).bold(), path.display());
+                    } else {
+                        if st == TrustStatus::NoFile {
+                            anyhow::bail!("no {} to trust — create it first", path.display());
+                        }
+                        // Review: show the rules and flag any that could hide output.
+                        let rules = filter_rules::describe_file(&path)
+                            .map_err(|e| anyhow::anyhow!(e))?;
+                        println!(
+                            "Reviewing {} ({} rule{}):\n",
+                            style(path.display()).bold(),
+                            rules.len(),
+                            if rules.len() == 1 { "" } else { "s" }
+                        );
+                        let mut risky = false;
+                        for r in &rules {
+                            let flag = if r.can_hide_output {
+                                risky = true;
+                                style(" ⚠ can short-circuit output").red().to_string()
+                            } else {
+                                String::new()
+                            };
+                            println!(
+                                "  {}  {}{}",
+                                style(&r.name).cyan().bold(),
+                                style(&r.match_pattern).dim(),
+                                flag
+                            );
+                        }
+                        if risky {
+                            println!(
+                                "\n{} one or more rules use match_output without an `unless` guard — they can replace real output with a fixed message.",
+                                style("note:").yellow().bold()
+                            );
+                        }
+                        let hash = filter_rules::trust(workdir, &h5i_root)
+                            .map_err(|e| anyhow::anyhow!(e))?;
+                        println!(
+                            "\n{} trusted {} (sha256:{})",
+                            style("✔").green(),
+                            path.display(),
+                            &hash[..12]
+                        );
+                    }
+                }
+
+                ObjectsCommands::Fsck => {
+                    let report = objects::fsck(git, &h5i_root)?;
+                    println!(
+                        "{} manifests · {} absent · {} orphan blob{}",
+                        report.rows.len(),
+                        report.absent,
+                        report.orphans.len(),
+                        if report.orphans.len() == 1 { "" } else { "s" }
+                    );
+                    for row in report.rows.iter().filter(|r| !r.present) {
+                        println!(
+                            "  {} {} absent{}",
+                            style("✗").red(),
+                            style(&row.id).cyan(),
+                            if row.pinned { " (pinned!)" } else { "" }
+                        );
+                    }
+                    if !report.orphans.is_empty() {
+                        println!(
+                            "  {} run `h5i objects gc` to remove orphan blobs",
+                            style("tip:").dim()
+                        );
+                    }
+                }
+
+                ObjectsCommands::Push { remote, backend } => {
+                    let workdir = git
+                        .workdir()
+                        .ok_or_else(|| anyhow::anyhow!("h5i objects push requires a working tree"))?;
+                    let url = remote_url(git, &remote);
+                    let use_lfs = match backend {
+                        ObjectsBackend::GitRef => false,
+                        ObjectsBackend::Lfs => true,
+                        ObjectsBackend::Auto => url
+                            .as_deref()
+                            .and_then(h5i_core::lfs::endpoint_for_remote)
+                            .is_some(),
+                    };
+                    if use_lfs {
+                        let u = url
+                            .clone()
+                            .ok_or_else(|| anyhow::anyhow!("remote '{remote}' has no URL"))?;
+                        match lfs_push(git, workdir, &h5i_root, &u) {
+                            Ok(n) => println!(
+                                "{} {} blob{} uploaded to LFS on {}",
+                                style("✔").green(),
+                                n,
+                                if n == 1 { "" } else { "s" },
+                                style(&remote).cyan()
+                            ),
+                            // Auto falls back to the git-ref store ONLY when the
+                            // remote clearly lacks LFS — never on auth/network/
+                            // content failures (those must surface).
+                            Err(e) if backend == ObjectsBackend::Auto && e.is_unsupported() => {
+                                eprintln!(
+                                    "  {} {}; falling back to the git-ref store",
+                                    style("ℹ").dim(),
+                                    e
+                                );
+                                git_ref_push(git, workdir, &h5i_root, &remote)?;
+                            }
+                            Err(e) => return Err(e.into()),
+                        }
+                    } else {
+                        git_ref_push(git, workdir, &h5i_root, &remote)?;
+                    }
+                }
+
+                ObjectsCommands::Pull { remote, backend } => {
+                    let workdir = git
+                        .workdir()
+                        .ok_or_else(|| anyhow::anyhow!("h5i objects pull requires a working tree"))?;
+                    let url = remote_url(git, &remote);
+                    let use_lfs = match backend {
+                        ObjectsBackend::GitRef => false,
+                        ObjectsBackend::Lfs => true,
+                        ObjectsBackend::Auto => url
+                            .as_deref()
+                            .and_then(h5i_core::lfs::endpoint_for_remote)
+                            .is_some(),
+                    };
+                    if use_lfs {
+                        let u = url
+                            .clone()
+                            .ok_or_else(|| anyhow::anyhow!("remote '{remote}' has no URL"))?;
+                        match lfs_pull(git, workdir, &h5i_root, &u) {
+                            Ok((got, missing)) => println!(
+                                "{} {} blob{} fetched from LFS · cached locally{}",
+                                style("✔").green(),
+                                got,
+                                if got == 1 { "" } else { "s" },
+                                if missing > 0 {
+                                    format!(" · {missing} not available on the server")
+                                } else {
+                                    String::new()
+                                }
+                            ),
+                            Err(e) if backend == ObjectsBackend::Auto && e.is_unsupported() => {
+                                eprintln!(
+                                    "  {} {}; falling back to the git-ref store",
+                                    style("ℹ").dim(),
+                                    e
+                                );
+                                git_ref_pull(git, workdir, &h5i_root, &remote)?;
+                            }
+                            Err(e) => return Err(e.into()),
+                        }
+                    } else {
+                        git_ref_pull(git, workdir, &h5i_root, &remote)?;
+                    }
+                }
             }
         }
 

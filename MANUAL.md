@@ -21,6 +21,14 @@ Command reference for all h5i subcommands and flags.
 - [h5i audit](#h5i-audit)
 - [h5i share](#h5i-share)
   - [h5i share pr](#h5i-share-pr)
+- [h5i objects (token reduction)](#h5i-objects-token-reduction)
+  - [h5i capture run](#h5i-capture-run)
+  - [h5i recall object / objects](#h5i-recall-object--objects)
+  - [Structured output](#structured-output)
+  - [h5i objects gc / pin / fsck](#h5i-objects-gc--pin--fsck)
+  - [h5i objects push / pull (share raw blobs)](#h5i-objects-push--pull--sharing-raw-blobs-optional)
+  - [h5i objects filters / trust](#h5i-objects-filters--trust)
+  - [h5i objects setup](#h5i-objects-setup)
 - [h5i commit](#h5i-commit) — _alias of `h5i capture commit`_
 - [h5i log](#h5i-log) — _alias of `h5i recall log`_
 - [h5i blame](#h5i-blame) — _alias of `h5i recall blame`_
@@ -110,10 +118,11 @@ legacy equivalents, and the corresponding MCP tool names.
 
 | Noun | Verbs | What it covers |
 |---|---|---|
-| `h5i capture` | `commit`, `claim`, `memory` | Record provenance, content-addressed claims, and memory snapshots. |
-| `h5i recall` | `log`, `blame`, `diff`, `context`, `claims`, `notes`, `memory`, `recap`, `resume`, `vibe` | Read history & context. |
+| `h5i capture` | `commit`, `claim`, `memory`, `run` | Record provenance, content-addressed claims, memory snapshots, and large command output (token reduction). |
+| `h5i recall` | `log`, `blame`, `diff`, `context`, `claims`, `notes`, `memory`, `recap`, `resume`, `vibe`, `object`, `objects` | Read history, context, and captured tool output. |
 | `h5i audit` | `review`, `scan`, `compliance`, `policy`, `vibe` | Assess risk on AI-generated changes. |
 | `h5i share` | `push`, `pull`, `pr`, `memory` | Publish: push refs, pull refs, post a GitHub PR comment. |
+| `h5i objects` | `run`, `put`, `get`, `list`, `gc`, `pin`, `unpin`, `fsck`, `push`, `pull`, `filters`, `trust`, `setup` | Token-reduction object store: capture huge output, surface a summary, share raw blobs, maintain the store. See [h5i objects](#h5i-objects-token-reduction). |
 
 All four nouns route through a pre-clap argv rewriter into the legacy
 verbs — so the noun form and the legacy form are functionally identical;
@@ -383,6 +392,7 @@ Record provenance: commit code, pin claims, snapshot agent memory.
 | `h5i capture commit` | `h5i commit` | Git commit + AI provenance (prompt, model, agent, tokens, tests, decisions). See [h5i commit](#h5i-commit). |
 | `h5i capture claim` | `h5i claims add` | Pin a content-addressed fact backed by evidence files. See [h5i claims add](#h5i-claims-add). |
 | `h5i capture memory` | `h5i memory snapshot` | Snapshot the active agent's memory directory into `refs/h5i/memory`. See [h5i memory snapshot](#h5i-memory-snapshot). |
+| `h5i capture run` | _(new)_ | Run a command, store its full output out-of-band, surface only a filtered/structured summary. See [h5i objects](#h5i-objects-token-reduction). |
 
 ```bash
 h5i capture commit -m "switch session store to Redis" \
@@ -412,6 +422,8 @@ Read AI history & context.
 | `h5i recall recap` | `h5i context recap` | Import Claude Code `away_summary` entries as milestones. |
 | `h5i recall resume` | `h5i resume` | Print a structured handoff briefing. |
 | `h5i recall vibe` | `h5i vibe` | Quick AI-footprint audit (also under `audit`). |
+| `h5i recall object` | _(new)_ | Rehydrate a captured raw output (full bytes, or `--summary`/`--manifest`). See [h5i objects](#h5i-objects-token-reduction). |
+| `h5i recall objects` | _(new)_ | List captured outputs; filter by `--status`/`--tool`/`--branch`/`--file`/`--diff`. |
 
 ---
 
@@ -482,10 +494,18 @@ Publish provenance to teammates and PRs.
 
 | Verb | Equivalent legacy form | What it does |
 |---|---|---|
-| `h5i share push` | `h5i push` | Push all refs/h5i/* (notes, context, memory, ast) to a remote. |
+| `h5i share push` | `h5i push` | Push all refs/h5i/* (notes, context, memory, ast, msg, **object manifests**) to a remote. |
 | `h5i share pull` | `h5i pull` | Fetch & union-merge refs/h5i/* from a remote. |
 | `h5i share pr <sub>` | _(new)_ | Post / preview a GitHub PR comment with h5i provenance. |
 | `h5i share memory push|pull` | `h5i memory push|pull` | Push or pull only the agent-memory refs. |
+
+> **Raw tool output is _not_ shared by `share push`/`pull`.** It carries the
+> small token-reduction **manifests** (`refs/h5i/objects` — pointers + filtered
+> summaries), but never the huge raw blobs (`refs/h5i/objects-data` / Git LFS).
+> Those travel only when you explicitly run [`h5i objects push`](#h5i-objects-push--pull--sharing-raw-blobs-optional)
+> (and are fetched by `h5i objects pull`, or lazily by `recall` from LFS). So a
+> teammate who `h5i pull`s sees every capture's summary and pulls only the raw
+> bytes they actually need.
 
 ### h5i share pr
 
@@ -537,6 +557,16 @@ disclosure-safe by default:
   reassembled afterwards) and Markdown/HTML-escaped.
 - A footer line records the `refs/h5i/msg` tip OID the data came from.
 
+**🪙 Token reduction**
+
+When the branch has token-reduction captures (`h5i capture run`, see
+[h5i objects](#h5i-objects-token-reduction)), the comment includes a one-line
+`[!NOTE]` summarising how much raw tool output was kept out of the agent's
+context — `raw → summary` tokens and `% saved` across the branch's captures —
+with a collapsible per-tool breakdown when more than one tool was captured. It
+self-omits when there were no captures on the branch (or no net saving). The raw
+output remains recoverable with `h5i recall object`.
+
 Flags:
 
 | Flag | Effect |
@@ -584,6 +614,186 @@ h5i share pr body --msg-limit 5             # cap coordination threads at 5
 issues a `PATCH /repos/<owner>/<repo>/issues/comments/<id>` via `gh api`. If no
 marked comment exists yet, it falls back to `gh pr comment --body-file -` for
 the first post.
+
+---
+
+## h5i objects (token reduction)
+
+Large tool outputs — test logs, build output, big JSON, traces — are the biggest
+avoidable drain on an agent's context window. The object store keeps the **full
+raw output out-of-band** (content-addressed) and surfaces only a small filtered,
+**structured** summary, git-annex / git-lfs style:
+
+| Artifact | Location | Travels with `h5i push`? |
+|---|---|---|
+| Raw blob (full bytes, uncompressed) | `.git/.h5i/objects/ab/cd/<sha256>` (local) | Only via `h5i objects push` (the git-ref store) |
+| Manifest (pointer + structured summary) | `refs/h5i/objects` (git ref, JSONL) | Yes |
+| Shared raw blobs (optional) | `refs/h5i/objects-data` (git ref, content-addressed tree) | Yes — pushed/pulled on demand |
+
+The everyday entry point is `h5i capture run`; the `h5i objects` verbs are for
+maintenance. Only the small summary travels with `h5i push`; raw blobs stay
+local (an absent blob is shown as `○`, and `h5i recall object` reports it
+clearly).
+
+### h5i capture run
+
+Run a command, store its full output, and print **only** the summary. The exit
+code passes through, so it's a transparent wrapper:
+
+```bash
+h5i capture run -- pytest -q
+h5i capture run --kind log -- cargo build
+h5i capture run --file src/auth.rs -- pytest tests/test_auth.py   # tag related files
+```
+
+| Flag | Meaning |
+|---|---|
+| `--kind <test\|log\|json\|diff\|generic>` | Force a content kind instead of auto-detecting. |
+| `--budget <N>` | Max lines in the summary. |
+| `--token-budget <N>` | Best-effort cap on summary tokens (tiktoken). |
+| `--min-bytes <N>` | Only store + summarize when output ≥ N bytes (default 2048); smaller output passes through unstored, so wrapping any command is safe. `0` = always capture. |
+| `--format <compact\|structured\|json\|summary>` | Output format. Default `compact` (one line per finding — token-minimal). `structured` = full YAML; `json` = the `ToolResult` as JSON; `summary` = the legacy filtered text. |
+| `--file <path>` | Associate the capture with a file (repeatable). Branch + working-tree diff are recorded automatically. |
+| `--quiet` | Suppress the trailing pointer/status line. |
+
+Every capture is automatically tagged with the **branch** and the **files** it
+concerns (explicit `--file` ∪ paths mentioned in the output) plus the **working
+diff** at capture time.
+
+### h5i recall object / objects
+
+```bash
+h5i recall objects                       # list captures (newest first) with summaries
+h5i recall objects --status failed       # filter by structured status
+h5i recall objects --tool pytest         # by tool  (compose with --branch/--file/--diff)
+h5i recall object <id>                    # rehydrate the FULL raw bytes
+h5i recall object <id> --summary          # the reduced summary only
+h5i recall object <id> --manifest         # the full manifest JSON record
+```
+
+Handles accept the short id, a full `sha256:<hex>`, or any unambiguous prefix.
+
+### Structured output
+
+`h5i capture run` emits a normalized, AI-friendly **structured result** by
+default — one schema across test runners, compilers, linters, and type checkers:
+
+```yaml
+tool: pytest
+kind: test
+status: failed          # passed (tests) | ok (other tools) | failed | error | unknown
+exit_code: 1
+counts: { failed: 1, passed: 120 }
+parser_confidence: parsed   # parsed | heuristic | generic
+raw_oid: sha256:934f…       # full output, always recoverable
+findings:
+  - kind: test_failure      # test_failure | diagnostic | build_error | panic | generic
+    severity: failure
+    id: tests/t.py::test_pay
+    message: assert 0 == 100
+    location: tests/t.py:42
+    fingerprint: 0bb827e4e61a   # stable across line shifts → dedupe/query
+```
+
+- **JSON is canonical** — the manifest stores the `ToolResult` as JSON (and the
+  `h5i_capture_run` MCP tool returns it under a `structured` field); the CLI
+  **default render is `compact`** (one line per finding), with `--format
+  structured` for the full YAML — all from the same typed struct.
+- **Safety**: `status` is never `passed`/`ok` on a nonzero exit; a parser
+  **declines to a generic result** when its anchors are missing (`parser_confidence`
+  tells you how much to trust the structure); the raw is always recoverable.
+- **Dedicated parsers** (rich `findings`): pytest, cargo test, go test, tsc,
+  eslint, ruff, mypy. Everything else gets a generic result (status + `body`).
+
+### h5i objects gc / pin / fsck
+
+Manifests are immutable and kept forever; only local raw blobs expire.
+
+```bash
+h5i objects gc                 # remove orphan blobs (no manifest references them)
+h5i objects gc --ttl 30d       # also evict referenced blobs older than 30 days
+h5i objects gc --dry-run       # show what would be evicted
+h5i objects pin <id>           # protect a blob from eviction (pin/unpin)
+h5i objects fsck               # verify manifests against the local store (absent/orphans)
+```
+
+GC never rewrites a summary — it only reclaims raw bytes; an evicted blob's
+summary still works.
+
+### h5i objects push / pull — sharing raw blobs (optional)
+
+The manifest+summary travel with `h5i push` automatically; the **raw bytes are
+local-only** by default (they can be large). To share them:
+
+```bash
+h5i objects push                       # upload local raw blobs to the remote
+h5i objects pull                       # fetch shared blobs missing locally, cache them
+h5i objects push --remote upstream --backend lfs
+```
+
+Two backends, chosen by `--backend auto|lfs|git-ref` (default **`auto`**):
+
+| `--backend` | Storage | When |
+|---|---|---|
+| `lfs` | Remote **Git LFS** server (content-addressed by sha256) | default for HTTP(S) remotes — large/numerous objects never touch the git object DB |
+| `git-ref` | `refs/h5i/objects-data` (content-addressed git ref) | fallback for SSH/`file://` remotes, or forced |
+| `auto` | LFS when the remote is HTTP(S), else git-ref | the default |
+
+**Git LFS (default).** h5i speaks the **LFS Batch API natively** — it does *not*
+require the `git lfs` CLI and does not use LFS pointer files; auth is resolved
+via `git credential`. The manifest's `raw_oid` is the pointer, the bytes live in
+LFS. With LFS, **`h5i recall object <id>` lazily fetches** a blob from the server
+on demand (and caches it) — no explicit `objects pull` needed. Uploads/downloads
+process **one blob at a time** (the whole set is never held in memory at once).
+Lazy recall only tries the `origin` remote.
+
+**git-ref store (fallback).** Blobs live in `refs/h5i/objects-data`. `objects
+push` fetches + union-merges the remote ref before a **non-force** push (so it
+never clobbers a peer's blobs); `objects pull` union-merges and caches locally;
+then `recall` falls back to the *local* git-ref store (it does not fetch on
+demand — the "absent" error says to run `objects pull`).
+
+Both are deliberately separate from the metadata `h5i push` (raw output is
+heavy), and both **verify the content address on every read** — bytes that don't
+hash to their key are rejected and never cached; the git-ref store additionally
+self-heals corrupt entries on `put`/`pull`.
+
+> The `Backend` trait (`has`/`put`/`get`/`remove` by sha256) is the extension
+> point: LFS and the git-ref store are the built-ins; an S3/HTTP backend can slot
+> in the same way.
+
+### h5i objects filters / trust
+
+Beyond the coded adapters, h5i ships declarative per-command filter rules
+(gcc, make, npm, tsc, terraform, …) used for the text summary.
+
+```bash
+h5i objects filters            # list built-in command filters
+h5i objects filters --verify   # run every rule's inline golden tests
+```
+
+A repo may ship its own `.h5i/filters.toml`. Because that file is untrusted
+input (a malicious rule could mask failures), it is applied only after you trust
+its current content; any edit re-arms the gate:
+
+```bash
+h5i objects trust              # review the rules (risky ones flagged) + trust them
+h5i objects trust --status     # NoFile / Untrusted / Changed / Trusted
+h5i objects trust --remove     # stop applying project rules
+```
+
+`capture run` warns and falls back to built-ins when the file is untrusted or
+changed. `H5I_TRUST_FILTERS=1` overrides the gate (CI).
+
+### h5i objects setup
+
+Wire token-reduction guidance into the project's agent instruction files
+(`.claude/h5i.md`, `AGENTS.md`) so agents know to wrap large-output commands.
+Idempotent; `h5i init` already includes the guidance for new projects.
+
+```bash
+h5i objects setup
+```
 
 ---
 
@@ -2630,6 +2840,10 @@ status 1; otherwise it exits 0.
 │   ├── <sha256(file_path)>.snapshot # CRDT snapshot
 │   └── <commit-oid>/
 │       └── <sha256(file_path)>.bin  # committed delta archive
+├── objects/                         # token-reduction raw-output store (git-lfs style)
+│   ├── ab/cd/<sha256>               # full raw output, content-addressed, uncompressed
+│   └── pins                         # digests pinned against `h5i objects gc`
+├── trusted_filters.json             # content hash of a trusted .h5i/filters.toml (local)
 └── pending_context.json             # Transient: written by hook, consumed by next commit
 ```
 
@@ -2643,6 +2857,7 @@ Three additional directories (`ast/`, `crdt/`, `metadata/`) are created on `h5i 
 | `refs/h5i/memory` | Linear commit history | Agent memory snapshots as git tree objects; each commit carries the linked code-commit OID |
 | `refs/h5i/context` | Git tree | Context workspace: `main.md`, `.current_branch`, `branches/<name>/{commit.md,trace.md,dag.json,ephemeral.md,metadata.yaml}` |
 | `refs/h5i/ast` | Git objects | AST hash snapshots for semantic blame |
+| `refs/h5i/objects` | Append-only JSONL | Token-reduction manifests: per-capture pointer + structured `ToolResult` summary (raw blobs stay local, see above) |
 | `refs/h5i/shadow/<yyyymmdd-hhmmss>` | WIP commit | Pre-rewind working-tree snapshot created by `h5i rewind` before overwriting files. Never on any branch; recover with `git checkout refs/h5i/shadow/<ts> -- .` |
 
 The context workspace commands display paths under `.h5i-ctx/` in their output, but the data is stored in `refs/h5i/context`.
@@ -2731,6 +2946,12 @@ Auto-captured when the Claude Code hook is installed; you usually do not set the
 |----------|---------|---------|
 | `H5I_TEST_CMD` | unset | Shell command h5i runs when `--tests` is passed without `--test-cmd`/`--test-results`. Its stdout must be a [test-adapter JSON object](#appendix-test-adapter-schema). |
 | `H5I_TEST_RESULTS` | unset | Path to a pre-produced test-results JSON file. Equivalent to passing `--test-results`. |
+
+### Token reduction
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `H5I_TRUST_FILTERS` | unset | When `1`/`true`, apply a project-local `.h5i/filters.toml` without the content-hash trust gate (for CI). See [h5i objects trust](#h5i-objects-filters--trust). |
 
 ### AST parser
 

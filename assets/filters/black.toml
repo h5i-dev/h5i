@@ -1,0 +1,32 @@
+[filters.black]
+description = "Compact Black output — keep reformat results and errors, drop unchanged-file noise"
+match_command = "\\bblack\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "left unchanged",
+  "would be left unchanged",
+]
+max_lines = 60
+on_empty = "black: ok"
+
+[[tests.black]]
+name = "keeps would-reformat lines"
+input = """
+would reformat src/a.py
+would reformat src/b.py
+1 file would be left unchanged.
+Oh no! 2 files would be reformatted.
+"""
+expected = """
+would reformat src/a.py
+would reformat src/b.py
+Oh no! 2 files would be reformatted.
+"""
+
+[[tests.black]]
+name = "all unchanged collapses to ok"
+input = """
+3 files left unchanged.
+"""
+expected = "black: ok"

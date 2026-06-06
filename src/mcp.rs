@@ -663,6 +663,50 @@ pub fn tool_definitions() -> Value {
                 "properties": {}
             }
         },
+        // ── capture run (token reduction) ──────────────────────────────────────
+        {
+            "name": "h5i_capture_run",
+            "description": "Run a command and return ONLY a filtered summary of its \
+                output (errors, failures, counts), storing the full raw output \
+                out-of-band so it never floods your context. Use this instead of \
+                running large-output commands (test suites, builds, linters, big \
+                JSON, long logs) via the shell. The exit code is reported; the full \
+                raw output is recoverable later by its object id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Command argv (no shell), e.g. [\"pytest\", \"-q\"]. \
+                            Each element is one argument — no shell-quoting needed."
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": ["test", "log", "json", "diff", "generic"],
+                        "description": "Force a content kind instead of auto-detecting."
+                    },
+                    "budget": {
+                        "type": "integer",
+                        "description": "Max lines to keep in the summary."
+                    },
+                    "min_bytes": {
+                        "type": "integer",
+                        "description": "Only store + summarize when output is at least this \
+                            many bytes; smaller output is returned as-is, unstored \
+                            (default 2048). Use 0 to always capture. Matches \
+                            `h5i capture run --min-bytes`."
+                    },
+                    "files": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Files to associate with this capture (for later \
+                            `recall objects --file`)."
+                    }
+                },
+                "required": ["command"]
+            }
+        },
     ])
 }
 
@@ -1248,6 +1292,109 @@ fn tool_claims_prune(_params: &Value, workdir: &Path) -> Result<Value> {
     })))
 }
 
+fn tool_capture_run(params: &Value, workdir: &Path) -> Result<Value> {
+    use crate::token_filter::{FilterConfig, OutputKind};
+
+    // `command` is an argv array (no shell): each element is one argument.
+    let argv: Vec<String> = match params.get("command") {
+        Some(Value::Array(a)) => a
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| anyhow::anyhow!("command elements must be strings"))
+            })
+            .collect::<Result<Vec<_>>>()?,
+        _ => anyhow::bail!("missing required param: command (array of strings)"),
+    };
+    if argv.is_empty() {
+        anyhow::bail!("command must not be empty");
+    }
+
+    let kind = params
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(OutputKind::parse)
+        .unwrap_or(OutputKind::Auto);
+    let budget = params.get("budget").and_then(Value::as_u64).map(|n| n as usize);
+    let min_bytes = params
+        .get("min_bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(crate::objects::DEFAULT_CAPTURE_MIN_BYTES);
+    let files: Vec<String> = params
+        .get("files")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+        .unwrap_or_default();
+
+    // Run the command in the workdir, capturing stdout + stderr.
+    let output = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .current_dir(workdir)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run `{}`: {e}", argv.join(" ")))?;
+    let exit_code = output.status.code();
+
+    let mut raw: Vec<u8> = Vec::with_capacity(output.stdout.len() + output.stderr.len() + 32);
+    raw.extend_from_slice(&output.stdout);
+    if !output.stderr.is_empty() {
+        if !raw.is_empty() && !raw.ends_with(b"\n") {
+            raw.push(b'\n');
+        }
+        raw.extend_from_slice(b"\n----- stderr -----\n");
+        raw.extend_from_slice(&output.stderr);
+    }
+
+    // Match the CLI: small output isn't worth a stored object — return it as-is,
+    // unstored, with no object id. Keeps trivial commands from bloating the ref.
+    if (raw.len() as u64) < min_bytes {
+        return Ok(json_content(json!({
+            "stored": false,
+            "exit_code": exit_code,
+            "output": String::from_utf8_lossy(&raw),
+            "hint": "Output below min_bytes; returned in full, not stored.",
+        })));
+    }
+
+    let repo = H5iRepository::open(workdir)?;
+    let git_tree = repo
+        .git()
+        .head()
+        .ok()
+        .and_then(|h| h.peel_to_tree().ok())
+        .map(|t| t.id().to_string());
+    let mut cfg = FilterConfig { kind, ..Default::default() };
+    if let Some(b) = budget {
+        cfg.max_lines = b;
+    }
+    cfg.cmd = Some(argv.clone());
+
+    let opts = crate::objects::CaptureOptions {
+        kind,
+        cmd: Some(argv.join(" ")),
+        cwd: Some(workdir.display().to_string()),
+        exit_code,
+        git_tree,
+        files,
+        cmd_argv: argv.clone(),
+        filter: cfg,
+    };
+    let outcome = crate::objects::capture(repo.git(), &repo.h5i_root, &raw, opts)?;
+    let m = &outcome.manifest;
+    // The structured result is the primary payload (the AI-friendly schema);
+    // id/raw_* are metadata for rehydration.
+    Ok(json_content(json!({
+        "stored": true,
+        "id": m.id,
+        "structured": m.structured,
+        "raw_size": m.raw_size,
+        "raw_lines": m.raw_lines,
+        "raw_tokens": m.raw_tokens,
+        "summary_tokens": m.summary_tokens,
+        "hint": format!("Full raw output recoverable via: h5i recall object {}", m.id),
+    })))
+}
+
 // ── Tool call dispatch ────────────────────────────────────────────────────────
 
 /// Dispatch a `tools/call` invocation to the appropriate handler.
@@ -1284,6 +1431,7 @@ pub fn call_tool(name: &str, params: &Value, workdir: &Path) -> Result<Value> {
         "h5i_claims_add" => tool_claims_add(params, workdir),
         "h5i_claims_list" => tool_claims_list(params, workdir),
         "h5i_claims_prune" => tool_claims_prune(params, workdir),
+        "h5i_capture_run" => tool_capture_run(params, workdir),
         other => anyhow::bail!("Unknown tool: {}", other),
     }
 }
@@ -1763,6 +1911,61 @@ mod tests {
         (dir, path)
     }
 
+    #[test]
+    fn capture_run_tool_runs_and_returns_summary() {
+        let (_dir, path) = make_repo();
+        // A command whose output is large enough to be worth summarizing.
+        let prog = "for i in $(seq 1 300); do echo \"compiling unit $i\"; done; echo 'error: boom at x.rs:1'";
+        let res = call_tool(
+            "h5i_capture_run",
+            &json!({ "command": ["bash", "-c", prog], "files": ["x.rs"] }),
+            &path,
+        )
+        .expect("capture_run tool");
+        let text = res["content"][0]["text"].as_str().unwrap();
+        let v: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(v["stored"], true);
+        assert!(v["id"].as_str().unwrap().len() == 16);
+        // The structured result is the primary payload.
+        let s = &v["structured"];
+        assert_eq!(s["tool"], "bash"); // no dedicated parser → generic envelope
+        assert_eq!(s["status"], "ok"); // exit 0
+        assert_eq!(s["exit_code"], 0);
+        assert!(s["body"].as_str().unwrap().contains("error: boom"));
+        assert!(s["raw_oid"].as_str().unwrap().starts_with("sha256:"));
+        // Reduction actually happened.
+        let raw_t = v["raw_tokens"].as_u64().unwrap();
+        let sum_t = v["summary_tokens"].as_u64().unwrap();
+        assert!(sum_t < raw_t, "summary should be smaller than raw");
+    }
+
+    #[test]
+    fn capture_run_tool_passes_small_output_through_unstored() {
+        let (_dir, path) = make_repo();
+        let res = call_tool(
+            "h5i_capture_run",
+            &json!({ "command": ["bash", "-c", "echo hi"] }),
+            &path,
+        )
+        .expect("capture_run tool");
+        let v: Value = serde_json::from_str(res["content"][0]["text"].as_str().unwrap()).unwrap();
+        // Below the default threshold: not stored, no id, full output returned.
+        assert_eq!(v["stored"], false);
+        assert!(v.get("id").is_none());
+        assert!(v["output"].as_str().unwrap().contains("hi"));
+        // And nothing was written to the objects ref.
+        assert!(crate::objects::read_manifests(
+            &git2::Repository::open(&path).unwrap()
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn capture_run_tool_rejects_non_array_command() {
+        let (_dir, path) = make_repo();
+        assert!(call_tool("h5i_capture_run", &json!({ "command": "echo hi" }), &path).is_err());
+    }
+
     fn make_req(method: &str, params: Value) -> JsonRpcRequest {
         JsonRpcRequest {
             jsonrpc: "2.0".into(),
@@ -1893,6 +2096,7 @@ mod tests {
             "h5i_claims_add",
             "h5i_claims_list",
             "h5i_claims_prune",
+            "h5i_capture_run",
         ];
         for name in &expected {
             assert!(names.contains(name), "missing tool: {}", name);

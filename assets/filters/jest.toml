@@ -1,0 +1,44 @@
+[filters.jest]
+description = "Compact Jest output — keep failures and the summary counts, drop PASS/progress noise"
+match_command = "\\bjest\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^PASS ",
+  "^\\s*✓ ",
+  "console\\.(log|warn|error)$",
+  "^Ran all test suites",
+  "A worker process has failed",
+]
+max_lines = 80
+on_empty = "jest: ok"
+
+[[tests.jest]]
+name = "keeps FAIL blocks and totals, drops PASS"
+input = """
+PASS src/a.test.ts
+PASS src/b.test.ts
+FAIL src/c.test.ts
+  ● adds numbers
+    expect(received).toBe(expected)
+    Expected: 4
+    Received: 5
+Tests:       1 failed, 12 passed, 13 total
+"""
+expected = """
+FAIL src/c.test.ts
+  ● adds numbers
+    expect(received).toBe(expected)
+    Expected: 4
+    Received: 5
+Tests:       1 failed, 12 passed, 13 total
+"""
+
+[[tests.jest]]
+name = "all-pass keeps only the totals"
+input = """
+PASS src/a.test.ts
+PASS src/b.test.ts
+Tests:       13 passed, 13 total
+"""
+expected = "Tests:       13 passed, 13 total"
