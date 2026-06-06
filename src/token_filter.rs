@@ -810,7 +810,7 @@ fn git_diff_summary(
     cfg: &FilterConfig,
 ) -> Option<(String, Vec<String>, OutputKind, usize)> {
     // Confirm this looks like a diff before claiming it.
-    if !text.contains("diff --git") && !(text.contains("\n+++ ") || text.starts_with("+++ ")) {
+    if !(text.contains("diff --git") || text.contains("\n+++ ") || text.starts_with("+++ ")) {
         return None;
     }
     let mut files = 0usize;
