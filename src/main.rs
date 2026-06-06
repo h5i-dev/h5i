@@ -1965,6 +1965,26 @@ h5i context relevant src/repository.rs
 
 ---
 
+### Capturing large command output (token reduction)
+
+Wrap commands that may produce **large or noisy output** — test suites, builds, linters, big JSON, long logs — so only a filtered summary enters context:
+
+```bash
+h5i capture run -- <command> [args…]          # e.g. h5i capture run -- pytest -q
+h5i capture run --file <path> -- <command>    # tag the files it relates to
+```
+
+It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Output under ~2 KB passes through unstored, so it is safe to wrap. Rehydrate the full raw only if the summary isn't enough:
+
+```bash
+h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall object <id>                         # full raw bytes
+```
+
+Prefer the `h5i_capture_run` MCP tool when available (same behavior, no shell-quoting). Don't wrap trivial commands you need to read in full.
+
+---
+
 ### Committing code
 
 **Always stage files before committing.** `h5i_commit` only commits what is staged and errors if nothing is staged.
@@ -2203,6 +2223,16 @@ Add flags when relevant:
 - `--tests`  — tests were added or modified
 - `--audit`  — security-sensitive or high-risk changes
 
+### Capturing large command output (token reduction)
+
+Wrap commands that produce large/noisy output (tests, builds, linters, big JSON, long logs) so only a filtered summary enters context; the full raw is stored out-of-band and stays recoverable. Output under ~2 KB passes through unstored, so it is safe to wrap:
+```bash
+h5i capture run -- <command> [args…]     # e.g. h5i capture run -- cargo test
+h5i capture run --file <path> -- <cmd>   # tag the files it relates to
+h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall object <id>                   # rehydrate full raw (only if needed)
+```
+
 ### Messaging other agents (i5h)
 
 `h5i msg` is a cross-agent message channel stored in `refs/h5i/msg` (shared via
@@ -2241,12 +2271,13 @@ h5i pull   # pull h5i refs from origin
 ```
 "#;
 
-/// Marker used to keep `h5i objects setup` idempotent.
-const CAPTURE_GUIDANCE_MARKER: &str = "<!-- h5i:capture-guidance -->";
+/// Detection string that keeps `h5i objects setup` idempotent. It is the section
+/// heading, which is also what `h5i init` writes into the templates — so setup
+/// never duplicates guidance an init'd project already has.
+const CAPTURE_GUIDANCE_MARKER: &str = "### Capturing large command output";
 
 /// The token-reduction guidance block appended by `h5i objects setup`.
-const CAPTURE_GUIDANCE_BLOCK: &str = r#"<!-- h5i:capture-guidance -->
-### Capturing large command output (token reduction)
+const CAPTURE_GUIDANCE_BLOCK: &str = r#"### Capturing large command output (token reduction)
 
 Wrap commands that may produce **large or noisy output** — test suites, builds,
 linters, big JSON, long logs — so only a filtered summary enters context:
