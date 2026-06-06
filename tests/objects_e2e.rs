@@ -524,3 +524,48 @@ fn search_on_empty_store_reports_no_match() {
     let bare = a.h5i_ok(&["recall", "search"]);
     assert!(stdout(&bare).contains("No captured findings match"), "{}", stdout(&bare));
 }
+
+// ── recall object --format: re-observe the captured structured view ───────────
+
+#[test]
+fn recall_object_format_reproduces_the_observed_structured_view() {
+    let (_root, a) = single();
+    install_fake_tool(&a.dir, "pytest", FAILING_PYTEST);
+
+    // What the agent observes at capture time when it asks for the YAML view.
+    // (The "▢ h5i object …" pointer goes to stderr, so stdout is pure YAML.)
+    let observed = stdout(&h5i_path(
+        &a,
+        &["capture", "run", "--min-bytes", "0", "--format", "structured", "--", "pytest", "-q"],
+    ));
+    assert!(observed.contains("tool: pytest"), "capture YAML:\n{observed}");
+    assert!(observed.contains("fingerprint:"), "capture YAML:\n{observed}");
+
+    let id = first_id(&stdout(&a.h5i_ok(&["recall", "objects"]))).expect("a capture id");
+
+    // recall object --format yaml reproduces that YAML byte-for-byte, without
+    // ever rehydrating the raw bytes.
+    let recalled = stdout(&a.h5i_ok(&["recall", "object", &id, "--format", "yaml"]));
+    assert_eq!(
+        recalled.trim_end(),
+        observed.trim_end(),
+        "recalled YAML must equal what the agent observed"
+    );
+
+    // `structured` is an alias for `yaml`; `compact` reproduces the default view.
+    let via_structured = stdout(&a.h5i_ok(&["recall", "object", &id, "--format", "structured"]));
+    assert_eq!(via_structured, recalled, "structured is an alias for yaml");
+    let compact = stdout(&a.h5i_ok(&["recall", "object", &id, "--format", "compact"]));
+    assert!(compact.contains("pytest test failed"), "compact view:\n{compact}");
+    assert!(compact.contains("tests/t.py::test_pay"), "compact view:\n{compact}");
+
+    // --format json is valid JSON carrying the same finding.
+    let json = stdout(&a.h5i_ok(&["recall", "object", &id, "--format", "json"]));
+    let v: serde_json::Value = serde_json::from_str(&json).expect("valid structured json");
+    assert_eq!(v["tool"], "pytest");
+    assert_eq!(v["findings"][0]["id"], "tests/t.py::test_pay");
+
+    // --format summary still falls back to the legacy free-text summary.
+    let summ = stdout(&a.h5i_ok(&["recall", "object", &id, "--format", "summary"]));
+    assert!(!summ.trim().is_empty(), "summary format yields text");
+}

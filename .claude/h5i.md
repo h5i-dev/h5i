@@ -72,9 +72,10 @@ h5i recall objects [--branch <b>|--file <p>]   # list captures
 h5i recall search <query> [--severity|--rule|--path|--fingerprint|--tool|--since]
                                                # query findings across captures
 h5i recall object <id>                         # full raw bytes
+h5i recall object <id> --format yaml|compact|json   # re-view the structured findings (no raw)
 ```
 
-`recall search` looks *inside* captures — it matches the normalized findings (message, rule, path, severity) across every captured tool, so `recall search --fingerprint <fp>` answers "has this exact failure happened before?". The `h5i_capture_run` MCP tool does the same capture without shell-quoting if the MCP server is configured. Don't wrap trivial commands you need to read in full.
+`recall object --format` re-renders the *exact* structured view you saw at capture time (the normalized findings) without rehydrating the raw output — cheap to re-observe. `recall search` looks *inside* captures — it matches the normalized findings (message, rule, path, severity) across every captured tool, so `recall search --fingerprint <fp>` answers "has this exact failure happened before?". The `h5i_capture_run` MCP tool does the same capture without shell-quoting if the MCP server is configured. Don't wrap trivial commands you need to read in full.
 
 ---
 

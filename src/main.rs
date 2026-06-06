@@ -1831,6 +1831,12 @@ enum ObjectsCommands {
         /// Print the full manifest JSON record.
         #[arg(long)]
         manifest: bool,
+        /// Re-render the stored structured result — the exact view an agent saw
+        /// at capture time — instead of the raw bytes:
+        /// compact | structured/yaml | json | summary/text. Takes precedence
+        /// over --summary/--manifest.
+        #[arg(long, value_enum)]
+        format: Option<CaptureFormat>,
     },
 
     /// List stored objects (most recent first), showing their summaries.
@@ -2093,9 +2099,10 @@ h5i recall objects [--branch <b>|--file <p>]   # list captures
 h5i recall search <query> [--severity|--rule|--path|--fingerprint|--tool|--since]
                                                # query findings across captures
 h5i recall object <id>                         # full raw bytes
+h5i recall object <id> --format yaml|compact|json   # re-view the structured findings (no raw)
 ```
 
-`recall search` looks *inside* captures — it matches the normalized findings (message, rule, path, severity) across every captured tool, so `recall search --fingerprint <fp>` answers "has this exact failure happened before?". The `h5i_capture_run` MCP tool does the same capture without shell-quoting if the MCP server is configured. Don't wrap trivial commands you need to read in full.
+`recall object --format` re-renders the *exact* structured view you saw at capture time (the normalized findings) without rehydrating the raw output — cheap to re-observe. `recall search` looks *inside* captures — it matches the normalized findings (message, rule, path, severity) across every captured tool, so `recall search --fingerprint <fp>` answers "has this exact failure happened before?". The `h5i_capture_run` MCP tool does the same capture without shell-quoting if the MCP server is configured. Don't wrap trivial commands you need to read in full.
 
 ---
 
@@ -2335,6 +2342,7 @@ h5i capture run --file <path> -- <cmd>   # tag the files it relates to
 h5i recall objects [--branch <b>|--file <p>]   # list captures
 h5i recall search <query> [--rule|--path|--severity|--fingerprint]  # query findings across captures
 h5i recall object <id>                   # rehydrate full raw (only if needed)
+h5i recall object <id> --format yaml     # re-view the structured findings (no raw)
 ```
 
 ### Messaging other agents (i5h)
@@ -2399,6 +2407,7 @@ through unstored, so it is safe to wrap. Rehydrate the full raw only if needed:
 h5i recall objects [--branch <b>|--file <p>]    # list captures
 h5i recall search <query> [--rule|--path|--severity|--fingerprint]  # query findings
 h5i recall object <id>                          # full raw bytes
+h5i recall object <id> --format yaml|compact|json   # re-view structured findings (no raw)
 ```
 
 The `h5i_capture_run` MCP tool does the same thing without shell-quoting if the
@@ -6833,9 +6842,35 @@ jq -c '{
                     print_pointer(&outcome.manifest, outcome.deduped, false);
                 }
 
-                ObjectsCommands::Get { id, summary, manifest } => {
+                ObjectsCommands::Get { id, summary, manifest, format } => {
                     let m = objects::resolve_manifest(git, &id)?;
-                    if manifest {
+                    if let Some(fmt) = format {
+                        // Re-render the stored structured result exactly as it was
+                        // shown at capture time. The summary/text formats fall back
+                        // to the free-text summary (always present); the structured
+                        // formats need the structured record.
+                        use h5i_core::structured as st;
+                        let need_structured = !matches!(fmt, CaptureFormat::Summary | CaptureFormat::Text);
+                        if need_structured && m.structured.is_none() {
+                            anyhow::bail!(
+                                "object {} has no structured result to render as {:?} \
+                                 (older or non-command capture). Use --summary for its text, \
+                                 or `h5i recall object {} --manifest` for the raw record.",
+                                m.id,
+                                fmt,
+                                m.id
+                            );
+                        }
+                        match (fmt, m.structured.as_ref()) {
+                            (CaptureFormat::Compact, Some(s)) => println!("{}", st::render_compact(s)),
+                            (CaptureFormat::Structured | CaptureFormat::Yaml, Some(s)) => {
+                                println!("{}", st::render_yaml(s))
+                            }
+                            (CaptureFormat::Json, Some(s)) => println!("{}", st::render_json_pretty(s)),
+                            // Summary/Text (and the unreachable None arms guarded above).
+                            _ => println!("{}", m.summary),
+                        }
+                    } else if manifest {
                         println!("{}", serde_json::to_string_pretty(&m)?);
                     } else if summary {
                         println!("{}", m.summary);

@@ -85,6 +85,7 @@ h5i capture run --file <path> -- <cmd>   # tag the files it relates to
 h5i recall objects [--branch <b>|--file <p>]   # list captures
 h5i recall search <query> [--rule|--path|--severity|--fingerprint]  # query findings across captures
 h5i recall object <id>                   # rehydrate full raw (only if needed)
+h5i recall object <id> --format yaml     # re-view the structured findings (no raw)
 ```
 
 ### Messaging other agents (i5h)
