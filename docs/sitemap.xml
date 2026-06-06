@@ -127,6 +127,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://h5i.dev/blog/structured-tool-output-schema/</loc>
+    <lastmod>2026-06-06</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://h5i.dev/guides/token-reduction-capture-run/</loc>
     <lastmod>2026-06-05</lastmod>
     <changefreq>monthly</changefreq>

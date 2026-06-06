@@ -765,7 +765,11 @@ self-heals corrupt entries on `put`/`pull`.
 ### h5i objects filters / trust
 
 Beyond the coded adapters, h5i ships declarative per-command filter rules
-(gcc, make, npm, tsc, terraform, …) used for the text summary.
+(gcc, make, npm, tsc, terraform, …) used for the text summary. These rules and
+the engine that runs them are derived from **[rtk](https://github.com/rtk-ai/rtk)**
+(Apache-2.0, © Patrick Szymkowiak); the log line-folding technique is from
+**[headroom](https://github.com/chopratejas/headroom)** (Apache-2.0). See the
+[`NOTICE`](NOTICE) and `assets/filters/NOTICE` files for full attribution.
 
 ```bash
 h5i objects filters            # list built-in command filters

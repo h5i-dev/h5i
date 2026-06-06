@@ -1,0 +1,30 @@
+h5i
+Copyright the h5i authors.
+
+Licensed under the Apache License, Version 2.0 (the "License"); see the LICENSE
+file. You may obtain a copy of the License at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+------------------------------------------------------------------------------
+Third-party attributions
+------------------------------------------------------------------------------
+
+This product includes software derived from the following projects. Both are
+licensed under the Apache License, Version 2.0 and are redistributed here under
+the same license.
+
+* rtk — https://github.com/rtk-ai/rtk
+  Copyright (c) Patrick Szymkowiak
+  The declarative output-filter rule files (assets/filters/*.toml) and the
+  filter engine (src/filter_rules.rs) used by `h5i capture run` are derived
+  from rtk and have been modified for use in h5i. See assets/filters/NOTICE for
+  the full, per-file modification notice required by Apache-2.0 section 4.
+
+* headroom — https://github.com/chopratejas/headroom
+  The log line-folding technique in src/token_filter.rs
+  (normalize_template / summarize_scored) reimplements headroom's normalized
+  "dedupe similar" idea (collapse lines that differ only by numbers/ids into one
+  representative with a count). Only the technique was reimplemented in Rust; no
+  headroom code was copied.
+
