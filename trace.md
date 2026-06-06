@@ -1563,3 +1563,4 @@ _[Checkpoint: 6a238941 — edited src/structured.rs; edited src/structured.rs; e
 [02:45:01] OBSERVE: searched src/structured.rs for "test|tsc|eslint|ruff|mypy|diag_result|parse_""
 [02:45:01] OBSERVE: read src/structured.rs
 [02:45:01] OBSERVE: read src/structured.rs
+[02:45:01] OBSERVE: read docs/token-reduction.md
