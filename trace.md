@@ -1552,3 +1552,4 @@ _[Checkpoint: 6a238924 — slice 2 parsers + docs done]_
 _[Checkpoint: 6a238941 — edited src/structured.rs; edited src/structured.rs; edited docs/token-reduction.md]_
 ---
 
+[02:43:47] ACT: edited src/objects.rs
