@@ -2139,3 +2139,4 @@ _[Checkpoint: 6a23f8e2 — edited src/main.rs; edited src/lfs.rs; edited MANUAL.
 _[Checkpoint: 6a24083f — edited src/main.rs; edited src/lfs.rs; edited MANUAL.md]_
 ---
 
+[11:46:13] OBSERVE: read MANUAL.md
