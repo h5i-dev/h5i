@@ -494,10 +494,18 @@ Publish provenance to teammates and PRs.
 
 | Verb | Equivalent legacy form | What it does |
 |---|---|---|
-| `h5i share push` | `h5i push` | Push all refs/h5i/* (notes, context, memory, ast) to a remote. |
+| `h5i share push` | `h5i push` | Push all refs/h5i/* (notes, context, memory, ast, msg, **object manifests**) to a remote. |
 | `h5i share pull` | `h5i pull` | Fetch & union-merge refs/h5i/* from a remote. |
 | `h5i share pr <sub>` | _(new)_ | Post / preview a GitHub PR comment with h5i provenance. |
 | `h5i share memory push|pull` | `h5i memory push|pull` | Push or pull only the agent-memory refs. |
+
+> **Raw tool output is _not_ shared by `share push`/`pull`.** It carries the
+> small token-reduction **manifests** (`refs/h5i/objects` — pointers + filtered
+> summaries), but never the huge raw blobs (`refs/h5i/objects-data` / Git LFS).
+> Those travel only when you explicitly run [`h5i objects push`](#h5i-objects-push--pull--sharing-raw-blobs-optional)
+> (and are fetched by `h5i objects pull`, or lazily by `recall` from LFS). So a
+> teammate who `h5i pull`s sees every capture's summary and pulls only the raw
+> bytes they actually need.
 
 ### h5i share pr
 

@@ -3778,7 +3778,7 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
             &[
                 NounVerb {
                     verb: "push",
-                    summary: "Push all refs/h5i/* (notes, context, memory, ast, msg) to a remote in one shot.",
+                    summary: "Push all refs/h5i/* (notes, context, memory, ast, msg, object manifests) to a remote. Raw blobs are NOT shared — use `h5i objects push`.",
                     legacy: "h5i push",
                     example: "h5i share push",
                 },
