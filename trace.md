@@ -1158,3 +1158,4 @@ _[Checkpoint: 6a2368f1 — edited tests/objects_e2e.rs; edited docs/token-reduct
 _[Checkpoint: 6a236ac0 — Reviewed Claude's expanded token-reduction implementation; verified checks/tests; sent h5i review #b57d32d4aef3ffb8 with Gradle routing, rule precedence, project-filter error, and attribution findings.]_
 ---
 
+[00:33:08] ACT: edited assets/filters/NOTICE
