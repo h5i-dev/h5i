@@ -43,8 +43,10 @@ pub enum ResultKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
-    /// Succeeded (exit 0, no error/failure findings).
+    /// Tests specifically passed (test runners only).
     Passed,
+    /// The command succeeded (exit 0, no problems) for non-test tools.
+    Ok,
     /// Tests/lints/types failed (the tool ran and reported problems).
     Failed,
     /// Tool/parser/infrastructure error (e.g. usage error, couldn't run).
@@ -54,13 +56,24 @@ pub enum Status {
 }
 
 impl Status {
-    /// Decide a *safe* status: never `Passed` when the process failed.
+    /// Safe status for a **non-test** tool: success → `Ok`, never on nonzero exit.
     pub fn from_exit(exit_code: Option<i32>, has_failures: bool) -> Status {
         match exit_code {
-            Some(0) if !has_failures => Status::Passed,
+            Some(0) if !has_failures => Status::Ok,
             Some(0) => Status::Failed, // findings despite exit 0 → surface them
             Some(_) if has_failures => Status::Failed,
             Some(_) => Status::Error, // nonzero, no parsed findings → tool/usage error
+            None => Status::Unknown,
+        }
+    }
+
+    /// Safe status for a **test runner**: clean success → `Passed`.
+    pub fn from_test(exit_code: Option<i32>, failed: bool) -> Status {
+        match exit_code {
+            Some(0) if !failed => Status::Passed,
+            Some(0) => Status::Failed,
+            Some(_) if failed => Status::Failed,
+            Some(_) => Status::Error,
             None => Status::Unknown,
         }
     }
@@ -101,6 +114,11 @@ pub struct Location {
     pub line: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub column: Option<u32>,
+    /// Span end (rustc/tsc/eslint/ruff/SARIF-style ranges). Optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<u32>,
 }
 
 impl Location {
@@ -137,6 +155,9 @@ pub struct Finding {
     pub detail: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fixable: bool,
+    /// Suggested fixes/replacements (eslint/ruff/clippy). Pairs with `fixable`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suggestions: Vec<String>,
     /// Deterministic dedupe/query id: tool + rule + normalized location + message.
     pub fingerprint: String,
 }
@@ -151,8 +172,15 @@ pub struct Suppressed {
 pub struct Truncated {
     pub findings_total: usize,
     pub findings_shown: usize,
+    /// Total bytes of per-finding `detail` clipped by [`MAX_DETAIL_BYTES`].
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub detail_bytes_omitted: usize,
     /// Whether the raw output is larger than what's represented here.
     pub raw: bool,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// One normalized tool result.
@@ -219,20 +247,26 @@ impl ToolResult {
         if total > MAX_FINDINGS {
             self.findings.truncate(MAX_FINDINGS);
         }
+        const ELLIPSIS: &str = "…"; // 3 bytes
+        let mut omitted = 0usize;
         for f in &mut self.findings {
             if let Some(d) = &mut f.detail {
                 if d.len() > MAX_DETAIL_BYTES {
-                    let mut end = MAX_DETAIL_BYTES;
+                    let before = d.len();
+                    // Reserve room for the marker so the final string is <= cap.
+                    let mut end = MAX_DETAIL_BYTES - ELLIPSIS.len();
                     while end > 0 && !d.is_char_boundary(end) {
                         end -= 1;
                     }
                     d.truncate(end);
-                    d.push('…');
+                    omitted += before - end;
+                    d.push_str(ELLIPSIS);
                 }
             }
         }
         self.truncated.findings_total = total;
         self.truncated.findings_shown = self.findings.len();
+        self.truncated.detail_bytes_omitted = omitted;
     }
 }
 
@@ -247,8 +281,14 @@ pub fn fingerprint(tool: &str, rule: &str, location: &str, message: &str) -> Str
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
-/// Canonical JSON (pretty). Used for the manifest store and MCP responses.
+/// Canonical JSON — **compact**. This is what's stored in the manifest and
+/// returned over MCP, so it must be token/byte-frugal.
 pub fn render_json(r: &ToolResult) -> String {
+    serde_json::to_string(r).unwrap_or_default()
+}
+
+/// Pretty JSON for human CLI/debug display only (not the canonical form).
+pub fn render_json_pretty(r: &ToolResult) -> String {
     serde_json::to_string_pretty(r).unwrap_or_default()
 }
 
@@ -415,7 +455,7 @@ fn loc_from_pytest_id(id: &str) -> Option<Location> {
     // "tests/test_auth.py::test_x" → tests/test_auth.py
     let path = id.split("::").next()?;
     if path.contains('.') {
-        Some(Location { path: path.to_string(), line: None, column: None })
+        Some(Location { path: path.to_string(), ..Default::default() })
     } else {
         None
     }
@@ -423,11 +463,15 @@ fn loc_from_pytest_id(id: &str) -> Option<Location> {
 
 fn parse_pytest(output: &str, exit_code: Option<i32>) -> Option<ToolResult> {
     let lines: Vec<&str> = output.lines().collect();
-    // Anchor: the count summary line. Absent → decline.
+    // Anchor: the count summary line, or an explicit "no tests ran". Absent → decline.
     let summary = lines.iter().rev().find(|l| {
         let t = l.trim().trim_matches('=').trim();
-        (t.contains(" in ") || t.starts_with("no tests ran"))
-            && (t.contains("passed") || t.contains("failed") || t.contains("error") || t.contains("skipped"))
+        t.contains("no tests ran")
+            || (t.contains(" in ")
+                && (t.contains("passed")
+                    || t.contains("failed")
+                    || t.contains("error")
+                    || t.contains("skipped")))
     })?;
     let counts = count_kv(summary);
     let failed = counts.get("failed").copied().unwrap_or(0) + counts.get("error").copied().unwrap_or(0);
@@ -454,6 +498,7 @@ fn parse_pytest(output: &str, exit_code: Option<i32>) -> Option<ToolResult> {
                 actual: None,
                 detail: None,
                 fixable: false,
+                suggestions: vec![],
                 fingerprint: fingerprint(
                     "pytest",
                     rule.as_deref().unwrap_or(""),
@@ -468,7 +513,7 @@ fn parse_pytest(output: &str, exit_code: Option<i32>) -> Option<ToolResult> {
         schema_version: SCHEMA_VERSION,
         tool: "pytest".into(),
         kind: ResultKind::Test,
-        status: Status::from_exit(exit_code, failed > 0),
+        status: Status::from_test(exit_code, failed > 0),
         exit_code,
         duration_ms: None,
         counts,
@@ -531,7 +576,7 @@ fn parse_cargo_test(output: &str, exit_code: Option<i32>) -> Option<ToolResult> 
                 detail_lines.push(t.to_string());
                 j += 1;
             }
-            let loc = Location { path: path.clone(), line: Some(line), column: Some(col) };
+            let loc = Location { path: path.clone(), line: Some(line), column: Some(col), ..Default::default() };
             findings.push(Finding {
                 kind: FindingKind::Panic,
                 severity: Severity::Failure,
@@ -544,6 +589,7 @@ fn parse_cargo_test(output: &str, exit_code: Option<i32>) -> Option<ToolResult> 
                 actual,
                 detail: if detail_lines.len() > 1 { Some(detail_lines.join("\n")) } else { None },
                 fixable: false,
+                suggestions: vec![],
                 fingerprint: fingerprint("cargo", "panic", &loc.shorthand(), &test),
             });
             i = j;
@@ -556,7 +602,7 @@ fn parse_cargo_test(output: &str, exit_code: Option<i32>) -> Option<ToolResult> 
         schema_version: SCHEMA_VERSION,
         tool: "cargo".into(),
         kind: ResultKind::Test,
-        status: Status::from_exit(exit_code, failed > 0 || !findings.is_empty()),
+        status: Status::from_test(exit_code, failed > 0 || !findings.is_empty()),
         exit_code,
         duration_ms: None,
         counts,
@@ -586,11 +632,16 @@ mod tests {
 
     #[test]
     fn status_never_passes_on_nonzero_exit() {
-        assert_eq!(Status::from_exit(Some(0), false), Status::Passed);
+        // Non-test tools → Ok on success, never on nonzero exit.
+        assert_eq!(Status::from_exit(Some(0), false), Status::Ok);
         assert_eq!(Status::from_exit(Some(0), true), Status::Failed);
         assert_eq!(Status::from_exit(Some(2), false), Status::Error);
         assert_eq!(Status::from_exit(Some(1), true), Status::Failed);
         assert_eq!(Status::from_exit(None, false), Status::Unknown);
+        // Test runners → Passed on clean success, never on nonzero exit.
+        assert_eq!(Status::from_test(Some(0), false), Status::Passed);
+        assert_eq!(Status::from_test(Some(2), false), Status::Error);
+        assert_eq!(Status::from_test(Some(1), true), Status::Failed);
     }
 
     #[test]
@@ -619,6 +670,7 @@ mod tests {
                 actual: None,
                 detail: None,
                 fixable: false,
+                suggestions: vec![],
                 fingerprint: "x".into(),
             });
         }
@@ -643,12 +695,13 @@ mod tests {
             id: Some("tests/test_auth.py::test_x".into()),
             rule: Some("AssertionError".into()),
             message: "assert 0 == 100".into(),
-            location: Some(Location { path: "tests/test_auth.py".into(), line: Some(42), column: None }),
+            location: Some(Location { path: "tests/test_auth.py".into(), line: Some(42), ..Default::default() }),
             locations: vec![],
             expected: Some("100".into()),
             actual: Some("0".into()),
             detail: None,
             fixable: false,
+            suggestions: vec![],
             fingerprint: fingerprint("pytest", "AssertionError", "tests/test_auth.py:42", "assert 0 == 100"),
         });
         let yaml = render_yaml(&r);
@@ -712,6 +765,45 @@ mod tests {
         assert_eq!(f.location.as_ref().unwrap().shorthand(), "src/auth.rs:55:9");
         assert_eq!(f.actual.as_deref(), Some("401"));
         assert_eq!(f.expected.as_deref(), Some("200"));
+    }
+
+    #[test]
+    fn detail_cap_respects_byte_limit_and_records_omission() {
+        let mut r = ToolResult::generic("x", Some(1));
+        r.findings.push(Finding {
+            kind: FindingKind::Diagnostic,
+            severity: Severity::Error,
+            id: None,
+            rule: None,
+            message: "m".into(),
+            location: None,
+            locations: vec![],
+            expected: None,
+            actual: None,
+            detail: Some("d".repeat(MAX_DETAIL_BYTES * 2)),
+            fixable: false,
+            suggestions: vec![],
+            fingerprint: "x".into(),
+        });
+        r.cap();
+        let d = r.findings[0].detail.as_ref().unwrap();
+        assert!(d.len() <= MAX_DETAIL_BYTES, "detail {} > cap {}", d.len(), MAX_DETAIL_BYTES);
+        assert!(r.truncated.detail_bytes_omitted > 0, "should record omitted bytes");
+    }
+
+    #[test]
+    fn pytest_no_tests_ran_is_handled_not_declined() {
+        let r = parse(&argv(&["pytest"]), "no tests ran in 0.01s\n", Some(0)).unwrap();
+        assert_eq!(r.tool, "pytest");
+        assert!(r.findings.is_empty());
+        // exit 0, no failures → Passed (test runner).
+        assert_eq!(r.status, Status::Passed);
+    }
+
+    #[test]
+    fn generic_success_is_ok_not_passed() {
+        let r = ToolResult::generic("make", Some(0));
+        assert_eq!(r.status, Status::Ok);
     }
 
     #[test]
