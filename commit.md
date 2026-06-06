@@ -1785,3 +1785,16 @@ render_compact (one line per finding, rtk-style) now the default --format for ca
 
 ---
 
+## Commit 6a239844 — 2026-06-06 03:47 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+render_compact (one line per finding, rtk-style) now the default --format for capture run. Flipped diagnostic-dense from net loss to win (ruff -108→+14%, mypy -101→+27%), aggregate 88.7→95.8%, experiment 32/32. structured/json/summary remain. Docs (MANUAL/man/token-reduction) + experiment results + e2e test updated. ALL_GREEN, clippy -D warnings clean. 38 commits.
+
+### This Commit's Contribution
+
+
+---
+
