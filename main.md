@@ -455,11 +455,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] native Git LFS backend, default for objects push/pull
 - [x] edited MANUAL.md; edited src/lfs.rs; edited man/man1/h5i.1
 - [x] LFS hardening — codex #7230a76d (cred scoping, fallback classification)
+- [x] edited src/main.rs; edited src/lfs.rs; edited MANUAL.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 10:37 UTC] `update-doc-with-i5h`: edited src/main.rs; edited src/lfs.rs; edited MANUAL.md
 - [2026-06-06 10:36 UTC] `update-doc-with-i5h`: LFS hardening — codex #7230a76d (cred scoping, fallback classification)
 - [2026-06-06 10:22 UTC] `update-doc-with-i5h`: edited MANUAL.md; edited src/lfs.rs; edited man/man1/h5i.1
 - [2026-06-06 10:22 UTC] `update-doc-with-i5h`: native Git LFS backend, default for objects push/pull
