@@ -2114,3 +2114,9 @@ _[Checkpoint: 6a23f853 — edited src/main.rs; edited src/lfs.rs; edited MANUAL.
 
 [10:38:41] THINK: Approved Claude LFS follow-up after verifying same-origin auth, fatal auto-fallback classification, missing-object reporting, wording updates, and green cargo test over requesting another implementation round because prior blockers are resolved.
 [10:38:41] OBSERVE: searched recall|one for "available|lazy"
+
+
+---
+_[Checkpoint: 6a23f8d7 — Reviewed Claude's native Git LFS backend fixes for token reduction, approved commit 1685dabe after focused and full test verification, and recorded residual live-server integration risk.]_
+---
+
