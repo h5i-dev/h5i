@@ -387,3 +387,140 @@ fn manifests_persist_and_accumulate() {
     let list = stdout(&a.h5i_ok(&["recall", "objects"]));
     assert!(list.contains("3 objects captured"), "expected 3 listed: {list}");
 }
+
+// ── recall search: query the normalized findings across captures ──────────────
+
+/// A fake `pytest` body whose one failure ⇒ a stable finding (id
+/// `tests/t.py::test_pay`, message `assert 0 == 100`, location `tests/t.py`).
+/// `"$@"` is echoed so callers can perturb the raw bytes (→ a distinct object)
+/// while keeping the failing finding — and thus its fingerprint — identical.
+const FAILING_PYTEST: &str = "echo \"args: $@\"\n\
+     echo '=== test session starts ==='\n\
+     for i in $(seq 1 80); do echo \"tests/t.py::test_$i PASSED some padding to clear the size threshold\"; done\n\
+     echo 'FAILED tests/t.py::test_pay - assert 0 == 100'\n\
+     echo '=== 1 failed, 80 passed in 4.1s ==='\n\
+     exit 1";
+
+/// Install an executable fake tool at `<dir>/bin/<name>` that runs `body`.
+fn install_fake_tool(dir: &Path, name: &str, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let p = bin.join(name);
+    std::fs::write(&p, format!("#!/bin/bash\n{body}\n")).unwrap();
+    let mut perms = std::fs::metadata(&p).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&p, perms).unwrap();
+}
+
+/// Run `h5i <args>` with the clone's `bin/` prepended to PATH (so fake tools
+/// resolve). Does not assert success — `capture run` passes through the wrapped
+/// command's exit code, which is nonzero for a failing tool.
+fn h5i_path(c: &Clone, args: &[&str]) -> Output {
+    let path = format!(
+        "{}:{}",
+        c.dir.join("bin").display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    Command::new(H5I)
+        .args(args)
+        .env("PATH", path)
+        .env_remove("H5I_AGENT")
+        .current_dir(&c.dir)
+        .output()
+        .expect("run h5i")
+}
+
+#[test]
+fn search_finds_findings_by_text_path_and_metadata() {
+    let (_root, a) = single();
+    install_fake_tool(&a.dir, "pytest", FAILING_PYTEST);
+    h5i_path(&a, &["capture", "run", "--min-bytes", "0", "--", "pytest", "-q"]);
+    assert_eq!(a.manifest_count(), 1, "the failing run should be captured");
+
+    // Free-text query on the finding message, rendered with its location.
+    let q = stdout(&h5i_path(&a, &["recall", "search", "100"]));
+    assert!(q.contains("1 capture matched"), "message query:\n{q}");
+    assert!(q.contains("assert 0 == 100"), "shows the finding:\n{q}");
+    assert!(q.contains("tests/t.py"), "shows the location:\n{q}");
+
+    // Query on the test id; --path on the location (suffix match).
+    assert!(stdout(&h5i_path(&a, &["recall", "search", "pay"])).contains("1 capture matched"));
+    assert!(stdout(&h5i_path(&a, &["objects", "search", "--path", "t.py"])).contains("1 capture matched"));
+
+    // Manifest-level structured filters.
+    assert!(stdout(&h5i_path(&a, &["recall", "search", "--status", "failed"])).contains("1 capture matched"));
+    assert!(stdout(&h5i_path(&a, &["recall", "search", "--tool", "pytest"])).contains("1 capture matched"));
+    assert!(stdout(&h5i_path(&a, &["recall", "search", "--severity", "failure"])).contains("1 capture matched"));
+
+    // Filters that exclude: this finding is `failure`, not `error`; and a term
+    // that appears nowhere.
+    assert!(stdout(&h5i_path(&a, &["recall", "search", "--severity", "error"])).contains("No captured findings match"));
+    assert!(stdout(&h5i_path(&a, &["recall", "search", "zzz-not-a-real-token"])).contains("No captured findings match"));
+}
+
+#[test]
+fn search_validates_enum_and_duration_arguments() {
+    let (_root, a) = single();
+    // Each invalid enum value is rejected before any work, with a helpful message.
+    let bad_sev = a.h5i(&["recall", "search", "--severity", "bogus"]);
+    assert!(!bad_sev.status.success());
+    assert!(stderr(&bad_sev).contains("invalid --severity"), "{}", stderr(&bad_sev));
+
+    let bad_status = a.h5i(&["recall", "search", "--status", "nope"]);
+    assert!(!bad_status.status.success());
+    assert!(stderr(&bad_status).contains("invalid --status"), "{}", stderr(&bad_status));
+
+    let bad_kind = a.h5i(&["recall", "search", "--kind", "weird"]);
+    assert!(!bad_kind.status.success());
+    assert!(stderr(&bad_kind).contains("invalid --kind"), "{}", stderr(&bad_kind));
+
+    // A malformed --since duration is an error too.
+    let bad_since = a.h5i(&["recall", "search", "--since", "not-a-duration"]);
+    assert!(!bad_since.status.success(), "bad --since should error");
+}
+
+#[test]
+fn search_since_includes_a_recent_capture() {
+    let (_root, a) = single();
+    install_fake_tool(&a.dir, "pytest", FAILING_PYTEST);
+    h5i_path(&a, &["capture", "run", "--min-bytes", "0", "--", "pytest", "-q"]);
+    // A generous window comfortably includes the just-now capture.
+    let hits = stdout(&h5i_path(&a, &["recall", "search", "--since", "1h", "--severity", "failure"]));
+    assert!(hits.contains("1 capture matched"), "recent capture within 1h:\n{hits}");
+}
+
+#[test]
+fn search_fingerprint_tracks_recurrence_across_distinct_captures() {
+    let (_root, a) = single();
+    install_fake_tool(&a.dir, "pytest", FAILING_PYTEST);
+
+    // Two runs with different args ⇒ different raw bytes ⇒ two distinct objects,
+    // but the same failing finding ⇒ the same fingerprint.
+    h5i_path(&a, &["capture", "run", "--min-bytes", "0", "--", "pytest", "-q", "--seed=1"]);
+    h5i_path(&a, &["capture", "run", "--min-bytes", "0", "--", "pytest", "-q", "--seed=2"]);
+    assert_eq!(a.manifest_count(), 2, "two distinct captures expected");
+
+    // Pull the fingerprint out of one capture's manifest.
+    let id = first_id(&stdout(&a.h5i_ok(&["recall", "objects"]))).expect("a capture id");
+    let manifest = stdout(&a.h5i_ok(&["objects", "get", &id, "--manifest"]));
+    let v: serde_json::Value = serde_json::from_str(&manifest).expect("manifest json");
+    let fp = v["structured"]["findings"][0]["fingerprint"]
+        .as_str()
+        .expect("a fingerprint")
+        .to_string();
+
+    // Searching that fingerprint (by prefix) finds BOTH recurrences.
+    let hits = stdout(&a.h5i_ok(&["recall", "search", "--fingerprint", &fp[..fp.len().min(8)]]));
+    assert!(hits.contains("2 captures matched"), "fingerprint recurrence:\n{hits}");
+}
+
+#[test]
+fn search_on_empty_store_reports_no_match() {
+    let (_root, a) = single();
+    // No captures yet: both a free-text and a no-arg search exit 0 and say so.
+    let q = a.h5i_ok(&["recall", "search", "anything"]);
+    assert!(stdout(&q).contains("No captured findings match"), "{}", stdout(&q));
+    let bare = a.h5i_ok(&["recall", "search"]);
+    assert!(stdout(&bare).contains("No captured findings match"), "{}", stdout(&bare));
+}
