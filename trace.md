@@ -1348,3 +1348,4 @@ _[Checkpoint: 6a237646 — edited src/mcp.rs; edited src/mcp.rs; edited docs/tok
 [01:35:30] ACT: wrote assets/filters/flake8.toml
 [01:35:55] ACT: edited assets/filters/pip.toml
 [01:38:31] OBSERVE: read bmtd8d22g.output
+[01:39:06] ACT: edited docs/token-reduction.md
