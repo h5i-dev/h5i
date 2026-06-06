@@ -1072,3 +1072,4 @@ _[Checkpoint: 6a23646e — edited docs/token-reduction.md; edited docs/token-red
 [00:10:32] ACT: wrote tests/filter_quality.rs
 [00:11:28] ACT: edited tests/filter_quality.rs
 [00:12:45] ACT: wrote tests/objects_e2e.rs
+[00:13:45] OBSERVE: read tests/cli_integration.rs
