@@ -1573,3 +1573,4 @@ _[Checkpoint: 6a238941 — edited src/structured.rs; edited src/structured.rs; e
 [02:52:16] OBSERVE: read bjf9e42i3.output
 [02:52:52] OBSERVE: read beor5qeev.output
 [02:54:20] OBSERVE: read bjf9e42i3.output
+[02:54:58] NOTE: DEFERRAL (~/Dev/h5i/docs/token-reduction.md): ric fallback (no dedicated parser yet) — easy to add as a follow-up. I notified Codex of slice ② and re-launched the waiter for its still-pending …
