@@ -383,11 +383,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] usability: threshold + instructions + MCP tool + setup
 - [x] edited src/main.rs; edited src/mcp.rs; edited docs/token-reduction.md
 - [x] capture guidance baked into h5i init templates
+- [x] edited src/main.rs; edited src/main.rs; edited src/main.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 01:09 UTC] `update-doc-with-i5h`: edited src/main.rs; edited src/main.rs; edited src/main.rs
 - [2026-06-06 01:09 UTC] `update-doc-with-i5h`: capture guidance baked into h5i init templates
 - [2026-06-06 01:05 UTC] `update-doc-with-i5h`: edited src/main.rs; edited src/mcp.rs; edited docs/token-reduction.md
 - [2026-06-06 01:05 UTC] `update-doc-with-i5h`: usability: threshold + instructions + MCP tool + setup
