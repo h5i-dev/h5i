@@ -1241,3 +1241,4 @@ _[Checkpoint: 6a236e7e — edited src/objects.rs; edited src/objects.rs; edited 
 [01:00:21] ACT: edited src/main.rs
 [01:02:08] OBSERVE: read src/mcp.rs
 [01:02:17] ACT: edited src/mcp.rs
+[01:05:02] ACT: edited docs/token-reduction.md
