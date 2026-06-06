@@ -1,0 +1,41 @@
+[filters.vitest]
+description = "Compact Vitest output — keep failures and the test summary, drop passing/progress lines"
+match_command = "\\bvitest\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^ ✓ ",
+  "^✓ ",
+  "^ RUN ",
+  "^stdout \\|",
+  "^stderr \\|",
+]
+max_lines = 80
+on_empty = "vitest: ok"
+
+[[tests.vitest]]
+name = "keeps failures and counts, drops passes"
+input = """
+ ✓ src/a.test.ts (3)
+ ❯ src/b.test.ts (2)
+   × computes total
+     → expected 10 to be 12
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 4 passed (5)
+"""
+expected = """
+ ❯ src/b.test.ts (2)
+   × computes total
+     → expected 10 to be 12
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 4 passed (5)
+"""
+
+[[tests.vitest]]
+name = "all-pass keeps the counts"
+input = """
+ ✓ src/a.test.ts (3)
+ ✓ src/b.test.ts (2)
+      Tests  5 passed (5)
+"""
+expected = "      Tests  5 passed (5)"

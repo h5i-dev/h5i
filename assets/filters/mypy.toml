@@ -1,0 +1,28 @@
+[filters.mypy]
+description = "Compact mypy output — keep type errors/notes, the count, and the success line"
+match_command = "\\bmypy\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+]
+max_lines = 80
+on_empty = "mypy: ok"
+
+[[tests.mypy]]
+name = "keeps errors and count"
+input = """
+src/a.py:12: error: Incompatible return value type [return-value]
+
+src/b.py:3: error: Name 'foo' is not defined [name-defined]
+Found 2 errors in 2 files (checked 9 source files)
+"""
+expected = """
+src/a.py:12: error: Incompatible return value type [return-value]
+src/b.py:3: error: Name 'foo' is not defined [name-defined]
+Found 2 errors in 2 files (checked 9 source files)
+"""
+
+[[tests.mypy]]
+name = "keeps success line"
+input = "Success: no issues found in 5 source files"
+expected = "Success: no issues found in 5 source files"

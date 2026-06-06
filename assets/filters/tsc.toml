@@ -1,0 +1,33 @@
+[filters.tsc]
+description = "Compact TypeScript compiler output — keep TS errors/warnings and the error count"
+match_command = "\\btsc\\b"
+strip_ansi = true
+keep_lines_matching = [
+  "error TS\\d+",
+  "warning TS\\d+",
+  "^Found \\d+ error",
+]
+max_lines = 80
+on_empty = "tsc: ok"
+
+[[tests.tsc]]
+name = "keeps TS errors and count, strips chatter"
+input = """
+Starting compilation in watch mode...
+src/api/auth.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.
+src/components/Button.tsx(8,3): error TS2339: Property 'onClick' does not exist.
+Found 2 errors in 2 files.
+"""
+expected = """
+src/api/auth.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.
+src/components/Button.tsx(8,3): error TS2339: Property 'onClick' does not exist.
+Found 2 errors in 2 files.
+"""
+
+[[tests.tsc]]
+name = "clean compile shows the zero-error line"
+input = """
+Starting compilation...
+Found 0 errors. Watching for file changes.
+"""
+expected = "Found 0 errors. Watching for file changes."

@@ -145,8 +145,10 @@ unexpected output never produces a misleading summary — it just falls back.
 
 ### Declarative rules (the long tail)
 
-Beyond the three coded adapters, h5i ships **59 declarative per-command rules**
-covering gcc, make, terraform, eslint, biome, gcloud, docker, rsync, and more.
+Beyond the three coded adapters, h5i ships **74 declarative per-command rules**
+covering the JS (npm/pnpm/yarn/tsc/eslint/jest/vitest), Python (pip/ruff/mypy/
+black/flake8), Go (go/golangci-lint), and container (docker) ecosystems, plus
+gcc, make, terraform, gradle, gcloud, rsync, and more.
 Each rule is a small TOML pipeline matched against the command by regex:
 
 ```
@@ -166,7 +168,7 @@ scorer**. An explicit `--kind` opts out of all of them.
 This engine and its rule set are ported from **rtk**
 (<https://github.com/rtk-ai/rtk>, Apache-2.0, © Patrick Szymkowiak) with
 modifications — see `assets/filters/NOTICE`. Each rule keeps its upstream inline
-`[[tests.*]]` golden cases, which run as part of h5i's test suite (145 cases) to
+`[[tests.*]]` golden cases, which run as part of h5i's test suite (175 cases) to
 prove the port stays faithful.
 
 #### Project-local rules (trust-gated)

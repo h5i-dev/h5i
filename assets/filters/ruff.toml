@@ -1,0 +1,35 @@
+[filters.ruff]
+description = "Compact Ruff output — keep diagnostics, the count, and the clean/reformat result"
+match_command = "\\bruff\\b"
+strip_ansi = true
+keep_lines_matching = [
+  "\\.py:\\d+:\\d+:",
+  "^Found \\d+ error",
+  "^All checks passed",
+  "Would reformat",
+  "files? reformatted",
+  "files? left unchanged",
+]
+max_lines = 80
+on_empty = "ruff: clean"
+
+[[tests.ruff]]
+name = "keeps diagnostics and count"
+input = """
+src/app.py:1:1: F401 [*] `os` imported but unused
+src/app.py:5:5: E711 comparison to `None`
+Found 2 errors.
+[*] 1 fixable with the `--fix` option.
+"""
+expected = """
+src/app.py:1:1: F401 [*] `os` imported but unused
+src/app.py:5:5: E711 comparison to `None`
+Found 2 errors.
+"""
+
+[[tests.ruff]]
+name = "clean keeps the all-passed line"
+input = """
+All checks passed!
+"""
+expected = "All checks passed!"

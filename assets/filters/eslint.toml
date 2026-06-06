@@ -1,0 +1,32 @@
+[filters.eslint]
+description = "Compact ESLint (stylish) output — strip blank lines, keep problems and the summary"
+match_command = "\\beslint\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+]
+truncate_lines_at = 200
+max_lines = 80
+on_empty = "eslint: clean"
+
+[[tests.eslint]]
+name = "keeps problems and summary, drops blanks"
+input = """
+/app/src/index.ts
+  1:7   error  'x' is assigned a value but never used  no-unused-vars
+
+  3:1   warning  Unexpected console statement            no-console
+
+✖ 2 problems (1 error, 1 warning)
+"""
+expected = """
+/app/src/index.ts
+  1:7   error  'x' is assigned a value but never used  no-unused-vars
+  3:1   warning  Unexpected console statement            no-console
+✖ 2 problems (1 error, 1 warning)
+"""
+
+[[tests.eslint]]
+name = "clean run collapses to message"
+input = ""
+expected = "eslint: clean"
