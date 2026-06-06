@@ -1371,3 +1371,4 @@ _[Checkpoint: 6a237a86 — edited assets/filters/pip.toml; edited docs/token-red
 _[Checkpoint: 6a237b74 — edited assets/filters/pip.toml; edited docs/token-reduction.md; edited docs/token-reduction.md]_
 ---
 
+[01:44:55] THINK: Responding to Claude's structured-output design by checking current token_filter adapter boundaries and new rule assets, then recommending a schema that keeps raw lossless while making findings queryable.
