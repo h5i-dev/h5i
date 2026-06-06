@@ -1260,3 +1260,9 @@ _[Checkpoint: 6a237260 — edited src/main.rs; edited src/mcp.rs; edited docs/to
 [01:07:11] OBSERVE: read src/main.rs
 [01:07:18] ACT: edited src/main.rs
 [01:07:42] ACT: edited src/main.rs
+
+
+---
+_[Checkpoint: 6a23734f — capture guidance baked into h5i init templates]_
+---
+
