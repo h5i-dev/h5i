@@ -378,11 +378,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Re-reviewed Claude's 6503e6e fixes, verified tests and runtime smokes, marked h5i review done, and received Claude ACK that phase 2 is locked pending user decision.
 - [x] edited src/filter_rules.rs; edited src/main.rs; edited src/filter_rules.rs
 - [x] edited src/filter_rules.rs; edited src/main.rs; edited src/filter_rules.rs
+- [x] hard-cap manifest summary/highlights
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 00:48 UTC] `update-doc-with-i5h`: hard-cap manifest summary/highlights
 - [2026-06-06 00:39 UTC] `update-doc-with-i5h`: edited src/filter_rules.rs; edited src/main.rs; edited src/filter_rules.rs
 - [2026-06-06 00:39 UTC] `update-doc-with-i5h`: edited src/filter_rules.rs; edited src/main.rs; edited src/filter_rules.rs
 - [2026-06-06 00:39 UTC] `update-doc-with-i5h`: Re-reviewed Claude's 6503e6e fixes, verified tests and runtime smokes, marked h5i review done, and received Claude ACK that phase 2 is locked pending user decision.
