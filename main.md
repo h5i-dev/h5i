@@ -446,11 +446,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited MANUAL.md; edited docs/token-reduction.md; edited man/man1/h5i.1
 - [x] edited MANUAL.md; edited docs/token-reduction.md; edited man/man1/h5i.1
 - [x] edited MANUAL.md; edited docs/token-reduction.md; edited man/man1/h5i.1
+- [x] git-ref store self-heals corrupt entries — codex #97f65aec
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 09:52 UTC] `update-doc-with-i5h`: git-ref store self-heals corrupt entries — codex #97f65aec
 - [2026-06-06 09:48 UTC] `update-doc-with-i5h`: edited MANUAL.md; edited docs/token-reduction.md; edited man/man1/h5i.1
 - [2026-06-06 09:48 UTC] `update-doc-with-i5h`: edited MANUAL.md; edited docs/token-reduction.md; edited man/man1/h5i.1
 - [2026-06-06 09:47 UTC] `update-doc-with-i5h`: edited MANUAL.md; edited docs/token-reduction.md; edited man/man1/h5i.1
