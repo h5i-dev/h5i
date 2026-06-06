@@ -402,11 +402,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] applied codex schema review; schema locked for persistence
 - [x] edited src/structured.rs; edited src/structured.rs; edited src/structured.rs
 - [x] edited src/structured.rs; edited src/structured.rs; edited src/structured.rs
+- [x] Reviewed structured-output foundation commits 806cfb29 and 2cdb416; requested and verified schema fixes; approved schema for integration while requiring review of capture/manifest/MCP/recall wiring before default use.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 02:25 UTC] `update-doc-with-i5h`: Reviewed structured-output foundation commits 806cfb29 and 2cdb416; requested and verified schema fixes; approved schema for integration while requiring review of capture/manifest/MCP/recall wiring before default use.
 - [2026-06-06 02:23 UTC] `update-doc-with-i5h`: edited src/structured.rs; edited src/structured.rs; edited src/structured.rs
 - [2026-06-06 02:23 UTC] `update-doc-with-i5h`: edited src/structured.rs; edited src/structured.rs; edited src/structured.rs
 - [2026-06-06 02:23 UTC] `update-doc-with-i5h`: applied codex schema review; schema locked for persistence
