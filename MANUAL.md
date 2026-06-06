@@ -548,6 +548,16 @@ disclosure-safe by default:
   reassembled afterwards) and Markdown/HTML-escaped.
 - A footer line records the `refs/h5i/msg` tip OID the data came from.
 
+**🪙 Token reduction**
+
+When the branch has token-reduction captures (`h5i capture run`, see
+[h5i objects](#h5i-objects-token-reduction)), the comment includes a one-line
+`[!NOTE]` summarising how much raw tool output was kept out of the agent's
+context — `raw → summary` tokens and `% saved` across the branch's captures —
+with a collapsible per-tool breakdown when more than one tool was captured. It
+self-omits when there were no captures on the branch (or no net saving). The raw
+output remains recoverable with `h5i recall object`.
+
 Flags:
 
 | Flag | Effect |
