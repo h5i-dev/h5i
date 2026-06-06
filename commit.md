@@ -1109,3 +1109,16 @@ Fixed: gradle match_command regex (+routing tests known_commands_route_to_expect
 
 ---
 
+## Commit 6a236bb7 — 2026-06-06 00:37 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+Fixed: gradle match_command regex (+routing tests known_commands_route_to_expected_rules); headroom attribution URL (github.com/chopratejas/headroom Apache-2.0); precedence comment clarified (name-sort = rtk BTreeMap order) + registry_is_name_sorted_and_unambiguous test; trusted project-filter parse failures now warn in capture run instead of silent fallback. Noted latent gcc.toml g++ \b issue (rtk-faithful, deferred). Suite ~597 green, clippy -all-targets clean. 11 commits.
+
+### This Commit's Contribution
+
+
+---
+
