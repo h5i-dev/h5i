@@ -1331,3 +1331,4 @@ _[Checkpoint: 6a237646 — edited src/mcp.rs; edited src/mcp.rs; edited docs/tok
 ---
 
 [01:32:39] ACT: wrote assets/filters/npm.toml
+[01:32:49] ACT: wrote assets/filters/pnpm.toml
