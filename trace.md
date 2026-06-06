@@ -2289,3 +2289,4 @@ _[Checkpoint: 6a2491b4 — edited src/main.rs; edited src/main.rs; edited src/ma
 [21:57:22] ACT: edited src/main.rs
 [22:00:21] THINK: Let me set up a context workspace and explore the key code regions I'll need to mirror.
 [22:00:21] THINK: I'll add it right after the `List` arm (ends at line ~6945, before `Gc`):
+[22:00:21] THINK: Let me add `recall search` to the instruction docs so agents discover it, then regenerate the dogfood files.
