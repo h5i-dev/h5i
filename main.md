@@ -390,11 +390,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md
 - [x] edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md
 - [x] edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md
+- [x] expanded rule coverage 59->74 (JS/Python/Go/container)
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 01:40 UTC] `update-doc-with-i5h`: expanded rule coverage 59->74 (JS/Python/Go/container)
 - [2026-06-06 01:22 UTC] `update-doc-with-i5h`: edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md
 - [2026-06-06 01:19 UTC] `update-doc-with-i5h`: edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md
 - [2026-06-06 01:19 UTC] `update-doc-with-i5h`: edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md
