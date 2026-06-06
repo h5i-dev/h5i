@@ -1592,3 +1592,4 @@ _[Checkpoint: 6a238c24 — codex slice-1 fixes applied; integration green]_
 _[Checkpoint: 6a238c40 — edited src/main.rs; edited src/main.rs; edited src/objects.rs]_
 ---
 
+[02:56:37] OBSERVE: read src/structured.rs
