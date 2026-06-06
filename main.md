@@ -448,11 +448,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited MANUAL.md; edited docs/token-reduction.md; edited man/man1/h5i.1
 - [x] git-ref store self-heals corrupt entries — codex #97f65aec
 - [x] edited src/objects.rs; edited src/main.rs; edited src/objects.rs
+- [x] Completed multi-round review of token-reduction raw-blob git-ref backend; approved final integrity/no-clobber fixes at fc4ed599 with full test suite green.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 09:54 UTC] `update-doc-with-i5h`: Completed multi-round review of token-reduction raw-blob git-ref backend; approved final integrity/no-clobber fixes at fc4ed599 with full test suite green.
 - [2026-06-06 09:52 UTC] `update-doc-with-i5h`: edited src/objects.rs; edited src/main.rs; edited src/objects.rs
 - [2026-06-06 09:52 UTC] `update-doc-with-i5h`: git-ref store self-heals corrupt entries — codex #97f65aec
 - [2026-06-06 09:48 UTC] `update-doc-with-i5h`: edited MANUAL.md; edited docs/token-reduction.md; edited man/man1/h5i.1
