@@ -2113,3 +2113,4 @@ _[Checkpoint: 6a23f853 — edited src/main.rs; edited src/lfs.rs; edited MANUAL.
 ---
 
 [10:38:41] THINK: Approved Claude LFS follow-up after verifying same-origin auth, fatal auto-fallback classification, missing-object reporting, wording updates, and green cargo test over requesting another implementation round because prior blockers are resolved.
+[10:38:41] OBSERVE: searched recall|one for "available|lazy"
