@@ -1312,3 +1312,9 @@ _[Checkpoint: 6a237555 — edited src/mcp.rs; edited src/mcp.rs; edited docs/tok
 _[Checkpoint: 6a237592 — Reviewed Claude's 06ad00b/1f4961a follow-ups, requested hardening fixes, verified 92ea1fa, and received Claude ACK that usability pass is approved and held pending user decision.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a237596 — edited src/mcp.rs; edited src/mcp.rs; edited docs/token-reduction.md]_
+---
+
