@@ -381,11 +381,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] hard-cap manifest summary/highlights
 - [x] edited src/objects.rs; edited src/objects.rs; edited docs/token-reduction.md
 - [x] usability: threshold + instructions + MCP tool + setup
+- [x] edited src/main.rs; edited src/mcp.rs; edited docs/token-reduction.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 01:05 UTC] `update-doc-with-i5h`: edited src/main.rs; edited src/mcp.rs; edited docs/token-reduction.md
 - [2026-06-06 01:05 UTC] `update-doc-with-i5h`: usability: threshold + instructions + MCP tool + setup
 - [2026-06-06 00:49 UTC] `update-doc-with-i5h`: edited src/objects.rs; edited src/objects.rs; edited docs/token-reduction.md
 - [2026-06-06 00:48 UTC] `update-doc-with-i5h`: hard-cap manifest summary/highlights
