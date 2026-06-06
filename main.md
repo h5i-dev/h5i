@@ -376,11 +376,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] addressed codex phase-2 review
 - [x] edited src/filter_rules.rs; edited src/main.rs; edited src/filter_rules.rs
 - [x] Re-reviewed Claude's 6503e6e fixes, verified tests and runtime smokes, marked h5i review done, and received Claude ACK that phase 2 is locked pending user decision.
+- [x] edited src/filter_rules.rs; edited src/main.rs; edited src/filter_rules.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-06 00:39 UTC] `update-doc-with-i5h`: edited src/filter_rules.rs; edited src/main.rs; edited src/filter_rules.rs
 - [2026-06-06 00:39 UTC] `update-doc-with-i5h`: Re-reviewed Claude's 6503e6e fixes, verified tests and runtime smokes, marked h5i review done, and received Claude ACK that phase 2 is locked pending user decision.
 - [2026-06-06 00:37 UTC] `update-doc-with-i5h`: edited src/filter_rules.rs; edited src/main.rs; edited src/filter_rules.rs
 - [2026-06-06 00:36 UTC] `update-doc-with-i5h`: addressed codex phase-2 review
