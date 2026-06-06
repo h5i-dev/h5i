@@ -1062,3 +1062,9 @@ _[Checkpoint: 6a23645f — trust-gated project rules + headroom log folding]_
 ---
 
 [00:06:06] THINK: So I'll borrow *code/algorithms only from headroom* and deliberately avoid copying context-mode (ideas like byte-safe truncation are generic and we already have our own).
+
+
+---
+_[Checkpoint: 6a23646e — edited docs/token-reduction.md; edited docs/token-reduction.md; edited assets/filters/NOTICE]_
+---
+

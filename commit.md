@@ -1018,3 +1018,16 @@ src/filter_rules.rs trust_status/trust/untrust/describe_file (content-hash gate 
 
 ---
 
+## Commit 6a23646e — 2026-06-06 00:06 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+src/filter_rules.rs trust_status/trust/untrust/describe_file (content-hash gate in .git/.h5i/trusted_filters.json; H5I_TRUST_FILTERS override); h5i objects trust [--status|--remove] with risky-rule review. token_filter::summarize_scored now folds near-identical lines by normalized template (headroom Apache-2.0): generic log 17223->74 tokens. context-mode (ELv2) deliberately not copied. Suite 586 green, clippy clean.
+
+### This Commit's Contribution
+
+
+---
+
