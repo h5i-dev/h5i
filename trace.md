@@ -1764,3 +1764,4 @@ _[Checkpoint: 6a239837 — compact format default — closes ruff/mypy token gap
 _[Checkpoint: 6a239844 — edited src/structured.rs; edited scripts/experiment_token_reduction_results.md; edited scripts/experiment_token_reductio…]_
 ---
 
+[03:50:13] OBSERVE: read src/pr.rs
