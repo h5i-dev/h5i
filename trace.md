@@ -2447,3 +2447,4 @@ _[Checkpoint: 6a25a3c6 — edited README.md; edited README.md; edited README.md]
 _[Checkpoint: 6a25a428 — edited README.md; edited README.md; edited README.md]_
 ---
 
+[17:05:18] OBSERVE: read Cargo.toml
