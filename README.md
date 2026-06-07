@@ -5,9 +5,25 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml/badge.svg"></a>
-  <a href="https://github.com/h5i-dev/h5i/blob/main/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/github/license/Koukyosyumei/h5i?color=blue"></a>
-  <a href="https://github.com/h5i-dev/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/h5i-dev/h5i?style=social"></a>
+  <a href="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml">
+    <img alt="tests" src="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml/badge.svg">
+  </a>
+  <a href="https://github.com/h5i-dev/h5i/blob/main/LICENSE">
+    <img alt="Apache-2.0" src="https://img.shields.io/github/license/Koukyosyumei/h5i?color=blue">
+  </a>
+  <a href="https://github.com/h5i-dev/h5i/stargazers">
+    <img alt="GitHub stars" src="https://img.shields.io/github/stars/h5i-dev/h5i?style=social">
+  </a>
+  <br>
+  <a href="#agent-radio">
+    <img alt="Agent Radio" src="https://img.shields.io/badge/Agent%20Radio-Claude%20%E2%86%94%20Codex-6f42c1">
+  </a>
+  <a href="#token-reduction">
+    <img alt="Token Reduction" src="https://img.shields.io/badge/Token%20Reduction-raw%20evidence%20kept-2ea44f">
+  </a>
+  <a href="#pull-request-briefs">
+    <img alt="AI PR Brief" src="https://img.shields.io/badge/AI%20PR%20Brief-reviewer%20ready-0969da">
+  </a>
 </p>
 
 Git records what changed. **`h5i`** records the rest: **who**, **why**, **what the agent knew**, **whether it was safe**, and **how the next agent picks up where the last left off**.
