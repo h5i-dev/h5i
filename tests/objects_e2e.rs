@@ -329,13 +329,14 @@ fn capture_emits_structured_default_and_is_queryable() {
 // ── min-bytes threshold: small output passes through unstored ─────────────────
 
 #[test]
-fn small_output_below_threshold_is_not_stored() {
+fn small_successful_output_below_threshold_is_not_stored() {
     let (_root, a) = single();
 
-    // Tiny output with the default threshold → passed through, no object created.
+    // Tiny *successful* output with the default threshold → passed through, no
+    // object created (nothing to reduce, and exit 0 carries no signal to keep).
     let out = a.h5i_ok(&["capture", "run", "--", "bash", "-c", "echo hi"]);
     assert!(stdout(&out).contains("hi"), "raw should pass through: {}", stdout(&out));
-    assert_eq!(a.manifest_count(), 0, "small output must not create a manifest");
+    assert_eq!(a.manifest_count(), 0, "small successful output must not create a manifest");
 
     // Large output (over the default threshold) → stored.
     let big = "for i in $(seq 1 400); do echo \"line $i has some content here\"; done";
@@ -345,6 +346,28 @@ fn small_output_below_threshold_is_not_stored() {
     // --min-bytes 0 forces capture even of tiny output.
     a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", "echo tiny"]);
     assert_eq!(a.manifest_count(), 2);
+}
+
+#[test]
+fn small_failing_output_is_stored_despite_threshold() {
+    let (_root, a) = single();
+
+    // Tiny output, but the command FAILED → the signal-aware gate stores it
+    // anyway (provenance + searchability), even though it's far under the byte
+    // threshold. `h5i` (not `h5i_ok`): capture passes the nonzero code through.
+    let out = a.h5i(&["capture", "run", "--", "bash", "-c", "echo 'boom: assertion failed'; exit 1"]);
+    assert_eq!(out.status.code(), Some(1), "exit code is passed through");
+    assert!(stdout(&out).contains("boom"), "raw still shown: {}", stdout(&out));
+    assert_eq!(a.manifest_count(), 1, "a small failure must be captured for later recall");
+
+    // …and it is searchable after the fact.
+    let hits = stdout(&a.h5i_ok(&["recall", "search", "boom"]));
+    assert!(hits.contains("1 capture matched"), "small failure should be searchable:\n{hits}");
+
+    // A subsequent small *successful* command is still passed through unstored,
+    // so the store stays free of trivia.
+    a.h5i_ok(&["capture", "run", "--", "bash", "-c", "echo all good"]);
+    assert_eq!(a.manifest_count(), 1, "small success stays unstored");
 }
 
 // ── branch / file association + filtered recall ──────────────────────────────

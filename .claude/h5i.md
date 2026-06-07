@@ -65,7 +65,7 @@ h5i capture run -- <command> [args…]          # e.g. h5i capture run -- pytest
 h5i capture run --file <path> -- <command>    # tag the files it relates to
 ```
 
-It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Output under ~2 KB passes through unstored, so it is safe to wrap. Rehydrate the full raw only if the summary isn't enough:
+It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Small *successful* output (under ~2 KB) passes through unstored — but failures are always captured regardless of size, so they stay searchable. Safe to wrap anything. Rehydrate the full raw only if the summary isn't enough:
 
 ```bash
 h5i recall objects [--branch <b>|--file <p>]   # list captures

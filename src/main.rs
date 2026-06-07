@@ -1787,9 +1787,11 @@ enum ObjectsCommands {
         /// Also echo the summary's pointer line even on success (default: yes).
         #[arg(long)]
         quiet: bool,
-        /// Only store + summarize when the output is at least this many bytes;
-        /// smaller output passes straight through unstored. Makes it safe to wrap
-        /// any command. Use 0 to always capture.
+        /// Size gate for storing *successful* output: only store + summarize when
+        /// it is at least this many bytes; smaller successful output passes
+        /// straight through unstored. Failures (nonzero exit) are always stored
+        /// regardless of size. Makes it safe to wrap any command. Use 0 to always
+        /// capture.
         #[arg(long, default_value_t = DEFAULT_CAPTURE_MIN_BYTES)]
         min_bytes: u64,
         /// Output format: compact (default, one line per finding) | structured
@@ -2092,7 +2094,7 @@ h5i capture run -- <command> [args…]          # e.g. h5i capture run -- pytest
 h5i capture run --file <path> -- <command>    # tag the files it relates to
 ```
 
-It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Output under ~2 KB passes through unstored, so it is safe to wrap. Rehydrate the full raw only if the summary isn't enough:
+It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Small *successful* output (under ~2 KB) passes through unstored — but failures are always captured regardless of size, so they stay searchable. Safe to wrap anything. Rehydrate the full raw only if the summary isn't enough:
 
 ```bash
 h5i recall objects [--branch <b>|--file <p>]   # list captures
@@ -2335,7 +2337,7 @@ Add flags when relevant:
 
 ### Capturing large command output (token reduction)
 
-Prefer wrapping all shell commands, so the agent receives compact, token-efficient output while preserving the original command behavior; the full raw is stored out-of-band and stays recoverable. Output under ~2 KB passes through unstored, so it is safe to wrap:
+Prefer wrapping all shell commands, so the agent receives compact, token-efficient output while preserving the original command behavior; the full raw is stored out-of-band and stays recoverable. Small *successful* output (under ~2 KB) passes through unstored, but failures are always captured regardless of size so they stay searchable:
 ```bash
 h5i capture run -- <command> [args…]     # e.g. h5i capture run -- cargo test
 h5i capture run --file <path> -- <cmd>   # tag the files it relates to
@@ -2400,8 +2402,9 @@ h5i capture run --file <path> -- <command>      # tag the files it relates to
 ```
 
 It prints only the summary (errors/failures/counts), passes the exit code
-through, and stores the full raw output out-of-band. Output under ~2 KB passes
-through unstored, so it is safe to wrap. Rehydrate the full raw only if needed:
+through, and stores the full raw output out-of-band. Small *successful* output
+(under ~2 KB) passes through unstored, but failures are always captured
+regardless of size so they stay searchable. Rehydrate the full raw only if needed:
 
 ```bash
 h5i recall objects [--branch <b>|--file <p>]    # list captures
@@ -6769,10 +6772,15 @@ jq -c '{
                         raw.extend_from_slice(&output.stderr);
                     }
 
-                    // Small output isn't worth a stored object: pass it straight
-                    // through so wrapping any command is safe and a no-op when
-                    // there's nothing to reduce.
-                    if (raw.len() as u64) < min_bytes {
+                    // Signal-aware gate. Store when there's either token-reduction
+                    // value (raw ≥ min_bytes) OR provenance/search value (the
+                    // command failed) — a small failure is exactly what
+                    // `recall search --fingerprint` recurrence-tracks, so it must
+                    // be kept regardless of size. Only small *successful* output is
+                    // passed straight through unstored, so wrapping a trivial
+                    // command stays a no-op. (`--min-bytes 0` still forces storage.)
+                    let worth_storing = (raw.len() as u64) >= min_bytes || exit_code != Some(0);
+                    if !worth_storing {
                         use std::io::Write;
                         std::io::stdout().write_all(&raw)?;
                     } else {

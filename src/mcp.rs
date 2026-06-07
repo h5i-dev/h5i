@@ -692,10 +692,11 @@ pub fn tool_definitions() -> Value {
                     },
                     "min_bytes": {
                         "type": "integer",
-                        "description": "Only store + summarize when output is at least this \
-                            many bytes; smaller output is returned as-is, unstored \
-                            (default 2048). Use 0 to always capture. Matches \
-                            `h5i capture run --min-bytes`."
+                        "description": "Size gate for storing *successful* output: store + \
+                            summarize when it is at least this many bytes; smaller successful \
+                            output is returned as-is, unstored (default 2048). Failures \
+                            (nonzero exit) are always stored regardless of size. Use 0 to \
+                            always capture. Matches `h5i capture run --min-bytes`."
                     },
                     "files": {
                         "type": "array",
@@ -1345,14 +1346,18 @@ fn tool_capture_run(params: &Value, workdir: &Path) -> Result<Value> {
         raw.extend_from_slice(&output.stderr);
     }
 
-    // Match the CLI: small output isn't worth a stored object — return it as-is,
-    // unstored, with no object id. Keeps trivial commands from bloating the ref.
-    if (raw.len() as u64) < min_bytes {
+    // Match the CLI's signal-aware gate: store when there's token-reduction value
+    // (raw ≥ min_bytes) OR provenance/search value (the command failed). A small
+    // failure is exactly what `recall search --fingerprint` recurrence-tracks, so
+    // it's kept regardless of size; only small *successful* output is returned
+    // as-is, unstored, to keep trivial commands from bloating the ref.
+    let worth_storing = (raw.len() as u64) >= min_bytes || exit_code != Some(0);
+    if !worth_storing {
         return Ok(json_content(json!({
             "stored": false,
             "exit_code": exit_code,
             "output": String::from_utf8_lossy(&raw),
-            "hint": "Output below min_bytes; returned in full, not stored.",
+            "hint": "Small successful output; returned in full, not stored.",
         })));
     }
 
@@ -1386,6 +1391,9 @@ fn tool_capture_run(params: &Value, workdir: &Path) -> Result<Value> {
     Ok(json_content(json!({
         "stored": true,
         "id": m.id,
+        // Top-level exit_code mirrors the unstored-path response, so a caller
+        // reads pass/fail the same way regardless of whether it was stored.
+        "exit_code": exit_code,
         "structured": m.structured,
         "raw_size": m.raw_size,
         "raw_lines": m.raw_lines,
@@ -1958,6 +1966,28 @@ mod tests {
             &git2::Repository::open(&path).unwrap()
         )
         .is_empty());
+    }
+
+    #[test]
+    fn capture_run_tool_stores_small_failures() {
+        let (_dir, path) = make_repo();
+        // Tiny output, but the command FAILS → the signal-aware gate stores it
+        // despite being far under min_bytes, so it stays searchable later.
+        let res = call_tool(
+            "h5i_capture_run",
+            &json!({ "command": ["bash", "-c", "echo 'boom: failed'; exit 1"] }),
+            &path,
+        )
+        .expect("capture_run tool");
+        let v: Value = serde_json::from_str(res["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(v["stored"], true, "small failure must be stored: {v}");
+        assert_eq!(v["exit_code"], 1);
+        assert_eq!(v["id"].as_str().unwrap().len(), 16);
+        // The manifest is on the objects ref.
+        assert_eq!(
+            crate::objects::read_manifests(&git2::Repository::open(&path).unwrap()).len(),
+            1
+        );
     }
 
     #[test]

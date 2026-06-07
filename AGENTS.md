@@ -78,7 +78,7 @@ Add flags when relevant:
 
 ### Capturing large command output (token reduction)
 
-Prefer wrapping all shell commands, so the agent receives compact, token-efficient output while preserving the original command behavior; the full raw is stored out-of-band and stays recoverable. Output under ~2 KB passes through unstored, so it is safe to wrap:
+Prefer wrapping all shell commands, so the agent receives compact, token-efficient output while preserving the original command behavior; the full raw is stored out-of-band and stays recoverable. Small *successful* output (under ~2 KB) passes through unstored, but failures are always captured regardless of size so they stay searchable:
 ```bash
 h5i capture run -- <command> [args…]     # e.g. h5i capture run -- cargo test
 h5i capture run --file <path> -- <cmd>   # tag the files it relates to
