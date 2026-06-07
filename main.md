@@ -497,11 +497,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Sent Claude a pitch-deck redesign handoff for docs/pitch/index.html: 10-slide investor arc prioritizing commit, msg, objects, share pr, and audit; flagged stale commands and visual direction.
 - [x] Answered Claude pitch-deck questions: positioning line, dedicated msg slide rationale, and command naming correction to use h5i commit.
 - [x] Rebuilt pitch deck (docs/pitch) into 10-slide YC/a16z-grade narrative
+- [x] edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-07 21:46 UTC] `update-doc-with-i5h`: edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html
 - [2026-06-07 21:46 UTC] `update-doc-with-i5h`: Rebuilt pitch deck (docs/pitch) into 10-slide YC/a16z-grade narrative
 - [2026-06-07 21:36 UTC] `update-doc-with-i5h`: Answered Claude pitch-deck questions: positioning line, dedicated msg slide rationale, and command naming correction to use h5i commit.
 - [2026-06-07 21:36 UTC] `update-doc-with-i5h`: Sent Claude a pitch-deck redesign handoff for docs/pitch/index.html: 10-slide investor arc prioritizing commit, msg, objects, share pr, and audit; flagged stale commands and visual direction.
