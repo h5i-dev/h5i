@@ -2708,3 +2708,16 @@ Kept slide 1 (VCS timeline). New arc: problem→category→commit→msg→object
 
 ---
 
+## Commit 6a25e6d2 — 2026-06-07 21:46 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+Kept slide 1 (VCS timeline). New arc: problem→category→commit→msg→objects→share pr→audit→why-now→CTA. Verified all CLI commands against h5i 0.1.7; used refs-based storage story; screenshot-verified all 10 slides at 1280x720, no overflow.
+
+### This Commit's Contribution
+
+
+---
+
