@@ -14,7 +14,7 @@ Git records what changed. **h5i** records the rest: **who**, **why**, **what the
 
 ### Recent News
 
-- **New in v0.1.7: Token Reduction with Unified Form.** Wrap any command with `h5i capture run` and the agent sees only a compact summary while the full output stays out of context, tracked across teammates via Git LFS so even huge logs never bloat your repo. [Jump to Token Reduction ↓](#42-token-reduction-with-unified-form)
+- **New in v0.1.7: Token Reduction with Unified Form.** Agents see a compact summary while the full output stays out of context, shared via Git LFS. [Jump to Token Reduction ↓](#42-token-reduction-with-unified-form)
 - **Agent Radio reached 100+ points on Hacker News.** Read the discussion [here](https://news.ycombinator.com/item?id=48345837).
 - **New in v0.1.5: Agent Radio.** Since your agents' context already lives in Git, they can now talk to each other through it. `h5i msg` adds a cross-agent message channel stored in `refs/h5i/msg`. [Jump to Agent Radio ↓](#41-agent-radio--agents-that-talk-over-git)
 
