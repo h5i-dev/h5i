@@ -2553,3 +2553,4 @@ _[Checkpoint: 6a25e6c2 — Rebuilt pitch deck (docs/pitch) into 10-slide YC/a16z
 [21:46:57] THINK: Let me polish slide 1's h5i descriptor (minor change per the user), then replace slides 2 onward.
 [21:46:57] THINK: I'll replace lines 630–985 (slides 2 through comparison) with the new slide set.
 [21:46:58] THINK: Splice worked. Let me update the remaining stale OG/Twitter/JSON-LD meta to match, then validate the structure.
+[21:46:58] THINK: Let me confirm exactly 10 slides and that the JS will count them right (it queries `.
