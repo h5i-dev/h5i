@@ -17,9 +17,26 @@
 
 Git records what changed. **`h5i`** records the rest: **who**, **why**, **what the agent knew**, **whether it was safe**, and **how the next agent picks up where the last left off**.
 
-| 5 | up to 95% | 3.5x | 1.8x |
-|---:|---:|---:|---:|
-| COMMAND GROUPS | LESS TOKEN WASTE | RICHER PR BRIEFS | FASTER AGENT HANDOFFS |
+<table align="center">
+  <tr>
+    <td align="center">
+      <strong>5</strong><br>
+      <sub>Command groups</sub>
+    </td>
+    <td align="center">
+      <strong>up to 95%</strong><br>
+      <sub>Less token waste</sub>
+    </td>
+    <td align="center">
+      <strong>3.5x</strong><br>
+      <sub>Richer PR briefs</sub>
+    </td>
+    <td align="center">
+      <strong>1.8x</strong><br>
+      <sub>Faster agent handoffs</sub>
+    </td>
+  </tr>
+</table>
 
 Use `h5i` if you want your AI agents to stop leaving their work in thin air.
 
