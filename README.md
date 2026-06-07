@@ -8,9 +8,43 @@
   <a href="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml/badge.svg"></a>
   <a href="https://github.com/h5i-dev/h5i/blob/main/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/github/license/Koukyosyumei/h5i?color=blue"></a>
   <a href="https://github.com/h5i-dev/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/h5i-dev/h5i?style=social"></a>
+  <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
+  <br>
+  <a href="#agent-radio"><img alt="Agent Radio" src="https://img.shields.io/badge/Agent%20Radio-Claude%20%E2%86%94%20Codex-6f42c1"></a>
+  <a href="#token-reduction"><img alt="Token Reduction" src="https://img.shields.io/badge/Token%20Reduction-raw%20evidence%20kept-2ea44f"></a>
+  <a href="#pull-request-briefs"><img alt="AI PR Brief" src="https://img.shields.io/badge/AI%20PR%20Brief-reviewer%20ready-0969da"></a>
 </p>
 
-Git records what changed. **h5i** records the rest: **who**, **why**, **what the agent knew**, **whether it was safe**, and **how the next agent picks up where the last left off**.
+Git records what changed. **`h5i`** records the rest: **who**, **why**, **what the agent knew**, **whether it was safe**, and **how the next agent picks up where the last left off**.
+
+<table align="center">
+  <tr>
+    <td align="center">
+      <strong>5</strong><br>
+      <sub>Command groups</sub>
+    </td>
+    <td align="center">
+      <strong>up to 95%</strong><br>
+      <sub>Less token waste</sub>
+    </td>
+    <td align="center">
+      <strong>3.5x</strong><br>
+      <sub>Richer PR briefs</sub>
+    </td>
+    <td align="center">
+      <strong>1.8x</strong><br>
+      <sub>Multi-agent productivity</sub>
+    </td>
+  </tr>
+</table>
+
+Use `h5i` if you want your AI agents to stop leaving their work in thin air.
+
+- Want to know which model, prompt, and reasoning led to a commit?
+- Want the next agent to inherit the full context of the last one?
+- Want Claude and Codex to talk in real time, with the conversation stored in Git?
+- Want to reduce token usage by shrinking noisy tool output while keeping the raw evidence?
+- Want to catch leaked secrets, blind edits, and risky AI changes before review?
 
 ### Recent News
 
