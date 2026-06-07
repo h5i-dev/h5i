@@ -2555,3 +2555,4 @@ _[Checkpoint: 6a25e6c2 — Rebuilt pitch deck (docs/pitch) into 10-slide YC/a16z
 [21:46:58] THINK: Splice worked. Let me update the remaining stale OG/Twitter/JSON-LD meta to match, then validate the structure.
 [21:46:58] THINK: Let me confirm exactly 10 slides and that the JS will count them right (it queries `.
 [21:46:58] THINK: Let me compact them (full detail already lives in the record card beside it):
+[21:46:58] THINK: Let me install just `playwright-core` (tiny, no browser download since chromium is cached):
