@@ -10,15 +10,15 @@
   <a href="https://github.com/h5i-dev/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/h5i-dev/h5i?style=social"></a>
 </p>
 
-Git records what changed. **h5i** records the rest: **who**, **why**, **what the agent knew**, **whether it was safe**, and **how the next agent picks up where the last left off**.
+Git records what changed. **`h5i`** records the rest: **who**, **why**, **what the agent knew**, **whether it was safe**, and **how the next agent picks up where the last left off**.
 
-Use h5i if you want your AI agents to stop leaving their work in thin air.
+Use `h5i` if you want your AI agents to stop leaving their work in thin air.
 
 - Want to know which model, prompt, and reasoning led to a commit?
-- Want Claude and Codex to talk in real time, with the conversation stored in Git?
-- Want to shrink noisy tool output without losing the raw evidence?
-- Want to catch leaked secrets, blind edits, and risky AI changes before review?
 - Want the next agent to inherit the full context of the last one?
+- Want Claude and Codex to talk in real time, with the conversation stored in Git?
+- Want to reduce token usage by shrinking noisy tool output while keeping the raw evidence?
+- Want to catch leaked secrets, blind edits, and risky AI changes before review?
 
 ### Recent News
 
