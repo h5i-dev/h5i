@@ -2515,3 +2515,4 @@ _[Checkpoint: 6a25c0bf — edited README.md; edited README.md]_
 [21:36:30] OBSERVE: listed files under .
 [21:36:30] OBSERVE: read docs/pitch/index.html
 [21:36:30] OBSERVE: read README.md
+[21:36:30] OBSERVE: searched README.md for "pr|audit|capture|secret|PR|provenance|AI""
