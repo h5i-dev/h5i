@@ -5,26 +5,22 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Koukyosyumei/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml/badge.svg"></a>
-  <a href="https://github.com/Koukyosyumei/h5i/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/github/license/h5i-dev/h5i?color=blue"></a>
-  <a href="https://github.com/Koukyosyumei/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Koukyosyumei/h5i?style=social"></a>
+  <a href="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml/badge.svg"></a>
+  <a href="https://github.com/h5i-dev/h5i/blob/main/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/github/license/h5i-dev/h5i?color=blue"></a>
+  <a href="https://github.com/h5i-dev/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/h5i-dev/h5i?style=social"></a>
 </p>
 
 Git records what changed. **h5i** records the rest: **who**, **why**, **what the agent knew**, **whether it was safe**, and **how the next agent picks up where the last left off**.
 
-### ⚡ The new feature (v.0.1.5): Agent Radio
+### Recent News
 
-Because that context already lives in Git, your agents can also **talk to each other through it**. `h5i msg` is a cross-agent message channel stored in `refs/h5i/msg` — typed, operational handoffs (`ASK` · `REVIEW_REQUEST` · `RISK` · `DONE`), not chat. Claude asks, Codex reviews, risks get flagged and resolved — all on a wire that survives clones, machines, and branches and **union-merges with nothing lost**.
-
-<p align="center">
-  <img src="./assets/claude-codex-chess.gif" alt="h5i msg watch — a live claude ↔ codex code review streaming over refs/h5i/msg" width="95%">
-</p>
-
-<p align="center"><sub><code>h5i msg watch</code> — a live claude ↔ codex code review, streamed straight off <code>refs/h5i/msg</code>. <a href="#agent-radio--agents-that-talk-over-git">Jump to Agent Radio ↓</a></sub></p>
+- **New in v0.1.7: Token Reduction with Unified Form.** Agents see a compact summary while the full output stays out of context, shared via Git LFS. [Jump to Token Reduction ↓](#42-token-reduction-with-unified-form)
+- **Agent Radio reached 100+ points on Hacker News.** Read the discussion [here](https://news.ycombinator.com/item?id=48345837).
+- **New in v0.1.5: Agent Radio.** Since your agents' context already lives in Git, they can now talk to each other through it. `h5i msg` adds a cross-agent message channel stored in `refs/h5i/msg`. [Jump to Agent Radio ↓](#41-agent-radio--agents-that-talk-over-git)
 
 ---
 
-### The foundation: a versioned record of every agent's work
+## 1. The foundation: a versioned record of every agent's work and communications
 
 h5i is a pure Git sidecar for recording and sharing AI-agent contexts, metadata, and other useful information. It uses dedicated refs, so it doesn’t pollute your working tree or your normal branch graph.
 
@@ -32,9 +28,9 @@ h5i is a pure Git sidecar for recording and sharing AI-agent contexts, metadata,
 |---|---|
 | `.git/refs/h5i/notes` | Per-commit metadata: model, agent, prompt, tests, decisions, risk signals. |
 | `.git/refs/h5i/context` | The reasoning workspace as a DAG: goal, milestones, traces, branches. |
-| `.git/refs/h5i/ast` | AST snapshots for structural blame and semantic diffs. |
-| `.git/refs/h5i/checkpoints/<agent>` | Per-agent memory snapshots. |
 | `.git/refs/h5i/msg` | Cross-agent message log (append-only, union-merged on pull). |
+| `.git/refs/h5i/objects` | Token-reduction capture manifests: command, exit code, and filtered summary of large outputs (full raw kept locally). |
+| `.git/refs/h5i/checkpoints/<agent>` | Per-agent memory snapshots. |
 
 Because these are Git objects, they are content-addressed, deduplicated, pushable, fetchable, and survive `git gc`.
 
@@ -44,21 +40,21 @@ Because these are Git objects, they are content-addressed, deduplicated, pushabl
 
 ---
 
-## Install
+## 2. Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
 ```
 
 Or build from source:
 
 ```bash
-cargo install --git https://github.com/Koukyosyumei/h5i h5i-core
+cargo install --git https://github.com/h5i-dev/h5i h5i-core
 ```
 
 ---
 
-## 60-Second Flow
+## 3. 60-Second Flow
 
 Initialize h5i in an existing Git repo:
 
@@ -70,12 +66,6 @@ For Claude Code hooks and MCP tools:
 
 ```bash
 h5i hook setup
-```
-
-To efficiently use `msg` feature:
-
-```bash
-h5i msg setup
 ```
 
 Post the PR review brief:
@@ -98,14 +88,11 @@ h5i share pull
 
 ---
 
-## Feature Examples
+## 4. Feature Examples
 
-### Agent Radio — agents that talk over Git
+### 4.1. Agent Radio — agents that talk over Git
 
-> Agent Radio lets agents *coordinate* over that same Git-native substrate.
-
-`h5i msg` is a cross-agent message channel stored **in Git**. Because the log lives in `refs/h5i/msg`, a conversation survives
-clones, machines, and branches — it travels with `h5i share push` / `pull`, and divergent sends from two machines **union-merge** with no message lost.
+Because that context already lives in Git, your agents can also **talk to each other through it**: `h5i msg` is a Git-backed cross-agent message channel stored in `refs/h5i/msg`, built for typed operational handoffs (`ASK` · `REVIEW_REQUEST` · `RISK` · `DONE` · `ACK`). Claude can ask, Codex can review, risks can be flagged and resolved, and the whole log survives clones, machines, and branches. It travels with `h5i share push` / `pull`, and divergent sends from two machines **union-merge with no messages lost**.
 
 To efficiently use `h5i msg`, first register some hookups for agents: 
 
@@ -120,15 +107,25 @@ Then, we’re ready to let Claude and Codex communicate with each other in real 
 - Claude: `Can you play Chess with Codex via h5i`
 - Codex: `Can you play Chess with Claude via h5i`
 
-You can also monitor the conversation in real time with `h5i msg watch`. Even after the conversation ends, you can review the conversation log with `h5i msg history`.
+We can also monitor the conversation in real time with `h5i msg watch`. 
 
 <p align="center">
-  <img src="./assets/h5i-msg-history.png" alt="h5i msg history" width="95%">
+  <img src="./assets/claude-codex-chess.gif" alt="h5i msg watch — a live claude ↔ codex code review streaming over refs/h5i/msg" width="95%">
 </p>
 
-### Context DAG
+### 4.2. Token Reduction with Unified Form
 
-The context DAG shows how the work unfolded:
+Wrap any command with `h5i capture run -- <cmd>` and the agent sees only a compact, normalized summary of errors, failures, and counts, while the full raw output is stored out of band in `refs/h5i/objects`. Every tool's output collapses into one unified form, so a 4 MB test log no longer burns your context window, and the raw bytes are always one `h5i recall object <id>` away when you need them.
+
+To share captures across a team, h5i borrows the split that Git LFS uses: the manifest in `refs/h5i/objects` is a lightweight pointer (it carries the raw output's `sha256`), while the bytes themselves ride on a native Git LFS backend, so huge tool output never bloats the Git object database. For remotes that are not HTTP, it transparently falls back to a git ref store.
+
+<p align="center">
+  <img src="./assets/token-reduction-unified.svg" alt="h5i recall object" width="95%">
+</p>
+
+### 4.3. Context DAG
+
+The context DAG shows how the work unfolded: the goal, every milestone, and the OBSERVE / THINK / ACT trace behind each change, captured automatically as the agent works. Because it is snapshotted on every commit, you can replay exactly what an agent knew and why it acted at any point in history.
 
 ```bash
 h5i recall context show
@@ -138,17 +135,7 @@ h5i recall context show
   <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
 </p>
 
-### Web Dashboard
-
-```bash
-h5i serve        # http://localhost:7150
-```
-
-<p align="center">
-  <img src="./assets/screenshot_h5i_server.png" alt="h5i web dashboard showing AI commit timeline and context details" width="95%">
-</p>
-
-### Pull Request Integration
+### 4.4. Pull Request Integration
 
 When a branch is ready for review, h5i surfaces all of it where reviewers already work — on the pull request.
 
@@ -208,9 +195,19 @@ Track the prompt, model names, and commit lineage.
 
 </br>
 
+### 4.5. Web Dashboard
+
+```bash
+h5i serve        # http://localhost:7150
+```
+
+<p align="center">
+  <img src="./assets/screenshot_h5i_server.png" alt="h5i web dashboard showing AI commit timeline and context details" width="95%">
+</p>
+
 ---
 
-## Documentation
+## 5. Documentation
 
 - [Official Website](https://h5i.dev/) - project overview
 - [Tutorials](https://h5i.dev/guides/) - guided workflows
@@ -218,7 +215,7 @@ Track the prompt, model names, and commit lineage.
 
 ---
 
-## Contributing
+## 6. Contributing
 
 High-impact contributions:
 
@@ -232,7 +229,7 @@ If the idea matters to you, starring the repo is the fastest way to help more AI
 
 ---
 
-## Acknowledgements
+## 7. Acknowledgements
 
 h5i's token-reduction filters build on prior art, both Apache-2.0:
 
@@ -244,6 +241,6 @@ h5i's token-reduction filters build on prior art, both Apache-2.0:
 
 See [`NOTICE`](NOTICE) and [`assets/filters/NOTICE`](assets/filters/NOTICE) for full attribution.
 
-## License
+## 8. License
 
 Apache-2.0. See [LICENSE](LICENSE).
