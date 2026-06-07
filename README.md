@@ -19,7 +19,7 @@ Git records what changed. **h5i** records the rest: **who**, **why**, **what the
 
 ---
 
-## 1. The foundation: a versioned record of every agent's work
+## 1. The foundation: a versioned record of every agent's work and communications
 
 h5i is a pure Git sidecar for recording and sharing AI-agent contexts, metadata, and other useful information. It uses dedicated refs, so it doesn’t pollute your working tree or your normal branch graph.
 
