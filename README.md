@@ -12,16 +12,6 @@
 
 Git records what changed. **h5i** records the rest: **who**, **why**, **what the agent knew**, **whether it was safe**, and **how the next agent picks up where the last left off**.
 
-### ⚡ The new feature (v.0.1.5): Agent Radio
-
-Because that context already lives in Git, your agents can also **talk to each other through it**. `h5i msg` is a cross-agent message channel stored in `refs/h5i/msg` — typed, operational handoffs (`ASK` · `REVIEW_REQUEST` · `RISK` · `DONE`), not chat. Claude asks, Codex reviews, risks get flagged and resolved — all on a wire that survives clones, machines, and branches and **union-merges with nothing lost**.
-
-<p align="center">
-  <img src="./assets/claude-codex-chess.gif" alt="h5i msg watch — a live claude ↔ codex code review streaming over refs/h5i/msg" width="95%">
-</p>
-
-<p align="center"><sub><code>h5i msg watch</code> — a live claude ↔ codex code review, streamed straight off <code>refs/h5i/msg</code>. <a href="#agent-radio--agents-that-talk-over-git">Jump to Agent Radio ↓</a></sub></p>
-
 ---
 
 ### The foundation: a versioned record of every agent's work
@@ -72,12 +62,6 @@ For Claude Code hooks and MCP tools:
 h5i hook setup
 ```
 
-To efficiently use `msg` feature:
-
-```bash
-h5i msg setup
-```
-
 Post the PR review brief:
 
 ```bash
@@ -102,10 +86,7 @@ h5i share pull
 
 ### Agent Radio — agents that talk over Git
 
-> Agent Radio lets agents *coordinate* over that same Git-native substrate.
-
-`h5i msg` is a cross-agent message channel stored **in Git**. Because the log lives in `refs/h5i/msg`, a conversation survives
-clones, machines, and branches — it travels with `h5i share push` / `pull`, and divergent sends from two machines **union-merge** with no message lost.
+Because that context already lives in Git, your agents can also **talk to each other through it**: `h5i msg` is a Git-backed cross-agent message channel stored in `refs/h5i/msg`, built for typed operational handoffs (`ASK` · `REVIEW_REQUEST` · `RISK` · `DONE` · `ACK`). Claude can ask, Codex can review, risks can be flagged and resolved, and the whole log survives clones, machines, and branches. It travels with `h5i share push` / `pull`, and divergent sends from two machines **union-merge with no messages lost**.
 
 To efficiently use `h5i msg`, first register some hookups for agents: 
 
@@ -120,10 +101,10 @@ Then, we’re ready to let Claude and Codex communicate with each other in real 
 - Claude: `Can you play Chess with Codex via h5i`
 - Codex: `Can you play Chess with Claude via h5i`
 
-You can also monitor the conversation in real time with `h5i msg watch`. Even after the conversation ends, you can review the conversation log with `h5i msg history`.
+We can also monitor the conversation in real time with `h5i msg watch`. 
 
 <p align="center">
-  <img src="./assets/h5i-msg-history.png" alt="h5i msg history" width="95%">
+  <img src="./assets/claude-codex-chess.gif" alt="h5i msg watch — a live claude ↔ codex code review streaming over refs/h5i/msg" width="95%">
 </p>
 
 ### Context DAG
@@ -136,16 +117,6 @@ h5i recall context show
 
 <p align="center">
   <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
-</p>
-
-### Web Dashboard
-
-```bash
-h5i serve        # http://localhost:7150
-```
-
-<p align="center">
-  <img src="./assets/screenshot_h5i_server.png" alt="h5i web dashboard showing AI commit timeline and context details" width="95%">
 </p>
 
 ### Pull Request Integration
@@ -207,6 +178,16 @@ Track the prompt, model names, and commit lineage.
 </table>
 
 </br>
+
+### Web Dashboard
+
+```bash
+h5i serve        # http://localhost:7150
+```
+
+<p align="center">
+  <img src="./assets/screenshot_h5i_server.png" alt="h5i web dashboard showing AI commit timeline and context details" width="95%">
+</p>
 
 ---
 
