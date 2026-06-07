@@ -2400,3 +2400,4 @@ _[Checkpoint: 6a258979 — edited tests/objects_e2e.rs; edited tests/objects_e2e
 _[Checkpoint: 6a259588 — edited tests/objects_e2e.rs; edited tests/objects_e2e.rs; edited tests/objects_e2e.rs]_
 ---
 
+[16:03:39] OBSERVE: read README.md
