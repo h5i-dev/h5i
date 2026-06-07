@@ -33,7 +33,7 @@ Git records what changed. **`h5i`** records the rest: **who**, **why**, **what t
     </td>
     <td align="center">
       <strong>1.8x</strong><br>
-      <sub>Faster agent handoffs</sub>
+      <sub>Multi-agent productivity</sub>
     </td>
   </tr>
 </table>
