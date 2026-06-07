@@ -592,3 +592,159 @@ fn recall_object_format_reproduces_the_observed_structured_view() {
     let summ = stdout(&a.h5i_ok(&["recall", "object", &id, "--format", "summary"]));
     assert!(!summ.trim().is_empty(), "summary format yields text");
 }
+
+// ── objects put: ingest a file / stdin (no min-bytes gate) ────────────────────
+
+#[test]
+fn put_ingests_a_file_and_rehydrates_losslessly() {
+    let (_root, a) = single();
+    let body = "line one\nline two with src/widget.rs:7 mentioned\nline three\n";
+    std::fs::write(a.dir.join("build.log"), body).unwrap();
+
+    // `objects put` always stores (no size gate) and tags the related file.
+    a.h5i_ok(&["objects", "put", "build.log", "--file", "src/widget.rs"]);
+    assert_eq!(a.manifest_count(), 1, "put always stores, even tiny input");
+
+    // Rehydrates byte-for-byte (id comes from the listing — the pointer with the
+    // id is printed to stderr, not stdout).
+    let id = first_id(&stdout(&a.h5i_ok(&["recall", "objects"]))).expect("a put id");
+    let raw = stdout(&a.h5i_ok(&["recall", "object", &id]));
+    assert_eq!(raw, body, "put → recall object round-trips exactly");
+
+    // Tagged file is queryable via list --file (suffix match).
+    let listed = stdout(&a.h5i_ok(&["recall", "objects", "--file", "widget.rs"]));
+    assert!(listed.contains("1 object matched"), "tagged file should filter:\n{listed}");
+}
+
+#[test]
+fn put_reads_from_stdin() {
+    use std::io::Write;
+    let (_root, a) = single();
+
+    let mut child = Command::new(H5I)
+        .args(["objects", "put", "-"])
+        .env_remove("H5I_AGENT")
+        .current_dir(&a.dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn put -");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"piped payload from stdin\n")
+        .unwrap();
+    let out = child.wait_with_output().expect("wait");
+    assert!(out.status.success(), "put - should succeed: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(a.manifest_count(), 1, "stdin input is stored");
+
+    let id = first_id(&stdout(&a.h5i_ok(&["recall", "objects"]))).expect("a put id");
+    let raw = stdout(&a.h5i_ok(&["recall", "object", &id]));
+    assert_eq!(raw, "piped payload from stdin\n");
+}
+
+// ── objects pin / unpin: protect a blob from gc, then release it ──────────────
+
+#[test]
+fn pin_protects_blob_from_ttl_gc_then_unpin_allows_eviction() {
+    let (_root, a) = single();
+    // Two stored captures (force storage of small output).
+    a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", "echo first"]);
+    a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", "echo second"]);
+
+    // Collect both ids in listing order (newest first).
+    let list = stdout(&a.h5i_ok(&["recall", "objects"]));
+    let ids: Vec<String> = list.lines().filter_map(first_id).collect();
+    assert_eq!(ids.len(), 2, "two captures listed:\n{list}");
+    let (pinned, other) = (&ids[0], &ids[1]);
+
+    // Pin one; `gc --ttl 0s` evicts every unpinned referenced blob (age ≥ 0 is
+    // always true), so the other is evicted while the pinned one survives.
+    a.h5i_ok(&["objects", "pin", pinned]);
+    let gc = stdout(&a.h5i_ok(&["objects", "gc", "--ttl", "0s"]));
+    assert!(gc.contains("1 pinned"), "one blob pinned:\n{gc}");
+
+    // Pinned raw is still present; the unpinned one's raw is gone (summary kept).
+    assert!(a.h5i(&["recall", "object", pinned]).status.success(), "pinned raw survives");
+    let evicted = a.h5i(&["recall", "object", other]);
+    assert!(!evicted.status.success(), "unpinned raw evicted");
+    assert!(stderr(&evicted).contains("absent"), "absent message:\n{}", stderr(&evicted));
+
+    // Unpin, gc again → the previously-pinned blob is now evictable too.
+    a.h5i_ok(&["objects", "unpin", pinned]);
+    a.h5i_ok(&["objects", "gc", "--ttl", "0s"]);
+    assert!(!a.h5i(&["recall", "object", pinned]).status.success(), "unpinned blob now evicted");
+}
+
+// ── objects fsck: cross-check manifests against the store ─────────────────────
+
+#[test]
+fn fsck_reports_absent_blob_after_eviction() {
+    let (_root, a) = single();
+    a.h5i_ok(&["capture", "run", "--min-bytes", "0", "--", "bash", "-c", "echo present"]);
+
+    // Healthy: one manifest, nothing absent or orphaned.
+    let clean = stdout(&a.h5i_ok(&["objects", "fsck"]));
+    assert!(clean.contains("1 manifests · 0 absent · 0 orphan"), "clean fsck:\n{clean}");
+
+    // Evict the raw (manifest stays) → fsck now flags it absent.
+    a.h5i_ok(&["objects", "gc", "--ttl", "0s"]);
+    let after = stdout(&a.h5i_ok(&["objects", "fsck"]));
+    assert!(after.contains("1 absent"), "fsck flags the evicted blob:\n{after}");
+    assert!(after.contains("absent"), "{after}");
+}
+
+// ── objects filters: list / verify the built-in rule set ──────────────────────
+
+#[test]
+fn filters_lists_builtin_rules_and_verifies_golden_tests() {
+    let (_root, a) = single();
+    let listed = stdout(&a.h5i_ok(&["objects", "filters"]));
+    assert!(listed.contains("built-in command filters"), "filters listing:\n{listed}");
+
+    // The golden self-tests for the declarative rules must pass.
+    let verified = stdout(&a.h5i_ok(&["objects", "filters", "--verify"]));
+    assert!(verified.contains("passed"), "golden tests should pass:\n{verified}");
+}
+
+// ── search rendering: --kind, --limit truncation, per-capture finding cap ──────
+
+#[test]
+fn search_kind_filter_and_limit_truncation() {
+    let (_root, a) = single();
+    install_fake_tool(&a.dir, "pytest", FAILING_PYTEST);
+    // Three distinct captures of the same failing finding.
+    for seed in ["1", "2", "3"] {
+        h5i_path(&a, &["capture", "run", "--min-bytes", "0", "--", "pytest", "-q", seed]);
+    }
+    assert_eq!(a.manifest_count(), 3);
+
+    // --kind selects the test-failure findings across all three captures.
+    let by_kind = stdout(&a.h5i_ok(&["recall", "search", "--kind", "test_failure"]));
+    assert!(by_kind.contains("3 captures matched"), "kind filter:\n{by_kind}");
+
+    // --limit caps the number of captures shown and says so.
+    let limited = stdout(&a.h5i_ok(&["recall", "search", "--kind", "test_failure", "--limit", "2"]));
+    assert!(limited.contains("showing 2"), "limit truncation note:\n{limited}");
+}
+
+const MULTI_FAIL_PYTEST: &str = "echo '=== test session starts ==='\n\
+     for i in $(seq 1 60); do echo \"tests/t.py::test_pass_$i PASSED padding padding padding\"; done\n\
+     for i in $(seq 1 10); do echo \"FAILED tests/t.py::test_case_$i - assert $i == 0\"; done\n\
+     echo '=== 10 failed, 60 passed in 9.9s ==='\n\
+     exit 1";
+
+#[test]
+fn search_caps_findings_per_capture_with_more_marker() {
+    let (_root, a) = single();
+    install_fake_tool(&a.dir, "pytest", MULTI_FAIL_PYTEST);
+    h5i_path(&a, &["capture", "run", "--min-bytes", "0", "--", "pytest", "-q"]);
+
+    // 10 findings in one capture; search shows at most 8 then a "+N more" marker.
+    let hits = stdout(&a.h5i_ok(&["recall", "search", "--severity", "failure"]));
+    assert!(hits.contains("1 capture matched"), "one capture:\n{hits}");
+    assert!(hits.contains("10 findings"), "all ten findings counted:\n{hits}");
+    assert!(hits.contains("more finding"), "per-capture cap shows a +N more marker:\n{hits}");
+}
