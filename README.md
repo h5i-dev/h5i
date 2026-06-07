@@ -8,6 +8,7 @@
   <a href="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml"><img alt="tests" src="https://github.com/h5i-dev/h5i/actions/workflows/test.yaml/badge.svg"></a>
   <a href="https://github.com/h5i-dev/h5i/blob/main/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/github/license/Koukyosyumei/h5i?color=blue"></a>
   <a href="https://github.com/h5i-dev/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/h5i-dev/h5i?style=social"></a>
+  <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
   <br>
   <a href="#agent-radio"><img alt="Agent Radio" src="https://img.shields.io/badge/Agent%20Radio-Claude%20%E2%86%94%20Codex-6f42c1"></a>
   <a href="#token-reduction"><img alt="Token Reduction" src="https://img.shields.io/badge/Token%20Reduction-raw%20evidence%20kept-2ea44f"></a>
