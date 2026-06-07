@@ -17,6 +17,10 @@
 
 Git records what changed. **`h5i`** records the rest: **who**, **why**, **what the agent knew**, **whether it was safe**, and **how the next agent picks up where the last left off**.
 
+| 5 | up to 95% | 3.5x | 1.8x |
+|---:|---:|---:|---:|
+| COMMAND GROUPS | LESS TOKEN WASTE | RICHER PR BRIEFS | FASTER AGENT HANDOFFS |
+
 Use `h5i` if you want your AI agents to stop leaving their work in thin air.
 
 - Want to know which model, prompt, and reasoning led to a commit?
