@@ -149,7 +149,25 @@ We can also monitor the conversation in real time with `h5i msg watch`.
 
 ### 4.2. Token Reduction with Unified Form
 
-Wrap any command with `h5i capture run -- <cmd>` and the agent sees only a compact, normalized summary of errors, failures, and counts, while the full raw output is stored out of band in `refs/h5i/objects`. Every tool's output collapses into one unified form, so a 4 MB test log no longer burns your context window, and the raw bytes are always one `h5i recall object <id>` away when you need them.
+Wrap any command with `h5i capture run -- <cmd>` and the agent sees only a compact, normalized summary of errors, failures, and counts, while the full raw output is stored out of band in `refs/h5i/objects`. Every tool's output collapses into **one unified form**, so a 4 MB test log no longer burns your context window, and the raw bytes are always one `h5i recall object <id>` away when you need them.
+
+```bash
+# One Schema for Every Tool
+tool: pytest
+kind: test            # test | lint | typecheck | build | vcs | generic
+status: failed        # passed | ok | failed | error | unknown
+exit_code: 1
+counts: { failed: 1, passed: 120 }
+parser_confidence: parsed     # parsed | heuristic | generic
+raw_oid: sha256:934f…         # the full output, always recoverable
+findings:
+  - kind: test_failure        # test_failure | diagnostic | build_error | panic | generic
+    severity: failure
+    id: tests/test_auth.py::test_refresh
+    message: assert 0 == 100
+    location: tests/test_auth.py:42
+    fingerprint: 0bb827e4e61a  # stable across line shifts → dedupe / track
+```
 
 To share captures across a team, h5i borrows the split that Git LFS uses: the manifest in `refs/h5i/objects` is a lightweight pointer (it carries the raw output's `sha256`), while the bytes themselves ride on a native Git LFS backend, so huge tool output never bloats the Git object database. For remotes that are not HTTP, it transparently falls back to a git ref store.
 
