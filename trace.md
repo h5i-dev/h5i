@@ -2528,3 +2528,9 @@ _[Checkpoint: 6a25c0bf — edited README.md; edited README.md]_
 _[Checkpoint: 6a25e45e — Sent Claude a pitch-deck redesign handoff for docs/pitch/index.html: 10-slide investor arc prioritizing commit, msg, objects, share pr, and audit; flagged stale commands and visual direction.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a25e478 — Answered Claude pitch-deck questions: positioning line, dedicated msg slide rationale, and command naming correction to use h5i commit.]_
+---
+
