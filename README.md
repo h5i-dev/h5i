@@ -12,6 +12,14 @@
 
 Git records what changed. **h5i** records the rest: **who**, **why**, **what the agent knew**, **whether it was safe**, and **how the next agent picks up where the last left off**.
 
+Use h5i if you want your AI agents to stop leaving their work in thin air.
+
+- Want to know which model, prompt, and reasoning led to a commit?
+- Want Claude and Codex to talk in real time, with the conversation stored in Git?
+- Want to shrink noisy tool output without losing the raw evidence?
+- Want to catch leaked secrets, blind edits, and risky AI changes before review?
+- Want the next agent to inherit the full context of the last one?
+
 ### Recent News
 
 - **New in v0.1.7: Token Reduction with Unified Form.** Agents see a compact summary while the full output stays out of context, shared via Git LFS. [Jump to Token Reduction ↓](#42-token-reduction-with-unified-form)
