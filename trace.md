@@ -2452,3 +2452,4 @@ _[Checkpoint: 6a25a428 — edited README.md; edited README.md; edited README.md]
 [17:05:30] ACT: edited README.md
 [17:05:37] OBSERVE: read Cargo.lock
 [17:05:40] ACT: edited Cargo.lock
+[17:05:47] THINK: I'll bump the version in the Cargo manifest(s) and add the news item.
