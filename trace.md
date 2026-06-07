@@ -2366,3 +2366,9 @@ _[Checkpoint: 6a25642d — edited src/main.rs; edited src/main.rs; edited src/ma
 [13:00:34] ACT: edited src/mcp.rs
 [13:03:36] THINK: Let me statically verify the full set of changes is consistent before running anything (per the OOM caution).
 [13:03:36] THINK: Let me run just the targeted MCP lib tests (lighter than the full suite, to avoid OOM):
+
+
+---
+_[Checkpoint: 6a256c28 — edited src/mcp.rs; edited src/mcp.rs; edited src/mcp.rs]_
+---
+
