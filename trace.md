@@ -2480,3 +2480,4 @@ _[Checkpoint: 6a25a5a7 — edited README.md; edited Cargo.lock; edited README.md
 
 [17:13:43] ACT: edited README.md
 [17:14:16] THINK: This is the key distinction I need to make: **repo URLs** (`github.
+[17:14:16] THINK: Let me fix the 13 leftover repo URLs (and the README license path).
