@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -e
 
-REPO="Koukyosyumei/h5i"
+REPO="h5i-dev/h5i"
 BINARY="h5i"
 INSTALL_DIR="${H5I_INSTALL_DIR:-/usr/local/bin}"
 

@@ -164,7 +164,7 @@ Team members who pull your h5i data (`h5i pull`) can run the same query on sessi
 ## Getting Started
 
 ```bash
-# Install h5i (see github.com/koukyosyumei/h5i for build instructions)
+# Install h5i (see github.com/h5i-dev/h5i for build instructions)
 cargo install --path .
 
 # Initialize in your repo
