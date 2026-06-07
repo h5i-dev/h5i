@@ -2502,3 +2502,4 @@ _[Checkpoint: 6a25a97e — edited README.md; edited README.md]_
 
 [19:04:31] THINK: sha256` checksums.
 - I'm **watching the run in the background** — I'll report back when it completes (previous releases took ~6 min).
+[19:04:31] THINK: I'll let you know as soon as the build + release publish finishes (or surface any failure with logs).
