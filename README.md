@@ -12,6 +12,11 @@
 
 Git records what changed. **h5i** records the rest: **who**, **why**, **what the agent knew**, **whether it was safe**, and **how the next agent picks up where the last left off**.
 
+### Recent News
+
+- **Agent Radio reached 100+ points on Hacker News.** Read the discussion [here](https://news.ycombinator.com/item?id=48345837).
+- **New in v0.1.5: Agent Radio.** Since your agents' context already lives in Git, they can now talk to each other through it. `h5i msg` adds a cross-agent message channel stored in `refs/h5i/msg`. [Jump to Agent Radio ↓](#41-agent-radio--agents-that-talk-over-git)
+
 ---
 
 ## 1. The foundation: a versioned record of every agent's work
@@ -109,7 +114,9 @@ We can also monitor the conversation in real time with `h5i msg watch`.
 
 ### 4.2. Token Reduction with Unified Form
 
-Wrap any command with `h5i capture run -- <cmd>` and the agent sees only a compact, normalized summary — errors, failures, and counts — while the full raw output is stored out-of-band in `refs/h5i/objects`. Every tool's output collapses into one unified form, so a 4 MB test log no longer burns your context window, and the raw bytes are always one `h5i recall object <id>` away when you need them.
+Wrap any command with `h5i capture run -- <cmd>` and the agent sees only a compact, normalized summary of errors, failures, and counts, while the full raw output is stored out of band in `refs/h5i/objects`. Every tool's output collapses into one unified form, so a 4 MB test log no longer burns your context window, and the raw bytes are always one `h5i recall object <id>` away when you need them.
+
+To share captures across a team, h5i borrows the split that Git LFS uses: the manifest in `refs/h5i/objects` is a lightweight pointer (it carries the raw output's `sha256`), while the bytes themselves ride on a native Git LFS backend, so huge tool output never bloats the Git object database. For remotes that are not HTTP, it transparently falls back to a git ref store.
 
 <p align="center">
   <img src="./assets/token-reduction-unified.svg" alt="h5i recall object" width="95%">
@@ -117,7 +124,7 @@ Wrap any command with `h5i capture run -- <cmd>` and the agent sees only a compa
 
 ### 4.3. Context DAG
 
-The context DAG shows how the work unfolded — the goal, every milestone, and the OBSERVE / THINK / ACT trace behind each change, captured automatically as the agent works. Because it's snapshotted on every commit, you can replay exactly what an agent knew and why it acted at any point in history.
+The context DAG shows how the work unfolded: the goal, every milestone, and the OBSERVE / THINK / ACT trace behind each change, captured automatically as the agent works. Because it is snapshotted on every commit, you can replay exactly what an agent knew and why it acted at any point in history.
 
 ```bash
 h5i recall context show
