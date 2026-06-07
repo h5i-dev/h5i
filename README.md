@@ -37,13 +37,13 @@ Because these are Git objects, they are content-addressed, deduplicated, pushabl
 ## 2. Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
 ```
 
 Or build from source:
 
 ```bash
-cargo install --git https://github.com/Koukyosyumei/h5i h5i-core
+cargo install --git https://github.com/h5i-dev/h5i h5i-core
 ```
 
 ---
