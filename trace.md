@@ -2522,3 +2522,9 @@ _[Checkpoint: 6a25c0bf — edited README.md; edited README.md]_
 [21:36:30] OBSERVE: searched pr|audit" for "run|share"
 [21:36:30] OBSERVE: read README.md
 [21:36:30] OBSERVE: searched run|recall for "(commit|msg|capture"
+
+
+---
+_[Checkpoint: 6a25e45e — Sent Claude a pitch-deck redesign handoff for docs/pitch/index.html: 10-slide investor arc prioritizing commit, msg, objects, share pr, and audit; flagged stale commands and visual direction.]_
+---
+
