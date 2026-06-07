@@ -2500,3 +2500,5 @@ _[Checkpoint: 6a25a72e — edited Cargo.lock; edited README.md; edited README.md
 _[Checkpoint: 6a25a97e — edited README.md; edited README.md]_
 ---
 
+[19:04:31] THINK: sha256` checksums.
+- I'm **watching the run in the background** — I'll report back when it completes (previous releases took ~6 min).
