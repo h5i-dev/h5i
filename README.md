@@ -14,7 +14,7 @@ Git records what changed. **h5i** records the rest: **who**, **why**, **what the
 
 ---
 
-### The foundation: a versioned record of every agent's work
+## 1. The foundation: a versioned record of every agent's work
 
 h5i is a pure Git sidecar for recording and sharing AI-agent contexts, metadata, and other useful information. It uses dedicated refs, so it doesn’t pollute your working tree or your normal branch graph.
 
@@ -34,7 +34,7 @@ Because these are Git objects, they are content-addressed, deduplicated, pushabl
 
 ---
 
-## Install
+## 2. Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Koukyosyumei/h5i/main/install.sh | sh
@@ -48,7 +48,7 @@ cargo install --git https://github.com/Koukyosyumei/h5i h5i-core
 
 ---
 
-## 60-Second Flow
+## 3. 60-Second Flow
 
 Initialize h5i in an existing Git repo:
 
@@ -82,9 +82,9 @@ h5i share pull
 
 ---
 
-## Feature Examples
+## 4. Feature Examples
 
-### Agent Radio — agents that talk over Git
+### 4.1. Agent Radio — agents that talk over Git
 
 Because that context already lives in Git, your agents can also **talk to each other through it**: `h5i msg` is a Git-backed cross-agent message channel stored in `refs/h5i/msg`, built for typed operational handoffs (`ASK` · `REVIEW_REQUEST` · `RISK` · `DONE` · `ACK`). Claude can ask, Codex can review, risks can be flagged and resolved, and the whole log survives clones, machines, and branches. It travels with `h5i share push` / `pull`, and divergent sends from two machines **union-merge with no messages lost**.
 
@@ -107,7 +107,13 @@ We can also monitor the conversation in real time with `h5i msg watch`.
   <img src="./assets/claude-codex-chess.gif" alt="h5i msg watch — a live claude ↔ codex code review streaming over refs/h5i/msg" width="95%">
 </p>
 
-### Context DAG
+### 4.2. Token Reduction with Unified Form
+
+<p align="center">
+  <img src="./assets/token-reduction-unified.svg" alt="h5i recall object" width="95%">
+</p>
+
+### 4.3. Context DAG
 
 The context DAG shows how the work unfolded:
 
@@ -119,7 +125,7 @@ h5i recall context show
   <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
 </p>
 
-### Pull Request Integration
+### 4.4. Pull Request Integration
 
 When a branch is ready for review, h5i surfaces all of it where reviewers already work — on the pull request.
 
@@ -179,7 +185,7 @@ Track the prompt, model names, and commit lineage.
 
 </br>
 
-### Web Dashboard
+### 4.5. Web Dashboard
 
 ```bash
 h5i serve        # http://localhost:7150
@@ -191,7 +197,7 @@ h5i serve        # http://localhost:7150
 
 ---
 
-## Documentation
+## 5. Documentation
 
 - [Official Website](https://h5i.dev/) - project overview
 - [Tutorials](https://h5i.dev/guides/) - guided workflows
@@ -199,7 +205,7 @@ h5i serve        # http://localhost:7150
 
 ---
 
-## Contributing
+## 6. Contributing
 
 High-impact contributions:
 
@@ -213,7 +219,7 @@ If the idea matters to you, starring the repo is the fastest way to help more AI
 
 ---
 
-## Acknowledgements
+## 7. Acknowledgements
 
 h5i's token-reduction filters build on prior art, both Apache-2.0:
 
@@ -225,6 +231,6 @@ h5i's token-reduction filters build on prior art, both Apache-2.0:
 
 See [`NOTICE`](NOTICE) and [`assets/filters/NOTICE`](assets/filters/NOTICE) for full attribution.
 
-## License
+## 8. License
 
 Apache-2.0. See [LICENSE](LICENSE).
