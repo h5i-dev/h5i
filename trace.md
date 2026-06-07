@@ -2534,3 +2534,4 @@ _[Checkpoint: 6a25e45e — Sent Claude a pitch-deck redesign handoff for docs/pi
 _[Checkpoint: 6a25e478 — Answered Claude pitch-deck questions: positioning line, dedicated msg slide rationale, and command naming correction to use h5i commit.]_
 ---
 
+[21:38:02] ACT: edited docs/pitch/index.html
