@@ -533,6 +533,16 @@ fn truncate(s: &str, max_chars: usize) -> String {
     result
 }
 
+/// A short colored severity glyph for `objects search` output.
+fn objects_severity_label(sev: &h5i_core::structured::Severity) -> String {
+    use h5i_core::structured::Severity;
+    match sev {
+        Severity::Error => style("✘ err ").red().to_string(),
+        Severity::Failure => style("✘ fail").red().to_string(),
+        Severity::Warning => style("⚠ warn").yellow().to_string(),
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "h5i", about = "Advanced Git for the AI Era", version)]
 struct Cli {
@@ -1777,9 +1787,11 @@ enum ObjectsCommands {
         /// Also echo the summary's pointer line even on success (default: yes).
         #[arg(long)]
         quiet: bool,
-        /// Only store + summarize when the output is at least this many bytes;
-        /// smaller output passes straight through unstored. Makes it safe to wrap
-        /// any command. Use 0 to always capture.
+        /// Size gate for storing *successful* output: only store + summarize when
+        /// it is at least this many bytes; smaller successful output passes
+        /// straight through unstored. Failures (nonzero exit) are always stored
+        /// regardless of size. Makes it safe to wrap any command. Use 0 to always
+        /// capture.
         #[arg(long, default_value_t = DEFAULT_CAPTURE_MIN_BYTES)]
         min_bytes: u64,
         /// Output format: compact (default, one line per finding) | structured
@@ -1821,6 +1833,12 @@ enum ObjectsCommands {
         /// Print the full manifest JSON record.
         #[arg(long)]
         manifest: bool,
+        /// Re-render the stored structured result — the exact view an agent saw
+        /// at capture time — instead of the raw bytes:
+        /// compact | structured/yaml | json | summary/text. Takes precedence
+        /// over --summary/--manifest.
+        #[arg(long, value_enum)]
+        format: Option<CaptureFormat>,
     },
 
     /// List stored objects (most recent first), showing their summaries.
@@ -1844,6 +1862,46 @@ enum ObjectsCommands {
         /// Only objects from this tool (e.g. pytest, cargo, npm).
         #[arg(long)]
         tool: Option<String>,
+    },
+
+    /// Search captured objects by their normalized findings (and metadata).
+    /// Goes deeper than `list`: queries finding message/rule/path/severity/kind
+    /// and fingerprints across every captured tool. `--fingerprint` answers
+    /// "has this exact failure happened before?".
+    Search {
+        /// Free-text query (case-insensitive) matched against finding
+        /// message/rule/id/detail/location — or the summary for older captures.
+        query: Option<String>,
+        /// Only findings of this severity (error|warning|failure).
+        #[arg(long)]
+        severity: Option<String>,
+        /// Only findings of this kind (test_failure|diagnostic|build_error|panic|generic).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Only findings whose rule / error code equals this (case-insensitive, e.g. TS2322).
+        #[arg(long)]
+        rule: Option<String>,
+        /// Only findings whose location matches this path fragment (suffix/equality).
+        #[arg(long)]
+        path: Option<String>,
+        /// Only findings whose fingerprint starts with this (recurrence tracking).
+        #[arg(long)]
+        fingerprint: Option<String>,
+        /// Only captures taken on this branch.
+        #[arg(long)]
+        branch: Option<String>,
+        /// Only captures with this structured status (passed|ok|failed|error|unknown).
+        #[arg(long)]
+        status: Option<String>,
+        /// Only captures from this tool (e.g. pytest, cargo, npm).
+        #[arg(long)]
+        tool: Option<String>,
+        /// Only captures at most this old (e.g. 7d, 12h, 90m).
+        #[arg(long, value_name = "DURATION")]
+        since: Option<String>,
+        /// Maximum number of matching captures to show.
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
     },
 
     /// Evict local raw blobs to reclaim space. Manifests/summaries are kept.
@@ -1973,7 +2031,7 @@ const H5I_CLAUDE_INSTRUCTIONS: &str = r#"## h5i Integration
 
 This repository uses **h5i** (a Git sidecar for AI-era version control).
 
-**Prefer MCP tools over Bash commands wherever possible.** h5i exposes native MCP tools (`h5i_context_trace`, `h5i_context_commit`, `h5i_commit`, `h5i_claims_add`, …) — they're faster and avoid shell-quoting pitfalls. Use `Bash: h5i …` only when no MCP tool covers the operation.
+**Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, `h5i_claims_add`, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
 
 h5i metadata lives in `refs/h5i/*` and is NOT pushed by plain `git push`. Use `h5i push` to share it.
 
@@ -2029,41 +2087,41 @@ h5i context relevant src/repository.rs
 
 ### Capturing large command output (token reduction)
 
-Wrap commands that may produce **large or noisy output** — test suites, builds, linters, big JSON, long logs — so only a filtered summary enters context:
+Prefer wrapping all shell commands, so the agent receives compact, token-efficient output while preserving the original command behavior.
 
 ```bash
 h5i capture run -- <command> [args…]          # e.g. h5i capture run -- pytest -q
 h5i capture run --file <path> -- <command>    # tag the files it relates to
 ```
 
-It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Output under ~2 KB passes through unstored, so it is safe to wrap. Rehydrate the full raw only if the summary isn't enough:
+It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Small *successful* output (under ~2 KB) passes through unstored — but failures are always captured regardless of size, so they stay searchable. Safe to wrap anything. Rehydrate the full raw only if the summary isn't enough:
 
 ```bash
 h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall search <query> [--severity|--rule|--path|--fingerprint|--tool|--since]
+                                               # query findings across captures
 h5i recall object <id>                         # full raw bytes
+h5i recall object <id> --format yaml|compact|json   # re-view the structured findings (no raw)
 ```
 
-Prefer the `h5i_capture_run` MCP tool when available (same behavior, no shell-quoting). Don't wrap trivial commands you need to read in full.
+`recall object --format` re-renders the *exact* structured view you saw at capture time (the normalized findings) without rehydrating the raw output — cheap to re-observe. `recall search` looks *inside* captures — it matches the normalized findings (message, rule, path, severity) across every captured tool, so `recall search --fingerprint <fp>` answers "has this exact failure happened before?". The `h5i_capture_run` MCP tool does the same capture without shell-quoting if the MCP server is configured. Don't wrap trivial commands you need to read in full.
 
 ---
 
 ### Committing code
 
-**Always stage files before committing.** `h5i_commit` only commits what is staged and errors if nothing is staged.
+**Always stage files before committing.** `h5i commit` only commits what is staged and errors if nothing is staged.
 
 ```bash
 git add <file1> <file2> …   # never `git add .`
 ```
 
-Then commit via MCP (preferred):
-```
-h5i_commit(message="…", model="claude-sonnet-4-6", agent="claude-code", prompt="…")
-```
-
-Or via Bash if MCP is unavailable:
+Then commit via Bash:
 ```bash
 h5i commit -m "…" --model claude-sonnet-4-6 --agent claude-code --prompt "…"
 ```
+
+(Or the `h5i_commit` MCP tool if the MCP server is configured.)
 
 Add flags when relevant:
 - `--tests`  — tests were added or modified (captures test metrics)
@@ -2083,17 +2141,7 @@ Every `h5i commit` automatically snapshots the context workspace and links it to
 
 **Record a claim when you have just established a non-obvious fact a future session would otherwise re-derive** — "X lives only in Y", "module M owns concern N", a subtle invariant, the public API of a struct, where *not* to look. Don't pin trivia a quick grep would answer.
 
-Prefer the MCP tool:
-```
-h5i_claims_add(
-  text="HTTP only src/api/client.py: fetch_user, create_post, delete_post.",
-  paths=["src/api/client.py"]
-)
-h5i_claims_list()       # → {claims: [...], live: N, stale: M}
-h5i_claims_prune()      # → {removed: N}
-```
-
-Or via Bash:
+Via Bash:
 ```bash
 h5i claims add "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
   --path src/api/client.py
@@ -2101,6 +2149,8 @@ h5i claims list                  # all claims, flat
 h5i claims list --group-by-path  # claims grouped by file ("what's known about each file")
 h5i claims prune                 # drop claims whose evidence changed
 ```
+
+(Or the `h5i_claims_add` / `h5i_claims_list` / `h5i_claims_prune` MCP tools if the MCP server is configured.)
 
 **Evidence-path rule — the single most important thing to get right:**
 Pick the *minimum* set of files whose content, if edited, should cause the claim to be re-checked. Ask: *"If I changed file X, would this claim's truth be in doubt?"* If no, do not include X — even if you read X while establishing the claim.
@@ -2287,12 +2337,14 @@ Add flags when relevant:
 
 ### Capturing large command output (token reduction)
 
-Wrap commands that produce large/noisy output (tests, builds, linters, big JSON, long logs) so only a filtered summary enters context; the full raw is stored out-of-band and stays recoverable. Output under ~2 KB passes through unstored, so it is safe to wrap:
+Prefer wrapping all shell commands, so the agent receives compact, token-efficient output while preserving the original command behavior; the full raw is stored out-of-band and stays recoverable. Small *successful* output (under ~2 KB) passes through unstored, but failures are always captured regardless of size so they stay searchable:
 ```bash
 h5i capture run -- <command> [args…]     # e.g. h5i capture run -- cargo test
 h5i capture run --file <path> -- <cmd>   # tag the files it relates to
 h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall search <query> [--rule|--path|--severity|--fingerprint]  # query findings across captures
 h5i recall object <id>                   # rehydrate full raw (only if needed)
+h5i recall object <id> --format yaml     # re-view the structured findings (no raw)
 ```
 
 ### Messaging other agents (i5h)
@@ -2350,16 +2402,19 @@ h5i capture run --file <path> -- <command>      # tag the files it relates to
 ```
 
 It prints only the summary (errors/failures/counts), passes the exit code
-through, and stores the full raw output out-of-band. Output under ~2 KB passes
-through unstored, so it is safe to wrap. Rehydrate the full raw only if needed:
+through, and stores the full raw output out-of-band. Small *successful* output
+(under ~2 KB) passes through unstored, but failures are always captured
+regardless of size so they stay searchable. Rehydrate the full raw only if needed:
 
 ```bash
 h5i recall objects [--branch <b>|--file <p>]    # list captures
+h5i recall search <query> [--rule|--path|--severity|--fingerprint]  # query findings
 h5i recall object <id>                          # full raw bytes
+h5i recall object <id> --format yaml|compact|json   # re-view structured findings (no raw)
 ```
 
-Prefer the `h5i_capture_run` MCP tool when available. Don't wrap trivial commands
-you need to read in full.
+The `h5i_capture_run` MCP tool does the same thing without shell-quoting if the
+MCP server is configured. Don't wrap trivial commands you need to read in full.
 "#;
 
 /// Append `block` to `path` (creating it) unless `marker` is already present.
@@ -3303,13 +3358,13 @@ fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
         "capture" => &["commit", "claim", "memory", "run"],
         "recall" => &[
             "log", "blame", "diff", "context", "claims", "notes", "memory", "recap", "resume",
-            "vibe", "object", "objects",
+            "vibe", "object", "objects", "search",
         ],
         "audit" => &["review", "scan", "compliance", "policy", "vibe"],
         "share" => &["push", "pull", "pr", "memory", "setup-remote", "migrate-remote"],
         "objects" => &[
-            "run", "put", "get", "list", "ls", "gc", "pin", "unpin", "fsck", "push", "pull",
-            "filters", "trust", "setup",
+            "run", "put", "get", "list", "ls", "search", "gc", "pin", "unpin", "fsck", "push",
+            "pull", "filters", "trust", "setup",
         ],
         _ => return None,
     };
@@ -3394,6 +3449,7 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("recall",  "vibe")     => &["vibe"],
         ("recall",  "object")   => &["objects", "get"],
         ("recall",  "objects")  => &["objects", "list"],
+        ("recall",  "search")   => &["objects", "search"],
 
         // ── audit ───────────────────────────────────────────────────────
         ("audit",   "review")   => &["notes", "review"],
@@ -3417,6 +3473,7 @@ fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("objects", "get")      => &["objects", "get"],
         ("objects", "list")     => &["objects", "list"],
         ("objects", "ls")       => &["objects", "list"],
+        ("objects", "search")   => &["objects", "search"],
         ("objects", "gc")       => &["objects", "gc"],
         ("objects", "pin")      => &["objects", "pin"],
         ("objects", "unpin")    => &["objects", "unpin"],
@@ -6715,10 +6772,15 @@ jq -c '{
                         raw.extend_from_slice(&output.stderr);
                     }
 
-                    // Small output isn't worth a stored object: pass it straight
-                    // through so wrapping any command is safe and a no-op when
-                    // there's nothing to reduce.
-                    if (raw.len() as u64) < min_bytes {
+                    // Signal-aware gate. Store when there's either token-reduction
+                    // value (raw ≥ min_bytes) OR provenance/search value (the
+                    // command failed) — a small failure is exactly what
+                    // `recall search --fingerprint` recurrence-tracks, so it must
+                    // be kept regardless of size. Only small *successful* output is
+                    // passed straight through unstored, so wrapping a trivial
+                    // command stays a no-op. (`--min-bytes 0` still forces storage.)
+                    let worth_storing = (raw.len() as u64) >= min_bytes || exit_code != Some(0);
+                    if !worth_storing {
                         use std::io::Write;
                         std::io::stdout().write_all(&raw)?;
                     } else {
@@ -6788,9 +6850,35 @@ jq -c '{
                     print_pointer(&outcome.manifest, outcome.deduped, false);
                 }
 
-                ObjectsCommands::Get { id, summary, manifest } => {
+                ObjectsCommands::Get { id, summary, manifest, format } => {
                     let m = objects::resolve_manifest(git, &id)?;
-                    if manifest {
+                    if let Some(fmt) = format {
+                        // Re-render the stored structured result exactly as it was
+                        // shown at capture time. The summary/text formats fall back
+                        // to the free-text summary (always present); the structured
+                        // formats need the structured record.
+                        use h5i_core::structured as st;
+                        let need_structured = !matches!(fmt, CaptureFormat::Summary | CaptureFormat::Text);
+                        if need_structured && m.structured.is_none() {
+                            anyhow::bail!(
+                                "object {} has no structured result to render as {:?} \
+                                 (older or non-command capture). Use --summary for its text, \
+                                 or `h5i recall object {} --manifest` for the raw record.",
+                                m.id,
+                                fmt,
+                                m.id
+                            );
+                        }
+                        match (fmt, m.structured.as_ref()) {
+                            (CaptureFormat::Compact, Some(s)) => println!("{}", st::render_compact(s)),
+                            (CaptureFormat::Structured | CaptureFormat::Yaml, Some(s)) => {
+                                println!("{}", st::render_yaml(s))
+                            }
+                            (CaptureFormat::Json, Some(s)) => println!("{}", st::render_json_pretty(s)),
+                            // Summary/Text (and the unreachable None arms guarded above).
+                            _ => println!("{}", m.summary),
+                        }
+                    } else if manifest {
                         println!("{}", serde_json::to_string_pretty(&m)?);
                     } else if summary {
                         println!("{}", m.summary);
@@ -6951,6 +7039,173 @@ jq -c '{
                             "\n{} = raw present locally · {} = absent (rehydrate from a remote)",
                             style("●").green(),
                             style("○").red()
+                        );
+                    }
+                }
+
+                ObjectsCommands::Search {
+                    query,
+                    severity,
+                    kind,
+                    rule,
+                    path,
+                    fingerprint,
+                    branch,
+                    status,
+                    tool,
+                    since,
+                    limit,
+                } => {
+                    // Validate enum-valued filters up front against the canonical
+                    // vocabularies, case-insensitively (mirrors `list --status`).
+                    let validate = |val: Option<String>, name: &str, valid: &[&str]| -> anyhow::Result<Option<String>> {
+                        match val {
+                            Some(s) => {
+                                let sl = s.to_lowercase();
+                                if !valid.contains(&sl.as_str()) {
+                                    anyhow::bail!(
+                                        "invalid --{name} '{s}' (expected one of: {})",
+                                        valid.join(", ")
+                                    );
+                                }
+                                Ok(Some(sl))
+                            }
+                            None => Ok(None),
+                        }
+                    };
+                    let severity = validate(severity, "severity", &["error", "warning", "failure"])?;
+                    let kind = validate(
+                        kind,
+                        "kind",
+                        &["test_failure", "diagnostic", "build_error", "panic", "generic"],
+                    )?;
+                    let status = validate(
+                        status,
+                        "status",
+                        &["passed", "ok", "failed", "error", "unknown"],
+                    )?;
+
+                    // `--since 7d` → an absolute RFC3339 cutoff in the manifest's
+                    // timestamp format, so the pure matcher only does a lexical compare.
+                    let since = match since {
+                        Some(s) => {
+                            let dur = objects::parse_duration(&s)?;
+                            let cutoff = chrono::Utc::now()
+                                - chrono::Duration::from_std(dur)
+                                    .map_err(|e| anyhow::anyhow!("duration too large: {e}"))?;
+                            Some(cutoff.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string())
+                        }
+                        None => None,
+                    };
+
+                    let filters = objects::SearchFilters {
+                        query: query.clone(),
+                        severity,
+                        kind,
+                        rule: rule.clone(),
+                        path: path.clone(),
+                        fingerprint: fingerprint.clone(),
+                        branch: branch.clone(),
+                        status,
+                        tool: tool.clone(),
+                        since,
+                    };
+
+                    let all = objects::read_manifests(git);
+                    // read_manifests is oldest-first; search preserves order, so
+                    // reverse to newest-first for display.
+                    let newest: Vec<objects::Manifest> = all.into_iter().rev().collect();
+                    let hits = objects::search_manifests(&newest, &filters);
+
+                    if hits.is_empty() {
+                        println!("No captured findings match that search.");
+                    } else {
+                        let store = objects::LocalStore::new(&h5i_root);
+                        let total = hits.len();
+                        let total_findings: usize = hits.iter().map(|h| h.findings.len()).sum();
+                        println!(
+                            "{} capture{} matched · {} finding{} (newest first){}\n",
+                            total,
+                            if total == 1 { "" } else { "s" },
+                            total_findings,
+                            if total_findings == 1 { "" } else { "s" },
+                            if total > limit {
+                                format!(" — showing {limit}")
+                            } else {
+                                String::new()
+                            }
+                        );
+                        for hit in hits.iter().take(limit) {
+                            let m = hit.manifest;
+                            let present = store.has(m.hex());
+                            let dot = if present {
+                                style("●").green()
+                            } else {
+                                style("○").red()
+                            };
+                            let tool_tag = m
+                                .structured
+                                .as_ref()
+                                .map(|s| s.tool.clone())
+                                .unwrap_or_else(|| m.kind.clone());
+                            let branch_tag = m
+                                .branch
+                                .as_deref()
+                                .map(|b| format!("  ⎇ {b}"))
+                                .unwrap_or_default();
+                            println!(
+                                "{} {}  {}{}",
+                                dot,
+                                style(&m.id).cyan().bold(),
+                                style(tool_tag).yellow(),
+                                style(branch_tag).magenta()
+                            );
+                            if let Some(cmd) = &m.cmd {
+                                println!("    {} {}", style("$").dim(), style(cmd).dim());
+                            }
+                            // Cap findings shown per capture to stay token-light;
+                            // the full set is one `recall object <id>` away.
+                            const PER_CAPTURE: usize = 8;
+                            for f in hit.findings.iter().take(PER_CAPTURE) {
+                                let loc = f
+                                    .location
+                                    .as_ref()
+                                    .map(|l| l.shorthand())
+                                    .unwrap_or_default();
+                                let rule = f
+                                    .rule
+                                    .as_deref()
+                                    .map(|r| format!("[{r}] "))
+                                    .unwrap_or_default();
+                                let sev = objects_severity_label(&f.severity);
+                                let msg = f.message.lines().next().unwrap_or("").trim();
+                                let msg = truncate(msg, 100);
+                                if loc.is_empty() {
+                                    println!("    {sev} {}{}", style(rule).dim(), msg);
+                                } else {
+                                    println!(
+                                        "    {sev} {}{}  {}",
+                                        style(rule).dim(),
+                                        msg,
+                                        style(loc).blue()
+                                    );
+                                }
+                            }
+                            let more = hit.findings.len().saturating_sub(PER_CAPTURE);
+                            if more > 0 {
+                                println!("    {}", style(format!("… +{more} more finding(s)")).dim());
+                            }
+                            if hit.findings.is_empty() {
+                                // Capture-level (textual/metadata) match — show the summary head.
+                                let first = m.summary.lines().next().unwrap_or("").trim();
+                                if !first.is_empty() {
+                                    println!("    {}", style(first).dim());
+                                }
+                            }
+                        }
+                        println!(
+                            "\nRehydrate full output with {}",
+                            style("h5i recall object <id>").bold()
                         );
                     }
                 }

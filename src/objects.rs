@@ -1279,6 +1279,213 @@ fn read_dir(p: &Path) -> Result<Vec<std::fs::DirEntry>, H5iError> {
     Ok(out)
 }
 
+// ── Search over captured objects ─────────────────────────────────────────────
+//
+// `objects list` filters at the *manifest* level — which captures match some
+// metadata. Search goes one level deeper: it queries the normalized
+// `structured::ToolResult` findings — message text, rule, severity, kind,
+// location path, fingerprint — uniformly across every captured tool. The
+// fingerprint query in particular enables "has this exact failure happened
+// before?" recurrence tracking that raw logs can't answer.
+//
+// The matcher is a pure function over already-loaded manifests, so it is cheap
+// (manifests are small) and fully unit-testable without a repo or a clock.
+
+/// Criteria for [`search_manifests`]. All set fields are ANDed together.
+/// Finding-level fields (`severity`/`kind`/`rule`/`path`/`fingerprint`) require
+/// at least one matching finding in a capture; manifest-level fields
+/// (`branch`/`status`/`tool`/`since`) gate the whole capture.
+#[derive(Debug, Default, Clone)]
+pub struct SearchFilters {
+    /// Case-insensitive free text. Matches a finding's message/rule/id/detail/
+    /// expected/actual/location, or — for captures with no matching structured
+    /// finding — the summary/highlights/command.
+    pub query: Option<String>,
+    /// Finding severity (`error` | `warning` | `failure`).
+    pub severity: Option<String>,
+    /// Finding kind (`test_failure`|`diagnostic`|`build_error`|`panic`|`generic`).
+    pub kind: Option<String>,
+    /// Finding rule / error code, matched case-insensitively and exactly (e.g. `TS2322`).
+    pub rule: Option<String>,
+    /// Path fragment matched against a finding's location(s) (suffix/equality).
+    pub path: Option<String>,
+    /// Finding fingerprint; matched by prefix so a short handle works.
+    pub fingerprint: Option<String>,
+    /// Only captures taken on this git branch.
+    pub branch: Option<String>,
+    /// Only captures with this structured status (`passed`|`ok`|`failed`|`error`|`unknown`).
+    pub status: Option<String>,
+    /// Only captures from this tool (e.g. `pytest`, `cargo`).
+    pub tool: Option<String>,
+    /// RFC3339 cutoff in the manifest timestamp format; keep captures at or after
+    /// it. Compared lexically, which is correct for the zero-padded UTC format.
+    pub since: Option<String>,
+}
+
+impl SearchFilters {
+    fn has_finding_constraints(&self) -> bool {
+        self.severity.is_some()
+            || self.kind.is_some()
+            || self.rule.is_some()
+            || self.path.is_some()
+            || self.fingerprint.is_some()
+    }
+}
+
+/// One capture that matched, with the specific findings that matched. `findings`
+/// is empty when the capture matched only at the text/metadata level (an older
+/// manifest with no structured findings, or a manifest-filter-only query).
+pub struct SearchHit<'a> {
+    pub manifest: &'a Manifest,
+    pub findings: Vec<&'a crate::structured::Finding>,
+}
+
+/// Serialize a `#[serde(rename_all = "snake_case")]` enum to its string form.
+fn enum_str<T: serde::Serialize>(v: &T) -> Option<String> {
+    serde_json::to_value(v)
+        .ok()
+        .and_then(|x| x.as_str().map(str::to_string))
+}
+
+/// `needle` matches `path` if they are equal or either is a suffix of the other
+/// — the same lenient rule `objects list --file` uses, so `auth.rs` finds
+/// `src/auth.rs` and vice-versa.
+fn path_match(path: &str, needle: &str) -> bool {
+    path == needle || path.ends_with(needle) || needle.ends_with(path)
+}
+
+fn finding_paths(f: &crate::structured::Finding) -> impl Iterator<Item = &str> {
+    f.location
+        .iter()
+        .chain(f.locations.iter())
+        .map(|l| l.path.as_str())
+}
+
+/// Does the finding's free text contain `q` (already lowercased)?
+fn finding_text_matches(f: &crate::structured::Finding, q: &str) -> bool {
+    let fields = [
+        Some(f.message.as_str()),
+        f.rule.as_deref(),
+        f.id.as_deref(),
+        f.detail.as_deref(),
+        f.expected.as_deref(),
+        f.actual.as_deref(),
+    ];
+    if fields
+        .into_iter()
+        .flatten()
+        .any(|s| s.to_lowercase().contains(q))
+    {
+        return true;
+    }
+    finding_paths(f).any(|p| p.to_lowercase().contains(q))
+}
+
+fn finding_matches(f: &crate::structured::Finding, flt: &SearchFilters, q: Option<&str>) -> bool {
+    if let Some(want) = &flt.severity {
+        if enum_str(&f.severity).as_deref() != Some(want.as_str()) {
+            return false;
+        }
+    }
+    if let Some(want) = &flt.kind {
+        if enum_str(&f.kind).as_deref() != Some(want.as_str()) {
+            return false;
+        }
+    }
+    if let Some(want) = &flt.rule {
+        match &f.rule {
+            Some(r) if r.eq_ignore_ascii_case(want) => {}
+            _ => return false,
+        }
+    }
+    if let Some(want) = &flt.path {
+        if !finding_paths(f).any(|p| path_match(p, want)) {
+            return false;
+        }
+    }
+    if let Some(want) = &flt.fingerprint {
+        if !f.fingerprint.starts_with(want.as_str()) {
+            return false;
+        }
+    }
+    if let Some(q) = q {
+        if !finding_text_matches(f, q) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Capture-level text match (summary/highlights/command) for manifests without a
+/// matching structured finding.
+fn manifest_text_matches(m: &Manifest, q: &str) -> bool {
+    m.summary.to_lowercase().contains(q)
+        || m.highlights.iter().any(|h| h.to_lowercase().contains(q))
+        || m.cmd.as_deref().is_some_and(|c| c.to_lowercase().contains(q))
+}
+
+/// Search captured objects by their normalized findings (and metadata),
+/// preserving the input ordering (callers pass newest-first). Pure and
+/// clock-free: `--since` is applied by lexical timestamp comparison.
+pub fn search_manifests<'a>(manifests: &'a [Manifest], flt: &SearchFilters) -> Vec<SearchHit<'a>> {
+    let q = flt.query.as_ref().map(|s| s.to_lowercase());
+    let has_fc = flt.has_finding_constraints();
+    let mut hits = Vec::new();
+
+    for m in manifests {
+        // ── manifest-level gates ──
+        if let Some(b) = &flt.branch {
+            if m.branch.as_deref() != Some(b.as_str()) {
+                continue;
+            }
+        }
+        if let Some(want) = &flt.status {
+            let got = m.structured.as_ref().and_then(|s| enum_str(&s.status));
+            if got.as_deref() != Some(want.as_str()) {
+                continue;
+            }
+        }
+        if let Some(want) = &flt.tool {
+            if m.structured.as_ref().map(|s| s.tool.as_str()) != Some(want.as_str()) {
+                continue;
+            }
+        }
+        if let Some(since) = &flt.since {
+            if m.timestamp.as_str() < since.as_str() {
+                continue;
+            }
+        }
+
+        // ── finding-level matches ──
+        let matched: Vec<&crate::structured::Finding> = m
+            .structured
+            .as_ref()
+            .map(|s| {
+                s.findings
+                    .iter()
+                    .filter(|f| finding_matches(f, flt, q.as_deref()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if !matched.is_empty() {
+            hits.push(SearchHit { manifest: m, findings: matched });
+        } else if has_fc {
+            // A finding-level constraint was required but nothing matched.
+            continue;
+        } else if let Some(q) = &q {
+            // No finding constraints, free-text query: allow a capture-level match.
+            if manifest_text_matches(m, q) {
+                hits.push(SearchHit { manifest: m, findings: Vec::new() });
+            }
+        } else {
+            // Only manifest-level gates (or none): the capture itself is the hit.
+            hits.push(SearchHit { manifest: m, findings: Vec::new() });
+        }
+    }
+    hits
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1792,5 +1999,385 @@ mod tests {
         let bytes = load_raw_with_remote(&repo, &root, &m).unwrap().unwrap();
         assert_eq!(bytes, b"a huge log\n".repeat(50));
         assert!(LocalStore::new(&root).has(&hex), "blob should be cached back locally");
+    }
+
+    // ── search_manifests ────────────────────────────────────────────────────
+
+    use crate::structured::{
+        Finding, FindingKind, Location, ParserConfidence, ResultKind, Severity, Status, ToolResult,
+        SCHEMA_VERSION,
+    };
+
+    fn hex64(c: char) -> String {
+        std::iter::repeat_n(c, 64).collect()
+    }
+
+    fn mk_finding(
+        kind: FindingKind,
+        sev: Severity,
+        rule: Option<&str>,
+        msg: &str,
+        path: Option<&str>,
+        fp: &str,
+    ) -> Finding {
+        Finding {
+            kind,
+            severity: sev,
+            id: None,
+            rule: rule.map(str::to_string),
+            message: msg.to_string(),
+            location: path.map(|p| Location {
+                path: p.to_string(),
+                line: Some(42),
+                column: None,
+                end_line: None,
+                end_column: None,
+            }),
+            locations: Vec::new(),
+            expected: None,
+            actual: None,
+            detail: None,
+            fixable: false,
+            suggestions: Vec::new(),
+            fingerprint: fp.to_string(),
+        }
+    }
+
+    /// Build a manifest carrying a structured result with the given findings.
+    fn mk_manifest(
+        fill: char,
+        tool: &str,
+        status: Status,
+        branch: Option<&str>,
+        findings: Vec<Finding>,
+    ) -> Manifest {
+        let mut m = manifest_with_oid(&hex64(fill));
+        m.branch = branch.map(str::to_string);
+        m.structured = Some(ToolResult {
+            schema_version: SCHEMA_VERSION,
+            tool: tool.to_string(),
+            kind: ResultKind::Test,
+            status,
+            exit_code: Some(1),
+            duration_ms: None,
+            counts: Default::default(),
+            parser_confidence: ParserConfidence::Parsed,
+            raw_oid: None,
+            findings,
+            suppressed: Vec::new(),
+            truncated: Default::default(),
+            body: None,
+            extra: Default::default(),
+        });
+        m
+    }
+
+    fn one_finding_manifest() -> Manifest {
+        mk_manifest(
+            'a',
+            "pytest",
+            Status::Failed,
+            Some("feature/x"),
+            vec![mk_finding(
+                FindingKind::TestFailure,
+                Severity::Failure,
+                Some("AssertionError"),
+                "expected 200 but got 500 in handler",
+                Some("src/api/auth.rs"),
+                "fp-aaaa-1111",
+            )],
+        )
+    }
+
+    #[test]
+    fn search_query_matches_message_rule_and_path() {
+        let ms = vec![one_finding_manifest()];
+
+        // Message substring (case-insensitive).
+        let hits = search_manifests(&ms, &SearchFilters { query: Some("HANDLER".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].findings.len(), 1);
+
+        // Rule text.
+        let hits = search_manifests(&ms, &SearchFilters { query: Some("assertion".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+
+        // Location path.
+        let hits = search_manifests(&ms, &SearchFilters { query: Some("auth.rs".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+
+        // A term that appears nowhere → no hit.
+        let hits = search_manifests(&ms, &SearchFilters { query: Some("nonexistent".into()), ..Default::default() });
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn search_filters_severity_and_kind() {
+        let ms = vec![mk_manifest(
+            'b',
+            "cargo",
+            Status::Failed,
+            None,
+            vec![
+                mk_finding(FindingKind::BuildError, Severity::Error, Some("E0599"), "no method", Some("src/a.rs"), "fp1"),
+                mk_finding(FindingKind::Diagnostic, Severity::Warning, Some("dead_code"), "unused", Some("src/b.rs"), "fp2"),
+            ],
+        )];
+
+        let hits = search_manifests(&ms, &SearchFilters { severity: Some("error".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].findings.len(), 1, "only the error-severity finding matches");
+        assert_eq!(hits[0].findings[0].rule.as_deref(), Some("E0599"));
+
+        let hits = search_manifests(&ms, &SearchFilters { kind: Some("diagnostic".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].findings[0].rule.as_deref(), Some("dead_code"));
+    }
+
+    #[test]
+    fn search_rule_is_exact_case_insensitive() {
+        let ms = vec![one_finding_manifest()]; // rule "AssertionError"
+        // Exact, case-insensitive → match.
+        let hits = search_manifests(&ms, &SearchFilters { rule: Some("assertionerror".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+        // Partial rule must NOT match (rule is exact, unlike free-text query).
+        let hits = search_manifests(&ms, &SearchFilters { rule: Some("assertion".into()), ..Default::default() });
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn search_path_matches_by_suffix_either_direction() {
+        let ms = vec![one_finding_manifest()]; // path "src/api/auth.rs"
+        for needle in ["auth.rs", "api/auth.rs", "src/api/auth.rs"] {
+            let hits = search_manifests(&ms, &SearchFilters { path: Some(needle.into()), ..Default::default() });
+            assert_eq!(hits.len(), 1, "path filter '{needle}' should match");
+        }
+        let hits = search_manifests(&ms, &SearchFilters { path: Some("other.rs".into()), ..Default::default() });
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn search_fingerprint_matches_by_prefix() {
+        let ms = vec![one_finding_manifest()]; // fingerprint "fp-aaaa-1111"
+        let hits = search_manifests(&ms, &SearchFilters { fingerprint: Some("fp-aaaa".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+        let hits = search_manifests(&ms, &SearchFilters { fingerprint: Some("fp-aaaa-1111".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+        let hits = search_manifests(&ms, &SearchFilters { fingerprint: Some("fp-bbbb".into()), ..Default::default() });
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn search_manifest_level_branch_status_tool() {
+        let ms = vec![
+            mk_manifest('a', "pytest", Status::Failed, Some("main"), vec![mk_finding(FindingKind::TestFailure, Severity::Failure, None, "m", None, "f1")]),
+            mk_manifest('b', "cargo", Status::Passed, Some("dev"), vec![mk_finding(FindingKind::TestFailure, Severity::Failure, None, "m", None, "f2")]),
+        ];
+
+        assert_eq!(search_manifests(&ms, &SearchFilters { branch: Some("dev".into()), ..Default::default() }).len(), 1);
+        assert_eq!(search_manifests(&ms, &SearchFilters { status: Some("passed".into()), ..Default::default() }).len(), 1);
+        assert_eq!(search_manifests(&ms, &SearchFilters { tool: Some("pytest".into()), ..Default::default() }).len(), 1);
+        // A branch nobody is on.
+        assert!(search_manifests(&ms, &SearchFilters { branch: Some("nope".into()), ..Default::default() }).is_empty());
+    }
+
+    #[test]
+    fn search_since_is_lexical_cutoff() {
+        let mut old = one_finding_manifest();
+        old.timestamp = "2026-01-01T00:00:00.000000Z".into();
+        let mut recent = mk_manifest('c', "pytest", Status::Failed, None, vec![mk_finding(FindingKind::TestFailure, Severity::Failure, None, "m", None, "f9")]);
+        recent.timestamp = "2026-06-01T00:00:00.000000Z".into();
+        let ms = vec![old, recent];
+
+        let hits = search_manifests(&ms, &SearchFilters { since: Some("2026-03-01T00:00:00.000000Z".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].manifest.timestamp, "2026-06-01T00:00:00.000000Z");
+    }
+
+    #[test]
+    fn search_and_semantics_apply_per_finding() {
+        // severity=error on finding A, query "bar" on finding B → no single
+        // finding satisfies both, so the capture is excluded.
+        let ms = vec![mk_manifest(
+            'd',
+            "cargo",
+            Status::Failed,
+            None,
+            vec![
+                mk_finding(FindingKind::BuildError, Severity::Error, None, "foo", None, "fa"),
+                mk_finding(FindingKind::Diagnostic, Severity::Warning, None, "bar", None, "fb"),
+            ],
+        )];
+        let hits = search_manifests(&ms, &SearchFilters { severity: Some("error".into()), query: Some("bar".into()), ..Default::default() });
+        assert!(hits.is_empty(), "no finding is both error-severity and matches 'bar'");
+
+        // Same filters, but one finding satisfies both → hit.
+        let ms = vec![mk_manifest('e', "cargo", Status::Failed, None, vec![mk_finding(FindingKind::BuildError, Severity::Error, None, "bar boom", None, "fc")])];
+        let hits = search_manifests(&ms, &SearchFilters { severity: Some("error".into()), query: Some("bar".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn search_falls_back_to_summary_when_no_structured() {
+        // Older capture: no structured result, query lives in the summary.
+        let mut m = manifest_with_oid(&hex64('f'));
+        m.summary = "Traceback: boom in module".into();
+        m.structured = None;
+        let ms = vec![m];
+
+        let hits = search_manifests(&ms, &SearchFilters { query: Some("boom".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].findings.is_empty(), "capture-level match carries no findings");
+
+        // A finding-level constraint can't be satisfied without structure → excluded.
+        let hits = search_manifests(&ms, &SearchFilters { severity: Some("error".into()), ..Default::default() });
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn search_query_only_in_summary_when_structured_findings_dont_match() {
+        // Structured findings exist but don't mention the term; the summary does.
+        let mut m = one_finding_manifest(); // finding msg has no "flaky"
+        m.summary = "note: this test is flaky".into();
+        let ms = vec![m];
+        let hits = search_manifests(&ms, &SearchFilters { query: Some("flaky".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].findings.is_empty(), "matched on summary, not a finding");
+    }
+
+    #[test]
+    fn search_no_criteria_returns_every_capture() {
+        let ms = vec![
+            one_finding_manifest(),
+            mk_manifest('1', "cargo", Status::Ok, None, vec![]),
+        ];
+        let hits = search_manifests(&ms, &SearchFilters::default());
+        assert_eq!(hits.len(), 2);
+        // The capture with a finding reports it; the empty one is a capture-level hit.
+        assert_eq!(hits[0].findings.len(), 1);
+        assert_eq!(hits[1].findings.len(), 0);
+    }
+
+    #[test]
+    fn search_finding_constraint_with_no_match_excludes_capture() {
+        // A capture whose only finding is a warning, filtered for errors → gone,
+        // even though the capture exists.
+        let ms = vec![mk_manifest('2', "ruff", Status::Failed, None, vec![mk_finding(FindingKind::Diagnostic, Severity::Warning, Some("E501"), "line too long", Some("a.py"), "fp")])];
+        let hits = search_manifests(&ms, &SearchFilters { severity: Some("error".into()), ..Default::default() });
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn search_matches_paths_in_the_locations_vec() {
+        // A finding with no singular `location` but several `locations` (rustc-style
+        // multi-span) must still match on path, via both query and --path.
+        let mut f = mk_finding(FindingKind::BuildError, Severity::Error, None, "borrow", None, "fp");
+        f.locations = vec![
+            Location { path: "src/lib.rs".into(), line: Some(1), column: None, end_line: None, end_column: None },
+            Location { path: "src/borrow.rs".into(), line: Some(9), column: None, end_line: None, end_column: None },
+        ];
+        let ms = vec![mk_manifest('a', "cargo", Status::Failed, None, vec![f])];
+
+        assert_eq!(search_manifests(&ms, &SearchFilters { path: Some("borrow.rs".into()), ..Default::default() }).len(), 1);
+        assert_eq!(search_manifests(&ms, &SearchFilters { query: Some("lib.rs".into()), ..Default::default() }).len(), 1);
+        assert!(search_manifests(&ms, &SearchFilters { path: Some("missing.rs".into()), ..Default::default() }).is_empty());
+    }
+
+    #[test]
+    fn search_returns_every_matching_finding_in_a_capture() {
+        let ms = vec![mk_manifest(
+            'b',
+            "cargo",
+            Status::Failed,
+            None,
+            vec![
+                mk_finding(FindingKind::BuildError, Severity::Error, None, "e1", Some("a.rs"), "f1"),
+                mk_finding(FindingKind::BuildError, Severity::Error, None, "e2", Some("b.rs"), "f2"),
+                mk_finding(FindingKind::Diagnostic, Severity::Warning, None, "w1", Some("c.rs"), "f3"),
+            ],
+        )];
+        let hits = search_manifests(&ms, &SearchFilters { severity: Some("error".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].findings.len(), 2, "both error findings should be reported");
+    }
+
+    #[test]
+    fn search_combines_manifest_and_finding_level_filters() {
+        let ms = vec![
+            // Right branch, but its finding is a warning.
+            mk_manifest('a', "cargo", Status::Failed, Some("dev"), vec![mk_finding(FindingKind::Diagnostic, Severity::Warning, None, "w", Some("a.rs"), "f1")]),
+            // Right branch AND an error finding → the only hit.
+            mk_manifest('b', "cargo", Status::Failed, Some("dev"), vec![mk_finding(FindingKind::BuildError, Severity::Error, None, "e", Some("b.rs"), "f2")]),
+            // Error finding but wrong branch.
+            mk_manifest('c', "cargo", Status::Failed, Some("main"), vec![mk_finding(FindingKind::BuildError, Severity::Error, None, "e", Some("c.rs"), "f3")]),
+        ];
+        let hits = search_manifests(&ms, &SearchFilters { branch: Some("dev".into()), severity: Some("error".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].findings[0].message, "e");
+    }
+
+    #[test]
+    fn search_since_boundary_is_inclusive() {
+        let cutoff = "2026-03-01T00:00:00.000000Z";
+        let mut exact = one_finding_manifest();
+        exact.timestamp = cutoff.into();
+        let ms = vec![exact];
+        // since uses `<` to exclude, so a timestamp equal to the cutoff is kept.
+        let hits = search_manifests(&ms, &SearchFilters { since: Some(cutoff.into()), ..Default::default() });
+        assert_eq!(hits.len(), 1, "an exact-boundary timestamp must be included");
+    }
+
+    #[test]
+    fn search_preserves_input_order() {
+        let ms = vec![
+            mk_manifest('1', "t", Status::Failed, None, vec![mk_finding(FindingKind::TestFailure, Severity::Failure, None, "boom", None, "f1")]),
+            mk_manifest('2', "t", Status::Failed, None, vec![mk_finding(FindingKind::TestFailure, Severity::Failure, None, "boom", None, "f2")]),
+            mk_manifest('3', "t", Status::Failed, None, vec![mk_finding(FindingKind::TestFailure, Severity::Failure, None, "boom", None, "f3")]),
+        ];
+        let hits = search_manifests(&ms, &SearchFilters { query: Some("boom".into()), ..Default::default() });
+        let order: Vec<&str> = hits.iter().map(|h| h.findings[0].fingerprint.as_str()).collect();
+        assert_eq!(order, vec!["f1", "f2", "f3"], "hits keep the caller's ordering");
+    }
+
+    #[test]
+    fn search_query_matches_detail_expected_actual_and_id() {
+        let mut f = mk_finding(FindingKind::TestFailure, Severity::Failure, None, "plain message", None, "fp");
+        f.id = Some("tests::case_alpha".into());
+        f.detail = Some("traceback line referencing widget".into());
+        f.expected = Some("HTTP 200".into());
+        f.actual = Some("HTTP 503".into());
+        let ms = vec![mk_manifest('a', "pytest", Status::Failed, None, vec![f])];
+
+        for term in ["case_alpha", "widget", "200", "503"] {
+            let hits = search_manifests(&ms, &SearchFilters { query: Some(term.into()), ..Default::default() });
+            assert_eq!(hits.len(), 1, "query '{term}' should match a finding field");
+        }
+    }
+
+    #[test]
+    fn search_empty_query_matches_all_findings() {
+        // An empty query string is a no-op filter (every finding "contains" "").
+        let ms = vec![one_finding_manifest()];
+        let hits = search_manifests(&ms, &SearchFilters { query: Some(String::new()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].findings.len(), 1);
+    }
+
+    #[test]
+    fn search_status_and_tool_exclude_captures_without_structure() {
+        // Manifest with no structured result can't satisfy a structured gate.
+        let bare = manifest_with_oid(&hex64('e'));
+        assert!(bare.structured.is_none());
+        let ms = vec![bare];
+        assert!(search_manifests(&ms, &SearchFilters { status: Some("failed".into()), ..Default::default() }).is_empty());
+        assert!(search_manifests(&ms, &SearchFilters { tool: Some("pytest".into()), ..Default::default() }).is_empty());
+    }
+
+    #[test]
+    fn search_fingerprint_prefix_is_case_sensitive() {
+        let ms = vec![one_finding_manifest()]; // fingerprint "fp-aaaa-1111"
+        assert_eq!(search_manifests(&ms, &SearchFilters { fingerprint: Some("fp-a".into()), ..Default::default() }).len(), 1);
+        // Fingerprints are lowercase hex-ish tokens; matching is exact-prefix, not folded.
+        assert!(search_manifests(&ms, &SearchFilters { fingerprint: Some("FP-A".into()), ..Default::default() }).is_empty());
     }
 }
