@@ -22,9 +22,9 @@ h5i is a pure Git sidecar for recording and sharing AI-agent contexts, metadata,
 |---|---|
 | `.git/refs/h5i/notes` | Per-commit metadata: model, agent, prompt, tests, decisions, risk signals. |
 | `.git/refs/h5i/context` | The reasoning workspace as a DAG: goal, milestones, traces, branches. |
-| `.git/refs/h5i/ast` | AST snapshots for structural blame and semantic diffs. |
-| `.git/refs/h5i/checkpoints/<agent>` | Per-agent memory snapshots. |
 | `.git/refs/h5i/msg` | Cross-agent message log (append-only, union-merged on pull). |
+| `.git/refs/h5i/objects` | Token-reduction capture manifests: command, exit code, and filtered summary of large outputs (full raw kept locally). |
+| `.git/refs/h5i/checkpoints/<agent>` | Per-agent memory snapshots. |
 
 Because these are Git objects, they are content-addressed, deduplicated, pushable, fetchable, and survive `git gc`.
 
@@ -109,13 +109,15 @@ We can also monitor the conversation in real time with `h5i msg watch`.
 
 ### 4.2. Token Reduction with Unified Form
 
+Wrap any command with `h5i capture run -- <cmd>` and the agent sees only a compact, normalized summary — errors, failures, and counts — while the full raw output is stored out-of-band in `refs/h5i/objects`. Every tool's output collapses into one unified form, so a 4 MB test log no longer burns your context window, and the raw bytes are always one `h5i recall object <id>` away when you need them.
+
 <p align="center">
   <img src="./assets/token-reduction-unified.svg" alt="h5i recall object" width="95%">
 </p>
 
 ### 4.3. Context DAG
 
-The context DAG shows how the work unfolded:
+The context DAG shows how the work unfolded — the goal, every milestone, and the OBSERVE / THINK / ACT trace behind each change, captured automatically as the agent works. Because it's snapshotted on every commit, you can replay exactly what an agent knew and why it acted at any point in history.
 
 ```bash
 h5i recall context show
