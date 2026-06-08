@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>h5i Pitch Deck — Shared Versioned Context for Claude Code &amp; Codex</title>
-<meta name="description" content="h5i pitch deck: the AI era needs a Git sidecar that versions agent reasoning, prompts, decisions, memory, risk signals, and shareable evidence alongside code.">
-<meta name="keywords" content="h5i pitch, ai provenance, versioned agent reasoning, claude code, codex, git sidecar, ai code review, agent memory">
+<title>h5i Pitch Deck — AI-Aware Version Control for Agent Work</title>
+<meta name="description" content="h5i pitch deck: a Git sidecar that gives AI-authored code a reviewable evidence layer — provenance on every commit, cross-agent messaging, token-saving object store, reviewer-ready PRs, and deterministic audit.">
+<meta name="keywords" content="h5i pitch, ai-aware version control, ai provenance, git sidecar, agent provenance, claude code, codex, cross-agent messaging, ai code review, ai audit">
 <meta name="author" content="Koukyosyumei">
 <meta name="theme-color" content="#D21C1C">
 <meta name="color-scheme" content="dark">
@@ -15,21 +15,21 @@
 <link rel="apple-touch-icon" href="/_static/logo.png">
 
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i Pitch Deck", "headline": "h5i Pitch Deck — Shared Versioned Context for Claude Code & Codex", "description": "Why the AI era needs a Git sidecar that versions agent reasoning, prompts, decisions, memory, risk signals, and shareable evidence alongside code.", "url": "https://h5i.dev/pitch/", "inLanguage": "en", "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"}, "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}}, "about": {"@type": "SoftwareApplication", "name": "h5i", "applicationCategory": "DeveloperApplication"}}
+{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i Pitch Deck", "headline": "h5i Pitch Deck — AI-Aware Version Control for Agent Work", "description": "A Git sidecar that gives AI-authored code a reviewable evidence layer — provenance on every commit, cross-agent messaging, a token-saving object store, reviewer-ready PRs, and deterministic audit.", "url": "https://h5i.dev/pitch/", "inLanguage": "en", "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"}, "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}}, "about": {"@type": "SoftwareApplication", "name": "h5i", "applicationCategory": "DeveloperApplication"}}
 </script>
 
 <!-- Open Graph -->
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="h5i">
-<meta property="og:title" content="h5i Pitch Deck — Shared Versioned Context for Claude Code &amp; Codex">
-<meta property="og:description" content="Why the AI era needs a Git sidecar that versions agent reasoning, prompts, memory, and provenance alongside code.">
+<meta property="og:title" content="h5i Pitch Deck — AI-Aware Version Control for Agent Work">
+<meta property="og:description" content="A Git sidecar that gives AI-authored code a reviewable evidence layer: provenance on every commit, cross-agent messaging, a token-saving object store, reviewer-ready PRs, and deterministic audit.">
 <meta property="og:url" content="https://h5i.dev/pitch/">
 <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="h5i Pitch Deck — Shared Versioned Context for Claude Code &amp; Codex">
-<meta name="twitter:description" content="Why the AI era needs versioned agent reasoning, prompts, memory, and provenance alongside code.">
+<meta name="twitter:title" content="h5i Pitch Deck — AI-Aware Version Control for Agent Work">
+<meta name="twitter:description" content="A Git sidecar for AI-authored code: provenance on every commit, cross-agent messaging, a token-saving object store, reviewer-ready PRs, and deterministic audit.">
 <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -438,6 +438,127 @@
   a:focus-visible, button:focus-visible, summary:focus-visible {
     outline: 2px solid var(--red-text); outline-offset: 3px; border-radius: 4px;
   }
+
+  /* ════════════════════════════════════════════════════════
+     Pitch v2 components — refs stack, msg thread, object flow,
+     PR cockpit, metrics, reviewer questions, CTA
+     ════════════════════════════════════════════════════════ */
+
+  /* lede under a headline */
+  .lede { margin-top: 14px; max-width: 640px; font-size: 1.2rem; color: var(--text-dim); line-height: 1.55; }
+  .kicker { font-size: 1.05rem; color: var(--text-faint); }
+
+  /* small inline pill (status / kind tags) */
+  .pill {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 0.18rem 0.6rem; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--text-dim);
+  }
+  .pill.red   { color: var(--red-text); border-color: var(--border-red); background: rgba(224,36,27,0.05); }
+  .pill.cyan  { color: var(--cyan);   border-color: rgba(169,189,208,0.28); }
+  .pill.green { color: var(--green);  border-color: rgba(98,201,140,0.28); }
+  .pill.yellow{ color: var(--yellow); border-color: rgba(214,169,78,0.28); }
+
+  /* ── Reviewer question list (problem slide) ──────────────── */
+  .qlist { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+  .qrow {
+    display: flex; align-items: center; gap: 16px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-left: 2px solid var(--red); border-radius: 0 10px 10px 0;
+    padding: 14px 20px;
+  }
+  .qrow .q { font-size: 1.18rem; color: var(--text); flex: 1; }
+  .qrow .src { font-family: var(--mono); font-size: 0.78rem; color: var(--text-faint); white-space: nowrap; }
+  .qrow .gx { font-family: var(--mono); font-size: 0.74rem; color: var(--danger); white-space: nowrap; letter-spacing: 0.04em; }
+
+  /* ── Ref stack (category slide) ──────────────────────────── */
+  .refstack { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+  .ref-layer {
+    display: flex; align-items: center; gap: 16px;
+    border: 1px solid var(--border-red); background: rgba(224,36,27,0.045);
+    border-radius: 12px; padding: 14px 18px;
+  }
+  .ref-layer .ref-name { font-family: var(--mono); font-size: 0.92rem; color: var(--red-text); min-width: 168px; }
+  .ref-layer .ref-desc { font-size: 1.02rem; color: var(--text-dim); }
+  .ref-git {
+    display: flex; align-items: center; gap: 16px;
+    border: 1px solid var(--border); background: var(--bg-card);
+    border-radius: 12px; padding: 14px 18px; margin-top: 4px;
+  }
+  .ref-git .ref-name { font-family: var(--mono); font-size: 0.92rem; color: var(--text); min-width: 168px; }
+  .ref-git .ref-desc { font-size: 1.02rem; color: var(--text-faint); }
+  .ref-join { text-align: center; font-family: var(--mono); font-size: 0.78rem; color: var(--text-faint); letter-spacing: 0.1em; padding: 2px 0; }
+
+  /* ── Provenance record (commit slide) ────────────────────── */
+  .rec { display: flex; flex-direction: column; gap: 9px; width: 100%; }
+  .rec-row { display: flex; align-items: baseline; gap: 14px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .rec-row:last-child { border-bottom: none; }
+  .rec-k { font-family: var(--mono); font-size: 0.8rem; color: var(--text-faint); min-width: 116px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .rec-v { font-size: 1.02rem; color: var(--text); }
+
+  /* ── Message thread (msg slide) ──────────────────────────── */
+  .thread { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+  .bubble {
+    border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 16px; max-width: 86%; background: var(--bg-card);
+  }
+  .bubble .meta { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-family: var(--mono); font-size: 0.76rem; color: var(--text-faint); }
+  .bubble .who  { color: var(--ink); font-weight: 700; }
+  .bubble .body { font-size: 1.05rem; color: var(--text); line-height: 1.5; }
+  .bubble.left  { align-self: flex-start; border-left: 2px solid var(--cyan); }
+  .bubble.right { align-self: flex-end; border-right: 2px solid var(--red); background: var(--bg-card2); }
+  .kind-tag { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; padding: 1px 6px; border-radius: 3px; font-family: var(--mono); }
+  .kind-ask    { color: var(--cyan);   background: rgba(169,189,208,0.1); }
+  .kind-review { color: var(--yellow); background: rgba(214,169,78,0.1); }
+  .kind-done   { color: var(--green);  background: rgba(98,201,140,0.1); }
+  .kind-risk   { color: var(--danger); background: rgba(224,36,27,0.1); }
+
+  /* ── Object flow (token reduction slide) ─────────────────── */
+  .oflow { display: flex; align-items: center; justify-content: center; gap: 18px; width: 100%; }
+  .obox {
+    flex: 1; border: 1px solid var(--border); border-radius: 12px;
+    background: var(--bg-term); padding: 18px; min-height: 150px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .obox.raw { border-color: var(--border-red); }
+  .obox.man { border-color: rgba(98,201,140,0.3); }
+  .obox .otag { font-family: var(--mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); }
+  .obox .obig { font-family: var(--mono); font-size: 1.7rem; font-weight: 700; color: var(--ink); line-height: 1; }
+  .obox.raw .obig { color: var(--danger); }
+  .obox.man .obig { color: var(--green); }
+  .obox .oline { font-family: var(--mono); font-size: 0.82rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .oarrow { display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--red-text); font-family: var(--mono); }
+  .oarrow .achar { font-size: 1.6rem; line-height: 1; }
+  .oarrow .albl  { font-size: 0.74rem; letter-spacing: 0.06em; }
+
+  /* ── PR cockpit (share pr slide) ─────────────────────────── */
+  .pr {
+    width: 100%; border: 1px solid var(--border); border-radius: var(--radius-lg);
+    background: var(--bg-card); overflow: hidden;
+  }
+  .pr-head { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,0.015); }
+  .pr-head .gh { font-family: var(--mono); font-size: 0.82rem; color: var(--text-dim); }
+  .pr-head .marker { margin-left: auto; font-family: var(--mono); font-size: 0.72rem; color: var(--text-faint); }
+  .pr-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+  .pr-sec { display: flex; gap: 12px; align-items: baseline; }
+  .pr-sec .pr-h { font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--red-text); min-width: 132px; }
+  .pr-sec .pr-c { font-size: 1.0rem; color: var(--text); line-height: 1.5; }
+
+  /* ── Metrics (why now) ───────────────────────────────────── */
+  .metric { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 26px 18px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+  .metric .mv { font-family: var(--mono); font-size: 3rem; font-weight: 700; color: var(--red-text); line-height: 1; }
+  .metric .ml { font-size: 0.95rem; color: var(--text-dim); }
+
+  /* ── CTA / closing ───────────────────────────────────────── */
+  .cta-install {
+    display: inline-flex; align-items: center; gap: 12px;
+    font-family: var(--mono); font-size: 1.05rem; color: var(--text);
+    background: var(--bg-term); border: 1px solid var(--border-hi);
+    border-radius: 10px; padding: 14px 22px;
+  }
+  .cta-install .pmt { color: var(--red-text); }
+  .cta-links { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 22px; }
 </style>
   <script type="application/ld+json">
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Pitch Deck", "item": "https://h5i.dev/pitch/"}]}
@@ -498,7 +619,7 @@
           <div class="tl-h5i-node">h5i</div>
           <div class="tl-h5i-year">now</div>
           <div class="tl-h5i-name">h5i</div>
-          <div class="tl-h5i-desc">shared versioned context for AI agents</div>
+          <div class="tl-h5i-desc">AI-aware version control for agent work</div>
         </div>
         <div class="tl-h5i-line right"></div>
       </div>
@@ -509,189 +630,77 @@
 <!-- ══════════════════════════════════════════════════════════════
      SLIDE 2 — The Problem
 ══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:32px;">
-  <div style="width:100%;max-width:820px;">
+<div class="slide" style="gap:28px;">
+  <div style="width:100%;max-width:900px;">
     <div class="section-tag">The problem</div>
-    <h2>The code survives.<br>The reasoning <span class="red">doesn't.</span></h2>
+    <h2>Git records the diff.<br>AI review needs the <span class="red">missing context.</span></h2>
+    <p class="lede">An agent opens a PR. Before a human can approve it, five questions need answers Git was never built to store.</p>
 
-    <div style="border-left:2px solid var(--red);padding:18px 24px;background:rgba(224,36,27,0.045);border-radius:0 12px 12px 0;margin-top:32px;">
-      <p style="font-size:1.35rem;color:var(--text);font-style:italic;line-height:1.5;">"Why did Claude touch <code>src/session.rs</code>?<br>That wasn't in the ticket."</p>
-      <p style="margin-top:10px;font-size:1rem;">— Every engineering team, every week</p>
-    </div>
-
-    <div class="g2" style="margin-top:24px;">
-      <div class="card">
-        <h3 style="margin-bottom:14px;" class="dim">Git records</h3>
-        <ul style="list-style:none;display:flex;flex-direction:column;gap:10px;">
-          <li style="display:flex;gap:12px;font-size:1rem;"><span class="green">✔</span><span>Which lines changed</span></li>
-          <li style="display:flex;gap:12px;font-size:1rem;"><span class="green">✔</span><span>Author and timestamp</span></li>
-        </ul>
-      </div>
-      <div class="card card-red">
-        <h3 style="margin-bottom:14px;color:var(--red-text);">Git misses</h3>
-        <ul style="list-style:none;display:flex;flex-direction:column;gap:10px;">
-          <li style="display:flex;gap:12px;font-size:1rem;"><span class="red">✗</span><span>Why those files were touched</span></li>
-          <li style="display:flex;gap:12px;font-size:1rem;"><span class="red">✗</span><span>What the AI read before editing</span></li>
-          <li style="display:flex;gap:12px;font-size:1rem;"><span class="red">✗</span><span>Where the AI was uncertain</span></li>
-        </ul>
-      </div>
+    <div class="qlist" style="margin-top:26px;">
+      <div class="qrow"><span class="q">What prompt produced this change?</span><span class="gx">git can't say</span></div>
+      <div class="qrow"><span class="q">Which files did the agent read before editing?</span><span class="gx">git can't say</span></div>
+      <div class="qrow"><span class="q">Did the tests pass — and which ones?</span><span class="gx">git can't say</span></div>
+      <div class="qrow"><span class="q">Did another agent already review or hand this off?</span><span class="gx">git can't say</span></div>
+      <div class="qrow"><span class="q">Any secret leak or prompt-injection risk in the reasoning?</span><span class="gx">git can't say</span></div>
     </div>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 3 — Solution
+     SLIDE 3 — Category / Solution
 ══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:32px;">
+<div class="slide" style="gap:28px;">
   <div style="width:100%;max-width:900px;">
     <div class="section-tag">The solution</div>
-    <h2>A Git sidecar that versions<br>the context behind AI work</h2>
-    <p style="margin-top:12px;max-width:620px;font-size:1.15rem;">Stores structured metadata in <code>.git/.h5i/</code> — no new infrastructure, no lock-in, works with any git remote.</p>
+    <h2>An evidence layer that lives<br><span class="red">beside</span> every Git branch</h2>
+    <p class="lede">h5i is a Git sidecar. Your commits, branches, and remotes stay exactly as they are — h5i writes the AI context to its own <code>refs/h5i/*</code> refs that travel with the repo.</p>
 
-    <div class="g2" style="margin-top:32px;gap:16px;">
-      <div class="feat-card">
-        <span class="feat-cmd">h5i capture commit --prompt …</span>
-        <h3 style="margin-top:6px;">AI provenance</h3>
-        <p class="feat-desc">Prompt, model, agent ID, and test results linked to every commit.</p>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">h5i recall notes</span>
-        <h3 style="margin-top:6px;">Session analysis</h3>
-        <p class="feat-desc">Files read vs. edited, uncertainty heatmap, blind-edit detection.</p>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">h5i recall context</span>
-        <h3 style="margin-top:6px;">Reasoning workspace</h3>
-        <p class="feat-desc">Version-controlled OBSERVE / THINK / ACT trace that survives session resets.</p>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">h5i audit compliance</span>
-        <h3 style="margin-top:6px;">Compliance &amp; policy</h3>
-        <p class="feat-desc">Enforce AI commit rules and generate audit reports across date ranges.</p>
-      </div>
+    <div class="refstack" style="margin-top:26px;">
+      <div class="ref-layer"><span class="ref-name">refs/h5i/notes</span><span class="ref-desc">provenance per commit — prompt, model, agent, tests, decisions, risk</span></div>
+      <div class="ref-layer"><span class="ref-name">refs/h5i/context</span><span class="ref-desc">versioned reasoning trace — OBSERVE / THINK / ACT, branched like Git</span></div>
+      <div class="ref-layer"><span class="ref-name">refs/h5i/msg</span><span class="ref-desc">cross-agent messages — typed asks, reviews, handoffs</span></div>
+      <div class="ref-layer"><span class="ref-name">refs/h5i/objects</span><span class="ref-desc">token-saving object store — raw tool output, kept out of context</span></div>
+      <div class="ref-join">▲  h5i sidecar  ·  carried by <code>h5i share push / pull</code>  ▲</div>
+      <div class="ref-git"><span class="ref-name">your Git repo</span><span class="ref-desc">commits, branches, any remote — unchanged. No SaaS, no new VCS, no lock-in.</span></div>
     </div>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 4 — h5i shared context
+     SLIDE 4 — h5i commit (provenance)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
-  <div style="width:100%;max-width:1020px;">
-    <div class="section-tag">Feature · shared context</div>
-    <h2>Every agent inherits<br>what the last agent learned</h2>
+  <div style="width:100%;max-width:1040px;">
+    <div class="section-tag">Feature · h5i commit</div>
+    <h2>Every AI commit ships<br>with its provenance</h2>
 
-    <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
-      <div style="display:flex;flex-direction:column;gap:14px;">
-        <div class="feat-card">
-          <span class="feat-cmd">h5i codex prelude</span>
-          <h3 style="margin-top:4px;">Session prelude</h3>
-          <p class="feat-desc">A new agent starts with the branch goal, milestones, open TODOs, and the last useful decisions.</p>
-        </div>
-        <div class="feat-card">
-          <span class="feat-cmd">h5i recall context show</span>
-          <h3 style="margin-top:4px;">Reasoning workspace</h3>
-          <p class="feat-desc">OBSERVE, THINK, ACT, NOTE, branch, merge, and checkpoint entries form a Git-native context DAG.</p>
-        </div>
-        <div class="feat-card">
-          <span class="feat-cmd">h5i share pr post</span>
-          <h3 style="margin-top:4px;">PR as one surface</h3>
-          <p class="feat-desc">When the branch reaches review, h5i renders the same context into a sticky GitHub PR comment.</p>
-        </div>
-      </div>
+    <div class="g2" style="margin-top:26px;align-items:start;gap:28px;">
       <div class="terminal">
         <div class="terminal-bar">
           <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
           <span class="terminal-path">~/my-project</span>
         </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i codex prelude</span>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">git add src/auth/token.rs</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i commit -m "fix token refresh" \
+    --agent claude --tests --audit</span>
 
-<span class="t-bold">[h5i] Context workspace active</span>
-<span class="t-ai">goal:</span> <span class="t-out">ship OAuth login safely</span>
-<span class="t-out">milestones: provider integration done;</span>
-<span class="t-out">            token refresh in progress</span>
-<span class="t-warn">TODO:</span> <span class="t-out">integration test for failover path</span>
+<span class="t-pass">✔</span> <span class="t-out">commit 1a2b3c4 · notes → refs/h5i/notes</span>
+<span class="t-pass">✔</span> <span class="t-out">tests: 142 passed, 0 failed (3.1s)</span>
+<span class="t-pass">✔</span> <span class="t-out">integrity audit: 12 rules · clean</span>
 
-<span class="t-ai">Last decisions:</span>
-<span class="t-out">  THINK Redis survives process restarts</span>
-<span class="t-out">  ACT   switched session store to Redis</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post --style review</span>
-<span class="t-out"># same context, rendered for reviewers</span></pre></div>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --limit 1</span>
+<span class="t-out"># the diff — now with the </span><span class="t-ai">why</span><span class="t-out"> attached</span></pre></div>
       </div>
-    </div>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 5 — h5i context
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:24px;">
-  <div style="width:100%;max-width:1020px;">
-    <div class="section-tag">Feature · h5i recall context</div>
-    <h2>Reasoning that survives<br>session resets</h2>
-
-    <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
       <div style="display:flex;flex-direction:column;gap:14px;">
-        <p style="font-size:1.15rem;">Version-controlled OBSERVE / THINK / ACT trace stored in <code>refs/h5i/context</code>. Snapshots on every commit. Branches like git.</p>
-        <div class="feat-card">
-          <span class="feat-cmd">h5i recall context trace</span>
-          <h3 style="margin-top:4px;">Trace entries</h3>
-          <p class="feat-desc">Log each reasoning step as OBSERVE, THINK, or ACT — persists across session resets.</p>
-        </div>
-        <div class="feat-card">
-          <span class="feat-cmd">h5i recall context search "…"</span>
-          <h3 style="margin-top:4px;">Targeted retrieval</h3>
-          <p class="feat-desc">BM25 over traces + git co-change. Replaces exploratory Read chains with ranked candidates.</p>
-        </div>
-      </div>
-
-      <!-- Context DAG -->
-      <div class="ctx-dag-wrap">
-        <div class="ctx-dag">
-          <!-- init -->
-          <div class="dag-row">
-            <div class="dag-node dag-init"><span class="dag-dot">●</span> init · feat/auth</div>
-          </div>
-          <div class="dag-vline"></div>
-          <!-- observe -->
-          <div class="dag-row">
-            <div class="dag-node dag-obs"><span class="dag-tag cyan">OBSERVE</span> auth.rs ×4</div>
-          </div>
-          <div class="dag-vline"></div>
-          <!-- think + branch -->
-          <div class="dag-fork">
-            <div class="dag-fork-main">
-              <div class="dag-node dag-think"><span class="dag-tag yellow">THINK</span> use Arc injection</div>
-            </div>
-            <div class="dag-fork-branch">
-              <div class="dag-hline"></div>
-              <div style="display:flex;flex-direction:column;align-items:flex-start;gap:5px;">
-                <div class="dag-branch-label">branch: experiment/mutex</div>
-                <div class="dag-node dag-think-alt"><span class="dag-tag yellow">THINK</span> try Mutex</div>
-                <div class="dag-abandoned">✗ abandoned</div>
-              </div>
-            </div>
-          </div>
-          <div class="dag-vline"></div>
-          <!-- act -->
-          <div class="dag-row">
-            <div class="dag-node dag-act"><span class="dag-tag green">ACT</span> inject Arc into middleware</div>
-          </div>
-          <div class="dag-vline"></div>
-          <!-- commit -->
-          <div class="dag-row">
-            <div class="dag-node dag-commit"><span class="dag-dot red">✓</span> commit · "analyzed auth"</div>
-          </div>
-          <div class="dag-vline"></div>
-          <!-- observe 2 -->
-          <div class="dag-row">
-            <div class="dag-node dag-obs"><span class="dag-tag cyan">OBSERVE</span> tests/ ×2</div>
-          </div>
-          <div class="dag-vline"></div>
-          <!-- commit 2 -->
-          <div class="dag-row">
-            <div class="dag-node dag-commit"><span class="dag-dot red">✓</span> commit · "updated tests"</div>
+        <p style="font-size:1.1rem;">One command turns an agent's edit into a reviewable record — written to <code>refs/h5i/notes</code>, never touching your source tree.</p>
+        <div class="card">
+          <div class="rec">
+            <div class="rec-row"><span class="rec-k">prompt</span><span class="rec-v">"harden refresh window"</span></div>
+            <div class="rec-row"><span class="rec-k">model</span><span class="rec-v">claude-sonnet-4-6 · 8.4k tokens</span></div>
+            <div class="rec-row"><span class="rec-k">agent</span><span class="rec-v">claude-code</span></div>
+            <div class="rec-row"><span class="rec-k">read</span><span class="rec-v">token.rs, session.rs, 2 more</span></div>
+            <div class="rec-row"><span class="rec-k">tests</span><span class="rec-v"><span class="green">142 passed</span> · 0 failed</span></div>
+            <div class="rec-row"><span class="rec-k">audit</span><span class="rec-v"><span class="green">clean</span> · 12 deterministic rules</span></div>
           </div>
         </div>
       </div>
@@ -700,73 +709,138 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 5b — h5i claims  (token reduction)
+     SLIDE 5 — h5i msg (agent radio)
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:24px;">
+  <div style="width:100%;max-width:1040px;">
+    <div class="section-tag">Feature · h5i msg</div>
+    <h2>Claude and Codex coordinate<br><span class="red">through Git</span></h2>
+
+    <div class="g2" style="margin-top:26px;align-items:start;gap:28px;">
+      <div class="thread">
+        <div class="bubble left">
+          <div class="meta"><span class="who">claude</span> → codex <span class="kind-tag kind-review">REVIEW_REQUEST</span></div>
+          <div class="body">review token refresh on <code>feat/auth</code> — focus <code>token.rs</code>, risk: expiry edges</div>
+        </div>
+        <div class="bubble right">
+          <div class="meta">codex → <span class="who">claude</span> <span class="kind-tag kind-risk">RISK</span></div>
+          <div class="body">cache crosses requests under load — flagged <code>session.rs:88</code></div>
+        </div>
+        <div class="bubble left">
+          <div class="meta"><span class="who">claude</span> → codex <span class="kind-tag kind-ask">ACK</span></div>
+          <div class="body">good catch — scoping the cache per-request now</div>
+        </div>
+        <div class="bubble right">
+          <div class="meta">codex → <span class="who">claude</span> <span class="kind-tag kind-done">DONE</span></div>
+          <div class="body">re-reviewed 1a2b3c4 — ships. see PR #42</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <p style="font-size:1.1rem;">Multiple agents share one repo. h5i gives them a typed message channel — <span class="green">ask</span>, <span class="yellow">review</span>, <span class="red">risk</span>, <span class="cyan">handoff</span> — stored append-only in <code>refs/h5i/msg</code>.</p>
+        <div class="feat-card">
+          <span class="feat-cmd">h5i msg review --focus token.rs codex "…"</span>
+          <h3 style="margin-top:4px;">Typed work handoffs</h3>
+          <p class="feat-desc">The i5h protocol: ASK, REVIEW, RISK, HANDOFF, ACK, DONE — threaded by reply, union-merged across clones.</p>
+        </div>
+        <div class="feat-card">
+          <span class="feat-cmd">h5i msg wait  ·  h5i share push</span>
+          <h3 style="margin-top:4px;">No server, no daemon</h3>
+          <p class="feat-desc">The whole conversation travels with the repo. An idle agent is woken when a reply lands.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SLIDE 6 — objects (token reduction)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:1020px;">
-    <div class="section-tag">Feature · h5i capture claim</div>
-    <h2>6× fewer file reads.<br>Same answer.</h2>
+    <div class="section-tag">Feature · h5i capture run</div>
+    <h2>Tool output stops eating<br>the context window</h2>
+    <p class="lede">A test or build log can be megabytes. The agent needs the two failures and the count — not the noise. h5i stores raw output out-of-band and surfaces a tiny structured summary.</p>
 
-    <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
-      <div style="display:flex;flex-direction:column;gap:14px;">
-        <p style="font-size:1.15rem;">Agents burn tokens every session re-deriving what they already figured out last time. <code>h5i capture claim</code> records each conclusion with its evidence pinned as a Merkle hash over the files it depends on — stays <span class="green">live</span> until any evidence blob changes, then <span class="red">auto-invalidates</span>.</p>
-        <div class="feat-card">
-          <span class="feat-cmd">h5i capture claim "…" --path src/api.rs</span>
-          <h3 style="margin-top:4px;">Content-addressed facts</h3>
-          <p class="feat-desc">Evidence = sha256 over (path, blob_oid) pairs at HEAD. Git tells you when they're stale — no TTL, no guessing.</p>
-        </div>
-        <div class="feat-card">
-          <span class="feat-cmd">h5i recall context prompt</span>
-          <h3 style="margin-top:4px;">Preamble injection</h3>
-          <p class="feat-desc">Live claims render as <code>## Known facts</code> at session start. Agent treats them as pre-verified — skips re-reading.</p>
-        </div>
+    <div class="oflow" style="margin-top:26px;">
+      <div class="obox raw">
+        <span class="otag">without h5i · lands in context</span>
+        <span class="obig">3,029 tok</span>
+        <span class="oline">error[E0382]: borrow of moved value …</span>
+        <span class="oline">warning: unused import …</span>
+        <span class="oline">… 4,200 more lines …</span>
       </div>
-      <div class="terminal">
-        <div class="terminal-bar">
+      <div class="oarrow"><span class="achar">→</span><span class="albl">capture</span></div>
+      <div class="obox man">
+        <span class="otag">with h5i · lands in context</span>
+        <span class="obig">257 tok</span>
+        <span class="oline">1 error, 1 warning · exit 101</span>
+        <span class="oline">E0382 src/main.rs:42</span>
+        <span class="oline">raw_oid 82bf… (rehydrate any time)</span>
+      </div>
+    </div>
+
+    <div class="g3" style="margin-top:22px;">
+      <div class="feat-card"><span class="feat-cmd">h5i capture run -- cargo test</span><p class="feat-desc" style="margin-top:6px;">Wrap any command. Failures always captured & searchable.</p></div>
+      <div class="feat-card"><span class="feat-cmd">h5i recall objects --status failed</span><p class="feat-desc" style="margin-top:6px;">Query findings across every capture — "did this fail before?"</p></div>
+      <div class="feat-card"><span class="feat-cmd">h5i recall object 82bf…</span><p class="feat-desc" style="margin-top:6px;">Rehydrate full bytes on demand — never sits in context unless asked.</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SLIDE 7 — share pr (reviewer cockpit)
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:24px;">
+  <div style="width:100%;max-width:1020px;">
+    <div class="section-tag">Feature · h5i share pr</div>
+    <h2>The PR becomes the<br>reviewer's cockpit</h2>
+
+    <div class="g2" style="margin-top:24px;align-items:start;gap:28px;">
+      <div class="pr">
+        <div class="pr-head">
           <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">A/B evaluation</span>
+          <span class="gh">PR #42 · fix token refresh</span>
+          <span class="marker">h5i ✓ sticky</span>
         </div>
-        <div class="terminal-body"><pre><span class="t-bold">── A/B · 5 trials per arm ─────────────────</span>
-  <span class="t-out">metric            No claims   With claims      Δ</span>
-  <span class="t-out">────────────────  ─────────   ───────────  ─────</span>
-  <span class="t-ai">Read tool calls   6.2 ± 0.4     4.0 ± 0    −35%</span>
-  <span class="t-ai">Cache-read tok.    793,425       511,824    −35%</span>
-  <span class="t-ai">Assistant turns  25.6 ± 3.8   16.6 ± 3.1    −35%</span>
-  <span class="t-ai">Est. session cost    ~$4.35        ~$2.13    −51%</span>
-  <span class="t-ai">Task fidelity           5/5          5/5  ✓</span>
-
-<span class="t-ai">  ✔  All 5 seeded trials read exactly the 4</span>
-<span class="t-ai">     relevant HTTP files.</span></pre></div>
+        <div class="pr-body">
+          <div class="pr-sec"><span class="pr-h">Intent</span><span class="pr-c">Ship OAuth token refresh safely</span></div>
+          <div class="pr-sec"><span class="pr-h">Review focus</span><span class="pr-c"><code>token.rs</code> refresh window · cache scope in <code>session.rs</code></span></div>
+          <div class="pr-sec"><span class="pr-h">Provenance</span><span class="pr-c">3 AI commits · claude-code, codex · all tested</span></div>
+          <div class="pr-sec"><span class="pr-h">Audit</span><span class="pr-c"><span class="green">no secrets</span> · <span class="green">no injection</span> · 1 blind edit reviewed</span></div>
+          <div class="pr-sec"><span class="pr-h">Agent threads</span><span class="pr-c">codex flagged cache scope → resolved</span></div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <p style="font-size:1.1rem;">One command renders everything h5i knows about the branch into a sticky, idempotent GitHub PR comment — so a human reviewer sees the context, not just the diff.</p>
+        <div class="feat-card">
+          <span class="feat-cmd">h5i share pr post --style review</span>
+          <h3 style="margin-top:4px;">Sticky &amp; idempotent</h3>
+          <p class="feat-desc">Upserts in place via an HTML marker — re-run after every push, no comment spam. Uses the <code>gh</code> CLI you already have.</p>
+        </div>
+        <div class="feat-card">
+          <span class="feat-cmd">h5i share pr body --style review</span>
+          <h3 style="margin-top:4px;">Render anywhere</h3>
+          <p class="feat-desc">Print the markdown to stdout — pipe into CI or any review tool, no <code>gh</code> required.</p>
+        </div>
       </div>
     </div>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 6 — Compliance & Policy
+     SLIDE 8 — audit
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
-  <div style="width:100%;max-width:1020px;">
+  <div style="width:100%;max-width:1040px;">
     <div class="section-tag">Feature · h5i audit</div>
-    <h2>Enforce rules.<br>Generate audit reports.</h2>
+    <h2>Deterministic risk triage —<br><span class="red">no model in the loop</span></h2>
 
-    <div class="g2" style="margin-top:28px;align-items:start;gap:28px;">
-      <div style="display:flex;flex-direction:column;gap:14px;">
-        <div class="feat-card">
-          <span class="feat-cmd">h5i audit policy init</span>
-          <h3 style="margin-top:4px;">Policy rules</h3>
-          <p class="feat-desc">Define TOML rules — require audit flag, minimum prompt length, model allowlist, test coverage threshold.</p>
-        </div>
-        <div class="feat-card">
-          <span class="feat-cmd">h5i audit policy check</span>
-          <h3 style="margin-top:4px;">Pre-commit enforcement</h3>
-          <p class="feat-desc">Checks staged files against policy before every commit. Blocks on errors, warns on violations.</p>
-        </div>
-        <div class="feat-card">
-          <span class="feat-cmd">h5i audit compliance --since …</span>
-          <h3 style="margin-top:4px;">Audit report</h3>
-          <p class="feat-desc">AI contribution ratio, audit coverage, policy violations, and top-risk files over any date range.</p>
-        </div>
+    <div class="g2" style="margin-top:24px;align-items:start;gap:28px;">
+      <div style="display:flex;flex-direction:column;gap:11px;">
+        <p style="font-size:1.08rem;">Every signal is rule-based and reproducible — blind edits, scope creep, secrets, prompt injection. Riskiest commits surface first; bad ones blocked at commit time.</p>
+        <div class="feat-card"><span class="feat-cmd">h5i audit review --limit 50</span><p class="feat-desc" style="margin-top:6px;">Triage funnel — riskiest AI commits first, before humans spend review cycles.</p></div>
+        <div class="feat-card"><span class="feat-cmd">h5i audit scan</span><p class="feat-desc" style="margin-top:6px;">Scan reasoning traces for prompt-injection and exfiltration patterns.</p></div>
+        <div class="feat-card"><span class="feat-cmd">h5i audit policy init</span><p class="feat-desc" style="margin-top:6px;"><code>.h5i/policy.toml</code> rules — block on credential leak, require audit on auth.</p></div>
       </div>
       <div class="terminal">
         <div class="terminal-bar">
@@ -774,91 +848,65 @@
           <span class="terminal-path">~/my-project</span>
         </div>
         <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit policy check</span>
-
   <span class="t-pass">✔</span> <span class="t-out">model declared (claude-sonnet-4-6)</span>
   <span class="t-pass">✔</span> <span class="t-out">audit flag present</span>
   <span class="t-red">✗</span> <span class="t-red">test metrics missing          [error]</span>
-  <span class="t-warn">⚠</span> <span class="t-warn">prompt length &lt; 20 chars      [warn]</span>
-
-  <span class="t-red">1 error · 1 warning — commit blocked</span>
+  <span class="t-red">1 error — commit blocked</span>
 
 <span class="t-prompt">$</span> <span class="t-cmd">h5i audit compliance --since 2026-04-01</span>
-
 <span class="t-bold">── Compliance Report ──────────────────────</span>
-  <span class="t-out">AI-generated:    </span><span class="t-pass">74%</span><span class="t-out"> of commits (30 days)</span>
+  <span class="t-out">AI-generated:    </span><span class="t-pass">74%</span><span class="t-out"> of commits (30d)</span>
   <span class="t-out">Audit coverage:  </span><span class="t-pass">91%</span>
   <span class="t-out">Policy errors:   </span><span class="t-red">3</span>  <span class="t-out">warnings: </span><span class="t-warn">8</span>
-  <span class="t-out">Top risk file:   </span><span class="t-ai">src/billing/token.rs</span></pre></div>
+  <span class="t-out">Top risk file:   </span><span class="t-ai">src/billing/token.rs</span>
+  <span class="t-out">Export:          </span><span class="t-out">--format html · audit.html</span></pre></div>
       </div>
     </div>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 7 — More features
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:24px;">
-  <div style="width:100%;max-width:960px;">
-    <div class="section-tag">More features</div>
-    <h2>Everything you need to<br>audit AI-generated code</h2>
-
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:28px;">
-      <div class="feat-card">
-        <span class="feat-cmd">h5i capture commit --audit</span>
-        <h3 style="margin-top:4px;">Integrity audit</h3>
-        <p class="feat-desc">12 deterministic rules — credential leaks, CI tampering, scope creep.</p>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">h5i recall blame &lt;file&gt;</span>
-        <h3 style="margin-top:4px;">AI-aware blame</h3>
-        <p class="feat-desc">Per-line authorship with agent name, model, and test badge.</p>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">h5i rewind &lt;sha&gt;</span>
-        <h3 style="margin-top:4px;">Safe rewind</h3>
-        <p class="feat-desc">Non-destructive restore to any past commit. WIP auto-backed up.</p>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">h5i audit scan</span>
-        <h3 style="margin-top:4px;">Injection detection</h3>
-        <p class="feat-desc">Scans the reasoning trace for prompt-injection patterns.</p>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">h5i capture memory</span>
-        <h3 style="margin-top:4px;">Memory tracking</h3>
-        <p class="feat-desc">Snapshots Claude's memory at every commit, diffs across versions.</p>
-      </div>
-      <div class="feat-card">
-        <span class="feat-cmd">h5i serve</span>
-        <h3 style="margin-top:4px;">Web dashboard</h3>
-        <p class="feat-desc">Timeline, Integrity, Intent Graph, Memory, Sessions at localhost:7150.</p>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 7 — Comparison
+     SLIDE 9 — Why now / proof
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:28px;">
-  <div style="width:100%;max-width:760px;">
-    <div class="section-tag">Positioning</div>
-    <h2>h5i vs. plain Git</h2>
+  <div style="width:100%;max-width:940px;">
+    <div class="section-tag">Why now</div>
+    <h2>Every AI-heavy team already has<br>Git, PRs, and agents</h2>
+    <p class="lede">The workflow won't change — agents are writing more of the diff every quarter, and the missing layer is the evidence that makes that diff reviewable. h5i drops in on top of what teams already run.</p>
 
-    <div class="vs-table" style="margin-top:28px;">
-      <div class="vs-row head">
-        <div class="vs-cell">Capability</div>
-        <div class="vs-cell vs-center">Plain Git</div>
-        <div class="vs-cell vs-center" style="color:var(--red-text);">h5i</div>
-      </div>
-      <div class="vs-row"><div class="vs-cell">Who changed what</div><div class="vs-cell vs-center green">✔</div><div class="vs-cell vs-center green">✔</div></div>
-      <div class="vs-row"><div class="vs-cell">AI provenance — prompt, model, agent</div><div class="vs-cell vs-center red">✗</div><div class="vs-cell vs-center green">✔</div></div>
-      <div class="vs-row"><div class="vs-cell">Which files the AI read, not just edited</div><div class="vs-cell vs-center red">✗</div><div class="vs-cell vs-center green">✔</div></div>
-      <div class="vs-row"><div class="vs-cell">Blind-edit and uncertainty detection</div><div class="vs-cell vs-center red">✗</div><div class="vs-cell vs-center green">✔</div></div>
-      <div class="vs-row"><div class="vs-cell">Reasoning persists across sessions</div><div class="vs-cell vs-center red">✗</div><div class="vs-cell vs-center green">✔</div></div>
-      <div class="vs-row"><div class="vs-cell">Targeted retrieval — no exploratory reads</div><div class="vs-cell vs-center red">✗</div><div class="vs-cell vs-center green">✔</div></div>
-      <div class="vs-row"><div class="vs-cell">Works with existing git remotes</div><div class="vs-cell vs-center green">✔</div><div class="vs-cell vs-center green">✔</div></div>
+    <div class="g3" style="margin-top:28px;">
+      <div class="metric"><span style="font-family:var(--mono);font-size:0.86rem;color:var(--text-faint);letter-spacing:0.08em;">UP TO</span><span class="mv">95%</span><span class="ml">less token waste with the object store</span></div>
+      <div class="metric"><span class="mv">3.5×</span><span class="ml">richer PR briefs for reviewers</span></div>
+      <div class="metric"><span class="mv">1.8×</span><span class="ml">multi-agent productivity</span></div>
     </div>
+
+    <div class="g3" style="margin-top:18px;">
+      <div class="card-sm"><span class="pill">no migration</span><p style="margin-top:8px;font-size:0.98rem;">Works with existing Git remotes — nothing to replace.</p></div>
+      <div class="card-sm"><span class="pill cyan">agent-native</span><p style="margin-top:8px;font-size:0.98rem;">Built for teams merging AI-authored diffs from many agents.</p></div>
+      <div class="card-sm"><span class="pill green">open source</span><p style="margin-top:8px;font-size:0.98rem;">Apache-2.0 Rust core — your data stays in your repo.</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SLIDE 10 — Closing / CTA
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:24px;">
+  <div class="hero-glow"></div>
+  <div style="width:100%;max-width:820px;text-align:center;display:flex;flex-direction:column;align-items:center;">
+    <div class="hero-badge">AI-aware version control</div>
+    <h1>Version control that<br>remembers <span class="shine-text">why</span></h1>
+    <p class="mono" style="margin:14px auto 0;font-size:1rem;color:var(--text-dim);letter-spacing:0.01em;">Git shows the diff. <span class="red">h5i shows the agent work behind it.</span></p>
+    <p class="lede" style="margin:16px auto 0;text-align:center;">A Git sidecar — provenance on every commit, agents that coordinate, tool output that doesn't bloat context, PRs a human can actually review. Without replacing Git.</p>
+
+    <div class="cta-install" style="margin-top:30px;">
+      <span class="pmt">$</span> curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
+    </div>
+    <div class="cta-links">
+      <a class="btn btn-primary" href="https://h5i.dev">h5i.dev</a>
+      <a class="btn btn-ghost" href="https://github.com/h5i-dev/h5i">github.com/h5i-dev/h5i</a>
+    </div>
+    <p class="kicker" style="margin-top:22px;">Try it on your next AI-assisted branch — <code>h5i init</code>.</p>
   </div>
 </div>
 
