@@ -2634,3 +2634,4 @@ _[Checkpoint: 6a2626d5 — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a26295b — wrote home_sections.html; wrote home_css.txt]_
 ---
 
+[02:34:05] OBSERVE: read docs/index.html
