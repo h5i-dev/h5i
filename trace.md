@@ -2626,3 +2626,4 @@ _[Checkpoint: 6a2626d5 — session ended (auto-checkpoint)]_
 [02:27:14] ACT: wrote home_css.txt
 [02:30:30] OBSERVE: read h_solution.png
 [02:30:51] THINK: Now I'll author the deck-derived homepage sections (using the homepage's native classes plus ported deck visuals).
+[02:30:51] THINK: I'll add `/features/` to the sitemap with high priority (it's now a primary content page).
