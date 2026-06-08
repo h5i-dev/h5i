@@ -2627,3 +2627,4 @@ _[Checkpoint: 6a2626d5 — session ended (auto-checkpoint)]_
 [02:30:30] OBSERVE: read h_solution.png
 [02:30:51] THINK: Now I'll author the deck-derived homepage sections (using the homepage's native classes plus ported deck visuals).
 [02:30:51] THINK: I'll add `/features/` to the sitemap with high priority (it's now a primary content page).
+[02:30:51] THINK: Let me do a final integrity sweep — check for any internal links pointing to the now-removed homepage anchors (`#features`, `#usecases`, `#dashboard`) across the site.
