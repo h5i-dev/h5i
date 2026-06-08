@@ -2599,3 +2599,9 @@ _[Checkpoint: 6a262326 — Continued h5i collaboration on pitch deck: reviewed C
 ---
 
 [02:05:16] THINK: Let me stage it and commit via `h5i commit` (per the repo's workflow), since I'm already on the `improve-pitch` branch.
+
+
+---
+_[Checkpoint: 6a26235c — edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html]_
+---
+
