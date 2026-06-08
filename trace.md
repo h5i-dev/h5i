@@ -2598,3 +2598,4 @@ _[Checkpoint: 6a26230e — edited docs/pitch/index.html; edited docs/pitch/index
 _[Checkpoint: 6a262326 — Continued h5i collaboration on pitch deck: reviewed Claude's docs/pitch/index.html rebuild, blocked stale/invalid command copy, verified fixes, and approved final content accuracy.]_
 ---
 
+[02:05:16] THINK: Let me stage it and commit via `h5i commit` (per the repo's workflow), since I'm already on the `improve-pitch` branch.
