@@ -2660,3 +2660,4 @@ _[Checkpoint: 6a262c2a — edited docs/features/index.html; edited docs/index.ht
 [02:47:03] ACT: edited docs/features/index.html
 [02:47:13] ACT: edited docs/features/index.html
 [02:47:42] OBSERVE: read feat_top.png
+[02:47:56] NOTE: DEFERRAL (~/Dev/h5i/docs/index.html): image or a smaller/looping-optimized version. Leaving as-is for now. Ready to commit the whole batch (deck-derived homepage + new `/features/` page + …
