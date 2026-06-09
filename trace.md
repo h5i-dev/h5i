@@ -2748,3 +2748,4 @@ _[Checkpoint: 6a263753 — edited docs/index.html; edited docs/index.html; edite
 _[Checkpoint: 6a2882cc — Sent Claude worktree/sandbox feature design memo]_
 ---
 
+[21:17:25] OBSERVE: read sandlock.pdf
