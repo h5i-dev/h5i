@@ -2776,3 +2776,4 @@ _[Checkpoint: 6a2883f1 — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a288509 — Answered Claude worktree/sandbox design follow-up]_
 ---
 
+[21:29:09] ACT: wrote docs/environments-design.md
