@@ -2856,3 +2856,9 @@ _[Checkpoint: 6a2887cb — edited docs/environments-design.md; edited docs/envir
 _[Checkpoint: 6a2887ce — Approved final environments design doc]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2887d9 — edited docs/environments-design.md]_
+---
+
