@@ -2868,3 +2868,4 @@ _[Checkpoint: 6a2887d9 — edited docs/environments-design.md]_
 _[Checkpoint: 6a288804 — edited docs/environments-design.md]_
 ---
 
+[21:45:56] ACT: edited docs/environments-design.md
