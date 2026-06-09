@@ -27,6 +27,44 @@ a reasoning DAG and a content-addressed evidence log," not "another sandbox."
 
 The mechanism for that bind is the **triple fusion** (§3).
 
+### 1.1 Comparison with existing tools and `git worktree`
+
+Detailed, by dimension (drawn from the systems under `../sandbox-design-ref/`):
+
+| Tool | Isolation boundary | Workspace / branch model | Network control | Provenance & audit | Reasoning bound? | Review / merge lifecycle | Footprint |
+|---|---|---|---|---|---|---|---|
+| **`git worktree`** (native) | **none** — same host/user, shared object store, no syscall/net confinement | native branch + linked worktree | none | git history only | no | ordinary git (manual merge/PR) | zero deps, no root, no daemon |
+| **branchfs** (FUSE CoW) | filesystem only (CoW); no syscall/net | instant CoW branches, nested, commit/abort to parent | none | none | no | filesystem merge (first-writer), not semantic | FUSE daemon |
+| **Sandlock / sandbox-runtime** (OS-level) | unprivileged Landlock+seccomp / bwrap+seccomp+Seatbelt | none (ephemeral; Sandlock has COW effects) | Landlock TCP / proxy allowlist (host/path) | none | no | none | lightweight, no root/daemon (proxies opt-in) |
+| **container-use** (Dagger) | container per agent | git worktree + branch in a fork repo | container net + service tunneling | per-env logs/notes (not content-addressed) | no | git push/pull to fork; apply/abort | Docker + Dagger engine (daemon) |
+| **OpenSandbox** | Docker/K8s; opt. gVisor/Kata/Firecracker; egress sidecar | ephemeral container/pod; volumes; pause→OCI snapshot | egress sidecar (DNS filter, nftables) | lifecycle-server logs (not git-native) | no | none (it's a sandbox platform) | K8s/Docker control plane (heavy) |
+| **E2B** | managed cloud micro-VM/container | ephemeral cloud sandbox + files API | managed | none git-native | no | none | remote service + SDK (account) |
+| **Firecracker / zeroboot** (microVM) | **KVM hardware** (zeroboot: CoW snapshot fork) | VM rootfs / memory snapshot | VM net config | none | no | none | KVM, jailer, VM images (infra) |
+| **h5i environments** (this) | **tiered claims:** workspace → process (our Landlock/seccomp/netns) → container → hardened → microvm | **native git worktree** (default), pluggable (branchfs later) | deny\|host (process-v1); domain/HTTP allowlist on supervisor/container | **content-addressed `objects` captures, git-native, audit-reconstructable** | **yes — triple fusion (context branch)** | **`propose`/`apply`, reviewer-selected, PR brief, parallel arena** | git2 (no new deps) for workspace; small pure-Rust for process tier; opt-in shell-outs above |
+
+Compact capability matrix (✓ full · ◐ partial/opt-in · ✗ none):
+
+| Capability | git worktree | branchfs | Sandlock | container-use | OpenSandbox | E2B | Firecracker | **h5i env** |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Workspace/branch isolation | ✓ | ✓ | ✗ | ✓ | ◐ | ◐ | ◐ | ✓ |
+| Syscall/process sandbox | ✗ | ✗ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ |
+| Network egress control | ✗ | ✗ | ✓ | ◐ | ✓ | ◐ | ◐ | ◐ |
+| Hardware-grade option | ✗ | ✗ | ✗ | ✗ | ◐ | ✓ | ✓ | ◐ |
+| Content-addressed provenance | ✗ | ✗ | ✗ | ◐ | ◐ | ✗ | ✗ | ✓ |
+| Reasoning / context bound | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| Git-native review lifecycle | ◐ | ✗ | ✗ | ◐ | ✗ | ✗ | ✗ | ✓ |
+| Local, no daemon/root | ✓ | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ |
+
+**Reading of the matrix.** `git worktree` gives us workspace isolation for free
+but *nothing else* — no sandbox, no provenance, no reasoning bind, no richer
+review than manual git. That is exactly why h5i builds *on top of* it rather
+than replacing it (§4). The dedicated sandboxes (Sandlock, container-use,
+OpenSandbox, microVMs) each own one or two columns but **none binds reasoning to
+execution or produces a content-addressed, git-native audit trail** — the two
+columns only h5i fills. h5i is also the only row that is simultaneously
+**local-first, dependency-light, and review-native**, while keeping an honest
+upgrade path into the stronger isolation columns via opt-in backends.
+
 ---
 
 ## 2. Threat model
