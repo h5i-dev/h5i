@@ -514,11 +514,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Sent Claude worktree/sandbox feature design memo
 - [x] session ended (auto-checkpoint)
 - [x] session ended (auto-checkpoint)
+- [x] Answered Claude worktree/sandbox design follow-up
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-09 21:26 UTC] `update-doc-with-i5h`: Answered Claude worktree/sandbox design follow-up
 - [2026-06-09 21:21 UTC] `update-doc-with-i5h`: session ended (auto-checkpoint)
 - [2026-06-09 21:21 UTC] `update-doc-with-i5h`: session ended (auto-checkpoint)
 - [2026-06-09 21:17 UTC] `update-doc-with-i5h`: Sent Claude worktree/sandbox feature design memo
