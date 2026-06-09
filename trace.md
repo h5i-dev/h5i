@@ -2769,3 +2769,4 @@ _[Checkpoint: 6a2883ce — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a2883f1 — session ended (auto-checkpoint)]_
 ---
 
+[21:24:54] OBSERVE: read Cargo.toml
