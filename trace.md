@@ -2829,3 +2829,4 @@ _[Checkpoint: 6a28873d — Applied Codex's 7 review fixes to env design doc]_
 _[Checkpoint: 6a288756 — edited docs/environments-design.md; edited docs/environments-design.md; edited docs/environments-design.md]_
 ---
 
+[21:37:44] NOTE: DEFERRAL (~/Dev/h5i/docs/environments-design.md): ost` only; a non-empty `net.egress` **fails closed** and is deferred to the supervisor/container phase | | 2 | Landlock is allowlist-only (no deny rul…
