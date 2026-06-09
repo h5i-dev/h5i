@@ -3059,3 +3059,16 @@ Final wording fix: §7 default profile bullet now deny-network (was stale 'egres
 
 ---
 
+## Commit 6a2887cb — 2026-06-09 21:38 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+Final wording fix: §7 default profile bullet now deny-network (was stale 'egress-allowlist'). Codex spot-check passed all 7 prior fixes and approved the design direction. docs/environments-design.md is in approved, doc-only state.
+
+### This Commit's Contribution
+
+
+---
+
