@@ -2942,3 +2942,16 @@ Improve docs website: simplify text, add msg feature to top page, write detailed
 
 ---
 
+## Commit 6a2885b8 — 2026-06-09 21:29 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+docs/environments-design.md: single 'h5i environment' (env) abstraction unifying worktree+sandbox. Triple fusion (git branch + ctx branch + manifest). Leverages native git worktree via git2 (zero new deps); own minimal sandbox via Landlock+seccomp+netns. isolation claims not tiers. objects = evidence layer. Doc-only per user.
+
+---
+

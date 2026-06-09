@@ -2777,3 +2777,9 @@ _[Checkpoint: 6a288509 — Answered Claude worktree/sandbox design follow-up]_
 ---
 
 [21:29:09] ACT: wrote docs/environments-design.md
+
+
+---
+_[Checkpoint: 6a2885b8 — Wrote environments design doc]_
+---
+
