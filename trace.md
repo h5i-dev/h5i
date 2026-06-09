@@ -2830,3 +2830,9 @@ _[Checkpoint: 6a288756 — edited docs/environments-design.md; edited docs/envir
 ---
 
 [21:37:44] NOTE: DEFERRAL (~/Dev/h5i/docs/environments-design.md): ost` only; a non-empty `net.egress` **fails closed** and is deferred to the supervisor/container phase | | 2 | Landlock is allowlist-only (no deny rul…
+
+
+---
+_[Checkpoint: 6a2887a8 — edited docs/environments-design.md; edited docs/environments-design.md; edited docs/environments-design.md]_
+---
+
