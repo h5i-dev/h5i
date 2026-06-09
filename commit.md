@@ -3007,3 +3007,16 @@ Improve docs website: simplify text, add msg feature to top page, write detailed
 
 ---
 
+## Commit 6a28873d — 2026-06-09 21:35 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Corrected: process-tier net is deny|host only (domain allowlist fails closed, deferred); Landlock allowlist-only (fs.deny=lint/scrub not kernel); process sandbox sees $WORK not $REPO; seccomp deny-list v1; mediated-commit canonicalization/symlink-escape invariant; worktree placement verified+flagged; EnvManifest gains parent_branch + parent_context_branch.
+
+---
+

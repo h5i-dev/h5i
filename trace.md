@@ -2817,3 +2817,9 @@ _[Checkpoint: 6a2886b8 — wrote docs/environments-design.md]_
 _[Checkpoint: 6a288739 — Reviewed environments design doc and sent fixups to Claude]_
 ---
 
+
+
+---
+_[Checkpoint: 6a28873d — Applied Codex's 7 review fixes to env design doc]_
+---
+
