@@ -2733,3 +2733,4 @@ _[Checkpoint: 6a263753 — edited docs/index.html; edited docs/index.html; edite
 [21:14:30] OBSERVE: read environment.go
 [21:14:32] OBSERVE: read src/msg.rs
 [21:14:36] OBSERVE: read src/session_log.rs
+[21:14:36] OBSERVE: read design.md
