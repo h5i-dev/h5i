@@ -520,11 +520,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] wrote docs/environments-design.md
 - [x] wrote docs/environments-design.md
 - [x] Reviewed environments design doc and sent fixups to Claude
+- [x] Applied Codex's 7 review fixes to env design doc
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-09 21:35 UTC] `update-doc-with-i5h`: Applied Codex's 7 review fixes to env design doc
 - [2026-06-09 21:35 UTC] `update-doc-with-i5h`: Reviewed environments design doc and sent fixups to Claude
 - [2026-06-09 21:33 UTC] `update-doc-with-i5h`: wrote docs/environments-design.md
 - [2026-06-09 21:29 UTC] `update-doc-with-i5h`: wrote docs/environments-design.md
