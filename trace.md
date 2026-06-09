@@ -2720,3 +2720,4 @@ _[Checkpoint: 6a263753 — edited docs/index.html; edited docs/index.html; edite
 [21:14:16] OBSERVE: read ../sandbox-design-ref/OpenSandbox/docs/secure-container.md
 [21:14:16] OBSERVE: read ../sandbox-design-ref/container-use/environment/README.md
 [21:14:16] OBSERVE: read ../sandbox-design-ref/E2B/README.md
+[21:14:16] OBSERVE: read ../sandbox-design-ref/firecracker/docs/jailer.md
