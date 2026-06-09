@@ -2724,3 +2724,4 @@ _[Checkpoint: 6a263753 — edited docs/index.html; edited docs/index.html; edite
 [21:14:16] OBSERVE: searched src/main.rs for "Commands|Subcommand|Capture|Objects|context|msg""
 [21:14:16] OBSERVE: read README.md
 [21:14:17] OBSERVE: read AGENTS.md
+[21:14:17] OBSERVE: read architecture.md
