@@ -526,11 +526,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Env design doc approved by Codex
 - [x] edited docs/environments-design.md; edited docs/environments-design.md; edited docs/environments-design.md
 - [x] Approved final environments design doc
+- [x] edited docs/environments-design.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-09 21:38 UTC] `update-doc-with-i5h`: edited docs/environments-design.md
 - [2026-06-09 21:38 UTC] `update-doc-with-i5h`: Approved final environments design doc
 - [2026-06-09 21:38 UTC] `update-doc-with-i5h`: edited docs/environments-design.md; edited docs/environments-design.md; edited docs/environments-design.md
 - [2026-06-09 21:38 UTC] `update-doc-with-i5h`: Env design doc approved by Codex
