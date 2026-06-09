@@ -3072,3 +3072,16 @@ Final wording fix: §7 default profile bullet now deny-network (was stale 'egres
 
 ---
 
+## Commit 6a2887ce — 2026-06-09 21:38 UTC
+
+### Branch Purpose
+Improve docs website: simplify text, add msg feature to top page, write detailed blog post on i5h messaging
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+

@@ -2850,3 +2850,9 @@ _[Checkpoint: 6a2887bd — Env design doc approved by Codex]_
 _[Checkpoint: 6a2887cb — edited docs/environments-design.md; edited docs/environments-design.md; edited docs/environments-design.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2887ce — Approved final environments design doc]_
+---
+
