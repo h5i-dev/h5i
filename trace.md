@@ -2789,3 +2789,9 @@ _[Checkpoint: 6a2885b8 — Wrote environments design doc]_
 _[Checkpoint: 6a2885c6 — wrote docs/environments-design.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2885d0 — wrote docs/environments-design.md]_
+---
+
