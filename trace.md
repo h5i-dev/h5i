@@ -2713,3 +2713,4 @@ _[Checkpoint: 6a263753 — edited docs/index.html; edited docs/index.html; edite
 [21:14:16] OBSERVE: listed files under ../sandbox-design-ref
 [21:14:16] OBSERVE: listed files under .
 [21:14:16] OBSERVE: listed files under ../sandbox-design-ref
+[21:14:16] OBSERVE: read ../sandbox-design-ref/branchfs/README.md
