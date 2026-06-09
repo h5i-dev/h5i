@@ -1,0 +1,1 @@
+{"git_oid":"5854d5e0a7b7a5926b31100c4443e38a6f0014f3","parent_oid":"c6396dc7e13b427500185e9e904041ef8f3d8f90","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"Add a comparison table against existing sandbox tools and git worktree","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-09T21:46:04.857933990Z"}
