@@ -2749,3 +2749,4 @@ _[Checkpoint: 6a2882cc — Sent Claude worktree/sandbox feature design memo]_
 ---
 
 [21:17:25] OBSERVE: read sandlock.pdf
+[21:17:38] OBSERVE: read escapebench.pdf
