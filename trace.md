@@ -2783,3 +2783,9 @@ _[Checkpoint: 6a288509 — Answered Claude worktree/sandbox design follow-up]_
 _[Checkpoint: 6a2885b8 — Wrote environments design doc]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2885c6 — wrote docs/environments-design.md]_
+---
+
