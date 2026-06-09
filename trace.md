@@ -2823,3 +2823,9 @@ _[Checkpoint: 6a288739 — Reviewed environments design doc and sent fixups to C
 _[Checkpoint: 6a28873d — Applied Codex's 7 review fixes to env design doc]_
 ---
 
+
+
+---
+_[Checkpoint: 6a288756 — edited docs/environments-design.md; edited docs/environments-design.md; edited docs/environments-design.md]_
+---
+
