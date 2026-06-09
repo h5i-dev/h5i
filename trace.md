@@ -2843,3 +2843,4 @@ _[Checkpoint: 6a2887a8 — edited docs/environments-design.md; edited docs/envir
 _[Checkpoint: 6a2887bd — Env design doc approved by Codex]_
 ---
 
+[21:38:11] OBSERVE: searched docs/environments-design.md
