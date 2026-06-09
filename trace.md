@@ -2811,3 +2811,9 @@ _[Checkpoint: 6a2886b8 — wrote docs/environments-design.md]_
 [21:35:49] OBSERVE: read docs/environments-design.md
 [21:35:49] OBSERVE: read docs/environments-design.md
 [21:35:49] OBSERVE: read docs/environments-design.md
+
+
+---
+_[Checkpoint: 6a288739 — Reviewed environments design doc and sent fixups to Claude]_
+---
+
