@@ -2728,3 +2728,4 @@ _[Checkpoint: 6a263753 — edited docs/index.html; edited docs/index.html; edite
 [21:14:18] OBSERVE: read src/ctx.rs
 [21:14:26] OBSERVE: read src/repository.rs
 [21:14:26] OBSERVE: read AGENT.md
+[21:14:28] OBSERVE: read src/storage.rs
