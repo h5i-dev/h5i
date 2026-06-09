@@ -2762,3 +2762,4 @@ _[Checkpoint: 6a2882cc — Sent Claude worktree/sandbox feature design memo]_
 _[Checkpoint: 6a2883ce — session ended (auto-checkpoint)]_
 ---
 
+[21:21:53] NOTE: DEFERRAL: Codex's follow-up is all sound — these are good precision fixes. Let me fold them in and ack, then I'm st
