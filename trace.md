@@ -37,3 +37,4 @@
 [02:05:14] OBSERVE: read src/storage.rs
 [02:05:19] OBSERVE: read src/msg.rs
 [02:05:21] OBSERVE: read src/objects.rs
+[02:05:24] OBSERVE: read tests/cli_integration.rs
