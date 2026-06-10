@@ -362,3 +362,9 @@ _[Checkpoint: 6a294441 — Shareable envs: manifest+policy in refs/h5i/env, push
 [11:02:55] THINK: Let me view the create manifest construction and the created-event append:
 [11:02:55] THINK: Let me add a helper for the "remote env" (no worktree) condition and improve the error messages in run:
 [11:02:55] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): t and skip cleanly where the confinement can't exec. Still deferred, consistent with the design's phasing and avoiding fragile external deps: containe…
+
+
+---
+_[Checkpoint: 6a29445f — edited tests/env_integration.rs; edited tests/cli_integration.rs; edited CLAUDE.md]_
+---
+
