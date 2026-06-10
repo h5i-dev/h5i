@@ -401,3 +401,4 @@ _[Checkpoint: 6a29783d — edited src/mcp.rs; edited .claude/h5i.md; edited CLAU
 ---
 
 [14:57:06] ACT: wrote src/container.rs
+[14:57:32] ACT: edited src/lib.rs
