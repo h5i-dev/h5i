@@ -18,3 +18,4 @@
 [02:04:49] OBSERVE: read src/ctx.rs
 [02:04:49] OBSERVE: read src/ctx.rs
 [02:04:52] OBSERVE: read src/ctx.rs
+[02:04:53] OBSERVE: read src/main.rs
