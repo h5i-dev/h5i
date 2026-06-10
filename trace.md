@@ -1159,3 +1159,4 @@ _[Checkpoint: 6a29cee4 — edited tests/env_integration.rs; edited tests/env_int
 
 [20:56:35] OBSERVE: read bs1ypv531.output
 [20:57:29] OBSERVE: read b6fsdid46.output
+[20:57:37] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): ), but `supervisor::run()` is still the fail-closed Phase A stub — so `env run` fails closed with "live enforcement not wired." Wiring that st…
