@@ -359,3 +359,4 @@ _[Checkpoint: 6a294441 — Shareable envs: manifest+policy in refs/h5i/env, push
 
 [11:02:55] THINK: First I need to understand the current push/pull plumbing, because for clone B to review, three things must travel: the **manifest** (currently disk-only), the **resolved policy**, and the env **code branch** (which is under `refs/heads/`, …
 [11:02:55] THINK: Now I'll refactor `append_event` into a combined `append_env_commit` that writes events + manifest + optional policy in one CAS commit, keeping `append_event` as a thin wrapper for the few callers that have no manifest (gc):
+[11:02:55] THINK: Let me view the create manifest construction and the created-event append:
