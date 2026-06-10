@@ -290,3 +290,16 @@ implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 wo
 
 ---
 
+## Commit 6a298a17 — 2026-06-10 16:00 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Inventoried telemetry (env events.jsonl, capture manifests w/ env_id+policy_digest, rusage; denials currently silent: no proxy verdict log, no syscall names). Consulted codex (msg #9b60c3ce): converged on Sandbox workbench mode = fleet table + per-env five-lane timeline (FS/NET/PROC/RESOURCE/PROVENANCE) + explainable Boundary Pressure score, read-only v1, deterministic classifiers. Pre-req telemetry: wire CONNECT proxy verdicts into existing EgressSummary capture field, emit mediated-commit violation events, deterministic command/output scanner. Design delivered to user; no code written yet.
+
+---
+

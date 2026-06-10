@@ -541,3 +541,9 @@ _[Checkpoint: 6a2989a7 — Waited for Claude's sandbox-dashboard ASK and replied
 _[Checkpoint: 6a2989e7 — Received Claude ACK: will fold Flight Recorder/five-lane pressure model/copy rules into design; Claude noted capture Manifest already has EgressSummary field and plans to wire CONNECT proxy verdicts first.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a298a17 — Designed sandbox-monitoring dashboard ('Sandbox Flight Recorder') for h5i serve]_
+---
+
