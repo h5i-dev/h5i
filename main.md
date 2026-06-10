@@ -594,11 +594,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited tests/env_integration.rs; edited tests/env_integration.rs; edited tests/env_integration.rs
 - [x] edited tests/env_integration.rs; edited tests/env_integration.rs; wrote test-msg.txt
 - [x] session ended (auto-checkpoint)
+- [x] wrote docs/comparison.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 21:09 UTC] `impl-env-sandbox`: wrote docs/comparison.md
 - [2026-06-10 21:06 UTC] `impl-env-sandbox`: session ended (auto-checkpoint)
 - [2026-06-10 21:01 UTC] `impl-env-sandbox`: edited tests/env_integration.rs; edited tests/env_integration.rs; wrote test-msg.txt
 - [2026-06-10 20:57 UTC] `impl-env-sandbox`: edited tests/env_integration.rs; edited tests/env_integration.rs; edited tests/env_integration.rs
