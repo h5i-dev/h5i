@@ -42,3 +42,4 @@
 [02:05:27] OBSERVE: read src/objects.rs
 [02:05:32] OBSERVE: read src/objects.rs
 [02:05:34] OBSERVE: read src/msg.rs
+[02:05:35] OBSERVE: read src/main.rs
