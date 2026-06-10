@@ -981,3 +981,4 @@ _[Checkpoint: 6a29baee — edited src/seccomp_notify.rs; edited src/seccomp_noti
 [19:33:40] OBSERVE: read src/container.rs
 [19:33:49] ACT: edited src/container.rs
 [19:34:03] ACT: edited src/secrets_broker.rs
+[19:34:13] ACT: edited src/supervisor.rs
