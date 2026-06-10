@@ -1249,3 +1249,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 [21:04:15] OBSERVE: read note.go
 [21:04:15] OBSERVE: read state.go
 [21:04:16] OBSERVE: read README.md
+[21:04:17] OBSERVE: read config.go
