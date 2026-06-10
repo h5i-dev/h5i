@@ -1105,3 +1105,4 @@ _[Checkpoint: 6a29c91f — edited docs/supervisor-design.md; wrote sup-msg.txt; 
 [20:35:09] ACT: edited src/sandbox.rs
 [20:39:45] OBSERVE: read tests/env_integration.rs
 [20:40:45] OBSERVE: read tests/env_integration.rs
+[20:40:58] OBSERVE: read tests/env_integration.rs
