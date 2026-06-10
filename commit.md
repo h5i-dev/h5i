@@ -316,3 +316,16 @@ Inventoried telemetry (env events.jsonl, capture manifests w/ env_id+policy_dige
 
 ---
 
+## Commit 6a299eac — 2026-06-10 17:28 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Phase0a: container.rs proxy verdicts -> EgressSummary{allowed,denied,hosts[],hosts_truncated} on capture manifest. Phase0b: mediated_commit emits durable 'violation' EnvEvent on nested-.git/symlink/.. boundary trips. Phase0c: src/risk.rs deterministic classifier (11 unit tests). Phase1: server.rs read-only /api/envs|/api/env/*|probe (build_router extracted; tests/sandbox_api.rs 3 integration tests boot real router). Phase2: web/src/SandboxView.tsx Workbench 'sandbox' mode - top-strip vitals, fleet table w/ pressure badges+filters, five-lane timeline, enforced-policy panel; theme.css sbx-* styles. All 725 lib + integration tests pass, clippy clean. Live-validated 3 regimes: workspace->grey weak, process->amber pressure, violation->red blocked.
+
+---
+

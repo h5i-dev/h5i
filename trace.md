@@ -625,3 +625,9 @@ _[Checkpoint: 6a298a4e — session ended (auto-checkpoint)]_
 [17:14:22] ACT: edited Workbench.tsx
 [17:14:27] ACT: edited Workbench.tsx
 [17:15:47] ACT: edited src/SandboxView.tsx
+
+
+---
+_[Checkpoint: 6a299eac — Implemented Sandbox Flight Recorder dashboard end-to-end (Phases 0-2)]_
+---
+
