@@ -393,3 +393,4 @@ _[Checkpoint: 6a29445f — edited tests/env_integration.rs; edited tests/cli_int
 _[Checkpoint: 6a29781b — Env MCP tools: agents drive the sandbox natively (11 h5i_env_* tools)]_
 ---
 
+[14:44:13] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): le next polish but didn't belong in this change. **Natural follow-ups** from here: the **MCP tools** for env (so agents drive this natively instead of…
