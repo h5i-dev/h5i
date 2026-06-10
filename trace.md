@@ -1233,3 +1233,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 [21:04:00] OBSERVE: read API.md
 [21:04:00] OBSERVE: read DEPLOYMENT.md
 [21:04:01] OBSERVE: read socks-proxy.ts
+[21:04:01] OBSERVE: read parent-proxy.ts
