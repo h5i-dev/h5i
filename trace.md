@@ -1420,3 +1420,4 @@ _[Checkpoint: 6a29dfa5 — edited README.md; edited README.md; edited README.md]
 [23:04:03] ACT: edited src/main.rs
 [23:20:41] OBSERVE: read b570ytxbp.output
 [23:20:44] OBSERVE: read b570ytxbp.output
+[23:20:47] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): ), but `supervisor::run()` is still the fail-closed Phase A stub — so `env run` fails closed with "live enforcement not wired." Wiring that st…
