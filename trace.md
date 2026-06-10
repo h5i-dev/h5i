@@ -836,3 +836,4 @@ _[Checkpoint: 6a29b056 — edited src/lib.rs; edited src/seccomp_notify.rs; edit
 _[Checkpoint: 6a29b16b — edited src/seccomp_notify.rs; edited src/seccomp_notify.rs; edited src/seccomp_notify.rs]_
 ---
 
+[18:48:53] OBSERVE: read src/seccomp_notify.rs
