@@ -445,3 +445,4 @@ _[Checkpoint: 6a298068 — Container backend (isolation=container): rootless pod
 _[Checkpoint: 6a298091 — edited CLAUDE.md; edited CLAUDE.md; edited docs/environments-design.md]_
 ---
 
+[15:21:38] OBSERVE: read tests/env_integration.rs
