@@ -704,3 +704,4 @@ _[Checkpoint: 6a29a160 — wrote sandbox-production-roadmap.md; wrote sandbox-pr
 
 [17:44:18] THINK: Let me run a final green check before committing (the lane-specific fix landed after the last full run):
 [17:44:18] THINK: Let me stage the files explicitly (per workflow, never `git add .
+[17:44:18] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/MEMORY.md): tracked in HEAD, I can finally pin the architecture claim I deferred earlier
