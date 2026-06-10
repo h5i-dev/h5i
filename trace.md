@@ -1242,3 +1242,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 [21:04:04] OBSERVE: read package.json
 [21:04:07] OBSERVE: read main.rs
 [21:04:07] OBSERVE: read apply-seccomp.c
+[21:04:08] OBSERVE: read README.md
