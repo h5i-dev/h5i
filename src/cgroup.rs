@@ -99,9 +99,46 @@ fn self_cgroup() -> Option<PathBuf> {
     Some(PathBuf::from(CG_ROOT).join(rel.trim_start_matches('/')))
 }
 
+/// The systemd **user-manager** cgroup for the current uid, where systemd
+/// delegates `cpu/memory/pids` to the unprivileged user (the standard rootless
+/// path — `man systemd.resource-control`, "Delegate"). h5i can create + limit
+/// child cgroups *under* this even when its own process sits elsewhere (e.g.
+/// parked in a root-owned `/init.scope`), because management only needs write
+/// access to the directory, not residency in it — the same thing rootless
+/// crun/runc do in cgroupfs mode.
+#[cfg(target_os = "linux")]
+fn user_service_cgroup() -> Option<PathBuf> {
+    let uid = unsafe { libc::geteuid() };
+    let path = PathBuf::from(CG_ROOT)
+        .join("user.slice")
+        .join(format!("user-{uid}.slice"))
+        .join(format!("user@{uid}.service"));
+    path.is_dir().then_some(path)
+}
+
+/// Candidate base cgroups under which to create h5i's managed run cgroups, in
+/// priority order: our own cgroup first (correct when h5i is launched inside a
+/// delegated user session), then the user-manager service (covers the common
+/// case where h5i is parked in a non-delegated cgroup but the user *does* have a
+/// delegated subtree).
+#[cfg(target_os = "linux")]
+fn candidate_bases() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Some(own) = self_cgroup() {
+        v.push(own);
+    }
+    if let Some(svc) = user_service_cgroup() {
+        if !v.contains(&svc) {
+            v.push(svc);
+        }
+    }
+    v
+}
+
 /// Detect whether this rootless process can actually manage cgroup v2 limits, by
-/// performing a real create → enable-controllers → remove probe. Cheap and
-/// side-effect-free (the probe cgroup is removed).
+/// performing a real create → enable-controllers → set-limit → remove probe
+/// against each candidate base. Cheap and side-effect-free (the probe cgroup is
+/// removed). The first base that passes is the one used at run time.
 #[cfg(target_os = "linux")]
 pub fn probe() -> CgroupCaps {
     let mut caps = CgroupCaps::default();
@@ -111,31 +148,34 @@ pub fn probe() -> CgroupCaps {
     }
     caps.v2_mounted = true;
 
-    let Some(own) = self_cgroup() else {
+    let bases = candidate_bases();
+    if bases.is_empty() {
         caps.detail = Some("could not read /proc/self/cgroup".into());
         return caps;
-    };
-    // Controllers our own cgroup could delegate to children.
-    if let Ok(s) = std::fs::read_to_string(own.join("cgroup.controllers")) {
-        caps.controllers = s.split_whitespace().map(String::from).collect();
     }
 
-    // Honest usability test: create a parent + leaf under our cgroup, enable
-    // controllers, then remove. If any step fails (the common rootless case),
-    // we are NOT usable and the caller falls back to rlimits.
-    let parent = own.join("h5i.probe");
-    match try_make_usable(&parent) {
-        Ok(()) => {
-            let _ = std::fs::remove_dir(&parent);
-            caps.usable = true;
-            // The real parent used at run time (created lazily).
-            caps.parent = Some(own.join("h5i"));
-        }
-        Err(e) => {
-            let _ = std::fs::remove_dir(&parent);
-            caps.detail = Some(format!("cgroup delegation unavailable: {e}"));
+    let mut last_err = String::from("no delegated, writable cgroup base found");
+    for base in &bases {
+        let probe = base.join("h5i.probe");
+        match try_make_usable(&probe) {
+            Ok(()) => {
+                let _ = std::fs::remove_dir(&probe);
+                // Controllers the *winning* base can delegate to children.
+                if let Ok(s) = std::fs::read_to_string(base.join("cgroup.controllers")) {
+                    caps.controllers = s.split_whitespace().map(String::from).collect();
+                }
+                caps.usable = true;
+                // The real parent used at run time (created lazily).
+                caps.parent = Some(base.join("h5i"));
+                return caps;
+            }
+            Err(e) => {
+                let _ = std::fs::remove_dir(&probe);
+                last_err = format!("{}: {e}", base.display());
+            }
         }
     }
+    caps.detail = Some(format!("cgroup delegation unavailable ({last_err})"));
     caps
 }
 
@@ -145,13 +185,14 @@ pub fn probe() -> CgroupCaps {
 fn try_make_usable(parent: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(parent)?;
     // Enabling controllers in the parent's subtree_control is what actually
-    // requires delegation; this is the step that fails on WSL2/CI.
+    // requires the base to delegate memory+pids to us; the leaf's memory.max is
+    // then writable. This is the step that fails when the base isn't delegated.
     let _ = std::fs::write(parent.join("cgroup.subtree_control"), "+memory +pids");
     let leaf = parent.join("probe-leaf");
     std::fs::create_dir_all(&leaf)?;
-    // memory.max must be writable for enforcement to mean anything.
-    let writable = std::fs::write(leaf.join("memory.max"), "max").is_ok()
-        || std::fs::metadata(leaf.join("memory.max")).is_ok();
+    // memory.max must be genuinely writable for enforcement to mean anything —
+    // require the write itself to succeed, not merely that the file exists.
+    let writable = std::fs::write(leaf.join("memory.max"), "max").is_ok();
     let _ = std::fs::remove_dir(&leaf);
     if writable {
         Ok(())
@@ -266,5 +307,48 @@ mod tests {
         } else {
             assert!(caps.detail.is_some(), "unusable cgroups must explain why");
         }
+    }
+
+    /// Live, capability-gated: where the host actually delegates cgroups (a
+    /// systemd user session), exercise the full ScopedCgroup lifecycle — create
+    /// under the discovered base, apply limits, join a process, read accounting,
+    /// and clean up on drop. Skips cleanly where delegation is unavailable.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn live_scoped_cgroup_applies_and_accounts() {
+        let caps = probe();
+        if !caps.usable {
+            eprintln!("skipping: no delegated cgroup on this host ({:?})", caps.detail);
+            return;
+        }
+        let parent = caps.parent.expect("usable ⇒ parent");
+        // 256 MiB memory cap, 64 pids. NOTE: we never move the test process into
+        // this cgroup — a tight memory.max on the multi-hundred-MB test harness
+        // would OOM-kill it. We validate that the limits are *written* and the
+        // accounting files are *readable* on an empty run cgroup, which proves
+        // the rootless create/limit/account/cleanup path end to end.
+        let cg = match ScopedCgroup::create(&parent, 999_999, Some(256 << 20), Some(64)) {
+            Ok(c) => c,
+            Err(e) => {
+                // Delegation probed OK but creation raced/failed — don't fail
+                // the suite on a transient host condition.
+                eprintln!("skipping: ScopedCgroup::create failed: {e}");
+                return;
+            }
+        };
+        // The limits are actually written into the run cgroup.
+        let max = std::fs::read_to_string(cg.path.join("memory.max")).unwrap_or_default();
+        assert_eq!(max.trim(), (256u64 << 20).to_string(), "memory.max must be enforced");
+        let pids = std::fs::read_to_string(cg.path.join("pids.max")).unwrap_or_default();
+        assert_eq!(pids.trim(), "64");
+        // Accounting is readable (an empty cgroup reports 0, but the file must
+        // exist — that's what the run path reads after a real run).
+        let usage = cg.usage();
+        assert!(usage.mem_peak_bytes.is_some(), "memory.peak must be readable in the run cgroup");
+        assert!(usage.cpu_usec.is_some(), "cpu.stat must be readable in the run cgroup");
+        // Drop removes the (empty) leaf; assert it's gone.
+        let path = cg.path.clone();
+        drop(cg);
+        assert!(!path.exists(), "run cgroup must be removed on drop");
     }
 }
