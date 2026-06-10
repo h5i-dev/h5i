@@ -453,3 +453,9 @@ _[Checkpoint: 6a298091 — edited CLAUDE.md; edited CLAUDE.md; edited docs/envir
 [15:25:28] ACT: edited CLAUDE.md
 [15:25:55] THINK: ** But let me confirm the details against your actual CI config rather than assert from memory.
 [15:25:55] THINK: Let me find and update the `container_runnable()` helper to require explicit opt-in:
+
+
+---
+_[Checkpoint: 6a298203 — edited docs/environments-design.md; edited tests/env_integration.rs; edited CLAUDE.md]_
+---
+

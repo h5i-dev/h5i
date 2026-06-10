@@ -212,3 +212,16 @@ Design phase 4. New src/container.rs: probe() (rootless podman, else docker); bu
 
 ---
 
+## Commit 6a298203 — 2026-06-10 15:25 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
