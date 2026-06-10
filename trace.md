@@ -1201,3 +1201,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 [21:03:39] OBSERVE: read README.md
 [21:03:40] OBSERVE: read README.md
 [21:03:40] OBSERVE: read SPECIFICATION.md
+[21:03:40] OBSERVE: read SECURITY.md
