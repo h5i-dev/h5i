@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 520" font-family="'Space Grotesk', system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-label="An agent runs a command via h5i env run. It executes inside a policy-confined sandbox built on a git worktree plus tiered kernel confinement. Legitimate work (cargo build) is allowed; escape attempts on three lanes are denied at the boundary: reading /etc/shadow is blocked by Landlock, a raw socket or curl to a raw IP is blocked by the seccomp gate and egress proxy, and mount/unshare/ptrace are blocked by the seccomp deny-list. Every run is captured as tamper-evident evidence, and changes are applied only after a reviewer approves a proposal — the sandbox is fail-closed and fully observed.">
+  <defs>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1.2" cy="1.2" r="1.2" fill="#ffffff" opacity="0.035"/>
+    </pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#7d8590"/>
+    </marker>
+    <marker id="deny" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#ff6b6b"/>
+    </marker>
+    <style>
+      .mono { font-family: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .cap  { letter-spacing: 2px; }
+    </style>
+  </defs>
+
+  <!-- backdrop -->
+  <rect x="1" y="1" width="1058" height="518" rx="20" fill="#0d0d11" stroke="#26262e"/>
+  <rect x="1" y="1" width="1058" height="518" rx="20" fill="url(#dots)"/>
+
+  <!-- title -->
+  <text x="530" y="44" text-anchor="middle" font-size="25" font-weight="600" fill="#ECECEC">Policy-Confined Agent Sandbox</text>
+  <text x="530" y="69" text-anchor="middle" font-size="13.5" fill="#9aa0aa">git worktree&#160;&#183;&#160;tiered kernel confinement&#160;&#183;&#160;captured evidence&#160;&#8212;&#160;fail-closed, never silently downgraded</text>
+
+  <!-- ───────── left: the agent ───────── -->
+  <g>
+    <rect x="34" y="200" width="178" height="92" rx="12" fill="#12161c" stroke="#2a3138"/>
+    <text x="123" y="227" text-anchor="middle" font-size="12" class="cap" fill="#6b7785">AGENT</text>
+    <text x="50" y="256" font-size="12.5" class="mono" fill="#abb3bf">$ h5i env run</text>
+    <text x="50" y="276" font-size="12.5" class="mono" fill="#abb3bf">&#160;&#160;fix-auth --</text>
+    <text x="160" y="276" font-size="12.5" class="mono" fill="#5ee2a0">cargo build</text>
+  </g>
+  <line x1="214" y1="246" x2="266" y2="246" stroke="#7d8590" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- ───────── center: the sandbox ───────── -->
+  <g>
+    <rect x="270" y="96" width="470" height="376" rx="16" fill="#10141a" stroke="#3a424b" stroke-width="1.5"/>
+    <text x="290" y="124" font-size="13" class="mono" fill="#7dd3fc">env/claude/fix-auth</text>
+    <text x="724" y="124" text-anchor="end" font-size="11" class="cap" fill="#6b7785">$WORK&#160;&#183;&#160;worktree</text>
+
+    <!-- tier ladder (active = supervised) -->
+    <g font-size="10.5" class="cap">
+      <rect x="288" y="142" width="92" height="20" rx="5" fill="#161b22" stroke="#2a3138"/>
+      <text x="334" y="156" text-anchor="middle" fill="#6b7785">workspace</text>
+      <rect x="288" y="166" width="92" height="20" rx="5" fill="#161b22" stroke="#2a3138"/>
+      <text x="334" y="180" text-anchor="middle" fill="#6b7785">process</text>
+      <rect x="288" y="190" width="92" height="20" rx="5" fill="#13251c" stroke="#2f6b46"/>
+      <text x="334" y="204" text-anchor="middle" fill="#5ee2a0">supervised &#9679;</text>
+      <rect x="288" y="214" width="92" height="20" rx="5" fill="#161b22" stroke="#2a3138"/>
+      <text x="334" y="228" text-anchor="middle" fill="#6b7785">container</text>
+    </g>
+
+    <!-- legit work: allowed -->
+    <g>
+      <rect x="398" y="150" width="324" height="40" rx="9" fill="#13251c" stroke="#2f6b46"/>
+      <text x="416" y="175" font-size="13" class="mono" fill="#5ee2a0">cargo build</text>
+      <text x="704" y="175" text-anchor="end" font-size="12.5" fill="#5ee2a0">&#10003; allowed</text>
+    </g>
+
+    <!-- the three lanes (escape attempts denied at the boundary) -->
+    <g font-size="12.5">
+      <!-- FS -->
+      <rect x="398" y="206" width="324" height="68" rx="9" fill="#1a1216" stroke="#3a242a"/>
+      <text x="412" y="226" font-size="10.5" class="cap" fill="#7dd3fc">FS</text>
+      <text x="416" y="250" class="mono" fill="#c9ccd1">open(/etc/shadow)</text>
+      <text x="416" y="268" font-size="11" fill="#8a9098">~/.ssh/id_rsa&#160;&#183;&#160;docker.sock</text>
+      <text x="704" y="246" text-anchor="end" fill="#ff6b6b">&#9940; Landlock EACCES</text>
+
+      <!-- NET -->
+      <rect x="398" y="282" width="324" height="68" rx="9" fill="#1a1216" stroke="#3a242a"/>
+      <text x="412" y="302" font-size="10.5" class="cap" fill="#f0a050">NET</text>
+      <text x="416" y="326" class="mono" fill="#c9ccd1">socket(RAW) &#183; curl 1.2.3.4</text>
+      <text x="416" y="344" font-size="11" fill="#8a9098">off-allowlist host</text>
+      <text x="704" y="322" text-anchor="end" fill="#ff6b6b">&#9940; seccomp gate / 403</text>
+
+      <!-- PROC -->
+      <rect x="398" y="358" width="324" height="68" rx="9" fill="#1a1216" stroke="#3a242a"/>
+      <text x="412" y="378" font-size="10.5" class="cap" fill="#b48bd9">PROC</text>
+      <text x="416" y="402" class="mono" fill="#c9ccd1">mount &#183; unshare &#183; ptrace</text>
+      <text x="416" y="420" font-size="11" fill="#8a9098">io_uring &#183; bpf</text>
+      <text x="704" y="398" text-anchor="end" fill="#ff6b6b">&#9940; seccomp EPERM</text>
+    </g>
+
+    <text x="505" y="458" text-anchor="middle" font-size="11" fill="#6b7785">Landlock &#183; seccomp(+notify) &#183; user/net namespaces &#183; cgroup v2&#160;&#8212;&#160;rootless</text>
+  </g>
+
+  <!-- deny ticks at the boundary -->
+  <g stroke="#ff6b6b" stroke-width="2" opacity="0.8">
+    <line x1="722" y1="240" x2="744" y2="240" marker-end="url(#deny)"/>
+    <line x1="722" y1="316" x2="744" y2="316" marker-end="url(#deny)"/>
+    <line x1="722" y1="392" x2="744" y2="392" marker-end="url(#deny)"/>
+  </g>
+  <!-- allow tick to evidence -->
+  <line x1="722" y1="170" x2="828" y2="170" stroke="#5ee2a0" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- ───────── right: evidence + review ───────── -->
+  <g>
+    <!-- evidence capture -->
+    <rect x="832" y="142" width="196" height="92" rx="12" fill="#12161c" stroke="#2a3138"/>
+    <text x="848" y="167" font-size="12" class="cap" fill="#6b7785">EVIDENCE</text>
+    <text x="848" y="190" font-size="11.5" class="mono" fill="#abb3bf">exit 0 &#183; wall 1.2s</text>
+    <text x="848" y="208" font-size="11.5" class="mono" fill="#abb3bf">policy c304&#8230;</text>
+    <text x="848" y="226" font-size="11.5" class="mono" fill="#abb3bf">redactions, egress</text>
+
+    <!-- review loop -->
+    <rect x="832" y="252" width="196" height="116" rx="12" fill="#12161c" stroke="#2a3138"/>
+    <text x="848" y="277" font-size="12" class="cap" fill="#6b7785">REVIEW</text>
+    <g font-size="12.5" class="mono">
+      <rect x="848" y="290" width="76" height="24" rx="6" fill="#161b22" stroke="#2a3138"/>
+      <text x="886" y="307" text-anchor="middle" fill="#9aa0aa">propose</text>
+      <text x="930" y="307" fill="#6b7785">&#8594;</text>
+      <rect x="944" y="290" width="68" height="24" rx="6" fill="#13251c" stroke="#2f6b46"/>
+      <text x="978" y="307" text-anchor="middle" fill="#5ee2a0">apply</text>
+    </g>
+    <text x="848" y="338" font-size="10.5" fill="#8a9098">mediated commit &#183; path-escape</text>
+    <text x="848" y="353" font-size="10.5" fill="#8a9098">refused &#183; apply never automatic</text>
+
+    <!-- dashboard hint -->
+    <text x="930" y="398" text-anchor="middle" font-size="11" fill="#6b7785">boundary pressure scored</text>
+    <text x="930" y="414" text-anchor="middle" font-size="11" fill="#6b7785">&amp; shown in the dashboard</text>
+  </g>
+
+  <!-- footer tagline -->
+  <text x="530" y="500" text-anchor="middle" font-size="12.5" fill="#7d8590">every run captured&#160;&#183;&#160;denials recorded as boundary-pressure&#160;&#183;&#160;state shared over <tspan class="mono" fill="#9aa0aa">refs/h5i/env</tspan></text>
+</svg>

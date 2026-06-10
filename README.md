@@ -48,7 +48,7 @@ Use `h5i` if you want your AI agents to stop leaving their work in thin air.
 
 ### Recent News
 
-- **New in v0.1.7: Token Reduction with Unified Form.** Agents see a compact summary while the full output stays out of context, shared via Git LFS. [Jump to Token Reduction ↓](#42-token-reduction-with-unified-form)
+- **New in v0.1.7: Token Reduction with Unified Form.** Agents see a compact summary while the full output stays out of context, shared via Git LFS. [Jump to Token Reduction ↓](#43-token-reduction-with-unified-form)
 - **Agent Radio reached 100+ points on Hacker News.** Read the discussion [here](https://news.ycombinator.com/item?id=48345837).
 - **New in v0.1.5: Agent Radio.** Since your agents' context already lives in Git, they can now talk to each other through it. `h5i msg` adds a cross-agent message channel stored in `refs/h5i/msg`. [Jump to Agent Radio ↓](#41-agent-radio--agents-that-talk-over-git)
 
@@ -147,7 +147,33 @@ We can also monitor the conversation in real time with `h5i msg watch`.
   <img src="./assets/claude-codex-chess.gif" alt="h5i msg watch — a live claude ↔ codex code review streaming over refs/h5i/msg" width="95%">
 </p>
 
-### 4.2. Token Reduction with Unified Form
+### 4.2. Agent Sandbox — run risky work confined, captured, and reviewable
+
+`h5i env` gives an agent an isolated **environment**: a git worktree plus a digest-pinned, **fail-closed** policy, so you can hand it a refactor, a dependency upgrade, or an untrusted build without it touching your main tree. Every `h5i env run` is policy-enforced and capture-wrapped — escape attempts (reading `/etc/shadow`, a raw socket to an arbitrary IP, `mount` / `unshare` / `ptrace`) are denied **at the boundary** by Landlock + seccomp + namespaces, while legitimate work proceeds and lands as tamper-evident evidence. Nothing reaches your branch until a reviewer approves a `propose` with `apply`.
+
+Isolation is **tiered and never silently downgraded** — `h5i env probe` reports what the host can actually enforce, and a claim the host can't satisfy is refused, not weakened:
+
+| Tier | Confinement |
+|------|-------------|
+| `workspace` | git worktree only — trusted code |
+| `process` | Landlock + seccomp deny-list + user/net namespaces + cgroup v2 (rootless) |
+| `supervised` | process tier + a live seccomp-notify socket gate (default-deny: only ordinary inet sockets pass) |
+| `container` | rootless Podman + a DNS-pinned **`net.egress` domain allowlist** |
+
+```bash
+h5i env create fix-auth --isolation process
+h5i env run    fix-auth -- cargo build      # confined + captured
+h5i env propose fix-auth                     # mediated commit + review brief
+h5i env apply   fix-auth                     # reviewer-selected; never automatic
+```
+
+Every run, allow or deny, is scored for **boundary pressure** and shown in the Sandbox tab of the [web dashboard](#46-web-dashboard); env state lives in `refs/h5i/env` and travels with `h5i push` / `pull` for a cross-clone review loop.
+
+<p align="center">
+  <img src="./assets/agent-sandbox.svg" alt="An agent runs cargo build via h5i env run inside a policy-confined sandbox; reads of /etc/shadow are blocked by Landlock, raw sockets and off-allowlist hosts by the seccomp gate and egress proxy, and mount/unshare/ptrace by the seccomp deny-list, while the legitimate build is allowed and captured as evidence that a reviewer applies via propose → apply." width="95%">
+</p>
+
+### 4.3. Token Reduction with Unified Form
 
 Wrap any command with `h5i capture run -- <cmd>` and the agent sees only a compact, normalized summary of errors, failures, and counts, while the full raw output is stored out of band in `refs/h5i/objects`. Every tool's output collapses into **one unified form**, so a 4 MB test log no longer burns your context window, and the raw bytes are always one `h5i recall object <id>` away when you need them.
 
@@ -175,7 +201,7 @@ To share captures across a team, h5i borrows the split that Git LFS uses: the ma
   <img src="./assets/token-reduction-unified.svg" alt="h5i recall object" width="95%">
 </p>
 
-### 4.3. Context DAG
+### 4.4. Context DAG
 
 The context DAG shows how the work unfolded: the goal, every milestone, and the OBSERVE / THINK / ACT trace behind each change, captured automatically as the agent works. Because it is snapshotted on every commit, you can replay exactly what an agent knew and why it acted at any point in history.
 
@@ -187,7 +213,7 @@ h5i recall context show
   <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
 </p>
 
-### 4.4. Pull Request Integration
+### 4.5. Pull Request Integration
 
 When a branch is ready for review, h5i surfaces all of it where reviewers already work — on the pull request.
 
@@ -247,7 +273,7 @@ Track the prompt, model names, and commit lineage.
 
 </br>
 
-### 4.5. Web Dashboard
+### 4.6. Web Dashboard
 
 ```bash
 h5i serve        # http://localhost:7150
