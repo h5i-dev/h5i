@@ -812,3 +812,4 @@ _[Checkpoint: 6a29a9e1 — Reviewed Claude supervisor tier design; approved Phas
 _[Checkpoint: 6a29ace8 — edited env_integration.rs; edited sandbox-production-roadmap.md; edited sandbox-production-roadmap.md]_
 ---
 
+[18:32:18] ACT: edited src/supervisor.rs
