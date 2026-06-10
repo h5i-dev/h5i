@@ -27,3 +27,4 @@
 [02:05:00] OBSERVE: read src/main.rs
 [02:05:01] OBSERVE: read docs/environments-design.md
 [02:05:04] OBSERVE: read src/lib.rs
+[02:05:04] OBSERVE: read src/mcp.rs
