@@ -289,3 +289,9 @@ _[Checkpoint: 6a28e117 — Env round 5: io_uring+fsize/cpu hardening, human stat
 ---
 
 [03:59:48] THINK: Let me add the drift helper and human status near the `diff` function.
+
+
+---
+_[Checkpoint: 6a28e134 — edited tests/env_integration.rs; edited CLAUDE.md; edited CLAUDE.md]_
+---
+

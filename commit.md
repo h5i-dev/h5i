@@ -121,3 +121,16 @@ Security: seccomp now blocks io_uring_setup/enter/register (major kernel escape 
 
 ---
 
+## Commit 6a28e134 — 2026-06-10 03:59 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+Security: seccomp now blocks io_uring_setup/enter/register (major kernel escape surface that also bypasses seccomp for submitted ops); policy resources gain opt-in fsize (RLIMIT_FSIZE disk-bomb cap) and cpu (RLIMIT_CPU spin backstop). Maturity: env status is now a human view (lifecycle, enforced policy incl. net/mem/procs/wall/fsize/cpu/tools, evidence, base drift) with --json for the manifest. Completeness (§9): base-drift detection (drift(): UpToDate/ParentAhead{n}/Diverged/ParentGone via graph_descendant_of + ahead_behind) surfaced in status + propose brief; new h5i env rebase folds the advanced parent in via 3-way merge onto the env work, refuses on conflict (base untouched), re-pins base_commit/base_tree, refreshes the worktree. +7 tests (3 sandbox unit: fsize/cpu parse+default-off, digest sensitivity, io_uring-in-denylist; 4 integration: drift→rebase→re-pin→apply, conflict refusal keeps base, status --json, fsize disk-bomb cap gated). Full suite 891 green, clippy clean.
+
+### This Commit's Contribution
+
+
+---
+
