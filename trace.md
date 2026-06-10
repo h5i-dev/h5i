@@ -508,3 +508,4 @@ _[Checkpoint: 6a29878b — Reviewed and hardened h5i env Linux/WSL Podman contai
 _[Checkpoint: 6a29883e — Committed env Podman backend hardening as 9ae3f6d6: rootless Podman only, no Docker/rootful fallback, --pull=never, safer --mount workspace bind, HTTPS proxy port fix, docs/probe wording aligned.]_
 ---
 
+[15:56:03] OBSERVE: read src/env.rs
