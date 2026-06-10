@@ -549,11 +549,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Reviewed and hardened h5i env Linux/WSL Podman container backend: rootless Podman only, no implicit image pulls, safer Podman argv, docs/probe wording aligned; cargo check and env/container tests pass.
 - [x] Committed env Podman backend hardening as 9ae3f6d6: rootless Podman only, no Docker/rootful fallback, --pull=never, safer --mount workspace bind, HTTPS proxy port fix, docs/probe wording aligned.
 - [x] Sent Claude sandbox dashboard design memo: first-class Sandbox mode for h5i serve, env timeline/inspector, deterministic Sandbox Pressure classifier, read-only env API endpoints, attack-surface map, rigorous copy.
+- [x] Waited for Claude's sandbox-dashboard ASK and replied in-thread with concrete Flight Recorder UI, ranked boundary-pressure signals, anomaly heuristics, risk schema, and rigorous copy rules.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 15:58 UTC] `impl-env-sandbox`: Waited for Claude's sandbox-dashboard ASK and replied in-thread with concrete Flight Recorder UI, ranked boundary-pressure signals, anomaly heuristics, risk schema, and rigorous copy rules.
 - [2026-06-10 15:56 UTC] `impl-env-sandbox`: Sent Claude sandbox dashboard design memo: first-class Sandbox mode for h5i serve, env timeline/inspector, deterministic Sandbox Pressure classifier, read-only env API endpoints, attack-surface map, rigorous copy.
 - [2026-06-10 15:52 UTC] `impl-env-sandbox`: Committed env Podman backend hardening as 9ae3f6d6: rootless Podman only, no Docker/rootful fallback, --pull=never, safer --mount workspace bind, HTTPS proxy port fix, docs/probe wording aligned.
 - [2026-06-10 15:49 UTC] `impl-env-sandbox`: Reviewed and hardened h5i env Linux/WSL Podman container backend: rootless Podman only, no implicit image pulls, safer Podman argv, docs/probe wording aligned; cargo check and env/container tests pass.
