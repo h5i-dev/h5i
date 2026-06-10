@@ -546,11 +546,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Container backend (isolation=container): rootless podman + DNS-pinned net.egress allowlist proxy
 - [x] edited CLAUDE.md; edited CLAUDE.md; edited docs/environments-design.md
 - [x] edited docs/environments-design.md; edited tests/env_integration.rs; edited CLAUDE.md
+- [x] Reviewed and hardened h5i env Linux/WSL Podman container backend: rootless Podman only, no implicit image pulls, safer Podman argv, docs/probe wording aligned; cargo check and env/container tests pass.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 15:49 UTC] `impl-env-sandbox`: Reviewed and hardened h5i env Linux/WSL Podman container backend: rootless Podman only, no implicit image pulls, safer Podman argv, docs/probe wording aligned; cargo check and env/container tests pass.
 - [2026-06-10 15:25 UTC] `impl-env-sandbox`: edited docs/environments-design.md; edited tests/env_integration.rs; edited CLAUDE.md
 - [2026-06-10 15:19 UTC] `impl-env-sandbox`: edited CLAUDE.md; edited CLAUDE.md; edited docs/environments-design.md
 - [2026-06-10 15:19 UTC] `impl-env-sandbox`: Container backend (isolation=container): rootless podman + DNS-pinned net.egress allowlist proxy
