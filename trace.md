@@ -282,3 +282,9 @@ _[Checkpoint: 6a28dcda — edited tests/env_integration.rs; wrote process-tier-b
 [03:56:26] ACT: edited tests/env_integration.rs
 [03:59:06] ACT: edited CLAUDE.md
 [03:59:09] ACT: edited CLAUDE.md
+
+
+---
+_[Checkpoint: 6a28e117 — Env round 5: io_uring+fsize/cpu hardening, human status w/ drift, env rebase (§9)]_
+---
+
