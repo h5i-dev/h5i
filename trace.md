@@ -57,3 +57,4 @@
 [02:05:52] OBSERVE: read src/main.rs
 [02:05:52] OBSERVE: read src/ctx.rs
 [02:05:57] OBSERVE: read src/main.rs
+[02:07:42] OBSERVE: read src/objects.rs
