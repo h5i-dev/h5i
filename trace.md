@@ -1067,3 +1067,4 @@ _[Checkpoint: 6a29c398 — wrote cg-msg.txt; wrote cg-msg.txt; edited sandbox-pr
 [20:23:07] ACT: edited tests/env_integration.rs
 [20:24:16] OBSERVE: read b9sg0vw3i.output
 [20:24:20] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): ), but `supervisor::run()` is still the fail-closed Phase A stub — so `env run` fails closed with "live enforcement not wired." Wiring that st…
+[20:24:20] NOTE: PLACEHOLDER (~/Dev/h5i/src/sandbox.rs): Now replace the `supervisor::run` stub with the real implementation. Let me view the current stub
