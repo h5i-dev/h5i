@@ -178,3 +178,4 @@ _[Checkpoint: 6a28d57a — Hardened h5i env: secret redaction, broader sandbox, 
 _[Checkpoint: 6a28d59c — edited src/main.rs; edited CLAUDE.md; edited CLAUDE.md]_
 ---
 
+[03:15:00] OBSERVE: read src/structured.rs
