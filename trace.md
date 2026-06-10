@@ -1237,3 +1237,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 [21:04:02] OBSERVE: read git.py
 [21:04:02] OBSERVE: read formal-verification.md
 [21:04:03] OBSERVE: read kvm.rs
+[21:04:03] OBSERVE: read README.md
