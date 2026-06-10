@@ -230,3 +230,9 @@ _[Checkpoint: 6a28d8cc — edited tests/env_integration.rs; edited CLAUDE.md; ed
 [03:31:43] ACT: edited tests/env_integration.rs
 [03:38:01] OBSERVE: read tests/env_integration.rs
 [03:38:06] ACT: edited tests/env_integration.rs
+
+
+---
+_[Checkpoint: 6a28dcb2 — Fix CI: functional process-tier self-test (bits != runnable), gate kernel tests on it]_
+---
+

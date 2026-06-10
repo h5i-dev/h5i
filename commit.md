@@ -82,3 +82,16 @@ wait4-based reaper records rusage (wall/cpu/peak-RSS) per run, surfaced in CLI +
 
 ---
 
+## Commit 6a28dcb2 — 2026-06-10 03:40 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Root cause: GitHub Actions runners (Ubuntu 24.04, AppArmor-restricted unprivileged userns) report Landlock+userns+seccomp present, so capability-bit gating didn't skip — but exec under the full confinement stack returns EACCES, failing 3 process-tier tests. Fix: sandbox::verify_exec(policy) runs a trivial confined  (tool-allowlist bypassed) to functionally verify the tier; env create calls it after resolve and fails closed with a clear 'not functional — re-request --isolation workspace' message BEFORE creating any on-disk state (was cryptic EACCES at every run). env probe now prints 'process tier runnable = yes|no'. Tests gate on process_tier_runnable() (cached; succeeds iff a process create succeeds) instead of raw bits; process_claim_all_or_nothing uses the same source of truth. Verified the not-runnable path by simulating restrictive Landlock grants. Full suite 884 green on dev (process tier runnable), clippy clean.
+
+---
+
