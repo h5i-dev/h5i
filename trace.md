@@ -1158,3 +1158,4 @@ _[Checkpoint: 6a29cee4 — edited tests/env_integration.rs; edited tests/env_int
 ---
 
 [20:56:35] OBSERVE: read bs1ypv531.output
+[20:57:29] OBSERVE: read b6fsdid46.output
