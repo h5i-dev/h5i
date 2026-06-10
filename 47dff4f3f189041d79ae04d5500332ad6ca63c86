@@ -1,0 +1,1 @@
+{"git_oid":"47dff4f3f189041d79ae04d5500332ad6ca63c86","parent_oid":"2e8c7450da985747bd5a09f50c4c925bb73d7d47","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"Make agent-in-box the default: auto-pick the strongest isolation tier","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-10T22:52:30.295783613Z"}
