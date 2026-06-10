@@ -48,7 +48,7 @@ Use `h5i` if you want your AI agents to stop leaving their work in thin air.
 - Want the next agent to inherit the full context of the last one?
 - Want Claude and Codex to talk in real time, with the conversation stored in Git?
 - Want to reduce token usage by shrinking noisy tool output while keeping the raw evidence?
-- Want to run a risky refactor or an untrusted build in a confined sandbox, then review it before it touches your tree?
+- Want to run a risky AI-generated code in a confined sandbox, then review it before it touches your tree?
 - Want to catch leaked secrets, blind edits, and risky AI changes before review?
 
 ### Recent News
