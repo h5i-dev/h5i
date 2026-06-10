@@ -123,3 +123,4 @@ _[Checkpoint: 6a28cf21 — Implemented h5i env (worktree+sandbox) per docs/envir
 _[Checkpoint: 6a28cf70 — edited docs/environments-design.md; wrote wsl2-host-has-landlock-abi3.md; edited MEMORY.md]_
 ---
 
+[02:53:18] OBSERVE: read src/secrets.rs
