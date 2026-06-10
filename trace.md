@@ -845,3 +845,9 @@ _[Checkpoint: 6a29b16b — edited src/seccomp_notify.rs; edited src/seccomp_noti
 [18:51:15] ACT: edited src/seccomp_notify.rs
 [18:51:31] OBSERVE: read bbvy9jwm5.output
 [18:52:02] OBSERVE: read bbvy9jwm5.output
+
+
+---
+_[Checkpoint: 6a29b275 — Reviewed Claude Phase B seccomp-notify loop; found live test hang from serve-loop shutdown lifecycle, answered ID_VALID/SEND/socketpair/threading/unknown-syscall questions, and requested recv_fd hardening.]_
+---
+
