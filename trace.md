@@ -368,3 +368,4 @@ _[Checkpoint: 6a294441 — Shareable envs: manifest+policy in refs/h5i/env, push
 _[Checkpoint: 6a29445f — edited tests/env_integration.rs; edited tests/cli_integration.rs; edited CLAUDE.md]_
 ---
 
+[13:11:01] OBSERVE: read src/mcp.rs
