@@ -1,5 +1,5 @@
 //! The `isolation=container` backend: run an environment's command inside a
-//! **rootless** container (podman, or docker as a fallback), and — uniquely —
+//! **rootless Podman** container, and — uniquely —
 //! enforce a `net.egress` **domain allowlist** that the static `process` tier
 //! cannot (docs/environments-design.md §5–§7, rollout phase 4).
 //!
@@ -8,7 +8,9 @@
 //! `/tmp` tmpfs, `--userns=keep-id` so files in the bind-mounted workspace keep
 //! the caller's ownership, memory/pid limits, an env-var allowlist, and **never**
 //! a Docker socket mount. The container is an *opt-in adapter* that shells out
-//! to a runtime the user already has — it adds no Rust dependency.
+//! to Podman if the user already has it — it adds no Rust dependency. Docker is
+//! intentionally not accepted in this phase: its daemon/socket model has a
+//! different trust boundary and is easy to misconfigure for agent workloads.
 //!
 //! ### Egress enforcement — honestly scoped
 //!
@@ -37,29 +39,25 @@ use crate::sandbox::{ExecOutcome, NetMode, Profile, ResolvedPolicy};
 /// A detected container runtime.
 #[derive(Debug, Clone)]
 pub struct Runtime {
-    /// The binary to invoke (`podman` or `docker`).
+    /// The binary to invoke (`podman` in this build).
     pub bin: String,
-    /// True for rootless podman (the secure default we prefer).
+    /// True for rootless Podman. Always true for a runtime returned by
+    /// [`probe`], but retained so argv construction stays explicit/testable.
     pub rootless: bool,
 }
 
-/// Detect a usable container runtime: prefer **rootless podman**, fall back to
-/// docker. Returns `None` when neither is present/working. Cheap: only runs a
-/// `--version` (and, for podman, an `info` field read).
+/// Detect the only container runtime this phase supports: **rootless Podman**.
+/// Returns `None` when Podman is absent, broken, or running as root. Cheap:
+/// only runs `--version` and one `podman info` field read.
 pub fn probe() -> Option<Runtime> {
-    if version_ok("podman") {
-        let rootless = std::process::Command::new("podman")
-            .args(["info", "--format", "{{.Host.Security.Rootless}}"])
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "true")
-            .unwrap_or(false);
-        return Some(Runtime { bin: "podman".into(), rootless });
+    if !version_ok("podman") {
+        return None;
     }
-    if version_ok("docker") {
-        return Some(Runtime { bin: "docker".into(), rootless: false });
+    if podman_rootless()? {
+        Some(Runtime { bin: "podman".into(), rootless: true })
+    } else {
+        None
     }
-    None
 }
 
 fn version_ok(bin: &str) -> bool {
@@ -70,6 +68,17 @@ fn version_ok(bin: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+fn podman_rootless() -> Option<bool> {
+    let out = std::process::Command::new("podman")
+        .args(["info", "--format", "{{.Host.Security.Rootless}}"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim() == "true")
 }
 
 // ─── egress allowlist ────────────────────────────────────────────────────────
@@ -259,11 +268,17 @@ fn parse_target(head: &[u8]) -> Option<(String, u16, bool)> {
         return Some((h.to_string(), p.parse().ok()?, true));
     }
     // Absolute-form: GET http://host[:port]/path
-    let rest = target.strip_prefix("http://").or_else(|| target.strip_prefix("https://"))?;
+    let (rest, default_port) = if let Some(rest) = target.strip_prefix("http://") {
+        (rest, 80)
+    } else if let Some(rest) = target.strip_prefix("https://") {
+        (rest, 443)
+    } else {
+        return None;
+    };
     let authority = rest.split('/').next().unwrap_or(rest);
     let (host, port) = match authority.rsplit_once(':') {
         Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) => (h.to_string(), p.parse().ok()?),
-        _ => (authority.to_string(), 80),
+        _ => (authority.to_string(), default_port),
     };
     Some((host, port, false))
 }
@@ -326,7 +341,7 @@ pub enum NetPlan {
     Proxy(u16),
 }
 
-/// Build the `podman/docker run` argv for `argv` under `policy`, fully
+/// Build the `podman run` argv for `argv` under `policy`, fully
 /// hardened. `image` is the resolved base image; `name` is the (unique)
 /// container name used for cleanup. Pure — no process is spawned, so this is
 /// unit-tested for the security-critical flag set.
@@ -343,6 +358,7 @@ pub fn build_run_argv(
         rt.bin.clone(),
         "run".into(),
         "--rm".into(),
+        "--pull=never".into(),
         "--name".into(),
         name.into(),
         // EscapeBench hardening: no ambient capabilities, no privilege gain,
@@ -353,10 +369,13 @@ pub fn build_run_argv(
         "--tmpfs".into(),
         "/tmp:rw,nosuid,nodev,size=256m".into(),
         // The env workspace is the only writable host path, mounted at /work.
-        "-v".into(),
-        format!("{}:/work:rw", work.display()),
+        // Use --mount rather than -v so ':' in a repository path cannot be
+        // parsed as a bind-mount option suffix by Podman.
+        "--mount".into(),
+        format!("type=bind,source={},target=/work,rw", work.display()),
         "-w".into(),
         "/work".into(),
+        "--ipc=private".into(),
     ];
     // Rootless podman: keep the caller's uid so files in /work stay owned by us.
     if rt.rootless {
@@ -417,8 +436,9 @@ pub fn run(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<Exec
     let p = &policy.profile;
     let rt = probe().ok_or_else(|| {
         H5iError::Metadata(
-            "isolation=container requires a rootless podman (or docker) runtime, which was not \
-             found on PATH — install podman or re-request --isolation workspace/process".into(),
+            "isolation=container requires rootless Podman on PATH; Docker and rootful Podman are \
+             intentionally not accepted in this Linux/WSL backend — install/configure rootless \
+             podman or re-request --isolation workspace/process".into(),
         )
     })?;
     let image = p.image.clone().ok_or_else(|| {
@@ -428,6 +448,13 @@ pub fn run(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<Exec
             p.name
         ))
     })?;
+    if work.display().to_string().contains(',') {
+        return Err(H5iError::Metadata(format!(
+            "container workspace path contains ',' and cannot be represented safely in Podman's \
+             --mount syntax: {}",
+            work.display()
+        )));
+    }
 
     // Networking + optional egress proxy (held for the container's lifetime).
     let mut _proxy: Option<ProxyHandle> = None;
@@ -579,6 +606,8 @@ mod tests {
         assert_eq!((h.as_str(), p, c), ("pypi.org", 443, true));
         let (h, p, c) = parse_target(b"GET http://example.com/x HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
         assert_eq!((h.as_str(), p, c), ("example.com", 80, false));
+        let (h, p, c) = parse_target(b"GET https://example.com/x HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        assert_eq!((h.as_str(), p, c), ("example.com", 443, false));
         let (h, p, _) = parse_target(b"GET http://example.com:8080/y HTTP/1.1\r\n\r\n").unwrap();
         assert_eq!((h.as_str(), p), ("example.com", 8080));
     }
@@ -600,11 +629,13 @@ mod tests {
         let joined = argv.join(" ");
         assert_eq!(argv[0], "podman");
         assert!(joined.contains("--rm"));
+        assert!(joined.contains("--pull=never"));
         assert!(joined.contains("--cap-drop=ALL"));
         assert!(joined.contains("--security-opt=no-new-privileges"));
         assert!(joined.contains("--read-only"));
         assert!(joined.contains("--network=none"));
-        assert!(joined.contains("/work/dir:/work:rw"));
+        assert!(joined.contains("type=bind,source=/work/dir,target=/work,rw"));
+        assert!(joined.contains("--ipc=private"));
         assert!(joined.contains("--userns=keep-id"));
         assert!(joined.contains("--memory 2147483648"));
         assert!(joined.contains("--pids-limit 128"));

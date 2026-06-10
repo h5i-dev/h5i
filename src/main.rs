@@ -8106,11 +8106,11 @@ jq -c '{
                             if ok { style("yes").green() } else { style("no").red() }
                         );
                     }
-                    // Container claim: needs a runtime + a profile image; show
-                    // whether the runtime half is satisfiable.
+                    // Container claim: needs rootless Podman + a profile image;
+                    // show whether the runtime half is satisfiable.
                     let container_ok = caps.container_runtime.is_some();
                     println!(
-                        "  claim {:<10} satisfiable = {} (needs a runtime + profile container.image)",
+                        "  claim {:<10} satisfiable = {} (needs rootless Podman + profile container.image)",
                         "container",
                         if container_ok { style("yes").green() } else { style("no").red() }
                     );

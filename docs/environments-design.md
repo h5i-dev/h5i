@@ -309,7 +309,7 @@ accidentally call Docker "secure."
 |---|---|---|---|
 | `isolation=workspace` | git worktree only | nothing (file isolation only) | none |
 | `isolation=process` | worktree + our Landlock/seccomp/netns (§5) | adversary 1–2 | small, pure-Rust |
-| `isolation=container` | rootless podman/docker, dropped caps, no sock | adversary 2 | external binary only |
+| `isolation=container` | rootless Podman, dropped caps, no sock | adversary 2 | external binary only |
 | `isolation=hardened-container` | gVisor / Kata | adversary 2–3 | external binary only |
 | `isolation=microvm` | Firecracker | adversary 3 | external binary only |
 

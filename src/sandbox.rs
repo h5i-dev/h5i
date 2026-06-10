@@ -46,7 +46,7 @@ pub enum IsolationClaim {
     Workspace,
     /// Our own Landlock + seccomp + netns confinement (this module).
     Process,
-    /// Rootless podman/docker adapter (opt-in shell-out; not in this build).
+    /// Rootless Podman adapter (opt-in shell-out).
     Container,
     /// gVisor / Kata adapter (not in this build).
     HardenedContainer,
@@ -435,8 +435,8 @@ pub struct HostCaps {
     pub userns: bool,
     /// seccomp-bpf filters.
     pub seccomp: bool,
-    /// Detected container runtime binary (`podman`/`docker`) for
-    /// `isolation=container`; `None` when neither is available.
+    /// Detected rootless Podman binary for `isolation=container`; `None` when
+    /// Podman is absent, broken, or rootful.
     pub container_runtime: Option<String>,
 }
 
@@ -580,13 +580,13 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
             }
         }
         IsolationClaim::Container => {
-            // Rootless podman/docker adapter (opt-in shell-out). Require the
+            // Rootless Podman adapter (opt-in shell-out). Require the
             // runtime AND an image — fail closed, never silently downgrade.
             if caps.container_runtime.is_none() {
                 return Err(H5iError::Metadata(
-                    "isolation claim 'container' requires a rootless podman (or docker) runtime, \
-                     which was not found on PATH — install podman, or re-request --isolation \
-                     workspace/process"
+                    "isolation claim 'container' requires rootless Podman on PATH; Docker and \
+                     rootful Podman are intentionally not accepted in this Linux/WSL backend — \
+                     install/configure rootless podman, or re-request --isolation workspace/process"
                         .into(),
                 ));
             }
