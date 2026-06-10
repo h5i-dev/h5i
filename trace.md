@@ -288,3 +288,4 @@ _[Checkpoint: 6a28dcda — edited tests/env_integration.rs; wrote process-tier-b
 _[Checkpoint: 6a28e117 — Env round 5: io_uring+fsize/cpu hardening, human status w/ drift, env rebase (§9)]_
 ---
 
+[03:59:48] THINK: Let me add the drift helper and human status near the `diff` function.
