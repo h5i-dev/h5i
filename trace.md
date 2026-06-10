@@ -868,3 +868,4 @@ _[Checkpoint: 6a29b275 — Reviewed Claude Phase B seccomp-notify loop; found li
 _[Checkpoint: 6a29b411 — edited src/seccomp_notify.rs; edited src/seccomp_notify.rs; edited docs/supervisor-design.md]_
 ---
 
+[19:00:32] OBSERVE: read bnmh53prm.output
