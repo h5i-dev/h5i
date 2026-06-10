@@ -1482,3 +1482,4 @@ _[Checkpoint: 6a29f2b7 — edited tests/env_integration.rs]_
 [23:28:02] ACT: wrote wsl2-cargo-test-oom.md
 [23:28:05] OBSERVE: read MEMORY.md
 [23:28:13] ACT: edited MEMORY.md
+[23:28:26] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): ), but `supervisor::run()` is still the fail-closed Phase A stub — so `env run` fails closed with "live enforcement not wired." Wiring that st…
