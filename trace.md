@@ -357,3 +357,4 @@ _[Checkpoint: 6a28e134 — edited tests/env_integration.rs; edited CLAUDE.md; ed
 _[Checkpoint: 6a294441 — Shareable envs: manifest+policy in refs/h5i/env, push/pull carry the env, cross-clone review loop]_
 ---
 
+[11:02:55] THINK: First I need to understand the current push/pull plumbing, because for clone B to review, three things must travel: the **manifest** (currently disk-only), the **resolved policy**, and the env **code branch** (which is under `refs/heads/`, …
