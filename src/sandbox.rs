@@ -420,6 +420,82 @@ pub fn load_profile(
     Ok(profile)
 }
 
+/// What isolation the caller requested for `env create`: a specific claim
+/// (fail-closed — refused, never downgraded, if the host can't satisfy it), or
+/// `Auto` — pick the strongest tier the host can actually run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IsolationRequest {
+    Auto,
+    Claim(IsolationClaim),
+}
+
+/// The isolation a profile *declares* in `.h5i/env.toml` (its `isolation =`
+/// field), or `None` when it's absent or set to `auto`. Read directly so the
+/// auto-picker can honor an explicit profile choice without probing the host.
+fn profile_declared_isolation(repo_workdir: &Path, name: &str) -> Result<Option<IsolationClaim>, H5iError> {
+    let path = repo_workdir.join(POLICY_FILE);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| H5iError::with_path(e, &path))?;
+    let file: PolicyFileToml = toml::from_str(&text)?;
+    match file.profile.get(name).and_then(|p| p.isolation.as_deref()) {
+        None => Ok(None),
+        Some(s) if s.eq_ignore_ascii_case("auto") => Ok(None),
+        Some(s) => Ok(Some(IsolationClaim::parse(s)?)),
+    }
+}
+
+/// Pick the isolation tier for `env create` when none is pinned explicitly: the
+/// **strongest** tier the host can actually run for this profile
+/// (`container > supervised > process > workspace`), so the default is
+/// secure-by-default and always works. Each candidate is gated by the *same*
+/// checks `create` applies (`resolve` + `verify_exec`), so a picked tier is
+/// guaranteed runnable — never a tier that would then fail at run time.
+///
+/// `force_probe = false` (the CLI default, no `--isolation`) honors a tier the
+/// profile explicitly declares; `force_probe = true` (`--isolation auto`)
+/// re-probes regardless. Explicit `--isolation <tier>` never reaches here — it
+/// stays fail-closed.
+pub fn effective_auto(
+    repo_workdir: &Path,
+    name: &str,
+    force_probe: bool,
+) -> Result<IsolationClaim, H5iError> {
+    if !force_probe {
+        if let Some(c) = profile_declared_isolation(repo_workdir, name)? {
+            return Ok(c);
+        }
+        // An explicit org/user default (`H5I_DEFAULT_ISOLATION`) pins the tier
+        // without probing — set it to opt a whole clone into a fixed tier.
+        // `--isolation auto` (force_probe) ignores it and re-probes.
+        if let Ok(v) = std::env::var("H5I_DEFAULT_ISOLATION") {
+            let v = v.trim();
+            if !v.is_empty() && !v.eq_ignore_ascii_case("auto") {
+                return IsolationClaim::parse(v);
+            }
+        }
+    }
+    let caps = probe_host();
+    // Strongest first. `container` is only picked when the profile sets an
+    // image (resolve refuses it otherwise), so the bare default lands on the
+    // strongest *kernel* confinement instead.
+    for tier in [
+        IsolationClaim::Container,
+        IsolationClaim::Supervised,
+        IsolationClaim::Process,
+    ] {
+        let Ok(profile) = load_profile(repo_workdir, name, Some(tier)) else {
+            continue;
+        };
+        let runnable = resolve(&profile, &caps).and_then(|pol| verify_exec(&pol)).is_ok();
+        if runnable {
+            return Ok(tier);
+        }
+    }
+    Ok(IsolationClaim::Workspace)
+}
+
 /// Fail-closed policy lints (§7). These reject *policies*, before any env is
 /// created — never silently weaken them.
 pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
@@ -1490,6 +1566,73 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
     fn isolation_override_wins_over_profile() {
         let p = load_from_str(doc_example_toml(), "default", Some(IsolationClaim::Workspace)).unwrap();
         assert_eq!(p.isolation, IsolationClaim::Workspace);
+    }
+
+    /// Temp repo workdir, optionally carrying a `.h5i/env.toml`.
+    fn tmp_repo(toml_text: Option<&str>) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        if let Some(t) = toml_text {
+            std::fs::create_dir_all(dir.path().join(".h5i")).unwrap();
+            std::fs::write(dir.path().join(POLICY_FILE), t).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn profile_declared_isolation_reads_the_field() {
+        let dir = tmp_repo(Some("[profile.default]\nisolation = \"process\"\n"));
+        assert_eq!(
+            profile_declared_isolation(dir.path(), "default").unwrap(),
+            Some(IsolationClaim::Process)
+        );
+        // `auto` is a strategy, not a declared tier → None (defer to the picker).
+        let dir = tmp_repo(Some("[profile.default]\nisolation = \"auto\"\n"));
+        assert_eq!(profile_declared_isolation(dir.path(), "default").unwrap(), None);
+        // No isolation key → None.
+        let dir = tmp_repo(Some("[profile.default]\ntools = [\"git\"]\n"));
+        assert_eq!(profile_declared_isolation(dir.path(), "default").unwrap(), None);
+        // No file at all → None (no error).
+        let dir = tmp_repo(None);
+        assert_eq!(profile_declared_isolation(dir.path(), "default").unwrap(), None);
+    }
+
+    #[test]
+    fn effective_auto_honors_a_declared_tier_without_probing() {
+        // A profile that explicitly declares `workspace` must resolve to exactly
+        // that under the default (non-forced) path — deterministic, no host probe.
+        let dir = tmp_repo(Some("[profile.default]\nisolation = \"workspace\"\n"));
+        assert_eq!(
+            effective_auto(dir.path(), "default", false).unwrap(),
+            IsolationClaim::Workspace
+        );
+    }
+
+    #[test]
+    fn effective_auto_never_picks_an_unrunnable_tier() {
+        // The core invariant of secure-by-default: whatever auto picks (host
+        // dependent) MUST pass the very checks `create` applies — so a default
+        // env never fails at run time. Forced probe, no declared tier.
+        let dir = tmp_repo(None);
+        let tier = effective_auto(dir.path(), "default", true).unwrap();
+        // Workspace is always runnable; any stronger pick must verify-exec clean.
+        if tier != IsolationClaim::Workspace {
+            let p = load_profile(dir.path(), "default", Some(tier)).unwrap();
+            let pol = resolve(&p, &probe_host()).expect("auto-picked tier must resolve");
+            verify_exec(&pol).expect("auto-picked tier must verify-exec");
+        }
+        // And it is never weaker than workspace is meaningless — just assert it's
+        // a real claim (the match is exhaustive, so reaching here means it's one).
+        let _ = tier;
+    }
+
+    #[test]
+    fn effective_auto_skips_container_without_an_image() {
+        // The bare default has no container image, so auto must NOT pick
+        // `container` (resolve refuses imageless container) — it lands on a
+        // kernel tier or workspace instead.
+        let dir = tmp_repo(None);
+        let tier = effective_auto(dir.path(), "default", true).unwrap();
+        assert_ne!(tier, IsolationClaim::Container, "imageless default can't be container");
     }
 
     #[test]

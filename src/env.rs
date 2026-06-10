@@ -626,8 +626,9 @@ pub struct CreateOpts {
     pub from: Option<String>,
     /// Policy profile name in `.h5i/env.toml` (default `default`).
     pub profile: String,
-    /// CLI `--isolation` override — the *minimum* claim; fails closed if unmet.
-    pub isolation: Option<IsolationClaim>,
+    /// `--isolation` request. `Some(Claim)` is fail-closed (refused if unmet);
+    /// `Some(Auto)` or `None` auto-picks the strongest runnable tier.
+    pub isolation: Option<sandbox::IsolationRequest>,
     /// Workspace backend. `auto` and `worktree` are accepted today.
     pub backend: String,
 }
@@ -681,8 +682,17 @@ pub fn create(
         )));
     }
 
+    // Resolve the isolation claim. Explicit `--isolation <tier>` is fail-closed;
+    // `auto` / unspecified picks the strongest tier the host can actually run
+    // (secure-by-default). The chosen tier is then pinned into the policy below.
+    let claim = match opts.isolation {
+        Some(sandbox::IsolationRequest::Claim(c)) => c,
+        Some(sandbox::IsolationRequest::Auto) => sandbox::effective_auto(workdir, &opts.profile, true)?,
+        None => sandbox::effective_auto(workdir, &opts.profile, false)?,
+    };
+
     // Policy first (fail closed BEFORE any state is created on disk).
-    let profile = sandbox::load_profile(workdir, &opts.profile, opts.isolation)?;
+    let profile = sandbox::load_profile(workdir, &opts.profile, Some(claim))?;
     let caps = sandbox::probe_host();
     let policy = sandbox::resolve(&profile, &caps)?;
     // Functionally verify the confinement can actually run a command — capability

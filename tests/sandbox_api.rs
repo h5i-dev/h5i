@@ -37,6 +37,8 @@ impl Harness {
         let out = Command::new(H5I)
             .args(args)
             .env("H5I_AGENT", "tester")
+            // Deterministic default tier (the API tests assert `workspace`).
+            .env("H5I_DEFAULT_ISOLATION", "workspace")
             .current_dir(&self.dir)
             .output()
             .expect("run h5i");

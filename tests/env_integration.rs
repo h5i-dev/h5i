@@ -104,6 +104,11 @@ impl Repo {
             .args(args)
             // Hermetic: a fixed identity, no ambient leakage.
             .env("H5I_AGENT", "tester")
+            // Pin the default tier so bare `env create` is deterministic + fast
+            // (no auto-pick probing / confined runs). Tests that exercise a tier
+            // pass `--isolation` or declare it in env.toml; the auto-pick test
+            // forces probing with `--isolation auto`.
+            .env("H5I_DEFAULT_ISOLATION", "workspace")
             .current_dir(&self.dir)
             .output()
             .expect("failed to run h5i")
@@ -743,6 +748,36 @@ fn abort_preserves_forensics_and_gc_reclaims_workspace() {
 }
 
 // ─── 6. isolation claims fail closed ────────────────────────────────────────
+
+/// Secure-by-default: `--isolation auto` (which force-probes, ignoring the
+/// test's `H5I_DEFAULT_ISOLATION=workspace` pin) selects the *strongest* tier
+/// this host can actually run — and the invariant is that the picked tier then
+/// runs a command cleanly (auto never lands on an unrunnable tier). Serialized
+/// with the other confined-fork tests since auto may pick supervised/process.
+#[test]
+fn auto_isolation_picks_a_runnable_tier() {
+    let _serial = supervised_guard();
+    let r = Repo::new();
+    let out = r.h5i(&["env", "create", "autobox", "--isolation", "auto"]);
+    assert!(out.status.success(), "auto create must succeed:\n{}", out_str(&out));
+
+    let picked = r.manifest("autobox")["isolation_claim"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        ["workspace", "process", "supervised", "container"].contains(&picked.as_str()),
+        "auto picked a real tier, got '{picked}'"
+    );
+
+    // The keystone invariant: whatever was picked must actually run.
+    let run = r.h5i(&["env", "run", "autobox", "--", "sh", "-c", "exit 0"]);
+    assert!(
+        run.status.success(),
+        "auto-picked tier '{picked}' failed to run a command:\n{}",
+        out_str(&run)
+    );
+}
 
 #[test]
 fn unimplemented_backends_refuse_at_create() {

@@ -1705,8 +1705,9 @@ enum EnvCommands {
         /// Policy profile from .h5i/env.toml (default: `default`)
         #[arg(long, default_value = "default")]
         profile: String,
-        /// Minimum isolation claim: workspace|process|supervised|container|hardened-container|microvm.
-        /// Fails closed if the host cannot satisfy it (never silently downgrades).
+        /// Isolation: auto (default) | workspace | process | supervised | container | hardened-container | microvm.
+        /// `auto` (or unset) picks the strongest tier the host can run; an explicit
+        /// tier fails closed if the host cannot satisfy it (never silently downgrades).
         #[arg(long)]
         isolation: Option<String>,
         /// Workspace backend (auto|worktree)
@@ -8009,10 +8010,12 @@ jq -c '{
                 EnvCommands::Create { name, from, profile, isolation, backend } => {
                     let agent = msg::resolve_identity(&h5i_root, None)
                         .unwrap_or_else(|_| "human".to_string());
-                    let isolation = isolation
-                        .as_deref()
-                        .map(h5i_core::sandbox::IsolationClaim::parse)
-                        .transpose()?;
+                    use h5i_core::sandbox::{IsolationClaim, IsolationRequest};
+                    let isolation = match isolation.as_deref() {
+                        None => None,
+                        Some(s) if s.eq_ignore_ascii_case("auto") => Some(IsolationRequest::Auto),
+                        Some(s) => Some(IsolationRequest::Claim(IsolationClaim::parse(s)?)),
+                    };
                     let opts = h5i_core::env::CreateOpts { from, profile, isolation, backend };
                     let m = h5i_core::env::create(git, &h5i_root, &workdir, &agent, &name, opts)?;
                     println!(

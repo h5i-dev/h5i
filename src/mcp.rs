@@ -1579,11 +1579,13 @@ fn tool_env_create(params: &Value, workdir: &Path) -> Result<Value> {
     // Identity: $H5I_AGENT (host-injected), falling back to "claude" for the
     // Claude-hosted MCP server.
     let agent = crate::msg::resolve_identity(&repo.h5i_root, None).unwrap_or_else(|_| "claude".into());
-    let isolation = params
-        .get("isolation")
-        .and_then(Value::as_str)
-        .map(crate::sandbox::IsolationClaim::parse)
-        .transpose()?;
+    let isolation = match params.get("isolation").and_then(Value::as_str) {
+        None => None,
+        Some(s) if s.eq_ignore_ascii_case("auto") => Some(crate::sandbox::IsolationRequest::Auto),
+        Some(s) => Some(crate::sandbox::IsolationRequest::Claim(
+            crate::sandbox::IsolationClaim::parse(s)?,
+        )),
+    };
     let opts = crate::env::CreateOpts {
         from: params.get("from").and_then(Value::as_str).map(str::to_owned),
         profile: params
