@@ -732,3 +732,4 @@ _[Checkpoint: 6a29a272 — wrote sandbox-production-roadmap.md; wrote sandbox-pr
 [17:51:16] ACT: edited src/sandbox.rs
 [17:51:22] ACT: edited src/sandbox.rs
 [17:51:28] ACT: edited src/sandbox.rs
+[17:52:50] OBSERVE: read src/container.rs
