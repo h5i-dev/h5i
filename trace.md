@@ -1254,3 +1254,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 [21:04:17] OBSERVE: read Cargo.toml
 [21:04:19] OBSERVE: read sandbox-schemas.ts
 [21:04:20] OBSERVE: read README.md
+[21:04:22] OBSERVE: read README.md
