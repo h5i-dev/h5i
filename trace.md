@@ -1190,3 +1190,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 [21:03:31] OBSERVE: read branch.rs
 [21:03:31] OBSERVE: read README.md
 [21:03:33] OBSERVE: read main.go
+[21:03:33] OBSERVE: read CLAUDE.md
