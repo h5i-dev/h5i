@@ -451,3 +451,4 @@ _[Checkpoint: 6a298091 — edited CLAUDE.md; edited CLAUDE.md; edited docs/envir
 [15:22:14] ACT: edited tests/env_integration.rs
 [15:25:15] OBSERVE: read CLAUDE.md
 [15:25:28] ACT: edited CLAUDE.md
+[15:25:55] THINK: ** But let me confirm the details against your actual CI config rather than assert from memory.
