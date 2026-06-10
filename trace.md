@@ -236,3 +236,4 @@ _[Checkpoint: 6a28d8cc — edited tests/env_integration.rs; edited CLAUDE.md; ed
 _[Checkpoint: 6a28dcb2 — Fix CI: functional process-tier self-test (bits != runnable), gate kernel tests on it]_
 ---
 
+[03:40:52] ACT: wrote process-tier-bits-vs-runnable.md
