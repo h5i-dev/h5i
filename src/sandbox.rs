@@ -615,6 +615,52 @@ pub fn run(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<Exec
     }
 }
 
+/// Monotonic counter so concurrent functional probes get distinct temp dirs.
+static PROBE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Functionally verify the resolved policy can actually *execute* a command on
+/// this host. Capability bits (Landlock + user namespaces + seccomp present)
+/// are necessary but **not sufficient**: a hardened kernel can satisfy every
+/// bit yet still deny `exec` under the full confinement stack — notably
+/// AppArmor-restricted unprivileged user namespaces on Ubuntu 24.04 (and the
+/// GitHub-Actions runners built on it), where `unshare(CLONE_NEWUSER)` succeeds
+/// but the resulting namespace is too restricted to run a program.
+///
+/// For non-`process` claims this is a no-op. For `process`, it runs a trivial
+/// `true` inside a throwaway directory under the *same* confinement the
+/// environment will use (the tool allowlist is bypassed — the probe command is
+/// ours, not the user's). Returning an error lets `env create` fail closed with
+/// a clear message instead of letting every later `env run` die on EACCES.
+pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
+    if policy.claim != IsolationClaim::Process {
+        return Ok(());
+    }
+    let seq = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("h5i-exec-probe-{}-{seq}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+    // Clone the profile but clear the tools allowlist so our internal probe
+    // command isn't rejected by a user-pinned list that omits `true`.
+    let mut profile = policy.profile.clone();
+    profile.tools.clear();
+    let probe = ResolvedPolicy { claim: policy.claim, profile };
+    let result = run(&probe, &dir, &["true".to_string()]);
+    let _ = std::fs::remove_dir_all(&dir);
+    match result {
+        Ok(o) if o.exit_code == Some(0) => Ok(()),
+        Ok(o) => Err(H5iError::Metadata(format!(
+            "process-tier confinement self-test exited {:?} on this host — refusing to create an \
+             environment whose commands could not run (re-request --isolation workspace)",
+            o.exit_code
+        ))),
+        Err(e) => Err(H5iError::Metadata(format!(
+            "process-tier confinement is not functional on this host: {e}. The kernel reports \
+             Landlock/user-namespace/seccomp support, but a confined command could not execute \
+             (e.g. AppArmor-restricted unprivileged user namespaces). Re-request \
+             --isolation workspace."
+        ))),
+    }
+}
+
 /// `workspace` tier: no kernel confinement (trusted), but still scoped — runs
 /// in the env worktree with the wall-clock limit applied so a hung command
 /// cannot wedge `h5i env run` forever.

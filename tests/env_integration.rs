@@ -52,6 +52,31 @@ fn out_str(out: &Output) -> String {
     )
 }
 
+/// Whether this host can actually *run* a process-tier confined command.
+///
+/// The capability bits (Landlock + user namespaces + seccomp) can all be
+/// present while a hardened kernel still denies `exec` under the full
+/// confinement stack — notably AppArmor-restricted unprivileged user
+/// namespaces on Ubuntu 24.04 / GitHub-Actions runners. `env create
+/// --isolation process` now functionally self-tests and fails closed there, so
+/// a successful create is the authoritative signal that the kernel tests can
+/// run. Cached across tests (the result is host-global).
+fn process_tier_runnable() -> bool {
+    use std::sync::OnceLock;
+    static OK: OnceLock<bool> = OnceLock::new();
+    *OK.get_or_init(|| {
+        let r = Repo::new();
+        let out = r.h5i(&["env", "create", "probe", "--isolation", "process"]);
+        if !out.status.success() {
+            eprintln!(
+                "process-tier confinement not runnable on this host — kernel tests will skip:\n{}",
+                out_str(&out)
+            );
+        }
+        out.status.success()
+    })
+}
+
 struct Repo {
     dir: PathBuf,
     _root: TempDir,
@@ -131,17 +156,6 @@ impl Repo {
             .join(&hex[2..4])
             .join(hex);
         std::fs::read(&path).unwrap_or_else(|_| panic!("raw blob {hex} missing"))
-    }
-
-    /// Parse `h5i env probe` output into (landlock, userns, seccomp).
-    fn probe(&self) -> (bool, bool, bool) {
-        let out = out_str(&self.h5i_ok(&["env", "probe"]));
-        let has = |k: &str, v: &str| out.lines().any(|l| l.contains(k) && l.contains(v));
-        (
-            !has("landlock_abi", "none"),
-            has("userns", "true"),
-            has("seccomp", "true"),
-        )
     }
 }
 
@@ -468,17 +482,19 @@ fn unimplemented_backends_refuse_at_create() {
 #[test]
 fn process_claim_is_all_or_nothing_per_host() {
     let r = Repo::new();
-    let (landlock, userns, seccomp) = r.probe();
-    let satisfiable = landlock && userns && seccomp;
     let out = r.h5i(&["env", "create", "confined", "--isolation", "process"]);
-    if satisfiable {
+    if process_tier_runnable() {
         assert!(out.status.success(), "{}", out_str(&out));
         assert_eq!(r.manifest("confined")["isolation_claim"], "process");
     } else {
-        // Fail closed: refuse with an explicit reason, never downgrade.
-        assert!(!out.status.success(), "must refuse on incapable host");
+        // Fail closed: refuse with an explicit reason, never downgrade — whether
+        // the bits are missing or the confinement simply can't exec on this host.
+        assert!(!out.status.success(), "must refuse when process tier is not runnable");
         let text = out_str(&out);
-        assert!(text.contains("cannot be satisfied"), "{text}");
+        assert!(
+            text.contains("cannot be satisfied") || text.contains("not functional"),
+            "{text}"
+        );
         assert!(!r.env_dir("confined").exists());
     }
 }
@@ -490,16 +506,11 @@ fn process_claim_is_all_or_nothing_per_host() {
 /// satisfy the process claim — the fail-closed path is covered above.
 #[test]
 fn process_tier_confines_fs_and_network() {
-    let r = Repo::new();
-    let (landlock, userns, seccomp) = r.probe();
-    if !(landlock && userns && seccomp) {
-        eprintln!(
-            "SKIP process_tier_confines_fs_and_network: host lacks landlock={landlock} \
-             userns={userns} seccomp={seccomp}"
-        );
+    if !process_tier_runnable() {
+        eprintln!("SKIP process_tier_confines_fs_and_network: process tier not runnable on this host");
         return;
     }
-
+    let r = Repo::new();
     r.h5i_ok(&["env", "create", "jail", "--isolation", "process"]);
 
     // Inside $WORK: writable.
@@ -576,12 +587,11 @@ fn wall_clock_kill_reaps_descendant_processes() {
 /// user namespace works when egress is allowed. Capability-gated.
 #[test]
 fn process_tier_host_net_still_confines_fs() {
-    let r = Repo::new();
-    let (landlock, userns, seccomp) = r.probe();
-    if !(landlock && userns && seccomp) {
-        eprintln!("SKIP process_tier_host_net_still_confines_fs: host lacks process-tier capabilities");
+    if !process_tier_runnable() {
+        eprintln!("SKIP process_tier_host_net_still_confines_fs: process tier not runnable on this host");
         return;
     }
+    let r = Repo::new();
     std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
     std::fs::write(
         r.dir.join(".h5i/env.toml"),
@@ -606,12 +616,11 @@ fn process_tier_host_net_still_confines_fs() {
 /// Env-var allowlist: only `env.pass` variables reach the confined process.
 #[test]
 fn process_tier_env_allowlist() {
-    let r = Repo::new();
-    let (landlock, userns, seccomp) = r.probe();
-    if !(landlock && userns && seccomp) {
-        eprintln!("SKIP process_tier_env_allowlist: host lacks process-tier capabilities");
+    if !process_tier_runnable() {
+        eprintln!("SKIP process_tier_env_allowlist: process tier not runnable on this host");
         return;
     }
+    let r = Repo::new();
     r.h5i_ok(&["env", "create", "envjail", "--isolation", "process"]);
     let out = Command::new(H5I)
         .args(["env", "run", "envjail", "--", "sh", "-c", "echo SECRET=[$MY_SECRET] PATH_SET=${PATH:+yes}"])
@@ -813,4 +822,8 @@ fn probe_reports_all_capability_lines() {
     // Workspace is satisfiable everywhere.
     let ws_line = out.lines().find(|l| l.contains("workspace")).unwrap();
     assert!(ws_line.contains("yes"), "{ws_line}");
+    // The functional self-test line is present and agrees with create.
+    let run_line = out.lines().find(|l| l.contains("runnable")).expect("runnable line");
+    let says_yes = run_line.contains("yes");
+    assert_eq!(says_yes, process_tier_runnable(), "probe 'runnable' must match create: {run_line}");
 }

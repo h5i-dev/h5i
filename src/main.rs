@@ -8025,6 +8025,15 @@ jq -c '{
                         );
                     }
                     println!("  claim container/hardened-container/microvm: external backends (not in this build)");
+                    // Functional self-test: bits can be present while a hardened
+                    // kernel still denies exec under the full confinement stack.
+                    let probe = h5i_core::sandbox::Profile::builtin("probe", h5i_core::sandbox::IsolationClaim::Process);
+                    match h5i_core::sandbox::resolve(&probe, &caps)
+                        .and_then(|pol| h5i_core::sandbox::verify_exec(&pol))
+                    {
+                        Ok(()) => println!("  process tier runnable = {}", style("yes").green()),
+                        Err(e) => println!("  process tier runnable = {} ({e})", style("no").red()),
+                    }
                 }
 
                 EnvCommands::List => {

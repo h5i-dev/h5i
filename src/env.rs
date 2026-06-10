@@ -469,6 +469,11 @@ pub fn create(
     let profile = sandbox::load_profile(workdir, &opts.profile, opts.isolation)?;
     let caps = sandbox::probe_host();
     let policy = sandbox::resolve(&profile, &caps)?;
+    // Functionally verify the confinement can actually run a command — capability
+    // bits can be present while a hardened kernel still denies exec under the
+    // full stack. Refuse here with a clear message rather than letting every
+    // later `env run` fail on EACCES.
+    sandbox::verify_exec(&policy)?;
     let policy_digest = policy.digest()?;
 
     // Pin the immutable base.
