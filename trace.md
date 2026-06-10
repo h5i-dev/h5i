@@ -529,3 +529,9 @@ _[Checkpoint: 6a298919 — Sent Claude sandbox dashboard design memo: first-clas
 [15:56:18] OBSERVE: read src/objects.rs
 [15:56:27] OBSERVE: read web/src/api.ts
 [15:56:40] OBSERVE: read src/sandbox.rs
+
+
+---
+_[Checkpoint: 6a2989a7 — Waited for Claude's sandbox-dashboard ASK and replied in-thread with concrete Flight Recorder UI, ranked boundary-pressure signals, anomaly heuristics, risk schema, and rigorous copy rules.]_
+---
+
