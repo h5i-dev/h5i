@@ -138,6 +138,9 @@ pub struct Profile {
     /// Tools allowlist — when non-empty, only these programs (argv[0] basename)
     /// may run; enforced fail-closed (see `check_tool_allowlist`).
     pub tools: Vec<String>,
+    /// Container image for `isolation=container` (required at that tier). The
+    /// command runs inside it with the workspace bind-mounted at `/work`.
+    pub image: Option<String>,
     /// Environment-variable allowlist — the child gets *only* these (plus
     /// nothing else; secrets are never inherited wholesale).
     pub env_pass: Vec<String>,
@@ -164,6 +167,7 @@ impl Profile {
             fsize_bytes: None,
             cpu_secs: None,
             tools: Vec::new(),
+            image: None,
             env_pass: vec!["PATH".into(), "HOME".into(), "LANG".into()],
         }
     }
@@ -210,7 +214,15 @@ struct ProfileToml {
     #[serde(default)]
     tools: Vec<String>,
     #[serde(default)]
+    container: ContainerToml,
+    #[serde(default)]
     env: EnvVarsToml,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ContainerToml {
+    /// Base image for `isolation=container`.
+    image: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -315,6 +327,7 @@ pub fn load_profile(
                     None => base.cpu_secs,
                 },
                 tools: t.tools,
+                image: t.container.image.or(base.image),
                 env_pass: if t.env.pass.is_empty() { base.env_pass } else { t.env.pass },
             }
         }
@@ -422,6 +435,9 @@ pub struct HostCaps {
     pub userns: bool,
     /// seccomp-bpf filters.
     pub seccomp: bool,
+    /// Detected container runtime binary (`podman`/`docker`) for
+    /// `isolation=container`; `None` when neither is available.
+    pub container_runtime: Option<String>,
 }
 
 #[cfg(target_os = "linux")]
@@ -431,6 +447,7 @@ pub fn probe_host() -> HostCaps {
         landlock_abi: probe_landlock_abi(),
         userns: probe_userns(),
         seccomp: probe_seccomp(),
+        container_runtime: crate::container::probe().map(|r| r.bin),
     }
 }
 
@@ -441,6 +458,7 @@ pub fn probe_host() -> HostCaps {
         landlock_abi: None,
         userns: false,
         seccomp: false,
+        container_runtime: crate::container::probe().map(|r| r.bin),
     }
 }
 
@@ -561,10 +579,29 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
                 )));
             }
         }
+        IsolationClaim::Container => {
+            // Rootless podman/docker adapter (opt-in shell-out). Require the
+            // runtime AND an image — fail closed, never silently downgrade.
+            if caps.container_runtime.is_none() {
+                return Err(H5iError::Metadata(
+                    "isolation claim 'container' requires a rootless podman (or docker) runtime, \
+                     which was not found on PATH — install podman, or re-request --isolation \
+                     workspace/process"
+                        .into(),
+                ));
+            }
+            if profile.image.is_none() {
+                return Err(H5iError::Metadata(format!(
+                    "isolation claim 'container' requires a base image — set `container.image = \
+                     \"…\"` in profile '{}' (e.g. your toolchain image)",
+                    profile.name
+                )));
+            }
+        }
         claim => {
             return Err(H5iError::Metadata(format!(
                 "isolation claim '{}' requires an external backend adapter that this build \
-                 does not ship yet (rollout §11 phase 4) — use workspace or process",
+                 does not ship yet (rollout §11 phase 4) — use workspace, process, or container",
                 claim.as_str()
             )));
         }
@@ -628,6 +665,7 @@ pub fn run(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<Exec
     match policy.claim {
         IsolationClaim::Workspace => run_unconfined(policy, work, argv),
         IsolationClaim::Process => run_confined(policy, work, argv),
+        IsolationClaim::Container => crate::container::run(policy, work, argv),
         claim => Err(H5iError::Metadata(format!(
             "no backend for isolation claim '{}'",
             claim.as_str()
@@ -1299,7 +1337,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     }
 
     fn caps(landlock: Option<i32>, userns: bool, seccomp: bool) -> HostCaps {
-        HostCaps { os: "linux".into(), landlock_abi: landlock, userns, seccomp }
+        HostCaps { os: "linux".into(), landlock_abi: landlock, userns, seccomp, container_runtime: None }
     }
 
     #[test]
@@ -1327,21 +1365,59 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
 
     #[test]
     fn resolve_refuses_unimplemented_backends() {
-        for claim in [
-            IsolationClaim::Container,
-            IsolationClaim::HardenedContainer,
-            IsolationClaim::Microvm,
-        ] {
+        for claim in [IsolationClaim::HardenedContainer, IsolationClaim::Microvm] {
             let p = Profile::builtin("default", claim);
             let err = resolve(&p, &caps(Some(5), true, true)).unwrap_err();
             assert!(err.to_string().contains("backend"), "{err}");
         }
     }
 
+    fn caps_with_container(runtime: Option<&str>) -> HostCaps {
+        HostCaps {
+            os: "linux".into(),
+            landlock_abi: Some(3),
+            userns: true,
+            seccomp: true,
+            container_runtime: runtime.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn resolve_container_requires_runtime_and_image() {
+        // No runtime on the host → refuse, mention podman.
+        let mut p = Profile::builtin("default", IsolationClaim::Container);
+        p.image = Some("docker.io/library/debian:stable-slim".into());
+        let err = resolve(&p, &caps_with_container(None)).unwrap_err();
+        assert!(err.to_string().contains("podman"), "{err}");
+
+        // Runtime present but no image → refuse, mention image.
+        let no_img = Profile::builtin("default", IsolationClaim::Container);
+        let err = resolve(&no_img, &caps_with_container(Some("podman"))).unwrap_err();
+        assert!(err.to_string().contains("image"), "{err}");
+
+        // Runtime + image → resolves.
+        assert!(resolve(&p, &caps_with_container(Some("podman"))).is_ok());
+    }
+
+    #[test]
+    fn net_egress_allowed_under_container_refused_under_process() {
+        // Under process, a domain allowlist fails closed (validate_profile).
+        let mut proc = Profile::builtin("p", IsolationClaim::Process);
+        proc.net_egress = vec!["pypi.org".into()];
+        assert!(validate_profile(&proc).is_err());
+
+        // Under container, it is permitted.
+        let mut cont = Profile::builtin("c", IsolationClaim::Container);
+        cont.net_egress = vec!["pypi.org".into()];
+        cont.image = Some("img".into());
+        assert!(validate_profile(&cont).is_ok());
+        assert!(resolve(&cont, &caps_with_container(Some("podman"))).is_ok());
+    }
+
     #[test]
     fn resolve_process_refused_off_linux() {
         let p = Profile::builtin("default", IsolationClaim::Process);
-        let mac = HostCaps { os: "macos".into(), landlock_abi: None, userns: false, seccomp: false };
+        let mac = HostCaps { os: "macos".into(), landlock_abi: None, userns: false, seccomp: false, container_runtime: None };
         let err = resolve(&p, &mac).unwrap_err();
         assert!(err.to_string().contains("Linux-only"), "{err}");
     }

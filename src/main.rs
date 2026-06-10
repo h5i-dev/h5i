@@ -8086,6 +8086,10 @@ jq -c '{
                     );
                     println!("  userns       = {}", caps.userns);
                     println!("  seccomp      = {}", caps.seccomp);
+                    println!(
+                        "  container    = {}",
+                        caps.container_runtime.as_deref().unwrap_or("none")
+                    );
                     println!();
                     for (claim, profile_net_deny) in [
                         (h5i_core::sandbox::IsolationClaim::Workspace, false),
@@ -8102,7 +8106,15 @@ jq -c '{
                             if ok { style("yes").green() } else { style("no").red() }
                         );
                     }
-                    println!("  claim container/hardened-container/microvm: external backends (not in this build)");
+                    // Container claim: needs a runtime + a profile image; show
+                    // whether the runtime half is satisfiable.
+                    let container_ok = caps.container_runtime.is_some();
+                    println!(
+                        "  claim {:<10} satisfiable = {} (needs a runtime + profile container.image)",
+                        "container",
+                        if container_ok { style("yes").green() } else { style("no").red() }
+                    );
+                    println!("  claim hardened-container/microvm: external backends (not in this build)");
                     // Functional self-test: bits can be present while a hardened
                     // kernel still denies exec under the full confinement stack.
                     let probe = h5i_core::sandbox::Profile::builtin("probe", h5i_core::sandbox::IsolationClaim::Process);

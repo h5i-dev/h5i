@@ -1,9 +1,13 @@
 # h5i Environments — Design
 
-> **Status:** implemented through rollout phases 1–3 (`src/env.rs`, `src/sandbox.rs`;
-> workspace tier, the static `process` tier with Landlock/seccomp/netns, and the
-> policy file with fail-closed gates). Container/microvm adapters, the
-> seccomp-notify supervisor, and stage separation remain future phases.
+> **Status:** implemented through rollout phases 1–4 (`src/env.rs`,
+> `src/sandbox.rs`, `src/container.rs`): the workspace tier, the static
+> `process` tier (Landlock/seccomp/netns), the policy file with fail-closed
+> gates, env sharing via `refs/h5i/env` + the `h5i_env_*` MCP tools, and the
+> **rootless-podman `container` backend** — which unlocks the `net.egress`
+> domain allowlist via a DNS-pinned host proxy. The `hardened-container`/
+> `microvm` adapters, the seccomp-notify supervisor (airtight L3/L4 egress),
+> and GAAP stage separation remain future phases.
 > Authored by `claude`, with design
 > contributions from `codex` via Agent Radio (`refs/h5i/msg`), grounded in the
 > reference systems under `../sandbox-design-ref/` and three 2026 security

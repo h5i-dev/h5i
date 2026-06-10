@@ -469,12 +469,14 @@ fn abort_preserves_forensics_and_gc_reclaims_workspace() {
 #[test]
 fn unimplemented_backends_refuse_at_create() {
     let r = Repo::new();
-    for claim in ["container", "hardened-container", "microvm"] {
+    // hardened-container/microvm have no adapter in this build → refuse.
+    for claim in ["hardened-container", "microvm"] {
         let out = r.h5i(&["env", "create", "boxed", "--isolation", claim]);
         assert!(!out.status.success(), "claim {claim} must refuse");
         assert!(out_str(&out).contains("backend"), "{}", out_str(&out));
         assert!(!r.env_dir("boxed").exists(), "no state left behind on refusal");
     }
+    // An unknown claim name is rejected outright.
     let out = r.h5i(&["env", "create", "boxed", "--isolation", "docker"]);
     assert!(!out.status.success(), "unknown claim must refuse");
 }
@@ -662,6 +664,115 @@ fn process_tier_fsize_caps_disk_bomb() {
         let sz = std::fs::metadata(&big).unwrap().len();
         assert!(sz <= 2 * 1024 * 1024, "file should be capped near 1 MiB, got {sz} bytes");
     }
+}
+
+// ─── 7b. container backend (rootless podman; design phase 4) ────────────────
+
+/// A rootless podman runtime able to actually run a container. Cached; gates
+/// the real-container tests (skip cleanly where podman is absent, e.g. CI).
+fn container_runnable() -> bool {
+    use std::sync::OnceLock;
+    static OK: OnceLock<bool> = OnceLock::new();
+    *OK.get_or_init(|| {
+        Command::new("podman")
+            .args(["run", "--rm", "docker.io/library/busybox:latest", "true"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    })
+}
+
+const BUSYBOX: &str = "docker.io/library/busybox:latest";
+
+fn write_profile(r: &Repo, toml: &str) {
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(r.dir.join(".h5i/env.toml"), toml).unwrap();
+}
+
+#[test]
+fn container_create_fails_closed_without_image() {
+    let r = Repo::new();
+    // A container profile with no image is refused at create (fail closed),
+    // whether or not a runtime is present.
+    write_profile(&r, "[profile.default]\nisolation = \"container\"\n");
+    let out = r.h5i(&["env", "create", "noimg"]);
+    assert!(!out.status.success());
+    assert!(out_str(&out).contains("image"), "{}", out_str(&out));
+    assert!(!r.env_dir("noimg").exists());
+}
+
+#[test]
+fn net_egress_under_process_fails_closed() {
+    let r = Repo::new();
+    write_profile(
+        &r,
+        "[profile.default]\nisolation = \"process\"\nnet.egress = [\"pypi.org\"]\n",
+    );
+    let out = r.h5i(&["env", "create", "egr"]);
+    assert!(!out.status.success(), "egress under process must refuse");
+    assert!(out_str(&out).contains("net.egress"), "{}", out_str(&out));
+}
+
+#[test]
+fn container_runs_with_workspace_mount_and_net_deny() {
+    if !container_runnable() {
+        eprintln!("SKIP container_runs_with_workspace_mount_and_net_deny: no rootless podman");
+        return;
+    }
+    let r = Repo::new();
+    write_profile(
+        &r,
+        &format!(
+            "[profile.default]\nisolation = \"container\"\nnet.mode = \"deny\"\ncontainer.image = \"{BUSYBOX}\"\n"
+        ),
+    );
+    r.h5i_ok(&["env", "create", "box"]);
+
+    // The command runs in the container, /work is the worktree (writable).
+    r.h5i_ok(&["env", "run", "box", "--", "sh", "-c", "echo from-container > made.txt"]);
+    let made = r.work("box").join("made.txt");
+    assert!(made.is_file(), "container wrote into the mounted workspace");
+    assert_eq!(std::fs::read_to_string(&made).unwrap().trim(), "from-container");
+
+    // net.mode=deny → no egress.
+    let out = r.h5i(&[
+        "env", "run", "box", "--", "sh", "-c",
+        "wget -T3 -q -O- http://example.com >/dev/null 2>&1 && echo REACHED || echo BLOCKED",
+    ]);
+    assert!(out_str(&out).contains("BLOCKED"), "net deny must block egress: {}", out_str(&out));
+
+    // The capture records the container claim in the manifest.
+    assert_eq!(r.manifest("box")["isolation_claim"], "container");
+}
+
+#[test]
+fn container_egress_allowlist_permits_only_listed_hosts() {
+    if !container_runnable() {
+        eprintln!("SKIP container_egress_allowlist_permits_only_listed_hosts: no rootless podman");
+        return;
+    }
+    let r = Repo::new();
+    write_profile(
+        &r,
+        &format!(
+            "[profile.default]\nisolation = \"container\"\nnet.egress = [\"example.com:80\"]\ncontainer.image = \"{BUSYBOX}\"\n"
+        ),
+    );
+    r.h5i_ok(&["env", "create", "egr"]);
+
+    // Allowlisted host is reachable through the DNS-pinned proxy.
+    let allowed = r.h5i(&[
+        "env", "run", "egr", "--", "sh", "-c",
+        "wget -T8 -q -O- http://example.com | grep -qi 'example domain' && echo OK || echo FAIL",
+    ]);
+    assert!(out_str(&allowed).contains("OK"), "allowlisted host must be reachable: {}", out_str(&allowed));
+
+    // A non-allowlisted host is blocked (fail-closed at the proxy).
+    let denied = r.h5i(&[
+        "env", "run", "egr", "--", "sh", "-c",
+        "wget -T8 -q -O- http://www.google.com >/dev/null 2>&1 && echo REACHED || echo BLOCKED",
+    ]);
+    assert!(out_str(&denied).contains("BLOCKED"), "non-allowlisted host must be blocked: {}", out_str(&denied));
 }
 
 // ─── 8. secret redaction in evidence (design §7) ────────────────────────────
