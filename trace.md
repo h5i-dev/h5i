@@ -347,3 +347,4 @@ _[Checkpoint: 6a28e134 — edited tests/env_integration.rs; edited CLAUDE.md; ed
 [10:58:18] OBSERVE: read tests/env_integration.rs
 [10:58:22] OBSERVE: read tests/env_integration.rs
 [10:58:49] ACT: edited tests/env_integration.rs
+[10:59:55] ACT: edited tests/env_integration.rs
