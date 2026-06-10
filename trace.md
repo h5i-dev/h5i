@@ -1182,3 +1182,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 ---
 
 [21:03:20] OBSERVE: read README.md
+[21:03:26] OBSERVE: read Cargo.toml
