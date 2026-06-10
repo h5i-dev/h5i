@@ -544,11 +544,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Env MCP tools: agents drive the sandbox natively (11 h5i_env_* tools)
 - [x] edited src/mcp.rs; edited .claude/h5i.md; edited CLAUDE.md
 - [x] Container backend (isolation=container): rootless podman + DNS-pinned net.egress allowlist proxy
+- [x] edited CLAUDE.md; edited CLAUDE.md; edited docs/environments-design.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 15:19 UTC] `impl-env-sandbox`: edited CLAUDE.md; edited CLAUDE.md; edited docs/environments-design.md
 - [2026-06-10 15:19 UTC] `impl-env-sandbox`: Container backend (isolation=container): rootless podman + DNS-pinned net.egress allowlist proxy
 - [2026-06-10 14:44 UTC] `impl-env-sandbox`: edited src/mcp.rs; edited .claude/h5i.md; edited CLAUDE.md
 - [2026-06-10 14:43 UTC] `impl-env-sandbox`: Env MCP tools: agents drive the sandbox natively (11 h5i_env_* tools)
