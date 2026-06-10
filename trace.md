@@ -987,3 +987,9 @@ _[Checkpoint: 6a29baee — edited src/seccomp_notify.rs; edited src/seccomp_noti
 [19:35:02] ACT: edited tests/sandbox_api.rs
 [19:35:17] ACT: edited tests/env_integration.rs
 [19:36:26] OBSERVE: read b1b2l4182.output
+
+
+---
+_[Checkpoint: 6a29bcbd — edited src/supervisor.rs; edited tests/sandbox_api.rs; edited tests/env_integration.rs]_
+---
+
