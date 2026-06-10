@@ -181,16 +181,45 @@ pub struct Manifest {
     pub redactions: Vec<String>,
 }
 
-/// Counts + an out-of-band pointer for an env's network egress decisions —
+/// Counts + a bounded per-host breakdown of an env's network egress decisions —
 /// the manifest holds only this summary (token-reduction principle, design §8).
+/// Populated by the `isolation=container` allowlist proxy (the only tier that
+/// observes egress today); `None` everywhere else.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EgressSummary {
+    /// Requests the proxy permitted (on-allowlist host:port).
     pub allowed: u64,
+    /// Requests the proxy refused with `403` (off-allowlist — a network
+    /// boundary trip). The single highest-fidelity egress signal.
     pub denied: u64,
+    /// Per `host:port` verdict counts, deduped and bounded ([`MAX_EGRESS_HOSTS`])
+    /// so a probing loop can never bloat the shared `refs/h5i/objects` ref. This
+    /// is what the dashboard reads directly — no raw rehydration needed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<EgressHost>,
+    /// True when [`MAX_EGRESS_HOSTS`] was exceeded and the tail was dropped, so a
+    /// reader never mistakes a clamped list for the whole picture.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hosts_truncated: bool,
     /// Object id (in this store) of the full `egress.jsonl`, when captured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log: Option<String>,
 }
+
+/// One destination an env's traffic was steered at, with allow/deny tallies.
+/// A host with `denied > 0` is a refused boundary attempt; the dashboard's NET
+/// lane surfaces these as "Boundary blocked".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EgressHost {
+    pub host: String,
+    pub port: u16,
+    pub allowed: u64,
+    pub denied: u64,
+}
+
+/// Cap on distinct `host:port` entries kept in an [`EgressSummary`] — keeps the
+/// shared manifest bounded regardless of how many hosts a run probes.
+pub const MAX_EGRESS_HOSTS: usize = 64;
 
 impl Manifest {
     /// The bare 64-char hex digest (no `sha256:` prefix).
@@ -365,6 +394,9 @@ pub struct CaptureOptions {
     /// digest of the policy enforced while producing it.
     pub env_id: Option<String>,
     pub policy_digest: Option<String>,
+    /// Network egress verdicts observed while producing this capture (the
+    /// `isolation=container` allowlist proxy populates it; `None` otherwise).
+    pub egress: Option<EgressSummary>,
     /// Scrub secret-like spans from the payload BEFORE it is hashed and stored,
     /// so the content-addressed blob itself never carries a credential. Used by
     /// `h5i env run` (design §7). The detected rule ids land in
@@ -537,7 +569,7 @@ pub fn capture(
         structured,
         env_id: opts.env_id,
         policy_digest: opts.policy_digest,
-        egress: None,
+        egress: opts.egress,
         redactions,
     };
 
@@ -1588,6 +1620,7 @@ mod tests {
             filter: FilterConfig::default(),
             env_id: None,
             policy_digest: None,
+            egress: None,
             redact: false,
         }
     }

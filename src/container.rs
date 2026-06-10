@@ -25,16 +25,74 @@
 //! is the `hardened-container`/`microvm` tier (or the future seccomp-notify
 //! supervisor). We state this rather than pretend the box is sealed.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::error::H5iError;
+use crate::objects::{EgressHost, EgressSummary, MAX_EGRESS_HOSTS};
 use crate::sandbox::{ExecOutcome, NetMode, Profile, ResolvedPolicy};
+
+/// Per `host:port` allow/deny tally accumulated by the egress proxy across a
+/// run. Shared between the proxy's worker threads and the run, behind a mutex;
+/// snapshotted into a bounded [`EgressSummary`] once the container exits.
+#[derive(Default)]
+struct EgressTally {
+    allowed: u64,
+    denied: u64,
+    /// `(host, port) -> (allowed, denied)`. `BTreeMap` keeps the snapshot
+    /// deterministic (sorted) for stable manifests and tests.
+    hosts: BTreeMap<(String, u16), (u64, u64)>,
+}
+
+impl EgressTally {
+    fn record(&mut self, host: &str, port: u16, permitted: bool) {
+        let slot = self.hosts.entry((host.to_string(), port)).or_insert((0, 0));
+        if permitted {
+            self.allowed += 1;
+            slot.0 += 1;
+        } else {
+            self.denied += 1;
+            slot.1 += 1;
+        }
+    }
+
+    /// Build the bounded summary the capture manifest carries. Denied hosts
+    /// (boundary trips) are surfaced first so the clamp never drops the signal
+    /// that matters most.
+    fn snapshot(&self) -> EgressSummary {
+        let mut hosts: Vec<EgressHost> = self
+            .hosts
+            .iter()
+            .map(|((host, port), (allowed, denied))| EgressHost {
+                host: host.clone(),
+                port: *port,
+                allowed: *allowed,
+                denied: *denied,
+            })
+            .collect();
+        // Denials first, then by descending traffic — most interesting on top.
+        hosts.sort_by(|a, b| {
+            (b.denied > 0)
+                .cmp(&(a.denied > 0))
+                .then((b.allowed + b.denied).cmp(&(a.allowed + a.denied)))
+                .then(a.host.cmp(&b.host))
+        });
+        let hosts_truncated = hosts.len() > MAX_EGRESS_HOSTS;
+        hosts.truncate(MAX_EGRESS_HOSTS);
+        EgressSummary {
+            allowed: self.allowed,
+            denied: self.denied,
+            hosts,
+            hosts_truncated,
+            log: None,
+        }
+    }
+}
 
 /// A detected container runtime.
 #[derive(Debug, Clone)]
@@ -190,7 +248,26 @@ impl AllowList {
 pub struct ProxyHandle {
     pub port: u16,
     stop: Arc<AtomicBool>,
+    tally: Arc<Mutex<EgressTally>>,
     join: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ProxyHandle {
+    /// Snapshot the egress verdicts seen so far into a bounded summary. Called
+    /// after the container exits; a poisoned lock degrades to an empty summary
+    /// rather than panicking the run.
+    pub fn egress_summary(&self) -> EgressSummary {
+        match self.tally.lock() {
+            Ok(t) => t.snapshot(),
+            Err(_) => EgressSummary {
+                allowed: 0,
+                denied: 0,
+                hosts: Vec::new(),
+                hosts_truncated: false,
+                log: None,
+            },
+        }
+    }
 }
 
 impl Drop for ProxyHandle {
@@ -214,6 +291,8 @@ pub fn spawn_proxy(allow: AllowList) -> Result<ProxyHandle, H5iError> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let allow = Arc::new(allow);
+    let tally = Arc::new(Mutex::new(EgressTally::default()));
+    let tally_thread = tally.clone();
 
     let join = std::thread::spawn(move || {
         while !stop_thread.load(Ordering::SeqCst) {
@@ -223,8 +302,9 @@ pub fn spawn_proxy(allow: AllowList) -> Result<ProxyHandle, H5iError> {
                         break;
                     }
                     let allow = allow.clone();
+                    let tally = tally_thread.clone();
                     std::thread::spawn(move || {
-                        let _ = handle_proxy_client(client, &allow);
+                        let _ = handle_proxy_client(client, &allow, &tally);
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -235,7 +315,7 @@ pub fn spawn_proxy(allow: AllowList) -> Result<ProxyHandle, H5iError> {
         }
     });
 
-    Ok(ProxyHandle { port, stop, join: Some(join) })
+    Ok(ProxyHandle { port, stop, tally, join: Some(join) })
 }
 
 /// Read the request head (up to the blank line) from `s`.
@@ -270,10 +350,9 @@ fn parse_target(head: &[u8]) -> Option<(String, u16, bool)> {
     // Absolute-form: GET http://host[:port]/path
     let (rest, default_port) = if let Some(rest) = target.strip_prefix("http://") {
         (rest, 80)
-    } else if let Some(rest) = target.strip_prefix("https://") {
-        (rest, 443)
     } else {
-        return None;
+        // `?` returns None for any non-http(s) absolute target.
+        (target.strip_prefix("https://")?, 443)
     };
     let authority = rest.split('/').next().unwrap_or(rest);
     let (host, port) = match authority.rsplit_once(':') {
@@ -283,14 +362,24 @@ fn parse_target(head: &[u8]) -> Option<(String, u16, bool)> {
     Some((host, port, false))
 }
 
-fn handle_proxy_client(mut client: TcpStream, allow: &AllowList) -> std::io::Result<()> {
+fn handle_proxy_client(
+    mut client: TcpStream,
+    allow: &AllowList,
+    tally: &Arc<Mutex<EgressTally>>,
+) -> std::io::Result<()> {
     client.set_read_timeout(Some(Duration::from_secs(30)))?;
     let head = read_head(&mut client)?;
     let Some((host, port, is_connect)) = parse_target(&head) else {
+        // A malformed/empty request (incl. the shutdown probe) records no
+        // verdict — only real CONNECT/HTTP targets count toward egress.
         let _ = client.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n");
         return Ok(());
     };
-    if !allow.allows(&host, port) {
+    let permitted = allow.allows(&host, port);
+    if let Ok(mut t) = tally.lock() {
+        t.record(&host, port, permitted);
+    }
+    if !permitted {
         let _ = client.write_all(
             b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n",
         );
@@ -483,8 +572,12 @@ pub fn run(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<Exec
     let mut cmd = std::process::Command::new(&full[0]);
     cmd.args(&full[1..]);
     let outcome = wait_container(cmd, &rt.bin, &name, p.wall(), &full)?;
+    // Snapshot the proxy's allow/deny verdicts (only present in the Proxy plan)
+    // before the handle drops and the listener shuts down.
+    let egress = _proxy.as_ref().map(|h| h.egress_summary());
     Ok(ExecOutcome {
         wall_ms: started.elapsed().as_millis(),
+        egress,
         ..outcome
     })
 }
@@ -551,6 +644,7 @@ fn wait_container(
         wall_ms: 0, // set by caller
         cpu_ms: 0,  // container-side accounting not collected here
         max_rss_kb: None,
+        egress: None, // set by caller from the proxy tally
     })
 }
 
@@ -562,6 +656,40 @@ mod tests {
 
     fn rt() -> Runtime {
         Runtime { bin: "podman".into(), rootless: true }
+    }
+
+    #[test]
+    fn egress_tally_counts_and_orders_verdicts() {
+        let mut t = EgressTally::default();
+        t.record("pypi.org", 443, true);
+        t.record("pypi.org", 443, true);
+        t.record("evil.example", 443, false); // a boundary trip
+        t.record("github.com", 443, true);
+
+        let s = t.snapshot();
+        assert_eq!(s.allowed, 3);
+        assert_eq!(s.denied, 1);
+        assert!(!s.hosts_truncated);
+        // Denied host is surfaced first regardless of traffic volume.
+        assert_eq!(s.hosts[0].host, "evil.example");
+        assert_eq!(s.hosts[0].denied, 1);
+        assert_eq!(s.hosts[0].allowed, 0);
+        // pypi.org (2 allowed) outranks github.com (1 allowed) among permits.
+        let pypi = s.hosts.iter().find(|h| h.host == "pypi.org").unwrap();
+        assert_eq!(pypi.allowed, 2);
+        assert_eq!(pypi.denied, 0);
+    }
+
+    #[test]
+    fn egress_tally_clamps_to_max_hosts() {
+        let mut t = EgressTally::default();
+        for i in 0..(MAX_EGRESS_HOSTS + 10) {
+            t.record(&format!("host{i}.example"), 443, false);
+        }
+        let s = t.snapshot();
+        assert_eq!(s.denied as usize, MAX_EGRESS_HOSTS + 10, "all counted");
+        assert_eq!(s.hosts.len(), MAX_EGRESS_HOSTS, "but host list is bounded");
+        assert!(s.hosts_truncated);
     }
 
     #[test]

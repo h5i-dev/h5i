@@ -629,6 +629,10 @@ pub struct ExecOutcome {
     /// Peak resident set size of the command and its children, KiB
     /// (`rusage.ru_maxrss`). `None` when the platform doesn't report it.
     pub max_rss_kb: Option<i64>,
+    /// Network egress verdicts observed during the run. Only the
+    /// `isolation=container` tier (whose allowlist proxy sees every request)
+    /// populates this; `None` for `workspace`/`process`.
+    pub egress: Option<crate::objects::EgressSummary>,
 }
 
 /// Validate `argv` against the policy's `tools` allowlist. When the list is
@@ -1051,6 +1055,7 @@ fn wait_with_deadline(
         wall_ms: started.elapsed().as_millis(),
         cpu_ms,
         max_rss_kb,
+        egress: None, // process tier doesn't proxy egress (see container tier)
     })
 }
 

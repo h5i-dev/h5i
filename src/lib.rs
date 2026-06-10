@@ -35,6 +35,7 @@ pub mod token_filter;
 pub mod repository;
 pub mod resume;
 pub mod review;
+pub mod risk;
 pub mod rules;
 pub mod server;
 pub mod ui;

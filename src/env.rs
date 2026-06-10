@@ -902,6 +902,9 @@ pub fn run(
         filter,
         env_id: Some(m.id.clone()),
         policy_digest: Some(m.policy_digest.clone()),
+        // Network egress verdicts (container tier's allowlist proxy); `None` for
+        // workspace/process. This is the dashboard's NET-lane evidence.
+        egress: outcome.egress.clone(),
         // Evidence is shared via `h5i objects push` — scrub secrets from the
         // stored blob and summary before it is written (design §7).
         redact: true,
@@ -1309,7 +1312,16 @@ pub fn render_compare(rows: &[CompareRow]) -> String {
 /// traversal are rejected and the whole commit **fails closed**.
 ///
 /// Returns `Ok(None)` when the worktree is identical to the branch tip.
-pub fn mediated_commit(h5i_root: &Path, m: &EnvManifest) -> Result<Option<git2::Oid>, H5iError> {
+///
+/// `repo` is the primary repository (not the worktree): a fail-closed boundary
+/// trip is recorded as a `violation` event in `refs/h5i/env` so the refusal is a
+/// permanent, shareable part of the env's provenance — the single
+/// highest-confidence "agent probed the sandbox" signal the dashboard surfaces.
+pub fn mediated_commit(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+) -> Result<Option<git2::Oid>, H5iError> {
     let work = m.work_dir(h5i_root);
     if !work.is_dir() {
         return Err(no_workspace_err(m, "propose/rebase"));
@@ -1323,11 +1335,7 @@ pub fn mediated_commit(h5i_root: &Path, m: &EnvManifest) -> Result<Option<git2::
     // with a precise diagnostic (fail closed).
     let mut violations: Vec<String> = scan_nested_git(&canon_work);
     if !violations.is_empty() {
-        return Err(H5iError::Metadata(format!(
-            "mediated commit refused (fail-closed) — {} path violation(s):\n  - {}",
-            violations.len(),
-            violations.join("\n  - ")
-        )));
+        return Err(record_commit_violation(repo, m, violations));
     }
 
     let mut index = wt_repo.index()?;
@@ -1359,11 +1367,7 @@ pub fn mediated_commit(h5i_root: &Path, m: &EnvManifest) -> Result<Option<git2::
     }
 
     if !violations.is_empty() {
-        return Err(H5iError::Metadata(format!(
-            "mediated commit refused (fail-closed) — {} path violation(s):\n  - {}",
-            violations.len(),
-            violations.join("\n  - ")
-        )));
+        return Err(record_commit_violation(repo, m, violations));
     }
 
     let tree_oid = index.write_tree()?;
@@ -1383,6 +1387,40 @@ pub fn mediated_commit(h5i_root: &Path, m: &EnvManifest) -> Result<Option<git2::
         &[&head],
     )?;
     Ok(Some(oid))
+}
+
+/// Record a mediated-commit boundary trip as a `violation` event, then build the
+/// fail-closed error to return. A boundary trip is the highest-confidence
+/// sandbox-probe signal (enforcement actually fired), so it is persisted to
+/// `refs/h5i/env` — durable and shareable via `h5i push` — not just surfaced as
+/// a transient CLI error. Event-append failures never mask the refusal itself.
+fn record_commit_violation(
+    repo: &Repository,
+    m: &EnvManifest,
+    violations: Vec<String>,
+) -> H5iError {
+    let detail = format!(
+        "mediated commit refused (fail-closed) — {} path violation(s): {}",
+        violations.len(),
+        // Redact: a path can embed a secret; this travels via `h5i push`.
+        crate::secrets::redact_text(&violations.join("; "))
+    );
+    let _ = append_event(
+        repo,
+        &EnvEvent {
+            ts: now_ts(),
+            env_id: m.id.clone(),
+            agent: m.agent.clone(),
+            event: "violation".into(),
+            detail: Some(detail),
+            capture: None,
+        },
+    );
+    H5iError::Metadata(format!(
+        "mediated commit refused (fail-closed) — {} path violation(s):\n  - {}",
+        violations.len(),
+        violations.join("\n  - ")
+    ))
 }
 
 /// Walk the worktree (without following symlinks) and report every nested
@@ -1479,7 +1517,7 @@ pub fn propose(
             )))
         }
     }
-    let commit = mediated_commit(h5i_root, m)?;
+    let commit = mediated_commit(repo, h5i_root, m)?;
     let stat = diff(repo, h5i_root, m, true).unwrap_or_default();
     set_status(
         repo,
@@ -1698,7 +1736,7 @@ pub fn rebase(
     }
 
     // Snapshot the worktree onto the env branch (host-side, path-allowlisted).
-    mediated_commit(h5i_root, m)?;
+    mediated_commit(repo, h5i_root, m)?;
 
     let work = m.work_dir(h5i_root);
     let wt_repo = Repository::open(&work)?;

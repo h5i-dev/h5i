@@ -1615,12 +1615,380 @@ fn count_trace_entries(trace_text: &str) -> usize {
     collect_trace_entries(trace_text).len()
 }
 
+// ── Sandbox dashboard (read-only env monitoring) ──────────────────────────────
+//
+// These endpoints power the workbench's "Sandbox" mode (the flight recorder):
+// the env fleet, per-env five-lane timelines, capture inspection, and host
+// isolation readiness. All read-only — propose/apply/abort stay in the CLI/MCP
+// (no mutating HTTP surface without a CSRF story; monitoring is safer and
+// sufficient). Risk findings come from the deterministic `risk` classifier.
+
+/// One row in the env fleet table.
+#[derive(Serialize)]
+pub struct EnvFleetItem {
+    pub id: String,
+    pub agent: String,
+    pub slug: String,
+    pub status: String,
+    pub isolation: String,
+    pub profile: String,
+    pub backend: String,
+    pub policy_digest: String,
+    pub parent_branch: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub captures: usize,
+    /// Whether the workspace is materialized here (false = pulled/gc'd).
+    pub has_workspace: bool,
+    /// Base-vs-parent drift: "up-to-date" | "parent-ahead" | "diverged" | "parent-gone".
+    pub drift: String,
+    pub drift_summary: String,
+    /// Most recent event (type + detail), for the "last activity" column.
+    pub last_event: Option<EnvEventView>,
+    /// Boundary-pressure roll-up from the deterministic classifier.
+    pub risk: crate::risk::EnvRisk,
+}
+
+#[derive(Serialize)]
+pub struct EnvEventView {
+    pub ts: String,
+    pub event: String,
+    pub detail: Option<String>,
+    pub capture: Option<String>,
+}
+
+impl From<&crate::env::EnvEvent> for EnvEventView {
+    fn from(e: &crate::env::EnvEvent) -> Self {
+        EnvEventView {
+            ts: e.ts.clone(),
+            event: e.event.clone(),
+            detail: e.detail.clone(),
+            capture: e.capture.clone(),
+        }
+    }
+}
+
+/// Map a `Drift` to a stable kind string for the UI.
+fn drift_kind(d: &crate::env::Drift) -> &'static str {
+    use crate::env::Drift;
+    match d {
+        Drift::UpToDate => "up-to-date",
+        Drift::ParentAhead { .. } => "parent-ahead",
+        Drift::Diverged { .. } => "diverged",
+        Drift::ParentGone => "parent-gone",
+    }
+}
+
+/// Resolve the capture manifests referenced by a manifest (best-effort; missing
+/// captures are simply skipped). Newest last, matching `m.captures` order.
+fn resolve_env_captures(
+    git: &git2::Repository,
+    m: &crate::env::EnvManifest,
+) -> Vec<crate::objects::Manifest> {
+    m.captures
+        .iter()
+        .filter_map(|id| crate::objects::resolve_manifest(git, id).ok())
+        .collect()
+}
+
+/// Build the fleet item for one env (shared by list + detail).
+fn build_fleet_item(
+    git: &git2::Repository,
+    h5i_root: &std::path::Path,
+    m: &crate::env::EnvManifest,
+    events: &[crate::env::EnvEvent],
+    captures: &[crate::objects::Manifest],
+) -> EnvFleetItem {
+    let drift = crate::env::drift(git, m);
+    let policy = crate::env::load_policy(h5i_root, m).ok().map(|rp| rp.profile);
+    let risk = crate::risk::classify_env(m, policy.as_ref(), events, captures);
+    EnvFleetItem {
+        id: m.id.clone(),
+        agent: m.agent.clone(),
+        slug: m.slug.clone(),
+        status: m.status.clone(),
+        isolation: m.isolation_claim.clone(),
+        profile: m.profile.clone(),
+        backend: m.backend.clone(),
+        policy_digest: m.policy_digest.clone(),
+        parent_branch: m.parent_branch.clone(),
+        created_at: m.created_at.clone(),
+        updated_at: m.updated_at.clone(),
+        captures: m.captures.len(),
+        has_workspace: crate::env::has_workspace(m, h5i_root),
+        drift: drift_kind(&drift).to_string(),
+        drift_summary: drift.summary(),
+        last_event: events.last().map(EnvEventView::from),
+        risk,
+    }
+}
+
+/// GET /api/envs — the env fleet, each enriched with drift + risk roll-up.
+async fn api_envs(State(state): State<Arc<AppState>>) -> Json<Vec<EnvFleetItem>> {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<EnvFleetItem>> {
+        let repo = H5iRepository::open(&path)?;
+        let git = repo.git();
+        let h5i_root = &repo.h5i_root;
+        let mut items: Vec<EnvFleetItem> = crate::env::list(h5i_root)
+            .iter()
+            .map(|m| {
+                let events = crate::env::read_events(git, Some(&m.id));
+                let captures = resolve_env_captures(git, m);
+                build_fleet_item(git, h5i_root, m, &events, &captures)
+            })
+            .collect();
+        // Most pressing first (highest risk), then most recently updated.
+        items.sort_by(|a, b| {
+            b.risk
+                .score
+                .cmp(&a.risk.score)
+                .then(b.updated_at.cmp(&a.updated_at))
+        });
+        Ok(items)
+    })
+    .await;
+    Json(result.ok().and_then(|r| r.ok()).unwrap_or_default())
+}
+
+/// Full per-env detail: manifest + enforced policy + events + capture summaries
+/// + diffstat. The five-lane timeline is assembled client-side from these.
+#[derive(Serialize)]
+pub struct EnvDetail {
+    pub item: EnvFleetItem,
+    /// The enforced (resolved) policy, the dashboard's "what was actually
+    /// allowed" panel. `None` when policy.resolved.toml is unreadable.
+    pub policy: Option<EnforcedPolicy>,
+    pub events: Vec<EnvEventView>,
+    pub captures: Vec<EnvCaptureView>,
+    /// `base..branch-tip` diffstat (the proposed state).
+    pub diffstat: Option<String>,
+}
+
+/// The enforced policy, flattened for the inspector's allowance lanes.
+#[derive(Serialize)]
+pub struct EnforcedPolicy {
+    pub isolation: String,
+    pub net_mode: String,
+    pub net_egress: Vec<String>,
+    pub fs_read: Vec<String>,
+    pub fs_write: Vec<String>,
+    pub fs_deny: Vec<String>,
+    pub tools: Vec<String>,
+    pub env_pass: Vec<String>,
+    pub image: Option<String>,
+    pub mem_bytes: Option<u64>,
+    pub max_procs: Option<u64>,
+    pub wall_secs: u64,
+    pub cpu_secs: Option<u64>,
+    pub fsize_bytes: Option<u64>,
+}
+
+impl From<&crate::sandbox::Profile> for EnforcedPolicy {
+    fn from(p: &crate::sandbox::Profile) -> Self {
+        EnforcedPolicy {
+            isolation: p.isolation.as_str().to_string(),
+            net_mode: match p.net_mode {
+                crate::sandbox::NetMode::Deny => "deny".into(),
+                crate::sandbox::NetMode::Host => "host".into(),
+            },
+            net_egress: p.net_egress.clone(),
+            fs_read: p.fs_read.clone(),
+            fs_write: p.fs_write.clone(),
+            fs_deny: p.fs_deny.clone(),
+            tools: p.tools.clone(),
+            env_pass: p.env_pass.clone(),
+            image: p.image.clone(),
+            mem_bytes: p.mem_bytes,
+            max_procs: p.max_procs,
+            wall_secs: p.wall_secs,
+            cpu_secs: p.cpu_secs,
+            fsize_bytes: p.fsize_bytes,
+        }
+    }
+}
+
+/// A capture summary for the timeline (no raw rehydration).
+#[derive(Serialize)]
+pub struct EnvCaptureView {
+    pub id: String,
+    pub cmd: Option<String>,
+    pub exit_code: Option<i32>,
+    pub timestamp: String,
+    pub summary: String,
+    pub egress: Option<crate::objects::EgressSummary>,
+    pub redactions: Vec<String>,
+}
+
+impl From<&crate::objects::Manifest> for EnvCaptureView {
+    fn from(m: &crate::objects::Manifest) -> Self {
+        EnvCaptureView {
+            id: m.id.clone(),
+            cmd: m.cmd.clone(),
+            exit_code: m.exit_code,
+            timestamp: m.timestamp.clone(),
+            summary: m.summary.clone(),
+            egress: m.egress.clone(),
+            redactions: m.redactions.clone(),
+        }
+    }
+}
+
+/// GET /api/env/:agent/:slug — full detail for one environment.
+async fn api_env_detail(
+    State(state): State<Arc<AppState>>,
+    Path((agent, slug)): Path<(String, String)>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<EnvDetail>> {
+        let repo = H5iRepository::open(&path)?;
+        let git = repo.git();
+        let h5i_root = &repo.h5i_root;
+        let id = format!("env/{agent}/{slug}");
+        let Some(m) = crate::env::list(h5i_root).into_iter().find(|m| m.id == id) else {
+            return Ok(None);
+        };
+        let events = crate::env::read_events(git, Some(&m.id));
+        let captures = resolve_env_captures(git, &m);
+        let policy = crate::env::load_policy(h5i_root, &m).ok().map(|rp| rp.profile);
+        let item = build_fleet_item(git, h5i_root, &m, &events, &captures);
+        let diffstat = crate::env::diff(git, h5i_root, &m, true).ok();
+        Ok(Some(EnvDetail {
+            item,
+            policy: policy.as_ref().map(EnforcedPolicy::from),
+            events: events.iter().map(EnvEventView::from).collect(),
+            captures: captures.iter().map(EnvCaptureView::from).collect(),
+            diffstat,
+        }))
+    })
+    .await;
+    match result.ok().and_then(|r| r.ok()).flatten() {
+        Some(detail) => Json(detail).into_response(),
+        None => (StatusCode::NOT_FOUND, "environment not found").into_response(),
+    }
+}
+
+/// GET /api/env/:agent/:slug/captures/:id — the rendered/structured capture
+/// (reuses `env::inspect`, which enforces the capture belongs to this env).
+async fn api_env_capture(
+    State(state): State<Arc<AppState>>,
+    Path((agent, slug, cap_id)): Path<(String, String, String)>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<String>> {
+        let repo = H5iRepository::open(&path)?;
+        let git = repo.git();
+        let id = format!("env/{agent}/{slug}");
+        let Some(m) = crate::env::list(&repo.h5i_root).into_iter().find(|m| m.id == id) else {
+            return Ok(None);
+        };
+        Ok(crate::env::inspect(git, &m, &cap_id).ok())
+    })
+    .await;
+    match result.ok().and_then(|r| r.ok()).flatten() {
+        Some(text) => Json(serde_json::json!({ "render": text })).into_response(),
+        None => (StatusCode::NOT_FOUND, "capture not found for this env").into_response(),
+    }
+}
+
+/// Host isolation readiness, for the dashboard's top-strip vitals.
+#[derive(Serialize)]
+pub struct ProbeResponse {
+    pub os: String,
+    pub landlock_abi: Option<i32>,
+    pub userns: bool,
+    pub seccomp: bool,
+    pub container_runtime: Option<String>,
+    /// Per-tier satisfiability ("workspace"/"process"/"container").
+    pub tiers: Vec<ProbeTier>,
+    /// Functional self-test: are the `process`-tier bits actually runnable here?
+    pub process_runnable: bool,
+    pub process_runnable_detail: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ProbeTier {
+    pub claim: String,
+    pub satisfiable: bool,
+    pub note: Option<String>,
+}
+
+/// GET /api/env/probe — host sandbox capabilities + per-tier readiness.
+async fn api_env_probe() -> Json<ProbeResponse> {
+    let resp = tokio::task::spawn_blocking(|| {
+        use crate::sandbox::{self, IsolationClaim, NetMode, Profile};
+        let caps = sandbox::probe_host();
+
+        let mut tiers = Vec::new();
+        for (claim, net_host) in [
+            (IsolationClaim::Workspace, true),
+            (IsolationClaim::Process, false),
+        ] {
+            let mut p = Profile::builtin("probe", claim);
+            if net_host {
+                p.net_mode = NetMode::Host;
+            }
+            tiers.push(ProbeTier {
+                claim: claim.as_str().to_string(),
+                satisfiable: sandbox::resolve(&p, &caps).is_ok(),
+                note: None,
+            });
+        }
+        tiers.push(ProbeTier {
+            claim: "container".into(),
+            satisfiable: caps.container_runtime.is_some(),
+            note: Some("needs rootless Podman + profile container.image".into()),
+        });
+
+        let probe = Profile::builtin("probe", IsolationClaim::Process);
+        let (process_runnable, process_runnable_detail) =
+            match sandbox::resolve(&probe, &caps).and_then(|pol| sandbox::verify_exec(&pol)) {
+                Ok(()) => (true, None),
+                Err(e) => (false, Some(e.to_string())),
+            };
+
+        ProbeResponse {
+            os: caps.os.clone(),
+            landlock_abi: caps.landlock_abi,
+            userns: caps.userns,
+            seccomp: caps.seccomp,
+            container_runtime: caps.container_runtime.clone(),
+            tiers,
+            process_runnable,
+            process_runnable_detail,
+        }
+    })
+    .await
+    .unwrap_or_else(|_| ProbeResponse {
+        os: "unknown".into(),
+        landlock_abi: None,
+        userns: false,
+        seccomp: false,
+        container_runtime: None,
+        tiers: Vec::new(),
+        process_runnable: false,
+        process_runnable_detail: Some("probe task panicked".into()),
+    });
+    Json(resp)
+}
+
 // ── Server entry point ────────────────────────────────────────────────────────
 
 pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
     let state = Arc::new(AppState { repo_path });
+    let app = build_router(state);
 
-    let app = Router::new()
+    let addr = format!("127.0.0.1:{}", port);
+    let listener = TcpListener::bind(&addr).await?;
+    println!("  h5i UI →  http://{}", addr);
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// Build the full router with all routes wired to `state`. Extracted from
+/// [`serve`] so tests can drive the HTTP surface against a temp repo.
+pub fn build_router(state: Arc<AppState>) -> Router {
+    Router::new()
         .route("/", get(index))
         .route("/v2", get(index))
         .route("/v2/", get(index))
@@ -1648,13 +2016,13 @@ pub async fn serve(repo_path: PathBuf, port: u16) -> anyhow::Result<()> {
         .route("/api/context/search", get(api_context_search))
         .route("/api/context/dag", get(api_context_dag))
         .route("/api/context/promotion", get(api_context_promotion))
-        .with_state(state);
-
-    let addr = format!("127.0.0.1:{}", port);
-    let listener = TcpListener::bind(&addr).await?;
-    println!("  h5i UI →  http://{}", addr);
-    axum::serve(listener, app).await?;
-    Ok(())
+        // Sandbox dashboard (read-only). `/probe` is registered before the
+        // `:agent/:slug` param route so it isn't captured as an env path.
+        .route("/api/envs", get(api_envs))
+        .route("/api/env/probe", get(api_env_probe))
+        .route("/api/env/:agent/:slug", get(api_env_detail))
+        .route("/api/env/:agent/:slug/captures/:id", get(api_env_capture))
+        .with_state(state)
 }
 
 // ── Embedded frontend ─────────────────────────────────────────────────────────

@@ -414,6 +414,14 @@ fn mediated_commit_fails_closed_on_nested_git_repo() {
     assert!(text.contains("fail-closed") || text.contains(".git"), "{text}");
     // And the env did NOT advance to proposed.
     assert_eq!(r.manifest("smuggle")["status"], "created");
+
+    // The boundary trip is recorded as a durable `violation` event (the
+    // dashboard's highest-confidence sandbox-probe signal), not just a CLI error.
+    let log = out_str(&r.h5i_ok(&["env", "log", "smuggle"]));
+    assert!(
+        log.contains("violation"),
+        "boundary trip must be persisted as a violation event:\n{log}"
+    );
 }
 
 // ─── 4. parallel envs (the arena) ───────────────────────────────────────────

@@ -7017,6 +7017,7 @@ jq -c '{
                             filter: cfg,
                             env_id: None,
                             policy_digest: None,
+                            egress: None,
                             redact: false,
                         };
                         let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
@@ -7071,6 +7072,7 @@ jq -c '{
                         filter: cfg,
                         env_id: None,
                         policy_digest: None,
+                        egress: None,
                         redact: false,
                     };
                     let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
