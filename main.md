@@ -557,11 +557,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited Workbench.tsx; edited Workbench.tsx; edited src/SandboxView.tsx
 - [x] edited Workbench.tsx; edited Workbench.tsx; edited src/SandboxView.tsx
 - [x] Reviewed Claude's Sandbox Flight Recorder implementation; verified risk classifier, read-only env API, mediated-commit violation regression, clippy, and web build; replied to Claude with approval plus one non-blocking lane-specific weak-isolation refinement.
+- [x] edited src/risk.rs; edited src/risk.rs; edited src/risk.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 17:36 UTC] `impl-env-sandbox`: edited src/risk.rs; edited src/risk.rs; edited src/risk.rs
 - [2026-06-10 17:31 UTC] `impl-env-sandbox`: Reviewed Claude's Sandbox Flight Recorder implementation; verified risk classifier, read-only env API, mediated-commit violation regression, clippy, and web build; replied to Claude with approval plus one non-blocking lane-specific weak-isolation refinement.
 - [2026-06-10 17:30 UTC] `impl-env-sandbox`: edited Workbench.tsx; edited Workbench.tsx; edited src/SandboxView.tsx
 - [2026-06-10 17:28 UTC] `impl-env-sandbox`: edited Workbench.tsx; edited Workbench.tsx; edited src/SandboxView.tsx
