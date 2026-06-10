@@ -897,6 +897,38 @@ fn wall_clock_kill_reaps_descendant_processes() {
     );
 }
 
+/// `env shell` (the agent-in-box) runs an interactive, stdio-inherited session
+/// inside the env: a command after `--` executes in `$WORK`, its exit code
+/// passes through transparently, and the env returns to `idle` with a `shell`
+/// event logged (nothing is captured — it's interactive). Workspace tier so it
+/// needs no kernel capabilities.
+#[test]
+fn env_shell_runs_in_box_and_passes_exit_code() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.default]\nisolation = \"workspace\"\n",
+    )
+    .unwrap();
+    r.h5i_ok(&["env", "create", "box"]);
+
+    // A command after `--` runs (non-interactively) inside the box, in $WORK.
+    let out = r.h5i(&["env", "shell", "box", "--", "sh", "-c", "echo hi > from-shell.txt"]);
+    assert!(out.status.success(), "shell command should succeed:\n{}", out_str(&out));
+    assert!(
+        r.work("box").join("from-shell.txt").is_file(),
+        "the shell session ran in $WORK"
+    );
+
+    // The child's exit code passes through transparently (transparent wrapper).
+    let bad = r.h5i(&["env", "shell", "box", "--", "sh", "-c", "exit 7"]);
+    assert_eq!(bad.status.code(), Some(7), "shell must pass the child exit code through");
+
+    // No capture is produced (interactive), but the env is back to idle.
+    assert_eq!(r.manifest("box")["status"], "idle", "env returns to idle after a shell");
+}
+
 /// `isolation=process` with `net.mode=host` must STILL confine the filesystem
 /// (Landlock applies without a network namespace) — proving the always-create
 /// user namespace works when egress is allowed. Capability-gated.

@@ -444,6 +444,10 @@ pub fn build_run_argv(
     net: &NetPlan,
     argv: &[String],
     injected_env: &[(String, String)],
+    // `None` → capture run (no stdin). `Some(tty)` → interactive: keep stdin open
+    // (`-i`), allocating a pseudo-TTY (`-t`) when the caller has one — the
+    // agent-in-box shell. Flags slot right after `run`, before the image.
+    tty: Option<bool>,
 ) -> Vec<String> {
     let mut a: Vec<String> = vec![
         rt.bin.clone(),
@@ -468,6 +472,13 @@ pub fn build_run_argv(
         "/work".into(),
         "--ipc=private".into(),
     ];
+    // Interactive (agent-in-box) flags, right after `run`.
+    if let Some(want_tty) = tty {
+        a.insert(2, "-i".into());
+        if want_tty {
+            a.insert(3, "-t".into());
+        }
+    }
     // Rootless podman: keep the caller's uid so files in /work stay owned by us.
     if rt.rootless {
         a.push("--userns=keep-id".into());
@@ -579,7 +590,7 @@ pub fn run(
         std::process::id(),
         PROBE_SEQ.fetch_add(1, Ordering::Relaxed)
     );
-    let full = build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env);
+    let full = build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, None);
 
     let started = std::time::Instant::now();
     let mut cmd = std::process::Command::new(&full[0]);
@@ -593,6 +604,66 @@ pub fn run(
         egress,
         ..outcome
     })
+}
+
+/// The **agent-in-box** path: run `argv` (a shell or a coding agent) inside the
+/// hardened rootless container with stdio **inherited** — a real interactive
+/// session whose every command is confined by the box (cap-drop, read-only
+/// rootfs, the `net.egress` allowlist). Unlike [`run`] it captures nothing and
+/// applies no wall-clock (the operator owns the session); it returns the child's
+/// exit code. The egress proxy is held for the whole session.
+pub fn run_interactive(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<i32, H5iError> {
+    use std::io::IsTerminal;
+    let p = &policy.profile;
+    let rt = probe().ok_or_else(|| {
+        H5iError::Metadata(
+            "isolation=container requires rootless Podman on PATH — install/configure rootless \
+             podman or re-request --isolation workspace/process".into(),
+        )
+    })?;
+    let image = p.image.clone().ok_or_else(|| {
+        H5iError::Metadata(format!(
+            "profile '{}' uses isolation=container but sets no image — add `container.image`",
+            p.name
+        ))
+    })?;
+    if work.display().to_string().contains(',') {
+        return Err(H5iError::Metadata(
+            "container workspace path contains ',' — unsafe in Podman --mount syntax".into(),
+        ));
+    }
+
+    let mut _proxy: Option<ProxyHandle> = None;
+    let net = if !p.net_egress.is_empty() {
+        let mut allow = AllowList::parse(&p.net_egress);
+        allow.pin_dns();
+        let handle = spawn_proxy(allow)?;
+        let port = handle.port;
+        _proxy = Some(handle);
+        NetPlan::Proxy(port)
+    } else if p.net_mode == NetMode::Host {
+        NetPlan::Host
+    } else {
+        NetPlan::None
+    };
+
+    // Allocate a TTY only when we actually have one on both ends (a piped/CI
+    // invocation must not request `-t`, which Podman would reject).
+    let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let name = format!("h5i-{}-{}", std::process::id(), PROBE_SEQ.fetch_add(1, Ordering::Relaxed));
+    let full = build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, Some(tty));
+
+    // Inherited stdio (the default) — this is the interactive session.
+    let status = std::process::Command::new(&full[0])
+        .args(&full[1..])
+        .status()
+        .map_err(|e| H5iError::Metadata(format!("failed to start container session: {e}")))?;
+    Ok(status.code().unwrap_or(130))
 }
 
 static PROBE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -767,6 +838,7 @@ mod tests {
             &NetPlan::None,
             &["sh".into(), "-c".into(), "echo hi".into()],
             &[],
+            None,
         );
         let joined = argv.join(" ");
         assert_eq!(argv[0], "podman");
@@ -801,12 +873,43 @@ mod tests {
             &NetPlan::Proxy(8123),
             &["true".into()],
             &[],
+            None,
         );
         let joined = argv.join(" ");
         assert!(joined.contains("--network=slirp4netns:allow_host_loopback=true"));
         assert!(joined.contains("HTTP_PROXY=http://10.0.2.2:8123"));
         assert!(joined.contains("HTTPS_PROXY=http://10.0.2.2:8123"));
         assert!(joined.contains("NO_PROXY=localhost,127.0.0.1"));
+    }
+
+    #[test]
+    fn run_argv_interactive_adds_i_and_optional_t() {
+        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let mk = |tty| {
+            build_run_argv(
+                &rt(),
+                &p,
+                Path::new("/w"),
+                "img",
+                "n",
+                &NetPlan::None,
+                &["bash".into()],
+                &[],
+                tty,
+            )
+        };
+        // Capture run: no interactive flags at all.
+        let cap = mk(None);
+        assert!(!cap.contains(&"-i".to_string()) && !cap.contains(&"-t".to_string()));
+        // Interactive, no TTY (piped/CI): `-i` only — never `-t` (Podman rejects
+        // a TTY request without one).
+        let piped = mk(Some(false));
+        assert!(piped.contains(&"-i".to_string()) && !piped.contains(&"-t".to_string()));
+        // Interactive with a TTY: both, and they sit before the image.
+        let tty = mk(Some(true));
+        assert!(tty.contains(&"-i".to_string()) && tty.contains(&"-t".to_string()));
+        let img = tty.iter().position(|a| a == "img").unwrap();
+        assert!(tty.iter().position(|a| a == "-i").unwrap() < img);
     }
 
     #[test]
@@ -822,6 +925,7 @@ mod tests {
             &NetPlan::None,
             &["true".into()],
             &injected,
+            None,
         );
         // The broker's env grant is passed to the container as a --env pair...
         let pos = argv.iter().position(|a| a == "GITHUB_TOKEN=ghp_secret");

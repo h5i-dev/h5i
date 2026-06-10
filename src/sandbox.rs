@@ -884,6 +884,92 @@ pub fn run_with_env(
     }
 }
 
+/// The **agent-in-box** entry point: run `argv` (a shell or a coding agent)
+/// interactively under the env's confinement. stdio is **inherited** (a real
+/// session, not captured), nothing is recorded per-command, and the child's exit
+/// code is returned. Confinement comes from the box itself, so whatever the
+/// agent spawns inside is contained by construction — the enforcement no longer
+/// depends on the agent choosing to wrap each command.
+pub fn run_interactive(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<i32, H5iError> {
+    if argv.is_empty() {
+        return Err(H5iError::Metadata("empty command".into()));
+    }
+    check_tool_allowlist(policy, argv)?;
+    match policy.claim {
+        IsolationClaim::Workspace => interactive_unconfined(work, argv, injected_env),
+        IsolationClaim::Process => interactive_confined(policy, work, argv, injected_env),
+        IsolationClaim::Supervised => {
+            crate::supervisor::run_interactive(policy, work, argv, injected_env)
+        }
+        IsolationClaim::Container => {
+            crate::container::run_interactive(policy, work, argv, injected_env)
+        }
+        claim => Err(H5iError::Metadata(format!(
+            "no interactive backend for isolation claim '{}'",
+            claim.as_str()
+        ))),
+    }
+}
+
+/// Interactive workspace tier: inherited stdio, a new session so signals reach
+/// the whole tree, no confinement (trusted code).
+fn interactive_unconfined(
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<i32, H5iError> {
+    let mut cmd = std::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..]).current_dir(work);
+    apply_injected_env(&mut cmd, injected_env);
+    let status = cmd
+        .status()
+        .map_err(|e| H5iError::Metadata(format!("failed to start '{}': {e}", argv[0])))?;
+    Ok(status.code().unwrap_or(130))
+}
+
+/// Interactive process tier: the shared confinement (Landlock + seccomp + ns +
+/// rlimits + cgroup) with stdio inherited. The profile's wall-clock is *not*
+/// applied — an interactive session is bounded by the operator, not a timer.
+#[cfg(target_os = "linux")]
+fn interactive_confined(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<i32, H5iError> {
+    let p = &policy.profile;
+    // Same rule as the captured path: a fresh netns only when egress is denied.
+    let net_deny = p.net_mode == NetMode::Deny;
+    let mut cmd = build_confined_command(policy, work, argv, injected_env, net_deny, None)?;
+    // build_confined_command leaves stdio unset → inherited (the session).
+    let cg = make_run_cgroup(p.mem_bytes, p.max_procs);
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| H5iError::Metadata(format!("confined session failed to start: {e}")))?;
+    if let Some(cgrp) = &cg {
+        let _ = std::fs::write(cgrp.procs_path(), child.id().to_string());
+    }
+    let status = child.wait().map_err(H5iError::Io)?;
+    Ok(status.code().unwrap_or(130))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn interactive_confined(
+    _policy: &ResolvedPolicy,
+    _work: &Path,
+    _argv: &[String],
+    _injected_env: &[(String, String)],
+) -> Result<i32, H5iError> {
+    Err(H5iError::Metadata(
+        "isolation=process requires Linux".into(),
+    ))
+}
+
 /// Apply the secrets broker's injected env vars to a child command (used by each
 /// tier). Applied after `env.pass`, so a grant can't be shadowed by a host var.
 fn apply_injected_env(cmd: &mut std::process::Command, injected_env: &[(String, String)]) {

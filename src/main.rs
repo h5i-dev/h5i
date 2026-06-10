@@ -1726,6 +1726,18 @@ enum EnvCommands {
         command: Vec<String>,
     },
 
+    /// Open an interactive, confined session INSIDE the environment — the
+    /// "agent-in-box". stdio is inherited (a real terminal), so every command
+    /// the session spawns is contained by the box, not by the agent choosing to
+    /// wrap each call. Defaults to a login shell when no command is given.
+    Shell {
+        /// Environment name (slug, `agent/slug`, or full `env/agent/slug`)
+        name: String,
+        /// Command to run inside the box (after `--`); default: an interactive shell.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+
     /// Probe what isolation this host can actually provide (Landlock, user
     /// namespaces, seccomp) and which claims are satisfiable.
     Probe,
@@ -8078,6 +8090,28 @@ jq -c '{
                         Some(0) => {}
                         Some(code) => std::process::exit(code),
                         None => std::process::exit(1),
+                    }
+                }
+
+                EnvCommands::Shell { name, command } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    // Default to an interactive shell when no command is given.
+                    let argv: Vec<String> = if command.is_empty() {
+                        let sh = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+                        vec![sh, "-i".into()]
+                    } else {
+                        command
+                    };
+                    eprintln!(
+                        "{} entering {} (isolation: {}) — confined session; exit to return",
+                        LOOKING,
+                        style(&m.id).magenta(),
+                        style(&m.isolation_claim).cyan()
+                    );
+                    let code = h5i_core::env::shell(git, &h5i_root, &mut m, &argv)?;
+                    match code {
+                        0 => {}
+                        c => std::process::exit(c),
                     }
                 }
 

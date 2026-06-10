@@ -996,6 +996,80 @@ pub fn run(
     })
 }
 
+// ─── shell (agent-in-box) ────────────────────────────────────────────────────
+
+/// Run an **interactive** session (a shell, or a coding agent) inside the env,
+/// confined by the box. stdio is inherited (a real terminal), so every command
+/// the session spawns is contained by construction — the enforcement no longer
+/// relies on the agent prefixing each command with `env run`. Unlike [`run`]
+/// nothing is captured (it's interactive); a single `shell` event records that a
+/// session ran and its exit code. Returns the child's exit code.
+pub fn shell(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &mut EnvManifest,
+    argv: &[String],
+) -> Result<i32, H5iError> {
+    match m.status.as_str() {
+        ST_CREATED | ST_RUNNING | ST_IDLE => {}
+        other => {
+            return Err(H5iError::Metadata(format!(
+                "{} is '{other}' — `env shell` is only valid before propose/apply/abort",
+                m.id
+            )))
+        }
+    }
+    let work = m.work_dir(h5i_root);
+    if !work.is_dir() {
+        return Err(no_workspace_err(m, "env shell"));
+    }
+
+    #[cfg(unix)]
+    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
+
+    let policy = load_policy(h5i_root, m)?;
+    let secret_dir = m.dir(h5i_root).join("secrets");
+    let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
+    let brokered =
+        crate::secrets_broker::broker(&policy.profile.secret_grants, &secret_dir, is_workspace)?;
+
+    set_status(repo, h5i_root, m, ST_RUNNING, "status", Some("running (shell)".into()), None)?;
+    let exit_code = match sandbox::run_interactive(&policy, &work, argv, &brokered.env) {
+        Ok(code) => code,
+        Err(e) => {
+            set_status(repo, h5i_root, m, ST_IDLE, "status", Some("idle (shell failed to start)".into()), None)?;
+            return Err(e);
+        }
+    };
+
+    let safe_cmd = crate::secrets::redact_text(&argv.join(" "));
+    set_status(
+        repo,
+        h5i_root,
+        m,
+        ST_IDLE,
+        "shell",
+        Some(format!("interactive cmd=`{safe_cmd}` exit={exit_code}")),
+        None,
+    )?;
+
+    // Audit each delivered secret grant (id + source + inject + fingerprint).
+    for rec in &brokered.records {
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "secret".into(),
+                detail: Some(rec.detail()),
+                capture: None,
+            },
+        )?;
+    }
+    Ok(exit_code)
+}
+
 // ─── diff ───────────────────────────────────────────────────────────────────
 
 /// Unified diff of the env's changes against its pinned base tree.

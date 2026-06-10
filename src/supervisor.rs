@@ -353,7 +353,35 @@ pub fn run(
                 .into(),
         ));
     }
-    run_supervised(policy, work, argv, injected_env)
+    run_supervised(policy, work, argv, injected_env, false)
+}
+
+/// The **agent-in-box** path at the supervised tier: an interactive confined
+/// session (stdio inherited, nothing captured), returning the child's exit code.
+/// Same fail-closed gating as [`run`]; the seccomp-notify socket gate, netns,
+/// Landlock, and cgroup limits all still apply.
+pub fn run_interactive(
+    policy: &crate::sandbox::ResolvedPolicy,
+    work: &std::path::Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<i32, H5iError> {
+    let caps = probe();
+    if !caps.usable {
+        return Err(H5iError::Metadata(format!(
+            "isolation=supervised cannot run — mediation stack incomplete (fail-closed). Missing: {}.",
+            caps.missing().join(", ")
+        )));
+    }
+    if !policy.profile.net_egress.is_empty() {
+        return Err(H5iError::Metadata(
+            "isolation=supervised v1 enforces net.mode=deny only (net.egress is the next \
+             increment) — use the container tier for an interactive agent box with egress."
+                .into(),
+        ));
+    }
+    let outcome = run_supervised(policy, work, argv, injected_env, true)?;
+    Ok(outcome.exit_code.unwrap_or(130))
 }
 
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -362,6 +390,7 @@ fn run_supervised(
     work: &std::path::Path,
     argv: &[String],
     injected_env: &[(String, String)],
+    interactive: bool,
 ) -> Result<crate::sandbox::ExecOutcome, H5iError> {
     use crate::seccomp_notify::{pidfd_open, recv_fd, serve_with_pidfd};
     use std::io::Read;
@@ -392,7 +421,12 @@ fn run_supervised(
                 return Err(e);
             }
         };
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    if interactive {
+        // Agent-in-box: inherit the real stdio (a TTY for the shell/agent).
+        // Confinement still comes from netns + the seccomp gate + Landlock.
+    } else {
+        cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    }
 
     let p = &policy.profile;
     let cg = crate::sandbox::make_run_cgroup(p.mem_bytes, p.max_procs);
@@ -439,18 +473,22 @@ fn run_supervised(
         }
     };
 
-    // Stream output while the supervisor serves syscall notifications.
-    let mut out_pipe = child.stdout.take().expect("piped stdout");
-    let mut err_pipe = child.stderr.take().expect("piped stderr");
-    let out_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = out_pipe.read_to_end(&mut b);
-        b
+    // Stream output while the supervisor serves syscall notifications. In
+    // interactive mode stdio was inherited (not piped), so there is nothing to
+    // drain — the session writes straight to the terminal.
+    let out_h = child.stdout.take().map(|mut out_pipe| {
+        std::thread::spawn(move || {
+            let mut b = Vec::new();
+            let _ = out_pipe.read_to_end(&mut b);
+            b
+        })
     });
-    let err_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = err_pipe.read_to_end(&mut b);
-        b
+    let err_h = child.stderr.take().map(|mut err_pipe| {
+        std::thread::spawn(move || {
+            let mut b = Vec::new();
+            let _ = err_pipe.read_to_end(&mut b);
+            b
+        })
     });
 
     // AF_UNIX is not granted by default (SCM_RIGHTS authority passing).
@@ -465,8 +503,8 @@ fn run_supervised(
     let stats = serve_h.join().unwrap_or_default();
     close(listener);
     close(pidfd);
-    let stdout = out_h.join().unwrap_or_default();
-    let stderr = err_h.join().unwrap_or_default();
+    let stdout = out_h.map(|h| h.join().unwrap_or_default()).unwrap_or_default();
+    let stderr = err_h.map(|h| h.join().unwrap_or_default()).unwrap_or_default();
 
     // Prefer cgroup accounting where present.
     if let Some(cgrp) = &cg {
@@ -508,6 +546,7 @@ fn run_supervised(
     _work: &std::path::Path,
     _argv: &[String],
     _injected_env: &[(String, String)],
+    _interactive: bool,
 ) -> Result<crate::sandbox::ExecOutcome, H5iError> {
     Err(H5iError::Metadata(
         "isolation=supervised requires Linux + x86_64/aarch64 (seccomp user-notif)".into(),
