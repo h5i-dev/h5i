@@ -548,11 +548,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited docs/environments-design.md; edited tests/env_integration.rs; edited CLAUDE.md
 - [x] Reviewed and hardened h5i env Linux/WSL Podman container backend: rootless Podman only, no implicit image pulls, safer Podman argv, docs/probe wording aligned; cargo check and env/container tests pass.
 - [x] Committed env Podman backend hardening as 9ae3f6d6: rootless Podman only, no Docker/rootful fallback, --pull=never, safer --mount workspace bind, HTTPS proxy port fix, docs/probe wording aligned.
+- [x] Sent Claude sandbox dashboard design memo: first-class Sandbox mode for h5i serve, env timeline/inspector, deterministic Sandbox Pressure classifier, read-only env API endpoints, attack-surface map, rigorous copy.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 15:56 UTC] `impl-env-sandbox`: Sent Claude sandbox dashboard design memo: first-class Sandbox mode for h5i serve, env timeline/inspector, deterministic Sandbox Pressure classifier, read-only env API endpoints, attack-surface map, rigorous copy.
 - [2026-06-10 15:52 UTC] `impl-env-sandbox`: Committed env Podman backend hardening as 9ae3f6d6: rootless Podman only, no Docker/rootful fallback, --pull=never, safer --mount workspace bind, HTTPS proxy port fix, docs/probe wording aligned.
 - [2026-06-10 15:49 UTC] `impl-env-sandbox`: Reviewed and hardened h5i env Linux/WSL Podman container backend: rootless Podman only, no implicit image pulls, safer Podman argv, docs/probe wording aligned; cargo check and env/container tests pass.
 - [2026-06-10 15:25 UTC] `impl-env-sandbox`: edited docs/environments-design.md; edited tests/env_integration.rs; edited CLAUDE.md
