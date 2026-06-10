@@ -295,3 +295,4 @@ _[Checkpoint: 6a28e117 — Env round 5: io_uring+fsize/cpu hardening, human stat
 _[Checkpoint: 6a28e134 — edited tests/env_integration.rs; edited CLAUDE.md; edited CLAUDE.md]_
 ---
 
+[04:10:20] OBSERVE: read src/main.rs
