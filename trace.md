@@ -484,3 +484,4 @@ _[Checkpoint: 6a298203 — edited docs/environments-design.md; edited tests/env_
 [15:47:14] ACT: edited src/container.rs
 [15:47:14] ACT: edited src/container.rs
 [15:47:14] ACT: edited src/container.rs
+[15:47:14] ACT: edited src/sandbox.rs
