@@ -566,6 +566,12 @@ pub struct RunOutcome {
     pub capture_id: String,
     pub exit_code: Option<i32>,
     pub timed_out: bool,
+    /// Wall-clock duration (ms).
+    pub wall_ms: u128,
+    /// CPU time consumed (ms).
+    pub cpu_ms: u128,
+    /// Peak resident set size (KiB), when the platform reports it.
+    pub max_rss_kb: Option<i64>,
     /// The capture manifest (for rendering).
     pub manifest: objects::Manifest,
 }
@@ -663,6 +669,14 @@ pub fn run(
     let capture_id = captured.manifest.id.clone();
 
     m.captures.push(capture_id.clone());
+    // The event log (refs/h5i/env) travels via `h5i push`, so the command —
+    // which can carry a credential passed as an argument — is scrubbed before
+    // it lands in the detail, exactly like the capture's cmd field.
+    let safe_cmd = crate::secrets::redact_text(&argv.join(" "));
+    let rss = outcome
+        .max_rss_kb
+        .map(|kb| format!(" rss={}MiB", kb / 1024))
+        .unwrap_or_default();
     set_status(
         repo,
         h5i_root,
@@ -670,9 +684,12 @@ pub fn run(
         ST_IDLE,
         "exec",
         Some(format!(
-            "cmd=`{}` exit={}{}",
-            argv.join(" "),
+            "cmd=`{}` exit={} wall={}ms cpu={}ms{}{}",
+            safe_cmd,
             outcome.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "signal".into()),
+            outcome.wall_ms,
+            outcome.cpu_ms,
+            rss,
             if outcome.timed_out { " timed-out" } else { "" }
         )),
         Some(capture_id.clone()),
@@ -682,6 +699,9 @@ pub fn run(
         capture_id,
         exit_code: outcome.exit_code,
         timed_out: outcome.timed_out,
+        wall_ms: outcome.wall_ms,
+        cpu_ms: outcome.cpu_ms,
+        max_rss_kb: outcome.max_rss_kb,
         manifest: captured.manifest,
     })
 }
@@ -766,6 +786,138 @@ pub fn inspect(repo: &Repository, m: &EnvManifest, capture_id: &str) -> Result<S
     }
     out.push('\n');
     Ok(out)
+}
+
+// ─── the arena: compare N envs from one base (§9) ───────────────────────────
+
+/// One environment's row in a comparison: how much it changed and how its
+/// latest run fared. The reviewer-comparison resolution the design calls out
+/// as h5i-unique — `msg` coordinates the agents, `objects` supplies each env's
+/// test results, and this folds them into one view.
+#[derive(Debug, Clone, Serialize)]
+pub struct CompareRow {
+    pub id: String,
+    pub status: String,
+    pub base_commit: String,
+    pub files_changed: usize,
+    pub insertions: usize,
+    pub deletions: usize,
+    /// Latest run's exit code, if any run has happened.
+    pub last_exit: Option<i32>,
+    /// The tool of the latest capture (e.g. `pytest`, `cargo`), if structured.
+    pub last_tool: Option<String>,
+    /// The latest capture's structured status (e.g. `pass`/`fail`).
+    pub last_result: Option<String>,
+    /// Selected counts from the latest capture (e.g. passed/failed), compacted.
+    pub last_counts: std::collections::BTreeMap<String, u64>,
+}
+
+/// Build comparison rows for the named environments.
+pub fn compare(
+    repo: &Repository,
+    h5i_root: &Path,
+    names: &[String],
+) -> Result<Vec<CompareRow>, H5iError> {
+    let mut rows = Vec::new();
+    for name in names {
+        let m = find(h5i_root, name)?;
+        let (files_changed, insertions, deletions) = diffstat_numbers(h5i_root, &m).unwrap_or((0, 0, 0));
+        let (last_exit, last_tool, last_result, last_counts) = match m.captures.last() {
+            Some(cap) => match objects::resolve_manifest(repo, cap) {
+                Ok(man) => {
+                    let (tool, result, counts) = match &man.structured {
+                        Some(s) => (
+                            Some(s.tool.clone()),
+                            Some(format!("{:?}", s.status).to_lowercase()),
+                            s.counts.clone(),
+                        ),
+                        None => (None, None, Default::default()),
+                    };
+                    (man.exit_code, tool, result, counts)
+                }
+                Err(_) => (None, None, None, Default::default()),
+            },
+            None => (None, None, None, Default::default()),
+        };
+        rows.push(CompareRow {
+            id: m.id,
+            status: m.status,
+            base_commit: m.base_commit,
+            files_changed,
+            insertions,
+            deletions,
+            last_exit,
+            last_tool,
+            last_result,
+            last_counts,
+        });
+    }
+    Ok(rows)
+}
+
+/// `(files_changed, insertions, deletions)` of an env's work vs. its pinned
+/// base — `None` when the workspace has been gc'd.
+fn diffstat_numbers(h5i_root: &Path, m: &EnvManifest) -> Option<(usize, usize, usize)> {
+    let work = m.work_dir(h5i_root);
+    if !work.is_dir() {
+        return None;
+    }
+    let wt_repo = Repository::open(&work).ok()?;
+    let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree).ok()?).ok()?;
+    let mut opts = git2::DiffOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .show_untracked_content(true);
+    let diff = wt_repo
+        .diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))
+        .ok()?;
+    let stats = diff.stats().ok()?;
+    Some((stats.files_changed(), stats.insertions(), stats.deletions()))
+}
+
+/// Render comparison rows as a human-readable table, flagging when the
+/// environments do not share a common base (so the comparison is apples-to-
+/// apples only when they do).
+pub fn render_compare(rows: &[CompareRow]) -> String {
+    let mut out = String::new();
+    let distinct_bases: HashSet<&str> = rows.iter().map(|r| r.base_commit.as_str()).collect();
+    out.push_str("── Arena: environment comparison ──\n");
+    if distinct_bases.len() > 1 {
+        out.push_str(
+            "  ⚠ environments do NOT share a base commit — diffs are not directly comparable\n",
+        );
+    } else if let Some(b) = distinct_bases.iter().next() {
+        out.push_str(&format!("  common base: {}\n", &b[..12.min(b.len())]));
+    }
+    out.push_str(&format!(
+        "  {:<26} {:<9} {:>7} {:>7} {:>7}  {}\n",
+        "env", "status", "files", "+", "-", "latest run"
+    ));
+    for r in rows {
+        let run = match (&r.last_tool, r.last_exit, &r.last_result) {
+            (Some(tool), exit, result) => {
+                let counts: Vec<String> = r
+                    .last_counts
+                    .iter()
+                    .filter(|(k, _)| matches!(k.as_str(), "passed" | "failed" | "errors" | "warnings"))
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect();
+                format!(
+                    "{tool} {} (exit {}){}",
+                    result.clone().unwrap_or_default(),
+                    exit.map(|c| c.to_string()).unwrap_or_else(|| "signal".into()),
+                    if counts.is_empty() { String::new() } else { format!(" [{}]", counts.join(" ")) }
+                )
+            }
+            _ => "— (no run yet)".to_string(),
+        };
+        out.push_str(&format!(
+            "  {:<26} {:<9} {:>7} {:>7} {:>7}  {}\n",
+            r.id, r.status, r.files_changed, r.insertions, r.deletions, run
+        ));
+    }
+    out.push_str("\nPick a winner with `h5i env diff <name>` / `h5i env inspect <name> --capture <id>`, then `h5i env apply <name>`.\n");
+    out
 }
 
 // ─── mediated commit (§4 — the critical security boundary) ─────────────────

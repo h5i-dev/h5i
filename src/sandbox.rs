@@ -557,13 +557,43 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
 
 // ─── confined execution (Linux, `process` tier) ─────────────────────────────
 
-/// Outcome of one (possibly confined) command execution.
+/// Outcome of one (possibly confined) command execution, including resource
+/// accounting (`records exit/resource/egress`, design §9).
 #[derive(Debug)]
 pub struct ExecOutcome {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub exit_code: Option<i32>,
     pub timed_out: bool,
+    /// Wall-clock duration of the run, milliseconds.
+    pub wall_ms: u128,
+    /// CPU time (user + system) consumed by the command and its children, ms.
+    pub cpu_ms: u128,
+    /// Peak resident set size of the command and its children, KiB
+    /// (`rusage.ru_maxrss`). `None` when the platform doesn't report it.
+    pub max_rss_kb: Option<i64>,
+}
+
+/// Validate `argv` against the policy's `tools` allowlist. When the list is
+/// non-empty, the command's program (argv[0], by basename) MUST be listed —
+/// defense in depth so a profile can pin exactly which executables an
+/// environment may launch. An empty list means "unrestricted" (the default).
+fn check_tool_allowlist(policy: &ResolvedPolicy, argv: &[String]) -> Result<(), H5iError> {
+    let tools = &policy.profile.tools;
+    if tools.is_empty() {
+        return Ok(());
+    }
+    let prog = &argv[0];
+    let base = prog.rsplit(['/', '\\']).next().unwrap_or(prog);
+    if tools.iter().any(|t| t == base || t == prog) {
+        Ok(())
+    } else {
+        Err(H5iError::Metadata(format!(
+            "command '{base}' is not in the profile '{}' tools allowlist ({}) — refusing (fail-closed)",
+            policy.profile.name,
+            tools.join(", ")
+        )))
+    }
 }
 
 /// Run `argv` inside `work` under `policy`. Dispatches on the resolved claim:
@@ -574,6 +604,7 @@ pub fn run(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<Exec
     if argv.is_empty() {
         return Err(H5iError::Metadata("empty command".into()));
     }
+    check_tool_allowlist(policy, argv)?;
     match policy.claim {
         IsolationClaim::Workspace => run_unconfined(policy, work, argv),
         IsolationClaim::Process => run_confined(policy, work, argv),
@@ -865,6 +896,7 @@ fn wait_with_deadline(
     use std::process::Stdio;
 
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let started = std::time::Instant::now();
     let mut child = cmd
         .spawn()
         .map_err(|e| H5iError::Metadata(format!("failed to run `{}`: {e}", argv.join(" "))))?;
@@ -882,42 +914,98 @@ fn wait_with_deadline(
         buf
     });
 
-    // The child called setsid(), so its process-group id equals its pid; a
-    // negative-pid SIGKILL reaps the whole tree, not just the leader, so a
-    // timed-out command can't strand runaway descendants.
-    #[cfg(unix)]
-    let pgid = child.id() as libc::pid_t;
-
-    let deadline = std::time::Instant::now() + wall;
-    let mut timed_out = false;
-    let status = loop {
-        match child.try_wait().map_err(H5iError::Io)? {
-            Some(status) => break status,
-            None => {
-                if std::time::Instant::now() >= deadline {
-                    timed_out = true;
-                    #[cfg(unix)]
-                    unsafe {
-                        // Kill the group; fall back to the leader if that fails.
-                        if libc::kill(-pgid, libc::SIGKILL) != 0 {
-                            let _ = child.kill();
-                        }
-                    }
-                    #[cfg(not(unix))]
-                    let _ = child.kill();
-                    break child.wait().map_err(H5iError::Io)?;
-                }
-                std::thread::sleep(Duration::from_millis(25));
-            }
-        }
-    };
+    let (exit_code, timed_out, cpu_ms, max_rss_kb) = wait_loop(&mut child, wall);
 
     Ok(ExecOutcome {
         stdout: out_h.join().unwrap_or_default(),
         stderr: err_h.join().unwrap_or_default(),
-        exit_code: status.code(),
+        exit_code,
         timed_out,
+        wall_ms: started.elapsed().as_millis(),
+        cpu_ms,
+        max_rss_kb,
     })
+}
+
+/// Poll the child to the deadline, enforcing the wall-clock with a
+/// process-group SIGKILL, and reap it with `wait4` so we recover `rusage`
+/// (peak RSS + CPU time). Returns `(exit_code, timed_out, cpu_ms, max_rss_kb)`.
+#[cfg(unix)]
+fn wait_loop(
+    child: &mut std::process::Child,
+    wall: Duration,
+) -> (Option<i32>, bool, u128, Option<i64>) {
+    // The child called setsid(), so its process-group id equals its pid; a
+    // negative-pid SIGKILL reaps the whole tree, not just the leader.
+    let pid = child.id() as libc::pid_t;
+    let deadline = std::time::Instant::now() + wall;
+    let mut timed_out = false;
+
+    loop {
+        let mut status: libc::c_int = 0;
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        let r = unsafe { libc::wait4(pid, &mut status, libc::WNOHANG, &mut usage) };
+        if r == pid {
+            // Reaped. Decode exit/signal and resource usage. (std's Child does
+            // not auto-wait on drop, so reaping here causes no double-wait.)
+            let exit_code = if libc::WIFEXITED(status) {
+                Some(libc::WEXITSTATUS(status))
+            } else {
+                None // died on a signal (incl. our SIGKILL)
+            };
+            return (exit_code, timed_out, cpu_ms(&usage), Some(usage.ru_maxrss));
+        }
+        if r == -1 {
+            let e = std::io::Error::last_os_error();
+            if e.raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            // Lost the child (e.g. ECHILD) — fall back to std's bookkeeping.
+            let code = child.wait().ok().and_then(|s| s.code());
+            return (code, timed_out, 0, None);
+        }
+        // r == 0: still running.
+        if std::time::Instant::now() >= deadline {
+            timed_out = true;
+            unsafe {
+                if libc::kill(-pid, libc::SIGKILL) != 0 {
+                    let _ = child.kill();
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(unix)]
+fn cpu_ms(u: &libc::rusage) -> u128 {
+    let secs = (u.ru_utime.tv_sec + u.ru_stime.tv_sec) as u128;
+    let usecs = (u.ru_utime.tv_usec + u.ru_stime.tv_usec) as u128;
+    secs * 1000 + usecs / 1000
+}
+
+#[cfg(not(unix))]
+fn wait_loop(
+    child: &mut std::process::Child,
+    wall: Duration,
+) -> (Option<i32>, bool, u128, Option<i64>) {
+    let deadline = std::time::Instant::now() + wall;
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break child.wait().expect("wait after kill");
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => return (None, timed_out, 0, None),
+        }
+    };
+    (status.code(), timed_out, 0, None)
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────────
@@ -1152,5 +1240,41 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let out = run(&policy, dir.path(), &["sleep".to_string(), "30".to_string()]).unwrap();
         assert!(out.timed_out, "expected the wall-clock kill to fire");
         assert_ne!(out.exit_code, Some(0));
+    }
+
+    #[test]
+    fn run_records_resource_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = Profile::builtin("default", IsolationClaim::Workspace);
+        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        // A command that burns a little wall time so the numbers are non-trivial.
+        let out = run(&policy, dir.path(), &["sh".into(), "-c".into(), "sleep 0.2".into()]).unwrap();
+        assert_eq!(out.exit_code, Some(0));
+        assert!(out.wall_ms >= 150, "wall_ms should reflect the ~200ms sleep: {}", out.wall_ms);
+        // On Linux wait4 fills ru_maxrss (KiB) — a real process is > 0.
+        #[cfg(target_os = "linux")]
+        assert!(out.max_rss_kb.unwrap_or(0) > 0, "expected a peak RSS reading");
+    }
+
+    #[test]
+    fn tools_allowlist_enforced_when_non_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut p = Profile::builtin("default", IsolationClaim::Workspace);
+        p.tools = vec!["echo".into(), "python".into()];
+        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        // Listed program (by basename) runs.
+        assert!(run(&policy, dir.path(), &["echo".into(), "hi".into()]).is_ok());
+        // An unlisted program is refused before it ever executes.
+        let err = run(&policy, dir.path(), &["sh".into(), "-c".into(), "echo no".into()]).unwrap_err();
+        assert!(err.to_string().contains("allowlist"), "{err}");
+    }
+
+    #[test]
+    fn empty_tools_allowlist_allows_anything() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = Profile::builtin("default", IsolationClaim::Workspace);
+        assert!(p.tools.is_empty());
+        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        assert!(run(&policy, dir.path(), &["true".into()]).is_ok());
     }
 }

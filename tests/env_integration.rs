@@ -708,7 +708,100 @@ fn concurrent_runs_of_one_env_are_serialized() {
     r.h5i_ok(&["env", "run", "busy", "--", "sh", "-c", "echo after"]);
 }
 
-// ─── 10. probe is honest and machine-readable ───────────────────────────────
+// ─── 10. event log is secret-safe and carries resource accounting ───────────
+
+#[test]
+fn event_log_redacts_command_and_records_resources() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "acct"]);
+    r.h5i_ok(&[
+        "env", "run", "acct", "--", "sh", "-c",
+        &format!("echo deploying with {PLANTED_SECRET}"),
+    ]);
+
+    // The raw event log blob (refs/h5i/env) must not leak the secret passed on
+    // the command line, and must carry wall/cpu resource accounting.
+    let log = out_str(&git(&r.dir, &["show", "refs/h5i/env:events.jsonl"]));
+    assert!(!log.contains(PLANTED_SECRET), "secret leaked into the env event log: {log}");
+    assert!(log.contains("redacted"), "command should be redacted in the event detail");
+    let exec_line = log.lines().find(|l| l.contains("\"event\":\"exec\"")).expect("exec event");
+    assert!(exec_line.contains("wall="), "exec event must record wall time: {exec_line}");
+    assert!(exec_line.contains("cpu="), "exec event must record cpu time: {exec_line}");
+
+    // The CLI run line surfaces resources too.
+    let out = out_str(&r.h5i_ok(&["env", "run", "acct", "--", "sh", "-c", "true"]));
+    assert!(out.contains("wall "), "run output should show wall time: {out}");
+}
+
+// ─── 11. tool allowlist enforcement (defense in depth) ──────────────────────
+
+#[test]
+fn tools_allowlist_is_enforced_at_run() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.default]\nisolation = \"workspace\"\ntools = [\"echo\", \"true\"]\n",
+    )
+    .unwrap();
+    r.h5i_ok(&["env", "create", "pinned"]);
+
+    // Listed program runs.
+    r.h5i_ok(&["env", "run", "pinned", "--", "true"]);
+    // Unlisted program is refused (and never executes).
+    let out = r.h5i(&["env", "run", "pinned", "--", "sh", "-c", "echo nope > escaped.txt"]);
+    assert!(!out.status.success(), "unlisted command must be refused");
+    assert!(out_str(&out).contains("allowlist"), "{}", out_str(&out));
+    assert!(!r.work("pinned").join("escaped.txt").exists(), "refused command must not run");
+}
+
+// ─── 12. the arena: compare environments from one base ──────────────────────
+
+#[test]
+fn compare_ranks_environments_and_flags_split_bases() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "cand-a"]);
+    r.h5i_ok(&["env", "create", "cand-b"]);
+
+    std::fs::write(r.work("cand-a").join("a.txt"), "one line\n").unwrap();
+    std::fs::write(r.work("cand-b").join("b.txt"), "x\ny\nz\n").unwrap();
+    r.h5i_ok(&["env", "run", "cand-a", "--", "sh", "-c", "echo a-ok"]);
+    // cand-b's run fails on purpose — exit code passes through, so it's not _ok.
+    let failed = r.h5i(&["env", "run", "cand-b", "--", "sh", "-c", "exit 2"]);
+    assert_eq!(failed.status.code(), Some(2));
+
+    let out = out_str(&r.h5i_ok(&["env", "compare", "cand-a", "cand-b"]));
+    assert!(out.contains("common base"), "shared-base envs report a common base: {out}");
+    assert!(out.contains("env/tester/cand-a"), "{out}");
+    assert!(out.contains("env/tester/cand-b"), "{out}");
+    assert!(out.contains("exit 0"), "cand-a's passing run shows: {out}");
+    assert!(out.contains("exit 2"), "cand-b's failing run shows: {out}");
+
+    // JSON form is machine-readable with the diffstat numbers.
+    let json = out_str(&r.h5i_ok(&["env", "compare", "cand-a", "cand-b", "--json"]));
+    let rows: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 2);
+    let b = rows.as_array().unwrap().iter().find(|r| r["id"] == "env/tester/cand-b").unwrap();
+    assert_eq!(b["insertions"], 3, "untracked-file lines counted: {json}");
+    assert_eq!(b["last_exit"], 2);
+}
+
+#[test]
+fn compare_warns_when_bases_differ() {
+    let r = Repo::new();
+    let first = out_str(&git(&r.dir, &["rev-parse", "HEAD"])).trim().to_string();
+    r.h5i_ok(&["env", "create", "from-old", "--from", &first]);
+    // Advance main, then create a second env off the new tip.
+    std::fs::write(r.dir.join("moved.txt"), "moved\n").unwrap();
+    git(&r.dir, &["add", "moved.txt"]);
+    git(&r.dir, &["commit", "-m", "advance"]);
+    r.h5i_ok(&["env", "create", "from-new"]);
+
+    let out = out_str(&r.h5i_ok(&["env", "compare", "from-old", "from-new"]));
+    assert!(out.contains("do NOT share a base"), "must warn on split bases: {out}");
+}
+
+// ─── 13. probe is honest and machine-readable ───────────────────────────────
 
 #[test]
 fn probe_reports_all_capability_lines() {

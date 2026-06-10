@@ -1759,6 +1759,17 @@ enum EnvCommands {
         capture: String,
     },
 
+    /// Compare environments side by side — changes + latest run results (the
+    /// "arena" reviewer comparison). Best on envs sharing one base.
+    Compare {
+        /// Two or more environment names
+        #[arg(required = true, num_args = 1..)]
+        names: Vec<String>,
+        /// Emit JSON instead of the table
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Snapshot the worktree (mediated commit, path-allowlist enforced) and
     /// mark the env proposed — produces a review brief. Never writes the
     /// parent branch.
@@ -7957,12 +7968,19 @@ jq -c '{
                             style("warning:").yellow().bold()
                         );
                     }
+                    let rss = outcome
+                        .max_rss_kb
+                        .map(|kb| format!(", rss {}MiB", kb / 1024))
+                        .unwrap_or_default();
                     eprintln!(
-                        "{} evidence {} (env {}, policy {})",
+                        "{} evidence {} (env {}, policy {}) · wall {}ms, cpu {}ms{}",
                         LOOKING,
                         style(&outcome.capture_id).magenta(),
                         m.id,
-                        &m.policy_digest[..12]
+                        &m.policy_digest[..12],
+                        outcome.wall_ms,
+                        outcome.cpu_ms,
+                        rss
                     );
                     // A wall-clock kill is a failure, not success — the child
                     // was SIGKILLed so it has no exit code of its own. Use the
@@ -8052,6 +8070,15 @@ jq -c '{
                 EnvCommands::Inspect { name, capture } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     print!("{}", h5i_core::env::inspect(git, &m, &capture)?);
+                }
+
+                EnvCommands::Compare { names, json } => {
+                    let rows = h5i_core::env::compare(git, &h5i_root, &names)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&rows)?);
+                    } else {
+                        print!("{}", h5i_core::env::render_compare(&rows));
+                    }
                 }
 
                 EnvCommands::Propose { name } => {
