@@ -222,6 +222,8 @@ fn aggressive_summary_still_has_lossless_raw_in_store() {
             files: Vec::new(),
             cmd_argv: Vec::new(),
             filter: cfg(OutputKind::Log, None),
+            env_id: None,
+            policy_digest: None,
         },
     )
     .unwrap();

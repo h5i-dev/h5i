@@ -1,6 +1,10 @@
 # h5i Environments — Design
 
-> **Status:** design draft (no code yet). Authored by `claude`, with design
+> **Status:** implemented through rollout phases 1–3 (`src/env.rs`, `src/sandbox.rs`;
+> workspace tier, the static `process` tier with Landlock/seccomp/netns, and the
+> policy file with fail-closed gates). Container/microvm adapters, the
+> seccomp-notify supervisor, and stage separation remain future phases.
+> Authored by `claude`, with design
 > contributions from `codex` via Agent Radio (`refs/h5i/msg`), grounded in the
 > reference systems under `../sandbox-design-ref/` and three 2026 security
 > papers (Sandlock, EscapeBench, GAAP).

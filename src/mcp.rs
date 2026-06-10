@@ -1383,6 +1383,8 @@ fn tool_capture_run(params: &Value, workdir: &Path) -> Result<Value> {
         files,
         cmd_argv: argv.clone(),
         filter: cfg,
+        env_id: None,
+        policy_digest: None,
     };
     let outcome = crate::objects::capture(repo.git(), &repo.h5i_root, &raw, opts)?;
     let m = &outcome.manifest;

@@ -27,6 +27,8 @@ CI runs `cargo build --verbose` then `cargo test --verbose` with Git user config
 - **`ast.rs`** — `SemanticAst` (S-expression based), `AstDiff` (additions/deletions/moves/unchanged), similarity scoring (0.0–1.0), SHA-256 structure hashing. Python files are parsed via `script/h5i-py-parser.py`.
 - **`blame.rs`** — Two modes: `Line` (traditional) and `Ast` (semantic). Associates authorship with AI metadata and test results per commit.
 - **`msg.rs`** — Cross-agent messaging (the i5h protocol, `docs/i5h-protocol.md`). Stores an append-only `messages.jsonl` + `agents.json` roster in `refs/h5i/msg`; sends via compare-and-swap, pulls union-merge by message id. `Message` carries i5h fields (version, kind, reply_to, thread_id, priority, focus, risk, links). Identity resolves `--from`/`--as` > `$H5I_AGENT` > stored. Read-state is per-agent local files (`cursors/<agent>.json`, `views/<agent>.json`). Includes `sanitize_display` (terminal-injection defense for untrusted pulled fields) and `merge_settings_json` (powers `h5i msg setup`).
+- **`env.rs`** — h5i environments (`h5i env`, `docs/environments-design.md`): the triple fusion of a code branch (`refs/heads/h5i/env/<agent>/<slug>`), a reasoning branch (`refs/h5i/context/env/<agent>/<slug>`), and a policy manifest. Workspace backend is a native git worktree under `.git/.h5i/env/<agent>/<slug>/work`. Lifecycle: `create → run → propose → apply | abort → gc`. Event log in `refs/h5i/env` (CAS append + union-merge, same pattern as msg/objects). Every `env run` is a tagged `objects` capture (`env_id`, `policy_digest`). Mediated commit enforces a canonicalized `$WORK` path allowlist (rejects nested `.git`, symlink-dir escapes, `..`).
+- **`sandbox.rs`** — Policy model + process-tier confinement. Profiles from checked-in `.h5i/env.toml` (isolation claim, `fs.read/write/deny` lint, `net.mode deny|host`, resources, `env.pass` allowlist), all fail-closed (non-empty `net.egress`/`secrets` under `process` refuse). Capability probing (Landlock ABI, userns, seccomp) — refuses, never silently downgrades. Linux enforcement: Landlock allowlist (`HardRequirement`), seccomp-bpf deny-list, `unshare(NEWUSER|NEWNET)` for net-deny, `no_new_privs`, rlimits + wall-clock kill.
 - **`watcher.rs`** — Uses `notify` crate. Detects file changes and syncs to CRDT session.
 - **`error.rs`** — Error categories mirror the five dimensions (Git/temporal, AST/structural, metadata/intentional, quality/empirical, CRDT/associative).
 - **`main.rs`** — CLI via `clap`. Subcommands: `init`, `session`, `commit`, `log`, `blame`, `resolve`.
@@ -48,6 +50,15 @@ h5i msg send <agent> <text>              # also: ask|review|risk|handoff <agent>
 h5i msg reply|ack|done|decline <n> [text]
 h5i msg inbox | history | team | watch [--all]
 h5i msg hook [--block]                   # Stop-hook turn delivery
+
+# Isolated agent environments (worktree + sandbox + provenance)
+h5i env create <name> [--from REV] [--profile P] [--isolation workspace|process|...]
+h5i env run <name> -- <cmd>              # policy-enforced, capture-wrapped
+h5i env probe                            # host isolation capabilities
+h5i env list | status <name> | log <name> | diff <name> [--stat]
+h5i env propose <name>                   # mediated commit + review brief
+h5i env apply <name> [--patch]           # reviewer-selected; never automatic
+h5i env abort <name> | gc
 ```
 
 ### Key Dependencies
@@ -58,5 +69,6 @@ h5i msg hook [--block]                   # Stop-hook turn delivery
 - **tiktoken-rs** — Token counting for AI metadata
 - **notify** — File system watching
 - **clap** — CLI parsing
+- **landlock / seccompiler / libc** (Linux) — `h5i env` process-tier sandbox (filesystem allowlist, syscall deny-list, namespaces)
 
 @.claude/h5i.md

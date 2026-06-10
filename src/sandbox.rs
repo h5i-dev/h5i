@@ -1,0 +1,1089 @@
+//! h5i's own confinement for the `process` isolation tier — plus the policy
+//! model shared by every tier (docs/environments-design.md §5–§7).
+//!
+//! Design (mirrors a minimal, embedded Sandlock):
+//!   - **Policy** comes from a checked-in `.h5i/env.toml` profile (fail-closed
+//!     defaults when absent). A profile requests a *minimum* isolation claim;
+//!     the resolved claim is recorded in the env manifest and every capture.
+//!   - **Capability probing**: hosts vary wildly (this matters — Landlock may
+//!     be compiled out, userns may be disabled). We probe what the kernel
+//!     actually supports and **refuse** (never silently downgrade) when the
+//!     requested claim cannot be satisfied.
+//!   - **Enforcement** (Linux, `process` tier v1, static — no supervisor):
+//!     Landlock filesystem allowlist (`$WORK` rw + ro system paths), a seccomp
+//!     deny-list of dangerous syscalls, `unshare(CLONE_NEWUSER|CLONE_NEWNET)`
+//!     for `net.mode = deny`, `PR_SET_NO_NEW_PRIVS`, and rlimits with a
+//!     wall-clock kill. Domain egress allowlists (`net.egress`) need the
+//!     seccomp-notify supervisor or a container backend and therefore **fail
+//!     closed** under the static `process` tier.
+//!
+//! Cross-platform honesty: the `process` tier is Linux-only in this build;
+//! macOS (Seatbelt) and Windows are explicitly not claimed (§5).
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use crate::error::H5iError;
+
+/// Repo-relative path of the checked-in policy file.
+pub const POLICY_FILE: &str = ".h5i/env.toml";
+
+/// Default wall-clock limit when a profile sets none (fail-closed: a confined
+/// command can never run unbounded).
+pub const DEFAULT_WALL: Duration = Duration::from_secs(30 * 60);
+
+// ─── isolation claims (§6) ──────────────────────────────────────────────────
+
+/// Descriptive isolation *claims*, not "security tiers" — so we never
+/// accidentally call Docker "secure". Ordered weakest → strongest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum IsolationClaim {
+    /// git worktree only — file isolation, no confinement.
+    Workspace,
+    /// Our own Landlock + seccomp + netns confinement (this module).
+    Process,
+    /// Rootless podman/docker adapter (opt-in shell-out; not in this build).
+    Container,
+    /// gVisor / Kata adapter (not in this build).
+    HardenedContainer,
+    /// Firecracker adapter (not in this build).
+    Microvm,
+}
+
+impl IsolationClaim {
+    pub fn parse(s: &str) -> Result<Self, H5iError> {
+        match s.trim().to_lowercase().as_str() {
+            "workspace" => Ok(Self::Workspace),
+            "process" => Ok(Self::Process),
+            "container" => Ok(Self::Container),
+            "hardened-container" | "hardened_container" => Ok(Self::HardenedContainer),
+            "microvm" => Ok(Self::Microvm),
+            other => Err(H5iError::Metadata(format!(
+                "unknown isolation claim '{other}' (expected workspace|process|container|hardened-container|microvm)"
+            ))),
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Workspace => "workspace",
+            Self::Process => "process",
+            Self::Container => "container",
+            Self::HardenedContainer => "hardened-container",
+            Self::Microvm => "microvm",
+        }
+    }
+}
+
+/// `net.mode` — what the *static* `process` tier can honestly enforce (netns):
+/// all-or-nothing. Domain allowlists live in `net.egress` and require a
+/// supervisor or container backend (fail closed under `process`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NetMode {
+    Deny,
+    Host,
+}
+
+impl NetMode {
+    pub fn parse(s: &str) -> Result<Self, H5iError> {
+        match s.trim().to_lowercase().as_str() {
+            "deny" => Ok(Self::Deny),
+            "host" => Ok(Self::Host),
+            other => Err(H5iError::Metadata(format!(
+                "unknown net.mode '{other}' (process-v1 enforces deny|host only)"
+            ))),
+        }
+    }
+}
+
+// ─── policy profile (§7) ────────────────────────────────────────────────────
+
+/// A fully-resolved policy profile — every field explicit, suitable for
+/// serializing as `policy.resolved.toml` and digesting. Field order is the
+/// canonical serialization order (digest stability depends on it).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Profile {
+    pub name: String,
+    pub isolation: IsolationClaim,
+    /// Landlock read-only GRANTS (allowlist) — system paths. `$WORK` is
+    /// implicitly readable+writable and need not be listed.
+    pub fs_read: Vec<String>,
+    /// Landlock read-write GRANTS. `$WORK` expands to the env workspace.
+    pub fs_write: Vec<String>,
+    /// NOT a kernel rule (Landlock is allowlist-only): a preflight lint +
+    /// secret-scrub scope. The policy is refused if any granted parent
+    /// contains one of these.
+    pub fs_deny: Vec<String>,
+    pub net_mode: NetMode,
+    /// Domain allowlist — requires supervisor/container backend; fails closed
+    /// under the static `process` tier when non-empty.
+    pub net_egress: Vec<String>,
+    /// Secret grants — not implemented in v1; non-empty fails closed.
+    pub secrets: Vec<String>,
+    pub mem_bytes: Option<u64>,
+    pub max_procs: Option<u64>,
+    pub wall_secs: u64,
+    /// Informational tool list (not enforced in v1; recorded for provenance).
+    pub tools: Vec<String>,
+    /// Environment-variable allowlist — the child gets *only* these (plus
+    /// nothing else; secrets are never inherited wholesale).
+    pub env_pass: Vec<String>,
+}
+
+impl Profile {
+    /// Built-in profile used when no `.h5i/env.toml` exists. Fail-closed for
+    /// `process`+ (deny-network, deny-home); `workspace` enforces nothing and
+    /// honestly says so (`net_mode = host`, no grants).
+    pub fn builtin(name: &str, isolation: IsolationClaim) -> Profile {
+        let confined = isolation >= IsolationClaim::Process;
+        Profile {
+            name: name.to_string(),
+            isolation,
+            fs_read: if confined { default_fs_read() } else { Vec::new() },
+            fs_write: if confined { vec!["$WORK".to_string()] } else { Vec::new() },
+            fs_deny: default_fs_deny(),
+            net_mode: if confined { NetMode::Deny } else { NetMode::Host },
+            net_egress: Vec::new(),
+            secrets: Vec::new(),
+            mem_bytes: Some(4 * 1024 * 1024 * 1024),
+            max_procs: Some(256),
+            wall_secs: DEFAULT_WALL.as_secs(),
+            tools: Vec::new(),
+            env_pass: vec!["PATH".into(), "HOME".into(), "LANG".into()],
+        }
+    }
+
+    pub fn wall(&self) -> Duration {
+        Duration::from_secs(self.wall_secs)
+    }
+}
+
+/// Read-only system paths granted by default at the `process` tier — enough to
+/// exec interpreters and link against system libraries, nothing under `$HOME`.
+fn default_fs_read() -> Vec<String> {
+    ["/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", "/nix", "/opt", "/tmp", "/dev/null", "/dev/zero", "/dev/urandom", "/proc"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn default_fs_deny() -> Vec<String> {
+    ["~/.ssh", "~/.aws", "~/.config/gh", "$REPO/.git/hooks"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+// ── raw TOML schema (what users write; everything optional) ────────────────
+
+#[derive(Debug, Default, Deserialize)]
+struct PolicyFileToml {
+    #[serde(default)]
+    profile: BTreeMap<String, ProfileToml>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ProfileToml {
+    isolation: Option<String>,
+    #[serde(default)]
+    fs: FsToml,
+    #[serde(default)]
+    net: NetToml,
+    #[serde(default)]
+    secrets: Vec<String>,
+    resources: Option<ResourcesToml>,
+    #[serde(default)]
+    tools: Vec<String>,
+    #[serde(default)]
+    env: EnvVarsToml,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct FsToml {
+    #[serde(default)]
+    read: Vec<String>,
+    #[serde(default)]
+    write: Vec<String>,
+    #[serde(default)]
+    deny: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct NetToml {
+    mode: Option<String>,
+    #[serde(default)]
+    egress: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ResourcesToml {
+    mem: Option<String>,
+    procs: Option<u64>,
+    wall: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct EnvVarsToml {
+    #[serde(default)]
+    pass: Vec<String>,
+}
+
+/// Load profile `name` from `<repo>/.h5i/env.toml`, falling back to the
+/// built-in default when the file (or the `default` profile) is absent.
+/// `isolation_override` (the CLI `--isolation` flag) replaces the profile's
+/// claim. The result is validated (fail-closed lints) before being returned.
+pub fn load_profile(
+    repo_workdir: &Path,
+    name: &str,
+    isolation_override: Option<IsolationClaim>,
+) -> Result<Profile, H5iError> {
+    let path = repo_workdir.join(POLICY_FILE);
+    let raw: Option<ProfileToml> = if path.is_file() {
+        let text = std::fs::read_to_string(&path).map_err(|e| H5iError::with_path(e, &path))?;
+        let mut file: PolicyFileToml = toml::from_str(&text)?;
+        match file.profile.remove(name) {
+            Some(p) => Some(p),
+            None if name == "default" => None,
+            None => {
+                return Err(H5iError::Metadata(format!(
+                    "profile '{name}' not found in {POLICY_FILE} (available: {})",
+                    file.profile.keys().cloned().collect::<Vec<_>>().join(", ")
+                )))
+            }
+        }
+    } else if name != "default" {
+        return Err(H5iError::Metadata(format!(
+            "profile '{name}' requested but {POLICY_FILE} does not exist"
+        )));
+    } else {
+        None
+    };
+
+    let mut profile = match raw {
+        None => Profile::builtin(name, isolation_override.unwrap_or(IsolationClaim::Workspace)),
+        Some(t) => {
+            let isolation = match (&isolation_override, &t.isolation) {
+                (Some(o), _) => *o,
+                (None, Some(s)) => IsolationClaim::parse(s)?,
+                (None, None) => IsolationClaim::Workspace,
+            };
+            let base = Profile::builtin(name, isolation);
+            Profile {
+                name: name.to_string(),
+                isolation,
+                fs_read: if t.fs.read.is_empty() { base.fs_read } else { t.fs.read },
+                fs_write: if t.fs.write.is_empty() { base.fs_write } else { t.fs.write },
+                fs_deny: if t.fs.deny.is_empty() { base.fs_deny } else { t.fs.deny },
+                net_mode: match t.net.mode {
+                    Some(ref s) => NetMode::parse(s)?,
+                    None => base.net_mode,
+                },
+                net_egress: t.net.egress,
+                secrets: t.secrets,
+                mem_bytes: match t.resources.as_ref().and_then(|r| r.mem.as_deref()) {
+                    Some(s) => Some(parse_mem(s)?),
+                    None => base.mem_bytes,
+                },
+                max_procs: t.resources.as_ref().and_then(|r| r.procs).or(base.max_procs),
+                wall_secs: match t.resources.as_ref().and_then(|r| r.wall.as_deref()) {
+                    Some(s) => parse_wall(s)?.as_secs(),
+                    None => base.wall_secs,
+                },
+                tools: t.tools,
+                env_pass: if t.env.pass.is_empty() { base.env_pass } else { t.env.pass },
+            }
+        }
+    };
+    if let Some(o) = isolation_override {
+        profile.isolation = o;
+    }
+    validate_profile(&profile)?;
+    Ok(profile)
+}
+
+/// Fail-closed policy lints (§7). These reject *policies*, before any env is
+/// created — never silently weaken them.
+pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
+    // Secret grants are a later phase. Refuse rather than half-implement.
+    if !p.secrets.is_empty() {
+        return Err(H5iError::Metadata(
+            "policy requests secret grants, which this build does not implement — \
+             remove `secrets` from the profile (fail-closed)"
+                .into(),
+        ));
+    }
+    // A domain egress allowlist cannot be honored by the static process tier
+    // (netns is all-or-nothing) and is meaningless below it.
+    if !p.net_egress.is_empty() && p.isolation <= IsolationClaim::Process {
+        return Err(H5iError::Metadata(format!(
+            "profile '{}' sets a net.egress domain allowlist, but isolation '{}' cannot \
+             enforce it (process-v1 supports net.mode deny|host only) — use a \
+             supervisor/container backend or drop net.egress (fail-closed)",
+            p.name,
+            p.isolation.as_str()
+        )));
+    }
+    // fs.deny preflight lint: Landlock has no deny rules, so a granted parent
+    // must never contain a denied child. Compare on expanded, normalized text.
+    for grant in p.fs_read.iter().chain(p.fs_write.iter()) {
+        let g = expand_tilde(grant);
+        for deny in &p.fs_deny {
+            let d = expand_tilde(deny);
+            if d == g || d.starts_with(&format!("{}/", g.trim_end_matches('/'))) {
+                return Err(H5iError::Metadata(format!(
+                    "policy refused: granted path '{grant}' contains denied child '{deny}' \
+                     (Landlock is allowlist-only and cannot subtract a child from a granted \
+                     parent — narrow the grant)"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Expand a leading `~/` (or bare `~`) to `$HOME`. Symbolic placeholders like
+/// `$WORK` / `$REPO` are left as-is (they expand at enforcement time).
+fn expand_tilde(path: &str) -> String {
+    if path == "~" || path.starts_with("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            let home = home.to_string_lossy();
+            return format!("{}{}", home, &path[1..]);
+        }
+    }
+    path.to_string()
+}
+
+/// Parse a memory size like "4G", "512M", "1024K", or plain bytes.
+pub fn parse_mem(s: &str) -> Result<u64, H5iError> {
+    let t = s.trim();
+    let (num, mult) = match t.chars().last() {
+        Some('G') | Some('g') => (&t[..t.len() - 1], 1024u64 * 1024 * 1024),
+        Some('M') | Some('m') => (&t[..t.len() - 1], 1024 * 1024),
+        Some('K') | Some('k') => (&t[..t.len() - 1], 1024),
+        _ => (t, 1),
+    };
+    num.trim()
+        .parse::<u64>()
+        .map(|n| n * mult)
+        .map_err(|_| H5iError::Metadata(format!("invalid resources.mem '{s}' (expected e.g. \"4G\", \"512M\")")))
+}
+
+/// Parse a wall-clock duration like "30m", "90s", "2h".
+pub fn parse_wall(s: &str) -> Result<Duration, H5iError> {
+    let t = s.trim();
+    let (num, mult) = match t.chars().last() {
+        Some('h') => (&t[..t.len() - 1], 3600u64),
+        Some('m') => (&t[..t.len() - 1], 60),
+        Some('s') => (&t[..t.len() - 1], 1),
+        _ => (t, 1),
+    };
+    num.trim()
+        .parse::<u64>()
+        .map(|n| Duration::from_secs(n * mult))
+        .map_err(|_| H5iError::Metadata(format!("invalid resources.wall '{s}' (expected e.g. \"30m\", \"90s\")")))
+}
+
+// ─── capability probing (§5, mandatory) ─────────────────────────────────────
+
+/// What this host's kernel actually supports. Probed at env creation and
+/// before every confined run — never assumed.
+#[derive(Debug, Clone, Serialize)]
+pub struct HostCaps {
+    pub os: String,
+    /// Landlock ABI version (≥1 means filesystem scoping works); `None` when
+    /// the LSM is absent/disabled (e.g. many WSL2 kernels).
+    pub landlock_abi: Option<i32>,
+    /// Unprivileged user namespaces (needed for `net.mode = deny`).
+    pub userns: bool,
+    /// seccomp-bpf filters.
+    pub seccomp: bool,
+}
+
+#[cfg(target_os = "linux")]
+pub fn probe_host() -> HostCaps {
+    HostCaps {
+        os: "linux".into(),
+        landlock_abi: probe_landlock_abi(),
+        userns: probe_userns(),
+        seccomp: probe_seccomp(),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn probe_host() -> HostCaps {
+    HostCaps {
+        os: std::env::consts::OS.to_string(),
+        landlock_abi: None,
+        userns: false,
+        seccomp: false,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn probe_landlock_abi() -> Option<i32> {
+    // landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)
+    // returns the highest supported ABI, or -1 (ENOSYS/EOPNOTSUPP) when the
+    // LSM is unavailable. This does not create anything.
+    const LANDLOCK_CREATE_RULESET_VERSION: libc::c_uint = 1 << 0;
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_landlock_create_ruleset,
+            std::ptr::null::<libc::c_void>(),
+            0usize,
+            LANDLOCK_CREATE_RULESET_VERSION,
+        )
+    };
+    if ret > 0 { Some(ret as i32) } else { None }
+}
+
+#[cfg(target_os = "linux")]
+fn probe_seccomp() -> bool {
+    // PR_GET_SECCOMP succeeds (0 or 2) iff the kernel has seccomp.
+    unsafe { libc::prctl(libc::PR_GET_SECCOMP) >= 0 }
+}
+
+#[cfg(target_os = "linux")]
+fn probe_userns() -> bool {
+    // The only reliable probe is to try: unshare(CLONE_NEWUSER) in a throwaway
+    // child (never in this process). `true` exits 0 iff the unshare succeeded.
+    use std::os::unix::process::CommandExt;
+    let mut cmd = std::process::Command::new("true");
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::unshare(libc::CLONE_NEWUSER) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+// ─── claim resolution (fail-closed, §6) ─────────────────────────────────────
+
+/// The policy as actually enforced: profile + resolved claim. Serialized as
+/// `policy.resolved.toml`; its digest is pinned in the env manifest and in
+/// every capture taken inside the env.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedPolicy {
+    pub claim: IsolationClaim,
+    pub profile: Profile,
+}
+
+impl ResolvedPolicy {
+    pub fn to_toml(&self) -> Result<String, H5iError> {
+        toml::to_string(self).map_err(|e| H5iError::Metadata(format!("policy serialization failed: {e}")))
+    }
+
+    /// Parse a stored `policy.resolved.toml` back. Callers MUST verify
+    /// [`Self::digest`] against the env manifest's pinned digest afterwards —
+    /// the stored file is tamper-evident, not trusted.
+    pub fn from_toml(text: &str) -> Result<Self, H5iError> {
+        toml::from_str(text).map_err(H5iError::TomlParse)
+    }
+
+    /// sha256 over the canonical TOML serialization.
+    pub fn digest(&self) -> Result<String, H5iError> {
+        let toml = self.to_toml()?;
+        let mut hasher = Sha256::new();
+        hasher.update(toml.as_bytes());
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+}
+
+/// Resolve `profile` against what `caps` says the host supports. Refuses —
+/// never silently downgrades — when the requested minimum claim cannot be
+/// satisfied (§5 "Capability probing + fail-closed").
+pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5iError> {
+    validate_profile(profile)?;
+    match profile.isolation {
+        IsolationClaim::Workspace => {}
+        IsolationClaim::Process => {
+            let mut missing: Vec<String> = Vec::new();
+            if caps.os != "linux" {
+                missing.push(format!(
+                    "isolation=process is Linux-only in this build (host: {})",
+                    caps.os
+                ));
+            } else {
+                if caps.landlock_abi.is_none() {
+                    missing.push(
+                        "Landlock LSM unavailable (kernel <5.13, or compiled out / not in the \
+                         active LSM list — common on WSL2)"
+                            .into(),
+                    );
+                }
+                if !caps.seccomp {
+                    missing.push("seccomp-bpf unavailable".into());
+                }
+                if profile.net_mode == NetMode::Deny && !caps.userns {
+                    missing.push(
+                        "unprivileged user namespaces unavailable (required for net.mode=deny)"
+                            .into(),
+                    );
+                }
+            }
+            if !missing.is_empty() {
+                return Err(H5iError::Metadata(format!(
+                    "isolation claim 'process' cannot be satisfied on this host — refusing \
+                     (h5i never silently downgrades):\n  - {}\nRe-request a weaker claim \
+                     (--isolation workspace) or fix the host.",
+                    missing.join("\n  - ")
+                )));
+            }
+        }
+        claim => {
+            return Err(H5iError::Metadata(format!(
+                "isolation claim '{}' requires an external backend adapter that this build \
+                 does not ship yet (rollout §11 phase 4) — use workspace or process",
+                claim.as_str()
+            )));
+        }
+    }
+    Ok(ResolvedPolicy {
+        claim: profile.isolation,
+        profile: profile.clone(),
+    })
+}
+
+// ─── confined execution (Linux, `process` tier) ─────────────────────────────
+
+/// Outcome of one (possibly confined) command execution.
+#[derive(Debug)]
+pub struct ExecOutcome {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+}
+
+/// Run `argv` inside `work` under `policy`. Dispatches on the resolved claim:
+/// `workspace` runs unconfined (trusted; file isolation only), `process`
+/// applies the kernel confinement. Anything else was already refused by
+/// [`resolve`].
+pub fn run(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<ExecOutcome, H5iError> {
+    if argv.is_empty() {
+        return Err(H5iError::Metadata("empty command".into()));
+    }
+    match policy.claim {
+        IsolationClaim::Workspace => run_unconfined(policy, work, argv),
+        IsolationClaim::Process => run_confined(policy, work, argv),
+        claim => Err(H5iError::Metadata(format!(
+            "no backend for isolation claim '{}'",
+            claim.as_str()
+        ))),
+    }
+}
+
+/// `workspace` tier: no kernel confinement (trusted), but still scoped — runs
+/// in the env worktree with the wall-clock limit applied so a hung command
+/// cannot wedge `h5i env run` forever.
+fn run_unconfined(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<ExecOutcome, H5iError> {
+    let mut cmd = std::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..]).current_dir(work);
+    wait_with_deadline(cmd, policy.profile.wall(), argv)
+}
+
+#[cfg(target_os = "linux")]
+fn run_confined(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<ExecOutcome, H5iError> {
+    use std::os::unix::process::CommandExt;
+
+    let p = &policy.profile;
+    let work = work
+        .canonicalize()
+        .map_err(|e| H5iError::with_path(e, work))?;
+
+    // Re-probe at run time (the host may have changed since `env create`) and
+    // fail closed before spawning anything.
+    let caps = probe_host();
+    resolve(p, &caps)?;
+
+    // ── Landlock ruleset (built pre-fork; restricted in the child) ──
+    // Grants: rw on $WORK + fs.write, ro on fs.read. Paths that don't exist on
+    // this host are skipped — skipping a *grant* narrows the sandbox, which is
+    // the fail-closed direction.
+    let abi = landlock_abi_for(caps.landlock_abi.unwrap_or(1));
+    let rw_paths: Vec<PathBuf> = std::iter::once(work.clone())
+        .chain(p.fs_write.iter().filter(|s| s.as_str() != "$WORK").map(|s| PathBuf::from(expand_tilde(s))))
+        .filter(|p| p.exists())
+        .collect();
+    let ro_paths: Vec<PathBuf> = p
+        .fs_read
+        .iter()
+        .map(|s| PathBuf::from(expand_tilde(s)))
+        .filter(|p| p.exists())
+        .collect();
+
+    let ruleset = {
+        use landlock::{
+            path_beneath_rules, Access, AccessFs, CompatLevel, Compatible, Ruleset, RulesetAttr,
+            RulesetCreatedAttr,
+        };
+        Ruleset::default()
+            // Fail closed: if the kernel can't enforce what we handle, error —
+            // never a silent partial sandbox.
+            .set_compatibility(CompatLevel::HardRequirement)
+            .handle_access(AccessFs::from_all(abi))
+            .and_then(|r| r.create())
+            .and_then(|r| r.add_rules(path_beneath_rules(&ro_paths, AccessFs::from_read(abi))))
+            .and_then(|r| r.add_rules(path_beneath_rules(&rw_paths, AccessFs::from_all(abi))))
+            .map_err(|e| H5iError::Metadata(format!("landlock ruleset construction failed: {e}")))?
+    };
+
+    // ── seccomp deny-list program (compiled pre-fork) ──
+    let bpf = seccomp_deny_program()?;
+
+    let net_deny = p.net_mode == NetMode::Deny;
+    let uid = unsafe { libc::geteuid() };
+    let gid = unsafe { libc::getegid() };
+    let mem = p.mem_bytes;
+    let nproc = p.max_procs;
+
+    let mut cmd = std::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..]).current_dir(&work);
+
+    // Environment allowlist — nothing inherited wholesale (§7).
+    cmd.env_clear();
+    for key in &p.env_pass {
+        if let Ok(v) = std::env::var(key) {
+            cmd.env(key, v);
+        }
+    }
+
+    let mut ruleset_slot = Some(ruleset);
+    unsafe {
+        cmd.pre_exec(move || {
+            use std::io::Error;
+
+            // 1. Network: empty netns (lo present but down — even loopback is
+            //    unreachable, which is stricter than the design's wording).
+            //    CLONE_NEWUSER makes this unprivileged; map our own uid/gid so
+            //    file access inside $WORK keeps working.
+            if net_deny {
+                if libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNET) != 0 {
+                    return Err(Error::last_os_error());
+                }
+                std::fs::write("/proc/self/setgroups", "deny")?;
+                std::fs::write("/proc/self/gid_map", format!("{gid} {gid} 1"))?;
+                std::fs::write("/proc/self/uid_map", format!("{uid} {uid} 1"))?;
+            }
+
+            // 2. Resource caps (cooperative, no cgroups needed).
+            if let Some(bytes) = mem {
+                let lim = libc::rlimit { rlim_cur: bytes, rlim_max: bytes };
+                if libc::setrlimit(libc::RLIMIT_AS, &lim) != 0 {
+                    return Err(Error::last_os_error());
+                }
+            }
+            if let Some(n) = nproc {
+                let lim = libc::rlimit { rlim_cur: n, rlim_max: n };
+                if libc::setrlimit(libc::RLIMIT_NPROC, &lim) != 0 {
+                    return Err(Error::last_os_error());
+                }
+            }
+            let core = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+            let _ = libc::setrlimit(libc::RLIMIT_CORE, &core);
+
+            // 3. No new privileges — required by Landlock, and blocks setuid
+            //    escalation on its own.
+            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+                return Err(Error::last_os_error());
+            }
+
+            // 4. Landlock filesystem allowlist. Fail closed if not fully
+            //    enforced (HardRequirement should already guarantee this).
+            let rs = ruleset_slot
+                .take()
+                .ok_or_else(|| Error::other("landlock ruleset consumed twice"))?;
+            let status = rs
+                .restrict_self()
+                .map_err(|e| Error::other(format!("landlock restrict_self: {e}")))?;
+            if status.ruleset == landlock::RulesetStatus::NotEnforced {
+                return Err(Error::other("landlock not enforced (fail-closed)"));
+            }
+
+            // 5. Seccomp deny-list, last (everything after this call is
+            //    subject to the filter).
+            seccompiler::apply_filter(&bpf)
+                .map_err(|e| Error::other(format!("seccomp apply: {e}")))?;
+            Ok(())
+        });
+    }
+
+    wait_with_deadline(cmd, p.wall(), argv)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn run_confined(_policy: &ResolvedPolicy, _work: &Path, _argv: &[String]) -> Result<ExecOutcome, H5iError> {
+    Err(H5iError::Metadata(
+        "isolation=process is Linux-only in this build (fail-closed)".into(),
+    ))
+}
+
+/// Map a probed Landlock ABI version to the highest version this crate knows.
+#[cfg(target_os = "linux")]
+fn landlock_abi_for(probed: i32) -> landlock::ABI {
+    match probed {
+        1 => landlock::ABI::V1,
+        2 => landlock::ABI::V2,
+        3 => landlock::ABI::V3,
+        4 => landlock::ABI::V4,
+        _ => landlock::ABI::V5,
+    }
+}
+
+/// The seccomp **deny-list** (v1, §5): dangerous administrative / introspection
+/// syscalls return EPERM; everything else is allowed. A default-deny allowlist
+/// is a later hardened profile. Known gap (documented, not hidden): `clone`
+/// with CLONE_NEWUSER is not arg-filtered in v1 — `unshare` is denied, and
+/// no_new_privs + Landlock still bound what a fresh namespace could reach.
+#[cfg(target_os = "linux")]
+fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
+    use seccompiler::{SeccompAction, SeccompFilter, SeccompRule, TargetArch};
+
+    let denied: &[libc::c_long] = &[
+        libc::SYS_mount,
+        libc::SYS_umount2,
+        libc::SYS_pivot_root,
+        libc::SYS_chroot,
+        libc::SYS_ptrace,
+        libc::SYS_process_vm_readv,
+        libc::SYS_process_vm_writev,
+        libc::SYS_keyctl,
+        libc::SYS_add_key,
+        libc::SYS_request_key,
+        libc::SYS_bpf,
+        libc::SYS_perf_event_open,
+        libc::SYS_userfaultfd,
+        libc::SYS_init_module,
+        libc::SYS_finit_module,
+        libc::SYS_delete_module,
+        libc::SYS_kexec_load,
+        libc::SYS_kexec_file_load,
+        libc::SYS_open_by_handle_at,
+        libc::SYS_setns,
+        libc::SYS_unshare,
+        libc::SYS_reboot,
+        libc::SYS_swapon,
+        libc::SYS_swapoff,
+        libc::SYS_acct,
+        libc::SYS_settimeofday,
+        libc::SYS_clock_settime,
+        libc::SYS_sethostname,
+        libc::SYS_setdomainname,
+    ];
+
+    // The cast is a no-op on 64-bit but required where c_long is i32.
+    #[allow(clippy::unnecessary_cast)]
+    let rules: std::collections::BTreeMap<i64, Vec<SeccompRule>> =
+        denied.iter().map(|s| (*s as i64, Vec::new())).collect();
+    let arch = TargetArch::try_from(std::env::consts::ARCH)
+        .map_err(|_| H5iError::Metadata(format!("unsupported seccomp arch {}", std::env::consts::ARCH)))?;
+    let filter = SeccompFilter::new(
+        rules,
+        SeccompAction::Allow,                       // mismatch: allow
+        SeccompAction::Errno(libc::EPERM as u32),   // match: EPERM
+        arch,
+    )
+    .map_err(|e| H5iError::Metadata(format!("seccomp filter build failed: {e}")))?;
+    filter
+        .try_into()
+        .map_err(|e: seccompiler::BackendError| H5iError::Metadata(format!("seccomp compile failed: {e}")))
+}
+
+/// Spawn `cmd`, stream stdout/stderr off-thread, and enforce `wall` as a hard
+/// deadline (SIGKILL). stdin is closed — env runs are non-interactive by
+/// construction so a confined process can't block on a prompt forever.
+fn wait_with_deadline(
+    mut cmd: std::process::Command,
+    wall: Duration,
+    argv: &[String],
+) -> Result<ExecOutcome, H5iError> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| H5iError::Metadata(format!("failed to run `{}`: {e}", argv.join(" "))))?;
+
+    let mut out_pipe = child.stdout.take().expect("piped stdout");
+    let mut err_pipe = child.stderr.take().expect("piped stderr");
+    let out_h = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = out_pipe.read_to_end(&mut buf);
+        buf
+    });
+    let err_h = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = err_pipe.read_to_end(&mut buf);
+        buf
+    });
+
+    let deadline = std::time::Instant::now() + wall;
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait().map_err(H5iError::Io)? {
+            Some(status) => break status,
+            None => {
+                if std::time::Instant::now() >= deadline {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break child.wait().map_err(H5iError::Io)?;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+    };
+
+    Ok(ExecOutcome {
+        stdout: out_h.join().unwrap_or_default(),
+        stderr: err_h.join().unwrap_or_default(),
+        exit_code: status.code(),
+        timed_out,
+    })
+}
+
+// ─── tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn doc_example_toml() -> &'static str {
+        r#"
+[profile.default]
+isolation = "process"
+fs.read   = ["/usr", "/lib", "/nix"]
+fs.write  = ["$WORK"]
+fs.deny   = ["~/.ssh", "~/.aws", "~/.config/gh", "$REPO/.git/hooks"]
+net.mode  = "deny"
+net.egress = []
+secrets   = []
+resources = { mem = "4G", procs = 256, wall = "30m" }
+tools     = ["python", "pytest", "cargo", "npm", "git"]
+env.pass  = ["PATH", "HOME", "LANG"]
+"#
+    }
+
+    fn load_from_str(toml_text: &str, name: &str, over: Option<IsolationClaim>) -> Result<Profile, H5iError> {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".h5i")).unwrap();
+        std::fs::write(dir.path().join(POLICY_FILE), toml_text).unwrap();
+        load_profile(dir.path(), name, over)
+    }
+
+    #[test]
+    fn parses_the_design_doc_example_profile() {
+        let p = load_from_str(doc_example_toml(), "default", None).expect("doc example must parse");
+        assert_eq!(p.isolation, IsolationClaim::Process);
+        assert_eq!(p.fs_read, vec!["/usr", "/lib", "/nix"]);
+        assert_eq!(p.fs_write, vec!["$WORK"]);
+        assert_eq!(p.net_mode, NetMode::Deny);
+        assert_eq!(p.mem_bytes, Some(4 * 1024 * 1024 * 1024));
+        assert_eq!(p.max_procs, Some(256));
+        assert_eq!(p.wall_secs, 30 * 60);
+        assert_eq!(p.env_pass, vec!["PATH", "HOME", "LANG"]);
+        assert_eq!(p.tools.len(), 5);
+    }
+
+    #[test]
+    fn missing_policy_file_yields_builtin_workspace_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = load_profile(dir.path(), "default", None).unwrap();
+        assert_eq!(p.isolation, IsolationClaim::Workspace);
+        // Workspace honestly claims nothing: no grants, host network.
+        assert_eq!(p.net_mode, NetMode::Host);
+        assert!(p.fs_write.is_empty());
+    }
+
+    #[test]
+    fn missing_named_profile_is_an_error() {
+        let err = load_from_str(doc_example_toml(), "fetch", None).unwrap_err();
+        assert!(err.to_string().contains("profile 'fetch' not found"), "{err}");
+    }
+
+    #[test]
+    fn isolation_override_wins_over_profile() {
+        let p = load_from_str(doc_example_toml(), "default", Some(IsolationClaim::Workspace)).unwrap();
+        assert_eq!(p.isolation, IsolationClaim::Workspace);
+    }
+
+    #[test]
+    fn egress_allowlist_under_process_fails_closed() {
+        let toml_text = r#"
+[profile.default]
+isolation = "process"
+net.mode = "deny"
+net.egress = ["pypi.org", "github.com:443"]
+"#;
+        let err = load_from_str(toml_text, "default", None).unwrap_err();
+        assert!(err.to_string().contains("net.egress"), "{err}");
+        assert!(err.to_string().contains("fail-closed"), "{err}");
+    }
+
+    #[test]
+    fn secret_grants_fail_closed() {
+        let toml_text = r#"
+[profile.default]
+isolation = "process"
+secrets = ["DB_URL"]
+"#;
+        let err = load_from_str(toml_text, "default", None).unwrap_err();
+        assert!(err.to_string().contains("secret"), "{err}");
+    }
+
+    #[test]
+    fn fs_deny_lint_rejects_granted_parent_of_denied_child() {
+        // Granting $HOME while denying ~/.ssh is unenforceable under Landlock
+        // (allowlist-only) — the policy must be refused, not weakened.
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/x".into());
+        let toml_text = format!(
+            r#"
+[profile.default]
+isolation = "process"
+fs.read = ["{home}"]
+fs.deny = ["~/.ssh"]
+"#
+        );
+        let err = load_from_str(&toml_text, "default", None).unwrap_err();
+        assert!(err.to_string().contains("granted path"), "{err}");
+    }
+
+    #[test]
+    fn fs_deny_lint_allows_disjoint_grants() {
+        let toml_text = r#"
+[profile.default]
+isolation = "process"
+fs.read = ["/usr", "/lib"]
+fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
+"#;
+        assert!(load_from_str(toml_text, "default", None).is_ok());
+    }
+
+    #[test]
+    fn parse_mem_units() {
+        assert_eq!(parse_mem("4G").unwrap(), 4 * 1024 * 1024 * 1024);
+        assert_eq!(parse_mem("512M").unwrap(), 512 * 1024 * 1024);
+        assert_eq!(parse_mem("64k").unwrap(), 64 * 1024);
+        assert_eq!(parse_mem("12345").unwrap(), 12345);
+        assert!(parse_mem("lots").is_err());
+    }
+
+    #[test]
+    fn parse_wall_units() {
+        assert_eq!(parse_wall("30m").unwrap(), Duration::from_secs(1800));
+        assert_eq!(parse_wall("90s").unwrap(), Duration::from_secs(90));
+        assert_eq!(parse_wall("2h").unwrap(), Duration::from_secs(7200));
+        assert_eq!(parse_wall("45").unwrap(), Duration::from_secs(45));
+        assert!(parse_wall("soon").is_err());
+    }
+
+    #[test]
+    fn isolation_claim_parse_and_order() {
+        assert_eq!(IsolationClaim::parse("workspace").unwrap(), IsolationClaim::Workspace);
+        assert_eq!(
+            IsolationClaim::parse("hardened-container").unwrap(),
+            IsolationClaim::HardenedContainer
+        );
+        assert!(IsolationClaim::parse("docker").is_err());
+        assert!(IsolationClaim::Workspace < IsolationClaim::Process);
+        assert!(IsolationClaim::Process < IsolationClaim::Microvm);
+    }
+
+    #[test]
+    fn policy_digest_is_stable_and_content_sensitive() {
+        let p1 = load_from_str(doc_example_toml(), "default", None).unwrap();
+        let p2 = load_from_str(doc_example_toml(), "default", None).unwrap();
+        let r1 = ResolvedPolicy { claim: p1.isolation, profile: p1 };
+        let r2 = ResolvedPolicy { claim: p2.isolation, profile: p2 };
+        assert_eq!(r1.digest().unwrap(), r2.digest().unwrap());
+
+        let mut p3 = r1.profile.clone();
+        p3.net_mode = NetMode::Host;
+        let r3 = ResolvedPolicy { claim: p3.isolation, profile: p3 };
+        assert_ne!(r1.digest().unwrap(), r3.digest().unwrap());
+        assert_eq!(r1.digest().unwrap().len(), 64);
+    }
+
+    fn caps(landlock: Option<i32>, userns: bool, seccomp: bool) -> HostCaps {
+        HostCaps { os: "linux".into(), landlock_abi: landlock, userns, seccomp }
+    }
+
+    #[test]
+    fn resolve_workspace_needs_nothing() {
+        let p = Profile::builtin("default", IsolationClaim::Workspace);
+        assert!(resolve(&p, &caps(None, false, false)).is_ok());
+    }
+
+    #[test]
+    fn resolve_process_requires_landlock_and_seccomp() {
+        let p = Profile::builtin("default", IsolationClaim::Process);
+        // Fully capable host: ok.
+        assert!(resolve(&p, &caps(Some(3), true, true)).is_ok());
+        // No Landlock (the WSL2 case): refuse, mention Landlock.
+        let err = resolve(&p, &caps(None, true, true)).unwrap_err();
+        assert!(err.to_string().contains("Landlock"), "{err}");
+        // No userns with net deny: refuse.
+        let err = resolve(&p, &caps(Some(3), false, true)).unwrap_err();
+        assert!(err.to_string().contains("user namespaces"), "{err}");
+        // net=host doesn't need userns.
+        let mut host_net = Profile::builtin("default", IsolationClaim::Process);
+        host_net.net_mode = NetMode::Host;
+        assert!(resolve(&host_net, &caps(Some(1), false, true)).is_ok());
+    }
+
+    #[test]
+    fn resolve_refuses_unimplemented_backends() {
+        for claim in [
+            IsolationClaim::Container,
+            IsolationClaim::HardenedContainer,
+            IsolationClaim::Microvm,
+        ] {
+            let p = Profile::builtin("default", claim);
+            let err = resolve(&p, &caps(Some(5), true, true)).unwrap_err();
+            assert!(err.to_string().contains("backend"), "{err}");
+        }
+    }
+
+    #[test]
+    fn resolve_process_refused_off_linux() {
+        let p = Profile::builtin("default", IsolationClaim::Process);
+        let mac = HostCaps { os: "macos".into(), landlock_abi: None, userns: false, seccomp: false };
+        let err = resolve(&p, &mac).unwrap_err();
+        assert!(err.to_string().contains("Linux-only"), "{err}");
+    }
+
+    #[test]
+    fn workspace_run_executes_in_workdir_with_wall_clock() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = Profile::builtin("default", IsolationClaim::Workspace);
+        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        let out = run(&policy, dir.path(), &["pwd".to_string()]).unwrap();
+        assert_eq!(out.exit_code, Some(0));
+        assert!(!out.timed_out);
+        let printed = String::from_utf8_lossy(&out.stdout);
+        let canon = dir.path().canonicalize().unwrap();
+        assert_eq!(printed.trim(), canon.to_string_lossy());
+    }
+
+    #[test]
+    fn wall_clock_kill_fires() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut p = Profile::builtin("default", IsolationClaim::Workspace);
+        p.wall_secs = 1;
+        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        let out = run(&policy, dir.path(), &["sleep".to_string(), "30".to_string()]).unwrap();
+        assert!(out.timed_out, "expected the wall-clock kill to fire");
+        assert_ne!(out.exit_code, Some(0));
+    }
+}

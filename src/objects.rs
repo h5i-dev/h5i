@@ -164,6 +164,32 @@ pub struct Manifest {
     /// captures; serde-skipped when absent so old manifests stay valid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structured: Option<crate::structured::ToolResult>,
+    /// The h5i environment this capture is evidence for (`h5i env run`), e.g.
+    /// `env/claude/fix-auth`. Absent for ordinary captures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_id: Option<String>,
+    /// sha256 of the resolved policy (`policy.resolved.toml`) in force when an
+    /// env capture was taken — what was *actually* enforced, not requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_digest: Option<String>,
+    /// Summary + pointer for the env's egress decisions (supervisor tier;
+    /// never an unbounded inline log). Absent until that phase ships.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress: Option<EgressSummary>,
+    /// What was scrubbed from this capture (secret names, never values).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub redactions: Vec<String>,
+}
+
+/// Counts + an out-of-band pointer for an env's network egress decisions —
+/// the manifest holds only this summary (token-reduction principle, design §8).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EgressSummary {
+    pub allowed: u64,
+    pub denied: u64,
+    /// Object id (in this store) of the full `egress.jsonl`, when captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log: Option<String>,
 }
 
 impl Manifest {
@@ -335,6 +361,10 @@ pub struct CaptureOptions {
     /// Empty for non-command captures (`objects put`).
     pub cmd_argv: Vec<String>,
     pub filter: FilterConfig,
+    /// Set by `h5i env run`: the env this capture is evidence for, and the
+    /// digest of the policy enforced while producing it.
+    pub env_id: Option<String>,
+    pub policy_digest: Option<String>,
 }
 
 /// Store `raw` in the local backend, build + persist a manifest, and return it.
@@ -462,6 +492,10 @@ pub fn capture(
         raw_tokens: filtered.raw_tokens,
         summary_tokens,
         structured,
+        env_id: opts.env_id,
+        policy_digest: opts.policy_digest,
+        egress: None,
+        redactions: Vec::new(),
     };
 
     append_manifest(repo, &manifest)?;
@@ -925,13 +959,13 @@ fn read_ref_blob(repo: &Repository, path: &str) -> Option<String> {
     std::str::from_utf8(blob.content()).ok().map(str::to_owned)
 }
 
-fn read_blob_from_tree(repo: &Repository, tree: Option<&git2::Tree>, path: &str) -> Option<String> {
+pub(crate) fn read_blob_from_tree(repo: &Repository, tree: Option<&git2::Tree>, path: &str) -> Option<String> {
     let entry = tree?.get_path(Path::new(path)).ok()?;
     let blob = repo.find_blob(entry.id()).ok()?;
     std::str::from_utf8(blob.content()).ok().map(str::to_owned)
 }
 
-fn build_tree(
+pub(crate) fn build_tree(
     repo: &Repository,
     base: Option<&git2::Tree>,
     files: &[(&str, &str)],
@@ -944,7 +978,7 @@ fn build_tree(
     Ok(builder.write()?)
 }
 
-fn signature(repo: &Repository) -> Result<Signature<'static>, H5iError> {
+pub(crate) fn signature(repo: &Repository) -> Result<Signature<'static>, H5iError> {
     repo.signature()
         .or_else(|_| Signature::now("h5i", "h5i@local"))
         .map_err(H5iError::Git)
@@ -1509,6 +1543,8 @@ mod tests {
             files: Vec::new(),
             cmd_argv: vec!["pytest".into(), "-q".into()],
             filter: FilterConfig::default(),
+            env_id: None,
+            policy_digest: None,
         }
     }
 
@@ -1683,6 +1719,10 @@ mod tests {
             raw_tokens: None,
             summary_tokens: None,
             structured: None,
+            env_id: None,
+            policy_digest: None,
+            egress: None,
+            redactions: Vec::new(),
         }
     }
 

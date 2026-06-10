@@ -633,6 +633,13 @@ enum Commands {
         rest: Vec<String>,
     },
 
+    /// Isolated agent environments — worktree + sandbox + provenance
+    /// (docs/environments-design.md). create/run/diff/propose/apply lifecycle.
+    Env {
+        #[command(subcommand)]
+        action: EnvCommands,
+    },
+
     /// Commit staged changes with AI provenance and quality tracking
     #[command(hide = true)]
     Commit {
@@ -1682,6 +1689,91 @@ enum ContextCommands {
         #[arg(long, default_value_t = 5)]
         limit: usize,
     },
+}
+
+#[derive(Subcommand)]
+enum EnvCommands {
+    /// Create an isolated environment: code branch + git worktree under
+    /// .git/.h5i/env/, a forked reasoning branch, and a pinned, fail-closed
+    /// policy. The base revision is frozen at creation.
+    Create {
+        /// Environment name (lowercase slug, e.g. `fix-auth`)
+        name: String,
+        /// Base revision (default: HEAD). Pinned immutably.
+        #[arg(long)]
+        from: Option<String>,
+        /// Policy profile from .h5i/env.toml (default: `default`)
+        #[arg(long, default_value = "default")]
+        profile: String,
+        /// Minimum isolation claim: workspace|process|container|hardened-container|microvm.
+        /// Fails closed if the host cannot satisfy it (never silently downgrades).
+        #[arg(long)]
+        isolation: Option<String>,
+        /// Workspace backend (auto|worktree)
+        #[arg(long, default_value = "auto")]
+        backend: String,
+    },
+
+    /// Run a command inside an environment, policy-enforced and
+    /// capture-wrapped: exit code passes through, evidence lands in
+    /// refs/h5i/objects tagged with the env id + policy digest.
+    Run {
+        /// Environment name (slug, `agent/slug`, or full `env/agent/slug`)
+        name: String,
+        /// The command to run, after `--`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+
+    /// Probe what isolation this host can actually provide (Landlock, user
+    /// namespaces, seccomp) and which claims are satisfiable.
+    Probe,
+
+    /// List environments on this clone
+    List,
+
+    /// Show one environment's manifest, policy, and evidence
+    Status {
+        name: String,
+    },
+
+    /// Show the event log (refs/h5i/env) for one environment
+    Log {
+        name: String,
+    },
+
+    /// Diff the environment's work against its pinned base
+    Diff {
+        name: String,
+        /// Show a diffstat instead of the full patch
+        #[arg(long)]
+        stat: bool,
+    },
+
+    /// Snapshot the worktree (mediated commit, path-allowlist enforced) and
+    /// mark the env proposed — produces a review brief. Never writes the
+    /// parent branch.
+    Propose {
+        name: String,
+    },
+
+    /// Apply a proposed environment onto its parent branch (reviewer-selected,
+    /// never automatic). Default is a merge (fast-forward when possible).
+    Apply {
+        name: String,
+        /// Squash the env's changes into a single commit instead of merging
+        #[arg(long)]
+        patch: bool,
+    },
+
+    /// Abort an environment — manifest and workspace preserved for forensics
+    Abort {
+        name: String,
+    },
+
+    /// Reclaim workspaces of applied/aborted environments (worktree prune).
+    /// Manifests, branches, and captures are retained.
+    Gc,
 }
 
 #[derive(Subcommand)]
@@ -6532,6 +6624,45 @@ jq -c '{
                                     false
                                 }
                             }
+                        } else if refname == h5i_core::env::ENV_REF {
+                            // The env event log is append-only: union the two
+                            // sides (dedup on env_id|ts|event) so no lifecycle
+                            // event is lost when two clones diverge.
+                            let g2 = git2::Repository::open(&workdir)
+                                .map_err(|e| anyhow::anyhow!("open git2 repo: {e}"))?;
+                            let local_git2 = git2::Oid::from_str(local_oid_str)
+                                .map_err(|e| anyhow::anyhow!("parse local oid: {e}"))?;
+                            let incoming_git2 = git2::Oid::from_str(&incoming_oid)
+                                .map_err(|e| anyhow::anyhow!("parse incoming oid: {e}"))?;
+                            match h5i_core::env::union_merge_commits(&g2, local_git2, incoming_git2)
+                            {
+                                Ok(new_oid) => {
+                                    let new_oid_str = new_oid.to_string();
+                                    let st = git(&[
+                                        "update-ref",
+                                        refname,
+                                        &new_oid_str,
+                                        local_oid_str,
+                                    ])?;
+                                    if st.status.success() {
+                                        println!(
+                                            "{} ({})",
+                                            style("ok").green(),
+                                            style("merged (union)").dim()
+                                        );
+                                        true
+                                    } else {
+                                        println!("{}", style("failed").red());
+                                        eprint!("{}", String::from_utf8_lossy(&st.stderr));
+                                        false
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("{}", style("failed").red());
+                                    eprintln!("union-merge of env refs failed: {e}");
+                                    false
+                                }
+                            }
                         } else if force {
                             install("forced over divergent local")?
                         } else {
@@ -6793,6 +6924,8 @@ jq -c '{
                             files,
                             cmd_argv: command.clone(),
                             filter: cfg,
+                            env_id: None,
+                            policy_digest: None,
                         };
                         let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
                         let m = &outcome.manifest;
@@ -6844,6 +6977,8 @@ jq -c '{
                         files,
                         cmd_argv: Vec::new(),
                         filter: cfg,
+                        env_id: None,
+                        policy_digest: None,
                     };
                     let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
                     println!("{}", outcome.manifest.summary);
@@ -7755,6 +7890,173 @@ jq -c '{
                         ))
                         .bold()
                     );
+                }
+            }
+        }
+
+        Commands::Env { action } => {
+            let repo = H5iRepository::open(".")?;
+            let h5i_root = repo.h5i_root.clone();
+            let git = repo.git();
+            let workdir = git
+                .workdir()
+                .ok_or_else(|| anyhow::anyhow!("h5i env requires a non-bare repository"))?
+                .to_path_buf();
+
+            match action {
+                EnvCommands::Create { name, from, profile, isolation, backend } => {
+                    let agent = msg::resolve_identity(&h5i_root, None)
+                        .unwrap_or_else(|_| "human".to_string());
+                    let isolation = isolation
+                        .as_deref()
+                        .map(h5i_core::sandbox::IsolationClaim::parse)
+                        .transpose()?;
+                    let opts = h5i_core::env::CreateOpts { from, profile, isolation, backend };
+                    let m = h5i_core::env::create(git, &h5i_root, &workdir, &agent, &name, opts)?;
+                    println!(
+                        "{} Created environment {} (isolation: {}, profile: {})",
+                        SUCCESS,
+                        style(&m.id).magenta().bold(),
+                        style(&m.isolation_claim).cyan(),
+                        m.profile
+                    );
+                    println!("   base     {}  (from {})", &m.base_commit[..12], m.parent_branch);
+                    println!("   branch   {}", m.branch);
+                    println!("   context  {}", m.context_branch);
+                    println!("   work     {}", m.work_dir(&h5i_root).display());
+                    println!(
+                        "   next     h5i env run {} -- <cmd>   ·   h5i env propose {}",
+                        m.slug, m.slug
+                    );
+                }
+
+                EnvCommands::Run { name, command } => {
+                    if command.is_empty() {
+                        anyhow::bail!("usage: h5i env run <name> -- <command> [args…]");
+                    }
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let outcome = h5i_core::env::run(git, &h5i_root, &mut m, &command)?;
+                    match &outcome.manifest.structured {
+                        Some(s) => println!("{}", h5i_core::structured::render_compact(s)),
+                        None => println!("{}", outcome.manifest.summary),
+                    }
+                    if outcome.timed_out {
+                        eprintln!(
+                            "{} run killed by the policy wall-clock limit",
+                            style("warning:").yellow().bold()
+                        );
+                    }
+                    eprintln!(
+                        "{} evidence {} (env {}, policy {})",
+                        LOOKING,
+                        style(&outcome.capture_id).magenta(),
+                        m.id,
+                        &m.policy_digest[..12]
+                    );
+                    // Transparent wrapper: pass the child's exit code through.
+                    if let Some(code) = outcome.exit_code {
+                        if code != 0 {
+                            std::process::exit(code);
+                        }
+                    }
+                }
+
+                EnvCommands::Probe => {
+                    let caps = h5i_core::sandbox::probe_host();
+                    println!("── Host isolation capabilities ──");
+                    println!("  os           = {}", caps.os);
+                    println!(
+                        "  landlock_abi = {}",
+                        caps.landlock_abi.map(|v| v.to_string()).unwrap_or_else(|| "none".into())
+                    );
+                    println!("  userns       = {}", caps.userns);
+                    println!("  seccomp      = {}", caps.seccomp);
+                    println!();
+                    for (claim, profile_net_deny) in [
+                        (h5i_core::sandbox::IsolationClaim::Workspace, false),
+                        (h5i_core::sandbox::IsolationClaim::Process, true),
+                    ] {
+                        let mut p = h5i_core::sandbox::Profile::builtin("probe", claim);
+                        if !profile_net_deny {
+                            p.net_mode = h5i_core::sandbox::NetMode::Host;
+                        }
+                        let ok = h5i_core::sandbox::resolve(&p, &caps).is_ok();
+                        println!(
+                            "  claim {:<10} satisfiable = {}",
+                            claim.as_str(),
+                            if ok { style("yes").green() } else { style("no").red() }
+                        );
+                    }
+                    println!("  claim container/hardened-container/microvm: external backends (not in this build)");
+                }
+
+                EnvCommands::List => {
+                    let envs = h5i_core::env::list(&h5i_root);
+                    if envs.is_empty() {
+                        println!("No environments. Create one: h5i env create <name>");
+                    }
+                    for m in envs {
+                        println!(
+                            "{:<28} {:<9} isolation={:<10} base={} captures={}",
+                            style(&m.id).magenta(),
+                            m.status,
+                            m.isolation_claim,
+                            &m.base_commit[..12],
+                            m.captures.len()
+                        );
+                    }
+                }
+
+                EnvCommands::Status { name } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    println!("{}", serde_json::to_string_pretty(&m)?);
+                }
+
+                EnvCommands::Log { name } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    for e in h5i_core::env::read_events(git, Some(&m.id)) {
+                        println!(
+                            "{}  {:<9} {}{}",
+                            e.ts,
+                            e.event,
+                            e.detail.unwrap_or_default(),
+                            e.capture.map(|c| format!("  [capture {c}]")).unwrap_or_default()
+                        );
+                    }
+                }
+
+                EnvCommands::Diff { name, stat } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    print!("{}", h5i_core::env::diff(&h5i_root, &m, stat)?);
+                }
+
+                EnvCommands::Propose { name } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let brief = h5i_core::env::propose(git, &h5i_root, &mut m)?;
+                    println!("{brief}");
+                }
+
+                EnvCommands::Apply { name, patch } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let msg_out = h5i_core::env::apply(git, &h5i_root, &workdir, &mut m, patch)?;
+                    println!("{} {}", SUCCESS, msg_out);
+                }
+
+                EnvCommands::Abort { name } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    h5i_core::env::abort(git, &h5i_root, &mut m)?;
+                    println!("{} {} aborted (manifest preserved for forensics)", SUCCESS, m.id);
+                }
+
+                EnvCommands::Gc => {
+                    let reclaimed = h5i_core::env::gc(git, &h5i_root)?;
+                    if reclaimed.is_empty() {
+                        println!("Nothing to reclaim (only applied/aborted envs are gc'd).");
+                    } else {
+                        for id in reclaimed {
+                            println!("{} reclaimed workspace of {}", SUCCESS, id);
+                        }
+                    }
                 }
             }
         }

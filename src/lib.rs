@@ -10,6 +10,7 @@ pub mod ctx;
 /// Deprecated alias — use `ctx` instead.
 pub use ctx as gcc;
 pub mod claude;
+pub mod env;
 pub mod error;
 pub mod filter_rules;
 pub mod lfs;
@@ -20,6 +21,7 @@ pub mod objects;
 pub mod pr;
 pub mod radio;
 pub mod recap;
+pub mod sandbox;
 pub mod secrets;
 pub mod session_log;
 pub mod storage;
