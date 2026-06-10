@@ -1346,3 +1346,4 @@ _[Checkpoint: 6a29daf6 — wrote assets/agent-sandbox.svg; edited README.md; edi
 _[Checkpoint: 6a29dc67 — edited README.md; edited README.md; edited README.md]_
 ---
 
+[22:01:54] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): ), but `supervisor::run()` is still the fail-closed Phase A stub — so `env run` fails closed with "live enforcement not wired." Wiring that st…
