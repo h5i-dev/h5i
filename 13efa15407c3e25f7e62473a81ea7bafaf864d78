@@ -1,0 +1,1 @@
+{"git_oid":"13efa15407c3e25f7e62473a81ea7bafaf864d78","parent_oid":"8f483e8f19f538331a0be0b8d9507725552046da","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"Update MANUAL.md and the man page to document h5i env and the new sandbox features","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-10T21:21:37.962438663Z"}
