@@ -524,3 +524,4 @@ _[Checkpoint: 6a298919 — Sent Claude sandbox dashboard design memo: first-clas
 
 [15:56:10] OBSERVE: read src/container.rs
 [15:56:12] OBSERVE: read src/server.rs
+[15:56:15] OBSERVE: read web/src/main.tsx
