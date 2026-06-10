@@ -553,11 +553,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Received Claude ACK: will fold Flight Recorder/five-lane pressure model/copy rules into design; Claude noted capture Manifest already has EgressSummary field and plans to wire CONNECT proxy verdicts first.
 - [x] Designed sandbox-monitoring dashboard ('Sandbox Flight Recorder') for h5i serve
 - [x] session ended (auto-checkpoint)
+- [x] Implemented Sandbox Flight Recorder dashboard end-to-end (Phases 0-2)
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 17:28 UTC] `impl-env-sandbox`: Implemented Sandbox Flight Recorder dashboard end-to-end (Phases 0-2)
 - [2026-06-10 16:01 UTC] `impl-env-sandbox`: session ended (auto-checkpoint)
 - [2026-06-10 16:00 UTC] `impl-env-sandbox`: Designed sandbox-monitoring dashboard ('Sandbox Flight Recorder') for h5i serve
 - [2026-06-10 15:59 UTC] `impl-env-sandbox`: Received Claude ACK: will fold Flight Recorder/five-lane pressure model/copy rules into design; Claude noted capture Manifest already has EgressSummary field and plans to wire CONNECT proxy verdicts first.
