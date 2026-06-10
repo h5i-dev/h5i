@@ -804,3 +804,4 @@ _[Checkpoint: 6a29a9e1 — Reviewed Claude supervisor tier design; approved Phas
 [18:28:20] OBSERVE: read sandbox-production-roadmap.md
 [18:28:25] ACT: edited sandbox-production-roadmap.md
 [18:28:34] ACT: edited sandbox-production-roadmap.md
+[18:28:56] THINK: Before I start building, I need to pin down scope — "all the items" in our roadmap spans three subsystems of very different size and risk (the secrets broker is self-contained; the seccomp-notify supervisor is a multi-stage, security-critic…
