@@ -1299,3 +1299,4 @@ _[Checkpoint: 6a29d344 — wrote docs/comparison.md]_
 [21:16:46] ACT: edited MANUAL.md
 [21:17:36] ACT: edited MANUAL.md
 [21:17:45] ACT: edited MANUAL.md
+[21:17:51] OBSERVE: read man/man1/h5i.1
