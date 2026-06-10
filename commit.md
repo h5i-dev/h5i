@@ -69,3 +69,16 @@ wait4-based reaper records rusage (wall/cpu/peak-RSS) per run, surfaced in CLI +
 
 ---
 
+## Commit 6a28d8cc — 2026-06-10 03:23 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+wait4-based reaper records rusage (wall/cpu/peak-RSS) per run, surfaced in CLI + exec event detail + run output. Security: exec event detail now redacts the command (was leaking secrets passed as args into refs/h5i/env); tools allowlist now ENFORCED at run (non-empty list refuses unlisted argv[0] basename, fail-closed). Completeness: h5i env compare <names...> [--json] ranks envs from one base by diffstat + latest-run exit/test-status (reuses objects structured results), warns when bases differ — the reviewer-comparison arena. +9 tests (4 sandbox unit: resources, tools enforce/empty; 5 integration: event redaction+resources, tools enforcement, compare rank+json, compare split-base warn). Full suite 884 green, clippy clean.
+
+### This Commit's Contribution
+
+
+---
+
