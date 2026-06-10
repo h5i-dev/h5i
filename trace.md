@@ -114,3 +114,4 @@
 _[Checkpoint: 6a28cf21 — Implemented h5i env (worktree+sandbox) per docs/environments-design.md phases 1-3]_
 ---
 
+[02:43:14] ACT: wrote wsl2-host-has-landlock-abi3.md
