@@ -1181,3 +1181,4 @@ _[Checkpoint: 6a29cfc1 — edited tests/env_integration.rs; edited tests/env_int
 _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_integration.rs; wrote test-msg.txt]_
 ---
 
+[21:03:20] OBSERVE: read README.md
