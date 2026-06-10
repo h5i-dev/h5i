@@ -199,3 +199,16 @@ Design phase 4. New src/container.rs: probe() (rootless podman, else docker); bu
 
 ---
 
+## Commit 6a298091 — 2026-06-10 15:19 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+Design phase 4. New src/container.rs: probe() (rootless podman, else docker); build_run_argv() = hardened podman run (--rm, --cap-drop=ALL, no-new-privileges, --read-only + tmpfs /tmp, -v $WORK:/work, --userns=keep-id, --memory/--pids-limit, env allowlist, no docker.sock, --name for timeout cleanup); net.mode deny→--network=none, host→default, net.egress→DNS-pinned host-side HTTP/HTTPS CONNECT allowlist proxy (AllowList exact/.wildcard/:port, fail-closed 403), container reaches it via slirp4netns 10.0.2.2 + HTTP(S)_PROXY. Honest L7 scoping documented. sandbox wiring: HostCaps.container_runtime, resolve() allows container (needs runtime+image, fail closed) and net.egress under container (was process-only refuse), Profile.image + ContainerToml, run() Container arm. env probe shows container runtime + claim. Verified REAL on podman 4.9.3: workspace mount + uid keep-id + net deny block + egress allowlist (example.com reachable, google blocked). Tests: 9 unit (allowlist decision, live proxy 403/gate, argv hardening, policy) + 5 integration (3 podman-gated real runs, fail-closed image/egress). Full suite 913 green, clippy clean.
+
+### This Commit's Contribution
+
+
+---
+

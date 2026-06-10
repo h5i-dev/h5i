@@ -439,3 +439,9 @@ _[Checkpoint: 6a298068 — Container backend (isolation=container): rootless pod
 
 [15:19:45] THINK: Now let me write the integration tests (real container runs gated on podman availability):
 [15:19:45] NOTE: PLACEHOLDER (~/Dev/h5i/CLAUDE.md): · `abort` This closes the gap that's been the most glaring incompleteness since the feature began: h5i's whole premise is that agents are the primary…
+
+
+---
+_[Checkpoint: 6a298091 — edited CLAUDE.md; edited CLAUDE.md; edited docs/environments-design.md]_
+---
+
