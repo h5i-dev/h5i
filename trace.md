@@ -280,3 +280,4 @@ _[Checkpoint: 6a28dcda — edited tests/env_integration.rs; wrote process-tier-b
 [03:56:08] ACT: edited tests/env_integration.rs
 [03:56:16] OBSERVE: read tests/env_integration.rs
 [03:56:26] ACT: edited tests/env_integration.rs
+[03:59:06] ACT: edited CLAUDE.md
