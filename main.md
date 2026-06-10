@@ -560,11 +560,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/risk.rs; edited src/risk.rs; edited src/risk.rs
 - [x] wrote sandbox-production-roadmap.md; wrote sandbox-production-roadmap.md; edited MEMORY.md
 - [x] wrote sandbox-production-roadmap.md; wrote sandbox-production-roadmap.md; edited MEMORY.md
+- [x] Reviewed Claude supervisor tier design; approved Phase A fail-closed refusal and required explicit socket-family/type coarse deny before CONTINUE with nftables as final L3/L4 egress guard.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 18:16 UTC] `impl-env-sandbox`: Reviewed Claude supervisor tier design; approved Phase A fail-closed refusal and required explicit socket-family/type coarse deny before CONTINUE with nftables as final L3/L4 egress guard.
 - [2026-06-10 17:44 UTC] `impl-env-sandbox`: wrote sandbox-production-roadmap.md; wrote sandbox-production-roadmap.md; edited MEMORY.md
 - [2026-06-10 17:39 UTC] `impl-env-sandbox`: wrote sandbox-production-roadmap.md; wrote sandbox-production-roadmap.md; edited MEMORY.md
 - [2026-06-10 17:36 UTC] `impl-env-sandbox`: edited src/risk.rs; edited src/risk.rs; edited src/risk.rs
