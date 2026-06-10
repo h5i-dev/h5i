@@ -668,12 +668,21 @@ fn process_tier_fsize_caps_disk_bomb() {
 
 // ─── 7b. container backend (rootless podman; design phase 4) ────────────────
 
-/// A rootless podman runtime able to actually run a container. Cached; gates
-/// the real-container tests (skip cleanly where podman is absent, e.g. CI).
+/// Whether to run the real-container tests. They are **opt-in** via
+/// `H5I_TEST_CONTAINER=1`: they pull an image and (for egress) make a live
+/// network call, so we never run them implicitly in CI — where podman may be
+/// present but the network/image pull would be a flakiness and surprise-egress
+/// risk. Locally: `H5I_TEST_CONTAINER=1 cargo test`. When opted in, this still
+/// functionally verifies rootless podman actually runs (skips if it can't).
+/// The container backend's security-critical *logic* is covered by the
+/// podman-free unit tests in `src/container.rs`.
 fn container_runnable() -> bool {
     use std::sync::OnceLock;
     static OK: OnceLock<bool> = OnceLock::new();
     *OK.get_or_init(|| {
+        if std::env::var("H5I_TEST_CONTAINER").as_deref() != Ok("1") {
+            return false;
+        }
         Command::new("podman")
             .args(["run", "--rm", "docker.io/library/busybox:latest", "true"])
             .output()

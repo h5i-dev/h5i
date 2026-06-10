@@ -10,9 +10,13 @@ cargo build --release       # Release build
 cargo test --verbose        # Run all tests
 cargo test <test_name>      # Run a single test
 cargo run -- <subcommand>   # Run the h5i CLI
+
+# Real-container tests (isolation=container) are opt-in — they pull an image and
+# make a live network call, so CI never runs them implicitly:
+H5I_TEST_CONTAINER=1 cargo test --test env_integration container_
 ```
 
-CI runs `cargo build --verbose` then `cargo test --verbose` with Git user config pre-set (needed because tests perform Git operations).
+CI runs clippy (`-D warnings`), `cargo build --verbose` then `cargo test --verbose` with Git user config pre-set (needed because tests perform Git operations). The kernel-confinement (`process` tier) and container tests are capability-gated: they skip cleanly where the host can't run them — no podman or special CI setup is required.
 
 ## Architecture
 
