@@ -108,3 +108,9 @@
 [02:42:24] ACT: edited CLAUDE.md
 [02:42:26] ACT: edited CLAUDE.md
 [02:42:31] ACT: edited docs/environments-design.md
+
+
+---
+_[Checkpoint: 6a28cf21 — Implemented h5i env (worktree+sandbox) per docs/environments-design.md phases 1-3]_
+---
+
