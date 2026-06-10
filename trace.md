@@ -1293,3 +1293,4 @@ _[Checkpoint: 6a29d2bb — wrote docs/comparison.md]_
 _[Checkpoint: 6a29d344 — wrote docs/comparison.md]_
 ---
 
+[21:16:18] OBSERVE: read MANUAL.md
