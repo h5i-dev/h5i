@@ -437,3 +437,4 @@ _[Checkpoint: 6a29783d — edited src/mcp.rs; edited .claude/h5i.md; edited CLAU
 _[Checkpoint: 6a298068 — Container backend (isolation=container): rootless podman + DNS-pinned net.egress allowlist proxy]_
 ---
 
+[15:19:45] THINK: Now let me write the integration tests (real container runs gated on podman availability):
