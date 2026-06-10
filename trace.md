@@ -1354,3 +1354,4 @@ _[Checkpoint: 6a29dc67 — edited README.md; edited README.md; edited README.md]
 _[Checkpoint: 6a29ded2 — edited README.md; edited README.md; edited README.md]_
 ---
 
+[22:05:25] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): ), but `supervisor::run()` is still the fail-closed Phase A stub — so `env run` fails closed with "live enforcement not wired." Wiring that st…
