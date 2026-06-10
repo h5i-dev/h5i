@@ -1001,3 +1001,4 @@ _[Checkpoint: 6a29bcbd — edited src/supervisor.rs; edited tests/sandbox_api.rs
 _[Checkpoint: 6a29bd8f — edited tests/sandbox_api.rs; edited tests/env_integration.rs; wrote h5i-commit-msg.txt]_
 ---
 
+[19:40:59] OBSERVE: read src/sandbox.rs
