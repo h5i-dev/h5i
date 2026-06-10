@@ -1541,6 +1541,22 @@ source = "http://evil/steal"
     }
 
     #[test]
+    fn supervised_builtin_is_confined_and_net_deny() {
+        // The supervised tier ranks above Process, so its built-in profile is
+        // fully confined: net.mode=deny (so v1 supervised runs work airtight),
+        // $WORK writable, no secrets/egress by default.
+        let p = Profile::builtin("p", IsolationClaim::Supervised);
+        assert_eq!(p.net_mode, NetMode::Deny);
+        assert_eq!(p.fs_write, vec!["$WORK".to_string()]);
+        assert!(p.net_egress.is_empty());
+        assert!(p.secret_grants.is_empty());
+        // Supervised must rank above Process so the net.egress preflight lint
+        // (which refuses egress at <= Process) doesn't reject a supervised egress.
+        assert!(IsolationClaim::Supervised > IsolationClaim::Process);
+        assert!(IsolationClaim::Supervised < IsolationClaim::Container);
+    }
+
+    #[test]
     fn fs_deny_lint_rejects_granted_parent_of_denied_child() {
         // Granting $HOME while denying ~/.ssh is unenforceable under Landlock
         // (allowlist-only) — the policy must be refused, not weakened.

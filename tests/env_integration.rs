@@ -135,13 +135,15 @@ impl Repo {
         serde_json::from_str(&text).expect("manifest json")
     }
 
-    /// The capture manifest line in refs/h5i/objects tagged for env `<slug>`.
+    /// The **latest** capture manifest in refs/h5i/objects tagged for env
+    /// `<slug>`. Manifests are appended chronologically, so the last matching
+    /// line is the newest capture — important when an env has several runs.
     fn capture_manifest(&self, slug: &str) -> serde_json::Value {
         let blob = out_str(&git(&self.dir, &["show", "refs/h5i/objects:manifests.jsonl"]));
         let id = format!("env/tester/{slug}");
         let line = blob
             .lines()
-            .find(|l| l.contains(&id))
+            .rfind(|l| l.contains(&id))
             .expect("an env-tagged capture");
         serde_json::from_str(line).expect("capture manifest json")
     }
@@ -536,6 +538,7 @@ fn secret_grant_missing_source_fails_closed() {
 
 #[test]
 fn supervised_claim_refuses_when_stack_incomplete() {
+    let _serial = supervised_guard();
     let r = Repo::new();
     // On this host (and any without the full mediation stack) the supervised
     // claim must be REFUSED — never silently downgraded. An impossible claim.
@@ -553,31 +556,82 @@ fn supervised_claim_refuses_when_stack_incomplete() {
     }
 }
 
-/// Live end-to-end proof that the supervised tier's seccomp-notify socket gate
-/// actually enforces inside a real `env run`: a raw/packet socket is denied with
-/// EPERM, an ordinary inet socket is allowed. Capability-gated — needs the full
-/// supervised stack (incl. cgroup delegation) AND python3; skips cleanly where
-/// unavailable (e.g. CI without a delegated user session).
+/// Set up a repo with a `supervised` profile (plus optional extra profile TOML)
+/// and create env `slug`. Returns `None` — so the caller skips cleanly — when
+/// the host can't satisfy the supervised claim (e.g. CI without cgroup
+/// delegation), exactly like the container tests gate on rootless Podman.
+/// Serializes the heavy supervised e2e tests. Each spawns confined children
+/// (userns+netns+seccomp+notify), and several running at once under cargo's
+/// parallel harness exhaust the host's fork capacity, making unrelated `git`
+/// subprocesses flake with EAGAIN. Holding this for the test's duration caps
+/// peak fork pressure without serializing the whole suite. Poison-tolerant so a
+/// failing test surfaces its real assertion, not a poison panic.
+static SUPERVISED_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn supervised_guard() -> std::sync::MutexGuard<'static, ()> {
+    SUPERVISED_SERIAL.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+fn supervised_env(slug: &str, extra_toml: &str) -> Option<Repo> {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        format!("[profile.default]\nisolation = \"supervised\"\n{extra_toml}"),
+    )
+    .unwrap();
+    git(&r.dir, &["add", ".h5i/env.toml"]);
+    git(&r.dir, &["commit", "-m", "supervised profile"]);
+    if r.h5i(&["env", "create", slug]).status.success() {
+        Some(r)
+    } else {
+        eprintln!("skipping: supervised tier not satisfiable on this host");
+        None
+    }
+}
+
+fn have_python3() -> bool {
+    std::process::Command::new("python3")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Run `argv` in supervised env `slug` and return the captured raw evidence
+/// (stdout+stderr), or `None` if the run couldn't start (skip).
+fn supervised_run_raw(r: &Repo, slug: &str, argv: &[&str]) -> Option<String> {
+    let mut full = vec!["env", "run", slug, "--"];
+    full.extend_from_slice(argv);
+    // Run synchronously. A non-zero exit (OOM-killed, denied write, …) still
+    // produces a capture — what we read below; only a setup failure has none.
+    let _out = Command::new(H5I)
+        .args(&full)
+        .env("H5I_AGENT", "tester")
+        .current_dir(&r.dir)
+        .output()
+        .expect("run");
+    let cap = r.capture_manifest(slug);
+    Some(String::from_utf8_lossy(&r.capture_raw(cap["raw_oid"].as_str()?)).into_owned())
+}
+
+/// Comprehensive live proof of the supervised tier's runtime enforcement, in a
+/// SINGLE env with a few **sequential** runs (deliberately not one test per
+/// property — many parallel supervised runs forking confined children exhaust
+/// the host's fork capacity and flake unrelated git steps). Covers the
+/// seccomp-notify socket gate, the airtight netns, the Landlock FS allowlist,
+/// the seccomp deny-list, and the gate-verdict recording. Capability-gated.
 #[test]
-fn supervised_socket_gate_denies_raw_in_a_live_run() {
-    if std::process::Command::new("python3").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
+fn supervised_enforces_runtime_confinement() {
+    let _serial = supervised_guard();
+    if !have_python3() {
         eprintln!("skipping: python3 unavailable");
         return;
     }
-    let r = Repo::new();
-    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
-    std::fs::write(r.dir.join(".h5i/env.toml"), "[profile.default]\nisolation = \"supervised\"\n").unwrap();
-    git(&r.dir, &["add", ".h5i/env.toml"]);
-    git(&r.dir, &["commit", "-m", "supervised profile"]);
+    let Some(r) = supervised_env("confine", "") else { return };
 
-    // If the host can't satisfy the supervised claim, create refuses → skip.
-    let create = r.h5i(&["env", "create", "gate"]);
-    if !create.status.success() {
-        eprintln!("skipping: supervised tier not satisfiable here:\n{}", out_str(&create));
-        return;
-    }
-
-    let script = "import socket,errno\n\
+    // Run 1 (python): the socket gate + airtight network, in one process.
+    let net_script = "import socket,errno\n\
         def t(n,a):\n\
         \x20try:\n\
         \x20\x20s=socket.socket(*a);s.close();print(n,'ALLOWED')\n\
@@ -585,24 +639,59 @@ fn supervised_socket_gate_denies_raw_in_a_live_run() {
         \x20\x20print(n,'DENIED',errno.errorcode.get(e.errno,e.errno))\n\
         t('RAW',(socket.AF_INET,socket.SOCK_RAW,socket.IPPROTO_TCP))\n\
         t('PACKET',(17,socket.SOCK_DGRAM,0))\n\
-        t('INET',(socket.AF_INET,socket.SOCK_STREAM,0))\n";
-    let out = Command::new(H5I)
-        .args(["env", "run", "gate", "--", "python3", "-c", script])
-        .env("H5I_AGENT", "tester")
-        .current_dir(&r.dir)
-        .output()
-        .expect("run");
-    if !out.status.success() {
-        eprintln!("skipping: supervised run unavailable:\n{}", out_str(&out));
+        t('UNIX',(socket.AF_UNIX,socket.SOCK_STREAM))\n\
+        t('INET',(socket.AF_INET,socket.SOCK_STREAM,0))\n\
+        c=socket.socket(); c.settimeout(3)\n\
+        try:\n\
+        \x20c.connect(('1.1.1.1',80)); print('CONNECTED')\n\
+        except OSError: print('NOCONNECT')\n";
+    let net = supervised_run_raw(&r, "confine", &["python3", "-c", net_script]).expect("run 1");
+    // Default-deny socket gate: only boring inet is allowed.
+    assert!(net.contains("RAW DENIED EPERM"), "raw socket denied:\n{net}");
+    assert!(net.contains("PACKET DENIED EPERM"), "packet socket denied:\n{net}");
+    assert!(net.contains("UNIX DENIED EPERM"), "ungranted AF_UNIX denied:\n{net}");
+    assert!(net.contains("INET ALLOWED"), "ordinary inet socket allowed:\n{net}");
+    // Airtight netns under net.mode=deny: no route to any external host.
+    assert!(net.contains("NOCONNECT") && !net.contains("CONNECTED"), "netns must have no egress:\n{net}");
+
+    // The socket-gate verdicts are recorded in the run's capture EgressSummary.
+    let cap = r.capture_manifest("confine");
+    let eg = &cap["egress"];
+    assert!(eg.is_object(), "supervised capture must carry an egress summary: {cap}");
+    assert!(eg["denied"].as_u64().unwrap_or(0) >= 1, "denials counted: {eg}");
+    assert!(eg["allowed"].as_u64().unwrap_or(0) >= 1, "allows counted: {eg}");
+
+    // Run 2 (sh): Landlock FS allowlist + seccomp deny-list (unshare).
+    let fs_script = "echo in > inside.txt && echo WORK_OK; \
+        echo x > /etc/h5i-escape 2>/dev/null && echo ETC_WROTE || echo ETC_DENIED; \
+        unshare --mount /bin/true 2>&1; echo unshare_rc=$?";
+    let fs = supervised_run_raw(&r, "confine", &["sh", "-c", fs_script]).expect("run 2");
+    assert!(fs.contains("WORK_OK"), "writing $WORK succeeds:\n{fs}");
+    assert!(fs.contains("ETC_DENIED") && !fs.contains("ETC_WROTE"), "Landlock denies writes outside $WORK:\n{fs}");
+    assert!(
+        fs.contains("Operation not permitted") || fs.contains("unshare_rc=1"),
+        "seccomp deny-list blocks unshare:\n{fs}"
+    );
+}
+
+/// A memory limit is enforced for a supervised run: a large allocation under a
+/// tight cap does not complete (cgroup memory.max / RLIMIT_AS). Separate env
+/// because it needs a `resources.mem` profile.
+#[test]
+fn supervised_memory_limit_is_enforced() {
+    let _serial = supervised_guard();
+    if !have_python3() {
+        eprintln!("skipping: python3 unavailable");
         return;
     }
-
-    // The captured evidence must show the gate's verdicts.
-    let cap = r.capture_manifest("gate");
-    let raw = String::from_utf8_lossy(&r.capture_raw(cap["raw_oid"].as_str().unwrap())).into_owned();
-    assert!(raw.contains("RAW DENIED EPERM"), "raw socket must be denied by the gate:\n{raw}");
-    assert!(raw.contains("PACKET DENIED EPERM"), "packet socket must be denied:\n{raw}");
-    assert!(raw.contains("INET ALLOWED"), "ordinary inet socket must be allowed:\n{raw}");
+    let Some(r) = supervised_env("membox", "[profile.default.resources]\nmem = \"64m\"\n") else {
+        return;
+    };
+    let script = "x=bytearray(400*1024*1024)\n\
+        for i in range(0,len(x),4096): x[i]=1\n\
+        print('ALLOCATED')\n";
+    let raw = supervised_run_raw(&r, "membox", &["python3", "-c", script]).expect("run");
+    assert!(!raw.contains("ALLOCATED"), "a 400MiB alloc under a 64MiB cap must not complete:\n{raw}");
 }
 
 // ─── 4. parallel envs (the arena) ───────────────────────────────────────────
