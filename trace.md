@@ -5,3 +5,4 @@
 [02:04:29] OBSERVE: read src/objects.rs
 [02:04:36] OBSERVE: read src/objects.rs
 [02:04:38] OBSERVE: read src/error.rs
+[02:04:40] OBSERVE: read src/main.rs
