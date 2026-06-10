@@ -390,6 +390,12 @@ export interface ProbeTier {
   satisfiable: boolean;
   note?: string | null;
 }
+export interface CgroupProbe {
+  v2_mounted: boolean;
+  usable: boolean;
+  controllers: string[];
+  detail?: string | null;
+}
 export interface ProbeResponse {
   os: string;
   landlock_abi?: number | null;
@@ -399,6 +405,7 @@ export interface ProbeResponse {
   tiers: ProbeTier[];
   process_runnable: boolean;
   process_runnable_detail?: string | null;
+  cgroups: CgroupProbe;
 }
 
 async function getJSON<T>(url: string): Promise<T> {

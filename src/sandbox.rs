@@ -862,7 +862,7 @@ fn run_unconfined(
             Ok(())
         });
     }
-    wait_with_deadline(cmd, policy.profile.wall(), argv)
+    wait_with_deadline(cmd, policy.profile.wall(), argv, None)
 }
 
 #[cfg(target_os = "linux")]
@@ -1027,7 +1027,40 @@ fn run_confined(
         });
     }
 
-    wait_with_deadline(cmd, p.wall(), argv)
+    // cgroup v2 (rootless, best-effort): real memory.max/pids.max + accurate
+    // memory.peak/cpu accounting where the host delegates a writable subtree.
+    // Unavailable on WSL2/CI → `None`, and the rlimits set above still apply.
+    let cg = make_run_cgroup(mem, nproc);
+    let procs = cg.as_ref().map(|c| c.procs_path());
+    let mut outcome = wait_with_deadline(cmd, p.wall(), argv, procs.as_deref())?;
+    if let Some(cg) = &cg {
+        let u = cg.usage();
+        // Prefer cgroup accounting (whole-subtree, accurate) over rusage.
+        if let Some(bytes) = u.mem_peak_bytes {
+            outcome.max_rss_kb = Some((bytes / 1024) as i64);
+        }
+        if let Some(usec) = u.cpu_usec {
+            outcome.cpu_ms = (usec / 1000) as u128;
+        }
+    }
+    Ok(outcome)
+}
+
+/// Create a best-effort run cgroup when the profile sets a memory/pid limit and
+/// the host actually supports rootless cgroup management. `None` (the common
+/// case on WSL2/CI) leaves the rlimit path as the sole enforcement.
+#[cfg(target_os = "linux")]
+fn make_run_cgroup(mem_bytes: Option<u64>, max_procs: Option<u64>) -> Option<crate::cgroup::ScopedCgroup> {
+    if mem_bytes.is_none() && max_procs.is_none() {
+        return None;
+    }
+    let caps = crate::cgroup::probe();
+    if !caps.usable {
+        return None;
+    }
+    let parent = caps.parent?;
+    let seq = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    crate::cgroup::ScopedCgroup::create(&parent, seq, mem_bytes, max_procs).ok()
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -1156,6 +1189,7 @@ fn wait_with_deadline(
     mut cmd: std::process::Command,
     wall: Duration,
     argv: &[String],
+    cgroup_procs: Option<&Path>,
 ) -> Result<ExecOutcome, H5iError> {
     use std::io::Read;
     use std::process::Stdio;
@@ -1165,6 +1199,14 @@ fn wait_with_deadline(
     let mut child = cmd
         .spawn()
         .map_err(|e| H5iError::Metadata(format!("failed to run `{}`: {e}", argv.join(" "))))?;
+
+    // Move the child into its cgroup as early as possible (best-effort): write
+    // its pid to the cgroup's `cgroup.procs`. There's a sub-millisecond window
+    // between spawn and this write where the child is not yet limited — accepted
+    // for v1 (CLONE_INTO_CGROUP would close it but isn't exposed by std).
+    if let Some(procs) = cgroup_procs {
+        let _ = std::fs::write(procs, child.id().to_string());
+    }
 
     let mut out_pipe = child.stdout.take().expect("piped stdout");
     let mut err_pipe = child.stderr.take().expect("piped stderr");

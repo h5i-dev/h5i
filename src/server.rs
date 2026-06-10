@@ -1904,6 +1904,19 @@ pub struct ProbeResponse {
     /// Functional self-test: are the `process`-tier bits actually runnable here?
     pub process_runnable: bool,
     pub process_runnable_detail: Option<String>,
+    /// cgroup v2 resource-control availability (rootless, best-effort).
+    pub cgroups: CgroupProbe,
+}
+
+/// cgroup v2 readiness for the dashboard.
+#[derive(Serialize)]
+pub struct CgroupProbe {
+    pub v2_mounted: bool,
+    /// True iff h5i can actually create + limit a run cgroup here (delegation).
+    pub usable: bool,
+    pub controllers: Vec<String>,
+    /// Why it's unusable, when it is (e.g. "no delegation").
+    pub detail: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1947,6 +1960,8 @@ async fn api_env_probe() -> Json<ProbeResponse> {
                 Err(e) => (false, Some(e.to_string())),
             };
 
+        let cg = crate::cgroup::probe();
+
         ProbeResponse {
             os: caps.os.clone(),
             landlock_abi: caps.landlock_abi,
@@ -1956,6 +1971,12 @@ async fn api_env_probe() -> Json<ProbeResponse> {
             tiers,
             process_runnable,
             process_runnable_detail,
+            cgroups: CgroupProbe {
+                v2_mounted: cg.v2_mounted,
+                usable: cg.usable,
+                controllers: cg.controllers.clone(),
+                detail: cg.detail.clone(),
+            },
         }
     })
     .await
@@ -1968,6 +1989,12 @@ async fn api_env_probe() -> Json<ProbeResponse> {
         tiers: Vec::new(),
         process_runnable: false,
         process_runnable_detail: Some("probe task panicked".into()),
+        cgroups: CgroupProbe {
+            v2_mounted: false,
+            usable: false,
+            controllers: Vec::new(),
+            detail: Some("probe task panicked".into()),
+        },
     });
     Json(resp)
 }

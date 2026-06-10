@@ -135,6 +135,19 @@ function TopStrip({ probe, envs }: { probe: ProbeResponse | null; envs: EnvFleet
             process tier not runnable
           </Tag>
         ) : null}
+        {probe ? (
+          <Tag
+            minimal
+            intent={probe.cgroups.usable ? "success" : "none"}
+            title={
+              probe.cgroups.usable
+                ? `cgroup v2 limits enforced (${probe.cgroups.controllers.join(", ")})`
+                : probe.cgroups.detail ?? "cgroup v2 unavailable — using rlimits"
+            }
+          >
+            cgroups {probe.cgroups.usable ? "✓" : "✗"}
+          </Tag>
+        ) : null}
       </div>
       <div className="sbx-strip-vitals">
         <Vital label="active" value={active} />

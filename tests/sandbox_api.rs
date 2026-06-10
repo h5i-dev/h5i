@@ -114,6 +114,11 @@ async fn probe_endpoint_reports_host_tiers() {
     assert!(claims.contains(&"process"));
     assert!(claims.contains(&"container"));
     assert!(body["process_runnable"].is_boolean());
+    // cgroup readiness is always reported (usable or, honestly, why not).
+    assert!(body["cgroups"]["usable"].is_boolean());
+    if !body["cgroups"]["usable"].as_bool().unwrap() {
+        assert!(body["cgroups"]["detail"].is_string(), "unusable cgroups must explain why");
+    }
 
     server.abort();
 }
