@@ -806,3 +806,9 @@ _[Checkpoint: 6a29a9e1 — Reviewed Claude supervisor tier design; approved Phas
 [18:28:34] ACT: edited sandbox-production-roadmap.md
 [18:28:56] THINK: Before I start building, I need to pin down scope — "all the items" in our roadmap spans three subsystems of very different size and risk (the secrets broker is self-contained; the seccomp-notify supervisor is a multi-stage, security-critic…
 [18:28:56] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/MEMORY.md): metadata. A context snapshot is linked to the SHA. - **The deferred claim is now pinned** (`83afbf26`) — the classifier architecture, scored against…
+
+
+---
+_[Checkpoint: 6a29ace8 — edited env_integration.rs; edited sandbox-production-roadmap.md; edited sandbox-production-roadmap.md]_
+---
+
