@@ -656,3 +656,4 @@ _[Checkpoint: 6a299f39 — edited Workbench.tsx; edited Workbench.tsx; edited sr
 [17:31:11] OBSERVE: read src/risk.rs
 [17:31:11] OBSERVE: read src/risk.rs
 [17:31:11] OBSERVE: read src/objects.rs
+[17:31:11] OBSERVE: read src/container.rs
