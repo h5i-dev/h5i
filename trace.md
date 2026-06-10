@@ -502,3 +502,9 @@ _[Checkpoint: 6a298203 — edited docs/environments-design.md; edited tests/env_
 _[Checkpoint: 6a29878b — Reviewed and hardened h5i env Linux/WSL Podman container backend: rootless Podman only, no implicit image pulls, safer Podman argv, docs/probe wording aligned; cargo check and env/container tests pass.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a29883e — Committed env Podman backend hardening as 9ae3f6d6: rootless Podman only, no Docker/rootful fallback, --pull=never, safer --mount workspace bind, HTTPS proxy port fix, docs/probe wording aligned.]_
+---
+
