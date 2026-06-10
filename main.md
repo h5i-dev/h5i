@@ -565,11 +565,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/lib.rs; edited src/seccomp_notify.rs; edited src/seccomp_notify.rs
 - [x] edited src/seccomp_notify.rs; edited src/seccomp_notify.rs; edited src/seccomp_notify.rs
 - [x] Reviewed Claude Phase B seccomp-notify loop; found live test hang from serve-loop shutdown lifecycle, answered ID_VALID/SEND/socketpair/threading/unknown-syscall questions, and requested recv_fd hardening.
+- [x] edited src/seccomp_notify.rs; edited src/seccomp_notify.rs; edited docs/supervisor-design.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 18:59 UTC] `impl-env-sandbox`: edited src/seccomp_notify.rs; edited src/seccomp_notify.rs; edited docs/supervisor-design.md
 - [2026-06-10 18:52 UTC] `impl-env-sandbox`: Reviewed Claude Phase B seccomp-notify loop; found live test hang from serve-loop shutdown lifecycle, answered ID_VALID/SEND/socketpair/threading/unknown-syscall questions, and requested recv_fd hardening.
 - [2026-06-10 18:48 UTC] `impl-env-sandbox`: edited src/seccomp_notify.rs; edited src/seccomp_notify.rs; edited src/seccomp_notify.rs
 - [2026-06-10 18:43 UTC] `impl-env-sandbox`: edited src/lib.rs; edited src/seccomp_notify.rs; edited src/seccomp_notify.rs
