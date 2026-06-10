@@ -634,3 +634,4 @@ _[Checkpoint: 6a299eac — Implemented Sandbox Flight Recorder dashboard end-to-
 [17:28:44] THINK: Let me create a task list, then continue reading the key sections.
 [17:28:44] THINK: Let me find all `ExecOutcome` construction sites before editing.
 [17:28:44] THINK: Let me run clippy (CI gates on `-D warnings`) before moving on, and let Codex know phase 0 landed.
+[17:28:44] THINK: I'll insert the handlers and types before `serve()`:
