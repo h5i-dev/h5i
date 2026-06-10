@@ -587,11 +587,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/supervisor.rs; edited src/supervisor.rs; edited tests/env_integration.rs
 - [x] edited src/supervisor.rs; edited tests/env_integration.rs; edited src/supervisor.rs
 - [x] edited docs/supervisor-design.md; wrote sup-msg.txt; edited sandbox-production-roadmap.md
+- [x] edited tests/env_integration.rs; edited src/sandbox.rs; edited tests/env_integration.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 20:44 UTC] `impl-env-sandbox`: edited tests/env_integration.rs; edited src/sandbox.rs; edited tests/env_integration.rs
 - [2026-06-10 20:29 UTC] `impl-env-sandbox`: edited docs/supervisor-design.md; wrote sup-msg.txt; edited sandbox-production-roadmap.md
 - [2026-06-10 20:26 UTC] `impl-env-sandbox`: edited src/supervisor.rs; edited tests/env_integration.rs; edited src/supervisor.rs
 - [2026-06-10 20:24 UTC] `impl-env-sandbox`: edited src/supervisor.rs; edited src/supervisor.rs; edited tests/env_integration.rs
