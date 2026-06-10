@@ -1750,6 +1750,15 @@ enum EnvCommands {
         stat: bool,
     },
 
+    /// Inspect one of an environment's evidence captures (structured findings,
+    /// exit code, policy digest, redactions)
+    Inspect {
+        name: String,
+        /// Capture id (from `h5i env status`/`log`)
+        #[arg(long)]
+        capture: String,
+    },
+
     /// Snapshot the worktree (mediated commit, path-allowlist enforced) and
     /// mark the env proposed — produces a review brief. Never writes the
     /// parent branch.
@@ -6926,6 +6935,7 @@ jq -c '{
                             filter: cfg,
                             env_id: None,
                             policy_digest: None,
+                            redact: false,
                         };
                         let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
                         let m = &outcome.manifest;
@@ -6979,6 +6989,7 @@ jq -c '{
                         filter: cfg,
                         env_id: None,
                         policy_digest: None,
+                        redact: false,
                     };
                     let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
                     println!("{}", outcome.manifest.summary);
@@ -7953,11 +7964,19 @@ jq -c '{
                         m.id,
                         &m.policy_digest[..12]
                     );
+                    // A wall-clock kill is a failure, not success — the child
+                    // was SIGKILLed so it has no exit code of its own. Use the
+                    // conventional timeout code (124, as coreutils `timeout`).
+                    if outcome.timed_out {
+                        std::process::exit(124);
+                    }
                     // Transparent wrapper: pass the child's exit code through.
-                    if let Some(code) = outcome.exit_code {
-                        if code != 0 {
-                            std::process::exit(code);
-                        }
+                    // A None code means the child died on a signal — surface it
+                    // as a generic failure rather than a silent success.
+                    match outcome.exit_code {
+                        Some(0) => {}
+                        Some(code) => std::process::exit(code),
+                        None => std::process::exit(1),
                     }
                 }
 
@@ -8028,6 +8047,11 @@ jq -c '{
                 EnvCommands::Diff { name, stat } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     print!("{}", h5i_core::env::diff(&h5i_root, &m, stat)?);
+                }
+
+                EnvCommands::Inspect { name, capture } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    print!("{}", h5i_core::env::inspect(git, &m, &capture)?);
                 }
 
                 EnvCommands::Propose { name } => {

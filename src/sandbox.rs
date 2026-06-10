@@ -590,6 +590,18 @@ pub fn run(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<Exec
 fn run_unconfined(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<ExecOutcome, H5iError> {
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(work);
+    // New session so the wall-clock kill reaps the whole tree (killpg), the
+    // same group-kill guarantee the confined path gets.
+    #[cfg(unix)]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
     wait_with_deadline(cmd, policy.profile.wall(), argv)
 }
 
@@ -664,18 +676,29 @@ fn run_confined(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result
         cmd.pre_exec(move || {
             use std::io::Error;
 
-            // 1. Network: empty netns (lo present but down — even loopback is
-            //    unreachable, which is stricter than the design's wording).
-            //    CLONE_NEWUSER makes this unprivileged; map our own uid/gid so
-            //    file access inside $WORK keeps working.
-            if net_deny {
-                if libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNET) != 0 {
-                    return Err(Error::last_os_error());
-                }
-                std::fs::write("/proc/self/setgroups", "deny")?;
-                std::fs::write("/proc/self/gid_map", format!("{gid} {gid} 1"))?;
-                std::fs::write("/proc/self/uid_map", format!("{uid} {uid} 1"))?;
+            // 0. New session/process group so the wall-clock kill can reap the
+            //    WHOLE tree (killpg), not just the direct child — a confined
+            //    command must not be able to leave runaway descendants behind.
+            if libc::setsid() == -1 {
+                return Err(Error::last_os_error());
             }
+
+            // 1. Namespaces. Always create a user namespace at the process tier
+            //    (drops every host capability outside it) plus fresh IPC and
+            //    UTS namespaces (no shared SysV IPC, isolated hostname); add an
+            //    empty network namespace when egress is denied. CLONE_NEWUSER
+            //    makes all of this unprivileged; we map our own uid/gid 1:1 so
+            //    file access inside $WORK keeps working.
+            let mut flags = libc::CLONE_NEWUSER | libc::CLONE_NEWIPC | libc::CLONE_NEWUTS;
+            if net_deny {
+                flags |= libc::CLONE_NEWNET;
+            }
+            if libc::unshare(flags) != 0 {
+                return Err(Error::last_os_error());
+            }
+            std::fs::write("/proc/self/setgroups", "deny")?;
+            std::fs::write("/proc/self/gid_map", format!("{gid} {gid} 1"))?;
+            std::fs::write("/proc/self/uid_map", format!("{uid} {uid} 1"))?;
 
             // 2. Resource caps (cooperative, no cgroups needed).
             if let Some(bytes) = mem {
@@ -750,37 +773,67 @@ fn landlock_abi_for(probed: i32) -> landlock::ABI {
 fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
     use seccompiler::{SeccompAction, SeccompFilter, SeccompRule, TargetArch};
 
-    let denied: &[libc::c_long] = &[
+    // Architecture-portable set (present on x86_64 and aarch64). Every entry is
+    // an administrative / introspection / namespace / fs-handle syscall that a
+    // build or test workload never legitimately issues, so a blanket EPERM is
+    // safe. We deliberately do NOT deny clone/clone3/fork (needed for normal
+    // subprocesses); the documented clone-with-CLONE_NEWUSER gap is closed by
+    // the hardened allowlist profile (a later phase), not here.
+    #[allow(unused_mut)] // `mut` is used only on arches with the extend below
+    let mut denied: Vec<libc::c_long> = vec![
+        // mount / rootfs manipulation
         libc::SYS_mount,
         libc::SYS_umount2,
         libc::SYS_pivot_root,
         libc::SYS_chroot,
+        // tracing / cross-process memory
         libc::SYS_ptrace,
         libc::SYS_process_vm_readv,
         libc::SYS_process_vm_writev,
+        // kernel keyring
         libc::SYS_keyctl,
         libc::SYS_add_key,
         libc::SYS_request_key,
+        // privileged kernel interfaces
         libc::SYS_bpf,
         libc::SYS_perf_event_open,
         libc::SYS_userfaultfd,
+        // module loading
         libc::SYS_init_module,
         libc::SYS_finit_module,
         libc::SYS_delete_module,
+        // kexec
         libc::SYS_kexec_load,
         libc::SYS_kexec_file_load,
+        // filesystem handles (bypass path-based confinement / Landlock)
         libc::SYS_open_by_handle_at,
+        libc::SYS_name_to_handle_at,
+        // namespace entry/creation
         libc::SYS_setns,
         libc::SYS_unshare,
+        // host / time / power administration
         libc::SYS_reboot,
         libc::SYS_swapon,
         libc::SYS_swapoff,
         libc::SYS_acct,
         libc::SYS_settimeofday,
         libc::SYS_clock_settime,
+        libc::SYS_clock_adjtime,
         libc::SYS_sethostname,
         libc::SYS_setdomainname,
+        libc::SYS_quotactl,
+        // NUMA memory-policy / page migration (host-visibility side effects)
+        libc::SYS_move_pages,
+        libc::SYS_mbind,
+        libc::SYS_set_mempolicy,
+        libc::SYS_migrate_pages,
+        // filesystem-wide change notification
+        libc::SYS_fanotify_init,
+        libc::SYS_fanotify_mark,
     ];
+    // x86_64-only port-I/O and LDT syscalls (absent on aarch64).
+    #[cfg(target_arch = "x86_64")]
+    denied.extend_from_slice(&[libc::SYS_iopl, libc::SYS_ioperm, libc::SYS_modify_ldt]);
 
     // The cast is a no-op on 64-bit but required where c_long is i32.
     #[allow(clippy::unnecessary_cast)]
@@ -829,6 +882,12 @@ fn wait_with_deadline(
         buf
     });
 
+    // The child called setsid(), so its process-group id equals its pid; a
+    // negative-pid SIGKILL reaps the whole tree, not just the leader, so a
+    // timed-out command can't strand runaway descendants.
+    #[cfg(unix)]
+    let pgid = child.id() as libc::pid_t;
+
     let deadline = std::time::Instant::now() + wall;
     let mut timed_out = false;
     let status = loop {
@@ -837,6 +896,14 @@ fn wait_with_deadline(
             None => {
                 if std::time::Instant::now() >= deadline {
                     timed_out = true;
+                    #[cfg(unix)]
+                    unsafe {
+                        // Kill the group; fall back to the leader if that fails.
+                        if libc::kill(-pgid, libc::SIGKILL) != 0 {
+                            let _ = child.kill();
+                        }
+                    }
+                    #[cfg(not(unix))]
                     let _ = child.kill();
                     break child.wait().map_err(H5iError::Io)?;
                 }

@@ -43,6 +43,42 @@ const MANIFEST_FILE: &str = "manifest.json";
 const POLICY_RESOLVED_FILE: &str = "policy.resolved.toml";
 const STATUS_FILE: &str = "status";
 const WORK_DIR: &str = "work";
+const RUN_LOCK_FILE: &str = "run.lock";
+
+/// An exclusive, advisory `flock` on `<env>/run.lock` that serializes
+/// `h5i env run` for one environment. The kernel releases the lock when the
+/// holding process exits — including a crash — so there are no stale locks to
+/// clear. Concurrent runs would otherwise race on the status file and the
+/// captures list and corrupt the manifest.
+#[cfg(unix)]
+struct RunLock {
+    _file: std::fs::File,
+}
+
+#[cfg(unix)]
+impl RunLock {
+    fn acquire(env_dir: &Path) -> Result<RunLock, H5iError> {
+        use std::os::unix::io::AsRawFd;
+        let path = env_dir.join(RUN_LOCK_FILE);
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|e| H5iError::with_path(e, &path))?;
+        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if rc != 0 {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                return Err(H5iError::Metadata(
+                    "environment is busy — another `h5i env run` holds its lock".into(),
+                ));
+            }
+            return Err(H5iError::with_path(err, &path));
+        }
+        Ok(RunLock { _file: file })
+    }
+}
 
 // ─── status state machine (§9) ──────────────────────────────────────────────
 
@@ -458,9 +494,14 @@ pub fn create(
         let branch_ref = repo.find_reference(&branch_full)?;
         let mut wt_opts = git2::WorktreeAddOptions::new();
         wt_opts.reference(Some(&branch_ref));
-        repo.worktree(&wt_name, &work_path, Some(&wt_opts)).map_err(|e| {
+        let wt = repo.worktree(&wt_name, &work_path, Some(&wt_opts)).map_err(|e| {
             H5iError::Metadata(format!("worktree creation failed for {id}: {e}"))
         })?;
+        // Lock the worktree for the env's whole life so a stray
+        // `git worktree prune` can't reclaim a live env out from under it;
+        // `h5i env gc` is the only thing that unlocks+prunes it (and only when
+        // applied/aborted).
+        let _ = wt.lock(Some(&format!("h5i env {id} live")));
     }
 
     // Reasoning branch: fork from the parent worktree's current context branch
@@ -556,6 +597,11 @@ pub fn run(
         )));
     }
 
+    // Serialize concurrent runs of THIS env (status + captures are mutated
+    // below and must not interleave). Held for the duration of the run.
+    #[cfg(unix)]
+    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
+
     // The stored policy, digest-verified, then re-resolved against a fresh
     // host probe (fail closed if the host can no longer satisfy the claim).
     let policy = load_policy(h5i_root, m)?;
@@ -609,6 +655,9 @@ pub fn run(
         filter,
         env_id: Some(m.id.clone()),
         policy_digest: Some(m.policy_digest.clone()),
+        // Evidence is shared via `h5i objects push` — scrub secrets from the
+        // stored blob and summary before it is written (design §7).
+        redact: true,
     };
     let captured = objects::capture(&wt_repo, h5i_root, &raw, capture_opts)?;
     let capture_id = captured.manifest.id.clone();
@@ -672,6 +721,50 @@ pub fn diff(h5i_root: &Path, m: &EnvManifest, stat_only: bool) -> Result<String,
         out.push_str(&String::from_utf8_lossy(line.content()));
         true
     })?;
+    Ok(out)
+}
+
+// ─── inspect (§9) ───────────────────────────────────────────────────────────
+
+/// Render one of an environment's evidence captures: its structured findings
+/// (or text summary), exit code, policy digest, and any redactions. The
+/// capture must belong to this env — a capture id from another env is refused
+/// so `inspect` can't be used to read unrelated evidence.
+pub fn inspect(repo: &Repository, m: &EnvManifest, capture_id: &str) -> Result<String, H5iError> {
+    let manifest = objects::resolve_manifest(repo, capture_id)?;
+    if manifest.env_id.as_deref() != Some(m.id.as_str()) {
+        return Err(H5iError::Metadata(format!(
+            "capture {} is not evidence for {} (it belongs to {})",
+            capture_id,
+            m.id,
+            manifest.env_id.as_deref().unwrap_or("<none>")
+        )));
+    }
+    let mut out = String::new();
+    out.push_str(&format!("── Capture {} ({}) ──\n", manifest.id, m.id));
+    if let Some(cmd) = &manifest.cmd {
+        out.push_str(&format!("  cmd      : {cmd}\n"));
+    }
+    out.push_str(&format!(
+        "  exit     : {}\n",
+        manifest.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "signal".into())
+    ));
+    if let Some(d) = &manifest.policy_digest {
+        out.push_str(&format!("  policy   : {}\n", &d[..12.min(d.len())]));
+    }
+    if !manifest.redactions.is_empty() {
+        out.push_str(&format!("  redacted : {}\n", manifest.redactions.join(", ")));
+    }
+    out.push_str(&format!(
+        "  raw      : {} bytes, {} lines (object {})\n",
+        manifest.raw_size, manifest.raw_lines, manifest.raw_oid
+    ));
+    out.push('\n');
+    match &manifest.structured {
+        Some(s) => out.push_str(&crate::structured::render_compact(s)),
+        None => out.push_str(&manifest.summary),
+    }
+    out.push('\n');
     Ok(out)
 }
 
@@ -1051,9 +1144,11 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
             continue;
         }
         if let Ok(wt) = repo.find_worktree(&m.worktree_name()) {
+            // The env was locked at create; we are intentionally reclaiming an
+            // applied/aborted env, so override the lock (locked(true)).
+            let _ = wt.unlock();
             let mut opts = git2::WorktreePruneOptions::new();
-            opts.valid(true).working_tree(true);
-            // Locked worktrees stay (a running env holds its lock, §4).
+            opts.valid(true).locked(true).working_tree(true);
             if wt.prune(Some(&mut opts)).is_err() {
                 continue;
             }

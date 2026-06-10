@@ -365,6 +365,11 @@ pub struct CaptureOptions {
     /// digest of the policy enforced while producing it.
     pub env_id: Option<String>,
     pub policy_digest: Option<String>,
+    /// Scrub secret-like spans from the payload BEFORE it is hashed and stored,
+    /// so the content-addressed blob itself never carries a credential. Used by
+    /// `h5i env run` (design §7). The detected rule ids land in
+    /// `Manifest::redactions`.
+    pub redact: bool,
 }
 
 /// Store `raw` in the local backend, build + persist a manifest, and return it.
@@ -379,6 +384,36 @@ pub fn capture(
     opts: CaptureOptions,
 ) -> Result<CaptureOutcome, H5iError> {
     let store = LocalStore::new(h5i_root);
+
+    // Secret redaction (opt-in; e.g. `h5i env run`). Scrub BEFORE hashing and
+    // storing so the content-addressed blob — which travels via `h5i objects
+    // push` — can never carry a credential. Binary payloads are left untouched
+    // (the scanner is line/text oriented); the redaction marker is recorded by
+    // rule id, never the value.
+    let mut redactions: Vec<String> = Vec::new();
+    let redacted_holder;
+    let raw: &[u8] = if opts.redact {
+        match std::str::from_utf8(raw) {
+            Ok(text) => {
+                let findings = crate::secrets::scan_text(Path::new("<capture>"), text);
+                if findings.is_empty() {
+                    raw
+                } else {
+                    let mut ids: Vec<String> =
+                        findings.iter().map(|f| f.rule_id.to_string()).collect();
+                    ids.sort();
+                    ids.dedup();
+                    redactions = ids;
+                    redacted_holder = crate::secrets::redact_text(text).into_bytes();
+                    &redacted_holder[..]
+                }
+            }
+            Err(_) => raw,
+        }
+    } else {
+        raw
+    };
+
     let hex = sha256_hex(raw);
     let deduped = store.has(&hex);
     store.put(&hex, raw)?;
@@ -470,10 +505,18 @@ pub fn capture(
         Some(s)
     };
 
+    // The command line can itself carry a credential (a secret passed as an
+    // argument), so it is scrubbed too when redaction is on — otherwise the
+    // payload would be clean but `cmd` would leak.
+    let cmd = match (opts.redact, opts.cmd) {
+        (true, Some(c)) => Some(crate::secrets::redact_text(&c)),
+        (_, c) => c,
+    };
+
     let manifest = Manifest {
         id: hex[..16].to_string(),
         kind,
-        cmd: opts.cmd,
+        cmd,
         cwd: opts.cwd,
         exit_code: opts.exit_code,
         git_tree: opts.git_tree,
@@ -495,7 +538,7 @@ pub fn capture(
         env_id: opts.env_id,
         policy_digest: opts.policy_digest,
         egress: None,
-        redactions: Vec::new(),
+        redactions,
     };
 
     append_manifest(repo, &manifest)?;
@@ -1545,6 +1588,7 @@ mod tests {
             filter: FilterConfig::default(),
             env_id: None,
             policy_digest: None,
+            redact: false,
         }
     }
 
@@ -1554,6 +1598,40 @@ mod tests {
             sha256_hex(b"hello"),
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
+    }
+
+    #[test]
+    fn redact_flag_scrubs_payload_and_command_before_storage() {
+        let (_d, repo, h5i_root) = setup();
+        let secret = "ghp_0123456789012345678901234567890123ab";
+        let raw = format!("auth token={secret}\nok\n");
+        let mut o = opts();
+        o.redact = true;
+        o.cmd = Some(format!("deploy --token {secret}"));
+        o.cmd_argv = vec!["deploy".into()];
+        let outcome = capture(&repo, &h5i_root, raw.as_bytes(), o).unwrap();
+        let m = &outcome.manifest;
+        // The detected rule id is recorded; the value never is.
+        assert!(m.redactions.contains(&"GITHUB_PAT".to_string()), "{:?}", m.redactions);
+        assert!(!m.summary.contains(secret));
+        assert!(!m.cmd.as_ref().unwrap().contains(secret), "cmd leaked the secret");
+        // The content-addressed blob (what `objects push` shares) is scrubbed,
+        // so the hash is of the REDACTED bytes — the raw secret is unrecoverable.
+        let stored = load_raw(&h5i_root, m).unwrap().unwrap();
+        assert!(!String::from_utf8_lossy(&stored).contains(secret), "raw blob leaked the secret");
+    }
+
+    #[test]
+    fn redact_flag_off_leaves_payload_intact() {
+        let (_d, repo, h5i_root) = setup();
+        let secret = "ghp_0123456789012345678901234567890123ab";
+        let raw = format!("token={secret}\n");
+        let mut o = opts();
+        o.redact = false;
+        let outcome = capture(&repo, &h5i_root, raw.as_bytes(), o).unwrap();
+        assert!(outcome.manifest.redactions.is_empty());
+        let stored = load_raw(&h5i_root, &outcome.manifest).unwrap().unwrap();
+        assert!(String::from_utf8_lossy(&stored).contains(secret));
     }
 
     #[test]

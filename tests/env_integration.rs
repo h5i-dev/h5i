@@ -110,6 +110,29 @@ impl Repo {
         serde_json::from_str(&text).expect("manifest json")
     }
 
+    /// The capture manifest line in refs/h5i/objects tagged for env `<slug>`.
+    fn capture_manifest(&self, slug: &str) -> serde_json::Value {
+        let blob = out_str(&git(&self.dir, &["show", "refs/h5i/objects:manifests.jsonl"]));
+        let id = format!("env/tester/{slug}");
+        let line = blob
+            .lines()
+            .find(|l| l.contains(&id))
+            .expect("an env-tagged capture");
+        serde_json::from_str(line).expect("capture manifest json")
+    }
+
+    /// The raw content-addressed blob bytes for a capture's `raw_oid`.
+    fn capture_raw(&self, raw_oid: &str) -> Vec<u8> {
+        let hex = raw_oid.strip_prefix("sha256:").unwrap_or(raw_oid);
+        let path = self
+            .dir
+            .join(".git/.h5i/objects")
+            .join(&hex[0..2])
+            .join(&hex[2..4])
+            .join(hex);
+        std::fs::read(&path).unwrap_or_else(|_| panic!("raw blob {hex} missing"))
+    }
+
     /// Parse `h5i env probe` output into (landlock, userns, seccomp).
     fn probe(&self) -> (bool, bool, bool) {
         let out = out_str(&self.h5i_ok(&["env", "probe"]));
@@ -512,6 +535,74 @@ fn process_tier_confines_fs_and_network() {
     assert!(!text.contains("UNSHARE-OK"), "unshare must be denied: {text}");
 }
 
+/// The wall-clock kill must reap the WHOLE process tree (process-group kill),
+/// not just the direct child — a runaway backgrounded descendant must die too.
+/// Runs at the workspace tier so it needs no kernel capabilities.
+#[test]
+fn wall_clock_kill_reaps_descendant_processes() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.default]\nisolation = \"workspace\"\nresources = { wall = \"1s\" }\n",
+    )
+    .unwrap();
+    r.h5i_ok(&["env", "create", "reap"]);
+
+    // Background a grandchild that writes a marker 8s in, while the foreground
+    // blocks for 60s. The 1s wall-clock fires long before 8s — even if the
+    // poller slips by several seconds under parallel test load — and a correct
+    // group-kill takes the grandchild with it, so the marker never appears.
+    let t0 = std::time::Instant::now();
+    let out = r.h5i(&[
+        "env", "run", "reap", "--", "sh", "-c",
+        "sh -c 'sleep 8; echo alive > survivor.txt' & echo started; sleep 60",
+    ]);
+    assert!(!out.status.success(), "timed-out run should not report success");
+
+    // Wait until we are safely past the grandchild's 8s write point, then the
+    // marker must still be absent (it was group-killed at ~1s).
+    while t0.elapsed() < std::time::Duration::from_secs(11) {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    assert!(
+        !r.work("reap").join("survivor.txt").exists(),
+        "a backgrounded descendant survived the wall-clock kill (no process-group kill)"
+    );
+}
+
+/// `isolation=process` with `net.mode=host` must STILL confine the filesystem
+/// (Landlock applies without a network namespace) — proving the always-create
+/// user namespace works when egress is allowed. Capability-gated.
+#[test]
+fn process_tier_host_net_still_confines_fs() {
+    let r = Repo::new();
+    let (landlock, userns, seccomp) = r.probe();
+    if !(landlock && userns && seccomp) {
+        eprintln!("SKIP process_tier_host_net_still_confines_fs: host lacks process-tier capabilities");
+        return;
+    }
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.default]\nisolation = \"process\"\nnet.mode = \"host\"\n",
+    )
+    .unwrap();
+    r.h5i_ok(&["env", "create", "hostnet"]);
+
+    // Inside $WORK still writable …
+    r.h5i_ok(&["env", "run", "hostnet", "--", "sh", "-c", "echo ok > in.txt"]);
+    assert!(r.work("hostnet").join("in.txt").is_file());
+    // … outside $WORK still blocked.
+    let escape = r.dir.join("hostnet-escape.txt");
+    let out = r.h5i(&[
+        "env", "run", "hostnet", "--", "sh", "-c",
+        &format!("echo x > {}", escape.display()),
+    ]);
+    assert!(!out.status.success());
+    assert!(!escape.exists(), "host-net env must still confine the filesystem");
+}
+
 /// Env-var allowlist: only `env.pass` variables reach the confined process.
 #[test]
 fn process_tier_env_allowlist() {
@@ -534,7 +625,90 @@ fn process_tier_env_allowlist() {
     assert!(text.contains("PATH_SET=yes"), "allowlisted PATH must pass: {text}");
 }
 
-// ─── 8. probe is honest and machine-readable ────────────────────────────────
+// ─── 8. secret redaction in evidence (design §7) ────────────────────────────
+
+const PLANTED_SECRET: &str = "ghp_0123456789012345678901234567890123ab";
+
+#[test]
+fn run_redacts_secrets_from_evidence_blob_summary_and_command() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "leaky"]);
+    // The secret appears both in the OUTPUT and in the command line itself.
+    r.h5i_ok(&[
+        "env", "run", "leaky", "--", "sh", "-c",
+        &format!("echo token={PLANTED_SECRET}"),
+    ]);
+
+    let m = r.capture_manifest("leaky");
+    // The detected rule is recorded (by id, never the value).
+    let redactions = m["redactions"].as_array().expect("redactions array");
+    assert!(
+        redactions.iter().any(|v| v == "GITHUB_PAT"),
+        "expected GITHUB_PAT in redactions: {m}"
+    );
+    // The secret must not survive ANYWHERE in the manifest line …
+    let manifest_line = serde_json::to_string(&m).unwrap();
+    assert!(!manifest_line.contains(PLANTED_SECRET), "secret leaked into manifest: {manifest_line}");
+    // … including the command field (it was passed as an argument).
+    assert!(!m["cmd"].as_str().unwrap().contains(PLANTED_SECRET), "secret leaked into cmd");
+
+    // … and not in the content-addressed raw blob (which travels via push).
+    let raw = r.capture_raw(m["raw_oid"].as_str().unwrap());
+    let raw_str = String::from_utf8_lossy(&raw);
+    assert!(!raw_str.contains(PLANTED_SECRET), "secret leaked into raw blob: {raw_str}");
+    assert!(raw_str.contains("redacted"), "redaction marker expected in raw: {raw_str}");
+}
+
+#[test]
+fn inspect_renders_a_capture_and_refuses_foreign_ones() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "one"]);
+    r.h5i_ok(&["env", "create", "two"]);
+    r.h5i_ok(&["env", "run", "one", "--", "sh", "-c", "echo hello-from-one"]);
+    let cap = r.manifest("one")["captures"][0].as_str().unwrap().to_string();
+
+    // Inspect from the owning env: renders the capture.
+    let out = out_str(&r.h5i_ok(&["env", "inspect", "one", "--capture", &cap]));
+    assert!(out.contains(&cap), "{out}");
+    assert!(out.contains("exit"), "{out}");
+
+    // Inspecting the SAME capture id from a different env is refused — evidence
+    // is scoped to its environment.
+    let out = r.h5i(&["env", "inspect", "two", "--capture", &cap]);
+    assert!(!out.status.success(), "cross-env inspect must be refused");
+    assert!(out_str(&out).contains("not evidence for"), "{}", out_str(&out));
+}
+
+// ─── 9. concurrency: the run-lock serializes runs of one env ────────────────
+
+#[test]
+fn concurrent_runs_of_one_env_are_serialized() {
+    use std::process::Stdio;
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "busy"]);
+
+    // Launch a slow run in the background; it holds the run-lock for ~2s.
+    let mut slow = Command::new(H5I)
+        .args(["env", "run", "busy", "--", "sh", "-c", "sleep 2; echo slow-done"])
+        .env("H5I_AGENT", "tester")
+        .current_dir(&r.dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn slow run");
+
+    // Give it a moment to take the lock, then a second run must be refused.
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    let contender = r.h5i(&["env", "run", "busy", "--", "sh", "-c", "echo fast"]);
+    assert!(!contender.status.success(), "second concurrent run must be refused");
+    assert!(out_str(&contender).contains("busy"), "{}", out_str(&contender));
+
+    assert!(slow.wait().unwrap().success());
+    // After the lock is released, a new run succeeds.
+    r.h5i_ok(&["env", "run", "busy", "--", "sh", "-c", "echo after"]);
+}
+
+// ─── 10. probe is honest and machine-readable ───────────────────────────────
 
 #[test]
 fn probe_reports_all_capability_lines() {
