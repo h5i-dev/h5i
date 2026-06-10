@@ -691,3 +691,4 @@ _[Checkpoint: 6a299f8d — Reviewed Claude's Sandbox Flight Recorder implementat
 _[Checkpoint: 6a29a099 — edited src/risk.rs; edited src/risk.rs; edited src/risk.rs]_
 ---
 
+[17:38:44] ACT: wrote sandbox-production-roadmap.md
