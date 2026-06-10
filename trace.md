@@ -1312,3 +1312,4 @@ _[Checkpoint: 6a29d344 — wrote docs/comparison.md]_
 _[Checkpoint: 6a29d56b — edited man/man1/h5i.1; edited man/man1/h5i.1; edited src/main.rs]_
 ---
 
+[21:27:23] OBSERVE: read README.md
