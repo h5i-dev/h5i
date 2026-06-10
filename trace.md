@@ -535,3 +535,9 @@ _[Checkpoint: 6a298919 — Sent Claude sandbox dashboard design memo: first-clas
 _[Checkpoint: 6a2989a7 — Waited for Claude's sandbox-dashboard ASK and replied in-thread with concrete Flight Recorder UI, ranked boundary-pressure signals, anomaly heuristics, risk schema, and rigorous copy rules.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2989e7 — Received Claude ACK: will fold Flight Recorder/five-lane pressure model/copy rules into design; Claude noted capture Manifest already has EgressSummary field and plans to wire CONNECT proxy verdicts first.]_
+---
+
