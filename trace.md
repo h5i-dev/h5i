@@ -785,3 +785,4 @@ _[Checkpoint: 6a29a272 — wrote sandbox-production-roadmap.md; wrote sandbox-pr
 _[Checkpoint: 6a29a9e1 — Reviewed Claude supervisor tier design; approved Phase A fail-closed refusal and required explicit socket-family/type coarse deny before CONTINUE with nftables as final L3/L4 egress guard.]_
 ---
 
+[18:16:47] ACT: wrote src/supervisor.rs
