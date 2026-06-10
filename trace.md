@@ -1008,3 +1008,4 @@ _[Checkpoint: 6a29bd8f — edited tests/sandbox_api.rs; edited tests/env_integra
 _[Checkpoint: 6a29bdec — edited tests/sandbox_api.rs; edited tests/env_integration.rs; wrote h5i-commit-msg.txt]_
 ---
 
+[19:45:23] NOTE: PLACEHOLDER (/tmp/h5i-commit-msg.txt): im gating. But `supervisor::run()` is still a **fail-closed stub**. Nothing connects the parts into a tier that executes a command: - no code sets up …
