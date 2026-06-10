@@ -644,3 +644,4 @@ _[Checkpoint: 6a299eac — Implemented Sandbox Flight Recorder dashboard end-to-
 _[Checkpoint: 6a299ecc — edited Workbench.tsx; edited Workbench.tsx; edited src/SandboxView.tsx]_
 ---
 
+[17:30:33] NOTE: DEFERRAL (~/Dev/h5i/web/src/SandboxView.tsx): ke, I'll stage and commit, then pin the claim. One natural follow-up the UI is already built for but the backend doesn't yet emit: structured per-sysc…
