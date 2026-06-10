@@ -1457,3 +1457,4 @@ _[Checkpoint: 6a29f231 — edited src/env.rs; edited src/main.rs; edited src/mai
 [23:25:56] OBSERVE: read bj4gifgi2.output
 [23:25:59] OBSERVE: read bj4gifgi2.output
 [23:26:02] OBSERVE: read bj4gifgi2.output
+[23:26:11] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): ), but `supervisor::run()` is still the fail-closed Phase A stub — so `env run` fails closed with "live enforcement not wired." Wiring that st…
