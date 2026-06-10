@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 520" font-family="'Space Grotesk', system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-label="An agent runs a command via h5i env run. It executes inside a policy-confined sandbox built on a git worktree plus tiered kernel confinement. Legitimate work (cargo build) is allowed; escape attempts on three lanes are denied at the boundary: reading /etc/shadow is blocked by Landlock, a raw socket or curl to a raw IP is blocked by the seccomp gate and egress proxy, and mount/unshare/ptrace are blocked by the seccomp deny-list. Every run is captured as tamper-evident evidence, and changes are applied only after a reviewer approves a proposal — the sandbox is fail-closed and fully observed.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 520" font-family="'Space Grotesk', system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-label="An agent runs a command via h5i env run. It executes inside a policy-confined sandbox built on a git worktree plus tiered kernel confinement. Legitimate work (cargo build) is allowed; escape attempts on three lanes are denied at the boundary: reading /etc/shadow is blocked by Landlock, a raw socket or an off-allowlist host by the seccomp gate and egress proxy, and mount/unshare/ptrace by the seccomp deny-list. Every run is captured as tamper-evident evidence, and changes are applied only after a reviewer approves a proposal — the sandbox is fail-closed and fully observed.">
   <defs>
     <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
       <circle cx="1.2" cy="1.2" r="1.2" fill="#ffffff" opacity="0.035"/>
@@ -6,8 +6,8 @@
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0L10 5L0 10z" fill="#7d8590"/>
     </marker>
-    <marker id="deny" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0L10 5L0 10z" fill="#ff6b6b"/>
+    <marker id="allow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#5ee2a0"/>
     </marker>
     <style>
       .mono { font-family: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -21,15 +21,15 @@
 
   <!-- title -->
   <text x="530" y="44" text-anchor="middle" font-size="25" font-weight="600" fill="#ECECEC">Policy-Confined Agent Sandbox</text>
-  <text x="530" y="69" text-anchor="middle" font-size="13.5" fill="#9aa0aa">git worktree&#160;&#183;&#160;tiered kernel confinement&#160;&#183;&#160;captured evidence&#160;&#8212;&#160;fail-closed, never silently downgraded</text>
+  <text x="530" y="69" text-anchor="middle" font-size="13.5" fill="#9aa0aa">git worktree + tiered kernel confinement&#160;&#8212;&#160;fail-closed, fully observed</text>
 
   <!-- ───────── left: the agent ───────── -->
   <g>
-    <rect x="34" y="200" width="178" height="92" rx="12" fill="#12161c" stroke="#2a3138"/>
-    <text x="123" y="227" text-anchor="middle" font-size="12" class="cap" fill="#6b7785">AGENT</text>
-    <text x="50" y="256" font-size="12.5" class="mono" fill="#abb3bf">$ h5i env run</text>
-    <text x="50" y="276" font-size="12.5" class="mono" fill="#abb3bf">&#160;&#160;fix-auth --</text>
-    <text x="160" y="276" font-size="12.5" class="mono" fill="#5ee2a0">cargo build</text>
+    <rect x="34" y="194" width="178" height="104" rx="12" fill="#12161c" stroke="#2a3138"/>
+    <text x="123" y="221" text-anchor="middle" font-size="12" class="cap" fill="#6b7785">AGENT</text>
+    <text x="50" y="248" font-size="12.5" class="mono" fill="#abb3bf">$ h5i env run</text>
+    <text x="50" y="269" font-size="12.5" class="mono" fill="#abb3bf">&#160;&#160;fix-auth --</text>
+    <text x="50" y="290" font-size="12.5" class="mono" fill="#5ee2a0">&#160;&#160;cargo build</text>
   </g>
   <line x1="214" y1="246" x2="266" y2="246" stroke="#7d8590" stroke-width="2" marker-end="url(#arrow)"/>
 
@@ -59,40 +59,34 @@
     </g>
 
     <!-- the three lanes (escape attempts denied at the boundary) -->
-    <g font-size="12.5">
+    <g>
       <!-- FS -->
       <rect x="398" y="206" width="324" height="68" rx="9" fill="#1a1216" stroke="#3a242a"/>
       <text x="412" y="226" font-size="10.5" class="cap" fill="#7dd3fc">FS</text>
-      <text x="416" y="250" class="mono" fill="#c9ccd1">open(/etc/shadow)</text>
-      <text x="416" y="268" font-size="11" fill="#8a9098">~/.ssh/id_rsa&#160;&#183;&#160;docker.sock</text>
-      <text x="704" y="246" text-anchor="end" fill="#ff6b6b">&#9940; Landlock EACCES</text>
+      <text x="416" y="250" font-size="12.5" class="mono" fill="#c9ccd1">open /etc/shadow</text>
+      <text x="416" y="268" font-size="11" fill="#8a9098">~/.ssh &#183; docker.sock</text>
+      <text x="704" y="249" text-anchor="end" font-size="12.5" fill="#ff6b6b">&#9940; Landlock</text>
 
       <!-- NET -->
       <rect x="398" y="282" width="324" height="68" rx="9" fill="#1a1216" stroke="#3a242a"/>
       <text x="412" y="302" font-size="10.5" class="cap" fill="#f0a050">NET</text>
-      <text x="416" y="326" class="mono" fill="#c9ccd1">socket(RAW) &#183; curl 1.2.3.4</text>
-      <text x="416" y="344" font-size="11" fill="#8a9098">off-allowlist host</text>
-      <text x="704" y="322" text-anchor="end" fill="#ff6b6b">&#9940; seccomp gate / 403</text>
+      <text x="416" y="326" font-size="12.5" class="mono" fill="#c9ccd1">socket(RAW)</text>
+      <text x="416" y="344" font-size="11" fill="#8a9098">curl &#8594; off-allowlist IP</text>
+      <text x="704" y="325" text-anchor="end" font-size="12.5" fill="#ff6b6b">&#9940; seccomp gate</text>
 
       <!-- PROC -->
       <rect x="398" y="358" width="324" height="68" rx="9" fill="#1a1216" stroke="#3a242a"/>
       <text x="412" y="378" font-size="10.5" class="cap" fill="#b48bd9">PROC</text>
-      <text x="416" y="402" class="mono" fill="#c9ccd1">mount &#183; unshare &#183; ptrace</text>
-      <text x="416" y="420" font-size="11" fill="#8a9098">io_uring &#183; bpf</text>
-      <text x="704" y="398" text-anchor="end" fill="#ff6b6b">&#9940; seccomp EPERM</text>
+      <text x="416" y="402" font-size="12.5" class="mono" fill="#c9ccd1">mount &#183; unshare</text>
+      <text x="416" y="420" font-size="11" fill="#8a9098">ptrace &#183; io_uring &#183; bpf</text>
+      <text x="704" y="401" text-anchor="end" font-size="12.5" fill="#ff6b6b">&#9940; seccomp EPERM</text>
     </g>
 
-    <text x="505" y="458" text-anchor="middle" font-size="11" fill="#6b7785">Landlock &#183; seccomp(+notify) &#183; user/net namespaces &#183; cgroup v2&#160;&#8212;&#160;rootless</text>
+    <text x="505" y="458" text-anchor="middle" font-size="11" fill="#6b7785">Landlock &#183; seccomp &#183; namespaces &#183; cgroup v2&#160;&#183;&#160;rootless</text>
   </g>
 
-  <!-- deny ticks at the boundary -->
-  <g stroke="#ff6b6b" stroke-width="2" opacity="0.8">
-    <line x1="722" y1="240" x2="744" y2="240" marker-end="url(#deny)"/>
-    <line x1="722" y1="316" x2="744" y2="316" marker-end="url(#deny)"/>
-    <line x1="722" y1="392" x2="744" y2="392" marker-end="url(#deny)"/>
-  </g>
-  <!-- allow tick to evidence -->
-  <line x1="722" y1="170" x2="828" y2="170" stroke="#5ee2a0" stroke-width="2" marker-end="url(#arrow)"/>
+  <!-- allowed work flows out to evidence; denied attempts dead-end at the wall -->
+  <line x1="722" y1="170" x2="828" y2="170" stroke="#5ee2a0" stroke-width="2" marker-end="url(#allow)"/>
 
   <!-- ───────── right: evidence + review ───────── -->
   <g>
@@ -122,5 +116,5 @@
   </g>
 
   <!-- footer tagline -->
-  <text x="530" y="500" text-anchor="middle" font-size="12.5" fill="#7d8590">every run captured&#160;&#183;&#160;denials recorded as boundary-pressure&#160;&#183;&#160;state shared over <tspan class="mono" fill="#9aa0aa">refs/h5i/env</tspan></text>
+  <text x="530" y="500" text-anchor="middle" font-size="12.5" fill="#7d8590">every run captured&#160;&#183;&#160;denials scored as boundary-pressure&#160;&#183;&#160;shared via <tspan class="mono" fill="#9aa0aa">refs/h5i/env</tspan></text>
 </svg>

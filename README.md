@@ -44,6 +44,7 @@ Use `h5i` if you want your AI agents to stop leaving their work in thin air.
 - Want the next agent to inherit the full context of the last one?
 - Want Claude and Codex to talk in real time, with the conversation stored in Git?
 - Want to reduce token usage by shrinking noisy tool output while keeping the raw evidence?
+- Want to run a risky refactor or an untrusted build in a confined sandbox, then review it before it touches your tree?
 - Want to catch leaked secrets, blind edits, and risky AI changes before review?
 
 ### Recent News
@@ -64,6 +65,7 @@ h5i is a pure Git sidecar for recording and sharing AI-agent contexts, metadata,
 | `.git/refs/h5i/context` | The reasoning workspace as a DAG: goal, milestones, traces, branches. |
 | `.git/refs/h5i/msg` | Cross-agent message log (append-only, union-merged on pull). |
 | `.git/refs/h5i/objects` | Token-reduction capture manifests: command, exit code, and filtered summary of large outputs (full raw kept locally). |
+| `.git/refs/h5i/env` | Sandbox environments: events, manifests, and digest-pinned policies for isolated, confined agent runs. |
 | `.git/refs/h5i/checkpoints/<agent>` | Per-agent memory snapshots. |
 
 Because these are Git objects, they are content-addressed, deduplicated, pushable, fetchable, and survive `git gc`.
