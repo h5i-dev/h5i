@@ -1099,3 +1099,4 @@ _[Checkpoint: 6a29c860 — edited src/supervisor.rs; edited tests/env_integratio
 _[Checkpoint: 6a29c91f — edited docs/supervisor-design.md; wrote sup-msg.txt; edited sandbox-production-roadmap.md]_
 ---
 
+[20:32:47] ACT: edited tests/env_integration.rs
