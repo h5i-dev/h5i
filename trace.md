@@ -1227,3 +1227,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 [21:03:54] OBSERVE: read ARCHITECTURE.md
 [21:03:56] OBSERVE: read index.ts
 [21:03:56] OBSERVE: read sandbox-manager.ts
+[21:03:56] OBSERVE: read http-proxy.ts
