@@ -40,3 +40,4 @@
 [02:05:24] OBSERVE: read tests/cli_integration.rs
 [02:05:25] OBSERVE: read src/main.rs
 [02:05:27] OBSERVE: read src/objects.rs
+[02:05:32] OBSERVE: read tests/msg_integration.rs
