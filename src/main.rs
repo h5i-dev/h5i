@@ -1705,7 +1705,7 @@ enum EnvCommands {
         /// Policy profile from .h5i/env.toml (default: `default`)
         #[arg(long, default_value = "default")]
         profile: String,
-        /// Minimum isolation claim: workspace|process|container|hardened-container|microvm.
+        /// Minimum isolation claim: workspace|process|supervised|container|hardened-container|microvm.
         /// Fails closed if the host cannot satisfy it (never silently downgrades).
         #[arg(long)]
         isolation: Option<String>,

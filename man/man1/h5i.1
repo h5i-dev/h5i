@@ -1,4 +1,4 @@
-.TH H5I 1 "2026-06-05" "h5i 0.1.6" "h5i Manual"
+.TH H5I 1 "2026-06-10" "h5i 0.1.7" "h5i Manual"
 .
 .SH NAME
 h5i \- Advanced Git sidecar for the AI era
@@ -430,7 +430,123 @@ and per-commit Audit buttons
 .IP \(bu 2
 .B Sessions
 \(em exploration footprint, uncertainty heatmap, and churn for each commit
+.IP \(bu 2
+.B Sandbox
+\(em the read-only "flight recorder" for
+.BR "h5i env" :
+host-readiness strip, an env fleet table with a deterministic boundary-pressure
+score, a five-lane (FS/NET/PROC/RESOURCE/PROVENANCE) per-run timeline, and the
+enforced-policy inspector. Denials are surfaced honestly ("Boundary blocked"
+only when enforcement fired; "Boundary pressure" for probing shapes; "Weak
+isolation" for capability gaps).
 .RE
+.
+.\" ─── env ────────────────────────────────────────────────────────────────────
+.SS h5i env \fISUBCOMMAND\fR
+Isolated agent environments: the fusion of a code branch + git worktree, a
+forked reasoning branch, and a digest-pinned, fail-closed policy manifest. Use
+one for risky or exploratory work instead of editing the main tree in place.
+Every
+.B run
+is policy-enforced and capture-wrapped (evidence in
+.IR refs/h5i/objects ,
+tagged with the env id + enforced policy digest). Lifecycle:
+.BR create " \(-> " run " \(-> " propose " \(-> " apply | abort " \(-> " gc ;
+.B apply
+is never automatic \(em a reviewer applies a proposal. Env state lives in
+.I refs/h5i/env
+and travels with
+.BR "h5i push" / pull
+for a cross-clone review loop.
+.PP
+.B Subcommands
+.RS 4
+.TP
+.BI "create " "NAME " "[\-\-from REV] [\-\-profile P] [\-\-isolation TIER]"
+Create an env; base frozen at creation. Refuses (never downgrades) if the host
+cannot satisfy the isolation claim.
+.TP
+.BI "run " "NAME " "\-\- COMMAND [ARGS...]"
+Run a command inside the env, policy-enforced + capture-wrapped.
+.TP
+.B probe
+Report what isolation this host can enforce (Landlock, user namespaces, seccomp,
+seccomp-notif, cgroup v2 delegation, rootless Podman) and which claims are
+satisfiable.
+.TP
+.B list
+List environments on this clone.
+.TP
+.BI "status " "NAME " "[\-\-json]"
+Lifecycle + enforced policy + evidence + base drift.
+.TP
+.BI "log " NAME
+Event log (created/exec/proposed/applied/aborted/gc/violation/secret).
+.TP
+.BI "diff " "NAME " "[\-\-stat]"
+Diff the env's work against its pinned base.
+.TP
+.BI "inspect " "NAME " "\-\-capture ID"
+Render one evidence capture (findings, exit code, policy digest, redactions).
+.TP
+.BI "compare " "NAMES... " "[\-\-json]"
+The "arena": rank environments side by side.
+.TP
+.BI "rebase " NAME
+Re-pin the base onto the parent branch's advanced tip (3-way; refuses conflicts).
+.TP
+.BI "propose " NAME
+Mediated commit (path-allowlist: rejects nested \fB.git\fR, symlink escapes,
+\fB..\fR) + review brief. Never writes the parent.
+.TP
+.BI "apply " "NAME " "[\-\-patch]"
+Apply a proposal onto its parent (reviewer-selected). Default merges; \fB\-\-patch\fR squashes.
+.TP
+.BI "abort " NAME
+Discard the env; manifest + workspace retained for forensics.
+.TP
+.B gc
+Reclaim worktrees of applied/aborted envs (manifests, branches, captures kept).
+.RE
+.PP
+.B Isolation tiers
+.RS 4
+.IP \(bu 2
+.B workspace
+\(em git worktree only; no kernel confinement (trusted code).
+.IP \(bu 2
+.B process
+\(em Landlock FS allowlist + seccomp deny-list + user/mount/IPC/UTS/net
+namespaces + cgroup v2/rlimits + no-new-privs (rootless; Linux x86-64/aarch64).
+.IP \(bu 2
+.B supervised
+\(em process tier + a live seccomp user-notification socket gate (default-deny:
+only boring inet or granted AF_UNIX proceeds) + an always-on network namespace.
+The first tier that may claim untrusted-code containment; requires the whole
+stack green or is refused.
+.IP \(bu 2
+.B container
+\(em rootless Podman (cap-drop=ALL, read-only rootfs, no docker.sock). The only
+tier that enforces a
+.B net.egress
+domain allowlist today (DNS-pinned host CONNECT proxy, L7, fail-closed).
+.IP \(bu 2
+.B "hardened-container, microvm"
+\(em external backends (gVisor/Kata, Firecracker); not in this build.
+.RE
+.PP
+Policy is defined per profile in
+.IR .h5i/env.toml " (" "isolation, fs.read/write/deny, net.mode/egress, "
+resources.mem/procs/wall/fsize/cpu, tools, env.pass, container.image, secrets).
+Declared
+.B secrets
+are brokered at run time (source
+.IR env: / file: ),
+injected, scrubbed from captured evidence, and audited by fingerprint \(em all
+fail-closed. The fully-resolved policy's sha256 digest is pinned in the manifest
+and every capture (tamper-evident). The
+.B h5i_env_*
+MCP tools mirror these subcommands.
 .
 .\" ─── share push ─────────────────────────────────────────────────────────────
 .SS h5i share push [\fIOPTIONS\fR] (alias: h5i push)
