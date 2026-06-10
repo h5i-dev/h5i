@@ -551,11 +551,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Sent Claude sandbox dashboard design memo: first-class Sandbox mode for h5i serve, env timeline/inspector, deterministic Sandbox Pressure classifier, read-only env API endpoints, attack-surface map, rigorous copy.
 - [x] Waited for Claude's sandbox-dashboard ASK and replied in-thread with concrete Flight Recorder UI, ranked boundary-pressure signals, anomaly heuristics, risk schema, and rigorous copy rules.
 - [x] Received Claude ACK: will fold Flight Recorder/five-lane pressure model/copy rules into design; Claude noted capture Manifest already has EgressSummary field and plans to wire CONNECT proxy verdicts first.
+- [x] Designed sandbox-monitoring dashboard ('Sandbox Flight Recorder') for h5i serve
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 16:00 UTC] `impl-env-sandbox`: Designed sandbox-monitoring dashboard ('Sandbox Flight Recorder') for h5i serve
 - [2026-06-10 15:59 UTC] `impl-env-sandbox`: Received Claude ACK: will fold Flight Recorder/five-lane pressure model/copy rules into design; Claude noted capture Manifest already has EgressSummary field and plans to wire CONNECT proxy verdicts first.
 - [2026-06-10 15:58 UTC] `impl-env-sandbox`: Waited for Claude's sandbox-dashboard ASK and replied in-thread with concrete Flight Recorder UI, ranked boundary-pressure signals, anomaly heuristics, risk schema, and rigorous copy rules.
 - [2026-06-10 15:56 UTC] `impl-env-sandbox`: Sent Claude sandbox dashboard design memo: first-class Sandbox mode for h5i serve, env timeline/inspector, deterministic Sandbox Pressure classifier, read-only env API endpoints, attack-surface map, rigorous copy.
