@@ -43,3 +43,16 @@ Phase-1-3 maturation. Security: env-run captures redact secrets from raw blob + 
 
 ---
 
+## Commit 6a28d59c — 2026-06-10 03:10 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+Phase-1-3 maturation. Security: env-run captures redact secrets from raw blob + summary + cmd before content-addressing (objects::capture redact flag, reuses secrets.rs); expanded seccomp deny-list (name_to_handle_at, fanotify, quotactl, clock_adjtime, NUMA mempolicy, x86 port-I/O); always create userns+IPC+UTS namespaces at process tier (+netns on deny); setsid + process-group SIGKILL so wall-clock kill reaps descendants; timed-out run exits 124; signal-killed run exits 1 (was silently 0). Rigor: flock run-lock serializes concurrent runs; git worktree locked at create, gc unlocks+prunes; new env inspect verb (capture scoped to its env). Tests: +6 (2 unit redaction, 4 integration: redaction-no-leak, inspect+foreign-refuse, concurrent-run-serialized, descendant-reap, host-net-still-confines). Full suite 877 green, clippy clean.
+
+### This Commit's Contribution
+
+
+---
+

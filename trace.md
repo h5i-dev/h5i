@@ -172,3 +172,9 @@ _[Checkpoint: 6a28cf70 — edited docs/environments-design.md; wrote wsl2-host-h
 _[Checkpoint: 6a28d57a — Hardened h5i env: secret redaction, broader sandbox, lifecycle locks, inspect]_
 ---
 
+
+
+---
+_[Checkpoint: 6a28d59c — edited src/main.rs; edited CLAUDE.md; edited CLAUDE.md]_
+---
+
