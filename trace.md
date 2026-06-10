@@ -1081,3 +1081,9 @@ _[Checkpoint: 6a29c7f4 — edited src/supervisor.rs; edited src/supervisor.rs; e
 [20:26:04] OBSERVE: read brqemzn9v.output
 [20:26:08] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): ), but `supervisor::run()` is still the fail-closed Phase A stub — so `env run` fails closed with "live enforcement not wired." Wiring that st…
 [20:26:08] NOTE: PLACEHOLDER (~/Dev/h5i/tests/env_integration.rs): ne test failed: `run_fails_closed` — it asserted the old *stub* behavior ("phase B not wired"), but `run()` is now real and on this (usable) host it…
+
+
+---
+_[Checkpoint: 6a29c860 — edited src/supervisor.rs; edited tests/env_integration.rs; edited src/supervisor.rs]_
+---
+
