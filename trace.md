@@ -243,3 +243,9 @@ _[Checkpoint: 6a28dcb2 — Fix CI: functional process-tier self-test (bits != ru
 [03:41:14] THINK: Let me enhance the probe-output test to assert the new functional line, then run everything:
 [03:41:14] THINK: All green on dev. Let me simulate the CI "not runnable" path (so I can verify the skip/refuse logic actually fires) by using a process profile whose Landlock grants exclude system paths — making `exec` fail just like CI:
 [03:41:14] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): able and JSON form including the split-base warning. Still deferred, consistent with the design's phasing and to avoid fragile external dependencies: …
+
+
+---
+_[Checkpoint: 6a28dcda — edited tests/env_integration.rs; wrote process-tier-bits-vs-runnable.md; edited MEMORY.md]_
+---
+
