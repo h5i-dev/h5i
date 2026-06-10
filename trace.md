@@ -1229,3 +1229,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 [21:03:56] OBSERVE: read sandbox-manager.ts
 [21:03:56] OBSERVE: read http-proxy.ts
 [21:03:56] OBSERVE: read linux-sandbox-utils.ts
+[21:03:59] OBSERVE: read package.json
