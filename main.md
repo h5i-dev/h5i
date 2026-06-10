@@ -536,11 +536,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Env round 3: resource accounting, the arena (compare), tool allowlist, event-log redaction
 - [x] edited tests/env_integration.rs; edited CLAUDE.md; edited CLAUDE.md
 - [x] Fix CI: functional process-tier self-test (bits != runnable), gate kernel tests on it
+- [x] edited tests/env_integration.rs; wrote process-tier-bits-vs-runnable.md; edited MEMORY.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 03:41 UTC] `impl-env-sandbox`: edited tests/env_integration.rs; wrote process-tier-bits-vs-runnable.md; edited MEMORY.md
 - [2026-06-10 03:40 UTC] `impl-env-sandbox`: Fix CI: functional process-tier self-test (bits != runnable), gate kernel tests on it
 - [2026-06-10 03:23 UTC] `impl-env-sandbox`: edited tests/env_integration.rs; edited CLAUDE.md; edited CLAUDE.md
 - [2026-06-10 03:23 UTC] `impl-env-sandbox`: Env round 3: resource accounting, the arena (compare), tool allowlist, event-log redaction
