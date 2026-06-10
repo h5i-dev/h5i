@@ -1118,3 +1118,4 @@ _[Checkpoint: 6a29c91f — edited docs/supervisor-design.md; wrote sup-msg.txt; 
 _[Checkpoint: 6a29cc92 — edited tests/env_integration.rs; edited src/sandbox.rs; edited tests/env_integration.rs]_
 ---
 
+[20:44:57] OBSERVE: read bdsa93p3h.output
