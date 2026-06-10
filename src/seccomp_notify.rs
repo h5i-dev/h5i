@@ -90,10 +90,13 @@ fn jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
 }
 
 /// Build the filter that NOTIFYs on `socket`/`socketpair`, ALLOWs everything
-/// else, and KILLs on an unexpected architecture (fail-closed). Pure — the BPF
-/// is structurally unit-tested.
-pub fn build_socket_notify_program() -> Vec<SockFilter> {
-    vec![
+/// else, and KILLs on an unexpected architecture (fail-closed). Returns a
+/// fixed-size **stack** array (no heap) so [`install_listener`] is
+/// allocation-free and therefore async-signal-safe to call in a `fork`ed child —
+/// a `Vec` here would risk a malloc-lock deadlock when the parent is
+/// multithreaded (e.g. the cargo test harness). Pure; structurally unit-tested.
+pub fn build_socket_notify_program() -> [SockFilter; 8] {
+    [
         // 0: A = arch
         stmt(BPF_LD | BPF_W | BPF_ABS, OFF_ARCH),
         // 1: if arch == the host arch, skip the kill
@@ -112,6 +115,10 @@ pub fn build_socket_notify_program() -> Vec<SockFilter> {
         stmt(BPF_RET | BPF_K, SECCOMP_RET_USER_NOTIF),
     ]
 }
+
+/// Compile-time guard: the BPF builder's array length must match what
+/// [`install_listener`] tells the kernel (`SockFprog::len`).
+const _: () = assert!(std::mem::size_of::<[SockFilter; 8]>() == 8 * 8);
 
 // ─── kernel ABI: seccomp_data / seccomp_notif / resp / sizes ──────────────────
 
@@ -254,77 +261,158 @@ pub struct ServeStats {
 pub fn serve(listener: RawFd, unix_granted: bool, stop: &std::sync::atomic::AtomicBool) -> ServeStats {
     use std::sync::atomic::Ordering;
     let mut stats = ServeStats::default();
-    // Non-blocking so poll() governs blocking and we can check `stop`.
-    unsafe {
-        let fl = libc::fcntl(listener, libc::F_GETFL);
-        libc::fcntl(listener, libc::F_SETFL, fl | libc::O_NONBLOCK);
-    }
+    set_nonblocking(listener);
     while !stop.load(Ordering::Acquire) {
         let mut pfd = libc::pollfd { fd: listener, events: libc::POLLIN, revents: 0 };
         let pr = unsafe { libc::poll(&mut pfd, 1, 50) }; // 50ms tick to recheck stop
         if pr <= 0 {
             continue; // timeout / EINTR → recheck stop
         }
-
-        let mut req: SeccompNotif = unsafe { std::mem::zeroed() };
-        let rc = unsafe { libc::ioctl(listener, ioctl_recv(), &mut req as *mut SeccompNotif) };
-        if rc != 0 {
-            let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            if err == libc::EAGAIN || err == libc::EINTR {
-                continue;
-            }
-            break; // a real error → fail-closed
-        }
-
-        // Defense-in-depth (Codex): the BPF should only ever notify on our arch
-        // + socket/socketpair, but a security boundary must not trust impossible
-        // inputs. An unexpected arch/nr is treated as deny, never continue.
-        let trusted_shape = req.data.arch == AUDIT_ARCH
-            && (req.data.nr as u32 == NR_SOCKET || req.data.nr as u32 == NR_SOCKETPAIR);
-        let decision = if trusted_shape {
-            // args[0]=domain, args[1]=type, args[2]=protocol (socket & socketpair).
-            decide_socket(
-                req.data.args[0] as i32,
-                req.data.args[1] as i32,
-                req.data.args[2] as i32,
-                unix_granted,
-            )
-        } else {
-            Decision::Deny(libc::EPERM)
-        };
-
-        let mut resp: SeccompNotifResp = unsafe { std::mem::zeroed() };
-        resp.id = req.id;
-        match decision {
-            Decision::Continue => resp.flags = SECCOMP_USER_NOTIF_FLAG_CONTINUE,
-            Decision::Deny(errno) => resp.error = -errno, // val ignored when error != 0
-        }
-
-        // Re-validate the id right before SEND: if the tracee died or the
-        // syscall was interrupted, the id is stale and SEND would mis-target —
-        // skip (never reply to a stale id).
-        let valid = unsafe { libc::ioctl(listener, ioctl_id_valid(), &req.id as *const u64) } == 0;
-        if !valid {
-            continue;
-        }
-        let send_rc = unsafe { libc::ioctl(listener, ioctl_send(), &resp as *const SeccompNotifResp) };
-        if send_rc != 0 {
-            let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            // The tracee can die between ID_VALID and SEND → ENOENT (stale,
-            // benign). EINTR is retryable-but-rare; treat as benign-skip. Any
-            // other SEND error is a supervisor failure → fail-closed.
-            if err == libc::ENOENT || err == libc::EINTR {
-                continue;
-            }
+        if matches!(handle_one(listener, unix_granted, &mut stats), Flow::FailClosed) {
             break;
-        }
-        // Count only *delivered* verdicts so the stats never lie.
-        match decision {
-            Decision::Continue => stats.allowed += 1,
-            Decision::Deny(_) => stats.denied += 1,
         }
     }
     stats
+}
+
+/// The production-correct lifecycle: serve notifications until the supervised
+/// process exits, observed via its **pidfd** (no `waitpid`/stop-flag race — the
+/// loop self-terminates). `pidfd` becomes readable when the child exits; on that
+/// signal we drain any final pending notifications and return. The listener and
+/// pidfd are both polled, so a blocked `RECV` can never strand the supervisor.
+pub fn serve_with_pidfd(listener: RawFd, pidfd: RawFd, unix_granted: bool) -> ServeStats {
+    let mut stats = ServeStats::default();
+    set_nonblocking(listener);
+    loop {
+        let mut pfds = [
+            libc::pollfd { fd: listener, events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: pidfd, events: libc::POLLIN, revents: 0 },
+        ];
+        let pr = unsafe { libc::poll(pfds.as_mut_ptr(), 2, -1) };
+        if pr < 0 {
+            let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if err == libc::EINTR {
+                continue;
+            }
+            break; // poll itself failed → fail-closed
+        }
+        // Handle exactly ONE notification per wakeup — only when poll confirms
+        // the listener is readable. We must never call RECV speculatively: the
+        // seccomp listener does not reliably honor O_NONBLOCK, so a RECV with
+        // nothing pending would *block* and strand the supervisor.
+        if pfds[0].revents & libc::POLLIN != 0
+            && matches!(handle_one(listener, unix_granted, &mut stats), Flow::FailClosed)
+        {
+            break;
+        }
+        // Child exited → drain any notifications still pending (each guarded by a
+        // zero-timeout poll so we never block), then stop.
+        if pfds[1].revents & (libc::POLLIN | libc::POLLHUP) != 0 {
+            while listener_pending(listener) {
+                if matches!(handle_one(listener, unix_granted, &mut stats), Flow::FailClosed) {
+                    break;
+                }
+            }
+            break;
+        }
+    }
+    stats
+}
+
+/// Is a notification pending on `listener` right now? (Zero-timeout poll — used
+/// to guard `handle_one` so we never issue a blocking `RECV`.)
+fn listener_pending(listener: RawFd) -> bool {
+    let mut pfd = libc::pollfd { fd: listener, events: libc::POLLIN, revents: 0 };
+    unsafe { libc::poll(&mut pfd, 1, 0) > 0 && (pfd.revents & libc::POLLIN != 0) }
+}
+
+/// Result of processing one pending notification.
+enum Flow {
+    /// One notification was handled (allow/deny delivered or stale-skipped).
+    Handled,
+    /// No notification was pending (`EAGAIN`).
+    Idle,
+    /// An unexpected error — the supervisor must stop (fail-closed).
+    FailClosed,
+}
+
+fn set_nonblocking(fd: RawFd) {
+    unsafe {
+        let fl = libc::fcntl(fd, libc::F_GETFL);
+        libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK);
+    }
+}
+
+/// Process at most one pending notification on `listener` (non-blocking). Shared
+/// by both serve loops so the security-critical decision/reply logic exists once.
+fn handle_one(listener: RawFd, unix_granted: bool, stats: &mut ServeStats) -> Flow {
+    let mut req: SeccompNotif = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::ioctl(listener, ioctl_recv(), &mut req as *mut SeccompNotif) };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        if err == libc::EAGAIN || err == libc::EINTR {
+            return Flow::Idle;
+        }
+        return Flow::FailClosed;
+    }
+
+    // Defense-in-depth (Codex): the BPF should only ever notify on our arch +
+    // socket/socketpair, but a security boundary must not trust impossible
+    // inputs. An unexpected arch/nr is treated as deny, never continue.
+    let trusted_shape = req.data.arch == AUDIT_ARCH
+        && (req.data.nr as u32 == NR_SOCKET || req.data.nr as u32 == NR_SOCKETPAIR);
+    let decision = if trusted_shape {
+        // args[0]=domain, args[1]=type, args[2]=protocol (socket & socketpair).
+        decide_socket(
+            req.data.args[0] as i32,
+            req.data.args[1] as i32,
+            req.data.args[2] as i32,
+            unix_granted,
+        )
+    } else {
+        Decision::Deny(libc::EPERM)
+    };
+
+    let mut resp: SeccompNotifResp = unsafe { std::mem::zeroed() };
+    resp.id = req.id;
+    match decision {
+        Decision::Continue => resp.flags = SECCOMP_USER_NOTIF_FLAG_CONTINUE,
+        Decision::Deny(errno) => resp.error = -errno, // val ignored when error != 0
+    }
+
+    // Re-validate the id right before SEND: if the tracee died or the syscall
+    // was interrupted, the id is stale and SEND would mis-target — skip.
+    let valid = unsafe { libc::ioctl(listener, ioctl_id_valid(), &req.id as *const u64) } == 0;
+    if !valid {
+        return Flow::Handled; // consumed a notification (stale); keep draining
+    }
+    let send_rc = unsafe { libc::ioctl(listener, ioctl_send(), &resp as *const SeccompNotifResp) };
+    if send_rc != 0 {
+        let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        // The tracee can die between ID_VALID and SEND → ENOENT (stale, benign).
+        // EINTR is retryable-but-rare; benign-skip. Any other SEND error is a
+        // supervisor failure → fail-closed.
+        if err == libc::ENOENT || err == libc::EINTR {
+            return Flow::Handled;
+        }
+        return Flow::FailClosed;
+    }
+    // Count only *delivered* verdicts so the stats never lie.
+    match decision {
+        Decision::Continue => stats.allowed += 1,
+        Decision::Deny(_) => stats.denied += 1,
+    }
+    Flow::Handled
+}
+
+/// Open a pidfd for `pid` (`pidfd_open(2)`) — readable when the process exits.
+pub fn pidfd_open(pid: libc::pid_t) -> std::io::Result<RawFd> {
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+    if fd < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(fd as RawFd)
+    }
 }
 
 // ─── SCM_RIGHTS fd handoff (child → supervisor) ───────────────────────────────
@@ -524,6 +612,90 @@ mod tests {
             assert_eq!(buf[1], 1, "boring inet socket must be ALLOWED");
             assert!(stats.denied >= 1, "supervisor must have recorded a denial");
             assert!(stats.allowed >= 1, "supervisor must have recorded an allow");
+        }
+    }
+
+    // Isolate whether pidfd POLLIN signals child exit on this host at all.
+    #[test]
+    fn pidfd_signals_child_exit() {
+        unsafe {
+            let pid = libc::fork();
+            assert!(pid >= 0);
+            if pid == 0 {
+                libc::_exit(0);
+            }
+            let pidfd = match pidfd_open(pid) {
+                Ok(fd) => fd,
+                Err(e) => {
+                    eprintln!("skipping: pidfd_open unsupported: {e}");
+                    libc::waitpid(pid, &mut 0, 0);
+                    return;
+                }
+            };
+            let mut pfd = libc::pollfd { fd: pidfd, events: libc::POLLIN, revents: 0 };
+            let pr = libc::poll(&mut pfd, 1, 3000); // 3s budget
+            let revents = pfd.revents;
+            libc::waitpid(pid, &mut 0, 0);
+            libc::close(pidfd);
+            assert_eq!(pr, 1, "pidfd poll must return readable on child exit (got {pr})");
+            assert!(revents & libc::POLLIN != 0, "pidfd must be POLLIN on exit (revents={revents})");
+        }
+    }
+
+    // The production-correct lifecycle: serve_with_pidfd self-terminates when the
+    // child exits, with no stop flag and no waitpid/serve ordering. Proves the
+    // loop the live supervised run will use.
+    #[test]
+    fn live_serve_with_pidfd_self_terminates() {
+        if !crate::supervisor::probe().components.iter().any(|c| c.name == "seccomp-user-notif" && c.ok)
+            || validate_notif_sizes().is_err()
+        {
+            eprintln!("skipping: seccomp user-notif unavailable on this host");
+            return;
+        }
+        unsafe {
+            let mut sv = [0i32; 2];
+            assert_eq!(libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()), 0);
+
+            let pid = libc::fork();
+            assert!(pid >= 0, "fork");
+            if pid == 0 {
+                // Child path is allocation-free / async-signal-safe (the parent
+                // is the multithreaded test harness, so a malloc here could
+                // deadlock on an inherited lock).
+                libc::close(sv[0]);
+                libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+                let lfd = match install_listener() {
+                    Ok(fd) => fd,
+                    Err(_) => libc::_exit(99),
+                };
+                if send_fd(sv[1], lfd).is_err() {
+                    libc::_exit(98);
+                }
+                // A denied raw socket then an allowed inet socket, then exit.
+                let raw = libc::socket(libc::AF_INET, libc::SOCK_RAW, libc::IPPROTO_TCP);
+                if raw >= 0 {
+                    libc::close(raw);
+                }
+                let inet = libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0);
+                if inet >= 0 {
+                    libc::close(inet);
+                }
+                libc::_exit(0);
+            }
+
+            // Parent/supervisor: open the child's pidfd, receive the listener,
+            // then serve until the pidfd reports the child exited — no stop flag.
+            libc::close(sv[1]);
+            let pidfd = pidfd_open(pid).expect("pidfd_open");
+            let listener = recv_fd(sv[0]).expect("receive listener fd");
+            let stats = serve_with_pidfd(listener, pidfd, false);
+            let mut status = 0;
+            libc::waitpid(pid, &mut status, 0);
+            libc::close(pidfd);
+
+            assert!(stats.denied >= 1, "raw socket should have been denied");
+            assert!(stats.allowed >= 1, "inet socket should have been allowed");
         }
     }
 }
