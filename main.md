@@ -529,11 +529,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited docs/environments-design.md
 - [x] edited docs/environments-design.md
 - [x] edited docs/environments-design.md; edited docs/environments-design.md
+- [x] Implemented h5i env (worktree+sandbox) per docs/environments-design.md phases 1-3
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 02:42 UTC] `impl-env-sandbox`: Implemented h5i env (worktree+sandbox) per docs/environments-design.md phases 1-3
 - [2026-06-09 21:46 UTC] `update-doc-with-i5h`: edited docs/environments-design.md; edited docs/environments-design.md
 - [2026-06-09 21:39 UTC] `update-doc-with-i5h`: edited docs/environments-design.md
 - [2026-06-09 21:38 UTC] `update-doc-with-i5h`: edited docs/environments-design.md
