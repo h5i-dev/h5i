@@ -695,3 +695,4 @@ _[Checkpoint: 6a29a099 — edited src/risk.rs; edited src/risk.rs; edited src/ri
 [17:39:02] ACT: wrote sandbox-production-roadmap.md
 [17:39:08] OBSERVE: read MEMORY.md
 [17:39:13] ACT: edited MEMORY.md
+[17:39:44] THINK: I'll fold Codex's answer in and come back with a concrete recommendation on which subsystem to design first — and can then draft that design (the way we did for the dashboard) on your go-ahead.
