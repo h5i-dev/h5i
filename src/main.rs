@@ -1732,8 +1732,18 @@ enum EnvCommands {
     /// List environments on this clone
     List,
 
-    /// Show one environment's manifest, policy, and evidence
+    /// Show one environment's status: lifecycle, enforced policy, evidence,
+    /// and base drift
     Status {
+        name: String,
+        /// Emit the raw manifest JSON instead of the human view
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Rebase the environment onto its parent branch's current tip, re-pinning
+    /// the base (use when `status` reports the parent has advanced)
+    Rebase {
         name: String,
     },
 
@@ -8053,9 +8063,19 @@ jq -c '{
                     }
                 }
 
-                EnvCommands::Status { name } => {
+                EnvCommands::Status { name, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
-                    println!("{}", serde_json::to_string_pretty(&m)?);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&m)?);
+                    } else {
+                        print!("{}", h5i_core::env::status_report(git, &h5i_root, &m));
+                    }
+                }
+
+                EnvCommands::Rebase { name } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let msg_out = h5i_core::env::rebase(git, &h5i_root, &mut m)?;
+                    println!("{} {}", SUCCESS, msg_out);
                 }
 
                 EnvCommands::Log { name } => {

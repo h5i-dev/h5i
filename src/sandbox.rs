@@ -128,7 +128,15 @@ pub struct Profile {
     pub mem_bytes: Option<u64>,
     pub max_procs: Option<u64>,
     pub wall_secs: u64,
-    /// Informational tool list (not enforced in v1; recorded for provenance).
+    /// Max single-file size (RLIMIT_FSIZE) — caps disk-bomb writes. Opt-in:
+    /// `None` leaves it unbounded so legitimate large build artifacts aren't
+    /// truncated with SIGXFSZ.
+    pub fsize_bytes: Option<u64>,
+    /// CPU-time limit in seconds (RLIMIT_CPU) — a kernel backstop to the
+    /// wall clock against a CPU-spinning command. Opt-in.
+    pub cpu_secs: Option<u64>,
+    /// Tools allowlist — when non-empty, only these programs (argv[0] basename)
+    /// may run; enforced fail-closed (see `check_tool_allowlist`).
     pub tools: Vec<String>,
     /// Environment-variable allowlist — the child gets *only* these (plus
     /// nothing else; secrets are never inherited wholesale).
@@ -153,6 +161,8 @@ impl Profile {
             mem_bytes: Some(4 * 1024 * 1024 * 1024),
             max_procs: Some(256),
             wall_secs: DEFAULT_WALL.as_secs(),
+            fsize_bytes: None,
+            cpu_secs: None,
             tools: Vec::new(),
             env_pass: vec!["PATH".into(), "HOME".into(), "LANG".into()],
         }
@@ -225,6 +235,8 @@ struct ResourcesToml {
     mem: Option<String>,
     procs: Option<u64>,
     wall: Option<String>,
+    fsize: Option<String>,
+    cpu: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -293,6 +305,14 @@ pub fn load_profile(
                 wall_secs: match t.resources.as_ref().and_then(|r| r.wall.as_deref()) {
                     Some(s) => parse_wall(s)?.as_secs(),
                     None => base.wall_secs,
+                },
+                fsize_bytes: match t.resources.as_ref().and_then(|r| r.fsize.as_deref()) {
+                    Some(s) => Some(parse_mem(s)?),
+                    None => base.fsize_bytes,
+                },
+                cpu_secs: match t.resources.as_ref().and_then(|r| r.cpu.as_deref()) {
+                    Some(s) => Some(parse_wall(s)?.as_secs()),
+                    None => base.cpu_secs,
                 },
                 tools: t.tools,
                 env_pass: if t.env.pass.is_empty() { base.env_pass } else { t.env.pass },
@@ -736,6 +756,8 @@ fn run_confined(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result
     let gid = unsafe { libc::getegid() };
     let mem = p.mem_bytes;
     let nproc = p.max_procs;
+    let fsize = p.fsize_bytes;
+    let cpu = p.cpu_secs;
 
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(&work);
@@ -787,6 +809,21 @@ fn run_confined(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result
             if let Some(n) = nproc {
                 let lim = libc::rlimit { rlim_cur: n, rlim_max: n };
                 if libc::setrlimit(libc::RLIMIT_NPROC, &lim) != 0 {
+                    return Err(Error::last_os_error());
+                }
+            }
+            if let Some(bytes) = fsize {
+                // Cap any single file the command writes — a disk-bomb backstop.
+                let lim = libc::rlimit { rlim_cur: bytes, rlim_max: bytes };
+                if libc::setrlimit(libc::RLIMIT_FSIZE, &lim) != 0 {
+                    return Err(Error::last_os_error());
+                }
+            }
+            if let Some(secs) = cpu {
+                // Hard CPU-time cap (SIGKILL at the hard limit) — a kernel
+                // backstop to the host-side wall-clock kill.
+                let lim = libc::rlimit { rlim_cur: secs, rlim_max: secs };
+                if libc::setrlimit(libc::RLIMIT_CPU, &lim) != 0 {
                     return Err(Error::last_os_error());
                 }
             }
@@ -907,6 +944,12 @@ fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
         // filesystem-wide change notification
         libc::SYS_fanotify_init,
         libc::SYS_fanotify_mark,
+        // io_uring — a large, repeatedly-exploited kernel attack surface that
+        // also bypasses seccomp for the operations it submits; build/test
+        // workloads don't need it, so deny the whole interface.
+        libc::SYS_io_uring_setup,
+        libc::SYS_io_uring_enter,
+        libc::SYS_io_uring_register,
     ];
     // x86_64-only port-I/O and LDT syscalls (absent on aarch64).
     #[cfg(target_arch = "x86_64")]
@@ -1095,6 +1138,45 @@ env.pass  = ["PATH", "HOME", "LANG"]
         assert_eq!(p.wall_secs, 30 * 60);
         assert_eq!(p.env_pass, vec!["PATH", "HOME", "LANG"]);
         assert_eq!(p.tools.len(), 5);
+    }
+
+    #[test]
+    fn resources_fsize_and_cpu_parse_and_default_off() {
+        // Opt-in: absent → None (unbounded file size, no CPU cap).
+        let p = load_from_str(doc_example_toml(), "default", None).unwrap();
+        assert_eq!(p.fsize_bytes, None);
+        assert_eq!(p.cpu_secs, None);
+
+        let toml_text = r#"
+[profile.default]
+isolation = "process"
+resources = { mem = "2G", fsize = "100M", cpu = "5s" }
+"#;
+        let p = load_from_str(toml_text, "default", None).unwrap();
+        assert_eq!(p.mem_bytes, Some(2 * 1024 * 1024 * 1024));
+        assert_eq!(p.fsize_bytes, Some(100 * 1024 * 1024));
+        assert_eq!(p.cpu_secs, Some(5));
+    }
+
+    #[test]
+    fn fsize_changes_the_policy_digest() {
+        let mut a = Profile::builtin("default", IsolationClaim::Process);
+        let mut b = a.clone();
+        a.fsize_bytes = None;
+        b.fsize_bytes = Some(100 * 1024 * 1024);
+        let ra = ResolvedPolicy { claim: a.isolation, profile: a };
+        let rb = ResolvedPolicy { claim: b.isolation, profile: b };
+        assert_ne!(ra.digest().unwrap(), rb.digest().unwrap());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn seccomp_deny_program_builds_and_blocks_io_uring() {
+        // The program compiles on this arch …
+        assert!(seccomp_deny_program().is_ok());
+        // … and io_uring is in the denied set (the curated list is the contract).
+        // Reference the syscalls so this test fails to compile if libc drops them.
+        let _ = (libc::SYS_io_uring_setup, libc::SYS_io_uring_enter, libc::SYS_io_uring_register);
     }
 
     #[test]

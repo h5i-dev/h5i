@@ -634,6 +634,36 @@ fn process_tier_env_allowlist() {
     assert!(text.contains("PATH_SET=yes"), "allowlisted PATH must pass: {text}");
 }
 
+/// `resources.fsize` caps any single file the confined command writes — a
+/// disk-bomb backstop (RLIMIT_FSIZE → SIGXFSZ). Capability-gated.
+#[test]
+fn process_tier_fsize_caps_disk_bomb() {
+    if !process_tier_runnable() {
+        eprintln!("SKIP process_tier_fsize_caps_disk_bomb: process tier not runnable on this host");
+        return;
+    }
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.default]\nisolation = \"process\"\nresources = { fsize = \"1M\" }\n",
+    )
+    .unwrap();
+    r.h5i_ok(&["env", "create", "bomb"]);
+
+    // Try to write 8 MiB into a single file; the 1 MiB RLIMIT_FSIZE kills it.
+    let out = r.h5i(&[
+        "env", "run", "bomb", "--", "sh", "-c",
+        "head -c 8388608 /dev/zero > big.bin",
+    ]);
+    assert!(!out.status.success(), "writing past the fsize cap must fail");
+    let big = r.work("bomb").join("big.bin");
+    if big.exists() {
+        let sz = std::fs::metadata(&big).unwrap().len();
+        assert!(sz <= 2 * 1024 * 1024, "file should be capped near 1 MiB, got {sz} bytes");
+    }
+}
+
 // ─── 8. secret redaction in evidence (design §7) ────────────────────────────
 
 const PLANTED_SECRET: &str = "ghp_0123456789012345678901234567890123ab";
@@ -810,7 +840,79 @@ fn compare_warns_when_bases_differ() {
     assert!(out.contains("do NOT share a base"), "must warn on split bases: {out}");
 }
 
-// ─── 13. probe is honest and machine-readable ───────────────────────────────
+// ─── 13. base drift + rebase (§9) ───────────────────────────────────────────
+
+#[test]
+fn status_reports_drift_and_rebase_refreshes_the_base() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "drifter"]);
+    let base0 = out_str(&git(&r.dir, &["rev-parse", "HEAD"])).trim().to_string();
+
+    // No drift initially.
+    let st = out_str(&r.h5i_ok(&["env", "status", "drifter"]));
+    assert!(st.contains("up to date with parent"), "{st}");
+    assert!(st.contains(&base0[..12]), "status shows the pinned base: {st}");
+
+    // The env makes a change on a disjoint file …
+    std::fs::write(r.work("drifter").join("env.txt"), "from env\n").unwrap();
+    // … while the parent advances on another file.
+    std::fs::write(r.dir.join("lib.py"), "def hello():\n    return 99\n").unwrap();
+    git(&r.dir, &["add", "lib.py"]);
+    git(&r.dir, &["commit", "-m", "parent moves"]);
+    let base1 = out_str(&git(&r.dir, &["rev-parse", "HEAD"])).trim().to_string();
+
+    // status (and the JSON manifest's base) now show drift.
+    let st = out_str(&r.h5i_ok(&["env", "status", "drifter"]));
+    assert!(st.contains("parent advanced 1 commit"), "drift surfaced: {st}");
+
+    // Rebase folds the parent's change in and re-pins the base.
+    let out = out_str(&r.h5i_ok(&["env", "rebase", "drifter"]));
+    assert!(out.contains("rebased onto main"), "{out}");
+    assert_eq!(r.manifest("drifter")["base_commit"].as_str().unwrap(), base1, "base re-pinned");
+
+    // Worktree now carries BOTH sides; drift is cleared.
+    let lib = std::fs::read_to_string(r.work("drifter").join("lib.py")).unwrap();
+    assert!(lib.contains("return 99"), "parent's change folded in: {lib}");
+    assert!(r.work("drifter").join("env.txt").is_file(), "env's change preserved");
+    let st = out_str(&r.h5i_ok(&["env", "status", "drifter"]));
+    assert!(st.contains("up to date with parent"), "drift cleared: {st}");
+
+    // The rebased env still applies cleanly onto the advanced parent.
+    r.h5i_ok(&["env", "propose", "drifter"]);
+    r.h5i_ok(&["env", "apply", "drifter"]);
+    assert!(r.dir.join("env.txt").is_file());
+}
+
+#[test]
+fn rebase_refuses_on_conflict_and_keeps_the_base() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "clash"]);
+    let base0 = out_str(&git(&r.dir, &["rev-parse", "HEAD"])).trim().to_string();
+
+    // Both the env and the parent edit the same file differently.
+    std::fs::write(r.work("clash").join("README.md"), "env version\n").unwrap();
+    std::fs::write(r.dir.join("README.md"), "parent version\n").unwrap();
+    git(&r.dir, &["add", "README.md"]);
+    git(&r.dir, &["commit", "-m", "parent readme"]);
+
+    let out = r.h5i(&["env", "rebase", "clash"]);
+    assert!(!out.status.success(), "conflicting rebase must refuse");
+    assert!(out_str(&out).contains("conflicts against the new base"), "{}", out_str(&out));
+    // The base is untouched after a refused rebase.
+    assert_eq!(r.manifest("clash")["base_commit"].as_str().unwrap(), base0);
+}
+
+#[test]
+fn status_json_still_emits_the_manifest() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "j"]);
+    let json = out_str(&r.h5i_ok(&["env", "status", "j", "--json"]));
+    let v: serde_json::Value = serde_json::from_str(&json).expect("status --json is JSON");
+    assert_eq!(v["id"], "env/tester/j");
+    assert_eq!(v["status"], "created");
+}
+
+// ─── 14. probe is honest and machine-readable ───────────────────────────────
 
 #[test]
 fn probe_reports_all_capability_lines() {

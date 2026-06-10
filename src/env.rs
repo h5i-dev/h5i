@@ -749,6 +749,122 @@ pub fn diff(h5i_root: &Path, m: &EnvManifest, stat_only: bool) -> Result<String,
     Ok(out)
 }
 
+// ─── base drift (§9) ────────────────────────────────────────────────────────
+
+/// How an env's pinned base relates to its parent branch's current tip.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum Drift {
+    /// The parent branch still points at the env's pinned base.
+    UpToDate,
+    /// The parent advanced; the base is an ancestor of the new tip.
+    /// `commits` is how many commits the parent is ahead — `env rebase` can
+    /// fast-forward the env's base onto it.
+    ParentAhead { tip: String, commits: usize },
+    /// The parent diverged or was rewound (the base is not an ancestor of the
+    /// tip). Manual intervention; `rebase` still attempts a 3-way merge.
+    Diverged { tip: String },
+    /// The parent branch no longer exists (renamed/deleted).
+    ParentGone,
+}
+
+impl Drift {
+    pub fn is_current(&self) -> bool {
+        matches!(self, Drift::UpToDate)
+    }
+    /// One-line human summary.
+    pub fn summary(&self) -> String {
+        match self {
+            Drift::UpToDate => "up to date with parent".into(),
+            Drift::ParentAhead { commits, tip } => format!(
+                "parent advanced {commits} commit{} (now {}) — `h5i env rebase` to refresh the base",
+                if *commits == 1 { "" } else { "s" },
+                &tip[..12.min(tip.len())]
+            ),
+            Drift::Diverged { tip } => format!(
+                "parent diverged from the base (now {}) — `h5i env rebase` will 3-way merge",
+                &tip[..12.min(tip.len())]
+            ),
+            Drift::ParentGone => "parent branch is gone".into(),
+        }
+    }
+}
+
+/// Compute how `m`'s pinned base relates to its parent branch's current tip.
+pub fn drift(repo: &Repository, m: &EnvManifest) -> Drift {
+    let Ok(reference) = repo.find_reference(&format!("refs/heads/{}", m.parent_branch)) else {
+        return Drift::ParentGone;
+    };
+    let Some(tip) = reference.peel_to_commit().ok().map(|c| c.id()) else {
+        return Drift::ParentGone;
+    };
+    let Ok(base) = git2::Oid::from_str(&m.base_commit) else {
+        return Drift::Diverged { tip: tip.to_string() };
+    };
+    if tip == base {
+        return Drift::UpToDate;
+    }
+    // base an ancestor of tip → parent simply moved forward.
+    if repo.graph_descendant_of(tip, base).unwrap_or(false) {
+        let commits = repo
+            .graph_ahead_behind(tip, base)
+            .map(|(ahead, _)| ahead)
+            .unwrap_or(0);
+        Drift::ParentAhead { tip: tip.to_string(), commits }
+    } else {
+        Drift::Diverged { tip: tip.to_string() }
+    }
+}
+
+// ─── status (human view) ────────────────────────────────────────────────────
+
+/// A human-readable status report for one environment: identity, lifecycle,
+/// the policy actually enforced, evidence, and base drift.
+pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("── {} ──\n", m.id));
+    out.push_str(&format!("  status   : {}\n", m.status));
+    out.push_str(&format!("  agent    : {}\n", m.agent));
+    out.push_str(&format!(
+        "  base     : {} (from {})\n",
+        &m.base_commit[..12.min(m.base_commit.len())],
+        m.parent_branch
+    ));
+    out.push_str(&format!("  branch   : {}\n", m.branch));
+    out.push_str(&format!("  context  : {}\n", m.context_branch));
+    out.push_str(&format!(
+        "  policy   : profile={} isolation={} digest={}\n",
+        m.profile,
+        m.isolation_claim,
+        &m.policy_digest[..12.min(m.policy_digest.len())]
+    ));
+    // Resolved policy details when readable (digest-verified).
+    if let Ok(policy) = load_policy(h5i_root, m) {
+        let p = &policy.profile;
+        out.push_str(&format!(
+            "  enforce  : net.mode={:?} fs.write={:?} mem={} procs={} wall={}s{}{}\n",
+            p.net_mode,
+            p.fs_write,
+            p.mem_bytes.map(|b| format!("{}MiB", b / 1024 / 1024)).unwrap_or_else(|| "∞".into()),
+            p.max_procs.map(|n| n.to_string()).unwrap_or_else(|| "∞".into()),
+            p.wall_secs,
+            p.fsize_bytes.map(|b| format!(" fsize={}MiB", b / 1024 / 1024)).unwrap_or_default(),
+            p.cpu_secs.map(|s| format!(" cpu={s}s")).unwrap_or_default(),
+        ));
+        if !p.tools.is_empty() {
+            out.push_str(&format!("  tools    : {}\n", p.tools.join(", ")));
+        }
+    }
+    out.push_str(&format!(
+        "  evidence : {} capture(s){}\n",
+        m.captures.len(),
+        if m.captures.is_empty() { String::new() } else { format!(": {}", m.captures.join(", ")) }
+    ));
+    let d = drift(repo, m);
+    let marker = if d.is_current() { "✓" } else { "⚠" };
+    out.push_str(&format!("  drift    : {marker} {}\n", d.summary()));
+    out
+}
+
 // ─── inspect (§9) ───────────────────────────────────────────────────────────
 
 /// Render one of an environment's evidence captures: its structured findings
@@ -1127,6 +1243,10 @@ pub fn propose(
         &m.policy_digest[..12.min(m.policy_digest.len())]
     ));
     brief.push_str(&format!("  evidence: {} capture(s): {}\n", m.captures.len(), m.captures.join(", ")));
+    let d = drift(repo, m);
+    if !d.is_current() {
+        brief.push_str(&format!("  drift   : ⚠ {}\n", d.summary()));
+    }
     if !stat.trim().is_empty() {
         brief.push_str("  diff    :\n");
         for line in stat.lines() {
@@ -1275,6 +1395,127 @@ pub fn apply(
         &new_commit.to_string()[..12],
         if base_oid == parent_tip.id() && !patch_mode { ", fast-forward" } else { "" },
         ctx_note
+    ))
+}
+
+/// Rebase the environment onto its parent branch's current tip (§9 — "the
+/// parent must not mutate under active envs; if it does, h5i detects and offers
+/// rebase"). The pinned base is immutable by default; this is the *sanctioned*
+/// re-pin.
+///
+/// Steps: snapshot the worktree via the mediated commit, 3-way merge the env's
+/// changes onto the new parent tip (refusing on conflict — resolve on the env
+/// branch), commit the rebased state on the env branch, re-pin
+/// `base_commit`/`base_tree` to the parent tip, and refresh the worktree to the
+/// rebased tree. Only valid before propose/apply.
+pub fn rebase(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &mut EnvManifest,
+) -> Result<String, H5iError> {
+    match m.status.as_str() {
+        ST_CREATED | ST_RUNNING | ST_IDLE => {}
+        other => {
+            return Err(H5iError::Metadata(format!(
+                "{} is '{other}' — rebase is only valid before propose/apply",
+                m.id
+            )))
+        }
+    }
+    match drift(repo, m) {
+        Drift::UpToDate => {
+            return Ok(format!("{} is already on its parent tip — nothing to rebase", m.id))
+        }
+        Drift::ParentGone => {
+            return Err(H5iError::Metadata(format!(
+                "{}: parent branch '{}' is gone — cannot rebase",
+                m.id, m.parent_branch
+            )))
+        }
+        _ => {}
+    }
+
+    // Snapshot the worktree onto the env branch (host-side, path-allowlisted).
+    mediated_commit(h5i_root, m)?;
+
+    let work = m.work_dir(h5i_root);
+    let wt_repo = Repository::open(&work)?;
+    let env_tip = wt_repo.head()?.peel_to_commit()?;
+    let parent_tip = repo
+        .find_reference(&format!("refs/heads/{}", m.parent_branch))?
+        .peel_to_commit()?;
+    // Re-open the parent tip in the worktree repo (shared object store) so all
+    // objects are reachable from one handle.
+    let parent_tip = wt_repo.find_commit(parent_tip.id())?;
+    let old_base = wt_repo.find_commit(git2::Oid::from_str(&m.base_commit)?)?;
+
+    // 3-way merge: ancestor = old base, ours = parent tip, theirs = env work.
+    let mut idx = wt_repo.merge_trees(
+        &old_base.tree()?,
+        &parent_tip.tree()?,
+        &env_tip.tree()?,
+        None,
+    )?;
+    if idx.has_conflicts() {
+        let paths: Vec<String> = idx
+            .conflicts()?
+            .filter_map(|c| c.ok())
+            .filter_map(|c| {
+                c.our
+                    .as_ref()
+                    .or(c.their.as_ref())
+                    .or(c.ancestor.as_ref())
+                    .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+            })
+            .collect();
+        return Err(H5iError::Metadata(format!(
+            "rebase refused — conflicts against the new base in: {} (resolve on the env branch, \
+             or apply against the old base)",
+            paths.join(", ")
+        )));
+    }
+    let merged_tree = wt_repo.find_tree(idx.write_tree_to(&wt_repo)?)?;
+
+    // Commit the rebased state on the env branch: a 2-parent commit (env work +
+    // new parent tip) so provenance shows what it was folded onto.
+    let sig = objects::signature(&wt_repo)?;
+    let rebased = wt_repo.commit(
+        Some("HEAD"),
+        &sig,
+        &sig,
+        &format!("h5i env rebase: {} onto {}", m.id, m.parent_branch),
+        &merged_tree,
+        &[&env_tip, &parent_tip],
+    )?;
+
+    // Refresh the worktree to the rebased tree (it's clean after the mediated
+    // commit), then re-pin the base to the parent tip.
+    let obj = wt_repo.find_object(rebased, None)?;
+    let mut co = CheckoutBuilder::new();
+    co.force();
+    wt_repo.checkout_tree(&obj, Some(&mut co))?;
+
+    m.base_commit = parent_tip.id().to_string();
+    m.base_tree = parent_tip.tree()?.id().to_string();
+
+    set_status(
+        repo,
+        h5i_root,
+        m,
+        if m.status == ST_CREATED { ST_CREATED } else { ST_IDLE },
+        "rebased",
+        Some(format!(
+            "onto {} ({})",
+            m.parent_branch,
+            &parent_tip.id().to_string()[..12]
+        )),
+        None,
+    )?;
+    Ok(format!(
+        "{} rebased onto {} ({}) — base re-pinned",
+        m.id,
+        m.parent_branch,
+        &parent_tip.id().to_string()[..12]
     ))
 }
 
