@@ -1389,3 +1389,4 @@ _[Checkpoint: 6a29dfa5 — edited README.md; edited README.md; edited README.md]
 [22:52:47] OBSERVE: read src/sandbox.rs
 [22:53:09] OBSERVE: read src/sandbox.rs
 [22:53:17] OBSERVE: read src/sandbox.rs
+[22:53:53] OBSERVE: read src/supervisor.rs
