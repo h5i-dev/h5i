@@ -541,11 +541,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited tests/env_integration.rs; edited CLAUDE.md; edited CLAUDE.md
 - [x] Shareable envs: manifest+policy in refs/h5i/env, push/pull carry the env, cross-clone review loop
 - [x] edited tests/env_integration.rs; edited tests/cli_integration.rs; edited CLAUDE.md
+- [x] Env MCP tools: agents drive the sandbox natively (11 h5i_env_* tools)
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 14:43 UTC] `impl-env-sandbox`: Env MCP tools: agents drive the sandbox natively (11 h5i_env_* tools)
 - [2026-06-10 11:02 UTC] `impl-env-sandbox`: edited tests/env_integration.rs; edited tests/cli_integration.rs; edited CLAUDE.md
 - [2026-06-10 11:02 UTC] `impl-env-sandbox`: Shareable envs: manifest+policy in refs/h5i/env, push/pull carry the env, cross-clone review loop
 - [2026-06-10 03:59 UTC] `impl-env-sandbox`: edited tests/env_integration.rs; edited CLAUDE.md; edited CLAUDE.md
