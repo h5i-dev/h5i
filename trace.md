@@ -1167,3 +1167,4 @@ _[Checkpoint: 6a29cee4 — edited tests/env_integration.rs; edited tests/env_int
 _[Checkpoint: 6a29cfc1 — edited tests/env_integration.rs; edited tests/env_integration.rs; edited tests/env_integration.rs]_
 ---
 
+[20:58:56] OBSERVE: read b6fsdid46.output
