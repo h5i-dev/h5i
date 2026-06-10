@@ -369,3 +369,4 @@ _[Checkpoint: 6a29445f — edited tests/env_integration.rs; edited tests/cli_int
 ---
 
 [13:11:01] OBSERVE: read src/mcp.rs
+[13:11:05] OBSERVE: read src/mcp.rs
