@@ -516,3 +516,9 @@ _[Checkpoint: 6a29883e — Committed env Podman backend hardening as 9ae3f6d6: r
 [15:56:09] OBSERVE: listed files under .
 [15:56:09] OBSERVE: read src/server.rs
 [15:56:09] OBSERVE: read src/main.rs
+
+
+---
+_[Checkpoint: 6a298919 — Sent Claude sandbox dashboard design memo: first-class Sandbox mode for h5i serve, env timeline/inspector, deterministic Sandbox Pressure classifier, read-only env API endpoints, attack-surface map, rigorous copy.]_
+---
+
