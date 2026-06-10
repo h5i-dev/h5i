@@ -46,6 +46,11 @@ pub enum IsolationClaim {
     Workspace,
     /// Our own Landlock + seccomp + netns confinement (this module).
     Process,
+    /// Process tier + a live seccomp-notify **supervisor** and a netns+nftables
+    /// L3/L4 egress guard (`docs/supervisor-design.md`). The first tier that may
+    /// claim untrusted-code containment — and only when every component probes
+    /// green; otherwise the claim is refused (fail-closed), never downgraded.
+    Supervised,
     /// Rootless Podman adapter (opt-in shell-out).
     Container,
     /// gVisor / Kata adapter (not in this build).
@@ -59,11 +64,12 @@ impl IsolationClaim {
         match s.trim().to_lowercase().as_str() {
             "workspace" => Ok(Self::Workspace),
             "process" => Ok(Self::Process),
+            "supervised" => Ok(Self::Supervised),
             "container" => Ok(Self::Container),
             "hardened-container" | "hardened_container" => Ok(Self::HardenedContainer),
             "microvm" => Ok(Self::Microvm),
             other => Err(H5iError::Metadata(format!(
-                "unknown isolation claim '{other}' (expected workspace|process|container|hardened-container|microvm)"
+                "unknown isolation claim '{other}' (expected workspace|process|supervised|container|hardened-container|microvm)"
             ))),
         }
     }
@@ -72,6 +78,7 @@ impl IsolationClaim {
         match self {
             Self::Workspace => "workspace",
             Self::Process => "process",
+            Self::Supervised => "supervised",
             Self::Container => "container",
             Self::HardenedContainer => "hardened-container",
             Self::Microvm => "microvm",
@@ -693,10 +700,26 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
                 )));
             }
         }
+        IsolationClaim::Supervised => {
+            // The keystone safety property: refuse unless the ENTIRE mediation
+            // stack probes green on this host. Never downgrade to a weaker tier
+            // — an unsatisfiable supervised claim is an *impossible* claim, not
+            // a degraded pass (docs/supervisor-design.md).
+            let probe = crate::supervisor::probe();
+            if !probe.usable {
+                return Err(H5iError::Metadata(format!(
+                    "isolation claim 'supervised' cannot be satisfied on this host — refusing \
+                     (h5i never claims untrusted-code containment it cannot deliver). Missing:\n  - {}\n\
+                     Re-request a weaker claim (--isolation process|workspace), or run on a host \
+                     with the full stack (see docs/supervisor-design.md).",
+                    probe.missing().join("\n  - ")
+                )));
+            }
+        }
         claim => {
             return Err(H5iError::Metadata(format!(
                 "isolation claim '{}' requires an external backend adapter that this build \
-                 does not ship yet (rollout §11 phase 4) — use workspace, process, or container",
+                 does not ship yet (rollout §11 phase 4) — use workspace, process, container, or supervised",
                 claim.as_str()
             )));
         }
@@ -776,6 +799,7 @@ pub fn run_with_env(
     match policy.claim {
         IsolationClaim::Workspace => run_unconfined(policy, work, argv, injected_env),
         IsolationClaim::Process => run_confined(policy, work, argv, injected_env),
+        IsolationClaim::Supervised => crate::supervisor::run(policy, work, argv, injected_env),
         IsolationClaim::Container => crate::container::run(policy, work, argv, injected_env),
         claim => Err(H5iError::Metadata(format!(
             "no backend for isolation claim '{}'",

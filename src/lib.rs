@@ -30,6 +30,7 @@ pub mod recap;
 pub mod sandbox;
 pub mod secrets;
 pub mod secrets_broker;
+pub mod supervisor;
 pub mod session_log;
 pub mod storage;
 pub mod structured;

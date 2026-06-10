@@ -495,6 +495,27 @@ fn secret_grant_missing_source_fails_closed() {
     assert_ne!(r.manifest("no-source")["status"], "running");
 }
 
+// ─── 3c. supervised tier (fail-closed) ──────────────────────────────────────
+
+#[test]
+fn supervised_claim_refuses_when_stack_incomplete() {
+    let r = Repo::new();
+    // On this host (and any without the full mediation stack) the supervised
+    // claim must be REFUSED — never silently downgraded. An impossible claim.
+    let out = r.h5i(&["env", "create", "untrusted", "--isolation", "supervised"]);
+    if out.status.success() {
+        // The only way this succeeds is if the host genuinely has the whole
+        // stack green — then the manifest must honestly say 'supervised'.
+        assert_eq!(r.manifest("untrusted")["isolation_claim"], "supervised");
+    } else {
+        let text = out_str(&out);
+        assert!(
+            text.contains("supervised") && (text.contains("refus") || text.contains("cannot be satisfied")),
+            "supervised must fail closed with an explanation, got:\n{text}"
+        );
+    }
+}
+
 // ─── 4. parallel envs (the arena) ───────────────────────────────────────────
 
 #[test]

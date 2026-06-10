@@ -148,6 +148,24 @@ function TopStrip({ probe, envs }: { probe: ProbeResponse | null; envs: EnvFleet
             cgroups {probe.cgroups.usable ? "✓" : "✗"}
           </Tag>
         ) : null}
+        {probe ? (
+          <Tag
+            minimal
+            intent={probe.supervisor.usable ? "success" : "none"}
+            title={
+              probe.supervisor.usable
+                ? "supervised containment available (full mediation stack present)"
+                : // Impossible-claim language, never "degraded".
+                  "supervised containment IMPOSSIBLE on this host — missing: " +
+                  probe.supervisor.components
+                    .filter((c) => !c.ok)
+                    .map((c) => c.name)
+                    .join(", ")
+            }
+          >
+            supervised {probe.supervisor.usable ? "✓" : "✗"}
+          </Tag>
+        ) : null}
       </div>
       <div className="sbx-strip-vitals">
         <Vital label="active" value={active} />

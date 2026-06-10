@@ -1906,6 +1906,8 @@ pub struct ProbeResponse {
     pub process_runnable_detail: Option<String>,
     /// cgroup v2 resource-control availability (rootless, best-effort).
     pub cgroups: CgroupProbe,
+    /// `isolation=supervised` readiness (fail-closed; unusable = impossible claim).
+    pub supervisor: SupervisorProbe,
 }
 
 /// cgroup v2 readiness for the dashboard.
@@ -1916,6 +1918,21 @@ pub struct CgroupProbe {
     pub usable: bool,
     pub controllers: Vec<String>,
     /// Why it's unusable, when it is (e.g. "no delegation").
+    pub detail: Option<String>,
+}
+
+/// `isolation=supervised` readiness: the per-component breakdown plus the
+/// fail-closed verdict. An unusable claim is *impossible*, not degraded.
+#[derive(Serialize)]
+pub struct SupervisorProbe {
+    pub usable: bool,
+    pub components: Vec<SupervisorComponent>,
+}
+
+#[derive(Serialize)]
+pub struct SupervisorComponent {
+    pub name: String,
+    pub ok: bool,
     pub detail: Option<String>,
 }
 
@@ -1953,6 +1970,18 @@ async fn api_env_probe() -> Json<ProbeResponse> {
             note: Some("needs rootless Podman + profile container.image".into()),
         });
 
+        let sup = crate::supervisor::probe();
+        tiers.push(ProbeTier {
+            claim: "supervised".into(),
+            satisfiable: sup.usable,
+            note: Some(if sup.usable {
+                "full mediation stack present".into()
+            } else {
+                // Impossible-claim language (Codex), not "degraded".
+                format!("impossible here — missing {}", sup.missing().join(", "))
+            }),
+        });
+
         let probe = Profile::builtin("probe", IsolationClaim::Process);
         let (process_runnable, process_runnable_detail) =
             match sandbox::resolve(&probe, &caps).and_then(|pol| sandbox::verify_exec(&pol)) {
@@ -1977,6 +2006,18 @@ async fn api_env_probe() -> Json<ProbeResponse> {
                 controllers: cg.controllers.clone(),
                 detail: cg.detail.clone(),
             },
+            supervisor: SupervisorProbe {
+                usable: sup.usable,
+                components: sup
+                    .components
+                    .iter()
+                    .map(|c| SupervisorComponent {
+                        name: c.name.to_string(),
+                        ok: c.ok,
+                        detail: c.detail.clone(),
+                    })
+                    .collect(),
+            },
         }
     })
     .await
@@ -1995,6 +2036,7 @@ async fn api_env_probe() -> Json<ProbeResponse> {
             controllers: Vec::new(),
             detail: Some("probe task panicked".into()),
         },
+        supervisor: SupervisorProbe { usable: false, components: Vec::new() },
     });
     Json(resp)
 }

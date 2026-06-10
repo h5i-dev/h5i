@@ -396,6 +396,15 @@ export interface CgroupProbe {
   controllers: string[];
   detail?: string | null;
 }
+export interface SupervisorComponent {
+  name: string;
+  ok: boolean;
+  detail?: string | null;
+}
+export interface SupervisorProbe {
+  usable: boolean;
+  components: SupervisorComponent[];
+}
 export interface ProbeResponse {
   os: string;
   landlock_abi?: number | null;
@@ -406,6 +415,7 @@ export interface ProbeResponse {
   process_runnable: boolean;
   process_runnable_detail?: string | null;
   cgroups: CgroupProbe;
+  supervisor: SupervisorProbe;
 }
 
 async function getJSON<T>(url: string): Promise<T> {
