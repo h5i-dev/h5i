@@ -215,3 +215,4 @@ _[Checkpoint: 6a28d8cc — edited tests/env_integration.rs; edited CLAUDE.md; ed
 ---
 
 [03:29:36] OBSERVE: read tests/env_integration.rs
+[03:29:46] OBSERVE: read src/sandbox.rs
