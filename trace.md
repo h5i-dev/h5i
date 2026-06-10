@@ -1173,3 +1173,4 @@ _[Checkpoint: 6a29cfc1 — edited tests/env_integration.rs; edited tests/env_int
 [20:59:20] OBSERVE: read tests/env_integration.rs
 [20:59:34] ACT: edited tests/env_integration.rs
 [21:00:23] ACT: wrote test-msg.txt
+[21:01:29] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): ), but `supervisor::run()` is still the fail-closed Phase A stub — so `env run` fails closed with "live enforcement not wired." Wiring that st…
