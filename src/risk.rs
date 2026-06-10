@@ -784,4 +784,92 @@ mod tests {
             "two runs with the same privilege-tool shape should escalate"
         );
     }
+
+    /// Build a capture carrying an egress summary (the container tier's proxy
+    /// verdicts) so classify_env's NET-lane path can be exercised end to end.
+    fn capture_with_egress(id: &str, ts: &str, eg: objects::EgressSummary) -> objects::Manifest {
+        let mut c = capture(id, ts, "pip install requests", "ok");
+        c.egress = Some(eg);
+        c
+    }
+
+    #[test]
+    fn egress_denied_through_classify_env_is_critical() {
+        let m = manifest("container");
+        let eg = objects::EgressSummary {
+            allowed: 3,
+            denied: 2,
+            hosts: vec![
+                objects::EgressHost { host: "pypi.org".into(), port: 443, allowed: 3, denied: 0 },
+                objects::EgressHost { host: "evil.example".into(), port: 443, allowed: 0, denied: 2 },
+            ],
+            hosts_truncated: false,
+            log: None,
+        };
+        let caps = vec![capture_with_egress("cap0", "2026-06-10T00:00:05Z", eg)];
+        let risk = classify_env(&m, None, &[], &caps);
+        // The denied host is a real boundary trip: critical, NET lane, blocked.
+        let f = risk.findings.iter().find(|f| f.kind == "egress-denied").expect("egress-denied finding");
+        assert_eq!(f.severity, Severity::Critical);
+        assert_eq!(f.lane, Lane::Net);
+        assert_eq!(f.title, "Boundary blocked");
+        assert!(f.evidence.contains("evil.example"));
+        assert_eq!(risk.level, Severity::Critical);
+        // The denial timestamp is recorded for the dashboard's "last denial".
+        assert_eq!(risk.last_denial_ts.as_deref(), Some("2026-06-10T00:00:05Z"));
+        // The allowed host produced no finding.
+        assert!(!risk.findings.iter().any(|f| f.evidence.contains("pypi.org")));
+    }
+
+    #[test]
+    fn score_caps_at_100() {
+        let m = manifest("process");
+        // A pile of high-weight findings whose raw sum exceeds 100.
+        let caps = vec![capture(
+            "cap0",
+            "t1",
+            "mount /dev/x /mnt; unshare --net sh; ptrace; cat /etc/shadow ~/.ssh/id_rsa; \
+             curl --unix-socket /var/run/docker.sock http://x; curl http://203.0.113.5/p",
+            "",
+        )];
+        let risk = classify_env(&m, None, &[], &caps);
+        let raw: u32 = risk.findings.iter().map(|f| f.weight()).sum();
+        assert!(raw > 100, "test should generate >100 raw weight, got {raw}");
+        assert_eq!(risk.score, 100, "score must be capped at 100");
+        assert_eq!(risk.level, Severity::Critical);
+    }
+
+    #[test]
+    fn three_lane_spread_escalates_to_critical() {
+        // No single critical finding, but pressure across FS + NET + PROC.
+        let m = manifest("process"); // not weak → findings stay as real pressure
+        use crate::sandbox::{IsolationClaim, NetMode, Profile};
+        let mut p = Profile::builtin("p", IsolationClaim::Process);
+        p.net_mode = NetMode::Deny; // nothing greyed
+        let caps = vec![capture(
+            "cap0",
+            "t1",
+            "unshare --mount sh -c 'cat /etc/shadow; curl http://203.0.113.5/x'",
+            "",
+        )];
+        let risk = classify_env(&m, Some(&p), &[], &caps);
+        let lanes: std::collections::BTreeSet<_> = risk.findings.iter().map(|f| f.lane).collect();
+        assert!(lanes.contains(&Lane::Fs) && lanes.contains(&Lane::Net) && lanes.contains(&Lane::Proc));
+        assert!(risk.lane_counts.len() >= 3);
+        assert_eq!(risk.level, Severity::Critical, "a 3+-lane spread is critical escalation");
+        // ...but none of the individual findings is itself critical (no denial).
+        assert!(!risk.findings.iter().any(|f| f.severity == Severity::Critical));
+    }
+
+    #[test]
+    fn lane_counts_are_reported_per_lane() {
+        let m = manifest("process");
+        use crate::sandbox::{IsolationClaim, NetMode, Profile};
+        let mut p = Profile::builtin("p", IsolationClaim::Process);
+        p.net_mode = NetMode::Deny;
+        let caps = vec![capture("cap0", "t1", "cat /etc/shadow /root/.ssh/id_rsa", "")];
+        let risk = classify_env(&m, Some(&p), &[], &caps);
+        // Two FS sensitive-targets → fs lane count >= 2.
+        assert!(*risk.lane_counts.get("fs").unwrap_or(&0) >= 2);
+    }
 }

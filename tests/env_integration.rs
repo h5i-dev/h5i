@@ -475,6 +475,43 @@ fn secret_grant_is_injected_then_redacted_and_audited() {
 }
 
 #[test]
+fn secret_file_injection_writes_a_file_and_redacts() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    // inject=file is supported on the (default) workspace tier.
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.default.secret.DEPLOY_KEY]\nsource = \"env:H5I_SECRET_DEPLOY_KEY\"\ninject = \"file\"\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", ".h5i/env.toml"]);
+    git(&r.dir, &["commit", "-m", "file secret"]);
+    r.h5i_ok(&["env", "create", "filesec"]);
+
+    // The broker sets DEPLOY_KEY_FILE → a path; the command reads it.
+    let out = Command::new(H5I)
+        .args(["env", "run", "filesec", "--", "sh", "-c", "echo KEY=[$(cat $DEPLOY_KEY_FILE)]"])
+        .env("H5I_AGENT", "tester")
+        .env("H5I_SECRET_DEPLOY_KEY", "topsecret-deploy")
+        .current_dir(&r.dir)
+        .output()
+        .expect("run");
+    assert!(out.status.success(), "run failed: {}", out_str(&out));
+
+    // The file-injected value must be redacted from the capture (proves it was
+    // delivered via the file and then scrubbed).
+    let cap = r.capture_manifest("filesec");
+    let summary = cap["summary"].as_str().unwrap_or("");
+    assert!(!summary.contains("topsecret-deploy"), "secret leaked: {summary}");
+    assert!(summary.contains("[redacted secret]"), "expected redaction marker: {summary}");
+
+    // The audit event records the grant with inject=file, never the value.
+    let log = out_str(&r.h5i_ok(&["env", "log", "filesec"]));
+    assert!(log.contains("grant=DEPLOY_KEY") && log.contains("inject=file"), "{log}");
+    assert!(!log.contains("topsecret-deploy"));
+}
+
+#[test]
 fn secret_grant_missing_source_fails_closed() {
     let r = Repo::new();
     std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();

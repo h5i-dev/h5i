@@ -312,6 +312,43 @@ mod tests {
     }
 
     #[test]
+    fn multiple_grants_all_brokered_independently() {
+        std::env::set_var("H5I_TEST_M1", "val-one");
+        std::env::set_var("H5I_TEST_M2", "val-two");
+        let grants = vec![
+            grant("TOK_A", Some("env:H5I_TEST_M1"), Some("env")),
+            grant("TOK_B", Some("env:H5I_TEST_M2"), Some("env")),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        let b = broker(&grants, &dir.path().join("secrets"), false).unwrap();
+        assert_eq!(b.env.len(), 2);
+        assert!(b.env.contains(&("TOK_A".into(), "val-one".into())));
+        assert!(b.env.contains(&("TOK_B".into(), "val-two".into())));
+        // Both values are scrubbed; both grants are audited; no value in records.
+        assert_eq!(b.redactions.len(), 2);
+        assert_eq!(b.records.len(), 2);
+        assert!(b.records.iter().all(|r| !r.detail().contains("val-")));
+        // Distinct fingerprints for distinct values.
+        assert_ne!(b.records[0].fingerprint, b.records[1].fingerprint);
+        std::env::remove_var("H5I_TEST_M1");
+        std::env::remove_var("H5I_TEST_M2");
+    }
+
+    #[test]
+    fn one_missing_grant_fails_the_whole_broker() {
+        std::env::set_var("H5I_TEST_PRESENT", "here");
+        // First grant resolves; second is absent → the whole call fails closed
+        // (an env must not run with a partial credential set).
+        let grants = vec![
+            grant("OK", Some("env:H5I_TEST_PRESENT"), Some("env")),
+            grant("MISSING", Some("env:H5I_TEST_ABSENT_ZZZ"), Some("env")),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        assert!(broker(&grants, &dir.path().join("secrets"), false).is_err());
+        std::env::remove_var("H5I_TEST_PRESENT");
+    }
+
+    #[test]
     fn fingerprint_is_stable_and_value_free() {
         let fp = fingerprint("hello");
         assert!(fp.starts_with("sha256:"));

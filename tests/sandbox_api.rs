@@ -189,3 +189,30 @@ async fn envs_endpoint_flags_boundary_pressure() {
 
     server.abort();
 }
+
+#[tokio::test]
+async fn capture_inspection_endpoint_renders_evidence() {
+    let h = Harness::new();
+    h.h5i(&["env", "create", "inspectme"]);
+    h.h5i(&["env", "run", "inspectme", "--", "sh", "-c", "echo hello-capture"]);
+
+    let (base, server) = boot(h.dir.clone()).await;
+
+    // Pull the capture id from the env detail, then fetch its rendered evidence.
+    let (status, detail) = get_json(format!("{base}/api/env/tester/inspectme")).await;
+    assert_eq!(status, 200);
+    let cap_id = detail["captures"][0]["id"].as_str().expect("a capture id").to_string();
+
+    let (status, rendered) =
+        get_json(format!("{base}/api/env/tester/inspectme/captures/{cap_id}")).await;
+    assert_eq!(status, 200);
+    assert!(rendered["render"].is_string(), "capture must render: {rendered}");
+
+    // A capture id that doesn't belong to this env → 404 (the handler enforces
+    // that the capture is evidence for the named env).
+    let (status, _) =
+        get_json(format!("{base}/api/env/tester/inspectme/captures/deadbeefdeadbeef")).await;
+    assert_eq!(status, 404);
+
+    server.abort();
+}

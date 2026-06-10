@@ -426,6 +426,29 @@ mod tests {
     }
 
     #[test]
+    fn nft_rule_pins_the_exact_port() {
+        // A non-default port must appear verbatim in the allow rule (the gate is
+        // host:port, not just host).
+        let allow = vec![EgressDest { ip: "10.1.2.3".parse().unwrap(), port: 8443 }];
+        let rs = build_nft_ruleset(&allow, None);
+        assert!(rs.contains("ip daddr 10.1.2.3 tcp dport 8443 accept"), "{rs}");
+        // And nothing on the conventional 443 for that host.
+        assert!(!rs.contains("dport 443"));
+    }
+
+    #[test]
+    fn pin_egress_parses_host_and_explicit_port() {
+        // localhost resolves deterministically on every host; assert the port
+        // parsing (default 443 vs explicit) without depending on public DNS.
+        let pinned = pin_egress(&["localhost".into(), "localhost:8080".into()]);
+        assert!(pinned.iter().any(|d| d.port == 443), "default port should be 443");
+        assert!(pinned.iter().any(|d| d.port == 8080), "explicit port should be honored");
+        assert!(pinned.iter().all(|d| d.ip.is_loopback()));
+        // An empty/garbage entry contributes nothing (fail-closed).
+        assert!(pin_egress(&["".into(), "   ".into()]).is_empty());
+    }
+
+    #[test]
     fn run_fails_closed() {
         // Even if somehow reached, run() must never execute unmediated.
         let p = crate::sandbox::Profile::builtin("p", crate::sandbox::IsolationClaim::Supervised);

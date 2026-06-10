@@ -810,6 +810,31 @@ mod tests {
     }
 
     #[test]
+    fn run_argv_injects_brokered_secret_env() {
+        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let injected = vec![("GITHUB_TOKEN".to_string(), "ghp_secret".to_string())];
+        let argv = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &injected,
+        );
+        // The broker's env grant is passed to the container as a --env pair...
+        let pos = argv.iter().position(|a| a == "GITHUB_TOKEN=ghp_secret");
+        assert!(pos.is_some(), "injected secret env must appear as a --env value: {argv:?}");
+        // ...preceded by --env, and BEFORE the image (so it's a podman flag, not
+        // an argument to the command).
+        let i = pos.unwrap();
+        assert_eq!(argv[i - 1], "--env");
+        let img = argv.iter().position(|a| a == "img").unwrap();
+        assert!(i < img, "secret env must precede the image in argv");
+    }
+
+    #[test]
     fn proxy_gates_connect_by_allowlist() {
         use std::io::{BufRead, BufReader};
 
