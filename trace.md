@@ -798,3 +798,4 @@ _[Checkpoint: 6a29a9e1 — Reviewed Claude supervisor tier design; approved Phas
 [18:19:41] ACT: edited src/server.rs
 [18:19:46] ACT: edited web/src/api.ts
 [18:19:50] ACT: edited web/src/api.ts
+[18:19:59] ACT: edited web/src/SandboxView.tsx
