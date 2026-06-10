@@ -130,13 +130,22 @@ tier is correctly unavailable rather than silently weak.
   netns nftables ruleset generator (`supervisor::build_nft_ruleset`) is pure +
   unit-tested. These are gated behind the green probe, so they do not run in a
   real `supervised` execution until the whole stack is present.
-  - **Phase B-cont (remaining):** wire both into `supervisor::run` (replacing the
-    fail-closed stub), emit structured deny events into the
-    `EgressSummary`/`risk` pipeline, and apply the nftables ruleset inside the
-    child netns. The supervisor loop will `poll()` **both** the listener fd and
-    the child's **pidfd**, so it self-terminates on child exit — no
-    `waitpid`/stop-flag race (the lifecycle hazard the phase-B review surfaced).
-    Validated end-to-end on a host with rootless nftables + cgroup delegation.
+- **Phase B-cont (DONE for net.mode=deny): `supervisor::run` runs.** The
+  fail-closed stub is replaced by a real execution that shares the process-tier
+  confinement (`sandbox::build_confined_command` — Landlock + seccomp deny-list +
+  userns/mountns/ipc/uts + cgroup + no-new-privs/cap-drop) **plus** an always-on
+  network namespace and the live seccomp-notify socket gate. The supervisor loop
+  `poll()`s both the listener fd and the child's **pidfd** (self-terminating, no
+  `waitpid` race). **Validated live on aarch64 WSL2**: a real supervised
+  `env run` of a Python program had its raw + packet sockets denied with `EPERM`
+  while an ordinary inet socket was allowed; the run's socket-gate verdicts are
+  recorded in the capture's `EgressSummary`. `net.mode=deny` gives an airtight
+  empty netns (no egress at all).
+  - **Remaining:** the `net.egress` **domain allowlist** (netns + nftables +
+    slirp4netns/pasta for connectivity) is **refused** in v1 rather than silently
+    ignored; wiring it (the `build_nft_ruleset` output is ready) + emitting
+    per-host egress verdicts is the next increment. Then `openat2` path-allow
+    (Phase C).
 - **Phase C: path allow via openat2+ADDFD**, secret-broker `file`/fd injection
   at this tier, and the `microvm`/`hardened-container` escalation.
 

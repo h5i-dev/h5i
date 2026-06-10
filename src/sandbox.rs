@@ -889,13 +889,28 @@ fn run_unconfined(
     wait_with_deadline(cmd, policy.profile.wall(), argv, None)
 }
 
+/// Build a fully-confined `std::process::Command` for `argv` — the **shared**
+/// confinement core used by both the `process` tier ([`run_confined`]) and the
+/// `supervised` tier ([`crate::supervisor::run`]). Keeping this in one place
+/// means the security-critical setup (Landlock + seccomp deny-list + namespaces
+/// + rlimits + no-new-privs + uid/gid maps) has a single audited implementation.
+///
+/// - `force_netns`: always create a fresh network namespace (the `supervised`
+///   tier does; the `process` tier only when `net.mode = deny`).
+/// - `notify_sock`: when `Some`, the child additionally installs a
+///   seccomp **user-notification** filter and hands the listener fd to this
+///   `AF_UNIX` socket via `SCM_RIGHTS` (the `supervised` socket gate). The
+///   notify filter stacks *after* the deny-list, and seccomp action precedence
+///   (ERRNO > USER_NOTIF > ALLOW) makes them compose correctly.
 #[cfg(target_os = "linux")]
-fn run_confined(
+pub(crate) fn build_confined_command(
     policy: &ResolvedPolicy,
     work: &Path,
     argv: &[String],
     injected_env: &[(String, String)],
-) -> Result<ExecOutcome, H5iError> {
+    force_netns: bool,
+    notify_sock: Option<std::os::unix::io::RawFd>,
+) -> Result<std::process::Command, H5iError> {
     use std::os::unix::process::CommandExt;
 
     let p = &policy.profile;
@@ -943,7 +958,7 @@ fn run_confined(
     // ── seccomp deny-list program (compiled pre-fork) ──
     let bpf = seccomp_deny_program()?;
 
-    let net_deny = p.net_mode == NetMode::Deny;
+    let want_netns = p.net_mode == NetMode::Deny || force_netns;
     let uid = unsafe { libc::geteuid() };
     let gid = unsafe { libc::getegid() };
     let mem = p.mem_bytes;
@@ -984,7 +999,7 @@ fn run_confined(
             //    makes all of this unprivileged; we map our own uid/gid 1:1 so
             //    file access inside $WORK keeps working.
             let mut flags = libc::CLONE_NEWUSER | libc::CLONE_NEWIPC | libc::CLONE_NEWUTS;
-            if net_deny {
+            if want_netns {
                 flags |= libc::CLONE_NEWNET;
             }
             if libc::unshare(flags) != 0 {
@@ -1043,18 +1058,51 @@ fn run_confined(
                 return Err(Error::other("landlock not enforced (fail-closed)"));
             }
 
-            // 5. Seccomp deny-list, last (everything after this call is
-            //    subject to the filter).
+            // 5. Seccomp deny-list (everything after this call is subject to
+            //    the filter).
             seccompiler::apply_filter(&bpf)
                 .map_err(|e| Error::other(format!("seccomp apply: {e}")))?;
+
+            // 6. Supervised tier only: stack a seccomp user-notification filter
+            //    on top of the deny-list and hand its listener fd to the
+            //    supervisor over `notify_sock`. The untrusted program must not
+            //    inherit the listener, so it's CLOEXEC (the supervisor keeps its
+            //    own copy received via SCM_RIGHTS).
+            if let Some(sock) = notify_sock {
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                {
+                    let listener = crate::seccomp_notify::install_listener()
+                        .map_err(Error::from_raw_os_error)?;
+                    libc::fcntl(listener, libc::F_SETFD, libc::FD_CLOEXEC);
+                    crate::seccomp_notify::send_fd(sock, listener)?;
+                }
+                #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+                {
+                    let _ = sock;
+                    return Err(Error::other("seccomp user-notif unsupported on this arch"));
+                }
+            }
             Ok(())
         });
     }
+    Ok(cmd)
+}
+
+#[cfg(target_os = "linux")]
+fn run_confined(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<ExecOutcome, H5iError> {
+    let p = &policy.profile;
+    // Process tier: netns only when egress is denied; no seccomp-notify gate.
+    let cmd = build_confined_command(policy, work, argv, injected_env, false, None)?;
 
     // cgroup v2 (rootless, best-effort): real memory.max/pids.max + accurate
     // memory.peak/cpu accounting where the host delegates a writable subtree.
-    // Unavailable on WSL2/CI → `None`, and the rlimits set above still apply.
-    let cg = make_run_cgroup(mem, nproc);
+    // Unavailable → `None`, and the rlimits set in the child still apply.
+    let cg = make_run_cgroup(p.mem_bytes, p.max_procs);
     let procs = cg.as_ref().map(|c| c.procs_path());
     let mut outcome = wait_with_deadline(cmd, p.wall(), argv, procs.as_deref())?;
     if let Some(cg) = &cg {
@@ -1074,7 +1122,7 @@ fn run_confined(
 /// the host actually supports rootless cgroup management. `None` (the common
 /// case on WSL2/CI) leaves the rlimit path as the sole enforcement.
 #[cfg(target_os = "linux")]
-fn make_run_cgroup(mem_bytes: Option<u64>, max_procs: Option<u64>) -> Option<crate::cgroup::ScopedCgroup> {
+pub(crate) fn make_run_cgroup(mem_bytes: Option<u64>, max_procs: Option<u64>) -> Option<crate::cgroup::ScopedCgroup> {
     if mem_bytes.is_none() && max_procs.is_none() {
         return None;
     }
@@ -1263,7 +1311,7 @@ fn wait_with_deadline(
 /// process-group SIGKILL, and reap it with `wait4` so we recover `rusage`
 /// (peak RSS + CPU time). Returns `(exit_code, timed_out, cpu_ms, max_rss_kb)`.
 #[cfg(unix)]
-fn wait_loop(
+pub(crate) fn wait_loop(
     child: &mut std::process::Child,
     wall: Duration,
 ) -> (Option<i32>, bool, u128, Option<i64>) {
@@ -1317,7 +1365,7 @@ fn cpu_ms(u: &libc::rusage) -> u128 {
 }
 
 #[cfg(not(unix))]
-fn wait_loop(
+pub(crate) fn wait_loop(
     child: &mut std::process::Child,
     wall: Duration,
 ) -> (Option<i32>, bool, u128, Option<i64>) {

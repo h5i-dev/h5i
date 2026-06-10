@@ -319,29 +319,199 @@ pub fn build_nft_ruleset(allow: &[EgressDest], resolver: Option<IpAddr>) -> Stri
     )
 }
 
-// ─── run (phase A: fail-closed) ───────────────────────────────────────────────
+// ─── run ──────────────────────────────────────────────────────────────────────
 
-/// Run under the supervised tier. Phase A: enforcement is not wired, so this
-/// **fails closed** — it must never execute an untrusted command without the
-/// full mediation stack. `resolve` already refuses the claim before reaching
-/// here on every current host; this is defense in depth.
+/// Run `argv` under the supervised tier. Re-verifies the full mediation stack is
+/// green (fail-closed), then executes the command with the shared process-tier
+/// confinement (Landlock + seccomp deny-list + userns/mountns/ipc/uts + cgroup +
+/// no-new-privs + cap-drop) **plus** an always-on network namespace and the
+/// live seccomp-notify socket gate ([`serve_with_pidfd`]), which denies
+/// raw/packet/netlink/ungranted-unix sockets and records every verdict.
+///
+/// v1 scope: `net.mode = deny` (an empty netns — airtight, no egress). A
+/// non-empty `net.egress` allowlist (netns + nftables + slirp4netns) is the next
+/// increment and is **refused** here rather than silently ignored.
 pub fn run(
+    policy: &crate::sandbox::ResolvedPolicy,
+    work: &std::path::Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<crate::sandbox::ExecOutcome, H5iError> {
+    let caps = probe();
+    if !caps.usable {
+        return Err(H5iError::Metadata(format!(
+            "isolation=supervised cannot run — the mediation stack is not fully present \
+             (fail-closed). Missing: {}.",
+            caps.missing().join(", ")
+        )));
+    }
+    if !policy.profile.net_egress.is_empty() {
+        return Err(H5iError::Metadata(
+            "isolation=supervised v1 enforces net.mode=deny only; a net.egress domain allowlist \
+             (netns + nftables + slirp4netns) is the next increment — drop net.egress, or use \
+             the container tier for an L7 allowlist (fail-closed)."
+                .into(),
+        ));
+    }
+    run_supervised(policy, work, argv, injected_env)
+}
+
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn run_supervised(
+    policy: &crate::sandbox::ResolvedPolicy,
+    work: &std::path::Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<crate::sandbox::ExecOutcome, H5iError> {
+    use crate::seccomp_notify::{pidfd_open, recv_fd, serve_with_pidfd};
+    use std::io::Read;
+    use std::process::Stdio;
+
+    // A CLOEXEC socketpair for the SCM_RIGHTS listener handoff: the child sends
+    // its seccomp listener fd over `sv[1]`; we receive it on `sv[0]`. CLOEXEC so
+    // neither end leaks into the exec'd (untrusted) program.
+    let mut sv = [0i32; 2];
+    let rc = unsafe {
+        libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0, sv.as_mut_ptr())
+    };
+    if rc != 0 {
+        return Err(H5iError::Io(std::io::Error::last_os_error()));
+    }
+    let (sv_parent, sv_child) = (sv[0], sv[1]);
+    let close = |fd: i32| unsafe {
+        libc::close(fd);
+    };
+
+    // Shared confinement + always-netns + the seccomp-notify gate.
+    let mut cmd =
+        match crate::sandbox::build_confined_command(policy, work, argv, injected_env, true, Some(sv_child)) {
+            Ok(c) => c,
+            Err(e) => {
+                close(sv_parent);
+                close(sv_child);
+                return Err(e);
+            }
+        };
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let p = &policy.profile;
+    let cg = crate::sandbox::make_run_cgroup(p.mem_bytes, p.max_procs);
+
+    let started = std::time::Instant::now();
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            close(sv_parent);
+            close(sv_child);
+            return Err(H5iError::Metadata(format!("supervised spawn failed: {e}")));
+        }
+    };
+    // The child has its own (CLOEXEC) copy of sv_child; drop ours.
+    close(sv_child);
+
+    // Join the child to its cgroup as early as possible.
+    if let Some(cgrp) = &cg {
+        let _ = std::fs::write(cgrp.procs_path(), child.id().to_string());
+    }
+
+    // Receive the seccomp listener the child installed in pre_exec. spawn()
+    // returns Ok only after pre_exec (hence send_fd) completed, so this does not
+    // block on a healthy child; a failure means the child died mid-setup.
+    let listener = match unsafe { recv_fd(sv_parent) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            close(sv_parent);
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(H5iError::Metadata(format!(
+                "supervised: did not receive the seccomp listener from the child: {e}"
+            )));
+        }
+    };
+    close(sv_parent);
+    let pidfd = match pidfd_open(child.id() as libc::pid_t) {
+        Ok(fd) => fd,
+        Err(e) => {
+            close(listener);
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(H5iError::Metadata(format!("supervised: pidfd_open failed: {e}")));
+        }
+    };
+
+    // Stream output while the supervisor serves syscall notifications.
+    let mut out_pipe = child.stdout.take().expect("piped stdout");
+    let mut err_pipe = child.stderr.take().expect("piped stderr");
+    let out_h = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = out_pipe.read_to_end(&mut b);
+        b
+    });
+    let err_h = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = err_pipe.read_to_end(&mut b);
+        b
+    });
+
+    // AF_UNIX is not granted by default (SCM_RIGHTS authority passing).
+    let unix_granted = false;
+    let serve_h = std::thread::spawn(move || serve_with_pidfd(listener, pidfd, unix_granted));
+
+    // Wall-clock kill + rusage (the child called setsid → killpg reaps the tree).
+    let (exit_code, timed_out, mut cpu_ms, mut max_rss_kb) =
+        crate::sandbox::wait_loop(&mut child, p.wall());
+
+    // The serve loop self-terminates when the child's pidfd signals exit.
+    let stats = serve_h.join().unwrap_or_default();
+    close(listener);
+    close(pidfd);
+    let stdout = out_h.join().unwrap_or_default();
+    let stderr = err_h.join().unwrap_or_default();
+
+    // Prefer cgroup accounting where present.
+    if let Some(cgrp) = &cg {
+        let u = cgrp.usage();
+        if let Some(bytes) = u.mem_peak_bytes {
+            max_rss_kb = Some((bytes / 1024) as i64);
+        }
+        if let Some(usec) = u.cpu_usec {
+            cpu_ms = (usec / 1000) as u128;
+        }
+    }
+
+    // Surface the socket-gate verdicts as the run's egress summary (the gate is
+    // the supervised tier's network-creation enforcement). `denied > 0` is a
+    // boundary block the dashboard's NET lane shows.
+    let egress = Some(crate::objects::EgressSummary {
+        allowed: stats.allowed,
+        denied: stats.denied,
+        hosts: Vec::new(),
+        hosts_truncated: false,
+        log: None,
+    });
+
+    Ok(crate::sandbox::ExecOutcome {
+        stdout,
+        stderr,
+        exit_code,
+        timed_out,
+        wall_ms: started.elapsed().as_millis(),
+        cpu_ms,
+        max_rss_kb,
+        egress,
+    })
+}
+
+#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+fn run_supervised(
     _policy: &crate::sandbox::ResolvedPolicy,
     _work: &std::path::Path,
     _argv: &[String],
     _injected_env: &[(String, String)],
 ) -> Result<crate::sandbox::ExecOutcome, H5iError> {
-    let caps = probe();
-    Err(H5iError::Metadata(format!(
-        "isolation=supervised: live enforcement (netns+nftables + seccomp-notify loop) is not \
-         wired in this build (design phase B). The tier fails closed rather than run untrusted \
-         code unmediated.{}",
-        if caps.usable {
-            String::new()
-        } else {
-            format!(" Host is also missing: {}.", caps.missing().join(", "))
-        }
-    )))
+    Err(H5iError::Metadata(
+        "isolation=supervised requires Linux + x86_64/aarch64 (seccomp user-notif)".into(),
+    ))
 }
 
 #[cfg(test)]
@@ -449,12 +619,21 @@ mod tests {
     }
 
     #[test]
-    fn run_fails_closed() {
-        // Even if somehow reached, run() must never execute unmediated.
-        let p = crate::sandbox::Profile::builtin("p", crate::sandbox::IsolationClaim::Supervised);
+    fn run_refuses_egress_allowlist_in_v1() {
+        // A supervised policy with a net.egress domain allowlist must be refused
+        // (v1 enforces net.mode=deny only) rather than silently ignoring it.
+        // Deterministic regardless of host: on a usable host the egress refusal
+        // fires; on an unusable host the missing-stack refusal fires first.
+        // Either way run() returns a fail-closed error, never silent acceptance.
+        let mut p = crate::sandbox::Profile::builtin("p", crate::sandbox::IsolationClaim::Supervised);
+        p.net_egress = vec!["pypi.org".into()];
         let pol = crate::sandbox::ResolvedPolicy { claim: p.isolation, profile: p };
         let dir = std::env::temp_dir();
         let err = run(&pol, &dir, &["true".to_string()], &[]).unwrap_err();
-        assert!(format!("{err}").contains("fails closed") || format!("{err}").contains("phase B"));
+        let m = format!("{err}");
+        assert!(
+            m.contains("net.egress") || m.contains("net.mode=deny") || m.contains("Missing"),
+            "supervised must fail closed (egress allowlist or missing stack), got: {m}"
+        );
     }
 }

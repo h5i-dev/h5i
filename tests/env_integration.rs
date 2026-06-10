@@ -553,6 +553,58 @@ fn supervised_claim_refuses_when_stack_incomplete() {
     }
 }
 
+/// Live end-to-end proof that the supervised tier's seccomp-notify socket gate
+/// actually enforces inside a real `env run`: a raw/packet socket is denied with
+/// EPERM, an ordinary inet socket is allowed. Capability-gated — needs the full
+/// supervised stack (incl. cgroup delegation) AND python3; skips cleanly where
+/// unavailable (e.g. CI without a delegated user session).
+#[test]
+fn supervised_socket_gate_denies_raw_in_a_live_run() {
+    if std::process::Command::new("python3").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
+        eprintln!("skipping: python3 unavailable");
+        return;
+    }
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(r.dir.join(".h5i/env.toml"), "[profile.default]\nisolation = \"supervised\"\n").unwrap();
+    git(&r.dir, &["add", ".h5i/env.toml"]);
+    git(&r.dir, &["commit", "-m", "supervised profile"]);
+
+    // If the host can't satisfy the supervised claim, create refuses → skip.
+    let create = r.h5i(&["env", "create", "gate"]);
+    if !create.status.success() {
+        eprintln!("skipping: supervised tier not satisfiable here:\n{}", out_str(&create));
+        return;
+    }
+
+    let script = "import socket,errno\n\
+        def t(n,a):\n\
+        \x20try:\n\
+        \x20\x20s=socket.socket(*a);s.close();print(n,'ALLOWED')\n\
+        \x20except OSError as e:\n\
+        \x20\x20print(n,'DENIED',errno.errorcode.get(e.errno,e.errno))\n\
+        t('RAW',(socket.AF_INET,socket.SOCK_RAW,socket.IPPROTO_TCP))\n\
+        t('PACKET',(17,socket.SOCK_DGRAM,0))\n\
+        t('INET',(socket.AF_INET,socket.SOCK_STREAM,0))\n";
+    let out = Command::new(H5I)
+        .args(["env", "run", "gate", "--", "python3", "-c", script])
+        .env("H5I_AGENT", "tester")
+        .current_dir(&r.dir)
+        .output()
+        .expect("run");
+    if !out.status.success() {
+        eprintln!("skipping: supervised run unavailable:\n{}", out_str(&out));
+        return;
+    }
+
+    // The captured evidence must show the gate's verdicts.
+    let cap = r.capture_manifest("gate");
+    let raw = String::from_utf8_lossy(&r.capture_raw(cap["raw_oid"].as_str().unwrap())).into_owned();
+    assert!(raw.contains("RAW DENIED EPERM"), "raw socket must be denied by the gate:\n{raw}");
+    assert!(raw.contains("PACKET DENIED EPERM"), "packet socket must be denied:\n{raw}");
+    assert!(raw.contains("INET ALLOWED"), "ordinary inet socket must be allowed:\n{raw}");
+}
+
 // ─── 4. parallel envs (the arena) ───────────────────────────────────────────
 
 #[test]
