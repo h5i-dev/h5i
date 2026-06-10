@@ -449,3 +449,4 @@ _[Checkpoint: 6a298091 — edited CLAUDE.md; edited CLAUDE.md; edited docs/envir
 [15:21:48] OBSERVE: read tests/env_integration.rs
 [15:21:57] OBSERVE: read tests/env_integration.rs
 [15:22:14] ACT: edited tests/env_integration.rs
+[15:25:15] OBSERVE: read CLAUDE.md
