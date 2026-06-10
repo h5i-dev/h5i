@@ -2,7 +2,9 @@
 
 This repository uses **h5i** (a Git sidecar for AI-era version control).
 
-**Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, `h5i_claims_add`, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
+**Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, `h5i_claims_add`, the `h5i_env_*` sandbox family, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
+
+The `h5i_env_*` tools (`h5i_env_create/run/list/status/diff/inspect/compare/propose/apply/rebase/abort`) drive isolated agent environments — a git worktree + sandbox + provenance. Prefer creating an env for risky/exploratory work (a refactor, an upgrade, an untrusted build) instead of editing the main tree in place: `h5i_env_create` → `h5i_env_run` (policy-enforced, capture-wrapped) → `h5i_env_propose` → `h5i_env_apply`. Use `h5i_env_diff`/`h5i_env_inspect` to review another agent's pulled environment before applying.
 
 h5i metadata lives in `refs/h5i/*` and is NOT pushed by plain `git push`. Use `h5i push` to share it.
 

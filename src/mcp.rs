@@ -708,6 +708,153 @@ pub fn tool_definitions() -> Value {
                 "required": ["command"]
             }
         },
+        // ── Environments (isolated agent sandboxes; docs/environments-design.md) ──
+        {
+            "name": "h5i_env_create",
+            "description": "Create an isolated environment: a git worktree on its own \
+                branch + a forked reasoning branch + a pinned, fail-closed policy. Use \
+                this to do risky or experimental work (a refactor, an upgrade, an \
+                untrusted build) without touching the main working tree — then review \
+                and apply only if it pans out. The base revision is frozen at creation. \
+                Prefer this over editing files in place when the change is exploratory.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Env name (lowercase slug, e.g. \"fix-auth\")." },
+                    "from": { "type": "string", "description": "Base revision (default HEAD); pinned immutably." },
+                    "profile": { "type": "string", "description": "Policy profile from .h5i/env.toml (default \"default\")." },
+                    "isolation": {
+                        "type": "string",
+                        "enum": ["workspace", "process", "container", "hardened-container", "microvm"],
+                        "description": "Minimum isolation claim; fails closed if the host can't satisfy it."
+                    }
+                },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "h5i_env_run",
+            "description": "Run a command INSIDE an environment, policy-enforced and \
+                capture-wrapped: the exit code is reported, evidence (filtered output + \
+                resource usage) is recorded, and secrets are redacted. This is how you \
+                build/test/execute within a sandbox. argv array, no shell.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Env name (slug, agent/slug, or env/agent/slug)." },
+                    "command": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Command argv (no shell), e.g. [\"pytest\", \"-q\"]."
+                    }
+                },
+                "required": ["name", "command"]
+            }
+        },
+        {
+            "name": "h5i_env_list",
+            "description": "List environments on this clone (including ones pulled from \
+                other agents), with status, base, isolation claim, and evidence count.",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "h5i_env_status",
+            "description": "Full manifest of one environment as JSON: lifecycle status, \
+                pinned base, code/context branch, policy digest, isolation claim, and \
+                evidence (capture ids).",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "h5i_env_diff",
+            "description": "Unified diff of an environment's changes against its pinned \
+                base. Works on a local env (live worktree) or one pulled from another \
+                clone (the proposed, committed state on its branch) — so you can review \
+                another agent's environment.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "stat": { "type": "boolean", "description": "Diffstat instead of the full patch." }
+                },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "h5i_env_inspect",
+            "description": "Render one of an environment's evidence captures (structured \
+                findings, exit code, policy digest, redactions) by capture id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "capture": { "type": "string", "description": "Capture id from status/list." }
+                },
+                "required": ["name", "capture"]
+            }
+        },
+        {
+            "name": "h5i_env_compare",
+            "description": "Compare environments side by side (the \"arena\"): changes + \
+                latest-run exit/test results, flagging when they don't share a base. Use \
+                to pick a winner among parallel attempts.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "names": { "type": "array", "items": { "type": "string" }, "description": "Two or more env names." }
+                },
+                "required": ["names"]
+            }
+        },
+        {
+            "name": "h5i_env_propose",
+            "description": "Snapshot an environment's worktree (a path-allowlisted, \
+                host-side mediated commit) and mark it proposed, returning a review \
+                brief. NEVER writes the parent branch — surfacing only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "h5i_env_apply",
+            "description": "Apply a PROPOSED environment onto its parent branch \
+                (reviewer-selected, never automatic). Default merges (fast-forward when \
+                possible); set patch=true to squash. Refuses on conflicts.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "patch": { "type": "boolean", "description": "Squash into one commit instead of merging." }
+                },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "h5i_env_rebase",
+            "description": "Rebase an environment onto its parent branch's current tip, \
+                re-pinning the base (use when status reports the parent advanced). 3-way \
+                merge; refuses on conflict, leaving the base untouched.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "h5i_env_abort",
+            "description": "Abort an environment — its manifest and workspace are \
+                preserved for forensics (reclaim later with `h5i env gc`).",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"]
+            }
+        },
     ])
 }
 
@@ -1406,6 +1553,161 @@ fn tool_capture_run(params: &Value, workdir: &Path) -> Result<Value> {
     })))
 }
 
+// ── Environment tool handlers ─────────────────────────────────────────────────
+
+/// Open the repo and surface environments pulled from other clones (mirrors the
+/// CLI `h5i env` dispatch entry), so `list`/`status`/`diff`/`apply` see them.
+fn env_open(workdir: &Path) -> Result<H5iRepository> {
+    let repo = H5iRepository::open(workdir)?;
+    let _ = crate::env::materialize_from_ref(repo.git(), &repo.h5i_root);
+    Ok(repo)
+}
+
+/// Required string param.
+fn req_str(params: &Value, key: &str) -> Result<String> {
+    params
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("missing required param: {key}"))
+}
+
+fn tool_env_create(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let repo = env_open(workdir)?;
+    // Identity: $H5I_AGENT (host-injected), falling back to "claude" for the
+    // Claude-hosted MCP server.
+    let agent = crate::msg::resolve_identity(&repo.h5i_root, None).unwrap_or_else(|_| "claude".into());
+    let isolation = params
+        .get("isolation")
+        .and_then(Value::as_str)
+        .map(crate::sandbox::IsolationClaim::parse)
+        .transpose()?;
+    let opts = crate::env::CreateOpts {
+        from: params.get("from").and_then(Value::as_str).map(str::to_owned),
+        profile: params
+            .get("profile")
+            .and_then(Value::as_str)
+            .unwrap_or("default")
+            .to_string(),
+        isolation,
+        backend: "auto".into(),
+    };
+    let m = crate::env::create(repo.git(), &repo.h5i_root, workdir, &agent, &name, opts)?;
+    Ok(json_content(serde_json::to_value(&m)?))
+}
+
+fn tool_env_run(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let argv: Vec<String> = match params.get("command") {
+        Some(Value::Array(a)) => a
+            .iter()
+            .map(|v| v.as_str().map(str::to_owned).ok_or_else(|| anyhow::anyhow!("command elements must be strings")))
+            .collect::<Result<Vec<_>>>()?,
+        _ => anyhow::bail!("missing required param: command (array of strings)"),
+    };
+    if argv.is_empty() {
+        anyhow::bail!("command must not be empty");
+    }
+    let repo = env_open(workdir)?;
+    let mut m = crate::env::find(&repo.h5i_root, &name)?;
+    let outcome = crate::env::run(repo.git(), &repo.h5i_root, &mut m, &argv)?;
+    Ok(json_content(json!({
+        "env_id": m.id,
+        "capture_id": outcome.capture_id,
+        "exit_code": outcome.exit_code,
+        "timed_out": outcome.timed_out,
+        "wall_ms": outcome.wall_ms,
+        "cpu_ms": outcome.cpu_ms,
+        "max_rss_kb": outcome.max_rss_kb,
+        "structured": outcome.manifest.structured,
+        "policy_digest": m.policy_digest,
+        "hint": format!("Full output recoverable via h5i_env_inspect {{name, capture: \"{}\"}}", outcome.capture_id),
+    })))
+}
+
+fn tool_env_list(_params: &Value, workdir: &Path) -> Result<Value> {
+    let repo = env_open(workdir)?;
+    let envs = crate::env::list(&repo.h5i_root);
+    Ok(json_content(serde_json::to_value(&envs)?))
+}
+
+fn tool_env_status(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let repo = env_open(workdir)?;
+    let m = crate::env::find(&repo.h5i_root, &name)?;
+    let drift = crate::env::drift(repo.git(), &m);
+    let mut v = serde_json::to_value(&m)?;
+    if let Value::Object(ref mut map) = v {
+        map.insert("drift".into(), serde_json::to_value(&drift)?);
+    }
+    Ok(json_content(v))
+}
+
+fn tool_env_diff(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let stat = params.get("stat").and_then(Value::as_bool).unwrap_or(false);
+    let repo = env_open(workdir)?;
+    let m = crate::env::find(&repo.h5i_root, &name)?;
+    let diff = crate::env::diff(repo.git(), &repo.h5i_root, &m, stat)?;
+    Ok(text_content(diff))
+}
+
+fn tool_env_inspect(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let capture = req_str(params, "capture")?;
+    let repo = env_open(workdir)?;
+    let m = crate::env::find(&repo.h5i_root, &name)?;
+    Ok(text_content(crate::env::inspect(repo.git(), &m, &capture)?))
+}
+
+fn tool_env_compare(params: &Value, workdir: &Path) -> Result<Value> {
+    let names: Vec<String> = params
+        .get("names")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+        .unwrap_or_default();
+    if names.len() < 2 {
+        anyhow::bail!("compare needs at least two env names");
+    }
+    let repo = env_open(workdir)?;
+    let rows = crate::env::compare(repo.git(), &repo.h5i_root, &names)?;
+    Ok(json_content(serde_json::to_value(&rows)?))
+}
+
+fn tool_env_propose(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let repo = env_open(workdir)?;
+    let mut m = crate::env::find(&repo.h5i_root, &name)?;
+    let brief = crate::env::propose(repo.git(), &repo.h5i_root, &mut m)?;
+    Ok(json_content(json!({ "status": m.status, "brief": brief })))
+}
+
+fn tool_env_apply(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let patch = params.get("patch").and_then(Value::as_bool).unwrap_or(false);
+    let repo = env_open(workdir)?;
+    let mut m = crate::env::find(&repo.h5i_root, &name)?;
+    let result = crate::env::apply(repo.git(), &repo.h5i_root, workdir, &mut m, patch)?;
+    Ok(json_content(json!({ "status": m.status, "result": result })))
+}
+
+fn tool_env_rebase(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let repo = env_open(workdir)?;
+    let mut m = crate::env::find(&repo.h5i_root, &name)?;
+    let result = crate::env::rebase(repo.git(), &repo.h5i_root, &mut m)?;
+    Ok(json_content(json!({ "base_commit": m.base_commit, "result": result })))
+}
+
+fn tool_env_abort(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let repo = env_open(workdir)?;
+    let mut m = crate::env::find(&repo.h5i_root, &name)?;
+    crate::env::abort(repo.git(), &repo.h5i_root, &mut m)?;
+    Ok(json_content(json!({ "status": m.status, "id": m.id })))
+}
+
 // ── Tool call dispatch ────────────────────────────────────────────────────────
 
 /// Dispatch a `tools/call` invocation to the appropriate handler.
@@ -1443,6 +1745,17 @@ pub fn call_tool(name: &str, params: &Value, workdir: &Path) -> Result<Value> {
         "h5i_claims_list" => tool_claims_list(params, workdir),
         "h5i_claims_prune" => tool_claims_prune(params, workdir),
         "h5i_capture_run" => tool_capture_run(params, workdir),
+        "h5i_env_create" => tool_env_create(params, workdir),
+        "h5i_env_run" => tool_env_run(params, workdir),
+        "h5i_env_list" => tool_env_list(params, workdir),
+        "h5i_env_status" => tool_env_status(params, workdir),
+        "h5i_env_diff" => tool_env_diff(params, workdir),
+        "h5i_env_inspect" => tool_env_inspect(params, workdir),
+        "h5i_env_compare" => tool_env_compare(params, workdir),
+        "h5i_env_propose" => tool_env_propose(params, workdir),
+        "h5i_env_apply" => tool_env_apply(params, workdir),
+        "h5i_env_rebase" => tool_env_rebase(params, workdir),
+        "h5i_env_abort" => tool_env_abort(params, workdir),
         other => anyhow::bail!("Unknown tool: {}", other),
     }
 }
@@ -2130,6 +2443,17 @@ mod tests {
             "h5i_claims_list",
             "h5i_claims_prune",
             "h5i_capture_run",
+            "h5i_env_create",
+            "h5i_env_run",
+            "h5i_env_list",
+            "h5i_env_status",
+            "h5i_env_diff",
+            "h5i_env_inspect",
+            "h5i_env_compare",
+            "h5i_env_propose",
+            "h5i_env_apply",
+            "h5i_env_rebase",
+            "h5i_env_abort",
         ];
         for name in &expected {
             assert!(names.contains(name), "missing tool: {}", name);
@@ -2478,6 +2802,109 @@ mod tests {
         let r = read_resource("h5i://nonexistent/path", &path);
         assert!(r.is_err());
         assert!(r.unwrap_err().to_string().contains("Unknown resource"));
+    }
+
+    // ── Environment tools ─────────────────────────────────────────────────────
+
+    /// Parse a tool's JSON content block back into a Value.
+    fn tool_json(resp: &Value) -> Value {
+        let text = resp["content"][0]["text"].as_str().expect("text content");
+        serde_json::from_str(text).expect("json content")
+    }
+
+    #[test]
+    fn env_tools_are_advertised() {
+        let defs = tool_definitions();
+        let names: Vec<&str> = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["name"].as_str())
+            .collect();
+        for t in [
+            "h5i_env_create", "h5i_env_run", "h5i_env_list", "h5i_env_status",
+            "h5i_env_diff", "h5i_env_inspect", "h5i_env_compare", "h5i_env_propose",
+            "h5i_env_apply", "h5i_env_rebase", "h5i_env_abort",
+        ] {
+            assert!(names.contains(&t), "tool {t} not advertised");
+        }
+    }
+
+    #[test]
+    fn env_lifecycle_over_mcp() {
+        let (_dir, path) = make_repo();
+
+        // create (via the public dispatch, so the name→handler wiring is tested).
+        let created = call_tool("h5i_env_create", &json!({"name": "feat"}), &path).unwrap();
+        let m = tool_json(&created);
+        assert_eq!(m["slug"], "feat");
+        assert_eq!(m["status"], "created");
+        let id = m["id"].as_str().unwrap().to_string(); // env/<agent>/feat
+
+        // list shows it.
+        let listed = tool_json(&call_tool("h5i_env_list", &json!({}), &path).unwrap());
+        assert!(listed.as_array().unwrap().iter().any(|e| e["id"] == id));
+
+        // run captures evidence and reports the exit code.
+        let run = tool_json(
+            &call_tool(
+                "h5i_env_run",
+                &json!({"name": "feat", "command": ["sh", "-c", "echo hello-mcp"]}),
+                &path,
+            )
+            .unwrap(),
+        );
+        assert_eq!(run["exit_code"], 0);
+        let cap = run["capture_id"].as_str().unwrap().to_string();
+
+        // inspect renders that capture.
+        let insp = call_tool(
+            "h5i_env_inspect",
+            &json!({"name": "feat", "capture": cap}),
+            &path,
+        )
+        .unwrap();
+        let insp_text = insp["content"][0]["text"].as_str().unwrap();
+        assert!(insp_text.contains("hello-mcp") || insp_text.contains("sh"), "{insp_text}");
+
+        // status carries drift + manifest.
+        let status = tool_json(&call_tool("h5i_env_status", &json!({"name": "feat"}), &path).unwrap());
+        assert_eq!(status["id"], id);
+        assert!(status.get("drift").is_some());
+
+        // make a change in the worktree, then diff + propose.
+        let work = path.join(".git/.h5i/env").join(status["agent"].as_str().unwrap()).join("feat/work");
+        std::fs::write(work.join("new.txt"), "from env\n").unwrap();
+        let diff = call_tool("h5i_env_diff", &json!({"name": "feat"}), &path).unwrap();
+        assert!(diff["content"][0]["text"].as_str().unwrap().contains("from env"));
+
+        let proposed = tool_json(&call_tool("h5i_env_propose", &json!({"name": "feat"}), &path).unwrap());
+        assert_eq!(proposed["status"], "proposed");
+        assert!(proposed["brief"].as_str().unwrap().contains("Proposal"));
+
+        // apply onto main (make_repo leaves us on the default branch, clean).
+        let applied = tool_json(&call_tool("h5i_env_apply", &json!({"name": "feat"}), &path).unwrap());
+        assert_eq!(applied["status"], "applied");
+        assert!(path.join("new.txt").is_file(), "apply updated the working tree");
+    }
+
+    #[test]
+    fn env_compare_over_mcp() {
+        let (_dir, path) = make_repo();
+        call_tool("h5i_env_create", &json!({"name": "a"}), &path).unwrap();
+        call_tool("h5i_env_create", &json!({"name": "b"}), &path).unwrap();
+        let rows = tool_json(
+            &call_tool("h5i_env_compare", &json!({"names": ["a", "b"]}), &path).unwrap(),
+        );
+        assert_eq!(rows.as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn env_run_unknown_env_errors() {
+        let (_dir, path) = make_repo();
+        let err = call_tool("h5i_env_run", &json!({"name": "ghost", "command": ["true"]}), &path)
+            .unwrap_err();
+        assert!(err.to_string().contains("no environment named"), "{err}");
     }
 
     // ── Full context workflow ─────────────────────────────────────────────────

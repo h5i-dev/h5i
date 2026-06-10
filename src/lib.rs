@@ -1,3 +1,7 @@
+// The MCP `tool_definitions()` builds a large `json!` literal; the default
+// macro recursion limit (128) is not enough to expand it.
+#![recursion_limit = "512"]
+
 pub mod ast;
 pub mod codex;
 pub mod injection;
