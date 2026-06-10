@@ -755,3 +755,4 @@ _[Checkpoint: 6a29a272 — wrote sandbox-production-roadmap.md; wrote sandbox-pr
 [17:58:07] OBSERVE: read tests/env_integration.rs
 [17:58:10] OBSERVE: read tests/env_integration.rs
 [17:58:29] ACT: edited tests/env_integration.rs
+[17:59:54] OBSERVE: read src/sandbox.rs
