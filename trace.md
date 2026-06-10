@@ -1268,3 +1268,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 _[Checkpoint: 6a29d1d8 — session ended (auto-checkpoint)]_
 ---
 
+[21:09:07] ACT: wrote docs/comparison.md
