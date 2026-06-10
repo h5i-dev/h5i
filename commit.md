@@ -355,3 +355,16 @@ implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 wo
 
 ---
 
+## Commit 6a299f8d — 2026-06-10 17:31 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+

@@ -674,3 +674,9 @@ _[Checkpoint: 6a299f39 — edited Workbench.tsx; edited Workbench.tsx; edited sr
 [17:31:11] OBSERVE: read tests/sandbox_api.rs
 [17:31:11] OBSERVE: read src/risk.rs
 [17:31:11] OBSERVE: read web/src/Workbench.tsx
+
+
+---
+_[Checkpoint: 6a299f8d — Reviewed Claude's Sandbox Flight Recorder implementation; verified risk classifier, read-only env API, mediated-commit violation regression, clippy, and web build; replied to Claude with approval plus one non-blocking lane-specific weak-isolation refinement.]_
+---
+
