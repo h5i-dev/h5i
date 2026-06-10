@@ -559,11 +559,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Reviewed Claude's Sandbox Flight Recorder implementation; verified risk classifier, read-only env API, mediated-commit violation regression, clippy, and web build; replied to Claude with approval plus one non-blocking lane-specific weak-isolation refinement.
 - [x] edited src/risk.rs; edited src/risk.rs; edited src/risk.rs
 - [x] wrote sandbox-production-roadmap.md; wrote sandbox-production-roadmap.md; edited MEMORY.md
+- [x] wrote sandbox-production-roadmap.md; wrote sandbox-production-roadmap.md; edited MEMORY.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 17:44 UTC] `impl-env-sandbox`: wrote sandbox-production-roadmap.md; wrote sandbox-production-roadmap.md; edited MEMORY.md
 - [2026-06-10 17:39 UTC] `impl-env-sandbox`: wrote sandbox-production-roadmap.md; wrote sandbox-production-roadmap.md; edited MEMORY.md
 - [2026-06-10 17:36 UTC] `impl-env-sandbox`: edited src/risk.rs; edited src/risk.rs; edited src/risk.rs
 - [2026-06-10 17:31 UTC] `impl-env-sandbox`: Reviewed Claude's Sandbox Flight Recorder implementation; verified risk classifier, read-only env API, mediated-commit violation regression, clippy, and web build; replied to Claude with approval plus one non-blocking lane-specific weak-isolation refinement.
