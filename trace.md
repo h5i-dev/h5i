@@ -1216,3 +1216,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 [21:03:44] OBSERVE: read dagger.json
 [21:03:45] OBSERVE: read network-setup.md
 [21:03:46] OBSERVE: read prod-host-setup.md
+[21:03:46] OBSERVE: read SECURITY.md
