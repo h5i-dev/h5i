@@ -496,3 +496,9 @@ _[Checkpoint: 6a298203 — edited docs/environments-design.md; edited tests/env_
 [15:49:04] OBSERVE: searched \(or for "podman"
 [15:49:31] OBSERVE: listed files under .git/.h5i
 [15:49:31] OBSERVE: read .git/.h5i/claims/986da88c96d9.json
+
+
+---
+_[Checkpoint: 6a29878b — Reviewed and hardened h5i env Linux/WSL Podman container backend: rootless Podman only, no implicit image pulls, safer Podman argv, docs/probe wording aligned; cargo check and env/container tests pass.]_
+---
+
