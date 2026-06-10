@@ -958,3 +958,4 @@ _[Checkpoint: 6a29b9a8 — edited src/seccomp_notify.rs; edited src/seccomp_noti
 _[Checkpoint: 6a29ba12 — edited src/seccomp_notify.rs; edited src/seccomp_notify.rs; edited src/seccomp_notify.rs]_
 ---
 
+[19:26:52] OBSERVE: read b4g5pbbi0.output
