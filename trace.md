@@ -240,3 +240,4 @@ _[Checkpoint: 6a28dcb2 — Fix CI: functional process-tier self-test (bits != ru
 [03:40:52] OBSERVE: read MEMORY.md
 [03:41:00] ACT: edited MEMORY.md
 [03:41:14] THINK: Now let me implement the functional self-test in sandbox.
+[03:41:14] THINK: Let me enhance the probe-output test to assert the new functional line, then run everything:
