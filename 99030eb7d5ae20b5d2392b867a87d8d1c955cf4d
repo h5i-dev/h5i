@@ -1,0 +1,1 @@
+{"git_oid":"99030eb7d5ae20b5d2392b867a87d8d1c955cf4d","parent_oid":"df36404a198e988d6abdc0d878c48476bf8f8a90","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"Fix SVG overlaps + shorten text; add an intro question and update the Sec 1 table","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-10T21:45:12.931603002Z"}
