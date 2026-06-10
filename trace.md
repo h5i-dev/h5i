@@ -129,3 +129,4 @@ _[Checkpoint: 6a28cf70 — edited docs/environments-design.md; wrote wsl2-host-h
 [02:55:28] ACT: edited src/objects.rs
 [02:55:30] ACT: edited src/objects.rs
 [02:55:42] ACT: edited src/objects.rs
+[02:55:44] ACT: edited src/mcp.rs
