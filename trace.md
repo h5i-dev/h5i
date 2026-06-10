@@ -214,3 +214,4 @@ _[Checkpoint: 6a28d8b2 — Env round 3: resource accounting, the arena (compare)
 _[Checkpoint: 6a28d8cc — edited tests/env_integration.rs; edited CLAUDE.md; edited CLAUDE.md]_
 ---
 
+[03:29:36] OBSERVE: read tests/env_integration.rs
