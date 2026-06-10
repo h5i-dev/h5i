@@ -249,3 +249,4 @@ _[Checkpoint: 6a28dcb2 — Fix CI: functional process-tier self-test (bits != ru
 _[Checkpoint: 6a28dcda — edited tests/env_integration.rs; wrote process-tier-bits-vs-runnable.md; edited MEMORY.md]_
 ---
 
+[03:49:19] OBSERVE: read src/sandbox.rs
