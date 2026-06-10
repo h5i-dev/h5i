@@ -532,11 +532,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Implemented h5i env (worktree+sandbox) per docs/environments-design.md phases 1-3
 - [x] edited docs/environments-design.md; wrote wsl2-host-has-landlock-abi3.md; edited MEMORY.md
 - [x] Hardened h5i env: secret redaction, broader sandbox, lifecycle locks, inspect
+- [x] edited src/main.rs; edited CLAUDE.md; edited CLAUDE.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 03:10 UTC] `impl-env-sandbox`: edited src/main.rs; edited CLAUDE.md; edited CLAUDE.md
 - [2026-06-10 03:09 UTC] `impl-env-sandbox`: Hardened h5i env: secret redaction, broader sandbox, lifecycle locks, inspect
 - [2026-06-10 02:44 UTC] `impl-env-sandbox`: edited docs/environments-design.md; wrote wsl2-host-has-landlock-abi3.md; edited MEMORY.md
 - [2026-06-10 02:42 UTC] `impl-env-sandbox`: Implemented h5i env (worktree+sandbox) per docs/environments-design.md phases 1-3
