@@ -431,3 +431,9 @@ _[Checkpoint: 6a29783d — edited src/mcp.rs; edited .claude/h5i.md; edited CLAU
 [15:18:25] ACT: edited CLAUDE.md
 [15:18:26] ACT: edited CLAUDE.md
 [15:18:45] ACT: edited docs/environments-design.md
+
+
+---
+_[Checkpoint: 6a298068 — Container backend (isolation=container): rootless podman + DNS-pinned net.egress allowlist proxy]_
+---
+
