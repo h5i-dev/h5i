@@ -351,3 +351,9 @@ _[Checkpoint: 6a28e134 — edited tests/env_integration.rs; edited CLAUDE.md; ed
 [11:00:55] OBSERVE: read tests/cli_integration.rs
 [11:01:05] ACT: edited tests/cli_integration.rs
 [11:02:16] ACT: edited CLAUDE.md
+
+
+---
+_[Checkpoint: 6a294441 — Shareable envs: manifest+policy in refs/h5i/env, push/pull carry the env, cross-clone review loop]_
+---
+

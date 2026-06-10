@@ -134,3 +134,16 @@ Security: seccomp now blocks io_uring_setup/enter/register (major kernel escape 
 
 ---
 
+## Commit 6a294441 — 2026-06-10 11:02 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Makes the multi-agent review loop real. refs/h5i/env now holds events.jsonl + manifests.jsonl + policies.jsonl, written in one CAS commit per change (append_env_commit); union_merge_commits reconciles all three (events append-only, manifests newest-updated_at wins so apply-on-B propagates back, policies immutable). EnvManifest gains updated_at. materialize_from_ref writes pulled manifests/policies to disk; diff/compare fall back to base..branch-tip when the worktree is absent (remote env); run/propose/rebase give a clear 'lives on another clone' error. Wiring: h5i push adds refs/h5i/env + wildcard refs/heads/h5i/env/*; h5i pull now calls sync_one(ENV_REF) (was never called!) + fetches env branches + materializes; setup-remote adds both patterns. Tests: +4 (unit upsert_jsonl; integration env_ref_holds_blobs, and the full two-clones loop: A creates+runs+proposes+pushes, B pulls+lists+diffs-from-branch+inspects+applies, applied status round-trips back to A). Full suite 894 green, clippy clean.
+
+---
+
