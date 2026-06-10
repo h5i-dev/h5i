@@ -580,11 +580,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/supervisor.rs; edited tests/sandbox_api.rs; edited tests/env_integration.rs
 - [x] edited tests/sandbox_api.rs; edited tests/env_integration.rs; wrote h5i-commit-msg.txt
 - [x] edited tests/sandbox_api.rs; edited tests/env_integration.rs; wrote h5i-commit-msg.txt
+- [x] edited tests/sandbox_api.rs; edited tests/env_integration.rs; wrote h5i-commit-msg.txt
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 19:45 UTC] `impl-env-sandbox`: edited tests/sandbox_api.rs; edited tests/env_integration.rs; wrote h5i-commit-msg.txt
 - [2026-06-10 19:41 UTC] `impl-env-sandbox`: edited tests/sandbox_api.rs; edited tests/env_integration.rs; wrote h5i-commit-msg.txt
 - [2026-06-10 19:39 UTC] `impl-env-sandbox`: edited tests/sandbox_api.rs; edited tests/env_integration.rs; wrote h5i-commit-msg.txt
 - [2026-06-10 19:36 UTC] `impl-env-sandbox`: edited src/supervisor.rs; edited tests/sandbox_api.rs; edited tests/env_integration.rs
