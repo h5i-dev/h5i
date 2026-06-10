@@ -1038,3 +1038,4 @@ _[Checkpoint: 6a29bf97 — edited tests/sandbox_api.rs; edited tests/env_integra
 _[Checkpoint: 6a29c289 — edited src/cgroup.rs; edited src/cgroup.rs; edited src/cgroup.rs]_
 ---
 
+[20:02:51] OBSERVE: read bz2y25bvl.output
