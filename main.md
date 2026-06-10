@@ -534,11 +534,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Hardened h5i env: secret redaction, broader sandbox, lifecycle locks, inspect
 - [x] edited src/main.rs; edited CLAUDE.md; edited CLAUDE.md
 - [x] Env round 3: resource accounting, the arena (compare), tool allowlist, event-log redaction
+- [x] edited tests/env_integration.rs; edited CLAUDE.md; edited CLAUDE.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 03:23 UTC] `impl-env-sandbox`: edited tests/env_integration.rs; edited CLAUDE.md; edited CLAUDE.md
 - [2026-06-10 03:23 UTC] `impl-env-sandbox`: Env round 3: resource accounting, the arena (compare), tool allowlist, event-log redaction
 - [2026-06-10 03:10 UTC] `impl-env-sandbox`: edited src/main.rs; edited CLAUDE.md; edited CLAUDE.md
 - [2026-06-10 03:09 UTC] `impl-env-sandbox`: Hardened h5i env: secret redaction, broader sandbox, lifecycle locks, inspect
