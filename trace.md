@@ -1477,3 +1477,4 @@ _[Checkpoint: 6a29f293 — edited tests/env_integration.rs]_
 _[Checkpoint: 6a29f2b7 — edited tests/env_integration.rs]_
 ---
 
+[23:27:13] OBSERVE: read b1gxhvhqo.output
