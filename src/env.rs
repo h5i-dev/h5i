@@ -30,10 +30,18 @@ use crate::error::H5iError;
 use crate::objects;
 use crate::sandbox::{self, IsolationClaim, ResolvedPolicy};
 
-/// Git ref holding the append-only env event log (one JSON object per line).
+/// Git ref holding the shareable env state: the append-only event log plus the
+/// per-env manifests and resolved policies (so `h5i push`/`pull` carry an
+/// environment to another clone for the cross-agent review loop, design §11).
 pub const ENV_REF: &str = "refs/h5i/env";
-/// Top-level file inside the ref's tree holding the event log.
+/// File inside the ref's tree holding the event log (one JSON object per line).
 pub const EVENTS_FILE: &str = "events.jsonl";
+/// File inside the ref's tree holding the manifests (one `EnvManifest` per
+/// line, keyed by id — the mutable per-env record).
+pub const MANIFESTS_FILE: &str = "manifests.jsonl";
+/// File inside the ref's tree holding resolved policies (one `{id, toml}` per
+/// line — immutable after create).
+pub const POLICIES_FILE: &str = "policies.jsonl";
 /// Directory under the h5i sidecar root holding per-env state.
 pub const ENV_DIR: &str = "env";
 /// Prefix (under `refs/heads/`) of every env code branch.
@@ -118,6 +126,10 @@ pub struct EnvManifest {
     /// Workspace backend (`worktree` today; pluggable later).
     pub backend: String,
     pub created_at: String,
+    /// Last-persisted timestamp (RFC3339). Bumped on every save; the union-merge
+    /// tiebreak when the same env is edited on two clones (newest wins).
+    #[serde(default)]
+    pub updated_at: String,
     pub status: String,
     /// Object ids in `refs/h5i/objects` — the evidence, oldest first.
     #[serde(default)]
@@ -193,10 +205,55 @@ pub fn validate_slug(slug: &str) -> Result<(), H5iError> {
 
 // ─── event log: CAS append + union merge (same pattern as objects/msg) ──────
 
-/// Append one event to `refs/h5i/env` with compare-and-swap semantics.
+/// Replace (or append) the single JSONL line whose parsed `id` field equals
+/// `id`. Lines are kept sorted by id so the blob is deterministic.
+fn upsert_jsonl_by_id(existing: &str, id: &str, new_line: &str) -> String {
+    use std::collections::BTreeMap;
+    let mut map: BTreeMap<String, String> = BTreeMap::new();
+    for line in existing.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Some(line_id) = serde_json::from_str::<serde_json::Value>(line)
+            .ok()
+            .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(str::to_owned))
+        {
+            map.insert(line_id, line.to_string());
+        }
+    }
+    map.insert(id.to_string(), new_line.to_string());
+    let mut out = String::new();
+    for line in map.values() {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// Append one event to `refs/h5i/env` with compare-and-swap semantics. Thin
+/// wrapper over [`append_env_commit`] for callers with no manifest to mirror
+/// (only `gc`, which records an event without changing the manifest body).
 pub fn append_event(repo: &Repository, ev: &EnvEvent) -> Result<(), H5iError> {
+    append_env_commit(repo, ev, None, None)
+}
+
+/// Atomically record an env event AND mirror the env's manifest (and, on
+/// create, its resolved policy) into `refs/h5i/env`, so the whole environment
+/// travels with `h5i push`/`pull`. One CAS commit updates `events.jsonl`
+/// (append), `manifests.jsonl` (upsert by id), and `policies.jsonl` (upsert,
+/// write-once). Retries on a lost race.
+pub fn append_env_commit(
+    repo: &Repository,
+    ev: &EnvEvent,
+    manifest: Option<&EnvManifest>,
+    policy_toml: Option<&str>,
+) -> Result<(), H5iError> {
     const MAX_ATTEMPTS: usize = 64;
-    let line = serde_json::to_string(ev)?;
+    let event_line = serde_json::to_string(ev)?;
+    let manifest_line = match manifest {
+        Some(m) => Some(serde_json::to_string(m)?),
+        None => None,
+    };
     let message = format!("h5i env: {} {}", ev.event, ev.env_id);
 
     for _ in 0..MAX_ATTEMPTS {
@@ -212,10 +269,38 @@ pub fn append_event(repo: &Repository, ev: &EnvEvent) -> Result<(), H5iError> {
         if !log.is_empty() && !log.ends_with('\n') {
             log.push('\n');
         }
-        log.push_str(&line);
+        log.push_str(&event_line);
         log.push('\n');
 
-        let tree_oid = objects::build_tree(repo, base_tree.as_ref(), &[(EVENTS_FILE, &log)])?;
+        let mut files: Vec<(&str, String)> = vec![(EVENTS_FILE, log)];
+        if let (Some(m), Some(line)) = (manifest, &manifest_line) {
+            let existing =
+                objects::read_blob_from_tree(repo, base_tree.as_ref(), MANIFESTS_FILE).unwrap_or_default();
+            files.push((MANIFESTS_FILE, upsert_jsonl_by_id(&existing, &m.id, line)));
+        }
+        if let (Some(m), Some(toml)) = (manifest, policy_toml) {
+            let existing =
+                objects::read_blob_from_tree(repo, base_tree.as_ref(), POLICIES_FILE).unwrap_or_default();
+            // Only write a policy once (it is immutable after create).
+            if !existing.lines().any(|l| {
+                serde_json::from_str::<serde_json::Value>(l)
+                    .ok()
+                    .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(|s| s == m.id))
+                    .unwrap_or(false)
+            }) {
+                let entry = serde_json::to_string(&serde_json::json!({"id": m.id, "toml": toml}))?;
+                let mut updated = existing;
+                if !updated.is_empty() && !updated.ends_with('\n') {
+                    updated.push('\n');
+                }
+                updated.push_str(&entry);
+                updated.push('\n');
+                files.push((POLICIES_FILE, updated));
+            }
+        }
+
+        let file_refs: Vec<(&str, &str)> = files.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        let tree_oid = objects::build_tree(repo, base_tree.as_ref(), &file_refs)?;
         let tree = repo.find_tree(tree_oid)?;
         let sig = objects::signature(repo)?;
         let parents: Vec<&git2::Commit> = parent.iter().collect();
@@ -233,6 +318,79 @@ pub fn append_event(repo: &Repository, ev: &EnvEvent) -> Result<(), H5iError> {
         "h5i env: event {} for {} could not be appended after {MAX_ATTEMPTS} attempts",
         ev.event, ev.env_id
     )))
+}
+
+/// Read every env manifest stored in `refs/h5i/env`.
+pub fn read_ref_manifests(repo: &Repository) -> Vec<EnvManifest> {
+    let Some(tree) = repo
+        .find_reference(ENV_REF)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+        .and_then(|c| c.tree().ok())
+    else {
+        return Vec::new();
+    };
+    let Some(raw) = objects::read_blob_from_tree(repo, Some(&tree), MANIFESTS_FILE) else {
+        return Vec::new();
+    };
+    raw.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<EnvManifest>(l).ok())
+        .collect()
+}
+
+/// Read every resolved policy stored in `refs/h5i/env` as `(env_id, toml)`.
+pub fn read_ref_policies(repo: &Repository) -> Vec<(String, String)> {
+    let Some(tree) = repo
+        .find_reference(ENV_REF)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+        .and_then(|c| c.tree().ok())
+    else {
+        return Vec::new();
+    };
+    let Some(raw) = objects::read_blob_from_tree(repo, Some(&tree), POLICIES_FILE) else {
+        return Vec::new();
+    };
+    raw.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|v| {
+            Some((
+                v.get("id")?.as_str()?.to_string(),
+                v.get("toml")?.as_str()?.to_string(),
+            ))
+        })
+        .collect()
+}
+
+/// Materialize env manifests + policies from `refs/h5i/env` onto disk for any
+/// env that is absent locally, or whose ref copy is newer (`updated_at`). This
+/// is what lets a `h5i pull` make another clone's environments appear in
+/// `h5i env list`/`status`/`diff`/`apply`. Worktrees are inherently local, so a
+/// materialized ("remote") env has no `work/`; review/apply operate on the
+/// pushed code branch instead.
+pub fn materialize_from_ref(repo: &Repository, h5i_root: &Path) -> Result<usize, H5iError> {
+    let policies: std::collections::HashMap<String, String> =
+        read_ref_policies(repo).into_iter().collect();
+    let mut written = 0usize;
+    for m in read_ref_manifests(repo) {
+        let dir = env_dir(h5i_root, &m.agent, &m.slug);
+        let local_newer = load_manifest_at(&dir)
+            .ok()
+            .map(|local| local.updated_at >= m.updated_at)
+            .unwrap_or(false);
+        if local_newer {
+            continue;
+        }
+        save_manifest(h5i_root, &m)?;
+        if let Some(toml) = policies.get(&m.id) {
+            let path = dir.join(POLICY_RESOLVED_FILE);
+            std::fs::write(&path, toml).map_err(|e| H5iError::with_path(e, &path))?;
+        }
+        written += 1;
+    }
+    Ok(written)
 }
 
 /// Read every event, oldest first. Optionally filtered to one env.
@@ -253,11 +411,15 @@ pub fn read_events(repo: &Repository, env_id: Option<&str>) -> Vec<EnvEvent> {
         .collect()
 }
 
-/// Reconcile two divergent `refs/h5i/env` tips: the log is append-only, so a
-/// divergence is two disjoint sets of events — union them (dedup on the
-/// `(env_id, ts, event)` key), re-sort by timestamp, commit with both parents.
-/// Mirrors [`crate::objects::union_merge_commits`] so `h5i pull` never drops
-/// an event.
+/// Reconcile two divergent `refs/h5i/env` tips. Three files travel in this
+/// ref; each merges so `h5i pull` never drops data:
+///
+/// - `events.jsonl` — append-only: union by `(env_id, ts, event)`.
+/// - `manifests.jsonl` — mutable per env: union by `id`, newest `updated_at`
+///   wins (lets an `apply` on one clone propagate back).
+/// - `policies.jsonl` — immutable after create: union by `id`, keep either.
+///
+/// Mirrors [`crate::objects::union_merge_commits`].
 pub fn union_merge_commits(
     repo: &Repository,
     local_oid: git2::Oid,
@@ -266,8 +428,14 @@ pub fn union_merge_commits(
     let local_commit = repo.find_commit(local_oid)?;
     let incoming_commit = repo.find_commit(incoming_oid)?;
 
+    // events: append-only union.
     let mut seen: HashSet<String> = HashSet::new();
-    let mut merged: Vec<EnvEvent> = Vec::new();
+    let mut events: Vec<EnvEvent> = Vec::new();
+    // manifests: id → newest manifest.
+    let mut manifests: std::collections::HashMap<String, EnvManifest> = std::collections::HashMap::new();
+    // policies: id → toml (first seen wins; immutable).
+    let mut policies: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+
     for oid in [local_oid, incoming_oid] {
         let tree = repo.find_commit(oid)?.tree().ok();
         let raw = objects::read_blob_from_tree(repo, tree.as_ref(), EVENTS_FILE).unwrap_or_default();
@@ -278,21 +446,64 @@ pub fn union_merge_commits(
             if let Ok(e) = serde_json::from_str::<EnvEvent>(line) {
                 let key = format!("{}|{}|{}", e.env_id, e.ts, e.event);
                 if seen.insert(key) {
-                    merged.push(e);
+                    events.push(e);
+                }
+            }
+        }
+        let mraw = objects::read_blob_from_tree(repo, tree.as_ref(), MANIFESTS_FILE).unwrap_or_default();
+        for line in mraw.lines() {
+            if let Ok(m) = serde_json::from_str::<EnvManifest>(line) {
+                match manifests.get(&m.id) {
+                    Some(existing) if existing.updated_at >= m.updated_at => {}
+                    _ => {
+                        manifests.insert(m.id.clone(), m);
+                    }
+                }
+            }
+        }
+        let praw = objects::read_blob_from_tree(repo, tree.as_ref(), POLICIES_FILE).unwrap_or_default();
+        for line in praw.lines() {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                if let (Some(id), Some(toml)) = (
+                    v.get("id").and_then(|i| i.as_str()),
+                    v.get("toml").and_then(|t| t.as_str()),
+                ) {
+                    policies.entry(id.to_string()).or_insert_with(|| toml.to_string());
                 }
             }
         }
     }
-    merged.sort_by(|a, b| a.ts.cmp(&b.ts).then(a.env_id.cmp(&b.env_id)));
+    events.sort_by(|a, b| a.ts.cmp(&b.ts).then(a.env_id.cmp(&b.env_id)));
 
     let mut log = String::new();
-    for e in &merged {
+    for e in &events {
         log.push_str(&serde_json::to_string(e)?);
         log.push('\n');
     }
+    let mut mlog = String::new();
+    for m in {
+        let mut v: Vec<&EnvManifest> = manifests.values().collect();
+        v.sort_by(|a, b| a.id.cmp(&b.id));
+        v
+    } {
+        mlog.push_str(&serde_json::to_string(m)?);
+        mlog.push('\n');
+    }
+    let mut plog = String::new();
+    for (id, toml) in &policies {
+        plog.push_str(&serde_json::to_string(&serde_json::json!({"id": id, "toml": toml}))?);
+        plog.push('\n');
+    }
 
     let base_tree = local_commit.tree().ok();
-    let tree_oid = objects::build_tree(repo, base_tree.as_ref(), &[(EVENTS_FILE, &log)])?;
+    let mut files: Vec<(&str, &str)> = vec![(EVENTS_FILE, &log)];
+    if !mlog.is_empty() {
+        files.push((MANIFESTS_FILE, &mlog));
+    }
+    if !plog.is_empty() {
+        files.push((POLICIES_FILE, &plog));
+    }
+    let tree_oid = objects::build_tree(repo, base_tree.as_ref(), &files)?;
     let tree = repo.find_tree(tree_oid)?;
     let sig = objects::signature(repo)?;
     let parents = [&local_commit, &incoming_commit];
@@ -389,8 +600,11 @@ fn set_status(
     capture: Option<String>,
 ) -> Result<(), H5iError> {
     m.status = status.to_string();
+    m.updated_at = now_ts();
     save_manifest(h5i_root, m)?;
-    append_event(
+    // Mirror the updated manifest into refs/h5i/env (shareable) in the same
+    // commit as the event, so a `h5i push` carries the new state.
+    append_env_commit(
         repo,
         &EnvEvent {
             ts: now_ts(),
@@ -400,6 +614,8 @@ fn set_status(
             detail,
             capture,
         },
+        Some(m),
+        None,
     )
 }
 
@@ -537,15 +753,19 @@ pub fn create(
         isolation_claim: policy.claim.as_str().to_string(),
         backend: backend.to_string(),
         created_at: now_ts(),
+        updated_at: now_ts(),
         status: ST_CREATED.to_string(),
         captures: Vec::new(),
     };
 
+    let policy_toml = policy.to_toml()?;
     let policy_path = dir.join(POLICY_RESOLVED_FILE);
-    std::fs::write(&policy_path, policy.to_toml()?)
+    std::fs::write(&policy_path, &policy_toml)
         .map_err(|e| H5iError::with_path(e, &policy_path))?;
     save_manifest(h5i_root, &manifest)?;
-    append_event(
+    // Mirror the manifest AND the resolved policy into refs/h5i/env so the
+    // whole environment is shareable from creation.
+    append_env_commit(
         repo,
         &EnvEvent {
             ts: now_ts(),
@@ -560,6 +780,8 @@ pub fn create(
             )),
             capture: None,
         },
+        Some(&manifest),
+        Some(&policy_toml),
     )?;
     Ok(manifest)
 }
@@ -579,6 +801,24 @@ pub struct RunOutcome {
     pub max_rss_kb: Option<i64>,
     /// The capture manifest (for rendering).
     pub manifest: objects::Manifest,
+}
+
+/// Whether this env's workspace is materialized locally. A `false` means the
+/// env was created on another clone and pulled here (no `work/`), or gc'd —
+/// such an env supports review/apply (which operate on the pushed code branch)
+/// but not run/propose/rebase (which need the worktree).
+pub fn has_workspace(m: &EnvManifest, h5i_root: &Path) -> bool {
+    m.work_dir(h5i_root).is_dir()
+}
+
+/// A uniform error for operations that need a local worktree the env lacks.
+fn no_workspace_err(m: &EnvManifest, op: &str) -> H5iError {
+    H5iError::Metadata(format!(
+        "{}: no local workspace for `{op}` — this environment lives on another clone (or was \
+         gc'd). You can review it (`h5i env diff/status/inspect {}`) and `h5i env apply {}` \
+         from the pushed code branch, but run/propose/rebase need the originating clone.",
+        m.id, m.slug, m.slug
+    ))
 }
 
 /// Run `argv` inside the env's worktree under its pinned policy, and record
@@ -601,11 +841,7 @@ pub fn run(
     }
     let work = m.work_dir(h5i_root);
     if !work.is_dir() {
-        return Err(H5iError::Metadata(format!(
-            "workspace for {} is missing ({}) — was it gc'd?",
-            m.id,
-            work.display()
-        )));
+        return Err(no_workspace_err(m, "env run"));
     }
 
     // Serialize concurrent runs of THIS env (status + captures are mutated
@@ -713,40 +949,54 @@ pub fn run(
 
 // ─── diff ───────────────────────────────────────────────────────────────────
 
-/// Unified diff of the env's current worktree state against its pinned base
-/// tree (committed + uncommitted work, including untracked files).
-pub fn diff(h5i_root: &Path, m: &EnvManifest, stat_only: bool) -> Result<String, H5iError> {
-    let work = m.work_dir(h5i_root);
-    if !work.is_dir() {
-        return Err(H5iError::Metadata(format!(
-            "workspace for {} is missing — `env diff` needs the worktree (status: {})",
-            m.id, m.status
-        )));
-    }
-    let wt_repo = Repository::open(&work)?;
-    let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
-    let mut opts = git2::DiffOptions::new();
-    opts.include_untracked(true).recurse_untracked_dirs(true).show_untracked_content(true);
-    let diff = wt_repo.diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))?;
-
-    if stat_only {
-        let stats = diff.stats()?;
-        let buf = stats.to_buf(git2::DiffStatsFormat::FULL, 80)?;
-        return Ok(buf.as_str().unwrap_or("").to_string());
-    }
-    let mut out = String::new();
-    diff.print(git2::DiffFormat::Patch, |_d, _h, line| {
-        let prefix = match line.origin() {
-            '+' | '-' | ' ' => Some(line.origin()),
-            _ => None,
-        };
-        if let Some(p) = prefix {
-            out.push(p);
+/// Unified diff of the env's changes against its pinned base tree.
+///
+/// When the worktree is present (the originating clone) this is the live
+/// working-tree diff (committed + uncommitted, including untracked files).
+/// When it is absent (a pulled "remote" env, or after gc) it falls back to the
+/// **committed** state on the env's code branch — i.e. what `propose`
+/// snapshotted — so a reviewer on another clone sees exactly the proposed diff.
+pub fn diff(repo: &Repository, h5i_root: &Path, m: &EnvManifest, stat_only: bool) -> Result<String, H5iError> {
+    let render = |diff: git2::Diff| -> Result<String, H5iError> {
+        if stat_only {
+            let stats = diff.stats()?;
+            let buf = stats.to_buf(git2::DiffStatsFormat::FULL, 80)?;
+            return Ok(buf.as_str().unwrap_or("").to_string());
         }
-        out.push_str(&String::from_utf8_lossy(line.content()));
-        true
-    })?;
-    Ok(out)
+        let mut out = String::new();
+        diff.print(git2::DiffFormat::Patch, |_d, _h, line| {
+            if matches!(line.origin(), '+' | '-' | ' ') {
+                out.push(line.origin());
+            }
+            out.push_str(&String::from_utf8_lossy(line.content()));
+            true
+        })?;
+        Ok(out)
+    };
+
+    let work = m.work_dir(h5i_root);
+    if work.is_dir() {
+        let wt_repo = Repository::open(&work)?;
+        let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
+        let mut opts = git2::DiffOptions::new();
+        opts.include_untracked(true).recurse_untracked_dirs(true).show_untracked_content(true);
+        let diff = wt_repo.diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))?;
+        render(diff)
+    } else {
+        // Remote/no-worktree: diff base_tree → env branch tip (the committed,
+        // proposed state) using the shared object store.
+        let base_tree = repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
+        let tip_tree = repo
+            .find_reference(&m.branch)
+            .map_err(|_| H5iError::Metadata(format!(
+                "{}: env code branch '{}' is not present locally — `h5i pull` it first",
+                m.id, m.branch
+            )))?
+            .peel_to_tree()?;
+        let mut opts = git2::DiffOptions::new();
+        let diff = repo.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), Some(&mut opts))?;
+        render(diff)
+    }
 }
 
 // ─── base drift (§9) ────────────────────────────────────────────────────────
@@ -942,7 +1192,7 @@ pub fn compare(
     let mut rows = Vec::new();
     for name in names {
         let m = find(h5i_root, name)?;
-        let (files_changed, insertions, deletions) = diffstat_numbers(h5i_root, &m).unwrap_or((0, 0, 0));
+        let (files_changed, insertions, deletions) = diffstat_numbers(repo, h5i_root, &m).unwrap_or((0, 0, 0));
         let (last_exit, last_tool, last_result, last_counts) = match m.captures.last() {
             Some(cap) => match objects::resolve_manifest(repo, cap) {
                 Ok(man) => {
@@ -976,24 +1226,33 @@ pub fn compare(
     Ok(rows)
 }
 
-/// `(files_changed, insertions, deletions)` of an env's work vs. its pinned
-/// base — `None` when the workspace has been gc'd.
-fn diffstat_numbers(h5i_root: &Path, m: &EnvManifest) -> Option<(usize, usize, usize)> {
+/// `(files_changed, insertions, deletions)` of an env's changes vs. its pinned
+/// base. Uses the worktree when present, else the env branch tip (so pulled
+/// "remote" envs still compare).
+fn diffstat_numbers(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Option<(usize, usize, usize)> {
+    let triple = |diff: &git2::Diff| {
+        diff.stats()
+            .ok()
+            .map(|s| (s.files_changed(), s.insertions(), s.deletions()))
+    };
     let work = m.work_dir(h5i_root);
-    if !work.is_dir() {
-        return None;
+    if work.is_dir() {
+        let wt_repo = Repository::open(&work).ok()?;
+        let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree).ok()?).ok()?;
+        let mut opts = git2::DiffOptions::new();
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .show_untracked_content(true);
+        let diff = wt_repo
+            .diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))
+            .ok()?;
+        triple(&diff)
+    } else {
+        let base_tree = repo.find_tree(git2::Oid::from_str(&m.base_tree).ok()?).ok()?;
+        let tip_tree = repo.find_reference(&m.branch).ok()?.peel_to_tree().ok()?;
+        let diff = repo.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), None).ok()?;
+        triple(&diff)
     }
-    let wt_repo = Repository::open(&work).ok()?;
-    let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree).ok()?).ok()?;
-    let mut opts = git2::DiffOptions::new();
-    opts.include_untracked(true)
-        .recurse_untracked_dirs(true)
-        .show_untracked_content(true);
-    let diff = wt_repo
-        .diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))
-        .ok()?;
-    let stats = diff.stats().ok()?;
-    Some((stats.files_changed(), stats.insertions(), stats.deletions()))
 }
 
 /// Render comparison rows as a human-readable table, flagging when the
@@ -1052,6 +1311,9 @@ pub fn render_compare(rows: &[CompareRow]) -> String {
 /// Returns `Ok(None)` when the worktree is identical to the branch tip.
 pub fn mediated_commit(h5i_root: &Path, m: &EnvManifest) -> Result<Option<git2::Oid>, H5iError> {
     let work = m.work_dir(h5i_root);
+    if !work.is_dir() {
+        return Err(no_workspace_err(m, "propose/rebase"));
+    }
     let wt_repo = Repository::open(&work)?;
     let canon_work = work.canonicalize().map_err(|e| H5iError::with_path(e, &work))?;
 
@@ -1218,7 +1480,7 @@ pub fn propose(
         }
     }
     let commit = mediated_commit(h5i_root, m)?;
-    let stat = diff(h5i_root, m, true).unwrap_or_default();
+    let stat = diff(repo, h5i_root, m, true).unwrap_or_default();
     set_status(
         repo,
         h5i_root,
@@ -1578,6 +1840,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn upsert_jsonl_replaces_by_id_and_keeps_others_sorted() {
+        let existing = "{\"id\":\"b\",\"v\":1}\n{\"id\":\"a\",\"v\":1}\n";
+        // Replace b, keep a; output sorted by id.
+        let out = upsert_jsonl_by_id(existing, "b", "{\"id\":\"b\",\"v\":2}");
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("\"id\":\"a\""));
+        assert!(lines[1].contains("\"v\":2"), "b replaced: {out}");
+        // Insert a new id.
+        let out = upsert_jsonl_by_id(&out, "c", "{\"id\":\"c\",\"v\":9}");
+        assert_eq!(out.lines().count(), 3);
+        assert!(out.lines().last().unwrap().contains("\"id\":\"c\""));
+    }
+
+    #[test]
     fn slug_validation() {
         assert!(validate_slug("fix-auth").is_ok());
         assert!(validate_slug("a").is_ok());
@@ -1629,6 +1906,7 @@ mod tests {
             isolation_claim: "workspace".into(),
             backend: "worktree".into(),
             created_at: now_ts(),
+            updated_at: now_ts(),
             status: ST_CREATED.into(),
             captures: vec!["cap1".into()],
         };
@@ -1705,6 +1983,7 @@ mod tests {
                 isolation_claim: "workspace".into(),
                 backend: "worktree".into(),
                 created_at: now_ts(),
+                updated_at: now_ts(),
                 status: ST_CREATED.into(),
                 captures: Vec::new(),
             };

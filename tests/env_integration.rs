@@ -912,7 +912,132 @@ fn status_json_still_emits_the_manifest() {
     assert_eq!(v["status"], "created");
 }
 
-// ─── 14. probe is honest and machine-readable ───────────────────────────────
+// ─── 14. shareable environments across clones (the multi-agent review loop) ──
+
+/// A clone addressed through the h5i binary under a fixed agent identity.
+struct Clone {
+    dir: PathBuf,
+    agent: &'static str,
+}
+
+impl Clone {
+    fn h5i(&self, args: &[&str]) -> Output {
+        Command::new(H5I)
+            .args(args)
+            .env("H5I_AGENT", self.agent)
+            .current_dir(&self.dir)
+            .output()
+            .expect("run h5i")
+    }
+    fn ok(&self, args: &[&str]) -> Output {
+        let out = self.h5i(args);
+        assert!(out.status.success(), "h5i {} failed:\n{}", args.join(" "), out_str(&out));
+        out
+    }
+}
+
+/// Build a bare origin and two h5i-init'd clones (agents `claude` and `codex`).
+fn two_clones() -> (TempDir, Clone, Clone) {
+    let root = TempDir::new().expect("tempdir");
+    let bare = root.path().join("origin.git");
+    run_ok(Command::new("git").args(["init", "-q", "--bare", "-b", "main"]).arg(&bare));
+
+    let a = root.path().join("A");
+    run_ok(Command::new("git").args(["clone", "-q"]).arg(&bare).arg(&a));
+    git(&a, &["config", "user.email", "a@h5i.test"]);
+    git(&a, &["config", "user.name", "A"]);
+    std::fs::write(a.join("lib.py"), "def f():\n    return 1\n").unwrap();
+    git(&a, &["add", "."]);
+    git(&a, &["commit", "-m", "seed"]);
+    git(&a, &["push", "-q", "origin", "main"]);
+    let ca = Clone { dir: a, agent: "claude" };
+    ca.ok(&["init"]);
+
+    let b = root.path().join("B");
+    run_ok(Command::new("git").args(["clone", "-q"]).arg(&bare).arg(&b));
+    git(&b, &["config", "user.email", "b@h5i.test"]);
+    git(&b, &["config", "user.name", "B"]);
+    let cb = Clone { dir: b, agent: "codex" };
+    cb.ok(&["init"]);
+
+    (root, ca, cb)
+}
+
+#[test]
+fn env_travels_to_another_clone_for_review_and_apply() {
+    let (_root, a, b) = two_clones();
+
+    // Clone A (claude): create, run, edit, propose, push.
+    a.ok(&["env", "create", "fix-auth"]);
+    a.ok(&["env", "run", "fix-auth", "--", "sh", "-c", "echo running-tests"]);
+    std::fs::write(
+        a.dir.join(".git/.h5i/env/claude/fix-auth/work/lib.py"),
+        "def f():\n    return 2  # fixed\n",
+    )
+    .unwrap();
+    a.ok(&["env", "propose", "fix-auth"]);
+    a.ok(&["push"]);
+
+    // Clone B (codex) cannot see it yet.
+    assert!(!out_str(&b.ok(&["env", "list"])).contains("fix-auth"));
+
+    // After pull, the env is materialized locally.
+    let pulled = out_str(&b.ok(&["pull"]));
+    assert!(pulled.contains("materialized") || pulled.contains("refs/h5i/env"), "{pulled}");
+    let list = out_str(&b.ok(&["env", "list"]));
+    assert!(list.contains("env/claude/fix-auth"), "B sees the env: {list}");
+    assert!(list.contains("proposed"), "{list}");
+
+    // B reviews the diff — from the pushed code branch (B has no worktree).
+    let diff = out_str(&b.ok(&["env", "diff", "fix-auth"]));
+    assert!(diff.contains("return 2"), "B reviews the proposed diff: {diff}");
+
+    // B sees the policy digest + evidence in status, and the manifest via JSON.
+    let json = out_str(&b.ok(&["env", "status", "fix-auth", "--json"]));
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["agent"], "claude", "manifest authorship preserved across clones");
+    let cap = v["captures"][0].as_str().expect("a capture id").to_string();
+
+    // B inspects the evidence (it travelled via refs/h5i/objects).
+    let insp = out_str(&b.ok(&["env", "inspect", "fix-auth", "--capture", &cap]));
+    assert!(insp.contains("running-tests") || insp.contains("sh"), "B inspects evidence: {insp}");
+
+    // Workspace-mutating ops on B refuse clearly — the worktree is on A.
+    // (propose passes the status guard, then the mediated commit needs work/.)
+    let no_ws = b.h5i(&["env", "propose", "fix-auth"]);
+    assert!(!no_ws.status.success());
+    assert!(out_str(&no_ws).contains("another clone"), "{}", out_str(&no_ws));
+
+    // B applies onto main (the code branch was fetched).
+    git(&b.dir, &["checkout", "-q", "main"]);
+    let applied = out_str(&b.ok(&["env", "apply", "fix-auth"]));
+    assert!(applied.contains("applied onto main"), "{applied}");
+    let lib = std::fs::read_to_string(b.dir.join("lib.py")).unwrap();
+    assert!(lib.contains("return 2"), "apply updated B's working tree: {lib}");
+
+    // The applied status round-trips back: B pushes, A pulls, A sees applied.
+    git(&b.dir, &["push", "-q", "origin", "main"]);
+    b.ok(&["push"]);
+    a.ok(&["pull"]);
+    let a_status = out_str(&a.ok(&["env", "status", "fix-auth", "--json"]));
+    let av: serde_json::Value = serde_json::from_str(&a_status).unwrap();
+    assert_eq!(av["status"], "applied", "applied status propagated back to A: {a_status}");
+}
+
+#[test]
+fn env_ref_holds_manifest_and_policy_blobs() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "shared"]);
+    // The ref tree carries the three shareable files.
+    let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/env:manifests.jsonl"]));
+    assert!(manifests.contains("env/tester/shared"), "{manifests}");
+    let policies = out_str(&git(&r.dir, &["show", "refs/h5i/env:policies.jsonl"]));
+    assert!(policies.contains("env/tester/shared"), "policy blob present: {policies}");
+    let events = out_str(&git(&r.dir, &["show", "refs/h5i/env:events.jsonl"]));
+    assert!(events.contains("\"event\":\"created\""), "{events}");
+}
+
+// ─── 15. probe is honest and machine-readable ───────────────────────────────
 
 #[test]
 fn probe_reports_all_capability_lines() {

@@ -3031,6 +3031,10 @@ const H5I_REF_PATTERNS: &[&str] = &[
     "refs/h5i/ast",
     "refs/h5i/msg",
     "refs/h5i/objects",
+    "refs/h5i/env",
+    // The env code branches live under refs/heads/ but are part of the env
+    // sharing story, so fetch them automatically too.
+    "refs/heads/h5i/env/*",
 ];
 
 /// Whether `remote` still hosts the pre-redesign single context ref
@@ -6355,6 +6359,37 @@ jq -c '{
                 "no captured objects yet",
             )?;
 
+            // Push the shareable env state (manifests + policies + event log).
+            try_push(
+                h5i_core::env::ENV_REF,
+                style("h5i env create").bold(),
+                "no environments yet",
+            )?;
+            // Push the env CODE branches so a reviewer on another clone can see
+            // the proposed diff and apply. They live under refs/heads/, not
+            // refs/h5i/*, so a wildcard refspec carries them all in one shot.
+            let any_env_branch = std::process::Command::new("git")
+                .args([
+                    "for-each-ref",
+                    "--count=1",
+                    "--format=%(refname)",
+                    "refs/heads/h5i/env/",
+                ])
+                .current_dir(&workdir)
+                .output()
+                .map(|o| !o.stdout.is_empty())
+                .unwrap_or(false);
+            if any_env_branch {
+                print!("  {} {} … ", style("→").dim(), style("refs/heads/h5i/env/*").yellow());
+                std::io::stdout().flush()?;
+                let status = std::process::Command::new("git")
+                    .args(["push", &remote, "+refs/heads/h5i/env/*:refs/heads/h5i/env/*"])
+                    .current_dir(&workdir)
+                    .status()
+                    .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+                println!("{}", if status.success() { style("ok").green() } else { style("failed").red() });
+            }
+
             // Bind to the original variable name so the existing "Tip:" footer
             // (gated on notes_status.success()) keeps working unchanged.
             let notes_status_success = notes_pushed;
@@ -6778,6 +6813,32 @@ jq -c '{
             sync_one("refs/h5i/ast")?;
             sync_one(msg::MSG_REF)?;
             sync_one(h5i_core::objects::OBJECTS_REF)?;
+            // Shareable env state (manifests + policies + events). The
+            // union-merge dispatch in `sync_one` reconciles divergence.
+            sync_one(h5i_core::env::ENV_REF)?;
+            // Fetch the env CODE branches so pulled environments can be
+            // reviewed/applied from their committed state. Fast-forward only;
+            // a diverged local env branch is kept (the reviewer's own work).
+            print!("  {} {} … ", style("→").dim(), style("refs/heads/h5i/env/*").yellow());
+            std::io::stdout().flush()?;
+            let env_fetch = git(&[
+                "fetch", "--no-write-fetch-head", &remote,
+                "refs/heads/h5i/env/*:refs/heads/h5i/env/*",
+            ])?;
+            println!(
+                "{}",
+                if env_fetch.status.success() { style("ok").green() } else { style("skipped").dim() }
+            );
+            // Materialize any newly-arrived env manifests/policies onto disk so
+            // `h5i env list/status/diff/apply` see them immediately.
+            if let Ok(repo) = git2::Repository::open(&workdir) {
+                if let Ok(h5i_root) = h5i_core::storage::h5i_root_for_repo(&repo) {
+                    match h5i_core::env::materialize_from_ref(&repo, &h5i_root) {
+                        Ok(n) if n > 0 => println!("  {} materialized {n} shared environment(s)", style("✓").green()),
+                        _ => {}
+                    }
+                }
+            }
 
             if notes_changed {
                 println!(
@@ -7935,6 +7996,13 @@ jq -c '{
                 .ok_or_else(|| anyhow::anyhow!("h5i env requires a non-bare repository"))?
                 .to_path_buf();
 
+            // Surface environments pulled from other clones: materialize any
+            // manifests/policies present in refs/h5i/env but absent (or older)
+            // on disk, so `list`/`status`/`diff`/`apply` see them.
+            if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
+                eprintln!("{} could not sync shared env manifests: {e}", style("warning:").yellow());
+            }
+
             match action {
                 EnvCommands::Create { name, from, profile, isolation, backend } => {
                     let agent = msg::resolve_identity(&h5i_root, None)
@@ -8093,7 +8161,7 @@ jq -c '{
 
                 EnvCommands::Diff { name, stat } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
-                    print!("{}", h5i_core::env::diff(&h5i_root, &m, stat)?);
+                    print!("{}", h5i_core::env::diff(git, &h5i_root, &m, stat)?);
                 }
 
                 EnvCommands::Inspect { name, capture } => {
