@@ -387,3 +387,9 @@ _[Checkpoint: 6a29445f — edited tests/env_integration.rs; edited tests/cli_int
 [14:41:53] ACT: edited .claude/h5i.md
 [14:42:08] OBSERVE: read CLAUDE.md
 [14:42:22] ACT: edited CLAUDE.md
+
+
+---
+_[Checkpoint: 6a29781b — Env MCP tools: agents drive the sandbox natively (11 h5i_env_* tools)]_
+---
+

@@ -160,3 +160,16 @@ Makes the multi-agent review loop real. refs/h5i/env now holds events.jsonl + ma
 
 ---
 
+## Commit 6a29781b — 2026-06-10 14:43 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Makes the flagship env feature agent-native (h5i's whole premise: agents call tools, not Bash). Added 11 MCP tools — h5i_env_create/run/list/status/diff/inspect/compare/propose/apply/rebase/abort — to tool_definitions() with agent-guiding descriptions, tool_env_* handlers reusing env.rs (open repo + materialize_from_ref + resolve claude, return JSON/patch/render), and dispatch arms in call_tool. status includes drift; run reports exit/resources/structured; diff works on pulled remote envs. Raised lib recursion_limit to 512 (large json! literal). Tests: +4 mcp unit (advertised, full create→run→inspect→diff→propose→apply lifecycle, compare, unknown-env error) and updated the tool-count + tools-list tests 29→40. Updated .claude/h5i.md to steer agents to h5i_env_* for risky/exploratory work. Full suite 898 green, clippy clean.
+
+---
+
