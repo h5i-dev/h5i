@@ -424,3 +424,4 @@ _[Checkpoint: 6a29783d — edited src/mcp.rs; edited .claude/h5i.md; edited CLAU
 [15:03:05] ACT: edited src/main.rs
 [15:12:11] ACT: edited src/container.rs
 [15:12:24] ACT: edited src/container.rs
+[15:13:22] OBSERVE: read tests/env_integration.rs
