@@ -32,3 +32,4 @@
 [02:05:06] OBSERVE: read src/ctx.rs
 [02:05:06] OBSERVE: read src/repository.rs
 [02:05:08] OBSERVE: read src/ctx.rs
+[02:05:09] OBSERVE: read src/objects.rs
