@@ -494,3 +494,4 @@ _[Checkpoint: 6a298203 — edited docs/environments-design.md; edited tests/env_
 [15:47:14] ACT: edited CLAUDE.md
 [15:47:14] ACT: edited docs/environments-design.md
 [15:49:04] OBSERVE: searched \(or for "podman"
+[15:49:31] OBSERVE: listed files under .git/.h5i
