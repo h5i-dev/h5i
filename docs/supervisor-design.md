@@ -123,10 +123,20 @@ tier is correctly unavailable rather than silently weak.
   protocol types and the decision/event model, and the dashboard surfacing.
   Because the full stack does not probe green on current hosts, the tier
   **refuses** everywhere today — which is the correct, safe state.
-- **Phase B: live enforcement.** Wire the netns+nftables guard and the
-  seccomp-notify loop into `run`, emit structured deny events into the existing
-  `EgressSummary`/`risk` pipeline, behind the green probe. Validated on a host
-  with rootless nftables + cgroup delegation.
+- **Phase B (in progress): the enforcement mechanisms, validated.** The
+  seccomp-notify default-deny socket gate is implemented (`src/seccomp_notify.rs`)
+  and **proven live** by a capability-gated test on aarch64: a raw socket is
+  denied with `EPERM` and a boring inet socket is allowed via `CONTINUE`. The
+  netns nftables ruleset generator (`supervisor::build_nft_ruleset`) is pure +
+  unit-tested. These are gated behind the green probe, so they do not run in a
+  real `supervised` execution until the whole stack is present.
+  - **Phase B-cont (remaining):** wire both into `supervisor::run` (replacing the
+    fail-closed stub), emit structured deny events into the
+    `EgressSummary`/`risk` pipeline, and apply the nftables ruleset inside the
+    child netns. The supervisor loop will `poll()` **both** the listener fd and
+    the child's **pidfd**, so it self-terminates on child exit — no
+    `waitpid`/stop-flag race (the lifecycle hazard the phase-B review surfaced).
+    Validated end-to-end on a host with rootless nftables + cgroup delegation.
 - **Phase C: path allow via openat2+ADDFD**, secret-broker `file`/fd injection
   at this tier, and the `microvm`/`hardened-container` escalation.
 

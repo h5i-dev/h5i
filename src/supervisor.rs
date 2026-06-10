@@ -243,6 +243,82 @@ pub fn decide_socket(domain: i32, sock_type: i32, protocol: i32, unix_granted: b
     }
 }
 
+// ─── netns + nftables egress guard (the airtight L3/L4 layer) ─────────────────
+
+use std::net::IpAddr;
+
+/// One allowed egress destination: a pinned IP and port. Built by resolving the
+/// policy's `net.egress` domains at run time (DNS-rebinding resistant).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EgressDest {
+    pub ip: IpAddr,
+    pub port: u16,
+}
+
+/// Resolve `net.egress` entries (`host`, `host:port`, defaulting to 443) to
+/// pinned `IP:port` destinations. A host that fails to resolve contributes
+/// nothing (fail-closed: it simply won't be reachable). Pure apart from DNS.
+pub fn pin_egress(egress: &[String]) -> Vec<EgressDest> {
+    use std::net::ToSocketAddrs;
+    let mut out = Vec::new();
+    for raw in egress {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        // Split a trailing :port only when numeric (IPv6 literals have colons).
+        let (host, port) = match raw.rsplit_once(':') {
+            Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {
+                (h, p.parse::<u16>().unwrap_or(443))
+            }
+            _ => (raw, 443u16),
+        };
+        if let Ok(addrs) = (host, port).to_socket_addrs() {
+            for a in addrs {
+                let dest = EgressDest { ip: a.ip(), port };
+                if !out.contains(&dest) {
+                    out.push(dest);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Build the **default-drop** nftables ruleset for a supervised run's network
+/// namespace. Only loopback, established/related return traffic, the controlled
+/// resolver (port 53), and the pinned `IP:port` allowlist may leave; everything
+/// else — including raw IP connects, other ports, and unlisted hosts — is
+/// dropped at L3/L4, independent of whether the process respects any proxy.
+/// Pure (string in, ruleset out) so it is unit-tested without touching the host.
+pub fn build_nft_ruleset(allow: &[EgressDest], resolver: Option<IpAddr>) -> String {
+    let mut v4 = String::new();
+    let mut v6 = String::new();
+    let mut push = |dst: &str, ip: &IpAddr, line: String| {
+        match ip {
+            IpAddr::V4(_) => v4.push_str(&line),
+            IpAddr::V6(_) => v6.push_str(&line),
+        }
+        let _ = dst;
+    };
+    if let Some(r) = resolver {
+        let fam = if r.is_ipv4() { "ip" } else { "ip6" };
+        push(fam, &r, format!("    {fam} daddr {r} udp dport 53 accept\n"));
+        push(fam, &r, format!("    {fam} daddr {r} tcp dport 53 accept\n"));
+    }
+    for d in allow {
+        let fam = if d.ip.is_ipv4() { "ip" } else { "ip6" };
+        push(fam, &d.ip, format!("    {fam} daddr {} tcp dport {} accept\n", d.ip, d.port));
+    }
+    format!(
+        "table inet h5i_egress {{\n  \
+         chain output {{\n    \
+         type filter hook output priority 0; policy drop;\n    \
+         ct state established,related accept\n    \
+         oif \"lo\" accept\n{v4}{v6}  }}\n}}\n"
+    )
+}
+
 // ─── run (phase A: fail-closed) ───────────────────────────────────────────────
 
 /// Run under the supervised tier. Phase A: enforcement is not wired, so this
@@ -318,6 +394,35 @@ mod tests {
         // AF_UNIX only by explicit grant.
         assert_eq!(decide_socket(AF_UNIX, SOCK_STREAM, 0, false), Decision::Deny(libc::EPERM));
         assert_eq!(decide_socket(AF_UNIX, SOCK_STREAM, 0, true), Decision::Continue);
+    }
+
+    #[test]
+    fn nft_ruleset_is_default_drop_with_allowlist() {
+        let allow = vec![
+            EgressDest { ip: "93.184.216.34".parse().unwrap(), port: 443 },
+            EgressDest { ip: "2606:2800:220:1:248:1893:25c8:1946".parse().unwrap(), port: 443 },
+        ];
+        let resolver = Some("10.0.2.3".parse().unwrap());
+        let rs = build_nft_ruleset(&allow, resolver);
+        // Fail-closed default.
+        assert!(rs.contains("policy drop;"), "must default-drop:\n{rs}");
+        // Loopback + established always allowed.
+        assert!(rs.contains("oif \"lo\" accept"));
+        assert!(rs.contains("ct state established,related accept"));
+        // Resolver on 53 only.
+        assert!(rs.contains("ip daddr 10.0.2.3 udp dport 53 accept"));
+        // The pinned v4 + v6 allowlist with their port.
+        assert!(rs.contains("ip daddr 93.184.216.34 tcp dport 443 accept"));
+        assert!(rs.contains("ip6 daddr 2606:2800:220:1:248:1893:25c8:1946 tcp dport 443 accept"));
+    }
+
+    #[test]
+    fn nft_empty_allowlist_drops_everything_but_lo() {
+        let rs = build_nft_ruleset(&[], None);
+        assert!(rs.contains("policy drop;"));
+        assert!(rs.contains("oif \"lo\" accept"));
+        // No accept for any external destination.
+        assert!(!rs.contains("daddr"), "empty allowlist must add no daddr rule:\n{rs}");
     }
 
     #[test]

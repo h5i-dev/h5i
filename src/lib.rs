@@ -28,6 +28,7 @@ pub mod pr;
 pub mod radio;
 pub mod recap;
 pub mod sandbox;
+pub mod seccomp_notify;
 pub mod secrets;
 pub mod secrets_broker;
 pub mod supervisor;
