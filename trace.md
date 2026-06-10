@@ -548,3 +548,4 @@ _[Checkpoint: 6a298a17 — Designed sandbox-monitoring dashboard ('Sandbox Fligh
 ---
 
 [16:01:18] THINK: I'll design this properly: first check the context workspace, explore what telemetry the sandbox already emits and how `h5i serve` is structured, and in parallel ask Codex for input.
+[16:01:18] THINK: Let me acknowledge it, record the key reusable fact, and log the milestone.
