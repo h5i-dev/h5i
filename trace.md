@@ -1259,3 +1259,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 [21:04:23] OBSERVE: read SKILL.md
 [21:04:23] OBSERVE: read sandbox-violation-store.ts
 [21:04:24] OBSERVE: read handlers.rs
+[21:04:31] OBSERVE: read pty.ts
