@@ -59,28 +59,7 @@ Use `h5i` if you want your AI agents to stop leaving their work in thin air.
 
 ---
 
-## 1. The foundation: a versioned record of every agent's work and communications
-
-h5i is a pure Git sidecar for recording and sharing AI-agent contexts, metadata, and other useful information. It uses dedicated refs, so it doesn’t pollute your working tree or your normal branch graph.
-
-| Ref | What lives there |
-|---|---|
-| `.git/refs/h5i/notes` | Per-commit metadata: model, agent, prompt, tests, decisions, risk signals. |
-| `.git/refs/h5i/context` | The reasoning workspace as a DAG: goal, milestones, traces, branches. |
-| `.git/refs/h5i/msg` | Cross-agent message log (append-only, union-merged on pull). |
-| `.git/refs/h5i/objects` | Token-reduction capture manifests: command, exit code, and filtered summary of large outputs (full raw kept locally). |
-| `.git/refs/h5i/env` | Sandbox environments: events, manifests, and digest-pinned policies for isolated, confined agent runs. |
-| `.git/refs/h5i/checkpoints/<agent>` | Per-agent memory snapshots. |
-
-Because these are Git objects, they are content-addressed, deduplicated, pushable, fetchable, and survive `git gc`.
-
-<p align="center">
-  <img src="./assets/h5i-concept.svg" alt="h5i context DAG view" width="95%">
-</p>
-
----
-
-## 2. Install
+## 1. Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
@@ -94,7 +73,7 @@ cargo install --git https://github.com/h5i-dev/h5i h5i-core
 
 ---
 
-## 3. 60-Second Flow
+## 2. 60-Second Flow
 
 Initialize h5i in an existing Git repo:
 
@@ -128,9 +107,9 @@ h5i share pull
 
 ---
 
-## 4. Feature Examples
+## 3. Feature Examples
 
-### 4.1. Agent Radio — agents that talk over Git
+### 3.1. Agent Radio — agents that talk over Git
 
 Because that context already lives in Git, your agents can also **talk to each other through it**: `h5i msg` is a Git-backed cross-agent message channel stored in `refs/h5i/msg`, built for typed operational handoffs (`ASK` · `REVIEW_REQUEST` · `RISK` · `DONE` · `ACK`). Claude can ask, Codex can review, risks can be flagged and resolved, and the whole log survives clones, machines, and branches. It travels with `h5i share push` / `pull`, and divergent sends from two machines **union-merge with no messages lost**.
 
@@ -153,7 +132,7 @@ We can also monitor the conversation in real time with `h5i msg watch`.
   <img src="./assets/claude-codex-chess.gif" alt="h5i msg watch — a live claude ↔ codex code review streaming over refs/h5i/msg" width="95%">
 </p>
 
-### 4.2. Agent Sandbox — run risky work confined, captured, and reviewable
+### 3.2. Agent Sandbox — run risky work confined, captured, and reviewable
 
 `h5i env` gives an agent an isolated **environment**: a git worktree plus a digest-pinned, **fail-closed** policy, so you can hand it a refactor, a dependency upgrade, or an untrusted build without it touching your main tree. Every `h5i env run` is policy-enforced and capture-wrapped — escape attempts (reading `/etc/shadow`, a raw socket to an arbitrary IP, `mount` / `unshare` / `ptrace`) are denied **at the boundary** by Landlock + seccomp + namespaces, while legitimate work proceeds and lands as tamper-evident evidence. Nothing reaches your branch until a reviewer approves a `propose` with `apply`.
 
@@ -179,7 +158,7 @@ Every run, allow or deny, is scored for **boundary pressure** and shown in the S
   <img src="./assets/agent-sandbox.svg" alt="An agent runs cargo build via h5i env run inside a policy-confined sandbox; reads of /etc/shadow are blocked by Landlock, raw sockets and off-allowlist hosts by the seccomp gate and egress proxy, and mount/unshare/ptrace by the seccomp deny-list, while the legitimate build is allowed and captured as evidence that a reviewer applies via propose → apply." width="95%">
 </p>
 
-### 4.3. Token Reduction with Unified Form
+### 3.3. Token Reduction with Unified Form
 
 Wrap any command with `h5i capture run -- <cmd>` and the agent sees only a compact, normalized summary of errors, failures, and counts, while the full raw output is stored out of band in `refs/h5i/objects`. Every tool's output collapses into **one unified form**, so a 4 MB test log no longer burns your context window, and the raw bytes are always one `h5i recall object <id>` away when you need them.
 
@@ -207,7 +186,7 @@ To share captures across a team, h5i borrows the split that Git LFS uses: the ma
   <img src="./assets/token-reduction-unified.svg" alt="h5i recall object" width="95%">
 </p>
 
-### 4.4. Context DAG
+### 3.4. Context DAG
 
 The context DAG shows how the work unfolded: the goal, every milestone, and the OBSERVE / THINK / ACT trace behind each change, captured automatically as the agent works. Because it is snapshotted on every commit, you can replay exactly what an agent knew and why it acted at any point in history.
 
@@ -219,7 +198,7 @@ h5i recall context show
   <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
 </p>
 
-### 4.5. Pull Request Integration
+### 3.5. Pull Request Integration
 
 When a branch is ready for review, h5i surfaces all of it where reviewers already work — on the pull request.
 
@@ -279,7 +258,7 @@ Track the prompt, model names, and commit lineage.
 
 </br>
 
-### 4.6. Web Dashboard
+### 3.6. Web Dashboard
 
 ```bash
 h5i serve        # http://localhost:7150
@@ -287,6 +266,27 @@ h5i serve        # http://localhost:7150
 
 <p align="center">
   <img src="./assets/screenshot_h5i_server.png" alt="h5i web dashboard showing AI commit timeline and context details" width="95%">
+</p>
+
+---
+
+## 4. The foundation: a versioned record of every agent's work and communications
+
+h5i is a pure Git sidecar for recording and sharing AI-agent contexts, metadata, and other useful information. It uses dedicated refs, so it doesn’t pollute your working tree or your normal branch graph.
+
+| Ref | What lives there |
+|---|---|
+| `.git/refs/h5i/notes` | Per-commit metadata: model, agent, prompt, tests, decisions, risk signals. |
+| `.git/refs/h5i/context` | The reasoning workspace as a DAG: goal, milestones, traces, branches. |
+| `.git/refs/h5i/msg` | Cross-agent message log (append-only, union-merged on pull). |
+| `.git/refs/h5i/objects` | Token-reduction capture manifests: command, exit code, and filtered summary of large outputs (full raw kept locally). |
+| `.git/refs/h5i/env` | Sandbox environments: events, manifests, and digest-pinned policies for isolated, confined agent runs. |
+| `.git/refs/h5i/checkpoints/<agent>` | Per-agent memory snapshots. |
+
+Because these are Git objects, they are content-addressed, deduplicated, pushable, fetchable, and survive `git gc`.
+
+<p align="center">
+  <img src="./assets/h5i-concept.svg" alt="h5i context DAG view" width="95%">
 </p>
 
 ---
