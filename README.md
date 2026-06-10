@@ -164,7 +164,7 @@ Isolation is **tiered and never silently downgraded** — `h5i env probe` report
 
 ```bash
 h5i env create fix-auth --isolation process
-h5i env run    fix-auth -- cargo build      # confined + captured
+h5i env run    fix-auth -- cargo build       # confined + captured
 h5i env propose fix-auth                     # mediated commit + review brief
 h5i env apply   fix-auth                     # reviewer-selected; never automatic
 ```
