@@ -201,3 +201,9 @@ _[Checkpoint: 6a28d59c — edited src/main.rs; edited CLAUDE.md; edited CLAUDE.m
 [03:21:40] ACT: edited tests/env_integration.rs
 [03:23:21] ACT: edited CLAUDE.md
 [03:23:23] ACT: edited CLAUDE.md
+
+
+---
+_[Checkpoint: 6a28d8b2 — Env round 3: resource accounting, the arena (compare), tool allowlist, event-log redaction]_
+---
+
