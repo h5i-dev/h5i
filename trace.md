@@ -207,3 +207,4 @@ _[Checkpoint: 6a28d59c — edited src/main.rs; edited CLAUDE.md; edited CLAUDE.m
 _[Checkpoint: 6a28d8b2 — Env round 3: resource accounting, the arena (compare), tool allowlist, event-log redaction]_
 ---
 
+[03:23:56] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): daction tests rely on, so I committed with `--force`. Still deferred per the design's own phasing: container/microvm adapters, the seccomp-notify supe…
