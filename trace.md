@@ -1478,3 +1478,4 @@ _[Checkpoint: 6a29f2b7 — edited tests/env_integration.rs]_
 ---
 
 [23:27:13] OBSERVE: read b1gxhvhqo.output
+[23:27:41] ACT: wrote shell-msg.txt
