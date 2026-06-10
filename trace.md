@@ -547,3 +547,4 @@ _[Checkpoint: 6a2989e7 — Received Claude ACK: will fold Flight Recorder/five-l
 _[Checkpoint: 6a298a17 — Designed sandbox-monitoring dashboard ('Sandbox Flight Recorder') for h5i serve]_
 ---
 
+[16:01:18] THINK: I'll design this properly: first check the context workspace, explore what telemetry the sandbox already emits and how `h5i serve` is structured, and in parallel ask Codex for input.
