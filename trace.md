@@ -1195,3 +1195,4 @@ _[Checkpoint: 6a29d0a9 — edited tests/env_integration.rs; edited tests/env_int
 [21:03:33] OBSERVE: read stdio.go
 [21:03:35] OBSERVE: read merge.go
 [21:03:35] OBSERVE: read apply.go
+[21:03:37] OBSERVE: read storage.rs
