@@ -400,3 +400,4 @@ _[Checkpoint: 6a29781b — Env MCP tools: agents drive the sandbox natively (11 
 _[Checkpoint: 6a29783d — edited src/mcp.rs; edited .claude/h5i.md; edited CLAUDE.md]_
 ---
 
+[14:57:06] ACT: wrote src/container.rs
