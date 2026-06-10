@@ -608,11 +608,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/env.rs; edited src/main.rs; edited src/main.rs
 - [x] edited tests/env_integration.rs
 - [x] edited tests/env_integration.rs
+- [x] wrote shell-msg.txt; wrote wsl2-cargo-test-oom.md; edited MEMORY.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-10 23:28 UTC] `impl-env-sandbox`: wrote shell-msg.txt; wrote wsl2-cargo-test-oom.md; edited MEMORY.md
 - [2026-06-10 23:26 UTC] `impl-env-sandbox`: edited tests/env_integration.rs
 - [2026-06-10 23:26 UTC] `impl-env-sandbox`: edited tests/env_integration.rs
 - [2026-06-10 23:24 UTC] `impl-env-sandbox`: edited src/env.rs; edited src/main.rs; edited src/main.rs
