@@ -434,6 +434,7 @@ pub enum NetPlan {
 /// hardened. `image` is the resolved base image; `name` is the (unique)
 /// container name used for cleanup. Pure — no process is spawned, so this is
 /// unit-tested for the security-critical flag set.
+#[allow(clippy::too_many_arguments)] // a pure argv builder; a params struct would obscure more than it helps
 pub fn build_run_argv(
     rt: &Runtime,
     profile: &Profile,
@@ -442,6 +443,7 @@ pub fn build_run_argv(
     name: &str,
     net: &NetPlan,
     argv: &[String],
+    injected_env: &[(String, String)],
 ) -> Vec<String> {
     let mut a: Vec<String> = vec![
         rt.bin.clone(),
@@ -511,6 +513,12 @@ pub fn build_run_argv(
         }
     }
 
+    // Brokered secrets (env-injected), applied after the allowlist.
+    for (key, value) in injected_env {
+        a.push("--env".into());
+        a.push(format!("{key}={value}"));
+    }
+
     a.push(image.to_string());
     a.extend(argv.iter().cloned());
     a
@@ -521,7 +529,12 @@ pub fn build_run_argv(
 /// Run `argv` for `policy` inside a hardened rootless container. Spawns the
 /// egress proxy when `net.egress` is non-empty, enforces the wall clock (and
 /// force-removes the container on timeout), and returns the captured output.
-pub fn run(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<ExecOutcome, H5iError> {
+pub fn run(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<ExecOutcome, H5iError> {
     let p = &policy.profile;
     let rt = probe().ok_or_else(|| {
         H5iError::Metadata(
@@ -566,7 +579,7 @@ pub fn run(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<Exec
         std::process::id(),
         PROBE_SEQ.fetch_add(1, Ordering::Relaxed)
     );
-    let full = build_run_argv(&rt, p, work, &image, &name, &net, argv);
+    let full = build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env);
 
     let started = std::time::Instant::now();
     let mut cmd = std::process::Command::new(&full[0]);
@@ -753,6 +766,7 @@ mod tests {
             "h5i-test",
             &NetPlan::None,
             &["sh".into(), "-c".into(), "echo hi".into()],
+            &[],
         );
         let joined = argv.join(" ");
         assert_eq!(argv[0], "podman");
@@ -786,6 +800,7 @@ mod tests {
             "n",
             &NetPlan::Proxy(8123),
             &["true".into()],
+            &[],
         );
         let joined = argv.join(" ");
         assert!(joined.contains("--network=slirp4netns:allow_host_loopback=true"));

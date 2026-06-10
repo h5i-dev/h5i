@@ -28,6 +28,7 @@ pub mod radio;
 pub mod recap;
 pub mod sandbox;
 pub mod secrets;
+pub mod secrets_broker;
 pub mod session_log;
 pub mod storage;
 pub mod structured;

@@ -853,8 +853,17 @@ pub fn run(
     // host probe (fail closed if the host can no longer satisfy the claim).
     let policy = load_policy(h5i_root, m)?;
 
+    // Broker any declared secrets BEFORE marking the env running, so a
+    // fail-closed grant (missing source, unsupported inject) aborts cleanly
+    // without leaving the env in 'running'. `brokered` lives for the whole run;
+    // its Drop guard unlinks any file-injected secrets on every exit path.
+    let secret_dir = m.dir(h5i_root).join("secrets");
+    let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
+    let brokered =
+        crate::secrets_broker::broker(&policy.profile.secret_grants, &secret_dir, is_workspace)?;
+
     set_status(repo, h5i_root, m, ST_RUNNING, "status", Some("running".into()), None)?;
-    let result = sandbox::run(&policy, &work, argv);
+    let result = sandbox::run_with_env(&policy, &work, argv, &brokered.env);
     // Whatever happened, leave the running state before propagating errors.
     let outcome = match result {
         Ok(o) => o,
@@ -878,6 +887,17 @@ pub fn run(
     }
     if outcome.timed_out {
         raw.extend_from_slice(b"\n----- h5i env: killed by wall-clock limit -----\n");
+    }
+
+    // Scrub brokered secret values from the evidence by exact match, on top of
+    // the pattern-based redaction the capture already applies — a token echoed
+    // to stdout must never reach refs/h5i/objects even if it matches no pattern.
+    if !brokered.redactions.is_empty() {
+        let mut text = String::from_utf8_lossy(&raw).into_owned();
+        for v in &brokered.redactions {
+            text = text.replace(v, "[redacted secret]");
+        }
+        raw = text.into_bytes();
     }
 
     // Capture against the WORKTREE repo so branch/diff context is the env's.
@@ -938,6 +958,22 @@ pub fn run(
         )),
         Some(capture_id.clone()),
     )?;
+
+    // Audit each delivered secret grant (id + source + inject + fingerprint —
+    // never the value), tied to the capture it was used in.
+    for rec in &brokered.records {
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "secret".into(),
+                detail: Some(rec.detail()),
+                capture: Some(capture_id.clone()),
+            },
+        )?;
+    }
 
     Ok(RunOutcome {
         capture_id,

@@ -123,8 +123,15 @@ pub struct Profile {
     /// Domain allowlist — requires supervisor/container backend; fails closed
     /// under the static `process` tier when non-empty.
     pub net_egress: Vec<String>,
-    /// Secret grants — not implemented in v1; non-empty fails closed.
+    /// Secret grant **names** (simple form: `secrets = ["GITHUB_TOKEN"]`). Each
+    /// name with no matching `[secret.<name>]` table gets default config.
     pub secrets: Vec<String>,
+    /// Resolved secret grant **config** (names + source/inject/ttl) — the
+    /// authoritative input to the broker (`docs/secrets-broker-design.md`).
+    /// Config only; values never appear here (or in any digest/ref). Empty for
+    /// non-secret policies, so their digest is unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_grants: Vec<SecretGrant>,
     pub mem_bytes: Option<u64>,
     pub max_procs: Option<u64>,
     pub wall_secs: u64,
@@ -146,6 +153,38 @@ pub struct Profile {
     pub env_pass: Vec<String>,
 }
 
+/// One secret grant's configuration (never its value). Part of the resolved
+/// policy, so a tampered `source` is caught by the policy digest.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SecretGrant {
+    pub name: String,
+    /// `env:VAR` | `file:/abs/path`; `None` ⇒ `env:H5I_SECRET_<NAME>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// `file` (default) | `env`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inject: Option<String>,
+    /// Advisory validity window for sources that mint a credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<String>,
+}
+
+impl SecretGrant {
+    /// Effective source string, applying the per-name default.
+    pub fn source_or_default(&self) -> String {
+        self.source
+            .clone()
+            .unwrap_or_else(|| format!("env:H5I_SECRET_{}", self.name))
+    }
+    /// Effective injection method. `env` is the universal default (works on
+    /// every tier); `file` is opt-in and, in v1, supported on the `workspace`
+    /// tier only (a secret file needs a Landlock grant on `process` and a
+    /// bind-mount on `container` — a documented follow-up).
+    pub fn inject_or_default(&self) -> &str {
+        self.inject.as_deref().unwrap_or("env")
+    }
+}
+
 impl Profile {
     /// Built-in profile used when no `.h5i/env.toml` exists. Fail-closed for
     /// `process`+ (deny-network, deny-home); `workspace` enforces nothing and
@@ -161,6 +200,7 @@ impl Profile {
             net_mode: if confined { NetMode::Deny } else { NetMode::Host },
             net_egress: Vec::new(),
             secrets: Vec::new(),
+            secret_grants: Vec::new(),
             mem_bytes: Some(4 * 1024 * 1024 * 1024),
             max_procs: Some(256),
             wall_secs: DEFAULT_WALL.as_secs(),
@@ -210,6 +250,9 @@ struct ProfileToml {
     net: NetToml,
     #[serde(default)]
     secrets: Vec<String>,
+    /// Rich per-grant config: `[profile.X.secret.NAME] source=… inject=… ttl=…`.
+    #[serde(default)]
+    secret: BTreeMap<String, SecretGrantToml>,
     resources: Option<ResourcesToml>,
     #[serde(default)]
     tools: Vec<String>,
@@ -255,6 +298,36 @@ struct ResourcesToml {
 struct EnvVarsToml {
     #[serde(default)]
     pass: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct SecretGrantToml {
+    source: Option<String>,
+    inject: Option<String>,
+    ttl: Option<String>,
+}
+
+/// Merge the simple `secrets = [..]` name list with the rich `[secret.<name>]`
+/// tables into the authoritative `secret_grants`. A name in both takes the rich
+/// config; a name only in the simple list gets defaults; a rich table grants its
+/// name implicitly. Deterministic order (sorted) for a stable policy digest.
+fn merge_secret_grants(
+    names: &[String],
+    rich: &BTreeMap<String, SecretGrantToml>,
+) -> Vec<SecretGrant> {
+    let mut all: std::collections::BTreeSet<String> = names.iter().cloned().collect();
+    all.extend(rich.keys().cloned());
+    all.into_iter()
+        .map(|name| {
+            let cfg = rich.get(&name);
+            SecretGrant {
+                source: cfg.and_then(|c| c.source.clone()),
+                inject: cfg.and_then(|c| c.inject.clone()),
+                ttl: cfg.and_then(|c| c.ttl.clone()),
+                name,
+            }
+        })
+        .collect()
 }
 
 /// Load profile `name` from `<repo>/.h5i/env.toml`, falling back to the
@@ -308,6 +381,7 @@ pub fn load_profile(
                     None => base.net_mode,
                 },
                 net_egress: t.net.egress,
+                secret_grants: merge_secret_grants(&t.secrets, &t.secret),
                 secrets: t.secrets,
                 mem_bytes: match t.resources.as_ref().and_then(|r| r.mem.as_deref()) {
                     Some(s) => Some(parse_mem(s)?),
@@ -342,13 +416,34 @@ pub fn load_profile(
 /// Fail-closed policy lints (§7). These reject *policies*, before any env is
 /// created — never silently weaken them.
 pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
-    // Secret grants are a later phase. Refuse rather than half-implement.
-    if !p.secrets.is_empty() {
-        return Err(H5iError::Metadata(
-            "policy requests secret grants, which this build does not implement — \
-             remove `secrets` from the profile (fail-closed)"
-                .into(),
-        ));
+    // Secret grants are brokered (docs/secrets-broker-design.md). Validate the
+    // *config* here (names + source/inject syntax); values are resolved
+    // fail-closed at run time, never at policy-load time.
+    for g in &p.secret_grants {
+        if g.name.is_empty() || !g.name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            return Err(H5iError::Metadata(format!(
+                "secret grant name '{}' is invalid — use ASCII letters, digits, '_' \
+                 (it becomes an environment variable)",
+                g.name
+            )));
+        }
+        let src = g.source_or_default();
+        if !(src.starts_with("env:") || src.starts_with("file:")) {
+            return Err(H5iError::Metadata(format!(
+                "secret grant '{}' has unsupported source '{src}' — use 'env:VAR' or \
+                 'file:/abs/path' (fail-closed)",
+                g.name
+            )));
+        }
+        match g.inject_or_default() {
+            "file" | "env" => {}
+            other => {
+                return Err(H5iError::Metadata(format!(
+                    "secret grant '{}' has unknown inject '{other}' — use 'file' or 'env'",
+                    g.name
+                )))
+            }
+        }
     }
     // A domain egress allowlist cannot be honored by the static process tier
     // (netns is all-or-nothing) and is meaningless below it.
@@ -662,18 +757,38 @@ fn check_tool_allowlist(policy: &ResolvedPolicy, argv: &[String]) -> Result<(), 
 /// applies the kernel confinement. Anything else was already refused by
 /// [`resolve`].
 pub fn run(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<ExecOutcome, H5iError> {
+    run_with_env(policy, work, argv, &[])
+}
+
+/// Like [`run`], plus `injected_env` (the secrets broker's resolved grants)
+/// applied to the child *after* the `env.pass` allowlist. The values are not
+/// part of the policy and never serialized — they only reach the child process.
+pub fn run_with_env(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<ExecOutcome, H5iError> {
     if argv.is_empty() {
         return Err(H5iError::Metadata("empty command".into()));
     }
     check_tool_allowlist(policy, argv)?;
     match policy.claim {
-        IsolationClaim::Workspace => run_unconfined(policy, work, argv),
-        IsolationClaim::Process => run_confined(policy, work, argv),
-        IsolationClaim::Container => crate::container::run(policy, work, argv),
+        IsolationClaim::Workspace => run_unconfined(policy, work, argv, injected_env),
+        IsolationClaim::Process => run_confined(policy, work, argv, injected_env),
+        IsolationClaim::Container => crate::container::run(policy, work, argv, injected_env),
         claim => Err(H5iError::Metadata(format!(
             "no backend for isolation claim '{}'",
             claim.as_str()
         ))),
+    }
+}
+
+/// Apply the secrets broker's injected env vars to a child command (used by each
+/// tier). Applied after `env.pass`, so a grant can't be shadowed by a host var.
+fn apply_injected_env(cmd: &mut std::process::Command, injected_env: &[(String, String)]) {
+    for (k, v) in injected_env {
+        cmd.env(k, v);
     }
 }
 
@@ -726,9 +841,15 @@ pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
 /// `workspace` tier: no kernel confinement (trusted), but still scoped — runs
 /// in the env worktree with the wall-clock limit applied so a hung command
 /// cannot wedge `h5i env run` forever.
-fn run_unconfined(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<ExecOutcome, H5iError> {
+fn run_unconfined(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<ExecOutcome, H5iError> {
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(work);
+    apply_injected_env(&mut cmd, injected_env);
     // New session so the wall-clock kill reaps the whole tree (killpg), the
     // same group-kill guarantee the confined path gets.
     #[cfg(unix)]
@@ -745,7 +866,12 @@ fn run_unconfined(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Resu
 }
 
 #[cfg(target_os = "linux")]
-fn run_confined(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result<ExecOutcome, H5iError> {
+fn run_confined(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<ExecOutcome, H5iError> {
     use std::os::unix::process::CommandExt;
 
     let p = &policy.profile;
@@ -811,6 +937,9 @@ fn run_confined(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result
             cmd.env(key, v);
         }
     }
+    // Brokered secrets, applied after the allowlist (so a grant is never
+    // shadowed by a passed-through host var).
+    apply_injected_env(&mut cmd, injected_env);
 
     let mut ruleset_slot = Some(ruleset);
     unsafe {
@@ -902,7 +1031,12 @@ fn run_confined(policy: &ResolvedPolicy, work: &Path, argv: &[String]) -> Result
 }
 
 #[cfg(not(target_os = "linux"))]
-fn run_confined(_policy: &ResolvedPolicy, _work: &Path, _argv: &[String]) -> Result<ExecOutcome, H5iError> {
+fn run_confined(
+    _policy: &ResolvedPolicy,
+    _work: &Path,
+    _argv: &[String],
+    _injected_env: &[(String, String)],
+) -> Result<ExecOutcome, H5iError> {
     Err(H5iError::Metadata(
         "isolation=process is Linux-only in this build (fail-closed)".into(),
     ))
@@ -1258,14 +1392,38 @@ net.egress = ["pypi.org", "github.com:443"]
     }
 
     #[test]
-    fn secret_grants_fail_closed() {
+    fn secret_grants_are_accepted_and_normalized() {
+        // Secrets are now brokered (docs/secrets-broker-design.md): a profile
+        // that declares them loads, with names merged into secret_grants.
         let toml_text = r#"
 [profile.default]
 isolation = "process"
 secrets = ["DB_URL"]
+
+[profile.default.secret.GITHUB_TOKEN]
+source = "env:GH_PAT"
+inject = "env"
+"#;
+        let p = load_from_str(toml_text, "default", None).unwrap();
+        let names: Vec<&str> = p.secret_grants.iter().map(|g| g.name.as_str()).collect();
+        assert!(names.contains(&"DB_URL"));
+        assert!(names.contains(&"GITHUB_TOKEN"));
+        let gh = p.secret_grants.iter().find(|g| g.name == "GITHUB_TOKEN").unwrap();
+        assert_eq!(gh.source.as_deref(), Some("env:GH_PAT"));
+        // DB_URL got defaults.
+        let db = p.secret_grants.iter().find(|g| g.name == "DB_URL").unwrap();
+        assert_eq!(db.source_or_default(), "env:H5I_SECRET_DB_URL");
+    }
+
+    #[test]
+    fn secret_grant_bad_source_fails_closed() {
+        let toml_text = r#"
+[profile.default]
+[profile.default.secret.TOK]
+source = "http://evil/steal"
 "#;
         let err = load_from_str(toml_text, "default", None).unwrap_err();
-        assert!(err.to_string().contains("secret"), "{err}");
+        assert!(err.to_string().contains("source"), "{err}");
     }
 
     #[test]

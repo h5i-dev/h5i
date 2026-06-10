@@ -424,6 +424,77 @@ fn mediated_commit_fails_closed_on_nested_git_repo() {
     );
 }
 
+// ─── 3b. secrets broker ─────────────────────────────────────────────────────
+
+#[test]
+fn secret_grant_is_injected_then_redacted_and_audited() {
+    let r = Repo::new();
+    // Declare a secret grant in the checked-in profile.
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.default]\nsecrets = [\"MY_TOKEN\"]\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", ".h5i/env.toml"]);
+    git(&r.dir, &["commit", "-m", "secret profile"]);
+
+    r.h5i_ok(&["env", "create", "needs-secret"]);
+
+    // Run echoing the secret. The broker must inject MY_TOKEN from the host
+    // source, and h5i must scrub the value out of the captured evidence.
+    let out = Command::new(H5I)
+        .args(["env", "run", "needs-secret", "--", "sh", "-c", "echo TOKEN=[$MY_TOKEN]"])
+        .env("H5I_AGENT", "tester")
+        .env("H5I_SECRET_MY_TOKEN", "supersecret-xyz")
+        .current_dir(&r.dir)
+        .output()
+        .expect("run");
+    assert!(out.status.success(), "run failed: {}", out_str(&out));
+
+    // The injected value must NOT appear in the capture — but the surrounding
+    // text must, proving the secret was actually injected (then redacted).
+    let cap = r.capture_manifest("needs-secret");
+    let summary = cap["summary"].as_str().unwrap_or("");
+    assert!(
+        !summary.contains("supersecret-xyz"),
+        "secret value leaked into the capture summary:\n{summary}"
+    );
+    assert!(
+        summary.contains("[redacted secret]"),
+        "expected the injected secret to be redacted (proves it was injected):\n{summary}"
+    );
+    // And the raw blob is scrubbed too, not just the summary.
+    let raw = String::from_utf8_lossy(&r.capture_raw(cap["raw_oid"].as_str().unwrap())).into_owned();
+    assert!(!raw.contains("supersecret-xyz"), "secret leaked into the raw blob:\n{raw}");
+
+    // A `secret` event records the grant id + fingerprint, never the value.
+    let log = out_str(&r.h5i_ok(&["env", "log", "needs-secret"]));
+    assert!(log.contains("secret") && log.contains("grant=MY_TOKEN"), "no secret audit event:\n{log}");
+    assert!(!log.contains("supersecret-xyz"), "secret value leaked into the event log:\n{log}");
+}
+
+#[test]
+fn secret_grant_missing_source_fails_closed() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.default]\nsecrets = [\"ABSENT_TOKEN\"]\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", ".h5i/env.toml"]);
+    git(&r.dir, &["commit", "-m", "secret profile"]);
+    r.h5i_ok(&["env", "create", "no-source"]);
+
+    // No host source for ABSENT_TOKEN → the run must refuse (fail-closed).
+    let out = r.h5i(&["env", "run", "no-source", "--", "sh", "-c", "echo hi"]);
+    assert!(!out.status.success(), "run must fail closed when a grant can't be resolved");
+    assert!(out_str(&out).contains("fail-closed") || out_str(&out).contains("not set"));
+    // The env did not get stuck in 'running'.
+    assert_ne!(r.manifest("no-source")["status"], "running");
+}
+
 // ─── 4. parallel envs (the arena) ───────────────────────────────────────────
 
 #[test]
