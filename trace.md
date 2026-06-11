@@ -1603,3 +1603,4 @@ _[Checkpoint: 6a2a0ab1 — edited man/man1/h5i.1; edited README.md; edited READM
 _[Checkpoint: 6a2a0c97 — edited README.md; edited README.md; edited src/main.rs]_
 ---
 
+[01:21:23] OBSERVE: read docs/comparison.md
