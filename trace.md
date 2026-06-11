@@ -1829,3 +1829,4 @@ _[Checkpoint: 6a2a1bc0 — edited src/env.rs; wrote env-process-tier-missing-pid
 [02:59:37] THINK: Let me re-read the exact regions of `build_confined_command` I'll edit (signature, the captured-vars block, the unshare flags, and the egress→rlimits boundary) so my edits match precisely.
 [02:59:37] THINK: Let me find the exact egress-block-end / rlimits boundary (offsets shifted by my edits):
 [02:59:37] THINK: I'll insert the two new tests right after `process_tier_fsize_caps_disk_bomb` (end of the process-tier cluster):
+[02:59:37] THINK: Now let me compile the test binary and run the process-tier tests to confirm pidns actually works on this host (if it broke exec, `process_tier_runnable()` would flip to skip):
