@@ -615,11 +615,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited man/man1/h5i.1; edited README.md; edited README.md
 - [x] edited README.md; edited README.md; edited src/main.rs
 - [x] edited docs/environments-design.md; edited docs/environments-design.md; edited docs/environments-design.md
+- [x] edited blog/index.html; edited blog/index.html; edited sitemap.xml
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-11 01:34 UTC] `impl-env-sandbox`: edited blog/index.html; edited blog/index.html; edited sitemap.xml
 - [2026-06-11 01:25 UTC] `impl-env-sandbox`: edited docs/environments-design.md; edited docs/environments-design.md; edited docs/environments-design.md
 - [2026-06-11 01:17 UTC] `impl-env-sandbox`: edited README.md; edited README.md; edited src/main.rs
 - [2026-06-11 01:09 UTC] `impl-env-sandbox`: edited man/man1/h5i.1; edited README.md; edited README.md
