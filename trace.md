@@ -196,3 +196,4 @@ _[Checkpoint: 6a2b145c — edited CLAUDE.md; edited CLAUDE.md; edited src/mcp.rs
 [20:08:16] OBSERVE: read src/main.rs
 [20:11:57] OBSERVE: read tests/env_integration.rs
 [20:13:48] OBSERVE: read src/env.rs
+[20:14:23] OBSERVE: read src/objects.rs
