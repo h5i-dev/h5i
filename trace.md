@@ -105,3 +105,4 @@ _[Checkpoint: 6a2ad9ea — edited docs/environments-design.md; edited src/env.rs
 _[Checkpoint: 6a2ae979 — edited docs/environments-design.md; edited src/env.rs; edited wsl2-cargo-test-oom.md]_
 ---
 
+[17:12:51] OBSERVE: read src/sandbox.rs
