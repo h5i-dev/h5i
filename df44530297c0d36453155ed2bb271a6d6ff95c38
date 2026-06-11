@@ -1,0 +1,1 @@
+{"git_oid":"df44530297c0d36453155ed2bb271a6d6ff95c38","parent_oid":"ff65bc4e1280e235f7affc8b7251a28284846b93","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"update ./docs for the new env features","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-11T01:25:15.466044229Z"}
