@@ -1395,3 +1395,16 @@ docs/index.html hero WebGL rework: (1) 1-LSB hash dither before gl_FragColor kil
 
 ---
 
+## Commit 6a2aa1cd — 2026-06-11 11:53 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+docs/index.html hero WebGL rework: (1) 1-LSB hash dither before gl_FragColor kills 8-bit banding; (2) canvas shrunk to top 80% of hero (CSS mask already hid the bottom), mask ellipse rescaled 78%->97.5%, shader remaps uv to hero space (vy=uv.y*0.8+0.2, asp*0.8) so visuals unchanged; (3) warp fbm calls (q) now 3 octaves via fbm3, final n keeps 4 -> 12->10 noise evals/px; (4) fixed 1.2M pixel budget in resize() replaces fixed SCALE=0.7, scale cap 0.8, DPR cap 1.25 kept; (5) u_t wrapped mod 3600 for mediump. Verified via headless chromium + swiftshader screenshot: renders, no seam, no banding. Not git-committed yet.
+
+### This Commit's Contribution
+
+
+---
+

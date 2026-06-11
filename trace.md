@@ -1912,3 +1912,9 @@ _[Checkpoint: 6a2a9fd9 — edited docs/comparison.md; edited docs/comparison.md]
 _[Checkpoint: 6a2aa1bf — Hero flow-field: higher resolution at flat GPU cost]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2aa1cd — edited docs/index.html; edited docs/index.html; edited docs/index.html]_
+---
+
