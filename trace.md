@@ -142,3 +142,4 @@ _[Checkpoint: 6a2aecc9 — edited docs/environments-design.md; edited src/env.rs
 _[Checkpoint: 6a2af0fd — agent profile runtime-scoping]_
 ---
 
+[17:31:59] THINK: Let me confirm the CLI populates the agent identity from `$H5I_AGENT` (so reading it back during profile resolution is consistent), and review the merge-override test.
