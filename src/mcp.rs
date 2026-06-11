@@ -722,7 +722,7 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "name": { "type": "string", "description": "Env name (lowercase slug, e.g. \"fix-auth\")." },
                     "from": { "type": "string", "description": "Base revision (default HEAD); pinned immutably." },
-                    "profile": { "type": "string", "description": "Policy profile from .h5i/env.toml (default \"default\")." },
+                    "profile": { "type": "string", "description": "Policy profile from .h5i/env.toml. Unset auto-picks: built-in \"agent\" (agent-in-box: HOME grants for claude/codex + API egress) when the host can enforce it, else the fail-closed \"default\"." },
                     "isolation": {
                         "type": "string",
                         "enum": ["workspace", "process", "container", "hardened-container", "microvm"],
@@ -1588,11 +1588,7 @@ fn tool_env_create(params: &Value, workdir: &Path) -> Result<Value> {
     };
     let opts = crate::env::CreateOpts {
         from: params.get("from").and_then(Value::as_str).map(str::to_owned),
-        profile: params
-            .get("profile")
-            .and_then(Value::as_str)
-            .unwrap_or("default")
-            .to_string(),
+        profile: params.get("profile").and_then(Value::as_str).map(str::to_owned),
         isolation,
         backend: "auto".into(),
     };

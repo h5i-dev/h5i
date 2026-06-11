@@ -243,6 +243,23 @@ pub fn decide_socket(domain: i32, sock_type: i32, protocol: i32, unix_granted: b
     }
 }
 
+/// Gate on `socketpair(domain, type, protocol)`. An `AF_UNIX` socketpair is an
+/// **anonymous connected pair** — it has no address, cannot `connect` anywhere,
+/// and both ends are born inside the sandbox, so it grants no authority the
+/// process didn't already have (it could only leave over an already-granted
+/// channel). It is also load-bearing: tokio's signal handling, Node's
+/// child-process IPC, and most modern runtimes create one at startup, so
+/// denying it bricks coding agents in the box. Every other shape (socketpair
+/// is AF_UNIX-only in practice; anything else is suspicious) falls through to
+/// the default-deny [`decide_socket`] gate.
+pub fn decide_socketpair(domain: i32, sock_type: i32, protocol: i32, unix_granted: bool) -> Decision {
+    const AF_UNIX: i32 = 1;
+    if domain == AF_UNIX {
+        return Decision::Continue;
+    }
+    decide_socket(domain, sock_type, protocol, unix_granted)
+}
+
 // ─── netns + nftables egress guard (the airtight L3/L4 layer) ─────────────────
 
 use std::net::IpAddr;
@@ -662,6 +679,7 @@ fn run_supervised(
         // pidfd serve loop); a PID namespace here is a separate, tested follow-up.
         false,
         None,
+        interactive,
     ) {
         Ok(c) => c,
         Err(e) => {
@@ -745,8 +763,12 @@ fn run_supervised(
     let serve_h = std::thread::spawn(move || serve_with_pidfd(listener, pidfd, unix_granted));
 
     // Wall-clock kill + rusage (the child called setsid → killpg reaps the tree).
+    // Interactive sessions get no deadline: they are bounded by the operator,
+    // not a timer (the same rule as the process tier's interactive path), and
+    // having skipped setsid they have no dedicated process group to killpg.
+    let wall = if interactive { None } else { Some(p.wall()) };
     let (exit_code, timed_out, mut cpu_ms, mut max_rss_kb) =
-        crate::sandbox::wait_loop(&mut child, p.wall());
+        crate::sandbox::wait_loop(&mut child, wall);
 
     // The serve loop self-terminates when the child's pidfd signals exit.
     let stats = serve_h.join().unwrap_or_default();
@@ -852,6 +874,34 @@ mod tests {
         // AF_UNIX only by explicit grant.
         assert_eq!(decide_socket(AF_UNIX, SOCK_STREAM, 0, false), Decision::Deny(libc::EPERM));
         assert_eq!(decide_socket(AF_UNIX, SOCK_STREAM, 0, true), Decision::Continue);
+    }
+
+    #[test]
+    fn socketpair_gate_allows_anonymous_unix_pairs() {
+        const AF_UNIX: i32 = 1;
+        const AF_INET: i32 = 2;
+        const AF_PACKET: i32 = 17;
+        const SOCK_STREAM: i32 = 1;
+        const SOCK_DGRAM: i32 = 2;
+        const SOCK_RAW: i32 = 3;
+        const SOCK_CLOEXEC: i32 = 0o2000000;
+
+        // An anonymous AF_UNIX pair is pure intra-box IPC — allowed without a
+        // grant (tokio signals / Node child IPC depend on it).
+        assert_eq!(decide_socketpair(AF_UNIX, SOCK_STREAM, 0, false), Decision::Continue);
+        assert_eq!(
+            decide_socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, false),
+            Decision::Continue
+        );
+        assert_eq!(decide_socketpair(AF_UNIX, SOCK_DGRAM, 0, false), Decision::Continue);
+
+        // Everything else keeps the default-deny socket gate's verdicts.
+        assert_eq!(decide_socketpair(AF_PACKET, SOCK_DGRAM, 0, false), Decision::Deny(libc::EPERM));
+        assert_eq!(decide_socketpair(AF_INET, SOCK_RAW, 0, false), Decision::Deny(libc::EPERM));
+        assert_eq!(decide_socketpair(999, 999, 0, false), Decision::Deny(libc::EPERM));
+        // inet socketpair is kernel-rejected anyway; the gate's verdict matches
+        // decide_socket so nothing widens.
+        assert_eq!(decide_socketpair(AF_INET, SOCK_STREAM, 0, false), Decision::Continue);
     }
 
     #[test]
