@@ -454,3 +454,4 @@ _[Checkpoint: 6a2b3a2b — edited docs/environments-design.md; edited CLAUDE.md;
 _[Checkpoint: 6a2b3b20 — edited docs/environments-design.md; edited CLAUDE.md; edited CLAUDE.md]_
 ---
 
+[22:50:16] OBSERVE: read src/env.rs
