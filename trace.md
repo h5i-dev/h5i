@@ -62,3 +62,4 @@ _[Checkpoint: 6a2ad0da — edited src/sandbox.rs; wrote supervised-tier-green-on
 [15:22:10] ACT: edited src/main.rs
 [15:23:54] ACT: edited src/sandbox.rs
 [15:37:58] OBSERVE: read src/env.rs
+[15:37:59] OBSERVE: read src/mcp.rs
