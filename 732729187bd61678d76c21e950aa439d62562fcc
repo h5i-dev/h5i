@@ -1,0 +1,1 @@
+{"git_oid":"732729187bd61678d76c21e950aa439d62562fcc","parent_oid":"dab92b829408b3b61fef253d4f9b0d139501b419","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"remove the tiered isolation card from the pitch deck env slide","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-11T01:34:43.615189916Z"}
