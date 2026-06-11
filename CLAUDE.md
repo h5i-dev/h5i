@@ -59,8 +59,9 @@ h5i msg hook [--block]                   # Stop-hook turn delivery
 
 # Isolated agent environments (worktree + sandbox + provenance)
 h5i env create <name> [--from REV] [--profile P] [--isolation workspace|process|...]
-                                         # built-in profiles: default (build/test), agent
-                                         # (agent-in-box: HOME grants for claude/codex + API egress)
+                                         # --profile unset auto-picks: `agent` (agent-in-box: HOME
+                                         # grants for claude/codex + API egress) where the host can
+                                         # enforce it, else `default` (fail-closed build/test)
 h5i env run <name> -- <cmd>              # policy-enforced, capture-wrapped
 h5i env shell <name> [-- <cmd>]          # interactive confined session (agent-in-box)
 h5i env probe                            # host isolation capabilities (incl. rootless Podman)

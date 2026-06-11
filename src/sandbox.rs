@@ -260,6 +260,9 @@ impl Profile {
             [
                 "~/.local",
                 "~/.nvm",
+                // PATH shims only — NOT ~/.cargo itself (credentials.toml).
+                "~/.cargo/env",
+                "~/.cargo/bin",
                 "~/.bashrc",
                 "~/.bash_profile",
                 "~/.profile",

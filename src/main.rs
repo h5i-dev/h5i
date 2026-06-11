@@ -1702,11 +1702,12 @@ enum EnvCommands {
         /// Base revision (default: HEAD). Pinned immutably.
         #[arg(long)]
         from: Option<String>,
-        /// Policy profile from .h5i/env.toml. Built-ins need no file: `default`
-        /// (build/test confinement) and `agent` (agent-in-box: HOME grants for
-        /// claude/codex, API egress — for `env shell` sessions running an agent).
-        #[arg(long, default_value = "default")]
-        profile: String,
+        /// Policy profile from .h5i/env.toml. Built-ins need no file: `agent`
+        /// (agent-in-box: HOME grants for claude/codex + API egress) and
+        /// `default` (fail-closed build/test confinement). Unset auto-picks
+        /// `agent` when this host can enforce it, else `default`.
+        #[arg(long)]
+        profile: Option<String>,
         /// Isolation: auto (default) | workspace | process | supervised | container | hardened-container | microvm.
         /// `auto` (or unset) picks the strongest tier the host can run; an explicit
         /// tier fails closed if the host cannot satisfy it (never silently downgrades).
@@ -8033,6 +8034,7 @@ jq -c '{
                     // Did we auto-pick (vs. the user pinning a tier)? Used below to
                     // surface the container tier when the host lacks Podman.
                     let auto_picked = matches!(isolation, None | Some(IsolationRequest::Auto));
+                    let profile_auto = profile.is_none();
                     let opts = h5i_core::env::CreateOpts { from, profile, isolation, backend };
                     let m = h5i_core::env::create(git, &h5i_root, &workdir, &agent, &name, opts)?;
                     println!(
@@ -8042,6 +8044,14 @@ jq -c '{
                         style(&m.isolation_claim).cyan(),
                         m.profile
                     );
+                    if profile_auto && m.profile == "default" {
+                        println!(
+                            "   {}      this host cannot enforce the built-in 'agent' profile (its \
+                             API egress needs the supervised or container tier), so the fail-closed \
+                             'default' was used — coding agents won't run in this box",
+                            style("note").yellow()
+                        );
+                    }
                     println!("   base     {}  (from {})", &m.base_commit[..12], m.parent_branch);
                     println!("   branch   {}", m.branch);
                     println!("   context  {}", m.context_branch);
@@ -8131,8 +8141,8 @@ jq -c '{
                     );
                     if m.profile != "agent" {
                         eprintln!(
-                            "   hint: to run a coding agent (claude/codex) in the box, create the env \
-                             with --profile agent (grants the agent's HOME paths + API egress)"
+                            "   note: this profile has no agent grants — claude/codex won't run \
+                             here (envs default to --profile agent where the host supports it)"
                         );
                     }
                     let code = h5i_core::env::shell(git, &h5i_root, &mut m, &argv)?;

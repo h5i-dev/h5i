@@ -372,11 +372,14 @@ env.pass  = ["PATH", "HOME", "LANG"]   # env-var allowlist, not full inherit
 
 ### The built-in `agent` profile (agent-in-box defaults)
 
-The deny-home default is right for build/test workloads but bricks the
-agent-in-box use case: `claude` and `codex` live under `$HOME`, keep their
-state and credentials there, and need egress to their APIs. `--profile agent`
-is a second built-in (no `env.toml` required) that adds the minimum surface a
-coding agent needs:
+The deny-home `default` profile is right for build/test workloads but bricks
+the agent-in-box use case: `claude` and `codex` live under `$HOME`, keep their
+state and credentials there, and need egress to their APIs. `agent` is a
+second built-in (no `env.toml` required) that adds the minimum surface a
+coding agent needs — and it is what an unspecified `--profile` **auto-picks**
+when the host can enforce it (same pattern as the isolation auto-pick:
+explicit = fail-closed, unspecified = best runnable; hosts that cannot enforce
+the egress fall back to `default` with a printed note):
 
 - **ro:** `~/.local`, `~/.nvm`, shell rc files, `~/.gitconfig`, `~/.config/git`
 - **rw:** `~/.claude`, `~/.claude.json`, `~/.codex`, `~/.cache`, `~/.npm`,

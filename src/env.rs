@@ -652,8 +652,11 @@ fn set_status(
 pub struct CreateOpts {
     /// Base revision (default HEAD). Pinned immutably at creation.
     pub from: Option<String>,
-    /// Policy profile name in `.h5i/env.toml` (default `default`).
-    pub profile: String,
+    /// Policy profile name in `.h5i/env.toml`. `None` auto-picks: the built-in
+    /// `agent` profile (agent-in-box) when this host can enforce it, else the
+    /// fail-closed `default`. An explicit name is fail-closed (refused if it
+    /// cannot be instantiated, never substituted).
+    pub profile: Option<String>,
     /// `--isolation` request. `Some(Claim)` is fail-closed (refused if unmet);
     /// `Some(Auto)` or `None` auto-picks the strongest runnable tier.
     pub isolation: Option<sandbox::IsolationRequest>,
@@ -665,7 +668,7 @@ impl Default for CreateOpts {
     fn default() -> Self {
         CreateOpts {
             from: None,
-            profile: "default".into(),
+            profile: None,
             isolation: None,
             backend: "auto".into(),
         }
@@ -708,17 +711,45 @@ pub fn create(
         )));
     }
 
+    // Resolve the profile name. Unspecified prefers the built-in `agent`
+    // profile — `env shell` is the agent-in-box, and a box that cannot run an
+    // agent is the wrong default — but only when it is actually enforceable
+    // here: its net.egress needs a supervised/container tier, so a pinned
+    // weaker `--isolation` (or a host without the stack) falls back to the
+    // fail-closed `default`. Same pattern as the isolation auto-pick below:
+    // explicit = fail-closed, unspecified = best runnable.
+    let profile_name: &str = match &opts.profile {
+        Some(p) => p.as_str(),
+        None => {
+            let agent_runnable = (|| -> Result<(), H5iError> {
+                let claim = match opts.isolation {
+                    Some(sandbox::IsolationRequest::Claim(c)) => c,
+                    _ => sandbox::effective_auto(workdir, "agent", false)?,
+                };
+                let prof = sandbox::load_profile(workdir, "agent", Some(claim))?;
+                let pol = sandbox::resolve(&prof, &sandbox::probe_host())?;
+                sandbox::verify_exec(&pol)
+            })()
+            .is_ok();
+            if agent_runnable {
+                "agent"
+            } else {
+                "default"
+            }
+        }
+    };
+
     // Resolve the isolation claim. Explicit `--isolation <tier>` is fail-closed;
     // `auto` / unspecified picks the strongest tier the host can actually run
     // (secure-by-default). The chosen tier is then pinned into the policy below.
     let claim = match opts.isolation {
         Some(sandbox::IsolationRequest::Claim(c)) => c,
-        Some(sandbox::IsolationRequest::Auto) => sandbox::effective_auto(workdir, &opts.profile, true)?,
-        None => sandbox::effective_auto(workdir, &opts.profile, false)?,
+        Some(sandbox::IsolationRequest::Auto) => sandbox::effective_auto(workdir, profile_name, true)?,
+        None => sandbox::effective_auto(workdir, profile_name, false)?,
     };
 
     // Policy first (fail closed BEFORE any state is created on disk).
-    let profile = sandbox::load_profile(workdir, &opts.profile, Some(claim))?;
+    let profile = sandbox::load_profile(workdir, profile_name, Some(claim))?;
     let caps = sandbox::probe_host();
     let policy = sandbox::resolve(&profile, &caps)?;
     // Functionally verify the confinement can actually run a command — capability
