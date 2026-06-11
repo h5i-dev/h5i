@@ -108,3 +108,16 @@ Split builtin agent profile into runtime-scoped variants (agent-claude/agent-cod
 
 ---
 
+## Commit 6a2af10f — 2026-06-11 17:31 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+Split builtin agent profile into runtime-scoped variants (agent-claude/agent-codex) + bare agent auto-detecting from $H5I_AGENT. Narrowed ~/.local read to bin/lib + runtime's own share dir. Verified e2e: claude launches in box; cross-runtime creds + jupyter secret denied. 777 tests pass, clippy clean.
+
+### This Commit's Contribution
+
+
+---
+

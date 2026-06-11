@@ -145,3 +145,9 @@ _[Checkpoint: 6a2af0fd — agent profile runtime-scoping]_
 [17:31:59] THINK: Let me confirm the CLI populates the agent identity from `$H5I_AGENT` (so reading it back during profile resolution is consistent), and review the merge-override test.
 [17:31:59] THINK: Now let me run env tests and clippy to catch anything referencing the old name, plus verify the real agent box still launches `claude` end-to-end (the memory says it did with the old broad grant — the narrowed `~/.
 [17:31:59] THINK: Let me commit per the project rules (staging explicitly, `--audit` since this is security-sensitive).
+
+
+---
+_[Checkpoint: 6a2af10f — edited CLAUDE.md; edited CLAUDE.md; edited src/mcp.rs]_
+---
+
