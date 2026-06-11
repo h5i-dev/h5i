@@ -1901,3 +1901,4 @@ _[Checkpoint: 6a2a29d0 — edited docs/comparison.md; edited docs/comparison.md]
 _[Checkpoint: 6a2a9fd9 — edited docs/comparison.md; edited docs/comparison.md]_
 ---
 
+[11:50:22] ACT: edited docs/index.html
