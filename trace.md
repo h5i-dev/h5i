@@ -86,3 +86,9 @@ _[Checkpoint: 6a2ad7f2 — agent profile is now the auto-picked default for env 
 [15:45:10] ACT: edited wsl2-cargo-test-oom.md
 [15:45:24] THINK: claude.json` via a temp-file-rename in `$HOME` root, that write would still be denied (only the file itself is granted) — tell me if you see config-save warnings and I'll widen that grant.
 [15:45:24] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/MEMORY.md): y sharing is a PTY proxy (like `docker -it`) — noted as a follow-up. - I couldn't exercise true interactive job control headless — worth a quick `…
+
+
+---
+_[Checkpoint: 6a2ad814 — edited docs/environments-design.md; edited src/env.rs; edited wsl2-cargo-test-oom.md]_
+---
+

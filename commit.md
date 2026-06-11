@@ -43,3 +43,16 @@ Per user: replaced the interactive sibling-env prompt with a real default — Cr
 
 ---
 
+## Commit 6a2ad814 — 2026-06-11 15:45 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+Per user: replaced the interactive sibling-env prompt with a real default — CreateOpts.profile is Option<String>; None auto-picks builtin 'agent' when enforceable (checks effective_auto/pinned claim + load_profile + resolve + verify_exec), else 'default' with a printed note. Pinned weak --isolation correctly falls back. agent profile also gained ro ~/.cargo/env + ~/.cargo/bin. Verified e2e: bare create→agent+supervised, claude runs in box, process-pin falls back. -j2 builds are safe on this box (user-confirmed).
+
+### This Commit's Contribution
+
+
+---
+
