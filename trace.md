@@ -1861,3 +1861,4 @@ _[Checkpoint: 6a2a2797 — edited tests/env_integration.rs; wrote env-process-ti
 
 [03:14:44] OBSERVE: read README.md
 [03:14:44] OBSERVE: read README.md
+[03:14:45] OBSERVE: read README.md
