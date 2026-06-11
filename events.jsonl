@@ -6,3 +6,4 @@
 {"ts":"2026-06-11T17:25:34.061903Z","env_id":"env/claude/scopecheck","agent":"claude","event":"status","detail":"running"}
 {"ts":"2026-06-11T17:25:40.077503Z","env_id":"env/claude/scopecheck","agent":"claude","event":"exec","detail":"cmd=`sh -c cat ~/.codex/auth.json 2>&1 | head -1` exit=0 wall=61ms cpu=0ms rss=0MiB","capture":"e5cea76c0b1f6f51"}
 {"ts":"2026-06-11T17:25:40.108037Z","env_id":"env/claude/scopecheck","agent":"claude","event":"status","detail":"running"}
+{"ts":"2026-06-11T17:25:46.330840Z","env_id":"env/claude/scopecheck","agent":"claude","event":"exec","detail":"cmd=`sh -c ls ~/.local/share/jupyter 2>&1 | head -1` exit=0 wall=41ms cpu=0ms rss=0MiB","capture":"1d3e7d31593692eb"}
