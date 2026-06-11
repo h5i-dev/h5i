@@ -1703,9 +1703,11 @@ enum EnvCommands {
         #[arg(long)]
         from: Option<String>,
         /// Policy profile from .h5i/env.toml. Built-ins need no file: `agent`
-        /// (agent-in-box: HOME grants for claude/codex + API egress) and
-        /// `default` (fail-closed build/test confinement). Unset auto-picks
-        /// `agent` when this host can enforce it, else `default`.
+        /// (agent-in-box, scoped to $H5I_AGENT's runtime), `agent-claude` /
+        /// `agent-codex` (pin one runtime: only that agent's HOME state + API
+        /// egress), and `default` (fail-closed build/test confinement). Unset
+        /// auto-picks the creating runtime's agent profile when this host can
+        /// enforce it, else `default`.
         #[arg(long)]
         profile: Option<String>,
         /// Isolation: auto (default) | workspace | process | supervised | container | hardened-container | microvm.
@@ -1768,6 +1770,22 @@ enum EnvCommands {
         name: String,
     },
 
+    /// Show the environment's reasoning/context branch
+    /// (`refs/h5i/context/env/<agent>/<slug>`) — a convenience alias for
+    /// `h5i context show --branch <that-branch>`.
+    Context {
+        name: String,
+        /// Number of recent context commits to show (window K)
+        #[arg(long, default_value_t = 3)]
+        window: usize,
+        /// Include the full reasoning trace (equivalent to --depth 3)
+        #[arg(long)]
+        trace: bool,
+        /// Progressive disclosure depth: 1=compact index, 2=timeline (default), 3=full trace
+        #[arg(long, default_value_t = 2)]
+        depth: u8,
+    },
+
     /// Diff the environment's work against its pinned base
     Diff {
         name: String,
@@ -1815,6 +1833,17 @@ enum EnvCommands {
     /// Abort an environment — manifest and workspace preserved for forensics
     Abort {
         name: String,
+    },
+
+    /// Permanently remove an environment from this clone: prune its worktree,
+    /// delete its code + reasoning branches, and erase its manifest. Destroys
+    /// local provenance (only the `removed` event in refs/h5i/env survives).
+    /// A still-live env (created/running/proposed) needs --force.
+    Rm {
+        name: String,
+        /// Remove even if the env is still live (not applied/aborted)
+        #[arg(long)]
+        force: bool,
     },
 
     /// Reclaim workspaces of applied/aborted environments (worktree prune).
@@ -2000,6 +2029,10 @@ enum ObjectsCommands {
         /// Only objects from this tool (e.g. pytest, cargo, npm).
         #[arg(long)]
         tool: Option<String>,
+        /// Only objects captured inside this environment (`env run`). Accepts the
+        /// full id `env/<agent>/<slug>`, `<agent>/<slug>`, or a bare `<slug>`.
+        #[arg(long)]
+        env: Option<String>,
     },
 
     /// Search captured objects by their normalized findings (and metadata).
@@ -2034,6 +2067,10 @@ enum ObjectsCommands {
         /// Only captures from this tool (e.g. pytest, cargo, npm).
         #[arg(long)]
         tool: Option<String>,
+        /// Only captures taken inside this environment (`env run`). Accepts the
+        /// full id `env/<agent>/<slug>`, `<agent>/<slug>`, or a bare `<slug>`.
+        #[arg(long)]
+        env: Option<String>,
         /// Only captures at most this old (e.g. 7d, 12h, 90m).
         #[arg(long, value_name = "DURATION")]
         since: Option<String>,
@@ -2235,7 +2272,7 @@ h5i capture run --file <path> -- <command>    # tag the files it relates to
 It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Small *successful* output (under ~2 KB) passes through unstored — but failures are always captured regardless of size, so they stay searchable. Safe to wrap anything. Rehydrate the full raw only if the summary isn't enough:
 
 ```bash
-h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall objects [--branch <b>|--file <p>|--env <e>]   # list captures
 h5i recall search <query> [--severity|--rule|--path|--fingerprint|--tool|--since]
                                                # query findings across captures
 h5i recall object <id>                         # full raw bytes
@@ -2479,7 +2516,7 @@ Prefer wrapping all shell commands, so the agent receives compact, token-efficie
 ```bash
 h5i capture run -- <command> [args…]     # e.g. h5i capture run -- cargo test
 h5i capture run --file <path> -- <cmd>   # tag the files it relates to
-h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall objects [--branch <b>|--file <p>|--env <e>]   # list captures
 h5i recall search <query> [--rule|--path|--severity|--fingerprint]  # query findings across captures
 h5i recall object <id>                   # rehydrate full raw (only if needed)
 h5i recall object <id> --format yaml     # re-view the structured findings (no raw)
@@ -2545,7 +2582,7 @@ through, and stores the full raw output out-of-band. Small *successful* output
 regardless of size so they stay searchable. Rehydrate the full raw only if needed:
 
 ```bash
-h5i recall objects [--branch <b>|--file <p>]    # list captures
+h5i recall objects [--branch <b>|--file <p>|--env <e>]    # list captures
 h5i recall search <query> [--rule|--path|--severity|--fingerprint]  # query findings
 h5i recall object <id>                          # full raw bytes
 h5i recall object <id> --format yaml|compact|json   # re-view structured findings (no raw)
@@ -3047,11 +3084,34 @@ const H5I_REF_PATTERNS: &[&str] = &[
     "refs/h5i/ast",
     "refs/h5i/msg",
     "refs/h5i/objects",
-    "refs/h5i/env",
-    // The env code branches live under refs/heads/ but are part of the env
-    // sharing story, so fetch them automatically too.
-    "refs/heads/h5i/env/*",
+    h5i_core::env::ENV_REF, // refs/h5i/env/meta — the shareable env state
+    // NB: the env *code* branches are NOT here — they are an asymmetric transport
+    // remap (`refs/h5i/env/code/*` on the wire ↔ `refs/heads/h5i/env/*` locally),
+    // appended separately in `cmd_setup_remote` (see [`ENV_CODE_FETCH_REFSPEC`]).
 ];
+
+// ─── env code branch: transport remap (Option A) ────────────────────────────
+//
+// The env *code* branch is the one piece of env state that must be a real local
+// branch — a native git worktree requires a `refs/heads/` ref to check out and
+// advance. But we never want it to clutter a host like GitHub, which renders
+// every `refs/heads/*` as a branch in its UI, PR pickers, and protection globs.
+//
+// So it is a TRANSPORT REMAP: locally it stays at
+// `refs/heads/h5i/env/<agent>/<slug>` (the manifest's `branch` field, valid on
+// every clone), but it is pushed to / fetched from a remote under
+// `refs/h5i/env/code/*` — a hidden ref namespace (like the rest of `refs/h5i/*`
+// and GitHub's own `refs/pull/*`) that no branch UI lists. It sits beside the
+// state ref `refs/h5i/env/meta` under one `refs/h5i/env/` namespace. The objects
+// still travel, so `env diff/inspect/compare/apply` on another clone work
+// unchanged. See docs/environments-design.md §8 (storage & data model).
+
+/// Push: local env branches → hidden remote namespace. Forced (`+`): the env
+/// owner's clone is authoritative for its own code branch (matches prior behavior).
+const ENV_CODE_PUSH_REFSPEC: &str = "+refs/heads/h5i/env/*:refs/h5i/env/code/*";
+/// Fetch: hidden remote namespace → local env branches. Fast-forward only (no
+/// `+`), so a reviewer's diverged local env branch is never clobbered.
+const ENV_CODE_FETCH_REFSPEC: &str = "refs/h5i/env/code/*:refs/heads/h5i/env/*";
 
 /// Whether `remote` still hosts the pre-redesign single context ref
 /// `refs/h5i/context` (as opposed to the per-branch `refs/h5i/context/*`).
@@ -3142,10 +3202,14 @@ fn cmd_setup_remote(remote: &str, dry_run: bool, workdir: &Path) -> anyhow::Resu
         })
         .unwrap_or_default();
 
-    let desired: Vec<String> = H5I_REF_PATTERNS
+    let mut desired: Vec<String> = H5I_REF_PATTERNS
         .iter()
         .map(|p| format!("+{p}:{p}"))
         .collect();
+    // The env code branch is asymmetric (hidden remote ns → local branch) and
+    // fast-forward-only (no leading `+`, so a diverged local env branch is never
+    // force-clobbered by a bare `git fetch`), so it is not a `+{p}:{p}` entry.
+    desired.push(ENV_CODE_FETCH_REFSPEC.to_string());
 
     println!(
         "{} {} for {}",
@@ -6381,29 +6445,56 @@ jq -c '{
                 style("h5i env create").bold(),
                 "no environments yet",
             )?;
-            // Push the env CODE branches so a reviewer on another clone can see
-            // the proposed diff and apply. They live under refs/heads/, not
-            // refs/h5i/*, so a wildcard refspec carries them all in one shot.
-            let any_env_branch = std::process::Command::new("git")
-                .args([
-                    "for-each-ref",
-                    "--count=1",
-                    "--format=%(refname)",
-                    "refs/heads/h5i/env/",
-                ])
-                .current_dir(&workdir)
-                .output()
-                .map(|o| !o.stdout.is_empty())
-                .unwrap_or(false);
+            let git_out = |args: &[&str]| {
+                std::process::Command::new("git").args(args).current_dir(&workdir).output()
+            };
+            // Push the env CODE branches onto the hidden refs/h5i/env/code/*
+            // namespace so a reviewer on another clone can diff/apply, without
+            // the branches ever appearing in the remote's UI.
+            let any_env_branch = git_out(&[
+                "for-each-ref", "--count=1", "--format=%(refname)", "refs/heads/h5i/env/",
+            ])
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
             if any_env_branch {
-                print!("  {} {} … ", style("→").dim(), style("refs/heads/h5i/env/*").yellow());
+                print!("  {} {} … ", style("→").dim(), style("refs/h5i/env/code/*").yellow());
                 std::io::stdout().flush()?;
                 let status = std::process::Command::new("git")
-                    .args(["push", &remote, "+refs/heads/h5i/env/*:refs/heads/h5i/env/*"])
+                    .args(["push", &remote, ENV_CODE_PUSH_REFSPEC])
                     .current_dir(&workdir)
                     .status()
                     .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
                 println!("{}", if status.success() { style("ok").green() } else { style("failed").red() });
+            }
+
+            // Env code is published under refs/h5i/env/code/* (above); it must
+            // never live under refs/heads/ on the remote, where a host like
+            // GitHub would render it as a branch. Delete any such head refs (only
+            // present if an older h5i pushed them). Best-effort, idempotent.
+            if let Ok(out) = git_out(&["ls-remote", "--heads", &remote, "refs/heads/h5i/env/*"]) {
+                let stale: Vec<String> = String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter_map(|l| l.split_whitespace().nth(1).map(str::to_owned))
+                    .collect();
+                if !stale.is_empty() {
+                    print!(
+                        "  {} removing {} env branch(es) from {}'s head namespace … ",
+                        style("⌫").dim(),
+                        stale.len(),
+                        style(&remote).yellow()
+                    );
+                    std::io::stdout().flush()?;
+                    let mut args: Vec<String> =
+                        vec!["push".into(), remote.clone(), "--delete".into()];
+                    args.extend(stale);
+                    let ok = std::process::Command::new("git")
+                        .args(&args)
+                        .current_dir(&workdir)
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false);
+                    println!("{}", if ok { style("ok").green() } else { style("skipped").dim() });
+                }
             }
 
             // Bind to the original variable name so the existing "Tip:" footer
@@ -6833,17 +6924,19 @@ jq -c '{
             // union-merge dispatch in `sync_one` reconciles divergence.
             sync_one(h5i_core::env::ENV_REF)?;
             // Fetch the env CODE branches so pulled environments can be
-            // reviewed/applied from their committed state. Fast-forward only;
-            // a diverged local env branch is kept (the reviewer's own work).
-            print!("  {} {} … ", style("→").dim(), style("refs/heads/h5i/env/*").yellow());
+            // reviewed/applied from their committed state. They arrive from the
+            // hidden `refs/h5i/env/code/*` namespace into local `refs/heads/h5i/env/*`.
+            // Fast-forward only; a diverged local env branch is kept (the
+            // reviewer's own work).
+            print!("  {} {} … ", style("→").dim(), style("refs/h5i/env/code/*").yellow());
             std::io::stdout().flush()?;
             let env_fetch = git(&[
-                "fetch", "--no-write-fetch-head", &remote,
-                "refs/heads/h5i/env/*:refs/heads/h5i/env/*",
+                "fetch", "--no-write-fetch-head", &remote, ENV_CODE_FETCH_REFSPEC,
             ])?;
+            let env_ok = env_fetch.status.success();
             println!(
                 "{}",
-                if env_fetch.status.success() { style("ok").green() } else { style("skipped").dim() }
+                if env_ok { style("ok").green() } else { style("skipped").dim() }
             );
             // Materialize any newly-arrived env manifests/policies onto disk so
             // `h5i env list/status/diff/apply` see them immediately.
@@ -7148,7 +7241,7 @@ jq -c '{
                     }
                 }
 
-                ObjectsCommands::List { limit, branch, file, diff, status, tool } => {
+                ObjectsCommands::List { limit, branch, file, diff, status, tool, env } => {
                     let all = objects::read_manifests(git);
 
                     // Validate --status against the canonical vocabulary (the
@@ -7210,10 +7303,18 @@ jq -c '{
                                 m.structured.as_ref().map(|s| s.tool.as_str()) == Some(want)
                             })
                         })
+                        .filter(|m| {
+                            env.as_deref()
+                                .is_none_or(|want| objects::env_id_matches(m.env_id.as_deref(), want))
+                        })
                         .collect();
 
-                    let filtered =
-                        branch.is_some() || file.is_some() || diff || status.is_some() || tool.is_some();
+                    let filtered = branch.is_some()
+                        || file.is_some()
+                        || diff
+                        || status.is_some()
+                        || tool.is_some()
+                        || env.is_some();
                     if manifests.is_empty() {
                         if filtered {
                             println!("No captured objects match that filter.");
@@ -7299,6 +7400,7 @@ jq -c '{
                     branch,
                     status,
                     tool,
+                    env,
                     since,
                     limit,
                 } => {
@@ -7354,6 +7456,7 @@ jq -c '{
                         branch: branch.clone(),
                         status,
                         tool: tool.clone(),
+                        env: env.clone(),
                         since,
                     };
 
@@ -8139,7 +8242,7 @@ jq -c '{
                         style(&m.isolation_claim).cyan(),
                         style(&m.profile).cyan()
                     );
-                    if m.profile != "agent" {
+                    if !h5i_core::sandbox::is_agent_profile(&m.profile) {
                         eprintln!(
                             "   note: this profile has no agent grants — claude/codex won't run \
                              here (envs default to --profile agent where the host supports it)"
@@ -8247,6 +8350,23 @@ jq -c '{
                     }
                 }
 
+                EnvCommands::Context { name, window, trace, depth } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    // --trace is shorthand for --depth 3 (mirrors `context show`).
+                    let effective_depth = if trace { 3 } else { depth };
+                    let opts = ctx::ContextOpts {
+                        branch: Some(m.context_branch.clone()),
+                        commit_hash: None,
+                        show_log: effective_depth >= 3,
+                        log_offset: 0,
+                        metadata_segment: None,
+                        window,
+                        depth: effective_depth,
+                    };
+                    let snapshot = ctx::gcc_context(&workdir, &opts)?;
+                    ctx::print_context_depth(&snapshot, effective_depth);
+                }
+
                 EnvCommands::Diff { name, stat } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     print!("{}", h5i_core::env::diff(git, &h5i_root, &m, stat)?);
@@ -8282,6 +8402,15 @@ jq -c '{
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
                     h5i_core::env::abort(git, &h5i_root, &mut m)?;
                     println!("{} {} aborted (manifest preserved for forensics)", SUCCESS, m.id);
+                }
+
+                EnvCommands::Rm { name, force } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    h5i_core::env::rm(git, &h5i_root, &m, force)?;
+                    println!(
+                        "{} {} removed (workspace, branches, and manifest erased)",
+                        SUCCESS, m.id
+                    );
                 }
 
                 EnvCommands::Gc => {

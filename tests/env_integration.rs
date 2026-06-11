@@ -208,7 +208,7 @@ fn create_builds_worktree_branch_context_policy_and_event() {
         .current_dir(&r.dir));
 
     // Event log: refs/h5i/env carries the created event.
-    let log = out_str(&git(&r.dir, &["show", "refs/h5i/env:events.jsonl"]));
+    let log = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:events.jsonl"]));
     assert!(log.contains("\"event\":\"created\""), "{log}");
     assert!(log.contains("env/tester/fix-auth"), "{log}");
 
@@ -788,6 +788,91 @@ fn abort_preserves_forensics_and_gc_reclaims_workspace() {
     // Run after gc refuses cleanly.
     let out = r.h5i(&["env", "run", "doomed", "--", "true"]);
     assert!(!out.status.success());
+}
+
+#[test]
+fn rm_erases_workspace_branches_and_manifest() {
+    let r = Repo::new();
+    let branch = "refs/heads/h5i/env/tester/scratch";
+    let ctx_branch = "refs/h5i/context/env/tester/scratch";
+
+    r.h5i_ok(&["env", "create", "scratch"]);
+    r.h5i_ok(&["env", "run", "scratch", "--", "sh", "-c", "echo evidence"]);
+    // A live env refuses removal without --force.
+    let out = r.h5i(&["env", "rm", "scratch"]);
+    assert!(!out.status.success(), "live env must refuse rm without --force");
+    assert!(r.env_dir("scratch").join("manifest.json").is_file(), "manifest still present");
+
+    // --force removes everything: workspace, both branches, on-disk dir.
+    r.h5i_ok(&["env", "rm", "scratch", "--force"]);
+    assert!(!r.work("scratch").exists(), "workspace gone");
+    assert!(!r.env_dir("scratch").exists(), "env dir erased");
+    for refname in [branch, ctx_branch] {
+        let rp = Command::new("git")
+            .args(["rev-parse", "--verify", refname])
+            .current_dir(&r.dir)
+            .output()
+            .expect("git spawn");
+        assert!(!rp.status.success(), "{refname} should be deleted");
+    }
+    // Gone from the list, and a second rm reports no such env.
+    assert!(!out_str(&r.h5i_ok(&["env", "list"])).contains("scratch"), "not listed");
+    assert!(!r.h5i(&["env", "rm", "scratch", "--force"]).status.success(), "already gone");
+
+    // An applied/aborted env removes without --force.
+    r.h5i_ok(&["env", "create", "done"]);
+    r.h5i_ok(&["env", "abort", "done"]);
+    r.h5i_ok(&["env", "rm", "done"]);
+    assert!(!r.env_dir("done").exists(), "aborted env removed without --force");
+}
+
+#[test]
+fn recall_objects_filters_by_env() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "alpha"]);
+    r.h5i_ok(&["env", "create", "beta"]);
+    r.h5i_ok(&["env", "run", "alpha", "--", "sh", "-c", "echo alpha-out"]);
+    r.h5i_ok(&["env", "run", "beta", "--", "sh", "-c", "echo beta-out"]);
+
+    // Bare slug selects exactly that env's capture (and not the other's).
+    let a = out_str(&r.h5i_ok(&["recall", "objects", "--env", "alpha"]));
+    assert!(a.contains("alpha-out"), "alpha capture shown:\n{a}");
+    assert!(!a.contains("beta-out"), "beta capture must be excluded:\n{a}");
+
+    // The <agent>/<slug> and full-id forms resolve the same env.
+    assert!(out_str(&r.h5i_ok(&["recall", "objects", "--env", "tester/beta"])).contains("beta-out"));
+    assert!(out_str(&r.h5i_ok(&["recall", "objects", "--env", "env/tester/beta"])).contains("beta-out"));
+
+    // An unknown env matches nothing (filter message, not the empty-store one).
+    let none = out_str(&r.h5i_ok(&["recall", "objects", "--env", "ghost"]));
+    assert!(none.contains("match that filter"), "{none}");
+
+    // search --env composes with the query and is env-scoped.
+    let s = out_str(&r.h5i_ok(&["recall", "search", "alpha-out", "--env", "alpha"]));
+    assert!(s.contains("alpha-out"), "{s}");
+    assert!(out_str(&r.h5i_ok(&["recall", "search", "alpha-out", "--env", "beta"]))
+        .contains("No captured findings"), "alpha-out must not match in beta");
+
+    // Captures survive their env's removal and stay queryable by env id.
+    r.h5i_ok(&["env", "rm", "alpha", "--force"]);
+    assert!(out_str(&r.h5i_ok(&["recall", "objects", "--env", "alpha"])).contains("alpha-out"),
+        "captures of a removed env remain searchable by env id");
+}
+
+#[test]
+fn env_context_shows_the_reasoning_branch() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "scout"]);
+
+    let out = out_str(&r.h5i_ok(&["env", "context", "scout"]));
+    // Renders the env's reasoning branch (name under refs/h5i/context/).
+    assert!(out.contains("env/tester/scout"), "shows the env context branch:\n{out}");
+
+    // --trace deepens to the full trace (depth 3) without erroring.
+    r.h5i_ok(&["env", "context", "scout", "--trace"]);
+
+    // An unknown env name is a clean error, not a panic.
+    assert!(!r.h5i(&["env", "context", "ghost"]).status.success(), "unknown env must fail");
 }
 
 // ─── 6. isolation claims fail closed ────────────────────────────────────────
@@ -1386,7 +1471,7 @@ fn event_log_redacts_command_and_records_resources() {
 
     // The raw event log blob (refs/h5i/env) must not leak the secret passed on
     // the command line, and must carry wall/cpu resource accounting.
-    let log = out_str(&git(&r.dir, &["show", "refs/h5i/env:events.jsonl"]));
+    let log = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:events.jsonl"]));
     assert!(!log.contains(PLANTED_SECRET), "secret leaked into the env event log: {log}");
     assert!(log.contains("redacted"), "command should be redacted in the event detail");
     let exec_line = log.lines().find(|l| l.contains("\"event\":\"exec\"")).expect("exec event");
@@ -1650,16 +1735,67 @@ fn env_travels_to_another_clone_for_review_and_apply() {
     assert_eq!(av["status"], "applied", "applied status propagated back to A: {a_status}");
 }
 
+/// Option A: the env code branch travels under the hidden `refs/h5i/env/code/*`
+/// namespace (beside the `refs/h5i/env/meta` state ref, under one `refs/h5i/env/`
+/// namespace), so a host like GitHub (which lists only `refs/heads/*`) never
+/// shows env sandboxes as branches. Any env branch that does land under
+/// `refs/heads/` on the remote is removed on push.
+#[test]
+fn push_keeps_env_refs_out_of_refs_heads() {
+    let (_root, a, _b) = two_clones();
+    a.ok(&["env", "create", "scopecheck"]);
+    a.ok(&["env", "run", "scopecheck", "--", "sh", "-c", "echo hi"]);
+    a.ok(&["push"]);
+
+    let remote_refs = |c: &Clone| -> String {
+        String::from_utf8_lossy(&git(&c.dir, &["ls-remote", "origin"]).stdout)
+            .lines()
+            .filter_map(|l| l.split_whitespace().nth(1).map(str::to_owned))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let refs = remote_refs(&a);
+    assert!(refs.lines().any(|r| r == "refs/h5i/env/meta"), "state ref present:\n{refs}");
+    assert!(
+        refs.contains("refs/h5i/env/code/claude/scopecheck"),
+        "code branch under hidden ns:\n{refs}"
+    );
+    assert!(
+        !refs.lines().any(|r| r.starts_with("refs/heads/h5i/env/")),
+        "NO env branch may appear under refs/heads/ (GitHub clutter):\n{refs}"
+    );
+
+    // A stray env branch on the remote's head namespace (e.g. left by an older
+    // h5i) is deleted on the next push.
+    git(&a.dir, &[
+        "push", "-q", "origin",
+        "refs/heads/h5i/env/claude/scopecheck:refs/heads/h5i/env/claude/oldone",
+    ]);
+    assert!(
+        remote_refs(&a).contains("refs/heads/h5i/env/claude/oldone"),
+        "stray head branch staged"
+    );
+
+    a.ok(&["push"]);
+    let after = remote_refs(&a);
+    assert!(
+        !after.lines().any(|r| r.starts_with("refs/heads/h5i/env/")),
+        "stray head branches cleaned:\n{after}"
+    );
+    assert!(after.lines().any(|r| r == "refs/h5i/env/meta"), "state ref still present:\n{after}");
+}
+
 #[test]
 fn env_ref_holds_manifest_and_policy_blobs() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "shared"]);
     // The ref tree carries the three shareable files.
-    let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/env:manifests.jsonl"]));
+    let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:manifests.jsonl"]));
     assert!(manifests.contains("env/tester/shared"), "{manifests}");
-    let policies = out_str(&git(&r.dir, &["show", "refs/h5i/env:policies.jsonl"]));
+    let policies = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:policies.jsonl"]));
     assert!(policies.contains("env/tester/shared"), "policy blob present: {policies}");
-    let events = out_str(&git(&r.dir, &["show", "refs/h5i/env:events.jsonl"]));
+    let events = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:events.jsonl"]));
     assert!(events.contains("\"event\":\"created\""), "{events}");
 }
 

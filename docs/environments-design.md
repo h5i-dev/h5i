@@ -379,23 +379,38 @@ second built-in (no `env.toml` required) that adds the minimum surface a
 coding agent needs — and it is what an unspecified `--profile` **auto-picks**
 when the host can enforce it (same pattern as the isolation auto-pick:
 explicit = fail-closed, unspecified = best runnable; hosts that cannot enforce
-the egress fall back to `default` with a printed note):
+the egress fall back to `default` with a printed note).
 
-- **ro:** `~/.local`, `~/.nvm`, shell rc files, `~/.gitconfig`, `~/.config/git`
-- **rw:** `~/.claude`, `~/.claude.json`, `~/.codex`, `~/.cache`, `~/.npm`,
-  `/tmp` (host-shared at this tier; the container tier gives a private one)
-- **net.egress:** `api.anthropic.com`, `statsig.anthropic.com`,
-  `api.openai.com`, `auth.openai.com`, `chatgpt.com` — DNS-pinned + enforced
-  (so the profile **refuses** to instantiate at tiers that cannot enforce it:
-  it is a supervised/container profile by design)
+**It is scoped to a single runtime.** A Claude box that could also read
+`~/.codex/auth.json` *and* egress to `api.openai.com` lets a prompt-injected
+agent steal the other runtime's token and use it against an allowlisted host —
+so the grants are split per runtime. `agent` resolves to the creating agent's
+runtime (`$H5I_AGENT`: `codex*` → Codex, else Claude); `agent-claude` /
+`agent-codex` pin one explicitly. Each variant grants **only that runtime's**
+state + API:
+
+- **ro (shared, non-secret):** `~/.local/bin`, `~/.local/lib`, `~/.nvm`, shell
+  rc files, `~/.gitconfig`, `~/.config/git` — *plus* the runtime's own
+  `~/.local/share/<runtime>` (its installed binary; `~/.local/bin/claude` is a
+  launcher into `~/.local/share/claude/versions/…`). The blanket `~/.local`
+  read was **narrowed** so the box no longer sees unrelated `~/.local/share`
+  state (Jupyter `notebook_secret`, app history DBs).
+- **rw (this runtime only):** Claude → `~/.claude`, `~/.claude.json`; Codex →
+  `~/.codex`. Plus shared `~/.cache`, `~/.npm`, `/tmp` (host-shared at this
+  tier; the container tier gives a private one).
+- **net.egress (this runtime only):** Claude → `api.anthropic.com`,
+  `statsig.anthropic.com`; Codex → `api.openai.com`, `auth.openai.com`,
+  `chatgpt.com` — DNS-pinned + enforced (so the profile **refuses** to
+  instantiate at tiers that cannot enforce it: supervised/container by design).
 - `TERM`/`COLORTERM`/`USER`/`SHELL` pass through; mem 8G, procs 512
 
 The default deny set (`~/.ssh`, `~/.aws`, `~/.config/gh`, hooks) still applies.
 Deliberate trade, stated honestly: the agent can read its *own* credentials —
 it cannot function without them — and the egress allowlist bounds where bytes
-can go. A user-defined `[profile.agent]` merges over this base (fs/env/resource
-fields inherit; `net.egress` does **not** — a user profile owns its egress
-list).
+can go, but it gets **neither the other runtime's credentials nor egress to its
+API**. A user-defined `[profile.agent-claude]` (or `[profile.agent-codex]`)
+merges over the matching base (fs/env/resource fields inherit; `net.egress`
+does **not** — a user profile owns its egress list).
 
 Interactive sessions (`env shell`) additionally differ from captured runs in
 two deliberate ways: they keep the caller's terminal session (no `setsid`, so
@@ -410,11 +425,22 @@ authority-smuggling vector — stays deny-by-default).
 ## 8. Storage & data model (reuses existing h5i machinery)
 
 ```
-refs/h5i/env            # append-only env event log (JSONL): created / exec / status / proposed / applied / aborted
-                        #   CAS append + union-merge — identical pattern to refs/h5i/msg and refs/h5i/objects
+refs/h5i/env/meta       # shareable env state: append-only event log (created/exec/status/proposed/
+                        #   applied/aborted/removed) + manifests.jsonl + policies.jsonl, in ONE tree.
+                        #   CAS append + union-merge — identical pattern to refs/h5i/msg and refs/h5i/objects.
+                        #   (`…/meta`, not the bare leaf `refs/h5i/env`, so the code refs can nest beside it —
+                        #    git forbids a leaf and a directory at the same ref path.)
+refs/h5i/env/code/<agent>/<slug>    # the code branch ON THE WIRE — a transport remap of the local
+                        #   refs/heads/h5i/env/<agent>/<slug>. A native worktree needs a real local branch,
+                        #   but a remote (GitHub) renders every refs/heads/* as a branch; this hidden ns is
+                        #   pushable + fetchable yet invisible in branch UIs (like GitHub's own refs/pull/*).
+                        #   Beside refs/h5i/env/meta under one refs/h5i/env/ namespace. Push:
+                        #   +refs/heads/h5i/env/*:refs/h5i/env/code/*. Fetch (FF-only):
+                        #   refs/h5i/env/code/*:refs/heads/h5i/env/*. push also deletes any stray
+                        #   refs/heads/h5i/env/* left on the remote.
+refs/heads/h5i/env/<agent>/<slug>   # the code branch LOCALLY (worktree checkout); never pushed as a head
 refs/h5i/context/<env>  # the env's reasoning branch — ALREADY exists (ctx.rs)
 refs/h5i/objects        # the env's EVIDENCE log — ALREADY exists; every exec captured here
-refs/heads/h5i/env/<agent>/<slug>   # the code branch — ordinary git, pushable
 
 .git/.h5i/env/<id>/
   manifest.json         # EnvManifest (small)
@@ -476,6 +502,9 @@ h5i env propose NAME [--style review]   # PR brief: diff + tests + captures + po
 h5i env apply NAME [--patch|--merge]    # reviewer-selected; NEVER auto-writes parent branch
 h5i env abort NAME               # stop procs, preserve manifest for forensics
 h5i env gc                       # git worktree prune + reclaim; raw blobs GC via existing object policy
+h5i env rm NAME [--force]        # permanent removal: worktree + code/reasoning branches + on-disk manifest,
+                                 #   and strip manifest/policy from refs/h5i/env (local-only; the append-only
+                                 #   `removed` event survives). --force required for a still-live env.
 ```
 
 Wiring follows the existing noun-verb table in `main.rs` (the same pattern as

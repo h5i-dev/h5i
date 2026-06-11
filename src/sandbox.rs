@@ -192,6 +192,82 @@ impl SecretGrant {
     }
 }
 
+/// Which coding-agent runtime an `agent` box is scoped to. The built-in `agent`
+/// profile is *not* one-size-fits-all: a Claude box must not get Codex's
+/// credentials (or egress to OpenAI), and vice versa — granting both makes a
+/// prompt-injected agent able to read the *other* runtime's API token and use
+/// it against an allowlisted host. Each runtime gets only its own HOME state +
+/// API endpoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRuntime {
+    Claude,
+    Codex,
+}
+
+impl AgentRuntime {
+    /// Map an agent identity (`$H5I_AGENT`, e.g. `claude`/`codex`) to the
+    /// runtime whose credentials + API the box should expose. Codex identities
+    /// → Codex; everything else (claude, unknown) → Claude, the conservative
+    /// default (Claude Code is the primary driver, and an unknown identity
+    /// should not silently inherit OpenAI egress).
+    pub fn from_identity(agent: &str) -> AgentRuntime {
+        if agent.trim().to_ascii_lowercase().starts_with("codex") {
+            AgentRuntime::Codex
+        } else {
+            AgentRuntime::Claude
+        }
+    }
+
+    /// Detect the runtime from the ambient `$H5I_AGENT`, defaulting to Claude.
+    /// Used when the bare `agent` profile is resolved — `env create` runs with
+    /// `$H5I_AGENT` set to the creating agent, so the box is scoped to whoever
+    /// built it. Explicit `agent-claude`/`agent-codex` profiles bypass this.
+    fn detect() -> AgentRuntime {
+        std::env::var(crate::msg::AGENT_ENV)
+            .ok()
+            .map(|s| AgentRuntime::from_identity(&s))
+            .unwrap_or(AgentRuntime::Claude)
+    }
+
+    /// The built-in profile name that pins this runtime explicitly.
+    pub fn profile_name(self) -> &'static str {
+        match self {
+            AgentRuntime::Claude => "agent-claude",
+            AgentRuntime::Codex => "agent-codex",
+        }
+    }
+
+    /// Read-write HOME state this runtime needs — its *own* credentials/config
+    /// only. Never the other runtime's.
+    fn state_write(self) -> &'static [&'static str] {
+        match self {
+            AgentRuntime::Claude => &["~/.claude", "~/.claude.json"],
+            AgentRuntime::Codex => &["~/.codex"],
+        }
+    }
+
+    /// Read-only `~/.local/share/<runtime>` subtree holding the runtime's own
+    /// installed binary (`claude` is a launcher → `~/.local/share/claude/...`).
+    /// Scoped per-runtime so the box never sees unrelated `~/.local/share`
+    /// state (Jupyter secrets, history DBs, …).
+    fn share_read(self) -> &'static str {
+        match self {
+            AgentRuntime::Claude => "~/.local/share/claude",
+            AgentRuntime::Codex => "~/.local/share/codex",
+        }
+    }
+
+    /// The API endpoints this runtime is allowed to reach. Scoped per-runtime so
+    /// a Claude box cannot egress to OpenAI (and so a stolen cross-runtime token
+    /// would have nowhere allowlisted to go).
+    fn egress(self) -> &'static [&'static str] {
+        match self {
+            AgentRuntime::Claude => &["api.anthropic.com", "statsig.anthropic.com"],
+            AgentRuntime::Codex => &["api.openai.com", "auth.openai.com", "chatgpt.com"],
+        }
+    }
+}
+
 impl Profile {
     /// Built-in profile used when no `.h5i/env.toml` exists. Fail-closed for
     /// `process`+ (deny-network, deny-home); `workspace` enforces nothing and
@@ -234,31 +310,43 @@ impl Profile {
     }
 
     /// Built-in **`agent`** profile (`--profile agent`): the agent-in-box
-    /// defaults. The base built-in confines to system paths + `$WORK`, which is
-    /// right for build/test workloads but bricks coding agents — `claude` /
-    /// `codex` live under `$HOME`, keep state there, and need egress to their
-    /// APIs. This profile adds the minimum HOME surface an agent needs:
+    /// defaults, scoped to a single `runtime` (Claude or Codex). The base
+    /// built-in confines to system paths + `$WORK`, which is right for
+    /// build/test workloads but bricks coding agents — `claude` / `codex` live
+    /// under `$HOME`, keep state there, and need egress to their APIs. This
+    /// profile adds the minimum HOME surface *that runtime* needs:
     ///
-    /// - read-only: `~/.local` (agent binaries + bundles), `~/.nvm` (node
+    /// - read-only (shared, non-secret): `~/.local/bin` (PATH shims),
+    ///   `~/.local/lib` (user site-packages for tooling), `~/.nvm` (node
     ///   installs), shell rc files, `~/.gitconfig` + `~/.config/git` (commit
-    ///   identity);
-    /// - read-write: the agents' own state (`~/.claude`, `~/.claude.json`,
-    ///   `~/.codex`), caches (`~/.cache`, `~/.npm`), and `/tmp` (host-shared at
-    ///   this tier; the container tier gives a private one);
-    /// - `net.egress`: the agent API endpoints, DNS-pinned + nftables-enforced
-    ///   at the supervised tier (the lint refuses egress at tiers that cannot
-    ///   enforce it — `agent` is a supervised/container profile by design);
+    ///   identity), and the runtime's own `~/.local/share/<runtime>` binary;
+    /// - read-write: **only this runtime's** state (Claude →
+    ///   `~/.claude`/`~/.claude.json`, Codex → `~/.codex`), shared caches
+    ///   (`~/.cache`, `~/.npm`), and `/tmp` (host-shared at this tier; the
+    ///   container tier gives a private one);
+    /// - `net.egress`: **only this runtime's** API endpoints, DNS-pinned +
+    ///   nftables-enforced at the supervised tier (the lint refuses egress at
+    ///   tiers that cannot enforce it — `agent` is a supervised/container
+    ///   profile by design);
     /// - `USER`/`SHELL` passed through; roomier mem/procs for a live agent.
     ///
     /// The default deny set (`~/.ssh`, `~/.aws`, `~/.config/gh`, hooks) still
     /// applies — none of the grants contains a denied child. Deliberate trade:
     /// the agent can read its *own* credentials (it cannot function without
-    /// them), and the egress allowlist bounds where bytes can go.
-    pub fn builtin_agent(isolation: IsolationClaim) -> Profile {
-        let mut p = Profile::builtin("agent", isolation);
+    /// them), and the egress allowlist bounds where bytes can go. Crucially the
+    /// box gets *neither the other runtime's credentials nor egress to its API*
+    /// — a Claude box cannot read `~/.codex/auth.json` and use it against
+    /// OpenAI, and the broad `~/.local` read no longer exposes unrelated
+    /// `~/.local/share` secrets (Jupyter tokens, history DBs).
+    pub fn builtin_agent(isolation: IsolationClaim, runtime: AgentRuntime) -> Profile {
+        let mut p = Profile::builtin(runtime.profile_name(), isolation);
         p.fs_read.extend(
             [
-                "~/.local",
+                // Narrowed from all of `~/.local`: PATH shims + user libs only.
+                // NOT `~/.local/share` wholesale (Jupyter notebook_secret, app
+                // history DBs) — the runtime's own share dir is added below.
+                "~/.local/bin",
+                "~/.local/lib",
                 "~/.nvm",
                 // PATH shims only — NOT ~/.cargo itself (credentials.toml).
                 "~/.cargo/env",
@@ -272,23 +360,18 @@ impl Profile {
             ]
             .map(String::from),
         );
-        p.fs_write.extend(
-            ["~/.claude", "~/.claude.json", "~/.codex", "~/.cache", "~/.npm", "/tmp"]
-                .map(String::from),
-        );
+        // The runtime's own installed binary (e.g. `~/.local/bin/claude` is a
+        // launcher resolving into `~/.local/share/claude/versions/...`).
+        p.fs_read.push(runtime.share_read().to_string());
+        // Read-write: this runtime's own state only, plus shared caches.
+        p.fs_write.extend(runtime.state_write().iter().map(|s| s.to_string()));
+        p.fs_write.extend(["~/.cache", "~/.npm", "/tmp"].map(String::from));
         // The agent's own controlling terminal (TUIs re-open /dev/tty for raw
         // input). Deliberately NOT /dev/pts — that subtree includes the user's
         // *other* host terminals (same-uid writable → injection channel).
         p.fs_write.push("/dev/tty".into());
-        p.net_egress = [
-            "api.anthropic.com",
-            "statsig.anthropic.com",
-            "api.openai.com",
-            "auth.openai.com",
-            "chatgpt.com",
-        ]
-        .map(String::from)
-        .to_vec();
+        // Egress: this runtime's API endpoints only.
+        p.net_egress = runtime.egress().iter().map(|s| s.to_string()).collect();
         p.env_pass.extend(["USER".into(), "SHELL".into()]);
         p.mem_bytes = Some(8 * 1024 * 1024 * 1024);
         p.max_procs = Some(512);
@@ -418,16 +501,25 @@ fn merge_secret_grants(
 /// no-`env.toml` fallback and as the merge base under a user-defined profile
 /// of the same name (so a partial `[profile.agent]` keeps the agent grants).
 fn builtin_named(name: &str, isolation: IsolationClaim) -> Profile {
-    if name == "agent" {
-        Profile::builtin_agent(isolation)
-    } else {
-        Profile::builtin(name, isolation)
+    match name {
+        // Bare `agent` scopes to whoever is driving the box ($H5I_AGENT);
+        // `agent-claude`/`agent-codex` pin the runtime explicitly.
+        "agent" => Profile::builtin_agent(isolation, AgentRuntime::detect()),
+        "agent-claude" => Profile::builtin_agent(isolation, AgentRuntime::Claude),
+        "agent-codex" => Profile::builtin_agent(isolation, AgentRuntime::Codex),
+        _ => Profile::builtin(name, isolation),
     }
 }
 
 /// Is `name` backed by a built-in profile (usable without `.h5i/env.toml`)?
 fn is_builtin_name(name: &str) -> bool {
-    name == "default" || name == "agent"
+    matches!(name, "default" | "agent" | "agent-claude" | "agent-codex")
+}
+
+/// Is `name` an agent-in-box profile (the family that grants claude/codex HOME
+/// state + API egress)? Used to decide whether a box can actually run an agent.
+pub fn is_agent_profile(name: &str) -> bool {
+    matches!(name, "agent" | "agent-claude" | "agent-codex")
 }
 
 /// Load profile `name` from `<repo>/.h5i/env.toml`, falling back to the
@@ -1981,22 +2073,52 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
 
     #[test]
     fn builtin_agent_profile_loads_without_policy_file() {
-        // `--profile agent` must work with no .h5i/env.toml, like `default`.
+        // `--profile agent-claude` must work with no .h5i/env.toml, like
+        // `default`. (Explicit runtime name → deterministic regardless of the
+        // ambient $H5I_AGENT in the test runner.)
         let dir = tempfile::tempdir().unwrap();
-        let p = load_profile(dir.path(), "agent", Some(IsolationClaim::Supervised)).unwrap();
+        let p = load_profile(dir.path(), "agent-claude", Some(IsolationClaim::Supervised)).unwrap();
         assert_eq!(p.isolation, IsolationClaim::Supervised);
-        // Agent binaries + state under $HOME.
-        assert!(p.fs_read.iter().any(|s| s == "~/.local"));
+        // Narrowed binaries (not all of ~/.local) + the runtime's own share dir.
+        assert!(p.fs_read.iter().any(|s| s == "~/.local/bin"));
+        assert!(!p.fs_read.iter().any(|s| s == "~/.local"), "blanket ~/.local removed");
+        assert!(p.fs_read.iter().any(|s| s == "~/.local/share/claude"));
+        // Own state read-write; the OTHER runtime's state is NOT granted.
         assert!(p.fs_write.iter().any(|s| s == "~/.claude"));
-        assert!(p.fs_write.iter().any(|s| s == "~/.codex"));
+        assert!(!p.fs_write.iter().any(|s| s == "~/.codex"), "no cross-runtime state");
         assert!(p.fs_write.iter().any(|s| s == "/tmp"));
-        // API egress (enforceable at this tier) + TUI env.
+        // Own API egress only — not OpenAI's.
         assert!(p.net_egress.iter().any(|s| s == "api.anthropic.com"));
+        assert!(!p.net_egress.iter().any(|s| s == "api.openai.com"), "no cross-runtime egress");
         assert!(p.env_pass.iter().any(|k| k == "TERM"));
         assert!(p.env_pass.iter().any(|k| k == "SHELL"));
         // The default deny set survives and no grant contains a denied child
         // (validate_profile ran inside load_profile).
         assert!(p.fs_deny.iter().any(|s| s == "~/.ssh"));
+    }
+
+    #[test]
+    fn agent_codex_profile_scopes_to_codex_only() {
+        // The Codex box gets Codex state + OpenAI egress, and NOT Claude's.
+        let dir = tempfile::tempdir().unwrap();
+        let p = load_profile(dir.path(), "agent-codex", Some(IsolationClaim::Supervised)).unwrap();
+        assert!(p.fs_write.iter().any(|s| s == "~/.codex"));
+        assert!(!p.fs_write.iter().any(|s| s == "~/.claude"), "no cross-runtime state");
+        assert!(!p.fs_write.iter().any(|s| s == "~/.claude.json"), "no cross-runtime state");
+        assert!(p.fs_read.iter().any(|s| s == "~/.local/share/codex"));
+        assert!(!p.fs_read.iter().any(|s| s == "~/.local/share/claude"));
+        assert!(p.net_egress.iter().any(|s| s == "api.openai.com"));
+        assert!(!p.net_egress.iter().any(|s| s == "api.anthropic.com"), "no cross-runtime egress");
+    }
+
+    #[test]
+    fn agent_runtime_from_identity_maps_codex_else_claude() {
+        assert_eq!(AgentRuntime::from_identity("codex"), AgentRuntime::Codex);
+        assert_eq!(AgentRuntime::from_identity("Codex-2"), AgentRuntime::Codex);
+        assert_eq!(AgentRuntime::from_identity("claude"), AgentRuntime::Claude);
+        // Unknown identities default to Claude (never silent OpenAI egress).
+        assert_eq!(AgentRuntime::from_identity("some-bot"), AgentRuntime::Claude);
+        assert_eq!(AgentRuntime::from_identity(""), AgentRuntime::Claude);
     }
 
     #[test]
@@ -2012,16 +2134,16 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
 
     #[test]
     fn user_defined_agent_profile_merges_over_agent_builtin() {
-        // A partial [profile.agent] keeps the agent-in-box grants as its base.
-        // (net.egress is NOT inherited: a user profile owns its egress list.)
+        // A partial [profile.agent-claude] keeps the agent-in-box grants as its
+        // base. (net.egress is NOT inherited: a user profile owns its egress.)
         let toml_text = r#"
-[profile.agent]
+[profile.agent-claude]
 isolation = "supervised"
 resources = { mem = "2G" }
 "#;
-        let p = load_from_str(toml_text, "agent", None).unwrap();
+        let p = load_from_str(toml_text, "agent-claude", None).unwrap();
         assert_eq!(p.mem_bytes, Some(2 * 1024 * 1024 * 1024));
-        assert!(p.fs_read.iter().any(|s| s == "~/.local"), "agent base grants inherited");
+        assert!(p.fs_read.iter().any(|s| s == "~/.local/bin"), "agent base grants inherited");
         assert!(p.fs_write.iter().any(|s| s == "~/.claude"));
         assert!(p.net_egress.is_empty(), "egress is owned by the user profile");
     }

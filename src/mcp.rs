@@ -722,7 +722,7 @@ pub fn tool_definitions() -> Value {
                 "properties": {
                     "name": { "type": "string", "description": "Env name (lowercase slug, e.g. \"fix-auth\")." },
                     "from": { "type": "string", "description": "Base revision (default HEAD); pinned immutably." },
-                    "profile": { "type": "string", "description": "Policy profile from .h5i/env.toml. Unset auto-picks: built-in \"agent\" (agent-in-box: HOME grants for claude/codex + API egress) when the host can enforce it, else the fail-closed \"default\"." },
+                    "profile": { "type": "string", "description": "Policy profile from .h5i/env.toml. Built-ins: \"agent\" (agent-in-box, scoped to the creating runtime), \"agent-claude\"/\"agent-codex\" (pin one runtime: only that agent's HOME state + API egress), \"default\" (fail-closed build/test). Unset auto-picks the creating runtime's agent profile when the host can enforce it, else \"default\"." },
                     "isolation": {
                         "type": "string",
                         "enum": ["workspace", "process", "container", "hardened-container", "microvm"],
