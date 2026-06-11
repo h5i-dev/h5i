@@ -1693,3 +1693,9 @@ _[Checkpoint: 6a2a1166 — edited sitemap.xml; edited docs/pitch/index.html; edi
 [01:42:49] OBSERVE: read index.html
 [01:44:13] THINK: I'll look at the docs site structure to understand what's there and what SEO/meta tags exist.
 [01:44:13] THINK: Let me confirm one detail — whether the blog `TechArticle` schema includes `datePublished`/`author`/`headline` (needed for article rich results).
+
+
+---
+_[Checkpoint: 6a2a12ed — edited sitemap.xml; edited docs/pitch/index.html; edited index.html]_
+---
+
