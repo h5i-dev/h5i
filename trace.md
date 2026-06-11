@@ -1800,3 +1800,4 @@ _[Checkpoint: 6a2a1bc0 — edited src/env.rs; wrote env-process-tier-missing-pid
 ---
 
 [02:26:59] OBSERVE: read src/supervisor.rs
+[02:38:16] OBSERVE: read tests/env_integration.rs
