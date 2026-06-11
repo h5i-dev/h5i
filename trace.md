@@ -35,3 +35,4 @@
 [15:01:48] OBSERVE: read src/main.rs
 [15:01:56] ACT: edited src/main.rs
 [15:02:04] ACT: edited src/main.rs
+[15:02:39] ACT: edited docs/environments-design.md
