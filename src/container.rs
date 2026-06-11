@@ -516,18 +516,24 @@ pub fn build_run_argv(
         }
     }
 
-    // Env-var allowlist (nothing inherited wholesale).
+    // Env-var allowlist (nothing inherited wholesale). Pass by NAME only:
+    // Podman forwards each value from its own (h5i's) environment, so the
+    // value never lands in the container's argv — which is world-readable on a
+    // default host via `/proc/<podman-pid>/cmdline`. (`--env KEY=VALUE` would
+    // leak it there.)
     for key in &profile.env_pass {
-        if let Ok(v) = std::env::var(key) {
+        if std::env::var_os(key).is_some() {
             a.push("--env".into());
-            a.push(format!("{key}={v}"));
+            a.push(key.clone());
         }
     }
 
-    // Brokered secrets (env-injected), applied after the allowlist.
-    for (key, value) in injected_env {
+    // Brokered secrets (env-injected), applied after the allowlist. Also passed
+    // by NAME only — the caller seeds the value into Podman's environment (see
+    // `run`/`run_interactive`), keeping the credential out of the process argv.
+    for (key, _value) in injected_env {
         a.push("--env".into());
-        a.push(format!("{key}={value}"));
+        a.push(key.clone());
     }
 
     a.push(image.to_string());
@@ -595,6 +601,12 @@ pub fn run(
     let started = std::time::Instant::now();
     let mut cmd = std::process::Command::new(&full[0]);
     cmd.args(&full[1..]);
+    // Seed brokered secret values into Podman's environment so the `--env NAME`
+    // flags forward them into the container without ever exposing the value in
+    // argv. Podman injects only the named vars; the rest of its env stays put.
+    for (k, v) in injected_env {
+        cmd.env(k, v);
+    }
     let outcome = wait_container(cmd, &rt.bin, &name, p.wall(), &full)?;
     // Snapshot the proxy's allow/deny verdicts (only present in the Proxy plan)
     // before the handle drops and the listener shuts down.
@@ -658,9 +670,16 @@ pub fn run_interactive(
     let name = format!("h5i-{}-{}", std::process::id(), PROBE_SEQ.fetch_add(1, Ordering::Relaxed));
     let full = build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, Some(tty));
 
-    // Inherited stdio (the default) — this is the interactive session.
-    let status = std::process::Command::new(&full[0])
-        .args(&full[1..])
+    // Inherited stdio (the default) — this is the interactive session. Secret
+    // values are seeded into Podman's environment (forwarded by the `--env NAME`
+    // flags) rather than placed in argv, so they never appear in the host's
+    // process list.
+    let mut cmd = std::process::Command::new(&full[0]);
+    cmd.args(&full[1..]);
+    for (k, v) in injected_env {
+        cmd.env(k, v);
+    }
+    let status = cmd
         .status()
         .map_err(|e| H5iError::Metadata(format!("failed to start container session: {e}")))?;
     Ok(status.code().unwrap_or(130))
@@ -927,9 +946,16 @@ mod tests {
             &injected,
             None,
         );
-        // The broker's env grant is passed to the container as a --env pair...
-        let pos = argv.iter().position(|a| a == "GITHUB_TOKEN=ghp_secret");
-        assert!(pos.is_some(), "injected secret env must appear as a --env value: {argv:?}");
+        // The broker's env grant is passed to the container by NAME only — the
+        // value is forwarded from Podman's own env, never placed in argv (which
+        // is world-readable via /proc/<pid>/cmdline).
+        let joined = argv.join(" ");
+        assert!(
+            !joined.contains("ghp_secret"),
+            "secret VALUE must never appear in the container argv: {argv:?}"
+        );
+        let pos = argv.iter().position(|a| a == "GITHUB_TOKEN");
+        assert!(pos.is_some(), "injected secret must appear as a --env NAME: {argv:?}");
         // ...preceded by --env, and BEFORE the image (so it's a podman flag, not
         // an argument to the command).
         let i = pos.unwrap();

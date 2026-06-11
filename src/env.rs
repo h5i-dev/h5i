@@ -203,6 +203,34 @@ pub fn validate_slug(slug: &str) -> Result<(), H5iError> {
     }
 }
 
+/// Validate an agent identity before it is used to build a ref component
+/// (`refs/heads/h5i/env/<agent>/<slug>`), a directory name (`env_dir` joins it
+/// unchecked), and a worktree name. `msg::validate_name` already constrains the
+/// charset to `[A-Za-z0-9._-]`, but that still admits `.`, `..`, and
+/// leading-dot names — which are path traversal here (`env_dir(.., "..", slug)`
+/// escapes the env root) and invalid git ref components. Reject them
+/// fail-closed, mirroring [`validate_slug`].
+pub fn validate_agent(agent: &str) -> Result<(), H5iError> {
+    let ok = !agent.is_empty()
+        && agent.len() <= 64
+        && !agent.contains('/')
+        && !agent.contains('\\')
+        && !agent.contains("..")
+        && !agent.starts_with('.')
+        && !agent.ends_with(".lock")
+        && agent
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if ok {
+        Ok(())
+    } else {
+        Err(H5iError::Metadata(format!(
+            "invalid agent name '{agent}' — letters, digits, '-', '_', '.' only \
+             (≤64 chars, must not start with '.', contain '..', or end '.lock')"
+        )))
+    }
+}
+
 // ─── event log: CAS append + union merge (same pattern as objects/msg) ──────
 
 /// Replace (or append) the single JSONL line whose parsed `id` field equals
@@ -655,9 +683,7 @@ pub fn create(
     opts: CreateOpts,
 ) -> Result<EnvManifest, H5iError> {
     validate_slug(slug)?;
-    if agent.is_empty() || agent.contains('/') || agent.contains('\\') {
-        return Err(H5iError::Metadata(format!("invalid agent name '{agent}'")));
-    }
+    validate_agent(agent)?;
     let backend = match opts.backend.as_str() {
         "auto" | "worktree" => "worktree",
         other => {
@@ -2024,6 +2050,23 @@ mod tests {
         assert!(validate_slug(".hidden").is_err());
         assert!(validate_slug("x.lock").is_err());
         assert!(validate_slug(&"x".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn agent_validation_blocks_traversal_and_bad_refs() {
+        assert!(validate_agent("claude").is_ok());
+        assert!(validate_agent("codex-1").is_ok());
+        assert!(validate_agent("a.b_c").is_ok());
+        // Path traversal / ref-escape shapes that msg::validate_name admits.
+        assert!(validate_agent("").is_err());
+        assert!(validate_agent(".").is_err());
+        assert!(validate_agent("..").is_err());
+        assert!(validate_agent("../x").is_err());
+        assert!(validate_agent("a/b").is_err());
+        assert!(validate_agent("a\\b").is_err());
+        assert!(validate_agent(".hidden").is_err());
+        assert!(validate_agent("x.lock").is_err());
+        assert!(validate_agent(&"a".repeat(65)).is_err());
     }
 
     #[test]
