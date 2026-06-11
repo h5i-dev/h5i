@@ -540,3 +540,9 @@ _[Checkpoint: 6a2b450c — Observation-first auto-capture shipped]_
 _[Checkpoint: 6a2b47a9 — edited CLAUDE.md; edited CLAUDE.md; edited .claude/h5i.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2b4803 — edited CLAUDE.md; edited CLAUDE.md; edited .claude/h5i.md]_
+---
+

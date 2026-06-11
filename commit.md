@@ -407,3 +407,16 @@ Three observe-only surfaces: (1) optional 'h5i hook observe-bash' PostToolUse ha
 
 ---
 
+## Commit 6a2b4803 — 2026-06-11 23:42 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
