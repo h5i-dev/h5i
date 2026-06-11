@@ -381,3 +381,4 @@ _[Checkpoint: 6a2b2717 — edited docs/environments-design.md; edited CLAUDE.md;
 [21:28:11] ACT: edited src/main.rs
 [21:28:15] OBSERVE: read src/main.rs
 [21:28:33] ACT: edited src/main.rs
+[21:29:42] OBSERVE: read tests/env_integration.rs
