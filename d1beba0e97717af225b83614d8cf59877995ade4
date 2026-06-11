@@ -1,0 +1,1 @@
+{"git_oid":"d1beba0e97717af225b83614d8cf59877995ade4","parent_oid":"0af7d3c1d3a056ec1f8e31ddbc3fd04f69c19f19","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"update man, MANUAL.md, and readme for the new env features","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-11T01:03:12.251986935Z"}
