@@ -1,0 +1,1 @@
+{"git_oid":"a71488611cca53004aa3ec1cf5c82cf9bf8d2b72","parent_oid":"8fb61ea13cd473cc7c59b4d87f391e3b5b83fb70","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"replace '4 Tiers' with SANDBOX and 'SANDBOX ISOLATION' with something appropriate","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-11T01:46:19.567258258Z"}
