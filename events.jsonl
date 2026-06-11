@@ -14,3 +14,4 @@
 {"ts":"2026-06-11T17:26:45.745588Z","env_id":"env/codex/codexcheck","agent":"codex","event":"exec","detail":"cmd=`sh -c test -e ~/.codex && echo CODEX_OK; cat ~/.claude/.credentials.json 2>&1 | head -1` exit=0 wall=39ms cpu=0ms rss=0MiB","capture":"bf5fe3e264917760"}
 {"ts":"2026-06-11T17:26:45.783125Z","env_id":"env/claude/scopecheck","agent":"claude","event":"aborted","detail":"manifest preserved for forensics"}
 {"ts":"2026-06-11T17:26:45.813821Z","env_id":"env/codex/codexcheck","agent":"codex","event":"aborted","detail":"manifest preserved for forensics"}
+{"ts":"2026-06-11T17:26:45.862560Z","env_id":"env/claude/scopecheck","agent":"claude","event":"gc","detail":"workspace reclaimed, manifest retained"}
