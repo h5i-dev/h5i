@@ -1571,3 +1571,4 @@ _[Checkpoint: 6a2a0775 — wrote eg-msg.txt; edited sandbox-production-roadmap.m
 _[Checkpoint: 6a2a095b — edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1]_
 ---
 
+[01:05:14] OBSERVE: read README.md
