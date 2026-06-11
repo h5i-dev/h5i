@@ -1559,9 +1559,9 @@ fn setup_remote_writes_all_fetch_refspecs() {
         "+refs/h5i/ast:refs/h5i/ast",
         "+refs/h5i/msg:refs/h5i/msg",
         "+refs/h5i/objects:refs/h5i/objects",
-        "+refs/h5i/env:refs/h5i/env",
+        "+refs/h5i/env/meta:refs/h5i/env/meta",
         // env code branch: hidden remote ns → local branch, fast-forward only (no +)
-        "refs/h5i/env-code/*:refs/heads/h5i/env/*",
+        "refs/h5i/env/code/*:refs/heads/h5i/env/*",
     ] {
         assert!(fetch_s.contains(pat), "missing fetch refspec {pat}:\n{fetch_s}");
     }

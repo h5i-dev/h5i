@@ -34,10 +34,11 @@ use crate::sandbox::{self, IsolationClaim, ResolvedPolicy};
 /// per-env manifests and resolved policies (so `h5i push`/`pull` carry an
 /// environment to another clone for the cross-agent review loop, design §11).
 ///
-/// The env *code* branches travel under the **sibling** `refs/h5i/env-code/*`
-/// (not under `refs/h5i/env/`), so this state ref stays the bare leaf and needs
-/// no relocation — they coexist in the ref store without a file/dir collision.
-pub const ENV_REF: &str = "refs/h5i/env";
+/// Everything env-related lives under one `refs/h5i/env/` namespace: this state
+/// ref at `…/meta`, the code transport at `refs/h5i/env/code/*`. The state ref
+/// is `…/meta` (not the bare leaf `refs/h5i/env`) because git's ref store cannot
+/// hold a leaf at `refs/h5i/env` and refs under `refs/h5i/env/` at once.
+pub const ENV_REF: &str = "refs/h5i/env/meta";
 /// File inside the ref's tree holding the event log (one JSON object per line).
 pub const EVENTS_FILE: &str = "events.jsonl";
 /// File inside the ref's tree holding the manifests (one `EnvManifest` per

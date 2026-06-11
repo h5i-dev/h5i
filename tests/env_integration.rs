@@ -208,7 +208,7 @@ fn create_builds_worktree_branch_context_policy_and_event() {
         .current_dir(&r.dir));
 
     // Event log: refs/h5i/env carries the created event.
-    let log = out_str(&git(&r.dir, &["show", "refs/h5i/env:events.jsonl"]));
+    let log = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:events.jsonl"]));
     assert!(log.contains("\"event\":\"created\""), "{log}");
     assert!(log.contains("env/tester/fix-auth"), "{log}");
 
@@ -1471,7 +1471,7 @@ fn event_log_redacts_command_and_records_resources() {
 
     // The raw event log blob (refs/h5i/env) must not leak the secret passed on
     // the command line, and must carry wall/cpu resource accounting.
-    let log = out_str(&git(&r.dir, &["show", "refs/h5i/env:events.jsonl"]));
+    let log = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:events.jsonl"]));
     assert!(!log.contains(PLANTED_SECRET), "secret leaked into the env event log: {log}");
     assert!(log.contains("redacted"), "command should be redacted in the event detail");
     let exec_line = log.lines().find(|l| l.contains("\"event\":\"exec\"")).expect("exec event");
@@ -1735,11 +1735,11 @@ fn env_travels_to_another_clone_for_review_and_apply() {
     assert_eq!(av["status"], "applied", "applied status propagated back to A: {a_status}");
 }
 
-/// Option A: the env code branch travels under the hidden `refs/h5i/env-code/*`
-/// namespace (a sibling of the `refs/h5i/env` state ref), so a host like GitHub
-/// (which lists only `refs/heads/*`) never shows env sandboxes as branches. Any
-/// env branch that does land under `refs/heads/` on the remote is removed on
-/// push.
+/// Option A: the env code branch travels under the hidden `refs/h5i/env/code/*`
+/// namespace (beside the `refs/h5i/env/meta` state ref, under one `refs/h5i/env/`
+/// namespace), so a host like GitHub (which lists only `refs/heads/*`) never
+/// shows env sandboxes as branches. Any env branch that does land under
+/// `refs/heads/` on the remote is removed on push.
 #[test]
 fn push_keeps_env_refs_out_of_refs_heads() {
     let (_root, a, _b) = two_clones();
@@ -1756,9 +1756,9 @@ fn push_keeps_env_refs_out_of_refs_heads() {
     };
 
     let refs = remote_refs(&a);
-    assert!(refs.lines().any(|r| r == "refs/h5i/env"), "state ref present:\n{refs}");
+    assert!(refs.lines().any(|r| r == "refs/h5i/env/meta"), "state ref present:\n{refs}");
     assert!(
-        refs.contains("refs/h5i/env-code/claude/scopecheck"),
+        refs.contains("refs/h5i/env/code/claude/scopecheck"),
         "code branch under hidden ns:\n{refs}"
     );
     assert!(
@@ -1783,7 +1783,7 @@ fn push_keeps_env_refs_out_of_refs_heads() {
         !after.lines().any(|r| r.starts_with("refs/heads/h5i/env/")),
         "stray head branches cleaned:\n{after}"
     );
-    assert!(after.lines().any(|r| r == "refs/h5i/env"), "state ref still present:\n{after}");
+    assert!(after.lines().any(|r| r == "refs/h5i/env/meta"), "state ref still present:\n{after}");
 }
 
 #[test]
@@ -1791,11 +1791,11 @@ fn env_ref_holds_manifest_and_policy_blobs() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "shared"]);
     // The ref tree carries the three shareable files.
-    let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/env:manifests.jsonl"]));
+    let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:manifests.jsonl"]));
     assert!(manifests.contains("env/tester/shared"), "{manifests}");
-    let policies = out_str(&git(&r.dir, &["show", "refs/h5i/env:policies.jsonl"]));
+    let policies = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:policies.jsonl"]));
     assert!(policies.contains("env/tester/shared"), "policy blob present: {policies}");
-    let events = out_str(&git(&r.dir, &["show", "refs/h5i/env:events.jsonl"]));
+    let events = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:events.jsonl"]));
     assert!(events.contains("\"event\":\"created\""), "{events}");
 }
 
