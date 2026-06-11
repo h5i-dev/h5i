@@ -1639,3 +1639,4 @@ _[Checkpoint: 6a2a0e88 — edited docs/environments-design.md; edited docs/envir
 [01:26:38] OBSERVE: read index.html
 [01:26:42] OBSERVE: read index.html
 [01:26:45] OBSERVE: read blog/index.html
+[01:26:45] OBSERVE: read blog/cve-2026-33068-bypass-permissions-settings/index.html
