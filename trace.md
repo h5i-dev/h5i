@@ -1823,3 +1823,4 @@ _[Checkpoint: 6a2a1bc0 — edited src/env.rs; wrote env-process-tier-missing-pid
 [02:57:48] ACT: wrote env-process-tier-missing-pidns.md
 [02:57:54] ACT: edited MEMORY.md
 [02:59:37] THINK: The supervised tier (separately validated, and it refuses on this host) shares `build_confined_command` — so I'll gate the new PID-namespace behind a parameter and enable it only for the process tier, where I can test it.
+[02:59:37] THINK: The ruleset fd is private (no `AsRawFd`), so I'll add the post-remount `/proc` grant via the crate's `add_rule` in the forked child.
