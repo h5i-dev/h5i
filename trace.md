@@ -1717,3 +1717,4 @@ _[Checkpoint: 6a2a1371 — edited docs/pitch/index.html; edited index.html; edit
 [01:48:39] OBSERVE: read index.html
 [01:48:48] ACT: edited index.html
 [01:48:58] ACT: edited index.html
+[01:49:28] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): ), but `supervisor::run()` is still the fail-closed Phase A stub — so `env run` fails closed with "live enforcement not wired." Wiring that st…
