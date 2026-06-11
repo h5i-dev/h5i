@@ -1,0 +1,1 @@
+{"git_oid":"64dc428b11b7412dfd24046e0836ecae6e46aff3","parent_oid":"b1119aa3d05015e7bd9f1d6360cdd1cdde651a7f","ai_metadata":{"model_name":"claude-fable-5","prompt":"use agent mode as the default profile instead of complex instructions","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-11T15:44:39.237469018Z"}
