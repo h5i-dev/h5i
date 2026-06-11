@@ -104,6 +104,66 @@ branchfs (none) → h5i workspace → sandbox-runtime ≈ h5i process/supervised
 4. **Confined tiers are Linux + x86-64/aarch64 only;** srt covers
    macOS/Linux/Windows (the h5i `workspace` tier is cross-platform but unconfined).
 
+## Security posture — an honest read (untrusted-code threat model)
+
+*Added 2026-06-10, after a focused security audit of `h5i env` (fixed: a
+container-tier secret leak into `podman` argv, an `env create` agent
+path-traversal, and a process-tier `/proc/<pid>/environ` host-secret leak now
+closed by a PID namespace + private procfs). The audit was one focused pass — it
+hardened real bugs, but absence of further findings is **not** a proof of
+security; a real sign-off needs independent adversarial review.*
+
+**The single question that decides everything: does the sandbox share the host
+kernel?** Every reference tool sorts on this, and so does every "is it secure
+enough for hostile code" answer.
+
+- **Separate-kernel / userspace-kernel tools** — Firecracker, zeroboot, E2B
+  (microVM in production), OpenSandbox+Kata, OpenSandbox+gVisor. A guest kernel
+  (VM) or a syscall-interception layer (gVisor) means a host-kernel LPE is not
+  reachable from inside. This is a *different category* of containment.
+- **Shared-kernel tools** — container-use / Docker, runc-based setups, Anthropic
+  **sandbox-runtime**, and **every runnable `h5i env` tier** (`process`,
+  `container`). Confinement is Landlock + seccomp + namespaces (+ rootless
+  podman). A host-kernel exploit reachable through the permitted syscalls is a
+  full escape. This is the ceiling of the whole class, not an h5i defect.
+
+**Where h5i lands:**
+
+- **Against the separate-kernel class: h5i does not reach it, by design.** Its
+  named `hardened-container` (gVisor/Kata) and `microvm` (Firecracker) tiers are
+  *not in this build* and fail closed. For genuinely hostile code that may carry
+  a kernel exploit, h5i's runnable tiers are categorically weaker than a microVM.
+- **Against the shared-kernel peers: roughly on par.** vs **sandbox-runtime** —
+  the closest analog — h5i is *slightly behind on defaults*: srt leans on seccomp
+  *allow*listing and deny-by-default proxy networking at its base tier, while
+  h5i's default `process` tier uses a seccomp *deny*-list and all-or-nothing
+  `net.mode = deny|host`. h5i's `supervised` tier closes most of that gap
+  (seccomp-notify socket gate + nftables L3/L4 egress allowlist) and is roughly
+  on par — **but `supervised` refuses on hosts without cgroup delegation +
+  rootless nftables**, so a typical host runs the slightly-weaker `process` tier.
+  vs **container-use / vanilla Docker**: h5i's `container` tier (rootless,
+  `--cap-drop=ALL`, read-only rootfs, `no-new-privs`, userns) is a *more* hardened
+  OCI config; comparable-to-ahead.
+
+**Residual not-minor items at the `process` tier** (all inherent to shared-kernel
+sandboxing, all documented, none introduced by the audit): seccomp is a
+**deny-list, not an allow-list**; `clone(CLONE_NEWUSER)` is **not argument-filtered**
+(a confined process can still nest a user namespace — bounded by no-new-privs +
+Landlock + the inherited seccomp filter, but it widens kernel attack surface);
+and on hosts without cgroup delegation the memory cap falls back to the weak
+`RLIMIT_AS`. The deny-list → allow-list move is the `process`-tier hardening with
+the most leverage.
+
+**Honest one-liner.** For untrusted code, `h5i env` today is *"a solid
+shared-kernel sandbox — peer to leading rootless agent sandboxes, plus a
+provenance/review layer they lack"* — **not** *"Firecracker/gVisor-level
+isolation."* Reaching the top class means implementing a `microvm` /
+`hardened-container` tier (shell out to Firecracker or gVisor/Kata, exactly as
+OpenSandbox does), which the `IsolationClaim` enum + fail-closed probe already
+have a slot for — not further patching the `process` tier. h5i's actual edge is
+orthogonal to raw isolation strength: it is the only entry here that makes the
+confined work **auditable and reviewable in git**.
+
 ## Ideas worth borrowing (mapped to the roadmap)
 
 - **Dynamic egress policy** (the supervised L3/L4 allowlist itself is **shipped**)
@@ -112,9 +172,13 @@ branchfs (none) → h5i workspace → sandbox-runtime ≈ h5i process/supervised
   And **srt's** proxy hardening for the *container* tier: reject malformed hosts
   (null bytes), canonicalize `inet_aton` shorthand (`2852039166` → an IP) before
   allowlist matching.
-- **Harden process/supervised** with **srt's** dual-namespace trick: a nested
-  PID + user namespace applied *after* the mount setup, plus `PR_SET_DUMPABLE=0`,
-  to block ptrace between the tracee and the supervisor's helpers.
+- **Harden process/supervised** with **srt's** dual-namespace trick: the nested
+  **PID namespace + private procfs is now shipped on the `process` tier** (closes
+  the `/proc/<pid>/environ` host-secret leak; the workload is PID 1 of its own
+  namespace). Still to borrow: extend it to the **`supervised`** tier (its
+  pidfd/serve loop targets the `Command` child, which the pidns fork turns into a
+  supervisor — needs care), and add `PR_SET_DUMPABLE=0`. The highest-leverage
+  remaining `process`-tier hardening is **seccomp deny-list → allow-list**.
 - **From Firecracker:** the minimal-attack-surface principle is already the ethos;
   the transferable concrete is per-thread/role seccomp if the tracee side ever
   multi-threads.
