@@ -1,0 +1,1 @@
+{"git_oid":"d03f8b3578d54b0875be5c5281b5256af192246e","parent_oid":"d1beba0e97717af225b83614d8cf59877995ade4","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"README should focus on the human's workflow for h5i env: create, shell, an audit command","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-11T01:06:20.285976859Z"}
