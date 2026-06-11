@@ -11,3 +11,4 @@
 {"ts":"2026-06-11T17:25:55.880012Z","env_id":"env/claude/scopecheck","agent":"claude","event":"exec","detail":"cmd=`sh -c test -e ~/.claude && echo CLAUDE_OK` exit=0 wall=36ms cpu=0ms rss=0MiB","capture":"f4158a2eba387e5c"}
 {"ts":"2026-06-11T17:26:38.454270Z","env_id":"env/codex/codexcheck","agent":"codex","event":"created","detail":"base=144edfeb9d4c profile=agent-codex isolation=supervised backend=worktree"}
 {"ts":"2026-06-11T17:26:39.641722Z","env_id":"env/codex/codexcheck","agent":"codex","event":"status","detail":"running"}
+{"ts":"2026-06-11T17:26:45.745588Z","env_id":"env/codex/codexcheck","agent":"codex","event":"exec","detail":"cmd=`sh -c test -e ~/.codex && echo CODEX_OK; cat ~/.claude/.credentials.json 2>&1 | head -1` exit=0 wall=39ms cpu=0ms rss=0MiB","capture":"bf5fe3e264917760"}
