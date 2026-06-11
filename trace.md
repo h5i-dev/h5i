@@ -1924,3 +1924,9 @@ _[Checkpoint: 6a2aa1cd — edited docs/index.html; edited docs/index.html; edite
 _[Checkpoint: 6a2aaf73 — Fixed jaggy hero flow-field in docs/index.html]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2ab0d8 — Reverted hero to static (removed WebGL flow-field)]_
+---
+

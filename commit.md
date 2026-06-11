@@ -1421,3 +1421,16 @@ Root cause: 30fps gate made flow features jump ~2px/frame (choppy). Replaced wit
 
 ---
 
+## Commit 6a2ab0d8 — 2026-06-11 12:58 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+Root cause: 30fps gate made flow features jump ~2px/frame (choppy). Replaced with <=66fps presentation + adaptive pixel-budget governor (sheds resolution if GPU cannot hold ~60fps, floor 0.15M px, first 3s ignored to dodge load jank) + quintic noise fade (removes grid-aligned creases). Verified headless: no JS errors, governor holds full res through load and sheds only under sustained slowness. Uncommitted in docs/index.html; user to eyeball on real GPU, revert-to-static option open.
+
+### This Commit's Contribution
+User judged the animated flow still too jaggy after the 60fps+adaptive-budget fix; removed hero-fx entirely (CSS rule, canvas element, shader script — 114 lines) restoring the pre-c5cdfe77 static hero byte-identically, while keeping c5cdfe77's content changes (sandbox section, SEO meta, FAQ). Verified headless: no JS errors, hero-glow intact. Working tree change only, not git-committed.
+
+---
+
