@@ -1116,6 +1116,42 @@
   </div>
 </section>
 
+<!-- ── Agent Sandbox ─────────────────────────────────────────── -->
+<section id="sandbox">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">h5i env</span>
+      <h2 class="section-title">A confined, fully auditable agent sandbox</h2>
+      <p class="section-sub">Hand an agent a disposable environment — a git worktree plus a policy that limits what code can read, write, and reach over the network. It picks the strongest isolation the host supports, records every command and blocked access, and nothing reaches your branch until you apply.</p>
+      <div class="divider"></div>
+    </div>
+    <div class="split2 reveal">
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">~/my-project</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create fix-auth</span>
+  <span class="t-out">created env · isolation: </span><span class="t-ai">supervised</span>
+  <span class="t-cmt"># net.egress = ["example.com"]  — allowlist</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell fix-auth</span>
+<span class="t-ai">box$</span> <span class="t-cmd">curl https://example.com</span>
+  <span class="t-pass">200 OK</span><span class="t-out">          — on the allowlist</span>
+<span class="t-ai">box$</span> <span class="t-cmd">curl https://evil.example</span>
+  <span class="t-red">could not resolve host — blocked</span>
+<span class="t-ai">box$</span> <span class="t-cmd">nft flush ruleset</span>
+  <span class="t-red">Operation not permitted — can't undo it</span></pre></div>
+      </div>
+      <div class="stack">
+        <div class="feat-card reveal"><span class="feat-cmd">h5i env create · shell</span><div class="feat-name">Work in a box</div><div class="feat-desc">Make a confined environment, then work in it — or hand it to an agent. Every command inside is confined by construction.</div></div>
+        <div class="feat-card reveal"><span class="feat-cmd">tiered isolation</span><div class="feat-name">As strong as the host allows</div><div class="feat-desc">Landlock + seccomp + namespaces up to a rootless network egress allowlist — no root, no VM. If the host can't enforce it, h5i refuses rather than quietly running with less.</div></div>
+        <div class="feat-card reveal"><span class="feat-cmd">h5i env diff · log · apply</span><div class="feat-name">Audit, then merge</div><div class="feat-desc">See what changed and every blocked access, then merge onto your branch — reviewer-selected, never automatic.</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ── Explore more ──────────────────────────────────────────── -->
 <section id="explore-more">
   <div class="container">
