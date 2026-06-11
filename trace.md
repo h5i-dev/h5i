@@ -92,3 +92,9 @@ _[Checkpoint: 6a2ad7f2 — agent profile is now the auto-picked default for env 
 _[Checkpoint: 6a2ad814 — edited docs/environments-design.md; edited src/env.rs; edited wsl2-cargo-test-oom.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2ad9ea — edited docs/environments-design.md; edited src/env.rs; edited wsl2-cargo-test-oom.md]_
+---
+

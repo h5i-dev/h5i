@@ -56,3 +56,16 @@ Per user: replaced the interactive sibling-env prompt with a real default — Cr
 
 ---
 
+## Commit 6a2ad9ea — 2026-06-11 15:53 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
