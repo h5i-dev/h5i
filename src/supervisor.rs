@@ -255,12 +255,24 @@ pub struct EgressDest {
     pub port: u16,
 }
 
+/// The result of resolving `net.egress`: the pinned `IP:port` destinations (for
+/// the nftables allowlist) and, for each *hostname* entry, the single IP it was
+/// pinned to (for a private `/etc/hosts`). Both come from **one** resolution
+/// pass, so the address the program connects to is exactly the address nftables
+/// allows — no second lookup that a CDN could answer differently.
+#[derive(Debug, Clone, Default)]
+pub struct ResolvedEgress {
+    pub dests: Vec<EgressDest>,
+    /// `(hostname, ip)` — only for non-IP-literal entries; pins DNS via files.
+    pub host_pins: Vec<(String, IpAddr)>,
+}
+
 /// Resolve `net.egress` entries (`host`, `host:port`, defaulting to 443) to
-/// pinned `IP:port` destinations. A host that fails to resolve contributes
+/// pinned destinations + host pins. A host that fails to resolve contributes
 /// nothing (fail-closed: it simply won't be reachable). Pure apart from DNS.
-pub fn pin_egress(egress: &[String]) -> Vec<EgressDest> {
+pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
     use std::net::ToSocketAddrs;
-    let mut out = Vec::new();
+    let mut r = ResolvedEgress::default();
     for raw in egress {
         let raw = raw.trim();
         if raw.is_empty() {
@@ -273,16 +285,28 @@ pub fn pin_egress(egress: &[String]) -> Vec<EgressDest> {
             }
             _ => (raw, 443u16),
         };
-        if let Ok(addrs) = (host, port).to_socket_addrs() {
-            for a in addrs {
-                let dest = EgressDest { ip: a.ip(), port };
-                if !out.contains(&dest) {
-                    out.push(dest);
-                }
+        let Ok(addrs) = (host, port).to_socket_addrs() else { continue };
+        let mut first_ip: Option<IpAddr> = None;
+        for a in addrs {
+            let dest = EgressDest { ip: a.ip(), port };
+            first_ip.get_or_insert(a.ip());
+            if !r.dests.contains(&dest) {
+                r.dests.push(dest);
+            }
+        }
+        // Pin DNS for a *hostname* (an IP literal needs no /etc/hosts entry).
+        if host.parse::<IpAddr>().is_err() {
+            if let Some(ip) = first_ip {
+                r.host_pins.push((host.to_string(), ip));
             }
         }
     }
-    out
+    r
+}
+
+/// Just the pinned `IP:port` destinations (the nftables allowlist input).
+pub fn pin_egress(egress: &[String]) -> Vec<EgressDest> {
+    resolve_egress(egress).dests
 }
 
 /// Build the **default-drop** nftables ruleset for a supervised run's network
@@ -337,6 +361,14 @@ pub fn run(
     argv: &[String],
     injected_env: &[(String, String)],
 ) -> Result<crate::sandbox::ExecOutcome, H5iError> {
+    preflight(policy)?;
+    run_supervised(policy, work, argv, injected_env, false)
+}
+
+/// Shared fail-closed admission for both supervised entry points: the full
+/// mediation stack must probe green, and — when a `net.egress` allowlist is set
+/// — `slirp4netns` must be present (it provides the netns uplink).
+fn preflight(policy: &crate::sandbox::ResolvedPolicy) -> Result<(), H5iError> {
     let caps = probe();
     if !caps.usable {
         return Err(H5iError::Metadata(format!(
@@ -345,15 +377,15 @@ pub fn run(
             caps.missing().join(", ")
         )));
     }
-    if !policy.profile.net_egress.is_empty() {
+    if !policy.profile.net_egress.is_empty() && slirp4netns_path().is_none() {
         return Err(H5iError::Metadata(
-            "isolation=supervised v1 enforces net.mode=deny only; a net.egress domain allowlist \
-             (netns + nftables + slirp4netns) is the next increment — drop net.egress, or use \
-             the container tier for an L7 allowlist (fail-closed)."
+            "isolation=supervised net.egress requires `slirp4netns` on PATH (it provides the \
+             network-namespace uplink) — install it, or drop net.egress for an airtight \
+             net.mode=deny run (fail-closed)."
                 .into(),
         ));
     }
-    run_supervised(policy, work, argv, injected_env, false)
+    Ok(())
 }
 
 /// The **agent-in-box** path at the supervised tier: an interactive confined
@@ -366,22 +398,211 @@ pub fn run_interactive(
     argv: &[String],
     injected_env: &[(String, String)],
 ) -> Result<i32, H5iError> {
-    let caps = probe();
-    if !caps.usable {
-        return Err(H5iError::Metadata(format!(
-            "isolation=supervised cannot run — mediation stack incomplete (fail-closed). Missing: {}.",
-            caps.missing().join(", ")
-        )));
-    }
-    if !policy.profile.net_egress.is_empty() {
-        return Err(H5iError::Metadata(
-            "isolation=supervised v1 enforces net.mode=deny only (net.egress is the next \
-             increment) — use the container tier for an interactive agent box with egress."
-                .into(),
-        ));
-    }
+    preflight(policy)?;
     let outcome = run_supervised(policy, work, argv, injected_env, true)?;
     Ok(outcome.exit_code.unwrap_or(130))
+}
+
+// ─── egress: netns uplink (slirp4netns) + nftables allowlist (increment 2) ────
+
+/// Find an executable by name, searching `$PATH` plus the sbin dirs where
+/// network tools commonly live but a user's `$PATH` may omit.
+#[cfg(target_os = "linux")]
+fn find_bin(name: &str) -> Option<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    for extra in ["/usr/sbin", "/sbin", "/usr/bin", "/bin"] {
+        let p = std::path::PathBuf::from(extra);
+        if !dirs.contains(&p) {
+            dirs.push(p);
+        }
+    }
+    dirs.into_iter().map(|d| d.join(name)).find(|c| c.is_file())
+}
+
+#[cfg(target_os = "linux")]
+fn slirp4netns_path() -> Option<std::path::PathBuf> {
+    find_bin("slirp4netns")
+}
+
+/// Distinct temp-dir suffixes for concurrent supervised egress runs.
+#[cfg(target_os = "linux")]
+static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(target_os = "linux")]
+fn pipe_cloexec() -> std::io::Result<(std::os::unix::io::RawFd, std::os::unix::io::RawFd)> {
+    let mut fds = [0i32; 2];
+    let rc = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok((fds[0], fds[1]))
+}
+
+/// The host side of a supervised egress run: the temp files (nft ruleset +
+/// pinned `/etc/hosts`), the handshake pipes, and the `slirp4netns` uplink
+/// process. Built before the confined child is spawned; it hands the child an
+/// [`crate::sandbox::EgressJail`] and tears the uplink down on drop.
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+struct EgressNetns {
+    tmp_dir: std::path::PathBuf,
+    // Parent ends (read child pid, signal "uplink ready").
+    pid_read_fd: std::os::unix::io::RawFd,
+    ready_write_fd: std::os::unix::io::RawFd,
+    // Child ends — handed to the jail (CLOEXEC: gone at the untrusted exec).
+    child_pid_write_fd: std::os::unix::io::RawFd,
+    child_ready_read_fd: std::os::unix::io::RawFd,
+    nft_path: std::ffi::CString,
+    rules_path: std::ffi::CString,
+    hosts_src: std::ffi::CString,
+    helper: Option<std::thread::JoinHandle<()>>,
+    slirp: std::sync::Arc<std::sync::Mutex<Option<std::process::Child>>>,
+}
+
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+impl EgressNetns {
+    fn jail(&self) -> crate::sandbox::EgressJail {
+        crate::sandbox::EgressJail {
+            ready_read_fd: self.child_ready_read_fd,
+            pid_write_fd: self.child_pid_write_fd,
+            nft_path: self.nft_path.clone(),
+            nft_rules_path: self.rules_path.clone(),
+            nft_envp: std::ffi::CString::new("PATH=/usr/sbin:/usr/bin:/sbin:/bin").unwrap(),
+            hosts_src: self.hosts_src.clone(),
+        }
+    }
+}
+
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+impl Drop for EgressNetns {
+    fn drop(&mut self) {
+        // Stop the uplink, then reap the helper and close every pipe end.
+        if let Ok(mut g) = self.slirp.lock() {
+            if let Some(mut c) = g.take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+        }
+        if let Some(h) = self.helper.take() {
+            let _ = h.join();
+        }
+        for fd in [self.pid_read_fd, self.ready_write_fd, self.child_pid_write_fd, self.child_ready_read_fd] {
+            unsafe { libc::close(fd) };
+        }
+        let _ = std::fs::remove_dir_all(&self.tmp_dir);
+    }
+}
+
+/// Build the egress jail: resolve the allowlist (once), write the nft ruleset +
+/// pinned `/etc/hosts`, and launch a helper that spawns the `slirp4netns` uplink
+/// for the confined child's netns and signals readiness. Fails closed if nothing
+/// resolves or the tools are missing.
+#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn setup_egress(policy: &crate::sandbox::ResolvedPolicy) -> Result<EgressNetns, H5iError> {
+    let resolved = resolve_egress(&policy.profile.net_egress);
+    if resolved.dests.is_empty() {
+        return Err(H5iError::Metadata(
+            "net.egress resolved to no reachable address — refusing (fail-closed)".into(),
+        ));
+    }
+    let nft = find_bin("nft").ok_or_else(|| H5iError::Metadata("`nft` not found on PATH".into()))?;
+    let slirp = slirp4netns_path()
+        .ok_or_else(|| H5iError::Metadata("`slirp4netns` not found on PATH".into()))?;
+
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = std::env::temp_dir().join(format!("h5i-egress-{}-{seq}", std::process::id()));
+    std::fs::create_dir_all(&tmp).map_err(H5iError::Io)?;
+    // No resolver port: DNS is pinned via /etc/hosts, so port 53 stays closed.
+    let rules = build_nft_ruleset(&resolved.dests, None);
+    let rules_path = tmp.join("egress.nft");
+    std::fs::write(&rules_path, rules).map_err(H5iError::Io)?;
+
+    let mut hosts = String::from("127.0.0.1 localhost\n::1 localhost\n");
+    for (h, ip) in &resolved.host_pins {
+        hosts.push_str(&format!("{ip} {h}\n"));
+    }
+    let hosts_path = tmp.join("hosts");
+    std::fs::write(&hosts_path, hosts).map_err(H5iError::Io)?;
+
+    let to_c = |p: &std::path::Path| -> Result<std::ffi::CString, H5iError> {
+        std::ffi::CString::new(p.as_os_str().as_encoded_bytes())
+            .map_err(|_| H5iError::Metadata("path has interior NUL".into()))
+    };
+    let nft_path = to_c(&nft)?;
+    let rules_c = to_c(&rules_path)?;
+    let hosts_c = to_c(&hosts_path)?;
+
+    // Two CLOEXEC pipes: child→parent (pid), parent→child (ready).
+    let (pid_r, pid_w) = pipe_cloexec().map_err(H5iError::Io)?;
+    let (ready_r, ready_w) = pipe_cloexec().map_err(H5iError::Io)?;
+
+    let slirp_slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let slot_for_helper = slirp_slot.clone();
+    // Barrier so the helper is parked in read() (not allocating) at the moment
+    // the caller forks the confined child — preserving the single-threaded-fork
+    // invariant the pre_exec allocations rely on.
+    let (parked_tx, parked_rx) = std::sync::mpsc::channel::<()>();
+    let helper = std::thread::spawn(move || {
+        parked_tx.send(()).ok();
+        // Park here until the child reports its pid. No allocation before this.
+        let mut pidbuf = [0u8; 4];
+        let n = unsafe { libc::read(pid_r, pidbuf.as_mut_ptr().cast(), 4) };
+        if n != 4 {
+            return;
+        }
+        let pid = u32::from_ne_bytes(pidbuf);
+        // Spawn the uplink for the child's netns (by pid). --configure sets up
+        // tap0 (10.0.2.100/24, gw 10.0.2.2); --disable-host-loopback blocks the
+        // child from reaching host services via the gateway.
+        let child = std::process::Command::new(&slirp)
+            .args([
+                "--configure",
+                "--disable-host-loopback",
+                "--mtu=65520",
+                &pid.to_string(),
+                "tap0",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        let child = match child {
+            Ok(c) => c,
+            Err(_) => return, // child will time out waiting for ready
+        };
+        // Poll the child's netns interface list (visible at /proc/<pid>/net/dev)
+        // until tap0 appears — slirp has then configured the uplink.
+        let dev = format!("/proc/{pid}/net/dev");
+        let mut ready = false;
+        for _ in 0..600 {
+            if std::fs::read_to_string(&dev).map(|s| s.contains("tap0")).unwrap_or(false) {
+                ready = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        *slot_for_helper.lock().unwrap() = Some(child);
+        if ready {
+            let _ = unsafe { libc::write(ready_w, [1u8].as_ptr().cast(), 1) };
+        }
+        // On failure we simply don't signal; the child's poll() times out and
+        // its run fails closed.
+    });
+    parked_rx.recv().ok();
+
+    Ok(EgressNetns {
+        tmp_dir: tmp,
+        pid_read_fd: pid_r,
+        ready_write_fd: ready_w,
+        child_pid_write_fd: pid_w,
+        child_ready_read_fd: ready_r,
+        nft_path,
+        rules_path: rules_c,
+        hosts_src: hosts_c,
+        helper: Some(helper),
+        slirp: slirp_slot,
+    })
 }
 
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -411,16 +632,40 @@ fn run_supervised(
         libc::close(fd);
     };
 
-    // Shared confinement + always-netns + the seccomp-notify gate.
-    let mut cmd =
-        match crate::sandbox::build_confined_command(policy, work, argv, injected_env, true, Some(sv_child)) {
-            Ok(c) => c,
+    // Egress allowlist (increment 2): when net.egress is set, stand up the
+    // slirp4netns uplink + nftables jail. `_egress` lives for the whole run; its
+    // Drop tears the uplink down. `None` ⇒ net.mode=deny (airtight empty netns).
+    let _egress = if !policy.profile.net_egress.is_empty() {
+        match setup_egress(policy) {
+            Ok(e) => Some(e),
             Err(e) => {
                 close(sv_parent);
                 close(sv_child);
                 return Err(e);
             }
-        };
+        }
+    } else {
+        None
+    };
+    let egress_jail = _egress.as_ref().map(|e| e.jail());
+
+    // Shared confinement + always-netns + the seccomp-notify gate.
+    let mut cmd = match crate::sandbox::build_confined_command(
+        policy,
+        work,
+        argv,
+        injected_env,
+        true,
+        Some(sv_child),
+        egress_jail,
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            close(sv_parent);
+            close(sv_child);
+            return Err(e);
+        }
+    };
     if interactive {
         // Agent-in-box: inherit the real stdio (a TTY for the shell/agent).
         // Confinement still comes from netns + the seccomp gate + Landlock.
@@ -658,21 +903,42 @@ mod tests {
     }
 
     #[test]
-    fn run_refuses_egress_allowlist_in_v1() {
-        // A supervised policy with a net.egress domain allowlist must be refused
-        // (v1 enforces net.mode=deny only) rather than silently ignoring it.
-        // Deterministic regardless of host: on a usable host the egress refusal
-        // fires; on an unusable host the missing-stack refusal fires first.
-        // Either way run() returns a fail-closed error, never silent acceptance.
+    fn resolve_egress_pins_hostnames_not_ip_literals() {
+        // One resolution pass yields both the nft dests and the /etc/hosts pins.
+        // A *hostname* gets a pin (so DNS resolves to exactly the allowed IP); an
+        // IP literal needs none (the program connects to it directly).
+        let r = resolve_egress(&["localhost".into(), "127.0.0.1:8080".into()]);
+        assert!(!r.dests.is_empty());
+        assert!(r.host_pins.iter().any(|(h, _)| h == "localhost"), "hostname pinned");
+        assert!(
+            r.host_pins.iter().all(|(h, _)| h != "127.0.0.1"),
+            "IP literal needs no /etc/hosts pin"
+        );
+        // Every pinned host's IP is among the nft-allowed destinations.
+        for (_, ip) in &r.host_pins {
+            assert!(r.dests.iter().any(|d| &d.ip == ip), "pin IP is in the nft allowlist");
+        }
+    }
+
+    #[test]
+    fn run_egress_fails_closed_when_unsupported() {
+        // With a net.egress allowlist, run() still fails closed when the host
+        // can't satisfy the supervised stack OR slirp4netns is absent — never a
+        // silent partial run. (On a fully-capable host the e2e test in
+        // tests/env_integration.rs proves real enforcement.)
         let mut p = crate::sandbox::Profile::builtin("p", crate::sandbox::IsolationClaim::Supervised);
-        p.net_egress = vec!["pypi.org".into()];
+        p.net_egress = vec!["example.com".into()];
         let pol = crate::sandbox::ResolvedPolicy { claim: p.isolation, profile: p };
-        let dir = std::env::temp_dir();
-        let err = run(&pol, &dir, &["true".to_string()], &[]).unwrap_err();
+        let usable = probe().usable && slirp4netns_path().is_some();
+        if usable {
+            // Can't assert a refusal on a capable host; that path is the e2e test.
+            return;
+        }
+        let err = run(&pol, &std::env::temp_dir(), &["true".to_string()], &[]).unwrap_err();
         let m = format!("{err}");
         assert!(
-            m.contains("net.egress") || m.contains("net.mode=deny") || m.contains("Missing"),
-            "supervised must fail closed (egress allowlist or missing stack), got: {m}"
+            m.contains("Missing") || m.contains("slirp4netns"),
+            "must fail closed with the missing component, got: {m}"
         );
     }
 }

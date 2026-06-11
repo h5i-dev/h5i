@@ -699,6 +699,49 @@ fn supervised_memory_limit_is_enforced() {
     assert!(!raw.contains("ALLOCATED"), "a 400MiB alloc under a 64MiB cap must not complete:\n{raw}");
 }
 
+fn have_bin(name: &str) -> bool {
+    std::process::Command::new(name).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// Supervised increment 2: a `net.egress` allowlist confines the netns to
+/// exactly the pinned hosts — slirp4netns provides the uplink, an nftables
+/// default-drop ruleset is the airtight L3/L4 guard, and DNS is pinned via a
+/// private `/etc/hosts` (no port 53 at all). So an allowlisted host resolves to
+/// the pinned IP and connects, while everything else fails closed. Needs real
+/// outbound network, so it is **opt-in** via `H5I_TEST_NET=1` (mirrors the
+/// container tests' `H5I_TEST_CONTAINER`), and capability-gated on the
+/// supervised stack + slirp4netns.
+#[test]
+fn supervised_egress_allowlist_confines_to_pinned_hosts() {
+    let _serial = supervised_guard();
+    if std::env::var("H5I_TEST_NET").is_err() {
+        eprintln!("skipping supervised egress e2e: set H5I_TEST_NET=1 (needs outbound network)");
+        return;
+    }
+    if !have_python3() || !have_bin("slirp4netns") {
+        eprintln!("skipping: python3/slirp4netns unavailable");
+        return;
+    }
+    let Some(r) = supervised_env("egbox", "net.egress = [\"example.com\"]\n") else { return };
+
+    // example.com is allowlisted → pinned in /etc/hosts → connects.
+    // cloudflare is NOT allowlisted → no /etc/hosts entry, no DNS → fails closed.
+    let script = "import socket\n\
+        def t(h):\n\
+        \x20try:\n\
+        \x20\x20s=socket.create_connection((h,443),timeout=8); s.close(); print(h,'CONNECTED')\n\
+        \x20except Exception as e:\n\
+        \x20\x20print(h,'BLOCKED',type(e).__name__)\n\
+        t('example.com')\n\
+        t('www.cloudflare.com')\n";
+    let raw = supervised_run_raw(&r, "egbox", &["python3", "-c", script]).expect("egress run");
+    assert!(raw.contains("example.com CONNECTED"), "allowlisted host must connect:\n{raw}");
+    assert!(
+        raw.contains("www.cloudflare.com BLOCKED") && !raw.contains("www.cloudflare.com CONNECTED"),
+        "a non-allowlisted host must be blocked (fail-closed):\n{raw}"
+    );
+}
+
 // ─── 4. parallel envs (the arena) ───────────────────────────────────────────
 
 #[test]

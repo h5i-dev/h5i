@@ -945,7 +945,7 @@ fn interactive_confined(
     let p = &policy.profile;
     // Same rule as the captured path: a fresh netns only when egress is denied.
     let net_deny = p.net_mode == NetMode::Deny;
-    let mut cmd = build_confined_command(policy, work, argv, injected_env, net_deny, None)?;
+    let mut cmd = build_confined_command(policy, work, argv, injected_env, net_deny, None, None)?;
     // build_confined_command leaves stdio unset → inherited (the session).
     let cg = make_run_cgroup(p.mem_bytes, p.max_procs);
     let mut child = cmd
@@ -1051,6 +1051,30 @@ fn run_unconfined(
     wait_with_deadline(cmd, policy.profile.wall(), argv, None)
 }
 
+/// The child-side handles for the `supervised` **egress allowlist** (increment
+/// 2). When `build_confined_command` is given one, the child — while it still
+/// holds `CAP_NET_ADMIN`/`CAP_SYS_ADMIN` in its own user namespace and *before*
+/// Landlock/seccomp lock it down — pins DNS via a private `/etc/hosts` and
+/// installs the nftables default-drop allowlist in its netns, after a host-side
+/// helper (the `slirp4netns` uplink) signals readiness. Every field is built
+/// pre-fork and is `Send`; the child touches them with raw syscalls only (no
+/// allocation in the forked child). See `supervisor::EgressNetns`.
+#[cfg(target_os = "linux")]
+pub(crate) struct EgressJail {
+    /// Child reads 1 byte here once `slirp4netns` has configured the uplink.
+    pub ready_read_fd: std::os::unix::io::RawFd,
+    /// Child writes its 4-byte pid here so the helper can target its netns.
+    pub pid_write_fd: std::os::unix::io::RawFd,
+    /// Absolute path to the `nft` binary (resolved on the host).
+    pub nft_path: std::ffi::CString,
+    /// Path to the temp file holding the nftables ruleset (`nft -f`).
+    pub nft_rules_path: std::ffi::CString,
+    /// Minimal `PATH=…` for the `nft` exec (the only env it gets).
+    pub nft_envp: std::ffi::CString,
+    /// Path to the temp file holding the pinned `/etc/hosts` content.
+    pub hosts_src: std::ffi::CString,
+}
+
 /// Build a fully-confined `std::process::Command` for `argv` — the **shared**
 /// confinement core used by both the `process` tier ([`run_confined`]) and the
 /// `supervised` tier ([`crate::supervisor::run`]). Keeping this in one place
@@ -1064,6 +1088,7 @@ fn run_unconfined(
 ///   `AF_UNIX` socket via `SCM_RIGHTS` (the `supervised` socket gate). The
 ///   notify filter stacks *after* the deny-list, and seccomp action precedence
 ///   (ERRNO > USER_NOTIF > ALLOW) makes them compose correctly.
+/// - `egress`: when `Some`, install the netns egress allowlist (see [`EgressJail`]).
 #[cfg(target_os = "linux")]
 pub(crate) fn build_confined_command(
     policy: &ResolvedPolicy,
@@ -1072,6 +1097,7 @@ pub(crate) fn build_confined_command(
     injected_env: &[(String, String)],
     force_netns: bool,
     notify_sock: Option<std::os::unix::io::RawFd>,
+    egress: Option<EgressJail>,
 ) -> Result<std::process::Command, H5iError> {
     use std::os::unix::process::CommandExt;
 
@@ -1168,8 +1194,74 @@ pub(crate) fn build_confined_command(
                 return Err(Error::last_os_error());
             }
             std::fs::write("/proc/self/setgroups", "deny")?;
-            std::fs::write("/proc/self/gid_map", format!("{gid} {gid} 1"))?;
-            std::fs::write("/proc/self/uid_map", format!("{uid} {uid} 1"))?;
+            // The egress path execs `nft` to install the allowlist; capabilities
+            // only survive execve for uid 0 in the user ns, so map the child to
+            // root-in-userns there (CAP_NET_ADMIN is kept ⇒ nft can touch
+            // netlink). The map still points back to our real host uid, so files
+            // created in $WORK stay owned by us. The non-egress tiers keep the
+            // 1:1 map (the untrusted program runs as our own uid).
+            if egress.is_some() {
+                std::fs::write("/proc/self/gid_map", format!("0 {gid} 1"))?;
+                std::fs::write("/proc/self/uid_map", format!("0 {uid} 1"))?;
+            } else {
+                std::fs::write("/proc/self/gid_map", format!("{gid} {gid} 1"))?;
+                std::fs::write("/proc/self/uid_map", format!("{uid} {uid} 1"))?;
+            }
+
+            // 1b. Egress allowlist (supervised increment 2). We still hold full
+            //     caps in our userns and seccomp/Landlock are not yet applied, so
+            //     this is the window to: tell the host helper our pid (it spawns
+            //     the slirp4netns uplink for this netns), pin DNS via a private
+            //     /etc/hosts, install the nftables default-drop allowlist, and
+            //     wait for the uplink before continuing. Raw syscalls only — no
+            //     allocation in this forked child.
+            if let Some(eg) = &egress {
+                use std::ptr::null;
+                // (a0) A private mount namespace for the pinned /etc/hosts —
+                //      unshared *after* the user ns is fully set up (maps written).
+                if libc::unshare(libc::CLONE_NEWNS) != 0 {
+                    return Err(Error::other(format!("egress: unshare NEWNS: {}", Error::last_os_error())));
+                }
+                // (a) Hand our pid to the helper so it can target our netns.
+                let pid = libc::getpid() as u32;
+                let pidbuf = pid.to_ne_bytes();
+                if libc::write(eg.pid_write_fd, pidbuf.as_ptr().cast(), 4) != 4 {
+                    return Err(Error::other(format!("egress: write pid: {}", Error::last_os_error())));
+                }
+                // (b) Bind the pinned /etc/hosts over the real one. The mount ns
+                //     was unshared under our user ns, so this mount cannot
+                //     propagate back to the host. (A recursive MS_PRIVATE on "/"
+                //     is unnecessary here and returns EINVAL under some kernels.)
+                if libc::mount(eg.hosts_src.as_ptr(), c"/etc/hosts".as_ptr(), null(), libc::MS_BIND, null()) != 0 {
+                    return Err(Error::other(format!("bind /etc/hosts failed: {}", Error::last_os_error())));
+                }
+                // (c) Apply the nftables ruleset (CAP_NET_ADMIN in our userns).
+                //     Raw fork/execve so nothing allocates in this child.
+                let argv: [*const libc::c_char; 4] =
+                    [eg.nft_path.as_ptr(), c"-f".as_ptr(), eg.nft_rules_path.as_ptr(), null()];
+                let envp: [*const libc::c_char; 2] = [eg.nft_envp.as_ptr(), null()];
+                let kid = libc::fork();
+                if kid == 0 {
+                    libc::execve(eg.nft_path.as_ptr(), argv.as_ptr(), envp.as_ptr());
+                    libc::_exit(127);
+                }
+                if kid < 0 {
+                    return Err(Error::last_os_error());
+                }
+                let mut st = 0;
+                if libc::waitpid(kid, &mut st, 0) < 0 {
+                    return Err(Error::last_os_error());
+                }
+                if !(libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 0) {
+                    return Err(Error::other("nft egress ruleset failed to apply (fail-closed)"));
+                }
+                // (d) Block until slirp4netns has configured the uplink, so the
+                //     program never races a not-yet-ready interface.
+                let mut rb = [0u8; 1];
+                if libc::read(eg.ready_read_fd, rb.as_mut_ptr().cast(), 1) != 1 {
+                    return Err(Error::other("slirp4netns uplink did not become ready"));
+                }
+            }
 
             // 2. Resource caps (cooperative, no cgroups needed).
             if let Some(bytes) = mem {
@@ -1259,7 +1351,7 @@ fn run_confined(
 ) -> Result<ExecOutcome, H5iError> {
     let p = &policy.profile;
     // Process tier: netns only when egress is denied; no seccomp-notify gate.
-    let cmd = build_confined_command(policy, work, argv, injected_env, false, None)?;
+    let cmd = build_confined_command(policy, work, argv, injected_env, false, None, None)?;
 
     // cgroup v2 (rootless, best-effort): real memory.max/pids.max + accurate
     // memory.peak/cpu accounting where the host delegates a writable subtree.

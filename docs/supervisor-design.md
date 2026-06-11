@@ -141,11 +141,35 @@ tier is correctly unavailable rather than silently weak.
   while an ordinary inet socket was allowed; the run's socket-gate verdicts are
   recorded in the capture's `EgressSummary`. `net.mode=deny` gives an airtight
   empty netns (no egress at all).
-  - **Remaining:** the `net.egress` **domain allowlist** (netns + nftables +
-    slirp4netns/pasta for connectivity) is **refused** in v1 rather than silently
-    ignored; wiring it (the `build_nft_ruleset` output is ready) + emitting
-    per-host egress verdicts is the next increment. Then `openat2` path-allow
-    (Phase C).
+- **Increment 2 (DONE): the `net.egress` domain allowlist.** A non-empty
+  `net.egress` now enforces a real **L3/L4** allowlist, not just an empty netns:
+  1. **Uplink.** A host-side helper spawns `slirp4netns --configure
+     --disable-host-loopback <child-pid> tap0`, giving the child's netns a NAT'd
+     uplink (10.0.2.100/24). The child waits for it (helper polls
+     `/proc/<pid>/net/dev` for `tap0`) before exec, parked behind a barrier so
+     the helper is in `read()` at fork time — preserving the single-threaded-fork
+     invariant the `pre_exec` allocations depend on.
+  2. **DNS pinning.** `resolve_egress` resolves each host **once**; the child
+     bind-mounts a private `/etc/hosts` mapping every allowlisted hostname to its
+     pinned IP. **No port 53 is opened at all** — an allowlisted host resolves
+     (via files) to exactly the IP nftables permits; anything else fails closed
+     with `Could not resolve host`. This sidesteps CDN-rotation and kills DNS as
+     an exfil channel.
+  3. **nftables guard.** The child (it holds `CAP_NET_ADMIN` in its own user ns)
+     applies the `build_nft_ruleset` **default-drop** allowlist via `nft -f`
+     before Landlock/seccomp lock it down. So that `nft` keeps its caps across
+     `execve`, the egress child is mapped to **root-in-userns** (the map still
+     points at the real host uid, so `$WORK` files stay owned by us).
+  - **Why it can't be bypassed:** the untrusted program runs as userns-root with
+    `CAP_NET_ADMIN`, but the seccomp socket gate **denies `AF_NETLINK`**, so it
+    cannot open the netlink socket `nft`/`ip` need to rewrite the ruleset or
+    routes. Verified live on aarch64 WSL2: an allowlisted host connects, a
+    non-allowlisted host is blocked, `nft flush ruleset` fails with *"Unable to
+    initialize Netlink socket: Operation not permitted"*, and the denied host
+    stays blocked afterward. Capability-gated e2e test:
+    `supervised_egress_allowlist_confines_to_pinned_hosts` (opt-in `H5I_TEST_NET=1`).
+  - Fail-closed: a non-empty `net.egress` refuses unless `slirp4netns` is present
+    and at least one host resolves.
 - **Phase C: path allow via openat2+ADDFD**, secret-broker `file`/fd injection
   at this tier, and the `microvm`/`hardened-container` escalation.
 
