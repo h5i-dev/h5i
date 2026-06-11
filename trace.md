@@ -57,3 +57,4 @@ _[Checkpoint: 6a2ad0a9 — env shell agent-in-box: agent profile + interactive f
 _[Checkpoint: 6a2ad0da — edited src/sandbox.rs; wrote supervised-tier-green-on-this-host.md; edited MEMORY.md]_
 ---
 
+[15:20:36] OBSERVE: read src/env.rs
