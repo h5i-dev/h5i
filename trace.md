@@ -1792,3 +1792,4 @@ _[Checkpoint: 6a2a1a9e — edited src/env.rs; wrote env-process-tier-missing-pid
 ---
 
 [02:21:52] THINK: The changes weren't pushed (and `h5i` metadata isn't carried by a plain `git push` anyway) — let me know if you want `h5i push` to share the refs, or if you'd like me to take a pass at the unpatched PID-namespace gap.
+[02:21:52] THINK: Let me assess properly rather than guess — checking what's actually on this branch vs main, whether a PR exists, and whether the full CI gates (not just `--lib`) pass.
