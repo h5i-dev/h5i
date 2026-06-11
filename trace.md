@@ -1878,3 +1878,4 @@ _[Checkpoint: 6a2a2797 — edited tests/env_integration.rs; wrote env-process-ti
 _[Checkpoint: 6a2a28ef — session ended (auto-checkpoint)]_
 ---
 
+[03:20:33] OBSERVE: read docs/comparison.md
