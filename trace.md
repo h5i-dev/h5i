@@ -82,3 +82,4 @@ _[Checkpoint: 6a2ad0da — edited src/sandbox.rs; wrote supervised-tier-green-on
 _[Checkpoint: 6a2ad7f2 — agent profile is now the auto-picked default for env create]_
 ---
 
+[15:45:00] OBSERVE: read wsl2-cargo-test-oom.md
