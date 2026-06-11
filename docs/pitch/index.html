@@ -877,7 +877,6 @@
       <div style="display:flex;flex-direction:column;gap:11px;">
         <p style="font-size:1.08rem;">Hand an agent a disposable environment — a git worktree plus a policy that limits what code can read, write, and reach. It picks the strongest isolation the host supports and records every command and blocked access; nothing reaches your branch until you apply.</p>
         <div class="feat-card"><span class="feat-cmd">h5i env create · shell</span><p class="feat-desc" style="margin-top:6px;">Make a confined box, then work in it — or hand it to an agent. Every command inside is confined by construction.</p></div>
-        <div class="feat-card"><span class="feat-cmd">tiered isolation</span><p class="feat-desc" style="margin-top:6px;">Landlock + seccomp + namespaces, up to a rootless network egress allowlist — all without root, no VM. If the host can't enforce it, h5i refuses rather than quietly running with less.</p></div>
         <div class="feat-card"><span class="feat-cmd">h5i env diff · log · apply</span><p class="feat-desc" style="margin-top:6px;">Audit what changed and every blocked access, then merge — reviewer-selected, never automatic.</p></div>
       </div>
       <div class="terminal">
