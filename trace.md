@@ -1646,3 +1646,4 @@ _[Checkpoint: 6a2a0e88 — edited docs/environments-design.md; edited docs/envir
 [01:26:51] OBSERVE: read blog/context-dag-versioned-agent-reasoning/index.html
 [01:27:45] OBSERVE: read features/index.html
 [01:27:52] ACT: edited features/index.html
+[01:27:56] OBSERVE: read workflows/index.html
