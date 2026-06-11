@@ -670,11 +670,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] session ended (auto-checkpoint)
 - [x] Observation-first auto-capture shipped
 - [x] edited CLAUDE.md; edited CLAUDE.md; edited .claude/h5i.md
+- [x] edited CLAUDE.md; edited CLAUDE.md; edited .claude/h5i.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-11 23:42 UTC] `improve-shell`: edited CLAUDE.md; edited CLAUDE.md; edited .claude/h5i.md
 - [2026-06-11 23:41 UTC] `improve-shell`: edited CLAUDE.md; edited CLAUDE.md; edited .claude/h5i.md
 - [2026-06-11 23:30 UTC] `improve-shell`: Observation-first auto-capture shipped
 - [2026-06-11 23:04 UTC] `improve-shell`: session ended (auto-checkpoint)
