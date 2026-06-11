@@ -387,3 +387,4 @@ _[Checkpoint: 6a2b2717 — edited docs/environments-design.md; edited CLAUDE.md;
 [21:31:10] ACT: edited CLAUDE.md
 [21:31:21] ACT: edited CLAUDE.md
 [21:31:48] ACT: edited src/main.rs
+[21:34:43] THINK: Let me view what follows the env-code push to add the remote head-branch cleanup back in (cleanly):
