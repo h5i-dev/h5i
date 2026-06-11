@@ -395,3 +395,4 @@ _[Checkpoint: 6a2b2717 — edited docs/environments-design.md; edited CLAUDE.md;
 _[Checkpoint: 6a2b29f3 — edited CLAUDE.md; edited CLAUDE.md; edited src/main.rs]_
 ---
 
+[21:35:47] THINK: Let me quickly confirm the earlier feature commit is still in history (the log showed an unexpected `311e828a update` below mine):
