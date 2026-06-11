@@ -2,3 +2,4 @@
 {"ts":"2026-06-11T17:02:12.177910Z","env_id":"env/human/audit","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-11T17:25:07.151221Z","env_id":"env/claude/scopecheck","agent":"claude","event":"created","detail":"base=144edfeb9d4c profile=agent-claude isolation=supervised backend=worktree"}
 {"ts":"2026-06-11T17:25:27.216084Z","env_id":"env/claude/scopecheck","agent":"claude","event":"status","detail":"running"}
+{"ts":"2026-06-11T17:25:34.021893Z","env_id":"env/claude/scopecheck","agent":"claude","event":"exec","detail":"cmd=`claude --version` exit=0 wall=1266ms cpu=0ms rss=0MiB","capture":"8c9c0c3576231385"}
