@@ -636,11 +636,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited docs/comparison.md; edited docs/comparison.md
 - [x] edited docs/comparison.md; edited docs/comparison.md
 - [x] Hero flow-field: higher resolution at flat GPU cost
+- [x] edited docs/index.html; edited docs/index.html; edited docs/index.html
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-11 11:53 UTC] `impl-env-sandbox`: edited docs/index.html; edited docs/index.html; edited docs/index.html
 - [2026-06-11 11:53 UTC] `impl-env-sandbox`: Hero flow-field: higher resolution at flat GPU cost
 - [2026-06-11 11:45 UTC] `impl-env-sandbox`: edited docs/comparison.md; edited docs/comparison.md
 - [2026-06-11 03:21 UTC] `impl-env-sandbox`: edited docs/comparison.md; edited docs/comparison.md
