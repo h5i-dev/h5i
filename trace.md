@@ -210,3 +210,4 @@ _[Checkpoint: 6a2b145c — edited CLAUDE.md; edited CLAUDE.md; edited src/mcp.rs
 [20:18:23] THINK: Let me build to confirm (single-job, debuginfo off per this host's memory note about OOM).
 [20:18:23] THINK: Let me place it right after `append_env_commit` (before `read_ref_manifests`):
 [20:18:23] THINK: Clippy clean. Let me confirm the resurrection bug is gone end-to-end (the exact failing scenario):
+[20:18:23] THINK: Let me clean up temp dirs and update the docs (CLAUDE.
