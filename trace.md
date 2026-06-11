@@ -1664,3 +1664,9 @@ _[Checkpoint: 6a2a0e88 — edited docs/environments-design.md; edited docs/envir
 [01:31:47] ACT: edited sitemap.xml
 [01:34:04] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): ), but `supervisor::run()` is still the fail-closed Phase A stub — so `env run` fails closed with "live enforcement not wired." Wiring that st…
 [01:34:04] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): stone is `isolation=supervised` is no longer a fail-closed stub — it **actually runs untrusted code under the full mediation stack**, and the …
+
+
+---
+_[Checkpoint: 6a2a108c — edited blog/index.html; edited blog/index.html; edited sitemap.xml]_
+---
+
