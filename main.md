@@ -648,11 +648,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited docs/environments-design.md; edited src/env.rs; edited wsl2-cargo-test-oom.md
 - [x] agent profile runtime-scoping
 - [x] edited CLAUDE.md; edited CLAUDE.md; edited src/mcp.rs
+- [x] edited CLAUDE.md; edited CLAUDE.md; edited src/mcp.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-11 17:33 UTC] `improve-shell`: edited CLAUDE.md; edited CLAUDE.md; edited src/mcp.rs
 - [2026-06-11 17:31 UTC] `improve-shell`: edited CLAUDE.md; edited CLAUDE.md; edited src/mcp.rs
 - [2026-06-11 17:31 UTC] `improve-shell`: agent profile runtime-scoping
 - [2026-06-11 17:13 UTC] `improve-shell`: edited docs/environments-design.md; edited src/env.rs; edited wsl2-cargo-test-oom.md
