@@ -33,6 +33,10 @@ use crate::sandbox::{self, IsolationClaim, ResolvedPolicy};
 /// Git ref holding the shareable env state: the append-only event log plus the
 /// per-env manifests and resolved policies (so `h5i push`/`pull` carry an
 /// environment to another clone for the cross-agent review loop, design §11).
+///
+/// The env *code* branches travel under the **sibling** `refs/h5i/env-code/*`
+/// (not under `refs/h5i/env/`), so this state ref stays the bare leaf and needs
+/// no relocation — they coexist in the ref store without a file/dir collision.
 pub const ENV_REF: &str = "refs/h5i/env";
 /// File inside the ref's tree holding the event log (one JSON object per line).
 pub const EVENTS_FILE: &str = "events.jsonl";
@@ -434,7 +438,7 @@ fn append_removed_and_strip(repo: &Repository, ev: &EnvEvent) -> Result<(), H5iE
     )))
 }
 
-/// Read every env manifest stored in `refs/h5i/env`.
+/// Read every env manifest stored in the state ref.
 pub fn read_ref_manifests(repo: &Repository) -> Vec<EnvManifest> {
     let Some(tree) = repo
         .find_reference(ENV_REF)
@@ -453,7 +457,7 @@ pub fn read_ref_manifests(repo: &Repository) -> Vec<EnvManifest> {
         .collect()
 }
 
-/// Read every resolved policy stored in `refs/h5i/env` as `(env_id, toml)`.
+/// Read every resolved policy stored in the state ref as `(env_id, toml)`.
 pub fn read_ref_policies(repo: &Repository) -> Vec<(String, String)> {
     let Some(tree) = repo
         .find_reference(ENV_REF)

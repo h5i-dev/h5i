@@ -3084,11 +3084,33 @@ const H5I_REF_PATTERNS: &[&str] = &[
     "refs/h5i/ast",
     "refs/h5i/msg",
     "refs/h5i/objects",
-    "refs/h5i/env",
-    // The env code branches live under refs/heads/ but are part of the env
-    // sharing story, so fetch them automatically too.
-    "refs/heads/h5i/env/*",
+    h5i_core::env::ENV_REF, // refs/h5i/env — the shareable env state (leaf)
+    // NB: the env *code* branches are NOT here — they are an asymmetric transport
+    // remap (`refs/h5i/env-code/*` on the wire ↔ `refs/heads/h5i/env/*` locally),
+    // appended separately in `cmd_setup_remote` (see [`ENV_CODE_FETCH_REFSPEC`]).
 ];
+
+// ─── env code branch: transport remap (Option A) ────────────────────────────
+//
+// The env *code* branch is the one piece of env state that must be a real local
+// branch — a native git worktree requires a `refs/heads/` ref to check out and
+// advance. But we never want it to clutter a host like GitHub, which renders
+// every `refs/heads/*` as a branch in its UI, PR pickers, and protection globs.
+//
+// So it is a TRANSPORT REMAP: locally it stays at
+// `refs/heads/h5i/env/<agent>/<slug>` (the manifest's `branch` field, valid on
+// every clone), but it is pushed to / fetched from a remote under
+// `refs/h5i/env-code/*` — a hidden ref namespace (like the rest of `refs/h5i/*`
+// and GitHub's own `refs/pull/*`) that no branch UI lists. The objects still
+// travel, so `env diff/inspect/compare/apply` on another clone work unchanged.
+// See docs/environments-design.md §"Where env state lives".
+
+/// Push: local env branches → hidden remote namespace. Forced (`+`): the env
+/// owner's clone is authoritative for its own code branch (matches prior behavior).
+const ENV_CODE_PUSH_REFSPEC: &str = "+refs/heads/h5i/env/*:refs/h5i/env-code/*";
+/// Fetch: hidden remote namespace → local env branches. Fast-forward only (no
+/// `+`), so a reviewer's diverged local env branch is never clobbered.
+const ENV_CODE_FETCH_REFSPEC: &str = "refs/h5i/env-code/*:refs/heads/h5i/env/*";
 
 /// Whether `remote` still hosts the pre-redesign single context ref
 /// `refs/h5i/context` (as opposed to the per-branch `refs/h5i/context/*`).
@@ -3179,10 +3201,14 @@ fn cmd_setup_remote(remote: &str, dry_run: bool, workdir: &Path) -> anyhow::Resu
         })
         .unwrap_or_default();
 
-    let desired: Vec<String> = H5I_REF_PATTERNS
+    let mut desired: Vec<String> = H5I_REF_PATTERNS
         .iter()
         .map(|p| format!("+{p}:{p}"))
         .collect();
+    // The env code branch is asymmetric (hidden remote ns → local branch) and
+    // fast-forward-only (no leading `+`, so a diverged local env branch is never
+    // force-clobbered by a bare `git fetch`), so it is not a `+{p}:{p}` entry.
+    desired.push(ENV_CODE_FETCH_REFSPEC.to_string());
 
     println!(
         "{} {} for {}",
@@ -6418,29 +6444,56 @@ jq -c '{
                 style("h5i env create").bold(),
                 "no environments yet",
             )?;
-            // Push the env CODE branches so a reviewer on another clone can see
-            // the proposed diff and apply. They live under refs/heads/, not
-            // refs/h5i/*, so a wildcard refspec carries them all in one shot.
-            let any_env_branch = std::process::Command::new("git")
-                .args([
-                    "for-each-ref",
-                    "--count=1",
-                    "--format=%(refname)",
-                    "refs/heads/h5i/env/",
-                ])
-                .current_dir(&workdir)
-                .output()
-                .map(|o| !o.stdout.is_empty())
-                .unwrap_or(false);
+            let git_out = |args: &[&str]| {
+                std::process::Command::new("git").args(args).current_dir(&workdir).output()
+            };
+            // Push the env CODE branches onto the hidden refs/h5i/env-code/*
+            // namespace so a reviewer on another clone can diff/apply, without
+            // the branches ever appearing in the remote's UI.
+            let any_env_branch = git_out(&[
+                "for-each-ref", "--count=1", "--format=%(refname)", "refs/heads/h5i/env/",
+            ])
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
             if any_env_branch {
-                print!("  {} {} … ", style("→").dim(), style("refs/heads/h5i/env/*").yellow());
+                print!("  {} {} … ", style("→").dim(), style("refs/h5i/env-code/*").yellow());
                 std::io::stdout().flush()?;
                 let status = std::process::Command::new("git")
-                    .args(["push", &remote, "+refs/heads/h5i/env/*:refs/heads/h5i/env/*"])
+                    .args(["push", &remote, ENV_CODE_PUSH_REFSPEC])
                     .current_dir(&workdir)
                     .status()
                     .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
                 println!("{}", if status.success() { style("ok").green() } else { style("failed").red() });
+            }
+
+            // Env code is published under refs/h5i/env-code/* (above); it must
+            // never live under refs/heads/ on the remote, where a host like
+            // GitHub would render it as a branch. Delete any such head refs (only
+            // present if an older h5i pushed them). Best-effort, idempotent.
+            if let Ok(out) = git_out(&["ls-remote", "--heads", &remote, "refs/heads/h5i/env/*"]) {
+                let stale: Vec<String> = String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter_map(|l| l.split_whitespace().nth(1).map(str::to_owned))
+                    .collect();
+                if !stale.is_empty() {
+                    print!(
+                        "  {} removing {} env branch(es) from {}'s head namespace … ",
+                        style("⌫").dim(),
+                        stale.len(),
+                        style(&remote).yellow()
+                    );
+                    std::io::stdout().flush()?;
+                    let mut args: Vec<String> =
+                        vec!["push".into(), remote.clone(), "--delete".into()];
+                    args.extend(stale);
+                    let ok = std::process::Command::new("git")
+                        .args(&args)
+                        .current_dir(&workdir)
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false);
+                    println!("{}", if ok { style("ok").green() } else { style("skipped").dim() });
+                }
             }
 
             // Bind to the original variable name so the existing "Tip:" footer
@@ -6870,17 +6923,19 @@ jq -c '{
             // union-merge dispatch in `sync_one` reconciles divergence.
             sync_one(h5i_core::env::ENV_REF)?;
             // Fetch the env CODE branches so pulled environments can be
-            // reviewed/applied from their committed state. Fast-forward only;
-            // a diverged local env branch is kept (the reviewer's own work).
-            print!("  {} {} … ", style("→").dim(), style("refs/heads/h5i/env/*").yellow());
+            // reviewed/applied from their committed state. They arrive from the
+            // hidden `refs/h5i/env-code/*` namespace into local `refs/heads/h5i/env/*`.
+            // Fast-forward only; a diverged local env branch is kept (the
+            // reviewer's own work).
+            print!("  {} {} … ", style("→").dim(), style("refs/h5i/env-code/*").yellow());
             std::io::stdout().flush()?;
             let env_fetch = git(&[
-                "fetch", "--no-write-fetch-head", &remote,
-                "refs/heads/h5i/env/*:refs/heads/h5i/env/*",
+                "fetch", "--no-write-fetch-head", &remote, ENV_CODE_FETCH_REFSPEC,
             ])?;
+            let env_ok = env_fetch.status.success();
             println!(
                 "{}",
-                if env_fetch.status.success() { style("ok").green() } else { style("skipped").dim() }
+                if env_ok { style("ok").green() } else { style("skipped").dim() }
             );
             // Materialize any newly-arrived env manifests/policies onto disk so
             // `h5i env list/status/diff/apply` see them immediately.

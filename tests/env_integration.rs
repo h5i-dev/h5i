@@ -1735,6 +1735,57 @@ fn env_travels_to_another_clone_for_review_and_apply() {
     assert_eq!(av["status"], "applied", "applied status propagated back to A: {a_status}");
 }
 
+/// Option A: the env code branch travels under the hidden `refs/h5i/env-code/*`
+/// namespace (a sibling of the `refs/h5i/env` state ref), so a host like GitHub
+/// (which lists only `refs/heads/*`) never shows env sandboxes as branches. Any
+/// env branch that does land under `refs/heads/` on the remote is removed on
+/// push.
+#[test]
+fn push_keeps_env_refs_out_of_refs_heads() {
+    let (_root, a, _b) = two_clones();
+    a.ok(&["env", "create", "scopecheck"]);
+    a.ok(&["env", "run", "scopecheck", "--", "sh", "-c", "echo hi"]);
+    a.ok(&["push"]);
+
+    let remote_refs = |c: &Clone| -> String {
+        String::from_utf8_lossy(&git(&c.dir, &["ls-remote", "origin"]).stdout)
+            .lines()
+            .filter_map(|l| l.split_whitespace().nth(1).map(str::to_owned))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let refs = remote_refs(&a);
+    assert!(refs.lines().any(|r| r == "refs/h5i/env"), "state ref present:\n{refs}");
+    assert!(
+        refs.contains("refs/h5i/env-code/claude/scopecheck"),
+        "code branch under hidden ns:\n{refs}"
+    );
+    assert!(
+        !refs.lines().any(|r| r.starts_with("refs/heads/h5i/env/")),
+        "NO env branch may appear under refs/heads/ (GitHub clutter):\n{refs}"
+    );
+
+    // A stray env branch on the remote's head namespace (e.g. left by an older
+    // h5i) is deleted on the next push.
+    git(&a.dir, &[
+        "push", "-q", "origin",
+        "refs/heads/h5i/env/claude/scopecheck:refs/heads/h5i/env/claude/oldone",
+    ]);
+    assert!(
+        remote_refs(&a).contains("refs/heads/h5i/env/claude/oldone"),
+        "stray head branch staged"
+    );
+
+    a.ok(&["push"]);
+    let after = remote_refs(&a);
+    assert!(
+        !after.lines().any(|r| r.starts_with("refs/heads/h5i/env/")),
+        "stray head branches cleaned:\n{after}"
+    );
+    assert!(after.lines().any(|r| r == "refs/h5i/env"), "state ref still present:\n{after}");
+}
+
 #[test]
 fn env_ref_holds_manifest_and_policy_blobs() {
     let r = Repo::new();

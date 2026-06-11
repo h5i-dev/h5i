@@ -425,11 +425,20 @@ authority-smuggling vector — stays deny-by-default).
 ## 8. Storage & data model (reuses existing h5i machinery)
 
 ```
-refs/h5i/env            # append-only env event log (JSONL): created / exec / status / proposed / applied / aborted
-                        #   CAS append + union-merge — identical pattern to refs/h5i/msg and refs/h5i/objects
+refs/h5i/env            # shareable env state (leaf): append-only event log (created/exec/status/proposed/
+                        #   applied/aborted/removed) + manifests.jsonl + policies.jsonl, in ONE tree.
+                        #   CAS append + union-merge — identical pattern to refs/h5i/msg and refs/h5i/objects.
+refs/h5i/env-code/<agent>/<slug>    # the code branch ON THE WIRE — a transport remap of the local
+                        #   refs/heads/h5i/env/<agent>/<slug>. A native worktree needs a real local branch,
+                        #   but a remote (GitHub) renders every refs/heads/* as a branch; this hidden ns is
+                        #   pushable + fetchable yet invisible in branch UIs (like GitHub's own refs/pull/*).
+                        #   A *sibling* of refs/h5i/env (not nested under it), so the leaf state ref needs no
+                        #   relocation. Push: +refs/heads/h5i/env/*:refs/h5i/env-code/*. Fetch (FF-only):
+                        #   refs/h5i/env-code/*:refs/heads/h5i/env/*. push also deletes any stray
+                        #   refs/heads/h5i/env/* left on the remote.
+refs/heads/h5i/env/<agent>/<slug>   # the code branch LOCALLY (worktree checkout); never pushed as a head
 refs/h5i/context/<env>  # the env's reasoning branch — ALREADY exists (ctx.rs)
 refs/h5i/objects        # the env's EVIDENCE log — ALREADY exists; every exec captured here
-refs/heads/h5i/env/<agent>/<slug>   # the code branch — ordinary git, pushable
 
 .git/.h5i/env/<id>/
   manifest.json         # EnvManifest (small)
