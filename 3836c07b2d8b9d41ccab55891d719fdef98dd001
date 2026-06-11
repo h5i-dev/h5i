@@ -1,0 +1,1 @@
+{"git_oid":"3836c07b2d8b9d41ccab55891d719fdef98dd001","parent_oid":"5fb21eafcdb492b22335e9aa6d6b16d0609424e0","ai_metadata":{"model_name":"claude-fable-5","prompt":"take a note in the markdown in ./docs about the sandbox security comparison","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-11T03:21:49.122542487Z"}
