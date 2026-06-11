@@ -1791,3 +1791,4 @@ _[Checkpoint: 6a2a1a41 — edited src/env.rs; wrote env-process-tier-missing-pid
 _[Checkpoint: 6a2a1a9e — edited src/env.rs; wrote env-process-tier-missing-pidns.md; edited MEMORY.md]_
 ---
 
+[02:21:52] THINK: The changes weren't pushed (and `h5i` metadata isn't carried by a plain `git push` anyway) — let me know if you want `h5i push` to share the refs, or if you'd like me to take a pass at the unpatched PID-namespace gap.
