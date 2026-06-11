@@ -4,3 +4,4 @@
 {"ts":"2026-06-11T17:25:27.216084Z","env_id":"env/claude/scopecheck","agent":"claude","event":"status","detail":"running"}
 {"ts":"2026-06-11T17:25:34.021893Z","env_id":"env/claude/scopecheck","agent":"claude","event":"exec","detail":"cmd=`claude --version` exit=0 wall=1266ms cpu=0ms rss=0MiB","capture":"8c9c0c3576231385"}
 {"ts":"2026-06-11T17:25:34.061903Z","env_id":"env/claude/scopecheck","agent":"claude","event":"status","detail":"running"}
+{"ts":"2026-06-11T17:25:40.077503Z","env_id":"env/claude/scopecheck","agent":"claude","event":"exec","detail":"cmd=`sh -c cat ~/.codex/auth.json 2>&1 | head -1` exit=0 wall=61ms cpu=0ms rss=0MiB","capture":"e5cea76c0b1f6f51"}
