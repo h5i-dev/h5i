@@ -361,3 +361,4 @@ _[Checkpoint: 6a2b20ad — edited tests/env_integration.rs; edited CLAUDE.md; ed
 [21:21:31] ACT: edited CLAUDE.md
 [21:21:41] ACT: edited CLAUDE.md
 [21:22:31] THINK: The key design constraint I need to respect: the git **worktree** requires a real `refs/heads/` branch locally, so this is a *transport* remap (local stays `refs/heads/h5i/env/*`, but it travels to/from the remote as `refs/h5i/env/code/*`, …
+[21:22:31] NOTE: DEFERRAL (~/Dev/h5i/.claude/h5i.md): s already on GitHub. I'd do it behind tests and keep B as a follow-up unless you want the explicit `publish` escape hatch in the same pass
