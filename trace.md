@@ -1906,3 +1906,9 @@ _[Checkpoint: 6a2a9fd9 — edited docs/comparison.md; edited docs/comparison.md]
 [11:50:47] ACT: edited docs/index.html
 [11:51:08] ACT: edited docs/index.html
 [11:53:08] OBSERVE: read hero-new.png
+
+
+---
+_[Checkpoint: 6a2aa1bf — Hero flow-field: higher resolution at flat GPU cost]_
+---
+
