@@ -1547,3 +1547,4 @@ _[Checkpoint: 6a29f31a — wrote shell-msg.txt; wrote wsl2-cargo-test-oom.md; ed
 _[Checkpoint: 6a2a0775 — wrote eg-msg.txt; edited sandbox-production-roadmap.md; edited sandbox-production-roadmap.md]_
 ---
 
+[00:57:07] OBSERVE: read README.md
