@@ -1859,3 +1859,4 @@ _[Checkpoint: 6a2a269c — edited tests/env_integration.rs; wrote env-process-ti
 _[Checkpoint: 6a2a2797 — edited tests/env_integration.rs; wrote env-process-tier-missing-pidns.md; edited MEMORY.md]_
 ---
 
+[03:14:44] OBSERVE: read README.md
