@@ -1799,3 +1799,4 @@ _[Checkpoint: 6a2a1a9e — edited src/env.rs; wrote env-process-tier-missing-pid
 _[Checkpoint: 6a2a1bc0 — edited src/env.rs; wrote env-process-tier-missing-pidns.md; edited MEMORY.md]_
 ---
 
+[02:26:59] OBSERVE: read src/supervisor.rs
