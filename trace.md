@@ -355,3 +355,4 @@ _[Checkpoint: 6a2b20ad — edited tests/env_integration.rs; edited CLAUDE.md; ed
 [21:16:22] ACT: edited tests/env_integration.rs
 [21:18:20] ACT: edited tests/env_integration.rs
 [21:18:31] ACT: edited tests/env_integration.rs
+[21:21:07] OBSERVE: read docs/environments-design.md
