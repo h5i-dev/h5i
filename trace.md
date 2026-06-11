@@ -134,3 +134,4 @@ _[Checkpoint: 6a2aecc9 — edited docs/environments-design.md; edited src/env.rs
 [17:29:09] ACT: edited CLAUDE.md
 [17:29:14] OBSERVE: read CLAUDE.md
 [17:29:19] ACT: edited CLAUDE.md
+[17:30:23] OBSERVE: read src/mcp.rs
