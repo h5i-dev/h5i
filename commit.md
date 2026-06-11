@@ -1408,3 +1408,16 @@ docs/index.html hero WebGL rework: (1) 1-LSB hash dither before gl_FragColor kil
 
 ---
 
+## Commit 6a2aaf73 — 2026-06-11 12:52 UTC
+
+### Branch Purpose
+implement h5i env (worktree+sandbox) per docs/environments-design.md: phase 1 workspace tier + phase 2 process confinement, with tests
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Root cause: 30fps gate made flow features jump ~2px/frame (choppy). Replaced with <=66fps presentation + adaptive pixel-budget governor (sheds resolution if GPU cannot hold ~60fps, floor 0.15M px, first 3s ignored to dodge load jank) + quintic noise fade (removes grid-aligned creases). Verified headless: no JS errors, governor holds full res through load and sheds only under sustained slowness. Uncommitted in docs/index.html; user to eyeball on real GPU, revert-to-static option open.
+
+---
+

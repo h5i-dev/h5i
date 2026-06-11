@@ -1918,3 +1918,9 @@ _[Checkpoint: 6a2aa1bf — Hero flow-field: higher resolution at flat GPU cost]_
 _[Checkpoint: 6a2aa1cd — edited docs/index.html; edited docs/index.html; edited docs/index.html]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2aaf73 — Fixed jaggy hero flow-field in docs/index.html]_
+---
+
