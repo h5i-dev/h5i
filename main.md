@@ -668,11 +668,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] session ended (auto-checkpoint)
 - [x] session ended (auto-checkpoint)
 - [x] session ended (auto-checkpoint)
+- [x] Observation-first auto-capture shipped
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-11 23:30 UTC] `improve-shell`: Observation-first auto-capture shipped
 - [2026-06-11 23:04 UTC] `improve-shell`: session ended (auto-checkpoint)
 - [2026-06-11 22:59 UTC] `improve-shell`: session ended (auto-checkpoint)
 - [2026-06-11 22:53 UTC] `improve-shell`: session ended (auto-checkpoint)
