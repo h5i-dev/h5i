@@ -448,3 +448,9 @@ _[Checkpoint: 6a2b2d4c — edited docs/environments-design.md; edited CLAUDE.md;
 _[Checkpoint: 6a2b3a2b — edited docs/environments-design.md; edited CLAUDE.md; edited CLAUDE.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2b3b20 — edited docs/environments-design.md; edited CLAUDE.md; edited CLAUDE.md]_
+---
+
