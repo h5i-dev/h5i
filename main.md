@@ -610,11 +610,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited tests/env_integration.rs
 - [x] wrote shell-msg.txt; wrote wsl2-cargo-test-oom.md; edited MEMORY.md
 - [x] wrote eg-msg.txt; edited sandbox-production-roadmap.md; edited sandbox-production-roadmap.md
+- [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-11 01:03 UTC] `impl-env-sandbox`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
 - [2026-06-11 00:55 UTC] `impl-env-sandbox`: wrote eg-msg.txt; edited sandbox-production-roadmap.md; edited sandbox-production-roadmap.md
 - [2026-06-10 23:28 UTC] `impl-env-sandbox`: wrote shell-msg.txt; wrote wsl2-cargo-test-oom.md; edited MEMORY.md
 - [2026-06-10 23:26 UTC] `impl-env-sandbox`: edited tests/env_integration.rs
