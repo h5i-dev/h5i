@@ -489,3 +489,4 @@ _[Checkpoint: 6a2b3ee9 — session ended (auto-checkpoint)]_
 [23:10:36] OBSERVE: read src/env.rs
 [23:11:52] OBSERVE: read src/seccomp_notify.rs
 [23:12:04] OBSERVE: read src/container.rs
+[23:12:13] OBSERVE: read src/container.rs
