@@ -658,6 +658,10 @@ fn run_supervised(
         true,
         Some(sv_child),
         egress_jail,
+        // The supervised tier keeps its own model (seccomp-notify gate + netns +
+        // pidfd serve loop); a PID namespace here is a separate, tested follow-up.
+        false,
+        None,
     ) {
         Ok(c) => c,
         Err(e) => {

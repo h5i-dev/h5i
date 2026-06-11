@@ -1054,6 +1054,124 @@ fn process_tier_fsize_caps_disk_bomb() {
     }
 }
 
+/// The PID-namespace jail (design §5 "PID view"): a confined process must not be
+/// able to see — or read the `/proc/<pid>/environ` of — host processes. Without
+/// it, a build script at the `process` tier could dump the operator's whole
+/// environment (every host secret) straight out of `/proc`, defeating the
+/// `env.pass` allowlist. Capability-gated.
+#[test]
+fn process_tier_pid_namespace_hides_host_processes_and_environ() {
+    if !process_tier_runnable() {
+        eprintln!("SKIP process_tier_pid_namespace...: process tier not runnable on this host");
+        return;
+    }
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "pidjail", "--isolation", "process"]);
+
+    // A long-lived host process holding a secret in its environment.
+    let secret = "h5i-leak-canary-9c3f1a2b";
+    let mut victim = Command::new("sleep")
+        .arg("120")
+        .env("H5I_LEAK_CANARY", secret)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn victim host process");
+    let vpid = victim.id();
+
+    // Control: on the host, the same uid can usually read the victim's environ —
+    // proving the secret is genuinely exposed there. Retry briefly: the new env
+    // only lands after the child's execve completes. (Some hosts set
+    // yama ptrace_scope=2 and forbid it even same-uid; we don't require it — the
+    // namespace assertions below stand on their own.)
+    let mut host_can_read = false;
+    for _ in 0..50 {
+        let e = std::fs::read(format!("/proc/{vpid}/environ")).unwrap_or_default();
+        if String::from_utf8_lossy(&e).contains(secret) {
+            host_can_read = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    // Inside the box: the victim's PID does not exist in the new namespace, so its
+    // /proc entry — and the secret — is unreachable.
+    let out = r.h5i(&[
+        "env", "run", "pidjail", "--", "sh", "-c",
+        &format!("cat /proc/{vpid}/environ 2>&1 | tr '\\0' '\\n'; echo DONE"),
+    ]);
+    let leaked = out_str(&out);
+
+    // The workload is PID 1 of its own namespace ($$ == 1 proves the fresh pidns).
+    let pid_out = r.h5i(&["env", "run", "pidjail", "--", "sh", "-c", "echo $$"]);
+    let pid_txt = out_str(&pid_out);
+
+    // The box sees only its own namespace's handful of pids, not the host's many.
+    let count_out = r.h5i(&[
+        "env", "run", "pidjail", "--", "sh", "-c",
+        "ls -1 /proc | grep -E '^[0-9]+$' | wc -l",
+    ]);
+    // h5i appends an evidence summary line, so pick the bare-integer line the
+    // command actually printed (not the "◈ evidence …" line).
+    let visible: usize = out_str(&count_out)
+        .lines()
+        .filter_map(|l| {
+            let t = l.trim();
+            (!t.is_empty() && t.bytes().all(|b| b.is_ascii_digit())).then(|| t.parse().ok())?
+        })
+        .next()
+        .unwrap_or(9999);
+
+    let _ = victim.kill();
+    let _ = victim.wait();
+
+    if host_can_read {
+        eprintln!("control OK: same-uid host read of the victim environ exposed the secret");
+    } else {
+        eprintln!("note: host won't expose the victim environ (ptrace_scope?); namespace checks still apply");
+    }
+    // The core security property: regardless of host policy, a confined process
+    // must not see a host process's environ (its pid isn't even in the namespace).
+    assert!(
+        !leaked.contains(secret),
+        "confined process read a HOST process's /proc/environ — PID-namespace leak:\n{leaked}"
+    );
+    assert!(
+        pid_txt.lines().any(|l| l.trim() == "1"),
+        "the workload must be PID 1 of a fresh namespace, got: {pid_txt}"
+    );
+    assert!(
+        visible < 20,
+        "the box must see only its own namespace's pids (saw {visible}); a host view shows far more"
+    );
+}
+
+/// The PID-namespace jail mounts a *fresh* procfs, which shadows the host `/proc`
+/// the pre-fork Landlock grant pinned. This proves the in-child re-grant works:
+/// the workload can still read its own `/proc/self/*` (otherwise every confined
+/// command that touches /proc would break). Capability-gated.
+#[test]
+fn process_tier_proc_self_is_readable_under_pid_namespace() {
+    if !process_tier_runnable() {
+        eprintln!("SKIP process_tier_proc_self...: process tier not runnable on this host");
+        return;
+    }
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "procok", "--isolation", "process"]);
+    // No redirection to /dev/null (the default policy grants it read-only); read
+    // /proc/self directly and gate the marker on a successful read.
+    let out = r.h5i(&[
+        "env", "run", "procok", "--", "sh", "-c",
+        "head -1 /proc/self/status | grep -q '^Name:' && grep -q '^Pid:' /proc/self/status && echo PROC-OK",
+    ]);
+    let text = out_str(&out);
+    assert!(
+        text.contains("PROC-OK"),
+        "the workload must still read its own /proc on the freshly-mounted procfs: {text}"
+    );
+}
+
 // ─── 7b. container backend (rootless podman; design phase 4) ────────────────
 
 /// Whether to run the real-container tests. They are **opt-in** via

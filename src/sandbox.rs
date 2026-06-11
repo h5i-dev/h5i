@@ -945,9 +945,14 @@ fn interactive_confined(
     let p = &policy.profile;
     // Same rule as the captured path: a fresh netns only when egress is denied.
     let net_deny = p.net_mode == NetMode::Deny;
-    let mut cmd = build_confined_command(policy, work, argv, injected_env, net_deny, None, None)?;
-    // build_confined_command leaves stdio unset → inherited (the session).
     let cg = make_run_cgroup(p.mem_bytes, p.max_procs);
+    let procs = cg.as_ref().map(|c| c.procs_path());
+    // Process tier interactive: confine the session to a fresh PID namespace +
+    // private procfs too (pidns=true), with the supervisor joining it to cgroup.
+    let mut cmd = build_confined_command(
+        policy, work, argv, injected_env, net_deny, None, None, true, procs.as_deref(),
+    )?;
+    // build_confined_command leaves stdio unset → inherited (the session).
     let mut child = cmd
         .spawn()
         .map_err(|e| H5iError::Metadata(format!("confined session failed to start: {e}")))?;
@@ -1089,7 +1094,17 @@ pub(crate) struct EgressJail {
 ///   notify filter stacks *after* the deny-list, and seccomp action precedence
 ///   (ERRNO > USER_NOTIF > ALLOW) makes them compose correctly.
 /// - `egress`: when `Some`, install the netns egress allowlist (see [`EgressJail`]).
+/// - `pidns`: when `true`, run the workload in a fresh PID namespace with a
+///   private procfs (design §5 "PID view"), so it cannot see — or read
+///   `/proc/<pid>/environ` of — host processes. Implemented by forking inside
+///   `pre_exec`: the parent becomes a thin supervisor that mirrors the workload's
+///   exit, the child is PID 1 of the new namespace. The `process` tier sets this;
+///   `supervised` does not yet (it has its own model).
+/// - `cgroup_procs`: path to the run cgroup's `cgroup.procs`. Only consulted when
+///   `pidns` is set — the supervisor writes the *workload's* pid there so the
+///   cgroup's `memory.max`/accounting bind the real process, not the supervisor.
 #[cfg(target_os = "linux")]
+#[allow(clippy::too_many_arguments)] // the security-critical setup is intentionally one audited fn
 pub(crate) fn build_confined_command(
     policy: &ResolvedPolicy,
     work: &Path,
@@ -1098,6 +1113,8 @@ pub(crate) fn build_confined_command(
     force_netns: bool,
     notify_sock: Option<std::os::unix::io::RawFd>,
     egress: Option<EgressJail>,
+    pidns: bool,
+    cgroup_procs: Option<&Path>,
 ) -> Result<std::process::Command, H5iError> {
     use std::os::unix::process::CommandExt;
 
@@ -1153,6 +1170,14 @@ pub(crate) fn build_confined_command(
     let nproc = p.max_procs;
     let fsize = p.fsize_bytes;
     let cpu = p.cpu_secs;
+    // The Landlock ABI is needed again *inside* the forked child to re-grant the
+    // freshly-mounted procfs (the pre-fork `/proc` grant pins the host procfs
+    // inode, which the new mount shadows). Captured by value (Copy).
+    let ll_abi = abi;
+    // The cgroup.procs path, pre-resolved to a CString so the alloc-free
+    // supervisor branch can move the workload into the cgroup.
+    let cgroup_procs_c: Option<std::ffi::CString> = cgroup_procs
+        .and_then(|p| std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok());
 
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(&work);
@@ -1189,6 +1214,13 @@ pub(crate) fn build_confined_command(
             let mut flags = libc::CLONE_NEWUSER | libc::CLONE_NEWIPC | libc::CLONE_NEWUTS;
             if want_netns {
                 flags |= libc::CLONE_NEWNET;
+            }
+            if pidns {
+                // A new PID namespace (so host processes are invisible/unsignalable)
+                // plus a new mount namespace (so we can mount a private procfs over
+                // /proc without touching the host). The userns in the same call
+                // grants the CAP_SYS_ADMIN both need, unprivileged.
+                flags |= libc::CLONE_NEWPID | libc::CLONE_NEWNS;
             }
             if libc::unshare(flags) != 0 {
                 return Err(Error::last_os_error());
@@ -1261,6 +1293,87 @@ pub(crate) fn build_confined_command(
                 if libc::read(eg.ready_read_fd, rb.as_mut_ptr().cast(), 1) != 1 {
                     return Err(Error::other("slirp4netns uplink did not become ready"));
                 }
+            }
+
+            // 1c. PID-namespace jail (process tier, design §5 "PID view").
+            //     CLONE_NEWPID only takes effect for the *next* child, so fork:
+            //     the parent becomes a thin supervisor that mirrors the workload's
+            //     fate to the h5i waiter; the child is PID 1 of the new namespace.
+            //     A private procfs is mounted so the workload cannot enumerate, or
+            //     read /proc/<pid>/environ of, host processes — notably this h5i
+            //     process, which holds the operator's environment (defeating the
+            //     env.pass allowlist). Raw syscalls + one File::open only.
+            if pidns {
+                let kid = libc::fork();
+                if kid > 0 {
+                    // Supervisor. First move the *workload* into the run cgroup
+                    // (so memory.max + accounting bind it, not us — it was forked
+                    // before the host-side cgroup write, which only sees us).
+                    if let Some(cpath) = &cgroup_procs_c {
+                        let fd = libc::open(cpath.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
+                        if fd >= 0 {
+                            let line = format!("{kid}");
+                            let _ = libc::write(fd, line.as_ptr().cast(), line.len());
+                            libc::close(fd);
+                        }
+                    }
+                    // Reap the workload and mirror its exit/signal so the waiter
+                    // observes the real outcome through this supervisor.
+                    let mut st: libc::c_int = 0;
+                    loop {
+                        let r = libc::waitpid(kid, &mut st, 0);
+                        if r == kid {
+                            break;
+                        }
+                        if r < 0 && Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                            continue;
+                        }
+                        libc::_exit(125);
+                    }
+                    if libc::WIFEXITED(st) {
+                        libc::_exit(libc::WEXITSTATUS(st));
+                    }
+                    if libc::WIFSIGNALED(st) {
+                        // Re-raise so the waiter sees a signal death (exit_code
+                        // None), matching the non-pidns path. The wall-clock
+                        // SIGKILL already reaches us directly via the process group.
+                        let sig = libc::WTERMSIG(st);
+                        libc::signal(sig, libc::SIG_DFL);
+                        libc::raise(sig);
+                        libc::_exit(128 + sig);
+                    }
+                    libc::_exit(125);
+                }
+                if kid < 0 {
+                    return Err(Error::last_os_error());
+                }
+                // Child = PID 1 of the new namespace. Mount a private procfs over
+                // /proc so only this namespace is visible, then re-grant Landlock
+                // read on the *new* procfs (the pre-fork grant pinned the host
+                // procfs inode, now shadowed by this mount).
+                if libc::mount(
+                    c"proc".as_ptr(),
+                    c"/proc".as_ptr(),
+                    c"proc".as_ptr(),
+                    libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC,
+                    std::ptr::null(),
+                ) != 0
+                {
+                    return Err(Error::other(format!(
+                        "pidns: mount private /proc failed: {}",
+                        Error::last_os_error()
+                    )));
+                }
+                use landlock::{AccessFs, PathBeneath, RulesetCreatedAttr};
+                let proc_fd = std::fs::File::open("/proc")
+                    .map_err(|e| Error::other(format!("pidns: open new /proc: {e}")))?;
+                let rs = ruleset_slot
+                    .take()
+                    .ok_or_else(|| Error::other("landlock ruleset consumed before /proc re-grant"))?;
+                let rs = rs
+                    .add_rule(PathBeneath::new(proc_fd, AccessFs::from_read(ll_abi)))
+                    .map_err(|e| Error::other(format!("pidns: landlock /proc re-grant failed: {e}")))?;
+                ruleset_slot = Some(rs);
             }
 
             // 2. Resource caps (cooperative, no cgroups needed).
@@ -1350,14 +1463,19 @@ fn run_confined(
     injected_env: &[(String, String)],
 ) -> Result<ExecOutcome, H5iError> {
     let p = &policy.profile;
-    // Process tier: netns only when egress is denied; no seccomp-notify gate.
-    let cmd = build_confined_command(policy, work, argv, injected_env, false, None, None)?;
-
     // cgroup v2 (rootless, best-effort): real memory.max/pids.max + accurate
     // memory.peak/cpu accounting where the host delegates a writable subtree.
-    // Unavailable → `None`, and the rlimits set in the child still apply.
+    // Created BEFORE the command so its `cgroup.procs` path can be handed to the
+    // PID-namespace supervisor (which joins the workload to it). Unavailable →
+    // `None`, and the rlimits set in the child still apply.
     let cg = make_run_cgroup(p.mem_bytes, p.max_procs);
     let procs = cg.as_ref().map(|c| c.procs_path());
+    // Process tier: netns only when egress is denied; no seccomp-notify gate; the
+    // workload is confined to a fresh PID namespace + private procfs (pidns=true).
+    let cmd = build_confined_command(
+        policy, work, argv, injected_env, false, None, None, true, procs.as_deref(),
+    )?;
+
     let mut outcome = wait_with_deadline(cmd, p.wall(), argv, procs.as_deref())?;
     if let Some(cg) = &cg {
         let u = cg.usage();
@@ -1368,6 +1486,13 @@ fn run_confined(
         if let Some(usec) = u.cpu_usec {
             outcome.cpu_ms = (usec / 1000) as u128;
         }
+    } else {
+        // Under the PID-namespace jail the workload runs as a grandchild of a thin
+        // supervisor, so `wait4`'s rusage is the supervisor's, not the workload's.
+        // Without a cgroup we cannot attribute rss/cpu — report unknown rather
+        // than a misleading figure. The in-child rlimits still *enforce* the caps.
+        outcome.max_rss_kb = None;
+        outcome.cpu_ms = 0;
     }
     Ok(outcome)
 }
