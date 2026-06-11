@@ -76,3 +76,9 @@ _[Checkpoint: 6a2ad0da — edited src/sandbox.rs; wrote supervised-tier-green-on
 [15:40:34] ACT: edited CLAUDE.md
 [15:40:38] ACT: edited docs/environments-design.md
 [15:41:13] ACT: edited src/env.rs
+
+
+---
+_[Checkpoint: 6a2ad7f2 — agent profile is now the auto-picked default for env create]_
+---
+
