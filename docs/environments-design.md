@@ -379,23 +379,38 @@ second built-in (no `env.toml` required) that adds the minimum surface a
 coding agent needs — and it is what an unspecified `--profile` **auto-picks**
 when the host can enforce it (same pattern as the isolation auto-pick:
 explicit = fail-closed, unspecified = best runnable; hosts that cannot enforce
-the egress fall back to `default` with a printed note):
+the egress fall back to `default` with a printed note).
 
-- **ro:** `~/.local`, `~/.nvm`, shell rc files, `~/.gitconfig`, `~/.config/git`
-- **rw:** `~/.claude`, `~/.claude.json`, `~/.codex`, `~/.cache`, `~/.npm`,
-  `/tmp` (host-shared at this tier; the container tier gives a private one)
-- **net.egress:** `api.anthropic.com`, `statsig.anthropic.com`,
-  `api.openai.com`, `auth.openai.com`, `chatgpt.com` — DNS-pinned + enforced
-  (so the profile **refuses** to instantiate at tiers that cannot enforce it:
-  it is a supervised/container profile by design)
+**It is scoped to a single runtime.** A Claude box that could also read
+`~/.codex/auth.json` *and* egress to `api.openai.com` lets a prompt-injected
+agent steal the other runtime's token and use it against an allowlisted host —
+so the grants are split per runtime. `agent` resolves to the creating agent's
+runtime (`$H5I_AGENT`: `codex*` → Codex, else Claude); `agent-claude` /
+`agent-codex` pin one explicitly. Each variant grants **only that runtime's**
+state + API:
+
+- **ro (shared, non-secret):** `~/.local/bin`, `~/.local/lib`, `~/.nvm`, shell
+  rc files, `~/.gitconfig`, `~/.config/git` — *plus* the runtime's own
+  `~/.local/share/<runtime>` (its installed binary; `~/.local/bin/claude` is a
+  launcher into `~/.local/share/claude/versions/…`). The blanket `~/.local`
+  read was **narrowed** so the box no longer sees unrelated `~/.local/share`
+  state (Jupyter `notebook_secret`, app history DBs).
+- **rw (this runtime only):** Claude → `~/.claude`, `~/.claude.json`; Codex →
+  `~/.codex`. Plus shared `~/.cache`, `~/.npm`, `/tmp` (host-shared at this
+  tier; the container tier gives a private one).
+- **net.egress (this runtime only):** Claude → `api.anthropic.com`,
+  `statsig.anthropic.com`; Codex → `api.openai.com`, `auth.openai.com`,
+  `chatgpt.com` — DNS-pinned + enforced (so the profile **refuses** to
+  instantiate at tiers that cannot enforce it: supervised/container by design).
 - `TERM`/`COLORTERM`/`USER`/`SHELL` pass through; mem 8G, procs 512
 
 The default deny set (`~/.ssh`, `~/.aws`, `~/.config/gh`, hooks) still applies.
 Deliberate trade, stated honestly: the agent can read its *own* credentials —
 it cannot function without them — and the egress allowlist bounds where bytes
-can go. A user-defined `[profile.agent]` merges over this base (fs/env/resource
-fields inherit; `net.egress` does **not** — a user profile owns its egress
-list).
+can go, but it gets **neither the other runtime's credentials nor egress to its
+API**. A user-defined `[profile.agent-claude]` (or `[profile.agent-codex]`)
+merges over the matching base (fs/env/resource fields inherit; `net.egress`
+does **not** — a user profile owns its egress list).
 
 Interactive sessions (`env shell`) additionally differ from captured runs in
 two deliberate ways: they keep the caller's terminal session (no `setsid`, so

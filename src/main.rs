@@ -1703,9 +1703,11 @@ enum EnvCommands {
         #[arg(long)]
         from: Option<String>,
         /// Policy profile from .h5i/env.toml. Built-ins need no file: `agent`
-        /// (agent-in-box: HOME grants for claude/codex + API egress) and
-        /// `default` (fail-closed build/test confinement). Unset auto-picks
-        /// `agent` when this host can enforce it, else `default`.
+        /// (agent-in-box, scoped to $H5I_AGENT's runtime), `agent-claude` /
+        /// `agent-codex` (pin one runtime: only that agent's HOME state + API
+        /// egress), and `default` (fail-closed build/test confinement). Unset
+        /// auto-picks the creating runtime's agent profile when this host can
+        /// enforce it, else `default`.
         #[arg(long)]
         profile: Option<String>,
         /// Isolation: auto (default) | workspace | process | supervised | container | hardened-container | microvm.
@@ -8139,7 +8141,7 @@ jq -c '{
                         style(&m.isolation_claim).cyan(),
                         style(&m.profile).cyan()
                     );
-                    if m.profile != "agent" {
+                    if !h5i_core::sandbox::is_agent_profile(&m.profile) {
                         eprintln!(
                             "   note: this profile has no agent grants — claude/codex won't run \
                              here (envs default to --profile agent where the host supports it)"

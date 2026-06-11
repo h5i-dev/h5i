@@ -711,28 +711,31 @@ pub fn create(
         )));
     }
 
-    // Resolve the profile name. Unspecified prefers the built-in `agent`
-    // profile — `env shell` is the agent-in-box, and a box that cannot run an
-    // agent is the wrong default — but only when it is actually enforceable
-    // here: its net.egress needs a supervised/container tier, so a pinned
-    // weaker `--isolation` (or a host without the stack) falls back to the
-    // fail-closed `default`. Same pattern as the isolation auto-pick below:
+    // Resolve the profile name. Unspecified prefers the built-in agent-in-box
+    // profile *scoped to the creating runtime* (`agent-claude`/`agent-codex`):
+    // a Claude box must not get Codex's credentials or OpenAI egress, so the
+    // box is pinned to whoever built it. `env shell` is the agent-in-box, and a
+    // box that cannot run an agent is the wrong default — but the profile is
+    // only enforceable when its net.egress has a supervised/container tier, so
+    // a pinned weaker `--isolation` (or a host without the stack) falls back to
+    // the fail-closed `default`. Same pattern as the isolation auto-pick below:
     // explicit = fail-closed, unspecified = best runnable.
+    let agent_profile = sandbox::AgentRuntime::from_identity(agent).profile_name();
     let profile_name: &str = match &opts.profile {
         Some(p) => p.as_str(),
         None => {
             let agent_runnable = (|| -> Result<(), H5iError> {
                 let claim = match opts.isolation {
                     Some(sandbox::IsolationRequest::Claim(c)) => c,
-                    _ => sandbox::effective_auto(workdir, "agent", false)?,
+                    _ => sandbox::effective_auto(workdir, agent_profile, false)?,
                 };
-                let prof = sandbox::load_profile(workdir, "agent", Some(claim))?;
+                let prof = sandbox::load_profile(workdir, agent_profile, Some(claim))?;
                 let pol = sandbox::resolve(&prof, &sandbox::probe_host())?;
                 sandbox::verify_exec(&pol)
             })()
             .is_ok();
             if agent_runnable {
-                "agent"
+                agent_profile
             } else {
                 "default"
             }
