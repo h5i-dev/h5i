@@ -638,11 +638,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Hero flow-field: higher resolution at flat GPU cost
 - [x] edited docs/index.html; edited docs/index.html; edited docs/index.html
 - [x] Fixed jaggy hero flow-field in docs/index.html
+- [x] Reverted hero to static (removed WebGL flow-field)
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-11 12:58 UTC] `impl-env-sandbox`: Reverted hero to static (removed WebGL flow-field)
 - [2026-06-11 12:52 UTC] `impl-env-sandbox`: Fixed jaggy hero flow-field in docs/index.html
 - [2026-06-11 11:53 UTC] `impl-env-sandbox`: edited docs/index.html; edited docs/index.html; edited docs/index.html
 - [2026-06-11 11:53 UTC] `impl-env-sandbox`: Hero flow-field: higher resolution at flat GPU cost
