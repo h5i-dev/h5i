@@ -657,11 +657,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited tests/env_integration.rs; edited CLAUDE.md; edited .claude/h5i.md
 - [x] edited tests/env_integration.rs; edited CLAUDE.md; edited .claude/h5i.md
 - [x] edited tests/env_integration.rs; edited CLAUDE.md; edited .claude/h5i.md
+- [x] edited docs/environments-design.md; edited CLAUDE.md; edited CLAUDE.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-11 21:22 UTC] `improve-shell`: edited docs/environments-design.md; edited CLAUDE.md; edited CLAUDE.md
 - [2026-06-11 20:55 UTC] `improve-shell`: edited tests/env_integration.rs; edited CLAUDE.md; edited .claude/h5i.md
 - [2026-06-11 20:46 UTC] `improve-shell`: edited tests/env_integration.rs; edited CLAUDE.md; edited .claude/h5i.md
 - [2026-06-11 20:44 UTC] `improve-shell`: edited tests/env_integration.rs; edited CLAUDE.md; edited .claude/h5i.md
