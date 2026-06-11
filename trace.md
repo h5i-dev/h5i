@@ -119,3 +119,4 @@ _[Checkpoint: 6a2aecc9 — edited docs/environments-design.md; edited src/env.rs
 [17:18:59] ACT: edited src/sandbox.rs
 [17:19:27] ACT: edited src/sandbox.rs
 [17:19:34] ACT: edited src/sandbox.rs
+[17:19:44] OBSERVE: read src/sandbox.rs
