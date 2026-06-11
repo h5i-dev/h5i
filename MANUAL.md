@@ -2566,9 +2566,10 @@ agent work — the "triple fusion" of:
 Use an env for any risky or exploratory work (a refactor, a dependency upgrade,
 an untrusted build) instead of editing the main tree in place. Every `env run`
 is policy-enforced and **capture-wrapped** (evidence lands in `refs/h5i/objects`,
-tagged with the env id and the enforced policy digest). The lifecycle is
-`create → run → propose → apply | abort → gc`, and **apply is never automatic** —
-`propose` surfaces a review brief, a reviewer applies.
+tagged with the env id and the enforced policy digest); `env shell` opens an
+**interactive** confined session in the same box for hands-on work. The lifecycle
+is `create → run → propose → apply | abort → gc`, and **apply is never
+automatic** — `propose` surfaces a review brief, a reviewer applies.
 
 Env state lives in `refs/h5i/env` (events, manifests, policies) and is shared by
 `h5i push` / `h5i pull`, enabling a cross-clone review loop (one agent proposes,
@@ -2580,8 +2581,9 @@ another reviews and applies). See `docs/environments-design.md` and the live
 
 | Command | Description |
 |---------|-------------|
-| `h5i env create <name> [--from REV] [--profile P] [--isolation TIER]` | Create an env: code branch + worktree + reasoning branch + pinned policy. Base frozen at creation. Fails closed if the host can't satisfy the isolation claim. |
+| `h5i env create <name> [--from REV] [--profile P] [--isolation TIER]` | Create an env: code branch + worktree + reasoning branch + pinned policy. Base frozen at creation. With no `--isolation` (or `--isolation auto`) it **auto-picks the strongest tier the host can run**; an explicit tier fails closed if the host can't satisfy it. |
 | `h5i env run <name> -- <cmd> [args…]` | Run a command inside the env, policy-enforced + capture-wrapped. Exit code passes through; evidence is captured. |
+| `h5i env shell <name> [-- <cmd>]` | Open an **interactive** confined session *inside* the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. Defaults to a login shell. Exit code passes through; nothing is captured (a `shell` event is logged). |
 | `h5i env probe` | Show what isolation this host can actually provide (Landlock ABI, user namespaces, seccomp, seccomp-notif, cgroup v2 delegation, rootless Podman) and which claims are satisfiable. |
 | `h5i env list` | List environments on this clone. |
 | `h5i env status <name> [--json]` | Lifecycle state + enforced policy + evidence + base drift. `--json` emits the raw manifest. |
@@ -2606,28 +2608,38 @@ The same operations are available as native MCP tools (`h5i_env_create`,
 <a name="env-isolation-tiers"></a>
 ### Isolation tiers
 
-`--isolation` (or `isolation =` in the profile) sets the **minimum** claim. h5i
-**fails closed** — it refuses (never silently downgrades) when the host cannot
-satisfy the claim, and re-verifies functionally (capability bits present ≠
-confinement can exec).
+`--isolation` (or `isolation =` in the profile) sets the **minimum** claim. With
+no `--isolation` (or `--isolation auto`), `env create` is **secure-by-default**:
+it auto-picks the *strongest tier the host can actually run* (`container` >
+`supervised` > `process` > `workspace`), each candidate gated by the same checks
+`create` applies, so an auto-picked tier is guaranteed runnable. An explicit tier
+**fails closed** — h5i refuses (never silently downgrades) when the host cannot
+satisfy it, and re-verifies functionally (capability bits present ≠ confinement
+can exec). Set `H5I_DEFAULT_ISOLATION` to pin a clone's default tier.
 
 | Tier | Mechanism | Network | Rootless | Notes |
 |------|-----------|---------|----------|-------|
 | `workspace` | git worktree only; no kernel confinement | host (unrestricted) | ✅ | Trusted code; file isolation only. Cross-platform. |
 | `process` | Landlock FS allowlist + seccomp deny-list + user/mount/IPC/UTS/(net) namespaces + cgroup v2 / rlimits + `no_new_privs` | `deny` (empty netns) or `host` — all-or-nothing | ✅ | Linux, x86-64/aarch64. The default confined tier. |
-| `supervised` | `process` **+** a live seccomp **user-notification** socket gate + an always-on network namespace | `deny` (airtight, v1) | ✅ | The first tier that may claim untrusted-code containment. Requires the full stack green (userns + mountns + netns + nftables + seccomp-notif + Landlock + cgroup delegation + no-new-privs + cap-drop), else refused. A `net.egress` allowlist is not yet wired in v1 and is refused. |
-| `container` | rootless **Podman** (`--cap-drop=ALL`, read-only rootfs, no docker.sock, env allowlist) | `net.egress` **domain allowlist** via a DNS-pinned host-side CONNECT proxy (L7, fail-closed `403`) | ✅ | Requires rootless Podman + a `container.image`. The only tier that enforces a domain allowlist today (honest L7 scope). |
+| `supervised` | `process` **+** a live seccomp **user-notification** socket gate + an always-on network namespace | `deny` (airtight empty netns) **or** a real **L3/L4 `net.egress` allowlist** | ✅ | The first tier that may claim untrusted-code containment. Requires the full stack green (userns + mountns + netns + nftables + seccomp-notif + Landlock + cgroup delegation + no-new-privs + cap-drop), else refused. `net.egress` runs `slirp4netns` for the uplink, an **nftables default-drop** allowlist as the airtight guard, and pins DNS via a private `/etc/hosts` (no port 53) — a raw socket cannot bypass it (vs. the container tier's L7). |
+| `container` | rootless **Podman** (`--cap-drop=ALL`, read-only rootfs, no docker.sock, env allowlist) | `net.egress` **domain allowlist** via a DNS-pinned host-side CONNECT proxy (L7, fail-closed `403`) | ✅ | Requires rootless Podman + a `container.image`. L7 scope (blocks proxy-respecting tooling; the `supervised` tier's nftables egress is the airtight L3/L4 equivalent). |
 | `hardened-container`, `microvm` | external backends (gVisor/Kata, Firecracker) | — | — | Not shipped in this build; refused. |
 
 The **`supervised` socket gate** is default-deny: only boring inet
 (`AF_INET`/`AF_INET6`, `SOCK_STREAM`/`SOCK_DGRAM`) — or an explicitly granted
 `AF_UNIX` — may proceed; raw/packet/netlink/vsock and unknown socket shapes are
-denied with `EPERM`, and every verdict is recorded.
+denied with `EPERM`, and every verdict is recorded. This gate is also what makes
+the `net.egress` allowlist **unbypassable**: untrusted code runs as root within
+its own user namespace (so `nft` keeps `CAP_NET_ADMIN` across `execve`), but the
+gate denies `AF_NETLINK`, so the program cannot open the netlink socket `nft`/`ip`
+would need to rewrite the ruleset or routes.
 
 ```bash
 h5i env probe                                   # what can this host enforce?
-h5i env create fix-auth --isolation process     # refuses if process tier unsatisfiable
+h5i env create fix-auth                          # auto-picks the strongest runnable tier
+h5i env create jail --isolation supervised       # refuses unless the full stack is green
 h5i env create build --isolation container       # needs rootless podman + an image
+h5i env shell  fix-auth                           # interactive confined session
 ```
 
 <a name="env-policy-file-h5ienvtoml"></a>
@@ -3114,6 +3126,15 @@ Auto-captured when the Claude Code hook is installed; you usually do not set the
 |----------|---------|---------|
 | `H5I_TEST_CMD` | unset | Shell command h5i runs when `--tests` is passed without `--test-cmd`/`--test-results`. Its stdout must be a [test-adapter JSON object](#appendix-test-adapter-schema). |
 | `H5I_TEST_RESULTS` | unset | Path to a pre-produced test-results JSON file. Equivalent to passing `--test-results`. |
+| `H5I_TEST_CONTAINER` | unset | When set, opts in the real-container (`isolation=container`) integration tests (they pull an image + make a live network call). |
+| `H5I_TEST_NET` | unset | When set, opts in the supervised `net.egress` allowlist e2e test (needs real outbound network). |
+
+### Sandbox / environments ([h5i env](#h5i-env-isolated-agent-sandboxes))
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `H5I_DEFAULT_ISOLATION` | unset (auto-pick) | Pin a clone's default isolation tier for `env create` when no `--isolation` is given (e.g. `workspace`, `process`). Unset ⇒ auto-pick the strongest runnable tier. `--isolation auto` re-probes past it. |
+| `H5I_SECRET_<NAME>` | unset | Default source for a secret grant `<name>` whose profile `source` is `env:H5I_SECRET_<NAME>` (the default). The broker injects it into the run, redacts it from evidence, and audits it by fingerprint — never the value. See [secrets](#env-secrets-broker). |
 
 ### Token reduction
 

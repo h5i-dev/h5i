@@ -134,22 +134,23 @@ We can also monitor the conversation in real time with `h5i msg watch`.
 
 ### 3.2. Agent Sandbox — run risky work confined, captured, and reviewable
 
-`h5i env` gives an agent an isolated **environment**: a git worktree plus a digest-pinned, **fail-closed** policy, so you can hand it a refactor, a dependency upgrade, or an untrusted build without it touching your main tree. Every `h5i env run` is policy-enforced and capture-wrapped — escape attempts (reading `/etc/shadow`, a raw socket to an arbitrary IP, `mount` / `unshare` / `ptrace`) are denied **at the boundary** by Landlock + seccomp + namespaces, while legitimate work proceeds and lands as tamper-evident evidence. Nothing reaches your branch until a reviewer approves a `propose` with `apply`.
+`h5i env` gives an agent an isolated **environment**: a git worktree plus a digest-pinned, **fail-closed** policy, so you can hand it a refactor, a dependency upgrade, or an untrusted build without it touching your main tree. Every `h5i env run` is policy-enforced and capture-wrapped — escape attempts (reading `/etc/shadow`, a raw socket to an arbitrary IP, `mount` / `unshare` / `ptrace`) are denied **at the boundary** by Landlock + seccomp + namespaces, while legitimate work proceeds and lands as tamper-evident evidence. Nothing reaches your branch until a reviewer approves a `propose` with `apply`. For interactive work, `h5i env shell` drops you (or an agent) into the box itself — every command the session spawns is confined by construction, not by remembering to wrap each one.
 
-Isolation is **tiered and never silently downgraded** — `h5i env probe` reports what the host can actually enforce, and a claim the host can't satisfy is refused, not weakened:
+Isolation is **tiered, secure-by-default, and never silently downgraded** — `h5i env create` with no `--isolation` auto-picks the *strongest tier the host can actually run*, `h5i env probe` reports what that is, and an explicit claim the host can't satisfy is refused, not weakened:
 
 | Tier | Confinement |
 |------|-------------|
 | `workspace` | git worktree only — trusted code |
 | `process` | Landlock + seccomp deny-list + user/net namespaces + cgroup v2 (rootless) |
-| `supervised` | process tier + a live seccomp-notify socket gate (default-deny: only ordinary inet sockets pass) |
-| `container` | rootless Podman + a DNS-pinned **`net.egress` domain allowlist** |
+| `supervised` | process tier + a live seccomp-notify socket gate (default-deny sockets) **plus a real L3/L4 `net.egress` allowlist** — slirp4netns uplink + nftables default-drop + `/etc/hosts` DNS pinning (no raw-socket bypass) |
+| `container` | rootless Podman + a DNS-pinned **`net.egress` domain allowlist** (L7) |
 
 ```bash
-h5i env create fix-auth --isolation process
-h5i env run    fix-auth -- cargo build       # confined + captured
-h5i env propose fix-auth                     # mediated commit + review brief
-h5i env apply   fix-auth                     # reviewer-selected; never automatic
+h5i env create fix-auth                       # auto-picks the strongest runnable tier
+h5i env run    fix-auth -- cargo build        # confined + captured
+h5i env shell  fix-auth                        # interactive confined session (agent-in-box)
+h5i env propose fix-auth                       # mediated commit + review brief
+h5i env apply   fix-auth                       # reviewer-selected; never automatic
 ```
 
 Every run, allow or deny, is scored for **boundary pressure** and shown in the Sandbox tab of the [web dashboard](#46-web-dashboard); env state lives in `refs/h5i/env` and travels with `h5i push` / `pull` for a cross-clone review loop.

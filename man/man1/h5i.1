@@ -463,11 +463,22 @@ for a cross-clone review loop.
 .RS 4
 .TP
 .BI "create " "NAME " "[\-\-from REV] [\-\-profile P] [\-\-isolation TIER]"
-Create an env; base frozen at creation. Refuses (never downgrades) if the host
-cannot satisfy the isolation claim.
+Create an env; base frozen at creation. With no
+.B \-\-isolation
+(or
+.BR "\-\-isolation auto" )
+it auto-picks the strongest tier the host can run; an explicit tier refuses
+(never downgrades) if the host cannot satisfy it.
 .TP
 .BI "run " "NAME " "\-\- COMMAND [ARGS...]"
 Run a command inside the env, policy-enforced + capture-wrapped.
+.TP
+.BI "shell " "NAME " "[\-\- COMMAND]"
+Open an interactive confined session inside the env (the "agent-in-box"): stdio
+is inherited, so every command the session spawns is confined by the box.
+Defaults to a login shell; exit code passes through; a
+.B shell
+event is logged (nothing is captured).
 .TP
 .B probe
 Report what isolation this host can enforce (Landlock, user namespaces, seccomp,
@@ -523,13 +534,23 @@ namespaces + cgroup v2/rlimits + no-new-privs (rootless; Linux x86-64/aarch64).
 \(em process tier + a live seccomp user-notification socket gate (default-deny:
 only boring inet or granted AF_UNIX proceeds) + an always-on network namespace.
 The first tier that may claim untrusted-code containment; requires the whole
-stack green or is refused.
+stack green or is refused. A
+.B net.egress
+allowlist here is a real L3/L4 guard: a
+.B slirp4netns
+uplink + an
+.B nftables
+default-drop allowlist + DNS pinned via a private
+.IR /etc/hosts
+(no port 53) \(em a raw socket cannot bypass it, and the socket gate's AF_NETLINK
+denial stops the confined program from rewriting the rules.
 .IP \(bu 2
 .B container
-\(em rootless Podman (cap-drop=ALL, read-only rootfs, no docker.sock). The only
-tier that enforces a
+\(em rootless Podman (cap-drop=ALL, read-only rootfs, no docker.sock). Enforces a
 .B net.egress
-domain allowlist today (DNS-pinned host CONNECT proxy, L7, fail-closed).
+domain allowlist via a DNS-pinned host CONNECT proxy (L7, fail-closed; the
+.B supervised
+tier's nftables egress is the airtight L3/L4 equivalent).
 .IP \(bu 2
 .B "hardened-container, microvm"
 \(em external backends (gVisor/Kata, Firecracker); not in this build.
@@ -1723,6 +1744,24 @@ Per-agent messaging identity for
 .BR "h5i msg" .
 Takes precedence over the stored default and is the recommended way to give
 each agent (Claude Code, Codex) a distinct name when sharing one clone.
+.TP
+.B H5I_DEFAULT_ISOLATION
+Pin a clone's default isolation tier for
+.B "h5i env create"
+when no
+.B \-\-isolation
+is given (e.g.
+.BR workspace ", " process ).
+Unset \(em auto-pick the strongest runnable tier;
+.B "\-\-isolation auto"
+re-probes past it.
+.TP
+.B "H5I_SECRET_<NAME>"
+Default source for a brokered secret grant
+.I <name>
+(profile
+.IR "source = \(dqenv:H5I_SECRET_<NAME>\(dq" ).
+Injected into the run, redacted from evidence, audited by fingerprint.
 .TP
 .B H5I_TEST_RESULTS
 Default path to a test results JSON file.
