@@ -1831,3 +1831,4 @@ _[Checkpoint: 6a2a1bc0 — edited src/env.rs; wrote env-process-tier-missing-pid
 [02:59:37] THINK: I'll insert the two new tests right after `process_tier_fsize_caps_disk_bomb` (end of the process-tier cluster):
 [02:59:37] THINK: Now let me compile the test binary and run the process-tier tests to confirm pidns actually works on this host (if it broke exec, `process_tier_runnable()` would flip to skip):
 [02:59:37] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/MEMORY.md): to unblock #126, and track the full PID-namespace fix as a separate issue.** Want me to push `1ae1d45f` and draft the doc-claim corrections
+[02:59:37] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/MEMORY.md): the security fix folded into this PR or split into a small follow-up PR that's trivial to review on its own. My recommendation: **push the fix, take t…
