@@ -389,3 +389,9 @@ _[Checkpoint: 6a2b2717 — edited docs/environments-design.md; edited CLAUDE.md;
 [21:31:48] ACT: edited src/main.rs
 [21:34:43] THINK: Let me view what follows the env-code push to add the remote head-branch cleanup back in (cleanly):
 [21:34:43] NOTE: PLACEHOLDER (~/Dev/h5i/src/main.rs): Now replace the whole push block (6441–6524) with the simplified version — keep only the remote head-branch cleanup, the state push, and the env-c…
+
+
+---
+_[Checkpoint: 6a2b29f3 — edited CLAUDE.md; edited CLAUDE.md; edited src/main.rs]_
+---
+
