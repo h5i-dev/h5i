@@ -1,0 +1,1 @@
+{"git_oid":"d4c812d1ce3b0cbb3637754557b5dc739be81a3a","parent_oid":"d03f8b3578d54b0875be5c5281b5256af192246e","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"avoid fancy metaphors and unclear jargon like fail-closed; prefer fully auditable sandbox","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-11T01:08:59.584989298Z"}
