@@ -1563,3 +1563,4 @@ _[Checkpoint: 6a2a0775 — wrote eg-msg.txt; edited sandbox-production-roadmap.m
 [00:59:44] ACT: edited man/man1/h5i.1
 [00:59:49] OBSERVE: read man/man1/h5i.1
 [00:59:56] ACT: edited man/man1/h5i.1
+[01:03:23] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): ), but `supervisor::run()` is still the fail-closed Phase A stub — so `env run` fails closed with "live enforcement not wired." Wiring that st…
