@@ -1770,6 +1770,22 @@ enum EnvCommands {
         name: String,
     },
 
+    /// Show the environment's reasoning/context branch
+    /// (`refs/h5i/context/env/<agent>/<slug>`) — a convenience alias for
+    /// `h5i context show --branch <that-branch>`.
+    Context {
+        name: String,
+        /// Number of recent context commits to show (window K)
+        #[arg(long, default_value_t = 3)]
+        window: usize,
+        /// Include the full reasoning trace (equivalent to --depth 3)
+        #[arg(long)]
+        trace: bool,
+        /// Progressive disclosure depth: 1=compact index, 2=timeline (default), 3=full trace
+        #[arg(long, default_value_t = 2)]
+        depth: u8,
+    },
+
     /// Diff the environment's work against its pinned base
     Diff {
         name: String,
@@ -1817,6 +1833,17 @@ enum EnvCommands {
     /// Abort an environment — manifest and workspace preserved for forensics
     Abort {
         name: String,
+    },
+
+    /// Permanently remove an environment from this clone: prune its worktree,
+    /// delete its code + reasoning branches, and erase its manifest. Destroys
+    /// local provenance (only the `removed` event in refs/h5i/env survives).
+    /// A still-live env (created/running/proposed) needs --force.
+    Rm {
+        name: String,
+        /// Remove even if the env is still live (not applied/aborted)
+        #[arg(long)]
+        force: bool,
     },
 
     /// Reclaim workspaces of applied/aborted environments (worktree prune).
@@ -2002,6 +2029,10 @@ enum ObjectsCommands {
         /// Only objects from this tool (e.g. pytest, cargo, npm).
         #[arg(long)]
         tool: Option<String>,
+        /// Only objects captured inside this environment (`env run`). Accepts the
+        /// full id `env/<agent>/<slug>`, `<agent>/<slug>`, or a bare `<slug>`.
+        #[arg(long)]
+        env: Option<String>,
     },
 
     /// Search captured objects by their normalized findings (and metadata).
@@ -2036,6 +2067,10 @@ enum ObjectsCommands {
         /// Only captures from this tool (e.g. pytest, cargo, npm).
         #[arg(long)]
         tool: Option<String>,
+        /// Only captures taken inside this environment (`env run`). Accepts the
+        /// full id `env/<agent>/<slug>`, `<agent>/<slug>`, or a bare `<slug>`.
+        #[arg(long)]
+        env: Option<String>,
         /// Only captures at most this old (e.g. 7d, 12h, 90m).
         #[arg(long, value_name = "DURATION")]
         since: Option<String>,
@@ -2237,7 +2272,7 @@ h5i capture run --file <path> -- <command>    # tag the files it relates to
 It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Small *successful* output (under ~2 KB) passes through unstored — but failures are always captured regardless of size, so they stay searchable. Safe to wrap anything. Rehydrate the full raw only if the summary isn't enough:
 
 ```bash
-h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall objects [--branch <b>|--file <p>|--env <e>]   # list captures
 h5i recall search <query> [--severity|--rule|--path|--fingerprint|--tool|--since]
                                                # query findings across captures
 h5i recall object <id>                         # full raw bytes
@@ -2481,7 +2516,7 @@ Prefer wrapping all shell commands, so the agent receives compact, token-efficie
 ```bash
 h5i capture run -- <command> [args…]     # e.g. h5i capture run -- cargo test
 h5i capture run --file <path> -- <cmd>   # tag the files it relates to
-h5i recall objects [--branch <b>|--file <p>]   # list captures
+h5i recall objects [--branch <b>|--file <p>|--env <e>]   # list captures
 h5i recall search <query> [--rule|--path|--severity|--fingerprint]  # query findings across captures
 h5i recall object <id>                   # rehydrate full raw (only if needed)
 h5i recall object <id> --format yaml     # re-view the structured findings (no raw)
@@ -2547,7 +2582,7 @@ through, and stores the full raw output out-of-band. Small *successful* output
 regardless of size so they stay searchable. Rehydrate the full raw only if needed:
 
 ```bash
-h5i recall objects [--branch <b>|--file <p>]    # list captures
+h5i recall objects [--branch <b>|--file <p>|--env <e>]    # list captures
 h5i recall search <query> [--rule|--path|--severity|--fingerprint]  # query findings
 h5i recall object <id>                          # full raw bytes
 h5i recall object <id> --format yaml|compact|json   # re-view structured findings (no raw)
@@ -7150,7 +7185,7 @@ jq -c '{
                     }
                 }
 
-                ObjectsCommands::List { limit, branch, file, diff, status, tool } => {
+                ObjectsCommands::List { limit, branch, file, diff, status, tool, env } => {
                     let all = objects::read_manifests(git);
 
                     // Validate --status against the canonical vocabulary (the
@@ -7212,10 +7247,18 @@ jq -c '{
                                 m.structured.as_ref().map(|s| s.tool.as_str()) == Some(want)
                             })
                         })
+                        .filter(|m| {
+                            env.as_deref()
+                                .is_none_or(|want| objects::env_id_matches(m.env_id.as_deref(), want))
+                        })
                         .collect();
 
-                    let filtered =
-                        branch.is_some() || file.is_some() || diff || status.is_some() || tool.is_some();
+                    let filtered = branch.is_some()
+                        || file.is_some()
+                        || diff
+                        || status.is_some()
+                        || tool.is_some()
+                        || env.is_some();
                     if manifests.is_empty() {
                         if filtered {
                             println!("No captured objects match that filter.");
@@ -7301,6 +7344,7 @@ jq -c '{
                     branch,
                     status,
                     tool,
+                    env,
                     since,
                     limit,
                 } => {
@@ -7356,6 +7400,7 @@ jq -c '{
                         branch: branch.clone(),
                         status,
                         tool: tool.clone(),
+                        env: env.clone(),
                         since,
                     };
 
@@ -8249,6 +8294,23 @@ jq -c '{
                     }
                 }
 
+                EnvCommands::Context { name, window, trace, depth } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    // --trace is shorthand for --depth 3 (mirrors `context show`).
+                    let effective_depth = if trace { 3 } else { depth };
+                    let opts = ctx::ContextOpts {
+                        branch: Some(m.context_branch.clone()),
+                        commit_hash: None,
+                        show_log: effective_depth >= 3,
+                        log_offset: 0,
+                        metadata_segment: None,
+                        window,
+                        depth: effective_depth,
+                    };
+                    let snapshot = ctx::gcc_context(&workdir, &opts)?;
+                    ctx::print_context_depth(&snapshot, effective_depth);
+                }
+
                 EnvCommands::Diff { name, stat } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     print!("{}", h5i_core::env::diff(git, &h5i_root, &m, stat)?);
@@ -8284,6 +8346,15 @@ jq -c '{
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
                     h5i_core::env::abort(git, &h5i_root, &mut m)?;
                     println!("{} {} aborted (manifest preserved for forensics)", SUCCESS, m.id);
+                }
+
+                EnvCommands::Rm { name, force } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    h5i_core::env::rm(git, &h5i_root, &m, force)?;
+                    println!(
+                        "{} {} removed (workspace, branches, and manifest erased)",
+                        SUCCESS, m.id
+                    );
                 }
 
                 EnvCommands::Gc => {

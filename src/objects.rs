@@ -1426,9 +1426,26 @@ pub struct SearchFilters {
     pub status: Option<String>,
     /// Only captures from this tool (e.g. `pytest`, `cargo`).
     pub tool: Option<String>,
+    /// Only captures taken inside this environment (`env run`). Matched against
+    /// the manifest's `env_id` via [`env_id_matches`] (full id / `<agent>/<slug>`
+    /// / bare `<slug>`).
+    pub env: Option<String>,
     /// RFC3339 cutoff in the manifest timestamp format; keep captures at or after
     /// it. Compared lexically, which is correct for the zero-padded UTC format.
     pub since: Option<String>,
+}
+
+/// Match a capture's stored `env_id` (the full `env/<agent>/<slug>`) against a
+/// user-supplied env name, accepting the full id, the `<agent>/<slug>` form, or
+/// a bare `<slug>`. Mirrors `env::find`'s name resolution so the same names work
+/// for `env …` and `recall objects/search --env …` — and it still resolves
+/// captures of a since-removed env (no on-disk manifest needed). Unlike `find`,
+/// a bare slug shared by two agents matches both (this is a filter, not a
+/// unique selection).
+pub fn env_id_matches(env_id: Option<&str>, query: &str) -> bool {
+    let Some(id) = env_id else { return false };
+    let q = query.trim().trim_matches('/');
+    id == q || id == format!("env/{q}") || id.rsplit('/').next() == Some(q)
 }
 
 impl SearchFilters {
@@ -1556,6 +1573,11 @@ pub fn search_manifests<'a>(manifests: &'a [Manifest], flt: &SearchFilters) -> V
         }
         if let Some(want) = &flt.tool {
             if m.structured.as_ref().map(|s| s.tool.as_str()) != Some(want.as_str()) {
+                continue;
+            }
+        }
+        if let Some(want) = &flt.env {
+            if !env_id_matches(m.env_id.as_deref(), want) {
                 continue;
             }
         }
@@ -2330,6 +2352,43 @@ mod tests {
         assert_eq!(search_manifests(&ms, &SearchFilters { tool: Some("pytest".into()), ..Default::default() }).len(), 1);
         // A branch nobody is on.
         assert!(search_manifests(&ms, &SearchFilters { branch: Some("nope".into()), ..Default::default() }).is_empty());
+    }
+
+    #[test]
+    fn env_id_matches_full_agentslug_and_bare_slug() {
+        let id = Some("env/claude/fix-auth");
+        assert!(env_id_matches(id, "env/claude/fix-auth")); // full id
+        assert!(env_id_matches(id, "claude/fix-auth")); // <agent>/<slug>
+        assert!(env_id_matches(id, "fix-auth")); // bare slug
+        assert!(env_id_matches(id, "/fix-auth/")); // stray slashes trimmed
+        // Non-matches.
+        assert!(!env_id_matches(id, "fix")); // partial slug, not a component
+        assert!(!env_id_matches(id, "claude")); // agent alone is not the slug
+        assert!(!env_id_matches(id, "codex/fix-auth")); // wrong agent
+        assert!(!env_id_matches(None, "fix-auth")); // capture has no env_id
+    }
+
+    #[test]
+    fn search_filters_by_env_id() {
+        let mut alpha = mk_manifest('a', "pytest", Status::Failed, Some("main"),
+            vec![mk_finding(FindingKind::TestFailure, Severity::Failure, None, "boom", None, "f1")]);
+        alpha.env_id = Some("env/tester/alpha".into());
+        let mut beta = mk_manifest('b', "cargo", Status::Failed, Some("main"),
+            vec![mk_finding(FindingKind::TestFailure, Severity::Failure, None, "boom", None, "f2")]);
+        beta.env_id = Some("env/tester/beta".into());
+        let plain = mk_manifest('c', "npm", Status::Failed, Some("main"),
+            vec![mk_finding(FindingKind::TestFailure, Severity::Failure, None, "boom", None, "f3")]);
+        let ms = vec![alpha, beta, plain];
+
+        // Bare slug selects exactly its env's capture.
+        let hits = search_manifests(&ms, &SearchFilters { env: Some("alpha".into()), ..Default::default() });
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].manifest.env_id.as_deref(), Some("env/tester/alpha"));
+        // Full id works too; a non-env capture is never matched by --env.
+        assert_eq!(search_manifests(&ms, &SearchFilters { env: Some("env/tester/beta".into()), ..Default::default() }).len(), 1);
+        assert!(search_manifests(&ms, &SearchFilters { env: Some("ghost".into()), ..Default::default() }).is_empty());
+        // --env composes with the free-text query.
+        assert_eq!(search_manifests(&ms, &SearchFilters { env: Some("alpha".into()), query: Some("boom".into()), ..Default::default() }).len(), 1);
     }
 
     #[test]

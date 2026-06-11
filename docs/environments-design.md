@@ -491,6 +491,9 @@ h5i env propose NAME [--style review]   # PR brief: diff + tests + captures + po
 h5i env apply NAME [--patch|--merge]    # reviewer-selected; NEVER auto-writes parent branch
 h5i env abort NAME               # stop procs, preserve manifest for forensics
 h5i env gc                       # git worktree prune + reclaim; raw blobs GC via existing object policy
+h5i env rm NAME [--force]        # permanent removal: worktree + code/reasoning branches + on-disk manifest,
+                                 #   and strip manifest/policy from refs/h5i/env (local-only; the append-only
+                                 #   `removed` event survives). --force required for a still-live env.
 ```
 
 Wiring follows the existing noun-verb table in `main.rs` (the same pattern as

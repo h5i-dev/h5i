@@ -790,6 +790,91 @@ fn abort_preserves_forensics_and_gc_reclaims_workspace() {
     assert!(!out.status.success());
 }
 
+#[test]
+fn rm_erases_workspace_branches_and_manifest() {
+    let r = Repo::new();
+    let branch = "refs/heads/h5i/env/tester/scratch";
+    let ctx_branch = "refs/h5i/context/env/tester/scratch";
+
+    r.h5i_ok(&["env", "create", "scratch"]);
+    r.h5i_ok(&["env", "run", "scratch", "--", "sh", "-c", "echo evidence"]);
+    // A live env refuses removal without --force.
+    let out = r.h5i(&["env", "rm", "scratch"]);
+    assert!(!out.status.success(), "live env must refuse rm without --force");
+    assert!(r.env_dir("scratch").join("manifest.json").is_file(), "manifest still present");
+
+    // --force removes everything: workspace, both branches, on-disk dir.
+    r.h5i_ok(&["env", "rm", "scratch", "--force"]);
+    assert!(!r.work("scratch").exists(), "workspace gone");
+    assert!(!r.env_dir("scratch").exists(), "env dir erased");
+    for refname in [branch, ctx_branch] {
+        let rp = Command::new("git")
+            .args(["rev-parse", "--verify", refname])
+            .current_dir(&r.dir)
+            .output()
+            .expect("git spawn");
+        assert!(!rp.status.success(), "{refname} should be deleted");
+    }
+    // Gone from the list, and a second rm reports no such env.
+    assert!(!out_str(&r.h5i_ok(&["env", "list"])).contains("scratch"), "not listed");
+    assert!(!r.h5i(&["env", "rm", "scratch", "--force"]).status.success(), "already gone");
+
+    // An applied/aborted env removes without --force.
+    r.h5i_ok(&["env", "create", "done"]);
+    r.h5i_ok(&["env", "abort", "done"]);
+    r.h5i_ok(&["env", "rm", "done"]);
+    assert!(!r.env_dir("done").exists(), "aborted env removed without --force");
+}
+
+#[test]
+fn recall_objects_filters_by_env() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "alpha"]);
+    r.h5i_ok(&["env", "create", "beta"]);
+    r.h5i_ok(&["env", "run", "alpha", "--", "sh", "-c", "echo alpha-out"]);
+    r.h5i_ok(&["env", "run", "beta", "--", "sh", "-c", "echo beta-out"]);
+
+    // Bare slug selects exactly that env's capture (and not the other's).
+    let a = out_str(&r.h5i_ok(&["recall", "objects", "--env", "alpha"]));
+    assert!(a.contains("alpha-out"), "alpha capture shown:\n{a}");
+    assert!(!a.contains("beta-out"), "beta capture must be excluded:\n{a}");
+
+    // The <agent>/<slug> and full-id forms resolve the same env.
+    assert!(out_str(&r.h5i_ok(&["recall", "objects", "--env", "tester/beta"])).contains("beta-out"));
+    assert!(out_str(&r.h5i_ok(&["recall", "objects", "--env", "env/tester/beta"])).contains("beta-out"));
+
+    // An unknown env matches nothing (filter message, not the empty-store one).
+    let none = out_str(&r.h5i_ok(&["recall", "objects", "--env", "ghost"]));
+    assert!(none.contains("match that filter"), "{none}");
+
+    // search --env composes with the query and is env-scoped.
+    let s = out_str(&r.h5i_ok(&["recall", "search", "alpha-out", "--env", "alpha"]));
+    assert!(s.contains("alpha-out"), "{s}");
+    assert!(out_str(&r.h5i_ok(&["recall", "search", "alpha-out", "--env", "beta"]))
+        .contains("No captured findings"), "alpha-out must not match in beta");
+
+    // Captures survive their env's removal and stay queryable by env id.
+    r.h5i_ok(&["env", "rm", "alpha", "--force"]);
+    assert!(out_str(&r.h5i_ok(&["recall", "objects", "--env", "alpha"])).contains("alpha-out"),
+        "captures of a removed env remain searchable by env id");
+}
+
+#[test]
+fn env_context_shows_the_reasoning_branch() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "scout"]);
+
+    let out = out_str(&r.h5i_ok(&["env", "context", "scout"]));
+    // Renders the env's reasoning branch (name under refs/h5i/context/).
+    assert!(out.contains("env/tester/scout"), "shows the env context branch:\n{out}");
+
+    // --trace deepens to the full trace (depth 3) without erroring.
+    r.h5i_ok(&["env", "context", "scout", "--trace"]);
+
+    // An unknown env name is a clean error, not a panic.
+    assert!(!r.h5i(&["env", "context", "ghost"]).status.success(), "unknown env must fail");
+}
+
 // ─── 6. isolation claims fail closed ────────────────────────────────────────
 
 /// Secure-by-default: `--isolation auto` (which force-probes, ignoring the

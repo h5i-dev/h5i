@@ -70,8 +70,8 @@ h5i capture run --file <path> -- <command>    # tag the files it relates to
 It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Small *successful* output (under ~2 KB) passes through unstored — but failures are always captured regardless of size, so they stay searchable. Safe to wrap anything. Rehydrate the full raw only if the summary isn't enough:
 
 ```bash
-h5i recall objects [--branch <b>|--file <p>]   # list captures
-h5i recall search <query> [--severity|--rule|--path|--fingerprint|--tool|--since]
+h5i recall objects [--branch <b>|--file <p>|--env <name>]   # list captures
+h5i recall search <query> [--severity|--rule|--path|--fingerprint|--tool|--env|--since]
                                                # query findings across captures
 h5i recall object <id>                         # full raw bytes
 h5i recall object <id> --format yaml|compact|json   # re-view the structured findings (no raw)

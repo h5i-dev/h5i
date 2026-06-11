@@ -258,6 +258,27 @@ fn upsert_jsonl_by_id(existing: &str, id: &str, new_line: &str) -> String {
     out
 }
 
+/// Drop the single JSONL line whose parsed `id` field equals `id`, preserving
+/// the others verbatim and in order. Inverse of [`upsert_jsonl_by_id`]; powers
+/// the manifest/policy strip in [`rm`].
+fn remove_jsonl_by_id(existing: &str, id: &str) -> String {
+    let mut out = String::new();
+    for line in existing.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let line_id = serde_json::from_str::<serde_json::Value>(line)
+            .ok()
+            .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(str::to_owned));
+        if line_id.as_deref() == Some(id) {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 /// Append one event to `refs/h5i/env` with compare-and-swap semantics. Thin
 /// wrapper over [`append_env_commit`] for callers with no manifest to mirror
 /// (only `gc`, which records an event without changing the manifest body).
@@ -345,6 +366,71 @@ pub fn append_env_commit(
     Err(H5iError::Internal(format!(
         "h5i env: event {} for {} could not be appended after {MAX_ATTEMPTS} attempts",
         ev.event, ev.env_id
+    )))
+}
+
+/// Append a `removed` event AND strip the env's manifest + policy lines from
+/// `refs/h5i/env`, in one CAS commit. This is what makes [`rm`] durable on this
+/// clone: [`materialize_from_ref`] runs at the top of every `env` command and
+/// would otherwise rewrite the on-disk manifest straight back from the ref. The
+/// `removed` event stays in the append-only log as the audit trail. (Across
+/// clones this is not a tombstone — a `pull` from a peer that still holds the
+/// manifest re-introduces it via union-merge; a distributed delete is a
+/// separate, larger change.)
+fn append_removed_and_strip(repo: &Repository, ev: &EnvEvent) -> Result<(), H5iError> {
+    const MAX_ATTEMPTS: usize = 64;
+    let event_line = serde_json::to_string(ev)?;
+    let message = format!("h5i env: removed {}", ev.env_id);
+
+    for _ in 0..MAX_ATTEMPTS {
+        let tip = repo.refname_to_id(ENV_REF).ok();
+        let parent = match tip {
+            Some(oid) => Some(repo.find_commit(oid)?),
+            None => None,
+        };
+        let base_tree = parent.as_ref().and_then(|c| c.tree().ok());
+
+        let mut log =
+            objects::read_blob_from_tree(repo, base_tree.as_ref(), EVENTS_FILE).unwrap_or_default();
+        if !log.is_empty() && !log.ends_with('\n') {
+            log.push('\n');
+        }
+        log.push_str(&event_line);
+        log.push('\n');
+
+        let manifests = remove_jsonl_by_id(
+            &objects::read_blob_from_tree(repo, base_tree.as_ref(), MANIFESTS_FILE)
+                .unwrap_or_default(),
+            &ev.env_id,
+        );
+        let policies = remove_jsonl_by_id(
+            &objects::read_blob_from_tree(repo, base_tree.as_ref(), POLICIES_FILE)
+                .unwrap_or_default(),
+            &ev.env_id,
+        );
+
+        let files: Vec<(&str, &str)> = vec![
+            (EVENTS_FILE, log.as_str()),
+            (MANIFESTS_FILE, manifests.as_str()),
+            (POLICIES_FILE, policies.as_str()),
+        ];
+        let tree_oid = objects::build_tree(repo, base_tree.as_ref(), &files)?;
+        let tree = repo.find_tree(tree_oid)?;
+        let sig = objects::signature(repo)?;
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+        let new_oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
+
+        let cas_ok = match tip {
+            None => repo.reference(ENV_REF, new_oid, false, &message).is_ok(),
+            Some(old) => repo.reference_matching(ENV_REF, new_oid, true, old, &message).is_ok(),
+        };
+        if cas_ok {
+            return Ok(());
+        }
+    }
+    Err(H5iError::Internal(format!(
+        "h5i env: removal of {} could not be committed after {MAX_ATTEMPTS} attempts",
+        ev.env_id
     )))
 }
 
@@ -2008,6 +2094,26 @@ pub fn abort(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result<
     set_status(repo, h5i_root, m, ST_ABORTED, "aborted", Some("manifest preserved for forensics".into()), None)
 }
 
+/// Prune one env's git worktree registration and remove its `work/` directory.
+/// Idempotent: a missing worktree or `work/` is a no-op. Shared by `gc`
+/// (workspace-only reclaim) and `rm` (full removal). Returns `Err` if the
+/// worktree prune itself fails, leaving the workspace in place for a retry.
+fn prune_workspace(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Result<(), H5iError> {
+    if let Ok(wt) = repo.find_worktree(&m.worktree_name()) {
+        // The worktree is locked for the env's life; we are intentionally
+        // reclaiming it now, so override the lock (locked(true)).
+        let _ = wt.unlock();
+        let mut opts = git2::WorktreePruneOptions::new();
+        opts.valid(true).locked(true).working_tree(true);
+        wt.prune(Some(&mut opts))?;
+    }
+    let work = m.work_dir(h5i_root);
+    if work.exists() {
+        std::fs::remove_dir_all(&work).map_err(|e| H5iError::with_path(e, &work))?;
+    }
+    Ok(())
+}
+
 /// Reclaim workspaces of applied/aborted envs: prune the git worktree and
 /// remove the `work/` directory. Manifests, policies, branches, context
 /// branches, and captures are all retained — provenance is never gc'd here.
@@ -2017,22 +2123,13 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
         if m.status != ST_APPLIED && m.status != ST_ABORTED {
             continue;
         }
-        let work = m.work_dir(h5i_root);
-        if !work.exists() {
+        if !m.work_dir(h5i_root).exists() {
             continue;
         }
-        if let Ok(wt) = repo.find_worktree(&m.worktree_name()) {
-            // The env was locked at create; we are intentionally reclaiming an
-            // applied/aborted env, so override the lock (locked(true)).
-            let _ = wt.unlock();
-            let mut opts = git2::WorktreePruneOptions::new();
-            opts.valid(true).locked(true).working_tree(true);
-            if wt.prune(Some(&mut opts)).is_err() {
-                continue;
-            }
-        }
-        if work.exists() {
-            std::fs::remove_dir_all(&work).map_err(|e| H5iError::with_path(e, &work))?;
+        // A failed prune leaves this env for a later sweep rather than aborting
+        // the whole gc; skip it and keep going.
+        if prune_workspace(repo, h5i_root, &m).is_err() {
+            continue;
         }
         append_event(
             repo,
@@ -2049,6 +2146,76 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
         reclaimed.push(std::mem::take(&mut m.id));
     }
     Ok(reclaimed)
+}
+
+/// Permanently remove an environment from this clone: prune its worktree,
+/// delete its code branch (`refs/heads/h5i/env/…`) and reasoning branch
+/// (`refs/h5i/context/env/…`), and erase its on-disk dir (manifest, policy,
+/// status). Unlike `gc` (workspace only) and `abort` (status only), this
+/// destroys the *local* provenance — the env's manifest + policy lines are
+/// stripped from `refs/h5i/env` (otherwise [`materialize_from_ref`], run at the
+/// top of every `env` command, would rewrite the on-disk manifest right back),
+/// leaving only the append-only `removed` event as the record. This removal is
+/// local: a later `pull` from a peer that still holds the manifest can
+/// re-introduce it via union-merge (no cross-clone tombstone yet).
+///
+/// `force` is required to remove a still-live env (created/running/idle/
+/// proposed); applied/aborted envs remove freely.
+pub fn rm(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+    force: bool,
+) -> Result<(), H5iError> {
+    let live = matches!(m.status.as_str(), ST_CREATED | ST_RUNNING | ST_IDLE | ST_PROPOSED);
+    if live && !force {
+        return Err(H5iError::Metadata(format!(
+            "{} is still live (status: {}) — abort it first (`h5i env abort {}`) or pass \
+             --force to remove it anyway",
+            m.id, m.status, m.slug
+        )));
+    }
+
+    // 1. Reclaim the workspace. Must precede the branch delete: git refuses to
+    //    delete a branch still checked out in a registered worktree.
+    prune_workspace(repo, h5i_root, m)?;
+
+    // 2. Delete the code branch and 3. the reasoning branch. Tolerate a missing
+    //    ref (a pulled or already-half-removed env may lack one locally).
+    if let Ok(mut r) = repo.find_reference(&m.branch) {
+        r.delete()?;
+    }
+    let ctx_ref = crate::ctx::branch_ref(&m.context_branch);
+    if let Ok(mut r) = repo.find_reference(&ctx_ref) {
+        r.delete()?;
+    }
+
+    // 4. Record the removal AND strip the manifest/policy from refs/h5i/env
+    //    BEFORE erasing the dir, so a failure on step 5 leaves the on-disk
+    //    manifest for a retry (and so a re-materialize can't resurrect it).
+    append_removed_and_strip(
+        repo,
+        &EnvEvent {
+            ts: now_ts(),
+            env_id: m.id.clone(),
+            agent: m.agent.clone(),
+            event: "removed".into(),
+            detail: Some("workspace + branches + manifest erased locally".into()),
+            capture: None,
+        },
+    )?;
+
+    // 5. Erase the on-disk env dir (manifest, policy, status, leftovers), then
+    //    tidy the now-empty agent dir.
+    let dir = m.dir(h5i_root);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+    }
+    let agent_dir = h5i_root.join(ENV_DIR).join(&m.agent);
+    if agent_dir.read_dir().map(|mut d| d.next().is_none()).unwrap_or(false) {
+        let _ = std::fs::remove_dir(&agent_dir);
+    }
+    Ok(())
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────────
@@ -2070,6 +2237,20 @@ mod tests {
         let out = upsert_jsonl_by_id(&out, "c", "{\"id\":\"c\",\"v\":9}");
         assert_eq!(out.lines().count(), 3);
         assert!(out.lines().last().unwrap().contains("\"id\":\"c\""));
+    }
+
+    #[test]
+    fn remove_jsonl_drops_only_the_matching_id() {
+        let existing = "{\"id\":\"a\",\"v\":1}\n{\"id\":\"b\",\"v\":1}\n{\"id\":\"c\",\"v\":1}\n";
+        let out = remove_jsonl_by_id(existing, "b");
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 2, "one line dropped: {out}");
+        assert!(lines[0].contains("\"id\":\"a\"") && lines[1].contains("\"id\":\"c\""));
+        // Removing an absent id is a no-op; an empty input stays empty.
+        assert_eq!(remove_jsonl_by_id(existing, "z"), existing);
+        assert_eq!(remove_jsonl_by_id("", "a"), "");
+        // Removing the sole line yields the empty blob.
+        assert_eq!(remove_jsonl_by_id("{\"id\":\"a\",\"v\":1}\n", "a"), "");
     }
 
     #[test]
