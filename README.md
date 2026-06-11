@@ -132,11 +132,22 @@ We can also monitor the conversation in real time with `h5i msg watch`.
   <img src="./assets/claude-codex-chess.gif" alt="h5i msg watch — a live claude ↔ codex code review streaming over refs/h5i/msg" width="95%">
 </p>
 
-### 3.2. Agent Sandbox — run risky work confined, captured, and reviewable
+### 3.2. Agent Sandbox — hand off risky work, then audit what happened
 
-`h5i env` gives an agent an isolated **environment**: a git worktree plus a digest-pinned, **fail-closed** policy, so you can hand it a refactor, a dependency upgrade, or an untrusted build without it touching your main tree. Every `h5i env run` is policy-enforced and capture-wrapped — escape attempts (reading `/etc/shadow`, a raw socket to an arbitrary IP, `mount` / `unshare` / `ptrace`) are denied **at the boundary** by Landlock + seccomp + namespaces, while legitimate work proceeds and lands as tamper-evident evidence. Nothing reaches your branch until a reviewer approves a `propose` with `apply`. For interactive work, `h5i env shell` drops you (or an agent) into the box itself — every command the session spawns is confined by construction, not by remembering to wrap each one.
+`h5i env` gives you a disposable, policy-confined **environment** — a git worktree plus a digest-pinned, **fail-closed** policy — to hand a refactor, a dependency upgrade, or an untrusted build to an agent (or do it yourself) without it touching your main tree. Your loop is four commands:
 
-Isolation is **tiered, secure-by-default, and never silently downgraded** — `h5i env create` with no `--isolation` auto-picks the *strongest tier the host can actually run*, `h5i env probe` reports what that is, and an explicit claim the host can't satisfy is refused, not weakened:
+```bash
+h5i env create fix-auth          # spin up a confined box (auto-picks the strongest tier)
+h5i env shell  fix-auth          # drop in — or hand the box to an agent
+h5i env diff   fix-auth          # audit: what changed, against the frozen base
+h5i env apply  fix-auth          # land it onto your branch — never automatic
+```
+
+Inside the box, **every command is confined by construction** — escape attempts (reading `/etc/shadow`, a raw socket to an arbitrary IP, an off-allowlist host, `mount` / `unshare` / `ptrace`) are denied **at the boundary** by Landlock + seccomp + namespaces, while legitimate work proceeds and lands as tamper-evident evidence. (`h5i env run <name> -- <cmd>` runs a single confined command the same way.)
+
+**Audit everything after the fact.** `h5i env log` lists every run, secret use, and denial; `h5i env inspect --capture <id>` renders one run's evidence (exit code, enforced policy digest, redactions); `h5i env compare` ranks parallel attempts side by side (the "arena"); and the Sandbox tab of the [web dashboard](#46-web-dashboard) scores every allow/deny for **boundary pressure**. `h5i env propose` turns the work into a review brief first — nothing reaches your branch until you `apply`. Env state lives in `refs/h5i/env` and travels with `h5i push` / `pull` for a cross-clone review loop.
+
+Isolation is **tiered, secure-by-default, and never silently downgraded** — `h5i env create` picks the strongest tier the host can run (`h5i env probe` shows what that is); an explicit `--isolation` the host can't satisfy is refused, not weakened:
 
 | Tier | Confinement |
 |------|-------------|
@@ -144,16 +155,6 @@ Isolation is **tiered, secure-by-default, and never silently downgraded** — `h
 | `process` | Landlock + seccomp deny-list + user/net namespaces + cgroup v2 (rootless) |
 | `supervised` | process tier + a live seccomp-notify socket gate (default-deny sockets) **plus a real L3/L4 `net.egress` allowlist** — slirp4netns uplink + nftables default-drop + `/etc/hosts` DNS pinning (no raw-socket bypass) |
 | `container` | rootless Podman + a DNS-pinned **`net.egress` domain allowlist** (L7) |
-
-```bash
-h5i env create fix-auth                       # auto-picks the strongest runnable tier
-h5i env run    fix-auth -- cargo build        # confined + captured
-h5i env shell  fix-auth                        # interactive confined session (agent-in-box)
-h5i env propose fix-auth                       # mediated commit + review brief
-h5i env apply   fix-auth                       # reviewer-selected; never automatic
-```
-
-Every run, allow or deny, is scored for **boundary pressure** and shown in the Sandbox tab of the [web dashboard](#46-web-dashboard); env state lives in `refs/h5i/env` and travels with `h5i push` / `pull` for a cross-clone review loop.
 
 <p align="center">
   <img src="./assets/agent-sandbox.svg" alt="An agent runs cargo build via h5i env run inside a policy-confined sandbox; reads of /etc/shadow are blocked by Landlock, raw sockets and off-allowlist hosts by the seccomp gate and egress proxy, and mount/unshare/ptrace by the seccomp deny-list, while the legitimate build is allowed and captured as evidence that a reviewer applies via propose → apply." width="95%">
