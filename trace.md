@@ -1595,3 +1595,4 @@ _[Checkpoint: 6a2a0ab1 — edited man/man1/h5i.1; edited README.md; edited READM
 [01:10:55] OBSERVE: read src/main.rs
 [01:13:23] OBSERVE: read src/main.rs
 [01:14:03] ACT: edited src/main.rs
+[01:17:11] NOTE: PLACEHOLDER (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/sandbox-production-roadmap.md): ), but `supervisor::run()` is still the fail-closed Phase A stub — so `env run` fails closed with "live enforcement not wired." Wiring that st…
