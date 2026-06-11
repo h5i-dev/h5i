@@ -410,3 +410,4 @@ _[Checkpoint: 6a2b2a33 — edited CLAUDE.md; edited CLAUDE.md; edited src/main.r
 [21:42:07] ACT: edited tests/env_integration.rs
 [21:42:14] ACT: edited tests/env_integration.rs
 [21:43:00] ACT: edited docs/environments-design.md
+[21:43:04] ACT: edited CLAUDE.md
