@@ -533,3 +533,4 @@ _[Checkpoint: 6a2b3ee9 — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a2b450c — Observation-first auto-capture shipped]_
 ---
 
+[23:41:29] THINK: Now let me map the rest of the code I'll touch: the hook CLI enum, the capture/objects API, the supervisor notify loop, and the container argv builder.
