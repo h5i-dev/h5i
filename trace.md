@@ -1852,3 +1852,4 @@ _[Checkpoint: 6a2a25fa — edited tests/env_integration.rs; wrote env-process-ti
 _[Checkpoint: 6a2a269c — edited tests/env_integration.rs; wrote env-process-tier-missing-pidns.md; edited MEMORY.md]_
 ---
 
+[03:12:23] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/MEMORY.md): ect: - Supervised tier still runs `pidns=false` — tracked follow-up, refuses on most hosts anyway. - Pre-existing `/dev/null` read-only usability ga…
