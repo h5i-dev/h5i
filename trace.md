@@ -1895,3 +1895,9 @@ _[Checkpoint: 6a2a29d0 — edited docs/comparison.md; edited docs/comparison.md]
 
 [11:44:33] OBSERVE: read docs/index.html
 [11:44:55] OBSERVE: read docs/index.html
+
+
+---
+_[Checkpoint: 6a2a9fd9 — edited docs/comparison.md; edited docs/comparison.md]_
+---
+
