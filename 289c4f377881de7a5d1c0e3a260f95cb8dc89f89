@@ -1,0 +1,1 @@
+{"git_oid":"289c4f377881de7a5d1c0e3a260f95cb8dc89f89","parent_oid":"a71488611cca53004aa3ec1cf5c82cf9bf8d2b72","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"is it better to add metatag about sandbox, isolation, etc.?","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-11T01:49:19.009152933Z"}
