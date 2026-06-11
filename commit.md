@@ -381,3 +381,16 @@ improve default UX of h5i env shell so AI agents (claude/codex) can actually run
 
 ---
 
+## Commit 6a2b450c — 2026-06-11 23:30 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Three observe-only surfaces: (1) optional 'h5i hook observe-bash' PostToolUse handler stores Bash command+output as redacted captures (>=2KB or stderr; h5i's own commands skipped), registered in this repo's .claude/settings.json; (2) supervised tier argv-logs every execve via seccomp-notify (interactive sessions) to <env>/spool/exec.jsonl; (3) container tier env shell shadows /bin/sh+/bin/bash with a POSIX tee shim (image self-mount keeps real shell at /.h5i/orig), spooling per-command records. env shell ingests spool into env-tagged captures (untrusted: caps+redaction). Left: supervised-tier output tee (needs mount-ns), exit codes absent in hook payload.
+
+---
+
