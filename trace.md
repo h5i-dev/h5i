@@ -300,3 +300,9 @@ _[Checkpoint: 6a2b1e15 — edited tests/env_integration.rs; edited CLAUDE.md; ed
 ---
 
 [20:46:41] NOTE: DEFERRAL (~/Dev/h5i/.claude/h5i.md): the in-CLI verb-table help. One thing I deliberately left out of scope: mirroring these into the **MCP** tool surface (`mcp.rs`). The MCP env family d…
+
+
+---
+_[Checkpoint: 6a2b1eb1 — edited tests/env_integration.rs; edited CLAUDE.md; edited .claude/h5i.md]_
+---
+
