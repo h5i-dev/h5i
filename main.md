@@ -642,11 +642,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] env shell agent-in-box: agent profile + interactive fixes, verified end-to-end
 - [x] edited src/sandbox.rs; wrote supervised-tier-green-on-this-host.md; edited MEMORY.md
 - [x] agent profile is now the auto-picked default for env create
+- [x] edited docs/environments-design.md; edited src/env.rs; edited wsl2-cargo-test-oom.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-11 15:45 UTC] `improve-shell`: edited docs/environments-design.md; edited src/env.rs; edited wsl2-cargo-test-oom.md
 - [2026-06-11 15:44 UTC] `improve-shell`: agent profile is now the auto-picked default for env create
 - [2026-06-11 15:14 UTC] `improve-shell`: edited src/sandbox.rs; wrote supervised-tier-green-on-this-host.md; edited MEMORY.md
 - [2026-06-11 15:13 UTC] `improve-shell`: env shell agent-in-box: agent profile + interactive fixes, verified end-to-end
