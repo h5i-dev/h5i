@@ -136,3 +136,9 @@ _[Checkpoint: 6a2aecc9 — edited docs/environments-design.md; edited src/env.rs
 [17:29:19] ACT: edited CLAUDE.md
 [17:30:23] OBSERVE: read src/mcp.rs
 [17:30:31] ACT: edited src/mcp.rs
+
+
+---
+_[Checkpoint: 6a2af0fd — agent profile runtime-scoping]_
+---
+
