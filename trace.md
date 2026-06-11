@@ -534,3 +534,9 @@ _[Checkpoint: 6a2b450c — Observation-first auto-capture shipped]_
 ---
 
 [23:41:29] THINK: Now let me map the rest of the code I'll touch: the hook CLI enum, the capture/objects API, the supervisor notify loop, and the container argv builder.
+
+
+---
+_[Checkpoint: 6a2b47a9 — edited CLAUDE.md; edited CLAUDE.md; edited .claude/h5i.md]_
+---
+
