@@ -384,3 +384,4 @@ _[Checkpoint: 6a2b2717 — edited docs/environments-design.md; edited CLAUDE.md;
 [21:29:42] OBSERVE: read tests/env_integration.rs
 [21:30:06] ACT: edited tests/env_integration.rs
 [21:31:06] ACT: edited docs/environments-design.md
+[21:31:10] ACT: edited CLAUDE.md
