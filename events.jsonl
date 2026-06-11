@@ -8,3 +8,4 @@
 {"ts":"2026-06-11T17:25:40.108037Z","env_id":"env/claude/scopecheck","agent":"claude","event":"status","detail":"running"}
 {"ts":"2026-06-11T17:25:46.330840Z","env_id":"env/claude/scopecheck","agent":"claude","event":"exec","detail":"cmd=`sh -c ls ~/.local/share/jupyter 2>&1 | head -1` exit=0 wall=41ms cpu=0ms rss=0MiB","capture":"1d3e7d31593692eb"}
 {"ts":"2026-06-11T17:25:46.363891Z","env_id":"env/claude/scopecheck","agent":"claude","event":"status","detail":"running"}
+{"ts":"2026-06-11T17:25:55.880012Z","env_id":"env/claude/scopecheck","agent":"claude","event":"exec","detail":"cmd=`sh -c test -e ~/.claude && echo CLAUDE_OK` exit=0 wall=36ms cpu=0ms rss=0MiB","capture":"f4158a2eba387e5c"}
