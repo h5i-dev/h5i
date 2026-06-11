@@ -1777,3 +1777,4 @@ _[Checkpoint: 6a2a16e0 — edited index.html; edited index.html; edited index.ht
 [02:14:55] ACT: wrote env-process-tier-missing-pidns.md
 [02:15:00] OBSERVE: read MEMORY.md
 [02:15:06] ACT: edited MEMORY.md
+[02:15:29] THINK: Let me apply the fixes, starting with the container secret-in-argv leak.
