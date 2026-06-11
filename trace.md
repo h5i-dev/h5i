@@ -344,3 +344,4 @@ _[Checkpoint: 6a2b20ad — edited tests/env_integration.rs; edited CLAUDE.md; ed
 [21:09:02] OBSERVE: read src/env.rs
 [21:09:07] ACT: edited src/env.rs
 [21:09:32] OBSERVE: read tests/cli_integration.rs
+[21:09:44] ACT: edited src/main.rs
