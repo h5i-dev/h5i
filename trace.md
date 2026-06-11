@@ -1868,3 +1868,4 @@ _[Checkpoint: 6a2a2797 — edited tests/env_integration.rs; wrote env-process-ti
 [03:14:48] OBSERVE: read SECURITY.md
 [03:14:48] OBSERVE: read CHARTER.md
 [03:14:49] OBSERVE: read secure-container.md
+[03:14:53] OBSERVE: read CLAUDE.md
