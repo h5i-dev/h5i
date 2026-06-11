@@ -167,6 +167,22 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i share pull</span></pre></div>
     </div>
 
+    <h2>Run risky work in a sandbox</h2>
+    <p>When the work is a refactor, a dependency upgrade, or anything you'd rather an agent didn't run loose in your tree, give it a confined <code>env</code>: a git worktree plus a policy that limits what the code can read, write, and reach over the network. <code>h5i env create</code> picks the strongest isolation the host can enforce; <code>h5i env shell</code> drops you (or the agent) inside the box; and you audit and merge afterward — nothing reaches your branch until you <code>apply</code>.</p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">env</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create fix-auth</span>
+<span class="t-cmt"># picks the strongest isolation the host supports (Landlock + seccomp → egress allowlist)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell fix-auth</span>
+<span class="t-cmt"># work inside it — or hand the box to an agent</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env diff fix-auth</span>
+<span class="t-cmt"># audit: what changed, every command run, every blocked access</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env log fix-auth</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env apply fix-auth</span>
+<span class="t-cmt"># merge into your branch — only when you choose to</span></pre></div>
+    </div>
+
     <h2>PR styles</h2>
     <p>Use <code>--style review</code> when reviewers need a triage-oriented view of the context. Use <code>receipt</code> for a screenshot-friendly summary, <code>detective</code> for a narrative brief, <code>replay</code> when the reasoning DAG should be the hero, and <code>minimal</code> for quiet internal provenance.</p>
 

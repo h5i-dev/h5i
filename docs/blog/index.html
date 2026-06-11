@@ -35,6 +35,7 @@
     "url": "https://h5i.dev/blog/",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "blogPost": [
+      {"@type": "BlogPosting", "headline": "An Auditable Sandbox for AI Agents", "datePublished": "2026-06-10", "url": "https://h5i.dev/blog/agent-sandbox-env/"},
       {"@type": "BlogPosting", "headline": "What Is AI-Aware Version Control?", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/what-is-ai-aware-version-control/"},
       {"@type": "BlogPosting", "headline": "Why Git Diffs Are Not Enough for AI-Generated Code", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/"},
       {"@type": "BlogPosting", "headline": "How to Track Claude Code Prompts and Diffs in Git", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/track-claude-code-prompts-diffs-git/"},
@@ -97,6 +98,16 @@
 </section>
 
 <section class="post-list">
+
+  <a class="post-card" href="/blog/agent-sandbox-env/">
+    <div class="card-meta">
+      <span>Feature · Sandbox</span>
+      <span>2026-06-10</span>
+      <span>10 min read</span>
+    </div>
+    <h2>An Auditable Sandbox for AI Agents</h2>
+    <p>Run an agent in a confined, disposable environment — a git worktree plus tiered isolation (Landlock, seccomp, namespaces) and an airtight, rootless network egress allowlist a raw socket can't bypass — then audit everything it did before it touches your branch.</p>
+  </a>
 
   <a class="post-card" href="/blog/structured-tool-output-schema/">
     <div class="card-meta">

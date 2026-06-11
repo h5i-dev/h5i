@@ -1074,7 +1074,7 @@ pub fn gcc_branch(workdir: &Path, name: &str, purpose: &str) -> Result<(), H5iEr
 /// Point `refs/h5i/context/<new>` at the same commit as `refs/h5i/context/<parent>`,
 /// like `git branch <new> <parent>`. No-op if the new ref already exists or the
 /// parent ref has no commit yet (the next write becomes the orphan root).
-fn fork_branch_ref(repo: &Repository, new_branch: &str, parent_branch: &str) -> Result<(), H5iError> {
+pub(crate) fn fork_branch_ref(repo: &Repository, new_branch: &str, parent_branch: &str) -> Result<(), H5iError> {
     let new_ref_name = branch_ref(new_branch);
     if repo.find_reference(&new_ref_name).is_ok() {
         return Ok(());
@@ -1095,6 +1095,29 @@ fn fork_branch_ref(repo: &Repository, new_branch: &str, parent_branch: &str) -> 
     )
     .map_err(H5iError::Git)?;
     Ok(())
+}
+
+/// Fork `name` from `parent` and ensure its branch file exists, WITHOUT
+/// switching or pinning the calling worktree's selection. Used by
+/// `h5i env create` to give an environment its own reasoning branch while the
+/// parent worktree stays on its current context.
+pub(crate) fn fork_branch_no_switch(
+    repo: &Repository,
+    name: &str,
+    parent: &str,
+    purpose: &str,
+) -> Result<(), H5iError> {
+    fork_branch_ref(repo, name, parent)?;
+    ensure_branch_git(repo, name, purpose)
+}
+
+/// Point a (work)tree's per-worktree context HEAD at `branch` and pin it, so
+/// auto-follow never reverts it to the git branch's shadow context. `repo`
+/// must be opened *from inside that worktree* (its `repo.path()` is the
+/// per-worktree gitdir where `h5i/HEAD` / `h5i/PINNED` live).
+pub(crate) fn pin_worktree_context(repo: &Repository, branch: &str) -> Result<(), H5iError> {
+    write_head(repo, branch)?;
+    set_pin(repo)
 }
 
 /// Switch the active branch without creating it. Pins the selection so it
@@ -1121,8 +1144,17 @@ pub fn gcc_checkout(workdir: &Path, name: &str) -> Result<(), H5iError> {
 ///      the merged tree, then commit with both branches as parents.
 ///   4. Append a cross-branch note to `main.md` on the main ref.
 pub fn gcc_merge(workdir: &Path, source_branch: &str) -> Result<String, H5iError> {
-    let repo = ctx_git_repo(workdir)?;
     let target = current_branch(workdir);
+    gcc_merge_into(workdir, &target, source_branch)
+}
+
+/// Like [`gcc_merge`], but with an explicit target branch — merges `source`
+/// into `target` without touching the worktree's active context selection.
+/// Used by `h5i env apply` to fold an environment's reasoning branch back
+/// into the parent context branch recorded in the env manifest.
+pub fn gcc_merge_into(workdir: &Path, target: &str, source_branch: &str) -> Result<String, H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    let target = target.to_string();
 
     if !ctx_list_branches_git(&repo).contains(&source_branch.to_string()) {
         return Err(H5iError::InvalidPath(format!(

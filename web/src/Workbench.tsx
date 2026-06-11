@@ -30,10 +30,11 @@ import { ContextView } from "./ContextView";
 import { CommitContextTab } from "./CommitContextTab";
 import { MemoryView } from "./MemoryView";
 import { ReviewView } from "./ReviewView";
+import { SandboxView } from "./SandboxView";
 import { ContextStrip } from "./ContextStrip";
 import { BranchPicker } from "./BranchPicker";
 
-type Mode = "explore" | "review" | "memory" | "context";
+type Mode = "explore" | "review" | "memory" | "context" | "sandbox";
 type RightTab = "refs" | "sessions" | "integrity" | "context";
 
 export function Workbench() {
@@ -142,6 +143,12 @@ export function Workbench() {
               active={mode === "memory"}
               onClick={() => setMode("memory")}
             />
+            <Button
+              icon="shield"
+              text="Sandbox"
+              active={mode === "sandbox"}
+              onClick={() => setMode("sandbox")}
+            />
           </ButtonGroup>
         </nav>
 
@@ -213,6 +220,8 @@ export function Workbench() {
             <MemoryView />
           </div>
         </div>
+      ) : mode === "sandbox" ? (
+        <SandboxView />
       ) : (
         <div className="wb-body wb-body-single">
           <div className="wb-pane">

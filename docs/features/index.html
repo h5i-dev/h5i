@@ -813,6 +813,11 @@
         <div class="feat-name">Web dashboard</div>
         <div class="feat-desc">Browse the timeline, integrity scores, intent graph, memory, and sessions in a local browser UI at localhost:7150.</div>
       </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i env create · shell · diff · apply</span>
+        <div class="feat-name">Agent sandbox</div>
+        <div class="feat-desc">Hand an agent a disposable, confined environment — a git worktree plus a policy that limits what code can read, write, and reach over the network. It picks the strongest isolation the host supports (Landlock + seccomp → a network egress allowlist), records every command and blocked access, and nothing reaches your branch until you apply.</div>
+      </div>
     </div>
   </div>
 </section>

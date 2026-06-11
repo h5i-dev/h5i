@@ -29,11 +29,16 @@ rust-embed = "8.5"
 mime_guess = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+libc = "0.2.186"
 
 # When targeting musl, vendor OpenSSL so the build doesn't require a musl-linked
 # system libssl (libgit2-sys → libssh2-sys → openssl-sys pulls this in).
 [target.'cfg(target_env = "musl")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4.5"
+seccompiler = "0.5.0"
 
 [dev-dependencies]
 tempfile = "3.8"

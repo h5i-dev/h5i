@@ -1548,7 +1548,7 @@ fn setup_remote_writes_all_fetch_refspecs() {
     let out = repo.h5i_ok(&["share", "setup-remote"]);
     let s = stdout(&out);
     assert!(s.contains("Configuring h5i fetch refspecs"), "banner missing:\n{s}");
-    assert!(s.contains("6 refspec(s) added"), "should add 6 refspecs:\n{s}");
+    assert!(s.contains("8 refspec(s) added"), "should add 8 refspecs:\n{s}");
 
     let fetch = git_in(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
     let fetch_s = String::from_utf8_lossy(&fetch.stdout);
@@ -1559,6 +1559,8 @@ fn setup_remote_writes_all_fetch_refspecs() {
         "+refs/h5i/ast:refs/h5i/ast",
         "+refs/h5i/msg:refs/h5i/msg",
         "+refs/h5i/objects:refs/h5i/objects",
+        "+refs/h5i/env:refs/h5i/env",
+        "+refs/heads/h5i/env/*:refs/heads/h5i/env/*",
     ] {
         assert!(fetch_s.contains(pat), "missing fetch refspec {pat}:\n{fetch_s}");
     }

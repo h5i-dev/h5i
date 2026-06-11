@@ -164,7 +164,62 @@ pub struct Manifest {
     /// captures; serde-skipped when absent so old manifests stay valid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structured: Option<crate::structured::ToolResult>,
+    /// The h5i environment this capture is evidence for (`h5i env run`), e.g.
+    /// `env/claude/fix-auth`. Absent for ordinary captures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_id: Option<String>,
+    /// sha256 of the resolved policy (`policy.resolved.toml`) in force when an
+    /// env capture was taken — what was *actually* enforced, not requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_digest: Option<String>,
+    /// Summary + pointer for the env's egress decisions (supervisor tier;
+    /// never an unbounded inline log). Absent until that phase ships.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress: Option<EgressSummary>,
+    /// What was scrubbed from this capture (secret names, never values).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub redactions: Vec<String>,
 }
+
+/// Counts + a bounded per-host breakdown of an env's network egress decisions —
+/// the manifest holds only this summary (token-reduction principle, design §8).
+/// Populated by the `isolation=container` allowlist proxy (the only tier that
+/// observes egress today); `None` everywhere else.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EgressSummary {
+    /// Requests the proxy permitted (on-allowlist host:port).
+    pub allowed: u64,
+    /// Requests the proxy refused with `403` (off-allowlist — a network
+    /// boundary trip). The single highest-fidelity egress signal.
+    pub denied: u64,
+    /// Per `host:port` verdict counts, deduped and bounded ([`MAX_EGRESS_HOSTS`])
+    /// so a probing loop can never bloat the shared `refs/h5i/objects` ref. This
+    /// is what the dashboard reads directly — no raw rehydration needed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<EgressHost>,
+    /// True when [`MAX_EGRESS_HOSTS`] was exceeded and the tail was dropped, so a
+    /// reader never mistakes a clamped list for the whole picture.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hosts_truncated: bool,
+    /// Object id (in this store) of the full `egress.jsonl`, when captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log: Option<String>,
+}
+
+/// One destination an env's traffic was steered at, with allow/deny tallies.
+/// A host with `denied > 0` is a refused boundary attempt; the dashboard's NET
+/// lane surfaces these as "Boundary blocked".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EgressHost {
+    pub host: String,
+    pub port: u16,
+    pub allowed: u64,
+    pub denied: u64,
+}
+
+/// Cap on distinct `host:port` entries kept in an [`EgressSummary`] — keeps the
+/// shared manifest bounded regardless of how many hosts a run probes.
+pub const MAX_EGRESS_HOSTS: usize = 64;
 
 impl Manifest {
     /// The bare 64-char hex digest (no `sha256:` prefix).
@@ -335,6 +390,18 @@ pub struct CaptureOptions {
     /// Empty for non-command captures (`objects put`).
     pub cmd_argv: Vec<String>,
     pub filter: FilterConfig,
+    /// Set by `h5i env run`: the env this capture is evidence for, and the
+    /// digest of the policy enforced while producing it.
+    pub env_id: Option<String>,
+    pub policy_digest: Option<String>,
+    /// Network egress verdicts observed while producing this capture (the
+    /// `isolation=container` allowlist proxy populates it; `None` otherwise).
+    pub egress: Option<EgressSummary>,
+    /// Scrub secret-like spans from the payload BEFORE it is hashed and stored,
+    /// so the content-addressed blob itself never carries a credential. Used by
+    /// `h5i env run` (design §7). The detected rule ids land in
+    /// `Manifest::redactions`.
+    pub redact: bool,
 }
 
 /// Store `raw` in the local backend, build + persist a manifest, and return it.
@@ -349,6 +416,36 @@ pub fn capture(
     opts: CaptureOptions,
 ) -> Result<CaptureOutcome, H5iError> {
     let store = LocalStore::new(h5i_root);
+
+    // Secret redaction (opt-in; e.g. `h5i env run`). Scrub BEFORE hashing and
+    // storing so the content-addressed blob — which travels via `h5i objects
+    // push` — can never carry a credential. Binary payloads are left untouched
+    // (the scanner is line/text oriented); the redaction marker is recorded by
+    // rule id, never the value.
+    let mut redactions: Vec<String> = Vec::new();
+    let redacted_holder;
+    let raw: &[u8] = if opts.redact {
+        match std::str::from_utf8(raw) {
+            Ok(text) => {
+                let findings = crate::secrets::scan_text(Path::new("<capture>"), text);
+                if findings.is_empty() {
+                    raw
+                } else {
+                    let mut ids: Vec<String> =
+                        findings.iter().map(|f| f.rule_id.to_string()).collect();
+                    ids.sort();
+                    ids.dedup();
+                    redactions = ids;
+                    redacted_holder = crate::secrets::redact_text(text).into_bytes();
+                    &redacted_holder[..]
+                }
+            }
+            Err(_) => raw,
+        }
+    } else {
+        raw
+    };
+
     let hex = sha256_hex(raw);
     let deduped = store.has(&hex);
     store.put(&hex, raw)?;
@@ -440,10 +537,18 @@ pub fn capture(
         Some(s)
     };
 
+    // The command line can itself carry a credential (a secret passed as an
+    // argument), so it is scrubbed too when redaction is on — otherwise the
+    // payload would be clean but `cmd` would leak.
+    let cmd = match (opts.redact, opts.cmd) {
+        (true, Some(c)) => Some(crate::secrets::redact_text(&c)),
+        (_, c) => c,
+    };
+
     let manifest = Manifest {
         id: hex[..16].to_string(),
         kind,
-        cmd: opts.cmd,
+        cmd,
         cwd: opts.cwd,
         exit_code: opts.exit_code,
         git_tree: opts.git_tree,
@@ -462,6 +567,10 @@ pub fn capture(
         raw_tokens: filtered.raw_tokens,
         summary_tokens,
         structured,
+        env_id: opts.env_id,
+        policy_digest: opts.policy_digest,
+        egress: opts.egress,
+        redactions,
     };
 
     append_manifest(repo, &manifest)?;
@@ -925,13 +1034,13 @@ fn read_ref_blob(repo: &Repository, path: &str) -> Option<String> {
     std::str::from_utf8(blob.content()).ok().map(str::to_owned)
 }
 
-fn read_blob_from_tree(repo: &Repository, tree: Option<&git2::Tree>, path: &str) -> Option<String> {
+pub(crate) fn read_blob_from_tree(repo: &Repository, tree: Option<&git2::Tree>, path: &str) -> Option<String> {
     let entry = tree?.get_path(Path::new(path)).ok()?;
     let blob = repo.find_blob(entry.id()).ok()?;
     std::str::from_utf8(blob.content()).ok().map(str::to_owned)
 }
 
-fn build_tree(
+pub(crate) fn build_tree(
     repo: &Repository,
     base: Option<&git2::Tree>,
     files: &[(&str, &str)],
@@ -944,7 +1053,7 @@ fn build_tree(
     Ok(builder.write()?)
 }
 
-fn signature(repo: &Repository) -> Result<Signature<'static>, H5iError> {
+pub(crate) fn signature(repo: &Repository) -> Result<Signature<'static>, H5iError> {
     repo.signature()
         .or_else(|_| Signature::now("h5i", "h5i@local"))
         .map_err(H5iError::Git)
@@ -1509,6 +1618,10 @@ mod tests {
             files: Vec::new(),
             cmd_argv: vec!["pytest".into(), "-q".into()],
             filter: FilterConfig::default(),
+            env_id: None,
+            policy_digest: None,
+            egress: None,
+            redact: false,
         }
     }
 
@@ -1518,6 +1631,40 @@ mod tests {
             sha256_hex(b"hello"),
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
+    }
+
+    #[test]
+    fn redact_flag_scrubs_payload_and_command_before_storage() {
+        let (_d, repo, h5i_root) = setup();
+        let secret = "ghp_0123456789012345678901234567890123ab";
+        let raw = format!("auth token={secret}\nok\n");
+        let mut o = opts();
+        o.redact = true;
+        o.cmd = Some(format!("deploy --token {secret}"));
+        o.cmd_argv = vec!["deploy".into()];
+        let outcome = capture(&repo, &h5i_root, raw.as_bytes(), o).unwrap();
+        let m = &outcome.manifest;
+        // The detected rule id is recorded; the value never is.
+        assert!(m.redactions.contains(&"GITHUB_PAT".to_string()), "{:?}", m.redactions);
+        assert!(!m.summary.contains(secret));
+        assert!(!m.cmd.as_ref().unwrap().contains(secret), "cmd leaked the secret");
+        // The content-addressed blob (what `objects push` shares) is scrubbed,
+        // so the hash is of the REDACTED bytes — the raw secret is unrecoverable.
+        let stored = load_raw(&h5i_root, m).unwrap().unwrap();
+        assert!(!String::from_utf8_lossy(&stored).contains(secret), "raw blob leaked the secret");
+    }
+
+    #[test]
+    fn redact_flag_off_leaves_payload_intact() {
+        let (_d, repo, h5i_root) = setup();
+        let secret = "ghp_0123456789012345678901234567890123ab";
+        let raw = format!("token={secret}\n");
+        let mut o = opts();
+        o.redact = false;
+        let outcome = capture(&repo, &h5i_root, raw.as_bytes(), o).unwrap();
+        assert!(outcome.manifest.redactions.is_empty());
+        let stored = load_raw(&h5i_root, &outcome.manifest).unwrap().unwrap();
+        assert!(String::from_utf8_lossy(&stored).contains(secret));
     }
 
     #[test]
@@ -1683,6 +1830,10 @@ mod tests {
             raw_tokens: None,
             summary_tokens: None,
             structured: None,
+            env_id: None,
+            policy_digest: None,
+            egress: None,
+            redactions: Vec::new(),
         }
     }
 

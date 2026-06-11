@@ -866,6 +866,41 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
+     SLIDE 8b — Agent Sandbox / h5i env
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:24px;">
+  <div style="width:100%;max-width:1040px;">
+    <div class="section-tag">Feature · h5i env</div>
+    <h2>A confined, fully auditable<br><span class="red">agent sandbox</span></h2>
+
+    <div class="g2" style="margin-top:24px;align-items:start;gap:28px;">
+      <div style="display:flex;flex-direction:column;gap:11px;">
+        <p style="font-size:1.08rem;">Hand an agent a disposable environment — a git worktree plus a policy that limits what code can read, write, and reach. It picks the strongest isolation the host supports and records every command and blocked access; nothing reaches your branch until you apply.</p>
+        <div class="feat-card"><span class="feat-cmd">h5i env create · shell</span><p class="feat-desc" style="margin-top:6px;">Make a confined box, then work in it — or hand it to an agent. Every command inside is confined by construction.</p></div>
+        <div class="feat-card"><span class="feat-cmd">h5i env diff · log · apply</span><p class="feat-desc" style="margin-top:6px;">Audit what changed and every blocked access, then merge — reviewer-selected, never automatic.</p></div>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">~/my-project</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">cat .h5i/env.toml</span>
+  <span class="t-out">isolation  = "supervised"</span>
+  <span class="t-out">net.egress = ["example.com"]   </span><span class="t-cmt"># allowlist</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell box</span>
+<span class="t-ai">box$</span> <span class="t-cmd">curl https://example.com</span>
+  <span class="t-pass">200 OK</span><span class="t-out">          — on the allowlist</span>
+<span class="t-ai">box$</span> <span class="t-cmd">curl https://evil.example</span>
+  <span class="t-red">could not resolve host — blocked</span>
+<span class="t-ai">box$</span> <span class="t-cmd">nft flush ruleset</span>
+  <span class="t-red">Operation not permitted</span><span class="t-out">  — can't undo it</span></pre></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
      SLIDE 9 — Why now / proof
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:28px;">

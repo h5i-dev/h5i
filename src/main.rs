@@ -633,6 +633,13 @@ enum Commands {
         rest: Vec<String>,
     },
 
+    /// Isolated agent environments — worktree + sandbox + provenance
+    /// (docs/environments-design.md). create/run/diff/propose/apply lifecycle.
+    Env {
+        #[command(subcommand)]
+        action: EnvCommands,
+    },
+
     /// Commit staged changes with AI provenance and quality tracking
     #[command(hide = true)]
     Commit {
@@ -1682,6 +1689,134 @@ enum ContextCommands {
         #[arg(long, default_value_t = 5)]
         limit: usize,
     },
+}
+
+#[derive(Subcommand)]
+enum EnvCommands {
+    /// Create an isolated environment: code branch + git worktree under
+    /// .git/.h5i/env/, a forked reasoning branch, and a pinned, fail-closed
+    /// policy. The base revision is frozen at creation.
+    Create {
+        /// Environment name (lowercase slug, e.g. `fix-auth`)
+        name: String,
+        /// Base revision (default: HEAD). Pinned immutably.
+        #[arg(long)]
+        from: Option<String>,
+        /// Policy profile from .h5i/env.toml (default: `default`)
+        #[arg(long, default_value = "default")]
+        profile: String,
+        /// Isolation: auto (default) | workspace | process | supervised | container | hardened-container | microvm.
+        /// `auto` (or unset) picks the strongest tier the host can run; an explicit
+        /// tier fails closed if the host cannot satisfy it (never silently downgrades).
+        #[arg(long)]
+        isolation: Option<String>,
+        /// Workspace backend (auto|worktree)
+        #[arg(long, default_value = "auto")]
+        backend: String,
+    },
+
+    /// Run a command inside an environment, policy-enforced and
+    /// capture-wrapped: exit code passes through, evidence lands in
+    /// refs/h5i/objects tagged with the env id + policy digest.
+    Run {
+        /// Environment name (slug, `agent/slug`, or full `env/agent/slug`)
+        name: String,
+        /// The command to run, after `--`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+
+    /// Open an interactive, confined session INSIDE the environment — the
+    /// "agent-in-box". stdio is inherited (a real terminal), so every command
+    /// the session spawns is contained by the box, not by the agent choosing to
+    /// wrap each call. Defaults to a login shell when no command is given.
+    Shell {
+        /// Environment name (slug, `agent/slug`, or full `env/agent/slug`)
+        name: String,
+        /// Command to run inside the box (after `--`); default: an interactive shell.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+
+    /// Probe what isolation this host can actually provide (Landlock, user
+    /// namespaces, seccomp) and which claims are satisfiable.
+    Probe,
+
+    /// List environments on this clone
+    List,
+
+    /// Show one environment's status: lifecycle, enforced policy, evidence,
+    /// and base drift
+    Status {
+        name: String,
+        /// Emit the raw manifest JSON instead of the human view
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Rebase the environment onto its parent branch's current tip, re-pinning
+    /// the base (use when `status` reports the parent has advanced)
+    Rebase {
+        name: String,
+    },
+
+    /// Show the event log (refs/h5i/env) for one environment
+    Log {
+        name: String,
+    },
+
+    /// Diff the environment's work against its pinned base
+    Diff {
+        name: String,
+        /// Show a diffstat instead of the full patch
+        #[arg(long)]
+        stat: bool,
+    },
+
+    /// Inspect one of an environment's evidence captures (structured findings,
+    /// exit code, policy digest, redactions)
+    Inspect {
+        name: String,
+        /// Capture id (from `h5i env status`/`log`)
+        #[arg(long)]
+        capture: String,
+    },
+
+    /// Compare environments side by side — changes + latest run results (the
+    /// "arena" reviewer comparison). Best on envs sharing one base.
+    Compare {
+        /// Two or more environment names
+        #[arg(required = true, num_args = 1..)]
+        names: Vec<String>,
+        /// Emit JSON instead of the table
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Snapshot the worktree (mediated commit, path-allowlist enforced) and
+    /// mark the env proposed — produces a review brief. Never writes the
+    /// parent branch.
+    Propose {
+        name: String,
+    },
+
+    /// Apply a proposed environment onto its parent branch (reviewer-selected,
+    /// never automatic). Default is a merge (fast-forward when possible).
+    Apply {
+        name: String,
+        /// Squash the env's changes into a single commit instead of merging
+        #[arg(long)]
+        patch: bool,
+    },
+
+    /// Abort an environment — manifest and workspace preserved for forensics
+    Abort {
+        name: String,
+    },
+
+    /// Reclaim workspaces of applied/aborted environments (worktree prune).
+    /// Manifests, branches, and captures are retained.
+    Gc,
 }
 
 #[derive(Subcommand)]
@@ -2909,6 +3044,10 @@ const H5I_REF_PATTERNS: &[&str] = &[
     "refs/h5i/ast",
     "refs/h5i/msg",
     "refs/h5i/objects",
+    "refs/h5i/env",
+    // The env code branches live under refs/heads/ but are part of the env
+    // sharing story, so fetch them automatically too.
+    "refs/heads/h5i/env/*",
 ];
 
 /// Whether `remote` still hosts the pre-redesign single context ref
@@ -6233,6 +6372,37 @@ jq -c '{
                 "no captured objects yet",
             )?;
 
+            // Push the shareable env state (manifests + policies + event log).
+            try_push(
+                h5i_core::env::ENV_REF,
+                style("h5i env create").bold(),
+                "no environments yet",
+            )?;
+            // Push the env CODE branches so a reviewer on another clone can see
+            // the proposed diff and apply. They live under refs/heads/, not
+            // refs/h5i/*, so a wildcard refspec carries them all in one shot.
+            let any_env_branch = std::process::Command::new("git")
+                .args([
+                    "for-each-ref",
+                    "--count=1",
+                    "--format=%(refname)",
+                    "refs/heads/h5i/env/",
+                ])
+                .current_dir(&workdir)
+                .output()
+                .map(|o| !o.stdout.is_empty())
+                .unwrap_or(false);
+            if any_env_branch {
+                print!("  {} {} … ", style("→").dim(), style("refs/heads/h5i/env/*").yellow());
+                std::io::stdout().flush()?;
+                let status = std::process::Command::new("git")
+                    .args(["push", &remote, "+refs/heads/h5i/env/*:refs/heads/h5i/env/*"])
+                    .current_dir(&workdir)
+                    .status()
+                    .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+                println!("{}", if status.success() { style("ok").green() } else { style("failed").red() });
+            }
+
             // Bind to the original variable name so the existing "Tip:" footer
             // (gated on notes_status.success()) keeps working unchanged.
             let notes_status_success = notes_pushed;
@@ -6532,6 +6702,45 @@ jq -c '{
                                     false
                                 }
                             }
+                        } else if refname == h5i_core::env::ENV_REF {
+                            // The env event log is append-only: union the two
+                            // sides (dedup on env_id|ts|event) so no lifecycle
+                            // event is lost when two clones diverge.
+                            let g2 = git2::Repository::open(&workdir)
+                                .map_err(|e| anyhow::anyhow!("open git2 repo: {e}"))?;
+                            let local_git2 = git2::Oid::from_str(local_oid_str)
+                                .map_err(|e| anyhow::anyhow!("parse local oid: {e}"))?;
+                            let incoming_git2 = git2::Oid::from_str(&incoming_oid)
+                                .map_err(|e| anyhow::anyhow!("parse incoming oid: {e}"))?;
+                            match h5i_core::env::union_merge_commits(&g2, local_git2, incoming_git2)
+                            {
+                                Ok(new_oid) => {
+                                    let new_oid_str = new_oid.to_string();
+                                    let st = git(&[
+                                        "update-ref",
+                                        refname,
+                                        &new_oid_str,
+                                        local_oid_str,
+                                    ])?;
+                                    if st.status.success() {
+                                        println!(
+                                            "{} ({})",
+                                            style("ok").green(),
+                                            style("merged (union)").dim()
+                                        );
+                                        true
+                                    } else {
+                                        println!("{}", style("failed").red());
+                                        eprint!("{}", String::from_utf8_lossy(&st.stderr));
+                                        false
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("{}", style("failed").red());
+                                    eprintln!("union-merge of env refs failed: {e}");
+                                    false
+                                }
+                            }
                         } else if force {
                             install("forced over divergent local")?
                         } else {
@@ -6617,6 +6826,32 @@ jq -c '{
             sync_one("refs/h5i/ast")?;
             sync_one(msg::MSG_REF)?;
             sync_one(h5i_core::objects::OBJECTS_REF)?;
+            // Shareable env state (manifests + policies + events). The
+            // union-merge dispatch in `sync_one` reconciles divergence.
+            sync_one(h5i_core::env::ENV_REF)?;
+            // Fetch the env CODE branches so pulled environments can be
+            // reviewed/applied from their committed state. Fast-forward only;
+            // a diverged local env branch is kept (the reviewer's own work).
+            print!("  {} {} … ", style("→").dim(), style("refs/heads/h5i/env/*").yellow());
+            std::io::stdout().flush()?;
+            let env_fetch = git(&[
+                "fetch", "--no-write-fetch-head", &remote,
+                "refs/heads/h5i/env/*:refs/heads/h5i/env/*",
+            ])?;
+            println!(
+                "{}",
+                if env_fetch.status.success() { style("ok").green() } else { style("skipped").dim() }
+            );
+            // Materialize any newly-arrived env manifests/policies onto disk so
+            // `h5i env list/status/diff/apply` see them immediately.
+            if let Ok(repo) = git2::Repository::open(&workdir) {
+                if let Ok(h5i_root) = h5i_core::storage::h5i_root_for_repo(&repo) {
+                    match h5i_core::env::materialize_from_ref(&repo, &h5i_root) {
+                        Ok(n) if n > 0 => println!("  {} materialized {n} shared environment(s)", style("✓").green()),
+                        _ => {}
+                    }
+                }
+            }
 
             if notes_changed {
                 println!(
@@ -6793,6 +7028,10 @@ jq -c '{
                             files,
                             cmd_argv: command.clone(),
                             filter: cfg,
+                            env_id: None,
+                            policy_digest: None,
+                            egress: None,
+                            redact: false,
                         };
                         let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
                         let m = &outcome.manifest;
@@ -6844,6 +7083,10 @@ jq -c '{
                         files,
                         cmd_argv: Vec::new(),
                         filter: cfg,
+                        env_id: None,
+                        policy_digest: None,
+                        egress: None,
+                        redact: false,
                     };
                     let outcome = objects::capture(git, &h5i_root, &raw, opts)?;
                     println!("{}", outcome.manifest.summary);
@@ -7755,6 +7998,282 @@ jq -c '{
                         ))
                         .bold()
                     );
+                }
+            }
+        }
+
+        Commands::Env { action } => {
+            let repo = H5iRepository::open(".")?;
+            let h5i_root = repo.h5i_root.clone();
+            let git = repo.git();
+            let workdir = git
+                .workdir()
+                .ok_or_else(|| anyhow::anyhow!("h5i env requires a non-bare repository"))?
+                .to_path_buf();
+
+            // Surface environments pulled from other clones: materialize any
+            // manifests/policies present in refs/h5i/env but absent (or older)
+            // on disk, so `list`/`status`/`diff`/`apply` see them.
+            if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
+                eprintln!("{} could not sync shared env manifests: {e}", style("warning:").yellow());
+            }
+
+            match action {
+                EnvCommands::Create { name, from, profile, isolation, backend } => {
+                    let agent = msg::resolve_identity(&h5i_root, None)
+                        .unwrap_or_else(|_| "human".to_string());
+                    use h5i_core::sandbox::{IsolationClaim, IsolationRequest};
+                    let isolation = match isolation.as_deref() {
+                        None => None,
+                        Some(s) if s.eq_ignore_ascii_case("auto") => Some(IsolationRequest::Auto),
+                        Some(s) => Some(IsolationRequest::Claim(IsolationClaim::parse(s)?)),
+                    };
+                    // Did we auto-pick (vs. the user pinning a tier)? Used below to
+                    // surface the container tier when the host lacks Podman.
+                    let auto_picked = matches!(isolation, None | Some(IsolationRequest::Auto));
+                    let opts = h5i_core::env::CreateOpts { from, profile, isolation, backend };
+                    let m = h5i_core::env::create(git, &h5i_root, &workdir, &agent, &name, opts)?;
+                    println!(
+                        "{} Created environment {} (isolation: {}, profile: {})",
+                        SUCCESS,
+                        style(&m.id).magenta().bold(),
+                        style(&m.isolation_claim).cyan(),
+                        m.profile
+                    );
+                    println!("   base     {}  (from {})", &m.base_commit[..12], m.parent_branch);
+                    println!("   branch   {}", m.branch);
+                    println!("   context  {}", m.context_branch);
+                    println!("   work     {}", m.work_dir(&h5i_root).display());
+                    // Discoverability: when we auto-picked a kernel tier and the host
+                    // has no rootless Podman, tell the user the `container` tier
+                    // (the one with a network egress allowlist) exists and what it
+                    // needs — otherwise they would never learn Podman unlocks it.
+                    if auto_picked
+                        && matches!(m.isolation_claim.as_str(), "workspace" | "process" | "supervised")
+                        && h5i_core::sandbox::probe_host().container_runtime.is_none()
+                    {
+                        println!(
+                            "   {}      the 'container' tier (adds a network egress allowlist) needs \
+                             rootless Podman, which isn't installed — install it, then set \
+                             container.image in .h5i/env.toml. See: h5i env probe",
+                            style("tip").yellow()
+                        );
+                    }
+                    println!(
+                        "   next     h5i env run {} -- <cmd>   ·   h5i env shell {}   ·   h5i env propose {}",
+                        m.slug, m.slug, m.slug
+                    );
+                }
+
+                EnvCommands::Run { name, command } => {
+                    if command.is_empty() {
+                        anyhow::bail!("usage: h5i env run <name> -- <command> [args…]");
+                    }
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let outcome = h5i_core::env::run(git, &h5i_root, &mut m, &command)?;
+                    match &outcome.manifest.structured {
+                        Some(s) => println!("{}", h5i_core::structured::render_compact(s)),
+                        None => println!("{}", outcome.manifest.summary),
+                    }
+                    if outcome.timed_out {
+                        eprintln!(
+                            "{} run killed by the policy wall-clock limit",
+                            style("warning:").yellow().bold()
+                        );
+                    }
+                    let rss = outcome
+                        .max_rss_kb
+                        .map(|kb| format!(", rss {}MiB", kb / 1024))
+                        .unwrap_or_default();
+                    eprintln!(
+                        "{} evidence {} (env {}, policy {}) · wall {}ms, cpu {}ms{}",
+                        LOOKING,
+                        style(&outcome.capture_id).magenta(),
+                        m.id,
+                        &m.policy_digest[..12],
+                        outcome.wall_ms,
+                        outcome.cpu_ms,
+                        rss
+                    );
+                    // A wall-clock kill is a failure, not success — the child
+                    // was SIGKILLed so it has no exit code of its own. Use the
+                    // conventional timeout code (124, as coreutils `timeout`).
+                    if outcome.timed_out {
+                        std::process::exit(124);
+                    }
+                    // Transparent wrapper: pass the child's exit code through.
+                    // A None code means the child died on a signal — surface it
+                    // as a generic failure rather than a silent success.
+                    match outcome.exit_code {
+                        Some(0) => {}
+                        Some(code) => std::process::exit(code),
+                        None => std::process::exit(1),
+                    }
+                }
+
+                EnvCommands::Shell { name, command } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    // Default to an interactive shell when no command is given.
+                    let argv: Vec<String> = if command.is_empty() {
+                        let sh = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+                        vec![sh, "-i".into()]
+                    } else {
+                        command
+                    };
+                    eprintln!(
+                        "{} entering {} (isolation: {}) — confined session; exit to return",
+                        LOOKING,
+                        style(&m.id).magenta(),
+                        style(&m.isolation_claim).cyan()
+                    );
+                    let code = h5i_core::env::shell(git, &h5i_root, &mut m, &argv)?;
+                    match code {
+                        0 => {}
+                        c => std::process::exit(c),
+                    }
+                }
+
+                EnvCommands::Probe => {
+                    let caps = h5i_core::sandbox::probe_host();
+                    println!("── Host isolation capabilities ──");
+                    println!("  os           = {}", caps.os);
+                    println!(
+                        "  landlock_abi = {}",
+                        caps.landlock_abi.map(|v| v.to_string()).unwrap_or_else(|| "none".into())
+                    );
+                    println!("  userns       = {}", caps.userns);
+                    println!("  seccomp      = {}", caps.seccomp);
+                    println!(
+                        "  container    = {}",
+                        caps.container_runtime.as_deref().unwrap_or("none")
+                    );
+                    println!();
+                    for (claim, profile_net_deny) in [
+                        (h5i_core::sandbox::IsolationClaim::Workspace, false),
+                        (h5i_core::sandbox::IsolationClaim::Process, true),
+                    ] {
+                        let mut p = h5i_core::sandbox::Profile::builtin("probe", claim);
+                        if !profile_net_deny {
+                            p.net_mode = h5i_core::sandbox::NetMode::Host;
+                        }
+                        let ok = h5i_core::sandbox::resolve(&p, &caps).is_ok();
+                        println!(
+                            "  claim {:<10} satisfiable = {}",
+                            claim.as_str(),
+                            if ok { style("yes").green() } else { style("no").red() }
+                        );
+                    }
+                    // Container claim: needs rootless Podman + a profile image;
+                    // show whether the runtime half is satisfiable.
+                    let container_ok = caps.container_runtime.is_some();
+                    println!(
+                        "  claim {:<10} satisfiable = {} (needs rootless Podman + profile container.image)",
+                        "container",
+                        if container_ok { style("yes").green() } else { style("no").red() }
+                    );
+                    println!("  claim hardened-container/microvm: external backends (not in this build)");
+                    // Functional self-test: bits can be present while a hardened
+                    // kernel still denies exec under the full confinement stack.
+                    let probe = h5i_core::sandbox::Profile::builtin("probe", h5i_core::sandbox::IsolationClaim::Process);
+                    match h5i_core::sandbox::resolve(&probe, &caps)
+                        .and_then(|pol| h5i_core::sandbox::verify_exec(&pol))
+                    {
+                        Ok(()) => println!("  process tier runnable = {}", style("yes").green()),
+                        Err(e) => println!("  process tier runnable = {} ({e})", style("no").red()),
+                    }
+                }
+
+                EnvCommands::List => {
+                    let envs = h5i_core::env::list(&h5i_root);
+                    if envs.is_empty() {
+                        println!("No environments. Create one: h5i env create <name>");
+                    }
+                    for m in envs {
+                        println!(
+                            "{:<28} {:<9} isolation={:<10} base={} captures={}",
+                            style(&m.id).magenta(),
+                            m.status,
+                            m.isolation_claim,
+                            &m.base_commit[..12],
+                            m.captures.len()
+                        );
+                    }
+                }
+
+                EnvCommands::Status { name, json } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&m)?);
+                    } else {
+                        print!("{}", h5i_core::env::status_report(git, &h5i_root, &m));
+                    }
+                }
+
+                EnvCommands::Rebase { name } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let msg_out = h5i_core::env::rebase(git, &h5i_root, &mut m)?;
+                    println!("{} {}", SUCCESS, msg_out);
+                }
+
+                EnvCommands::Log { name } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    for e in h5i_core::env::read_events(git, Some(&m.id)) {
+                        println!(
+                            "{}  {:<9} {}{}",
+                            e.ts,
+                            e.event,
+                            e.detail.unwrap_or_default(),
+                            e.capture.map(|c| format!("  [capture {c}]")).unwrap_or_default()
+                        );
+                    }
+                }
+
+                EnvCommands::Diff { name, stat } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    print!("{}", h5i_core::env::diff(git, &h5i_root, &m, stat)?);
+                }
+
+                EnvCommands::Inspect { name, capture } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    print!("{}", h5i_core::env::inspect(git, &m, &capture)?);
+                }
+
+                EnvCommands::Compare { names, json } => {
+                    let rows = h5i_core::env::compare(git, &h5i_root, &names)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&rows)?);
+                    } else {
+                        print!("{}", h5i_core::env::render_compare(&rows));
+                    }
+                }
+
+                EnvCommands::Propose { name } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let brief = h5i_core::env::propose(git, &h5i_root, &mut m)?;
+                    println!("{brief}");
+                }
+
+                EnvCommands::Apply { name, patch } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let msg_out = h5i_core::env::apply(git, &h5i_root, &workdir, &mut m, patch)?;
+                    println!("{} {}", SUCCESS, msg_out);
+                }
+
+                EnvCommands::Abort { name } => {
+                    let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    h5i_core::env::abort(git, &h5i_root, &mut m)?;
+                    println!("{} {} aborted (manifest preserved for forensics)", SUCCESS, m.id);
+                }
+
+                EnvCommands::Gc => {
+                    let reclaimed = h5i_core::env::gc(git, &h5i_root)?;
+                    if reclaimed.is_empty() {
+                        println!("Nothing to reclaim (only applied/aborted envs are gc'd).");
+                    } else {
+                        for id in reclaimed {
+                            println!("{} reclaimed workspace of {}", SUCCESS, id);
+                        }
+                    }
                 }
             }
         }

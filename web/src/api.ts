@@ -284,6 +284,140 @@ export interface ContextRelevant {
   hits: ContextRelevantHit[];
 }
 
+// ── Sandbox dashboard (the "flight recorder") ───────────────────────────────
+// Mirror of the read-only env-monitoring endpoints in server.rs.
+
+export type RiskLane = "fs" | "net" | "proc" | "resource" | "provenance";
+export type RiskSeverity = "info" | "warning" | "critical";
+
+export interface RiskFinding {
+  severity: RiskSeverity;
+  lane: RiskLane;
+  kind: string;
+  title: string; // "Boundary blocked" | "Boundary pressure" | "Weak isolation" | …
+  detail: string;
+  evidence: string;
+  capture_id?: string | null;
+  event_ts?: string | null;
+}
+
+export interface EnvRisk {
+  score: number; // 0..=100
+  level: RiskSeverity;
+  findings: RiskFinding[];
+  lane_counts: Record<string, number>;
+  last_denial_ts?: string | null;
+}
+
+export interface EnvEventView {
+  ts: string;
+  event: string; // created | exec | status | proposed | applied | aborted | gc | violation
+  detail?: string | null;
+  capture?: string | null;
+}
+
+export interface EnvFleetItem {
+  id: string;
+  agent: string;
+  slug: string;
+  status: string;
+  isolation: string;
+  profile: string;
+  backend: string;
+  policy_digest: string;
+  parent_branch: string;
+  created_at: string;
+  updated_at: string;
+  captures: number;
+  has_workspace: boolean;
+  drift: "up-to-date" | "parent-ahead" | "diverged" | "parent-gone" | string;
+  drift_summary: string;
+  last_event?: EnvEventView | null;
+  risk: EnvRisk;
+}
+
+export interface EgressHost {
+  host: string;
+  port: number;
+  allowed: number;
+  denied: number;
+}
+export interface EgressSummary {
+  allowed: number;
+  denied: number;
+  hosts: EgressHost[];
+  hosts_truncated: boolean;
+  log?: string | null;
+}
+
+export interface EnforcedPolicy {
+  isolation: string;
+  net_mode: string;
+  net_egress: string[];
+  fs_read: string[];
+  fs_write: string[];
+  fs_deny: string[];
+  tools: string[];
+  env_pass: string[];
+  image?: string | null;
+  mem_bytes?: number | null;
+  max_procs?: number | null;
+  wall_secs: number;
+  cpu_secs?: number | null;
+  fsize_bytes?: number | null;
+}
+
+export interface EnvCaptureView {
+  id: string;
+  cmd?: string | null;
+  exit_code?: number | null;
+  timestamp: string;
+  summary: string;
+  egress?: EgressSummary | null;
+  redactions: string[];
+}
+
+export interface EnvDetail {
+  item: EnvFleetItem;
+  policy?: EnforcedPolicy | null;
+  events: EnvEventView[];
+  captures: EnvCaptureView[];
+  diffstat?: string | null;
+}
+
+export interface ProbeTier {
+  claim: string;
+  satisfiable: boolean;
+  note?: string | null;
+}
+export interface CgroupProbe {
+  v2_mounted: boolean;
+  usable: boolean;
+  controllers: string[];
+  detail?: string | null;
+}
+export interface SupervisorComponent {
+  name: string;
+  ok: boolean;
+  detail?: string | null;
+}
+export interface SupervisorProbe {
+  usable: boolean;
+  components: SupervisorComponent[];
+}
+export interface ProbeResponse {
+  os: string;
+  landlock_abi?: number | null;
+  userns: boolean;
+  seccomp: boolean;
+  container_runtime?: string | null;
+  tiers: ProbeTier[];
+  process_runnable: boolean;
+  process_runnable_detail?: string | null;
+  cgroups: CgroupProbe;
+  supervisor: SupervisorProbe;
+}
+
 async function getJSON<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${url}`);
@@ -335,6 +469,20 @@ export const api = {
   reviewPoints: (limit = 100, minScore = 0.25) =>
     getJSON<ReviewPoint[]>(
       `/api/review-points?limit=${limit}&min_score=${minScore}`,
+    ),
+
+  // Sandbox dashboard
+  envs: () => getJSON<EnvFleetItem[]>("/api/envs"),
+  envProbe: () => getJSON<ProbeResponse>("/api/env/probe"),
+  envDetail: (agent: string, slug: string) =>
+    getJSON<EnvDetail>(
+      `/api/env/${encodeURIComponent(agent)}/${encodeURIComponent(slug)}`,
+    ),
+  envCapture: (agent: string, slug: string, id: string) =>
+    getJSON<{ render: string }>(
+      `/api/env/${encodeURIComponent(agent)}/${encodeURIComponent(
+        slug,
+      )}/captures/${encodeURIComponent(id)}`,
     ),
 };
 

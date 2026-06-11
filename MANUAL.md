@@ -83,6 +83,12 @@ Command reference for all h5i subcommands and flags.
   - [h5i policy check](#h5i-policy-check)
   - [h5i policy show](#h5i-policy-show)
 - [h5i compliance](#h5i-compliance)
+- [h5i env (isolated agent sandboxes)](#h5i-env-isolated-agent-sandboxes)
+  - [Lifecycle commands](#env-lifecycle-commands)
+  - [Isolation tiers](#env-isolation-tiers)
+  - [Policy file (.h5i/env.toml)](#env-policy-file-h5ienvtoml)
+  - [Secrets broker](#env-secrets-broker)
+  - [Resource limits](#env-resource-limits)
 - [h5i serve](#h5i-serve)
 - [h5i mcp](#h5i-mcp)
 - [h5i push](#h5i-push) — _alias of `h5i share push`_
@@ -2548,6 +2554,175 @@ At commit time, only rules from `[commit]` and `[paths]` sections are enforced. 
 
 ---
 
+## h5i env (isolated agent sandboxes)
+
+An **environment** is a Git-addressed, policy-confined, fully-observed unit of
+agent work — the "triple fusion" of:
+
+- a **code branch** + git worktree under `.git/.h5i/env/<agent>/<slug>/work`,
+- a **reasoning branch** (forked context workspace), and
+- a **policy manifest** that confines execution and is digest-pinned at creation.
+
+Use an env for any risky or exploratory work (a refactor, a dependency upgrade,
+an untrusted build) instead of editing the main tree in place. Every `env run`
+is policy-enforced and **capture-wrapped** (evidence lands in `refs/h5i/objects`,
+tagged with the env id and the enforced policy digest); `env shell` opens an
+**interactive** confined session in the same box for hands-on work. The lifecycle
+is `create → run → propose → apply | abort → gc`, and **apply is never
+automatic** — `propose` surfaces a review brief, a reviewer applies.
+
+Env state lives in `refs/h5i/env` (events, manifests, policies) and is shared by
+`h5i push` / `h5i pull`, enabling a cross-clone review loop (one agent proposes,
+another reviews and applies). See `docs/environments-design.md` and the live
+**Sandbox** dashboard in [`h5i serve`](#h5i-serve).
+
+<a name="env-lifecycle-commands"></a>
+### Lifecycle commands
+
+| Command | Description |
+|---------|-------------|
+| `h5i env create <name> [--from REV] [--profile P] [--isolation TIER]` | Create an env: code branch + worktree + reasoning branch + pinned policy. Base frozen at creation. With no `--isolation` (or `--isolation auto`) it **auto-picks the strongest tier the host can run**; an explicit tier fails closed if the host can't satisfy it. |
+| `h5i env run <name> -- <cmd> [args…]` | Run a command inside the env, policy-enforced + capture-wrapped. Exit code passes through; evidence is captured. |
+| `h5i env shell <name> [-- <cmd>]` | Open an **interactive** confined session *inside* the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. Defaults to a login shell. Exit code passes through; nothing is captured (a `shell` event is logged). |
+| `h5i env probe` | Show what isolation this host can actually provide (Landlock ABI, user namespaces, seccomp, seccomp-notif, cgroup v2 delegation, rootless Podman) and which claims are satisfiable. |
+| `h5i env list` | List environments on this clone. |
+| `h5i env status <name> [--json]` | Lifecycle state + enforced policy + evidence + base drift. `--json` emits the raw manifest. |
+| `h5i env log <name>` | The event log (`created`/`exec`/`proposed`/`applied`/`aborted`/`gc`/`violation`/`secret`). |
+| `h5i env diff <name> [--stat]` | Diff the env's work against its pinned base. |
+| `h5i env inspect <name> --capture <id>` | Render one evidence capture (structured findings, exit code, policy digest, redactions). |
+| `h5i env compare <names…> [--json]` | The "arena": rank N envs side by side (changes + latest run results). Best on envs sharing one base. |
+| `h5i env rebase <name>` | Re-pin the base onto the parent branch's advanced tip (3-way; refuses on conflict). |
+| `h5i env propose <name>` | Mediated commit (path-allowlist enforced: rejects nested `.git`, symlink escapes, `..`) + review brief. Never writes the parent. |
+| `h5i env apply <name> [--patch]` | Apply a proposed env onto its parent (reviewer-selected). Default merges; `--patch` squashes into one commit. |
+| `h5i env abort <name>` | Discard the env; manifest + workspace retained for forensics. |
+| `h5i env gc` | Reclaim worktrees of applied/aborted envs. Manifests, branches, and captures are retained. |
+
+`<name>` accepts a bare slug, `agent/slug`, or the full `env/agent/slug`.
+
+The same operations are available as native MCP tools (`h5i_env_create`,
+`h5i_env_run`, `h5i_env_status`, `h5i_env_diff`, `h5i_env_inspect`,
+`h5i_env_compare`, `h5i_env_propose`, `h5i_env_apply`, `h5i_env_rebase`,
+`h5i_env_abort`, `h5i_env_list`) when the MCP server is configured — see
+[`h5i mcp`](#h5i-mcp).
+
+<a name="env-isolation-tiers"></a>
+### Isolation tiers
+
+`--isolation` (or `isolation =` in the profile) sets the **minimum** claim. With
+no `--isolation` (or `--isolation auto`), `env create` is **secure-by-default**:
+it auto-picks the *strongest tier the host can actually run* (`container` >
+`supervised` > `process` > `workspace`), each candidate gated by the same checks
+`create` applies, so an auto-picked tier is guaranteed runnable. An explicit tier
+**fails closed** — h5i refuses (never silently downgrades) when the host cannot
+satisfy it, and re-verifies functionally (capability bits present ≠ confinement
+can exec). Set `H5I_DEFAULT_ISOLATION` to pin a clone's default tier.
+
+| Tier | Mechanism | Network | Rootless | Notes |
+|------|-----------|---------|----------|-------|
+| `workspace` | git worktree only; no kernel confinement | host (unrestricted) | ✅ | Trusted code; file isolation only. Cross-platform. |
+| `process` | Landlock FS allowlist + seccomp deny-list + user/mount/IPC/UTS/(net) namespaces + cgroup v2 / rlimits + `no_new_privs` | `deny` (empty netns) or `host` — all-or-nothing | ✅ | Linux, x86-64/aarch64. The default confined tier. |
+| `supervised` | `process` **+** a live seccomp **user-notification** socket gate + an always-on network namespace | `deny` (airtight empty netns) **or** a real **L3/L4 `net.egress` allowlist** | ✅ | The first tier that may claim untrusted-code containment. Requires the full stack green (userns + mountns + netns + nftables + seccomp-notif + Landlock + cgroup delegation + no-new-privs + cap-drop), else refused. `net.egress` runs `slirp4netns` for the uplink, an **nftables default-drop** allowlist as the airtight guard, and pins DNS via a private `/etc/hosts` (no port 53) — a raw socket cannot bypass it (vs. the container tier's L7). |
+| `container` | rootless **Podman** (`--cap-drop=ALL`, read-only rootfs, no docker.sock, env allowlist) | `net.egress` **domain allowlist** via a DNS-pinned host-side CONNECT proxy (L7, fail-closed `403`) | ✅ | Requires rootless Podman + a `container.image`. L7 scope (blocks proxy-respecting tooling; the `supervised` tier's nftables egress is the airtight L3/L4 equivalent). |
+| `hardened-container`, `microvm` | external backends (gVisor/Kata, Firecracker) | — | — | Not shipped in this build; refused. |
+
+The **`supervised` socket gate** is default-deny: only boring inet
+(`AF_INET`/`AF_INET6`, `SOCK_STREAM`/`SOCK_DGRAM`) — or an explicitly granted
+`AF_UNIX` — may proceed; raw/packet/netlink/vsock and unknown socket shapes are
+denied with `EPERM`, and every verdict is recorded. This gate is also what makes
+the `net.egress` allowlist **unbypassable**: untrusted code runs as root within
+its own user namespace (so `nft` keeps `CAP_NET_ADMIN` across `execve`), but the
+gate denies `AF_NETLINK`, so the program cannot open the netlink socket `nft`/`ip`
+would need to rewrite the ruleset or routes.
+
+```bash
+h5i env probe                                   # what can this host enforce?
+h5i env create fix-auth                          # auto-picks the strongest runnable tier
+h5i env create jail --isolation supervised       # refuses unless the full stack is green
+h5i env create build --isolation container       # needs rootless podman + an image
+h5i env shell  fix-auth                           # interactive confined session
+```
+
+<a name="env-policy-file-h5ienvtoml"></a>
+### Policy file (`.h5i/env.toml`)
+
+Profiles are checked into the repo at `.h5i/env.toml`. A profile named `default`
+is used unless `--profile` selects another. Everything is fail-closed and
+optional; the built-in default is a confined `workspace`/`process` baseline.
+
+```toml
+[profile.default]
+isolation = "process"             # workspace | process | supervised | container | …
+tools     = ["git", "cargo"]      # argv[0] allowlist (empty = unrestricted)
+secrets   = ["GITHUB_TOKEN"]      # brokered grant names (see Secrets broker)
+
+[profile.default.fs]
+read  = ["/usr", "/lib", "/etc"]  # Landlock read-only grants (system paths)
+write = ["$WORK"]                 # Landlock read-write grants ($WORK = the worktree)
+deny  = ["~/.ssh", "~/.aws"]      # preflight lint (refuses a grant whose parent contains these)
+
+[profile.default.net]
+mode   = "deny"                   # deny | host
+egress = ["pypi.org", "github.com:443", ".githubusercontent.com"]  # domain allowlist (container/supervised)
+
+[profile.default.resources]
+mem   = "4G"                      # cgroup memory.max (or RLIMIT_AS fallback)
+procs = 256                       # cgroup pids.max / RLIMIT_NPROC
+wall  = "30m"                     # host-side wall-clock kill (exit 124 on timeout)
+fsize = "100M"                    # RLIMIT_FSIZE — single-file write cap (opt-in)
+cpu   = "60s"                     # RLIMIT_CPU — hard CPU-time cap (opt-in)
+
+[profile.default.container]
+image = "docker.io/library/debian:stable-slim"   # required for isolation=container
+
+[profile.default.env]
+pass = ["PATH", "HOME", "LANG"]   # env-var allowlist (nothing inherited wholesale)
+
+# Optional rich secret config (see below)
+[profile.default.secret.GITHUB_TOKEN]
+source = "env:GH_PAT"             # env:VAR | file:/abs/path  (default: env:H5I_SECRET_<NAME>)
+inject = "file"                   # file | env  (default: env)
+ttl    = "1h"
+```
+
+The fully-resolved policy is serialized to `policy.resolved.toml` and its
+sha256 **digest is pinned** in the env manifest and in every capture — so the
+policy actually enforced is tamper-evident.
+
+<a name="env-secrets-broker"></a>
+### Secrets broker
+
+Declared `secrets` are resolved from host-side sources **at run time** (never at
+policy load), injected into the run, **scrubbed from the captured evidence**, and
+audited — all **fail-closed** (a missing source aborts the run).
+
+- **Source:** `env:VAR`, `file:/abs/path`, or the default `env:H5I_SECRET_<NAME>`.
+- **Injection:** `env` (sets `<NAME>` on the child — universal; the default) or
+  `file` (writes `0600` outside `$WORK`, sets `<NAME>_FILE` to the path —
+  workspace tier in v1).
+- **Audit:** one `secret` event per grant records the name, source, injection
+  method, ttl, and a sha256 **fingerprint** — never the value.
+- **Redaction:** the resolved value is removed from the capture (raw + summary)
+  by exact match, on top of h5i's pattern-based secret scrub.
+
+```bash
+# Profile declares: secrets = ["GITHUB_TOKEN"]
+H5I_SECRET_GITHUB_TOKEN=ghp_xxx h5i env run build -- ./deploy.sh
+# GITHUB_TOKEN is injected into the run, redacted from the capture, audited by fingerprint.
+```
+
+<a name="env-resource-limits"></a>
+### Resource limits
+
+The `process`/`supervised` tiers apply **cgroup v2** limits (`memory.max`,
+`pids.max`, accurate `memory.peak` / `cpu.stat`) when the host delegates a
+writable cgroup subtree to the user (a systemd user session — h5i discovers the
+delegated `user@<uid>.service` subtree, no root needed). Where delegation is
+unavailable, it falls back to rlimits (`RLIMIT_AS`/`NPROC`/`FSIZE`/`CPU`).
+`h5i env probe` reports whether cgroups are usable. A wall-clock timeout kills
+the whole process tree (`exit 124`).
+
+---
+
 ## h5i serve
 
 ```
@@ -2577,6 +2752,7 @@ h5i serve --port 8080
 | **Intent Graph** | Directed graph of causal commit chains |
 | **Memory** | Browse and diff agent memory snapshots linked to each commit |
 | **Sessions** | Per-commit session data: exploration footprint, uncertainty heatmap, omissions, churn |
+| **Sandbox** | The "flight recorder" for [`h5i env`](#h5i-env-isolated-agent-sandboxes): host-readiness strip (per-tier probe), an env fleet table with a deterministic **boundary-pressure** score, a five-lane (FS / NET / PROC / RESOURCE / PROVENANCE) per-run timeline, and the enforced-policy inspector. Read-only. Surfaces denials honestly — "Boundary blocked" only when enforcement fired, "Boundary pressure" for probing shapes, "Weak isolation" for capability gaps. Backed by `GET /api/envs`, `/api/env/:agent/:slug`, `/api/env/probe`. |
 
 ---
 
@@ -2950,6 +3126,15 @@ Auto-captured when the Claude Code hook is installed; you usually do not set the
 |----------|---------|---------|
 | `H5I_TEST_CMD` | unset | Shell command h5i runs when `--tests` is passed without `--test-cmd`/`--test-results`. Its stdout must be a [test-adapter JSON object](#appendix-test-adapter-schema). |
 | `H5I_TEST_RESULTS` | unset | Path to a pre-produced test-results JSON file. Equivalent to passing `--test-results`. |
+| `H5I_TEST_CONTAINER` | unset | When set, opts in the real-container (`isolation=container`) integration tests (they pull an image + make a live network call). |
+| `H5I_TEST_NET` | unset | When set, opts in the supervised `net.egress` allowlist e2e test (needs real outbound network). |
+
+### Sandbox / environments ([h5i env](#h5i-env-isolated-agent-sandboxes))
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `H5I_DEFAULT_ISOLATION` | unset (auto-pick) | Pin a clone's default isolation tier for `env create` when no `--isolation` is given (e.g. `workspace`, `process`). Unset ⇒ auto-pick the strongest runnable tier. `--isolation auto` re-probes past it. |
+| `H5I_SECRET_<NAME>` | unset | Default source for a secret grant `<name>` whose profile `source` is `env:H5I_SECRET_<NAME>` (the default). The broker injects it into the run, redacts it from evidence, and audits it by fingerprint — never the value. See [secrets](#env-secrets-broker). |
 
 ### Token reduction
 
