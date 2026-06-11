@@ -6,3 +6,4 @@
 [14:50:04] OBSERVE: read src/sandbox.rs
 [14:50:09] OBSERVE: read src/supervisor.rs
 [14:50:31] OBSERVE: read src/sandbox.rs
+[14:50:37] OBSERVE: read src/main.rs
