@@ -1,14 +1,17 @@
 # h5i Environments — Design
 
-> **Status:** implemented through rollout phases 1–4 (`src/env.rs`,
-> `src/sandbox.rs`, `src/container.rs`): the workspace tier, the static
-> `process` tier (Landlock/seccomp/netns), the policy file with fail-closed
-> gates, env sharing via `refs/h5i/env` + the `h5i_env_*` MCP tools, and the
-> **rootless-podman `container` backend** — which unlocks the `net.egress`
-> domain allowlist via a DNS-pinned host proxy. The `hardened-container`/
-> `microvm` adapters, the seccomp-notify supervisor (airtight L3/L4 egress),
-> and GAAP stage separation remain future phases.
-> Authored by `claude`, with design
+> **Status:** implemented (`src/env.rs`, `src/sandbox.rs`, `src/supervisor.rs`,
+> `src/container.rs`): the workspace tier, the static `process` tier
+> (Landlock/seccomp/netns), the **`supervised` tier** (seccomp-notify socket gate
+> + an **airtight rootless L3/L4 `net.egress` allowlist** — slirp4netns +
+> nftables + `/etc/hosts` DNS pinning; see `docs/supervisor-design.md`), the
+> **rootless-podman `container` backend** (L7 `net.egress` proxy), the secrets
+> broker + cgroup-v2 limits, the policy file with fail-closed gates, env sharing
+> via `refs/h5i/env` + the `h5i_env_*` MCP tools. `env create` is
+> **secure-by-default** (auto-picks the strongest runnable tier), and `env shell`
+> opens an interactive confined session in the box. The `hardened-container`/
+> `microvm` adapters, `openat2` path-allow, and GAAP stage separation remain
+> future phases. Authored by `claude`, with design
 > contributions from `codex` via Agent Radio (`refs/h5i/msg`), grounded in the
 > reference systems under `../sandbox-design-ref/` and three 2026 security
 > papers (Sandlock, EscapeBench, GAAP).
@@ -228,7 +231,7 @@ enforcement; we lean on the kernel, not on Docker.
 |---|---|---|
 | Filesystem scope | **Landlock** LSM (≥5.13; net rules ≥6.7) | **allowlist only** — grant rw `$WORK` + ro `/usr` `/lib` `/nix`. See the carve-out caveat below. |
 | Syscall surface | **seccomp-bpf deny-list** + `PR_SET_NO_NEW_PRIVS` | v1 *denies* the dangerous set (`mount`, `ptrace`, `keyctl`, `bpf`, kernel-module, `add_key`); a default-deny *allowlist* is a later hardened profile, not v1 |
-| Network | **`unshare(CLONE_NEWNET)`** | enforces only `net.mode = deny` (empty netns, loopback only) or `host` (full). **Cannot do domain/host allowlists** — that needs the supervisor or a container backend (phase 6). |
+| Network | **`unshare(CLONE_NEWNET)`** | enforces only `net.mode = deny` (empty netns, loopback only) or `host` (full). **Cannot do domain/host allowlists** — that needs the `supervised` tier (now shipped) or a container backend. |
 | Mount / fs view | **`unshare(CLONE_NEWNS)`** + bind mounts | restricted rootfs view; hides the shared `.git` |
 | PID view | `unshare(CLONE_NEWPID)` | can't see/signal host processes (EscapeBench pid-ns escape) |
 | Privilege | `unshare(CLONE_NEWUSER)` + uid/gid maps | rootless; this is how bubblewrap works |
@@ -244,15 +247,17 @@ enforcement; we lean on the kernel, not on Docker.
 > otherwise. If a profile needs the original source as a base, expose it
 > host-side at setup or as a sanitized read-only snapshot without `.git`.
 
-The MVP `process` tier is **static** (no supervisor): `net.mode` deny|host +
+The `process` tier is **static** (no supervisor): `net.mode` deny|host +
 Landlock allowlist grants (`$WORK` + ro system paths) + a fixed seccomp
 **deny-list** + rlimits. That already covers adversary classes 1–2 for the
 deny-network case. The **narrow supervisor** (seccomp user-notification) —
-needed for *host/HTTP-granular* egress allowlists and copy-on-write effects — is
-a later phase, mirroring Sandlock's static/dynamic split. **If a profile sets a
-non-empty `net.egress` allowlist under the `process` tier, h5i fails closed**
-(the static backend cannot honor it) and directs the user to a supervisor or
-container/hardened backend.
+needed for *host-granular* egress allowlists — is the **`supervised` tier**
+(now shipped: it adds the seccomp-notify socket gate and an airtight rootless
+L3/L4 `net.egress` allowlist via slirp4netns + nftables; see
+`docs/supervisor-design.md`), mirroring Sandlock's static/dynamic split. **If a
+profile sets a non-empty `net.egress` allowlist under the `process` tier, h5i
+fails closed** (the static backend cannot honor it) and directs the user to the
+`supervised` or container backend.
 
 ### Dependency budget
 
@@ -350,11 +355,13 @@ env.pass  = ["PATH", "HOME", "LANG"]   # env-var allowlist, not full inherit
 ```
 
 - **Network is first-class**, equal to filesystem, but honestly scoped to the
-  backend. `process`-v1 enforces only `net.mode = deny | host` (netns). A
-  non-empty `net.egress` **domain allowlist requires the supervisor or a
-  container/hardened backend**, and h5i fails closed if it is requested under
-  the static `process` tier. Later (supervisor): DNS resolved-and-pinned at
-  startup (kills rebinding), then HTTP method/host/path proxy.
+  backend. `process` enforces only `net.mode = deny | host` (netns). A
+  non-empty `net.egress` **domain allowlist requires the `supervised` tier or a
+  container backend**, and h5i fails closed if it is requested under the static
+  `process` tier. The `supervised` tier (shipped) resolves and pins each host to
+  its IP at startup — written into a private `/etc/hosts`, so no DNS port is even
+  open (kills rebinding) — and enforces the pinned IPs with an nftables
+  default-drop ruleset; the container tier adds an HTTP/HTTPS CONNECT proxy (L7).
 - **Secrets are never inherited wholesale.** Grants are explicit, capability-
   scoped, and their *values are redacted from captures* before the manifest is
   written (reuse existing `secrets.rs` scrubbers).
@@ -497,9 +504,11 @@ created ──run──▶ running ──idle──▶ idle
    Firecracker). OpenSandbox's "admin picks runtime class, user API unchanged."
 5. **Remote/share.** Env manifests via `h5i push`/`pull`; env branch via normal
    git remote. Optional BranchFS COW backend for speculative branches.
-6. **Supervisor + orchestration.** seccomp-notify supervisor for host/HTTP
-   egress + COW; the parallel "arena," reviewer comparison, test matrix, race
-   mode; GAAP stage-separated pipeline profiles.
+6. **Supervisor + orchestration.** seccomp-notify supervisor — **shipped**: the
+   `supervised` tier with the socket gate and the airtight rootless L3/L4
+   `net.egress` allowlist (slirp4netns + nftables + `/etc/hosts` pinning), plus
+   the parallel "arena" / reviewer comparison. Remaining: `openat2` path-allow,
+   COW, and GAAP stage-separated pipeline profiles.
 
 ---
 
@@ -527,11 +536,12 @@ created ──run──▶ running ──idle──▶ idle
   former is invisible to the main tree but nests a worktree inside `.git`.
 - **Dependency line** for the `process` tier: `landlock` + `seccompiler` + one
   of `rustix`/`nix`, vs. hand-rolled raw syscalls (zero crates, more `unsafe`).
-- **Supervisor scope** — how much of Sandlock's seccomp-notify dynamic layer is
-  worth the complexity for v1 vs. static-only netns. Note this gates *all* domain
-  egress allowlisting: without the supervisor (or a container backend), the
-  `process` tier can only do `net.mode = deny | host`, so domain allowlists are
-  deferred to the supervisor/container phase.
+- **Supervisor scope** *(resolved)* — the `supervised` tier ships a default-deny
+  seccomp-notify **socket gate** plus an airtight **L3/L4 `net.egress` allowlist**
+  (netns + nftables + DNS pinning), not Sandlock's full dynamic per-syscall layer.
+  Domain allowlisting is therefore available on `supervised` and `container`; the
+  static `process` tier remains `net.mode = deny | host` only. Remaining dynamic
+  work (`openat2` path-allow, runtime policy patching) is deferred.
 - **`fs.deny` semantics** — confirmed as a preflight lint + secret-scrub scope,
   *not* a Landlock rule (Landlock is allowlist-only and cannot subtract a child
   from a granted parent). Granted paths must avoid any parent that contains a

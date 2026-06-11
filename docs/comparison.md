@@ -51,7 +51,7 @@ branchfs (none) → h5i workspace → sandbox-runtime ≈ h5i process/supervised
 | **Isolation** | tiered: worktree → **process** (Landlock+seccomp+netns+cgroup) → **supervised** (+seccomp-notify gate, netns) → container (podman). No VM. | Docker container (root-in-container) | bwrap+seccomp+nested-ns | container; **optional gVisor/Kata/FC** | microVM (managed) | KVM microVM | none (FUSE only) |
 | **Rootless** | ✅ all tiers | ⚠️ root-in-container | ✅ | ⚠️ runtime-dependent | host ✅ (managed) | ❌ needs root/KVM | ✅ |
 | **FS / branch model** | **native git worktree per env** + mediated commit (path-escape / nested-`.git` defense) | git branch + worktree→container | bind mounts / allowlist | container fs + rootfs snapshots | per-sandbox + snapshot templates + volumes | CoW snapshot fork | **zero-cost FUSE CoW branches** |
-| **Egress control** | container = **L7 proxy allowlist** (DNS-pinned, fail-closed); supervised = airtight **net.mode=deny** today, **L3/L4 nftables allowlist pending**; + seccomp socket gate | ❌ none | **L7 proxy** allowlist (fail-closed) | **L3/L4 (DNS+nftables) + L7 MITM**, dynamic policy | CIDR/host allow+deny, per-domain HTTP transforms | host's job (TAP+nftables) / none | ❌ none |
+| **Egress control** | supervised = **airtight L3/L4 `net.egress` allowlist** (slirp4netns uplink + nftables default-drop + `/etc/hosts` DNS pinning; un-bypassable — the socket gate denies `AF_NETLINK`); container = **L7 proxy allowlist** (DNS-pinned, fail-closed) | ❌ none | **L7 proxy** allowlist (fail-closed) | **L3/L4 (DNS+nftables) + L7 MITM**, dynamic policy | CIDR/host allow+deny, per-domain HTTP transforms | host's job (TAP+nftables) / none | ❌ none |
 | **Provenance** | **structured captures (token-reduced + raw) + event log + policy digests + EgressSummary + redactions, all in shareable git refs** | git notes (free-form) | in-memory violations | minimal; audit-trail **roadmap-only** | metrics only | request JSONL (zeroboot) | logs only |
 | **Agent + review loop** | **worktree + context branch + policy = triple fusion; propose / apply / compare (arena) / rebase; MCP; cross-clone review via push/pull** | merge / apply; MCP | single-process; ask-callback | MCP; no git review | SDK; pause/resume; no review | none (substrate) | `@branch` multi-agent paths |
 | **Secrets** | **broker: scoped + redact-from-evidence + fingerprint audit + fail-closed** | env (Dagger secrets) | none | registry / token | env / git creds | none | none |
@@ -79,6 +79,12 @@ branchfs (none) → h5i workspace → sandbox-runtime ≈ h5i process/supervised
 5. **A real secrets broker** that redacts the value *from the captured evidence*
    and audits by fingerprint — beyond the env-var secrets of
    E2B/container-use/OpenSandbox.
+6. **Un-bypassable rootless L3/L4 egress.** The supervised tier's `net.egress`
+   allowlist (slirp4netns + nftables default-drop + `/etc/hosts` DNS pinning)
+   can't be circumvented even by code running as root in its own user namespace:
+   the seccomp socket gate denies `AF_NETLINK`, so it can't open the netlink
+   socket `nft`/`ip` would need to rewrite the rules. Stronger than the container
+   tier's (and srt's) L7 proxy, which a raw socket bypasses — all rootless, no VM.
 
 ## Where h5i env is behind (honest gaps)
 
@@ -86,13 +92,11 @@ branchfs (none) → h5i workspace → sandbox-runtime ≈ h5i process/supervised
    Kata give a hardware boundary h5i cannot match; its strongest tier is rootless
    supervised/container. (h5i's own design reserves `hardened-container`/`microvm`
    as external backends.)
-2. **Egress is behind *today*.** The container tier is L7-only (bypassable by a
-   raw socket — the same honest limitation srt has). OpenSandbox already ships
-   L3/L4 (DNS + nftables) and E2B ships CIDR/host allowlists. h5i's **supervised
-   increment 2** (netns + nftables, already designed in
-   `docs/supervisor-design.md`) is what closes this — and with the seccomp socket
-   gate, per-host verdicts, and the dashboard, it would *exceed* them on
-   observability.
+2. **No *dynamic* egress policy.** The egress allowlist is now real L3/L4 on the
+   supervised tier (shipped — see below), at parity with OpenSandbox's
+   DNS+nftables and ahead of it on observability. What OpenSandbox still does that
+   h5i does not: **runtime** policy patching (a `/policy` endpoint) and a
+   denied-host webhook. h5i's allowlist is fixed at run start.
 3. **No snapshot / pause-resume / fast-fork.** E2B (pause/resume), OpenSandbox
    (rootfs-snapshot hibernate), zeroboot (~0.8 ms VM fork). h5i's
    persistent-worktree model is better for *iterative review*, worse for
@@ -102,12 +106,12 @@ branchfs (none) → h5i workspace → sandbox-runtime ≈ h5i process/supervised
 
 ## Ideas worth borrowing (mapped to the roadmap)
 
-- **Supervised increment 2 (egress)** — adopt **OpenSandbox's** model directly:
-  DNS-proxy + nftables L3/L4, **dynamic `/policy` patching**,
-  `deny.always > allow.always` precedence, and a **denied-hostname webhook** that
-  feeds the dashboard's NET lane. And **srt's** proxy hardening for the *container*
-  tier now: reject malformed hosts (null bytes), canonicalize `inet_aton`
-  shorthand (`2852039166` → an IP) before allowlist matching.
+- **Dynamic egress policy** (the supervised L3/L4 allowlist itself is **shipped**)
+  — borrow **OpenSandbox's** runtime `/policy` patching + a **denied-hostname
+  webhook** to feed the dashboard's NET lane, so the allowlist can change mid-run.
+  And **srt's** proxy hardening for the *container* tier: reject malformed hosts
+  (null bytes), canonicalize `inet_aton` shorthand (`2852039166` → an IP) before
+  allowlist matching.
 - **Harden process/supervised** with **srt's** dual-namespace trick: a nested
   PID + user namespace applied *after* the mount setup, plus `PR_SET_DUMPABLE=0`,
   to block ptrace between the tracee and the supervisor's helpers.
@@ -127,9 +131,10 @@ branchfs (none) → h5i workspace → sandbox-runtime ≈ h5i process/supervised
 
 h5i `env` is best-in-class on **provenance, the review loop, denial
 observability, and fail-closed rigor**; competitive on **rootless kernel
-confinement** (a peer to sandbox-runtime, ahead of container-use); and behind on
-**isolation ceiling (no VM), egress (until supervised increment 2 lands), and
-ephemeral-scale lifecycle**. The single highest-leverage move to close the most
-visible gap is already on the roadmap — **supervised increment 2 (netns +
-nftables egress)** — which would take h5i from "behind OpenSandbox/E2B on egress"
-to "ahead on egress *observability*."
+confinement** (a peer to sandbox-runtime, ahead of container-use); and at parity
+or ahead on **egress** now that the supervised tier ships an un-bypassable
+rootless L3/L4 `net.egress` allowlist (DNS+nftables, like OpenSandbox, but
+stronger on observability and bypass-resistance). The remaining honest gaps are
+the **isolation ceiling (no VM/microVM tier)**, **ephemeral-scale lifecycle**
+(no snapshot/pause-resume), and **dynamic egress policy** (no runtime allowlist
+patching) — the first being the highest-leverage next move.
