@@ -1,0 +1,1 @@
+{"git_oid":"8ed1e83155b48402ca1e4d9a48560ec5ee15f8e5","parent_oid":"8e30d9c3601678b55b1509703d29dd26ba2ead76","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"commit the hero flow-field if the overhead is negligible","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-11T02:00:57.300998201Z"}
