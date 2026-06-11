@@ -463,3 +463,9 @@ _[Checkpoint: 6a2b3bcd — session ended (auto-checkpoint)]_
 ---
 
 [22:53:35] NOTE: DEFERRAL: for image-based envs, and the process-tier shim is probably not worth its dishonesty. That also means auto-capture-in-the-box isn't a quick win — it…
+
+
+---
+_[Checkpoint: 6a2b3c6f — session ended (auto-checkpoint)]_
+---
+
