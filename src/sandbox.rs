@@ -202,7 +202,13 @@ impl Profile {
             name: name.to_string(),
             isolation,
             fs_read: if confined { default_fs_read() } else { Vec::new() },
-            fs_write: if confined { vec!["$WORK".to_string()] } else { Vec::new() },
+            // /dev/null and /dev/zero are write-granted sinks: every shell
+            // pipeline redirects to them, and granting write reveals nothing.
+            fs_write: if confined {
+                vec!["$WORK".to_string(), "/dev/null".to_string(), "/dev/zero".to_string()]
+            } else {
+                Vec::new()
+            },
             fs_deny: default_fs_deny(),
             net_mode: if confined { NetMode::Deny } else { NetMode::Host },
             net_egress: Vec::new(),
@@ -215,8 +221,75 @@ impl Profile {
             cpu_secs: None,
             tools: Vec::new(),
             image: None,
-            env_pass: vec!["PATH".into(), "HOME".into(), "LANG".into()],
+            // TERM/COLORTERM so interactive sessions (`env shell`) render: a
+            // TUI without TERM is garbage on screen. Harmless for captured runs.
+            env_pass: vec![
+                "PATH".into(),
+                "HOME".into(),
+                "LANG".into(),
+                "TERM".into(),
+                "COLORTERM".into(),
+            ],
         }
+    }
+
+    /// Built-in **`agent`** profile (`--profile agent`): the agent-in-box
+    /// defaults. The base built-in confines to system paths + `$WORK`, which is
+    /// right for build/test workloads but bricks coding agents — `claude` /
+    /// `codex` live under `$HOME`, keep state there, and need egress to their
+    /// APIs. This profile adds the minimum HOME surface an agent needs:
+    ///
+    /// - read-only: `~/.local` (agent binaries + bundles), `~/.nvm` (node
+    ///   installs), shell rc files, `~/.gitconfig` + `~/.config/git` (commit
+    ///   identity);
+    /// - read-write: the agents' own state (`~/.claude`, `~/.claude.json`,
+    ///   `~/.codex`), caches (`~/.cache`, `~/.npm`), and `/tmp` (host-shared at
+    ///   this tier; the container tier gives a private one);
+    /// - `net.egress`: the agent API endpoints, DNS-pinned + nftables-enforced
+    ///   at the supervised tier (the lint refuses egress at tiers that cannot
+    ///   enforce it — `agent` is a supervised/container profile by design);
+    /// - `USER`/`SHELL` passed through; roomier mem/procs for a live agent.
+    ///
+    /// The default deny set (`~/.ssh`, `~/.aws`, `~/.config/gh`, hooks) still
+    /// applies — none of the grants contains a denied child. Deliberate trade:
+    /// the agent can read its *own* credentials (it cannot function without
+    /// them), and the egress allowlist bounds where bytes can go.
+    pub fn builtin_agent(isolation: IsolationClaim) -> Profile {
+        let mut p = Profile::builtin("agent", isolation);
+        p.fs_read.extend(
+            [
+                "~/.local",
+                "~/.nvm",
+                "~/.bashrc",
+                "~/.bash_profile",
+                "~/.profile",
+                "~/.inputrc",
+                "~/.gitconfig",
+                "~/.config/git",
+            ]
+            .map(String::from),
+        );
+        p.fs_write.extend(
+            ["~/.claude", "~/.claude.json", "~/.codex", "~/.cache", "~/.npm", "/tmp"]
+                .map(String::from),
+        );
+        // The agent's own controlling terminal (TUIs re-open /dev/tty for raw
+        // input). Deliberately NOT /dev/pts — that subtree includes the user's
+        // *other* host terminals (same-uid writable → injection channel).
+        p.fs_write.push("/dev/tty".into());
+        p.net_egress = [
+            "api.anthropic.com",
+            "statsig.anthropic.com",
+            "api.openai.com",
+            "auth.openai.com",
+            "chatgpt.com",
+        ]
+        .map(String::from)
+        .to_vec();
+        p.env_pass.extend(["USER".into(), "SHELL".into()]);
+        p.mem_bytes = Some(8 * 1024 * 1024 * 1024);
+        p.max_procs = Some(512);
+        p
     }
 
     pub fn wall(&self) -> Duration {
@@ -337,8 +410,26 @@ fn merge_secret_grants(
         .collect()
 }
 
+/// The built-in profile for `name`: the agent-in-box defaults for `agent`,
+/// the fail-closed build/test defaults for everything else. Used both as the
+/// no-`env.toml` fallback and as the merge base under a user-defined profile
+/// of the same name (so a partial `[profile.agent]` keeps the agent grants).
+fn builtin_named(name: &str, isolation: IsolationClaim) -> Profile {
+    if name == "agent" {
+        Profile::builtin_agent(isolation)
+    } else {
+        Profile::builtin(name, isolation)
+    }
+}
+
+/// Is `name` backed by a built-in profile (usable without `.h5i/env.toml`)?
+fn is_builtin_name(name: &str) -> bool {
+    name == "default" || name == "agent"
+}
+
 /// Load profile `name` from `<repo>/.h5i/env.toml`, falling back to the
-/// built-in default when the file (or the `default` profile) is absent.
+/// built-in when the file (or the profile entry) is absent and `name` is a
+/// built-in one (`default`, `agent`).
 /// `isolation_override` (the CLI `--isolation` flag) replaces the profile's
 /// claim. The result is validated (fail-closed lints) before being returned.
 pub fn load_profile(
@@ -352,7 +443,7 @@ pub fn load_profile(
         let mut file: PolicyFileToml = toml::from_str(&text)?;
         match file.profile.remove(name) {
             Some(p) => Some(p),
-            None if name == "default" => None,
+            None if is_builtin_name(name) => None,
             None => {
                 return Err(H5iError::Metadata(format!(
                     "profile '{name}' not found in {POLICY_FILE} (available: {})",
@@ -360,7 +451,7 @@ pub fn load_profile(
                 )))
             }
         }
-    } else if name != "default" {
+    } else if !is_builtin_name(name) {
         return Err(H5iError::Metadata(format!(
             "profile '{name}' requested but {POLICY_FILE} does not exist"
         )));
@@ -369,14 +460,14 @@ pub fn load_profile(
     };
 
     let mut profile = match raw {
-        None => Profile::builtin(name, isolation_override.unwrap_or(IsolationClaim::Workspace)),
+        None => builtin_named(name, isolation_override.unwrap_or(IsolationClaim::Workspace)),
         Some(t) => {
             let isolation = match (&isolation_override, &t.isolation) {
                 (Some(o), _) => *o,
                 (None, Some(s)) => IsolationClaim::parse(s)?,
                 (None, None) => IsolationClaim::Workspace,
             };
-            let base = Profile::builtin(name, isolation);
+            let base = builtin_named(name, isolation);
             Profile {
                 name: name.to_string(),
                 isolation,
@@ -950,7 +1041,7 @@ fn interactive_confined(
     // Process tier interactive: confine the session to a fresh PID namespace +
     // private procfs too (pidns=true), with the supervisor joining it to cgroup.
     let mut cmd = build_confined_command(
-        policy, work, argv, injected_env, net_deny, None, None, true, procs.as_deref(),
+        policy, work, argv, injected_env, net_deny, None, None, true, procs.as_deref(), true,
     )?;
     // build_confined_command leaves stdio unset → inherited (the session).
     let mut child = cmd
@@ -1115,6 +1206,7 @@ pub(crate) fn build_confined_command(
     egress: Option<EgressJail>,
     pidns: bool,
     cgroup_procs: Option<&Path>,
+    interactive: bool,
 ) -> Result<std::process::Command, H5iError> {
     use std::os::unix::process::CommandExt;
 
@@ -1201,7 +1293,15 @@ pub(crate) fn build_confined_command(
             // 0. New session/process group so the wall-clock kill can reap the
             //    WHOLE tree (killpg), not just the direct child — a confined
             //    command must not be able to leave runaway descendants behind.
-            if libc::setsid() == -1 {
+            //    Interactive (agent-in-box) sessions skip this: setsid detaches
+            //    the child from the controlling terminal, which breaks job
+            //    control and every TUI ("cannot set terminal process group").
+            //    They keep the caller's session — exactly how a nested shell
+            //    runs — and have no wall-clock kill (operator-bounded), so the
+            //    killpg guarantee isn't needed. (TIOCSTI keystroke injection
+            //    via the shared tty is gated off by default since kernel 6.2,
+            //    CONFIG_LEGACY_TIOCSTI; a PTY-proxy is the airtight follow-up.)
+            if !interactive && libc::setsid() == -1 {
                 return Err(Error::last_os_error());
             }
 
@@ -1473,7 +1573,7 @@ fn run_confined(
     // Process tier: netns only when egress is denied; no seccomp-notify gate; the
     // workload is confined to a fresh PID namespace + private procfs (pidns=true).
     let cmd = build_confined_command(
-        policy, work, argv, injected_env, false, None, None, true, procs.as_deref(),
+        policy, work, argv, injected_env, false, None, None, true, procs.as_deref(), false,
     )?;
 
     let mut outcome = wait_with_deadline(cmd, p.wall(), argv, procs.as_deref())?;
@@ -1672,7 +1772,7 @@ fn wait_with_deadline(
         buf
     });
 
-    let (exit_code, timed_out, cpu_ms, max_rss_kb) = wait_loop(&mut child, wall);
+    let (exit_code, timed_out, cpu_ms, max_rss_kb) = wait_loop(&mut child, Some(wall));
 
     Ok(ExecOutcome {
         stdout: out_h.join().unwrap_or_default(),
@@ -1689,15 +1789,19 @@ fn wait_with_deadline(
 /// Poll the child to the deadline, enforcing the wall-clock with a
 /// process-group SIGKILL, and reap it with `wait4` so we recover `rusage`
 /// (peak RSS + CPU time). Returns `(exit_code, timed_out, cpu_ms, max_rss_kb)`.
+///
+/// `wall = None` disables the deadline (interactive sessions are bounded by
+/// the operator, not a timer — and, having skipped `setsid`, they have no
+/// dedicated process group to `killpg`).
 #[cfg(unix)]
 pub(crate) fn wait_loop(
     child: &mut std::process::Child,
-    wall: Duration,
+    wall: Option<Duration>,
 ) -> (Option<i32>, bool, u128, Option<i64>) {
     // The child called setsid(), so its process-group id equals its pid; a
     // negative-pid SIGKILL reaps the whole tree, not just the leader.
     let pid = child.id() as libc::pid_t;
-    let deadline = std::time::Instant::now() + wall;
+    let deadline = wall.map(|w| std::time::Instant::now() + w);
     let mut timed_out = false;
 
     loop {
@@ -1724,7 +1828,7 @@ pub(crate) fn wait_loop(
             return (code, timed_out, 0, None);
         }
         // r == 0: still running.
-        if std::time::Instant::now() >= deadline {
+        if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
             timed_out = true;
             unsafe {
                 if libc::kill(-pid, libc::SIGKILL) != 0 {
@@ -1746,15 +1850,15 @@ fn cpu_ms(u: &libc::rusage) -> u128 {
 #[cfg(not(unix))]
 pub(crate) fn wait_loop(
     child: &mut std::process::Child,
-    wall: Duration,
+    wall: Option<Duration>,
 ) -> (Option<i32>, bool, u128, Option<i64>) {
-    let deadline = std::time::Instant::now() + wall;
+    let deadline = wall.map(|w| std::time::Instant::now() + w);
     let mut timed_out = false;
     let status = loop {
         match child.try_wait() {
             Ok(Some(s)) => break s,
             Ok(None) => {
-                if std::time::Instant::now() >= deadline {
+                if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
                     timed_out = true;
                     let _ = child.kill();
                     break child.wait().expect("wait after kill");
@@ -1863,6 +1967,60 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
     fn missing_named_profile_is_an_error() {
         let err = load_from_str(doc_example_toml(), "fetch", None).unwrap_err();
         assert!(err.to_string().contains("profile 'fetch' not found"), "{err}");
+    }
+
+    #[test]
+    fn builtin_passes_term_for_interactive_sessions() {
+        let p = Profile::builtin("default", IsolationClaim::Process);
+        assert!(p.env_pass.iter().any(|k| k == "TERM"));
+        assert!(p.env_pass.iter().any(|k| k == "COLORTERM"));
+    }
+
+    #[test]
+    fn builtin_agent_profile_loads_without_policy_file() {
+        // `--profile agent` must work with no .h5i/env.toml, like `default`.
+        let dir = tempfile::tempdir().unwrap();
+        let p = load_profile(dir.path(), "agent", Some(IsolationClaim::Supervised)).unwrap();
+        assert_eq!(p.isolation, IsolationClaim::Supervised);
+        // Agent binaries + state under $HOME.
+        assert!(p.fs_read.iter().any(|s| s == "~/.local"));
+        assert!(p.fs_write.iter().any(|s| s == "~/.claude"));
+        assert!(p.fs_write.iter().any(|s| s == "~/.codex"));
+        assert!(p.fs_write.iter().any(|s| s == "/tmp"));
+        // API egress (enforceable at this tier) + TUI env.
+        assert!(p.net_egress.iter().any(|s| s == "api.anthropic.com"));
+        assert!(p.env_pass.iter().any(|k| k == "TERM"));
+        assert!(p.env_pass.iter().any(|k| k == "SHELL"));
+        // The default deny set survives and no grant contains a denied child
+        // (validate_profile ran inside load_profile).
+        assert!(p.fs_deny.iter().any(|s| s == "~/.ssh"));
+    }
+
+    #[test]
+    fn agent_profile_refuses_tiers_that_cannot_enforce_egress() {
+        // Fail-closed: the agent profile carries net.egress, which the static
+        // process tier (and below) cannot enforce — refuse, never weaken.
+        let dir = tempfile::tempdir().unwrap();
+        for tier in [IsolationClaim::Workspace, IsolationClaim::Process] {
+            let err = load_profile(dir.path(), "agent", Some(tier)).unwrap_err();
+            assert!(err.to_string().contains("net.egress"), "{tier:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn user_defined_agent_profile_merges_over_agent_builtin() {
+        // A partial [profile.agent] keeps the agent-in-box grants as its base.
+        // (net.egress is NOT inherited: a user profile owns its egress list.)
+        let toml_text = r#"
+[profile.agent]
+isolation = "supervised"
+resources = { mem = "2G" }
+"#;
+        let p = load_from_str(toml_text, "agent", None).unwrap();
+        assert_eq!(p.mem_bytes, Some(2 * 1024 * 1024 * 1024));
+        assert!(p.fs_read.iter().any(|s| s == "~/.local"), "agent base grants inherited");
+        assert!(p.fs_write.iter().any(|s| s == "~/.claude"));
+        assert!(p.net_egress.is_empty(), "egress is owned by the user profile");
     }
 
     #[test]
@@ -1993,7 +2151,9 @@ source = "http://evil/steal"
         // $WORK writable, no secrets/egress by default.
         let p = Profile::builtin("p", IsolationClaim::Supervised);
         assert_eq!(p.net_mode, NetMode::Deny);
-        assert_eq!(p.fs_write, vec!["$WORK".to_string()]);
+        // $WORK plus the write-granted sinks (/dev/null, /dev/zero) — no other
+        // host paths are writable.
+        assert_eq!(p.fs_write, vec!["$WORK", "/dev/null", "/dev/zero"]);
         assert!(p.net_egress.is_empty());
         assert!(p.secret_grants.is_empty());
         // Supervised must rank above Process so the net.egress preflight lint

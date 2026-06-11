@@ -370,6 +370,38 @@ env.pass  = ["PATH", "HOME", "LANG"]   # env-var allowlist, not full inherit
   or container/hardened); they are not available under the static `process`
   tier.
 
+### The built-in `agent` profile (agent-in-box defaults)
+
+The deny-home default is right for build/test workloads but bricks the
+agent-in-box use case: `claude` and `codex` live under `$HOME`, keep their
+state and credentials there, and need egress to their APIs. `--profile agent`
+is a second built-in (no `env.toml` required) that adds the minimum surface a
+coding agent needs:
+
+- **ro:** `~/.local`, `~/.nvm`, shell rc files, `~/.gitconfig`, `~/.config/git`
+- **rw:** `~/.claude`, `~/.claude.json`, `~/.codex`, `~/.cache`, `~/.npm`,
+  `/tmp` (host-shared at this tier; the container tier gives a private one)
+- **net.egress:** `api.anthropic.com`, `statsig.anthropic.com`,
+  `api.openai.com`, `auth.openai.com`, `chatgpt.com` — DNS-pinned + enforced
+  (so the profile **refuses** to instantiate at tiers that cannot enforce it:
+  it is a supervised/container profile by design)
+- `TERM`/`COLORTERM`/`USER`/`SHELL` pass through; mem 8G, procs 512
+
+The default deny set (`~/.ssh`, `~/.aws`, `~/.config/gh`, hooks) still applies.
+Deliberate trade, stated honestly: the agent can read its *own* credentials —
+it cannot function without them — and the egress allowlist bounds where bytes
+can go. A user-defined `[profile.agent]` merges over this base (fs/env/resource
+fields inherit; `net.egress` does **not** — a user profile owns its egress
+list).
+
+Interactive sessions (`env shell`) additionally differ from captured runs in
+two deliberate ways: they keep the caller's terminal session (no `setsid`, so
+job control and TUIs work; the wall-clock kill that needed a dedicated process
+group does not apply — an interactive session is operator-bounded), and the
+supervised socket gate always permits **anonymous `AF_UNIX` socketpairs**
+(intra-box IPC that tokio/Node need at startup; `socket(AF_UNIX)` — the
+authority-smuggling vector — stays deny-by-default).
+
 ---
 
 ## 8. Storage & data model (reuses existing h5i machinery)

@@ -1702,7 +1702,9 @@ enum EnvCommands {
         /// Base revision (default: HEAD). Pinned immutably.
         #[arg(long)]
         from: Option<String>,
-        /// Policy profile from .h5i/env.toml (default: `default`)
+        /// Policy profile from .h5i/env.toml. Built-ins need no file: `default`
+        /// (build/test confinement) and `agent` (agent-in-box: HOME grants for
+        /// claude/codex, API egress — for `env shell` sessions running an agent).
         #[arg(long, default_value = "default")]
         profile: String,
         /// Isolation: auto (default) | workspace | process | supervised | container | hardened-container | microvm.
@@ -8121,11 +8123,18 @@ jq -c '{
                         command
                     };
                     eprintln!(
-                        "{} entering {} (isolation: {}) — confined session; exit to return",
+                        "{} entering {} (isolation: {}, profile: {}) — confined session; exit to return",
                         LOOKING,
                         style(&m.id).magenta(),
-                        style(&m.isolation_claim).cyan()
+                        style(&m.isolation_claim).cyan(),
+                        style(&m.profile).cyan()
                     );
+                    if m.profile != "agent" {
+                        eprintln!(
+                            "   hint: to run a coding agent (claude/codex) in the box, create the env \
+                             with --profile agent (grants the agent's HOME paths + API egress)"
+                        );
+                    }
                     let code = h5i_core::env::shell(git, &h5i_root, &mut m, &argv)?;
                     match code {
                         0 => {}

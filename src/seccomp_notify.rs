@@ -359,16 +359,17 @@ fn handle_one(listener: RawFd, unix_granted: bool, stats: &mut ServeStats) -> Fl
     // Defense-in-depth (Codex): the BPF should only ever notify on our arch +
     // socket/socketpair, but a security boundary must not trust impossible
     // inputs. An unexpected arch/nr is treated as deny, never continue.
-    let trusted_shape = req.data.arch == AUDIT_ARCH
-        && (req.data.nr as u32 == NR_SOCKET || req.data.nr as u32 == NR_SOCKETPAIR);
-    let decision = if trusted_shape {
-        // args[0]=domain, args[1]=type, args[2]=protocol (socket & socketpair).
-        decide_socket(
-            req.data.args[0] as i32,
-            req.data.args[1] as i32,
-            req.data.args[2] as i32,
-            unix_granted,
-        )
+    // args[0]=domain, args[1]=type, args[2]=protocol (socket & socketpair);
+    // socketpair gets its own gate (an anonymous AF_UNIX pair is allowed —
+    // see `decide_socketpair`), socket stays on the default-deny gate.
+    let (domain, ty, proto) =
+        (req.data.args[0] as i32, req.data.args[1] as i32, req.data.args[2] as i32);
+    let decision = if req.data.arch != AUDIT_ARCH {
+        Decision::Deny(libc::EPERM)
+    } else if req.data.nr as u32 == NR_SOCKET {
+        decide_socket(domain, ty, proto, unix_granted)
+    } else if req.data.nr as u32 == NR_SOCKETPAIR {
+        crate::supervisor::decide_socketpair(domain, ty, proto, unix_granted)
     } else {
         Decision::Deny(libc::EPERM)
     };
