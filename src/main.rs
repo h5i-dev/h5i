@@ -8028,6 +8028,9 @@ jq -c '{
                         Some(s) if s.eq_ignore_ascii_case("auto") => Some(IsolationRequest::Auto),
                         Some(s) => Some(IsolationRequest::Claim(IsolationClaim::parse(s)?)),
                     };
+                    // Did we auto-pick (vs. the user pinning a tier)? Used below to
+                    // surface the container tier when the host lacks Podman.
+                    let auto_picked = matches!(isolation, None | Some(IsolationRequest::Auto));
                     let opts = h5i_core::env::CreateOpts { from, profile, isolation, backend };
                     let m = h5i_core::env::create(git, &h5i_root, &workdir, &agent, &name, opts)?;
                     println!(
@@ -8041,9 +8044,24 @@ jq -c '{
                     println!("   branch   {}", m.branch);
                     println!("   context  {}", m.context_branch);
                     println!("   work     {}", m.work_dir(&h5i_root).display());
+                    // Discoverability: when we auto-picked a kernel tier and the host
+                    // has no rootless Podman, tell the user the `container` tier
+                    // (the one with a network egress allowlist) exists and what it
+                    // needs — otherwise they would never learn Podman unlocks it.
+                    if auto_picked
+                        && matches!(m.isolation_claim.as_str(), "workspace" | "process" | "supervised")
+                        && h5i_core::sandbox::probe_host().container_runtime.is_none()
+                    {
+                        println!(
+                            "   {}      the 'container' tier (adds a network egress allowlist) needs \
+                             rootless Podman, which isn't installed — install it, then set \
+                             container.image in .h5i/env.toml. See: h5i env probe",
+                            style("tip").yellow()
+                        );
+                    }
                     println!(
-                        "   next     h5i env run {} -- <cmd>   ·   h5i env propose {}",
-                        m.slug, m.slug
+                        "   next     h5i env run {} -- <cmd>   ·   h5i env shell {}   ·   h5i env propose {}",
+                        m.slug, m.slug, m.slug
                     );
                 }
 
