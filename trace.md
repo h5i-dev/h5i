@@ -1785,3 +1785,9 @@ _[Checkpoint: 6a2a1a41 — edited src/env.rs; wrote env-process-tier-missing-pid
 ---
 
 [02:17:02] THINK: The changes are in the working tree, unstaged — let me know if you'd like me to stage and `h5i commit` them (the container fix touches the `--audit`-worthy secrets path).
+
+
+---
+_[Checkpoint: 6a2a1a9e — edited src/env.rs; wrote env-process-tier-missing-pidns.md; edited MEMORY.md]_
+---
+
