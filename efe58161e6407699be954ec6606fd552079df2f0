@@ -1,0 +1,1 @@
+{"git_oid":"efe58161e6407699be954ec6606fd552079df2f0","parent_oid":"d4c812d1ce3b0cbb3637754557b5dc739be81a3a","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"can users naturally know they need podman to fully use h5i env?","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-11T01:17:00.325848138Z"}
