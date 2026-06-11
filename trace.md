@@ -413,3 +413,9 @@ _[Checkpoint: 6a2b2a33 — edited CLAUDE.md; edited CLAUDE.md; edited src/main.r
 [21:43:04] ACT: edited CLAUDE.md
 [21:43:15] ACT: edited CLAUDE.md
 [21:46:42] NOTE: DEFERRAL (~/Dev/h5i/src/main.rs): box` with a clean working tree. As a reminder, two optional follow-ups whenever you want them: 1. **Push to clean your live remote** — your next `h5…
+
+
+---
+_[Checkpoint: 6a2b2cc2 — edited docs/environments-design.md; edited CLAUDE.md; edited CLAUDE.md]_
+---
+
