@@ -234,3 +234,4 @@ _[Checkpoint: 6a2b180f — edited CLAUDE.md; edited docs/environments-design.md;
 [20:20:21] OBSERVE: read src/server.rs
 [20:20:24] OBSERVE: read src/env.rs
 [20:20:31] OBSERVE: read src/objects.rs
+[20:20:37] OBSERVE: read src/main.rs
