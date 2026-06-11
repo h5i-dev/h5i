@@ -408,3 +408,4 @@ _[Checkpoint: 6a2b2a33 — edited CLAUDE.md; edited CLAUDE.md; edited src/main.r
 [21:41:56] OBSERVE: read tests/env_integration.rs
 [21:42:02] ACT: edited tests/env_integration.rs
 [21:42:07] ACT: edited tests/env_integration.rs
+[21:42:14] ACT: edited tests/env_integration.rs
