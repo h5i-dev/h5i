@@ -45,3 +45,9 @@
 [15:13:09] ACT: wrote supervised-tier-green-on-this-host.md
 [15:13:33] OBSERVE: read MEMORY.md
 [15:13:42] ACT: edited MEMORY.md
+
+
+---
+_[Checkpoint: 6a2ad0a9 — env shell agent-in-box: agent profile + interactive fixes, verified end-to-end]_
+---
+

@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: impl-env-sandbox
+# Ephemeral traces — Branch: improve-shell
 
