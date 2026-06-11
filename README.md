@@ -20,10 +20,6 @@ Git records what changed. **`h5i`** records the rest: **who**, **why**, **what t
 <table align="center">
   <tr>
     <td align="center">
-      <strong>5</strong><br>
-      <sub>Command groups</sub>
-    </td>
-    <td align="center">
       <strong>4 tiers</strong><br>
       <sub>Sandbox isolation</sub>
     </td>
