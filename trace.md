@@ -1784,3 +1784,4 @@ _[Checkpoint: 6a2a16e0 — edited index.html; edited index.html; edited index.ht
 _[Checkpoint: 6a2a1a41 — edited src/env.rs; wrote env-process-tier-missing-pidns.md; edited MEMORY.md]_
 ---
 
+[02:17:02] THINK: The changes are in the working tree, unstaged — let me know if you'd like me to stage and `h5i commit` them (the container fix touches the `--audit`-worthy secrets path).
