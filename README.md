@@ -132,22 +132,22 @@ We can also monitor the conversation in real time with `h5i msg watch`.
   <img src="./assets/claude-codex-chess.gif" alt="h5i msg watch — a live claude ↔ codex code review streaming over refs/h5i/msg" width="95%">
 </p>
 
-### 3.2. Agent Sandbox — hand off risky work, then audit what happened
+### 3.2. Agent Sandbox — a confined, fully auditable environment
 
-`h5i env` gives you a disposable, policy-confined **environment** — a git worktree plus a digest-pinned, **fail-closed** policy — to hand a refactor, a dependency upgrade, or an untrusted build to an agent (or do it yourself) without it touching your main tree. Your loop is four commands:
+`h5i env` gives you a disposable, confined **environment** — a git worktree plus a policy that limits what the code inside can read, write, and reach over the network — so you can run a refactor, a dependency upgrade, or an untrusted build (yourself or via an agent) without it touching your main tree. Your loop is four commands:
 
 ```bash
-h5i env create fix-auth          # spin up a confined box (auto-picks the strongest tier)
-h5i env shell  fix-auth          # drop in — or hand the box to an agent
-h5i env diff   fix-auth          # audit: what changed, against the frozen base
-h5i env apply  fix-auth          # land it onto your branch — never automatic
+h5i env create fix-auth          # make a confined box (picks the strongest isolation the host supports)
+h5i env shell  fix-auth          # work inside it — or hand the box to an agent
+h5i env diff   fix-auth          # see exactly what changed, against the frozen starting point
+h5i env apply  fix-auth          # merge it into your branch (only when you choose to)
 ```
 
-Inside the box, **every command is confined by construction** — escape attempts (reading `/etc/shadow`, a raw socket to an arbitrary IP, an off-allowlist host, `mount` / `unshare` / `ptrace`) are denied **at the boundary** by Landlock + seccomp + namespaces, while legitimate work proceeds and lands as tamper-evident evidence. (`h5i env run <name> -- <cmd>` runs a single confined command the same way.)
+Inside the box, **every command is confined**: reading `/etc/shadow`, opening a raw socket, reaching a host that isn't on the allowlist, or calling `mount` / `unshare` / `ptrace` is blocked by Landlock + seccomp + namespaces, while normal work runs and is recorded. (`h5i env run <name> -- <cmd>` runs a single confined command the same way.)
 
-**Audit everything after the fact.** `h5i env log` lists every run, secret use, and denial; `h5i env inspect --capture <id>` renders one run's evidence (exit code, enforced policy digest, redactions); `h5i env compare` ranks parallel attempts side by side (the "arena"); and the Sandbox tab of the [web dashboard](#46-web-dashboard) scores every allow/deny for **boundary pressure**. `h5i env propose` turns the work into a review brief first — nothing reaches your branch until you `apply`. Env state lives in `refs/h5i/env` and travels with `h5i push` / `pull` for a cross-clone review loop.
+**Everything is auditable after the fact.** `h5i env log` lists every command run, secret used, and access blocked; `h5i env inspect --capture <id>` shows one run's record — its output, exit code, the exact policy that was enforced, and any redacted secrets; `h5i env compare` lines up parallel attempts; and the Sandbox tab of the [web dashboard](#46-web-dashboard) shows every allowed and blocked action. `h5i env propose` writes the change up for review first — nothing reaches your branch until you `apply`. The whole record lives in `refs/h5i/env` and moves between clones with `h5i push` / `pull`.
 
-Isolation is **tiered, secure-by-default, and never silently downgraded** — `h5i env create` picks the strongest tier the host can run (`h5i env probe` shows what that is); an explicit `--isolation` the host can't satisfy is refused, not weakened:
+`h5i env create` picks the strongest isolation level the host can actually enforce (`h5i env probe` shows what that is). If you ask for a level the host can't provide, h5i refuses rather than quietly running with less:
 
 | Tier | Confinement |
 |------|-------------|
