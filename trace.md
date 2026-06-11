@@ -470,3 +470,9 @@ _[Checkpoint: 6a2b3c6f — session ended (auto-checkpoint)]_
 ---
 
 [22:59:06] NOTE: DEFERRAL: r free; supervised currently runs with `pidns=false` (known follow-up). | | Network egress | **supervised** | Pinned-IP nftables default-drop is L3/L4…
+
+
+---
+_[Checkpoint: 6a2b3dba — session ended (auto-checkpoint)]_
+---
+
