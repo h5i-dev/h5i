@@ -1838,3 +1838,4 @@ _[Checkpoint: 6a2a1bc0 — edited src/env.rs; wrote env-process-tier-missing-pid
 _[Checkpoint: 6a2a2499 — edited tests/env_integration.rs; wrote env-process-tier-missing-pidns.md; edited MEMORY.md]_
 ---
 
+[03:05:30] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/MEMORY.md): **supervised tier** still runs `pidns=false` (tracked as a follow-up — its pidfd serve loop targets the Command child, which would become the superv…
