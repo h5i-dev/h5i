@@ -249,23 +249,11 @@
 
     /* ── Hero ──────────────────────────────────────────────── */
     #hero {
-      position: relative;
       min-height: 100vh;
       display: flex; align-items: center; justify-content: center;
       text-align: center;
       padding: 140px 2rem 90px;
       overflow: hidden;
-    }
-    /* Lightweight WebGL flow-field behind the hero. Additive (screen) so it
-       only adds drifting ember light over the dark page + grid — black areas
-       are a no-op. Paused off-screen / on blur, and static under
-       prefers-reduced-motion (see the small script at end of <body>). */
-    #hero-fx {
-      position: absolute; inset: 0; width: 100%; height: 100%;
-      z-index: 0; pointer-events: none;
-      mix-blend-mode: screen; opacity: 0.85;
-      mask-image: radial-gradient(ellipse 100% 78% at 50% 0%, #000 35%, transparent 100%);
-      -webkit-mask-image: radial-gradient(ellipse 100% 78% at 50% 0%, #000 35%, transparent 100%);
     }
     /* single faint red wash at the top — restraint, no pulse */
     .hero-glow {
@@ -857,7 +845,6 @@
 
 <!-- ── Hero ─────────────────────────────────────────────────── -->
 <section id="hero" tabindex="-1">
-  <canvas id="hero-fx" aria-hidden="true"></canvas>
   <div class="hero-glow"></div>
   <div class="hero-inner">
     <div class="hero-logo-wrap">
@@ -1389,107 +1376,6 @@
   onScroll();
 </script>
 
-<!-- ── Hero flow-field (lightweight, no deps) ───────────────────
-     A single full-screen WebGL fragment shader: domain-warped value-noise
-     drifting in the red/ink palette, blended additively (CSS mix-blend-mode:
-     screen) over the dark page so black areas are a no-op. Costs are bounded:
-     render scale 0.7, DPR capped, ~30fps, paused when off-screen or the tab is
-     hidden, and a single static frame under prefers-reduced-motion. Degrades to
-     nothing (the CSS hero-glow remains) when WebGL is unavailable. -->
-<script>
-(function () {
-  var canvas = document.getElementById('hero-fx');
-  if (!canvas) return;
-  var gl = canvas.getContext('webgl', { alpha: true, antialias: false, depth: false,
-                                        premultipliedAlpha: false, powerPreference: 'low-power' });
-  if (!gl) return; // no WebGL → leave the canvas blank; the CSS glow stays.
-
-  var VERT = 'attribute vec2 a;void main(){gl_Position=vec4(a,0.0,1.0);}';
-  var FRAG =
-    'precision mediump float;uniform vec2 u_res;uniform float u_t;' +
-    'float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}' +
-    'float noise(vec2 p){vec2 i=floor(p),f=fract(p);vec2 u=f*f*(3.0-2.0*f);' +
-    'return mix(mix(hash(i),hash(i+vec2(1.0,0.0)),u.x),mix(hash(i+vec2(0.0,1.0)),hash(i+vec2(1.0,1.0)),u.x),u.y);}' +
-    'float fbm(vec2 p){float v=0.0,a=0.5;for(int i=0;i<4;i++){v+=a*noise(p);p=p*2.0+vec2(1.7,9.2);a*=0.5;}return v;}' +
-    'void main(){vec2 uv=gl_FragCoord.xy/u_res;float asp=u_res.x/max(u_res.y,1.0);' +
-    'vec2 p=vec2(uv.x*asp,uv.y)*2.6;float t=u_t*0.05;' +
-    'vec2 q=vec2(fbm(p+vec2(0.0,t)),fbm(p+vec2(5.2,1.3)-t));' +
-    'float n=fbm(p+2.2*q+0.1*t);' +
-    'float glow=pow(smoothstep(0.42,0.97,n),1.6);' +
-    'vec3 ember=mix(vec3(0.50,0.05,0.04),vec3(1.0,0.30,0.13),smoothstep(0.5,1.0,n));' +
-    'float topFall=smoothstep(0.0,0.95,uv.y);' +
-    'float edge=1.0-smoothstep(0.34,0.64,abs(uv.x-0.5));' +
-    'vec3 col=ember*glow*(0.18+0.55*topFall)*(0.45+0.55*edge)*0.62;' +
-    'gl_FragColor=vec4(col,1.0);}';
-
-  function sh(type, src) {
-    var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
-    return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null;
-  }
-  var vs = sh(gl.VERTEX_SHADER, VERT), fs = sh(gl.FRAGMENT_SHADER, FRAG);
-  if (!vs || !fs) return;
-  var prog = gl.createProgram();
-  gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return;
-  gl.useProgram(prog);
-
-  var buf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-  var loc = gl.getAttribLocation(prog, 'a');
-  gl.enableVertexAttribArray(loc);
-  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-  var uRes = gl.getUniformLocation(prog, 'u_res');
-  var uT = gl.getUniformLocation(prog, 'u_t');
-
-  var SCALE = 0.7, FPS = 30, startT = performance.now();
-  function resize() {
-    var dpr = Math.min(window.devicePixelRatio || 1, 1.25);
-    var w = Math.max(1, Math.round(canvas.clientWidth * dpr * SCALE));
-    var h = Math.max(1, Math.round(canvas.clientHeight * dpr * SCALE));
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w; canvas.height = h; gl.viewport(0, 0, w, h);
-    }
-  }
-  function draw(tSec) {
-    gl.uniform2f(uRes, canvas.width, canvas.height);
-    gl.uniform1f(uT, tSec);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-  }
-
-  var mql = window.matchMedia('(prefers-reduced-motion: reduce)');
-  var raf = 0, last = 0, inView = true, visible = true;
-  function loop(now) {
-    raf = 0;
-    if (!inView || !visible) return;
-    if (now - last >= 1000 / FPS) { last = now; draw((now - startT) / 1000); }
-    raf = requestAnimationFrame(loop);
-  }
-  function start() {
-    if (mql.matches) { resize(); draw(0); return; } // static frame, no motion
-    if (!raf && inView && visible) raf = requestAnimationFrame(loop);
-  }
-  function stop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
-
-  resize(); draw(0);
-  var rz; window.addEventListener('resize', function () {
-    clearTimeout(rz); rz = setTimeout(function () { resize(); if (!raf) draw((performance.now() - startT) / 1000); }, 150);
-  }, { passive: true });
-
-  document.addEventListener('visibilitychange', function () {
-    visible = !document.hidden; visible ? start() : stop();
-  });
-  if ('IntersectionObserver' in window) {
-    new IntersectionObserver(function (e) {
-      inView = e[0].isIntersecting; inView ? start() : stop();
-    }, { threshold: 0 }).observe(canvas);
-  }
-  canvas.addEventListener('webglcontextlost', function (e) { e.preventDefault(); stop(); }, false);
-  if (mql.addEventListener) mql.addEventListener('change', function () { stop(); start(); });
-
-  start();
-})();
-</script>
 
 <!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
 </body>
