@@ -151,3 +151,9 @@ _[Checkpoint: 6a2af0fd — agent profile runtime-scoping]_
 _[Checkpoint: 6a2af10f — edited CLAUDE.md; edited CLAUDE.md; edited src/mcp.rs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2af158 — edited CLAUDE.md; edited CLAUDE.md; edited src/mcp.rs]_
+---
+

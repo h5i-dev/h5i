@@ -121,3 +121,16 @@ Split builtin agent profile into runtime-scoped variants (agent-claude/agent-cod
 
 ---
 
+## Commit 6a2af158 — 2026-06-11 17:33 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
