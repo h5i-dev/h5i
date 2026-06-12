@@ -626,3 +626,4 @@ _[Checkpoint: 6a2b5856 — edited src/container.rs; edited src/container.rs; edi
 [00:54:54] OBSERVE: listed files under .
 [00:54:54] OBSERVE: searched src for "env""
 [00:54:54] OBSERVE: searched |struct for "fn|^fn"
+[00:54:54] OBSERVE: searched tests for "traversal|\.\.|removed|rm\(""
