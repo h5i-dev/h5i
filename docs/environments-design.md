@@ -444,6 +444,44 @@ supervised socket gate always permits **anonymous `AF_UNIX` socketpairs**
 (intra-box IPC that tokio/Node need at startup; `socket(AF_UNIX)` — the
 authority-smuggling vector — stays deny-by-default).
 
+#### In-box observation & the Codex launch incantation
+
+Interactive sessions are **observed** so the box leaves an evidence trail of
+what the agent ran. Two layers, by what the host can enforce:
+
+- **Hook (both runtimes):** a `PreToolUse`/Bash hook rewrites each tool command
+  into `h5i capture run …`. On the **container** tier the Claude hook is pinned
+  unkillably via injected **managed-settings** (`/etc/claude-code/…`, ro,
+  ns-local). On the **process/supervised** tiers there is no managed tier to
+  reach, so instead the agent's config is made immutable in-box — the project
+  `.claude`/`.codex` dirs are bind-mounted read-only (blocks editing *and*
+  creating a `settings.local.json` with `disableAllHooks`) and the user
+  settings files are pinned read-only (`config_lock_paths`).
+- **Tee-shim (container):** a generated POSIX shim shadows `/bin/sh`+`/bin/bash`
+  and tees every top-level command, independent of any agent cooperation — the
+  runtime-agnostic floor (catches Claude's `bash -c` and Codex's `bash -lc`).
+
+**Codex operators must launch with `--dangerously-bypass-hook-trust`.** Codex
+*skips untrusted hooks* — "Codex records trust against the hook's current hash,
+so new or changed hooks are marked for review and skipped until trusted" — and
+only **managed** hooks are auto-trusted. The process/supervised tiers have no
+managed tier, and Codex documents **no** non-interactive way to pre-trust a
+hook, so an in-box Codex session would otherwise silently skip the wrap-bash
+hook. Run it as:
+
+```bash
+codex --dangerously-bypass-hook-trust      # inside `h5i env shell <name>`
+```
+
+This is deliberately left to the human operator (the trusted party) rather than
+forced by h5i: with the config lockdown above, the agent cannot disable or
+re-point the hook, so bypassing *trust* (not the hook itself) is safe. The
+"dangerous" in the flag name is about running unreviewed hooks generally; inside
+the box the policy already bounds what any hook can do (egress allowlist, fs
+limits). One-time interactive `/hooks` trust on the host works too (trust
+persists across sessions, hash-pinned), but the flag is the reliable per-run
+form. Claude has no such gate — a present, immutable hook just runs.
+
 ---
 
 ## 8. Storage & data model (reuses existing h5i machinery)
