@@ -594,3 +594,4 @@ _[Checkpoint: 6a2b53b5 — Observation auto-capture: ship container shim + hook;
 _[Checkpoint: 6a2b53d9 — wrote supervised-execve-notify-deadlock.md; edited MEMORY.md; edited wsl2-cargo-test-oom.md]_
 ---
 
+[00:43:46] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/wsl2-cargo-test-oom.md): x through the crown-jewel security path. It's documented as deferred, with the mechanism written to memory so it isn't re-derived. **What shipped (bot…
