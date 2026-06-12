@@ -1374,3 +1374,4 @@ _[Checkpoint: 6a2c730b — edited src/container.rs; edited src/container.rs; edi
 _[Checkpoint: 6a2c7478 — edited src/container.rs; edited src/container.rs; edited CLAUDE.md]_
 ---
 
+[21:09:02] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): ent design: 1. **Supervised has no tee-shim** (the port we deferred). So an interactive `env shell` session records *no* per-command captures. Contain…
