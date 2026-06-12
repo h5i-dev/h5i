@@ -796,3 +796,4 @@ _[Checkpoint: 6a2bf6ff — edited .claude/h5i.md; edited supervised-execve-notif
 [12:17:25] OBSERVE: searched docs for "README.md"
 [12:17:25] OBSERVE: searched docs/_static/blog.css
 [12:25:21] ACT: added docs/_static/sandbox-series-architecture.svg
+[12:25:21] ACT: added docs/blog/sandboxing-ai-agents-foundations/index.html
