@@ -901,3 +901,4 @@ _[Checkpoint: 6a2c182e — Added Part 1 glossary section explaining Landlock, se
 _[Checkpoint: 6a2c1913 — Committed sandbox primitives glossary update as 0f7f6b53 with h5i provenance.]_
 ---
 
+[14:44:51] OBSERVE: read docs/blog/sandboxing-ai-agents-foundations/index.html
