@@ -1526,3 +1526,4 @@ _[Checkpoint: 6a2c96d5 — edited /home/koukyosyumei/Dev/h5i/src/risk.rs; edited
 [23:48:24] OBSERVE: read src/repository.rs
 [23:48:29] OBSERVE: read src/repository.rs
 [23:48:37] ACT: edited src/repository.rs
+[23:50:53] ACT: edited tests/env_integration.rs
