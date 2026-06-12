@@ -786,3 +786,4 @@ _[Checkpoint: 6a2bf6ff — edited .claude/h5i.md; edited supervised-execve-notif
 
 [12:17:25] OBSERVE: listed files under docs
 [12:17:25] OBSERVE: listed files under docs/blog
+[12:17:25] OBSERVE: listed files under assets
