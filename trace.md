@@ -865,3 +865,4 @@ _[Checkpoint: 6a2c158f — Committed sandbox blog series and SEO polish as 8042a
 ---
 
 [14:25:33] ACT: edited docs/_static/sandbox-series-architecture.svg
+[14:25:33] ACT: edited docs/_static/sandbox-series-architecture.svg
