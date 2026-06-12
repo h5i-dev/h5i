@@ -849,3 +849,4 @@ _[Checkpoint: 6a2c13d6 — Audited SEO for all blog posts: no critical metadata/
 [14:19:15] ACT: edited docs/blog/git-communication-layer-ai-agents/index.html
 [14:19:15] ACT: edited docs/blog/intent-based-rollback-ai-generated-code/index.html
 [14:19:15] ACT: edited docs/blog/pr-body-ai-code-review/index.html
+[14:19:15] ACT: edited docs/blog/index.html
