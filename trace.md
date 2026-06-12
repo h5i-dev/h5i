@@ -800,3 +800,4 @@ _[Checkpoint: 6a2bf6ff — edited .claude/h5i.md; edited supervised-execve-notif
 [12:25:21] ACT: added docs/blog/sandboxing-ai-agents-implementation/index.html
 [12:25:21] ACT: added docs/blog/sandboxing-ai-agents-landscape/index.html
 [12:25:21] ACT: added docs/blog/sandboxing-ai-agents-h5i/index.html
+[12:25:21] OBSERVE: read docs/blog/index.html
