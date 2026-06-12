@@ -713,3 +713,4 @@ _[Checkpoint: 6a2bf066 — edited /home/koukyosyumei/Dev/h5i/tests/env_integrati
 [11:44:34] OBSERVE: read src/main.rs
 [11:44:35] OBSERVE: read src/msg.rs
 [11:44:41] OBSERVE: read src/main.rs
+[11:45:15] OBSERVE: read src/main.rs
