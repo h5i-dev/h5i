@@ -931,3 +931,4 @@ _[Checkpoint: 6a2c1fcd — Committed expanded sandbox Part 1/2 readability pass 
 _[Checkpoint: 6a2c20fb — edited docs/blog/sandboxing-ai-agents-implementation/index.html; edited docs/blog/sandboxing-ai-agents-foundations/index…]_
 ---
 
+[15:14:53] ACT: edited docs/blog/sandboxing-ai-agents-h5i/index.html
