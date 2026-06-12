@@ -1308,3 +1308,4 @@ _[Checkpoint: 6a2c6c81 — edited docs/environments-design.md]_
 _[Checkpoint: 6a2c6d2b — edited docs/environments-design.md]_
 ---
 
+[20:35:57] NOTE: DEFERRAL (~/Dev/h5i/docs/environments-design.md): this is now a meaningfully smaller lift than when we first deferred it. Want me to do it
