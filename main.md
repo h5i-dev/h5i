@@ -703,11 +703,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-san…
 - [x] Assessed in-box failures: powerline-shell denial intended (pipx symlink outside narrowed share grant); commondir 'locked' error = real gap ($WORK-only grant excludes .git/worktrees + common dir, bricking all git/h5i ops inside the box)
 - [x] edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-san…
+- [x] Option 1 implemented: in-box git works via narrow plumbing grants (commit 3ed695d7)
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 17:34 UTC] `improve-shell`: Option 1 implemented: in-box git works via narrow plumbing grants (commit 3ed695d7)
 - [2026-06-12 17:00 UTC] `improve-shell`: edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-san…
 - [2026-06-12 17:00 UTC] `improve-shell`: Assessed in-box failures: powerline-shell denial intended (pipx symlink outside narrowed share grant); commondir 'locked' error = real gap ($WORK-only grant excludes .git/worktrees + common dir, bricking all git/h5i ops inside the box)
 - [2026-06-12 15:18 UTC] `improve-shell`: edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-san…
