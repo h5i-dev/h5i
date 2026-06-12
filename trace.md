@@ -838,3 +838,4 @@ _[Checkpoint: 6a2c13d6 — Audited SEO for all blog posts: no critical metadata/
 [14:19:15] ACT: edited docs/blog/cve-2025-59536-startup-trust-dialog/index.html
 [14:19:15] ACT: edited docs/blog/from-git-blame-to-ai-blame/index.html
 [14:19:15] ACT: edited docs/blog/reduce-claude-token-costs/index.html
+[14:19:15] ACT: edited docs/blog/claude-code-hooks-vs-git-hooks/index.html
