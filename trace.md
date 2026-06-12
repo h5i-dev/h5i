@@ -710,3 +710,4 @@ _[Checkpoint: 6a2bf066 — edited /home/koukyosyumei/Dev/h5i/tests/env_integrati
 ---
 
 [11:44:33] NOTE: Implementing: h5i hook setup --write/--scope/--observe-bash (default excludes bash observation)
+[11:44:34] OBSERVE: read src/main.rs
