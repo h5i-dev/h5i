@@ -602,3 +602,9 @@ _[Checkpoint: 6a2b5642 — wrote supervised-execve-notify-deadlock.md; edited ME
 ---
 
 [00:47:22] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/wsl2-cargo-test-oom.md): e's still no in-box command capture — that's the piece we deferred to the deadlock. So "universal across agents" is true, but "universal across tier…
+
+
+---
+_[Checkpoint: 6a2b571a — wrote supervised-execve-notify-deadlock.md; edited MEMORY.md; edited wsl2-cargo-test-oom.md]_
+---
+
