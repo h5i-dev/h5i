@@ -1355,3 +1355,9 @@ _[Checkpoint: 6a2c70fd — session ended (auto-checkpoint)]_
 [20:52:37] ACT: edited src/container.rs
 [20:52:49] ACT: edited src/container.rs
 [20:57:43] ACT: edited CLAUDE.md
+
+
+---
+_[Checkpoint: 6a2c72f5 — Added tee-shim h5i-skip guard (commit 6f629bc8)]_
+---
+

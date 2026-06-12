@@ -1252,3 +1252,16 @@ improve default UX of h5i env shell so AI agents (claude/codex) can actually run
 
 ---
 
+## Commit 6a2c72f5 — 2026-06-12 20:58 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+shim_script now passes through h5i-prefixed commands unrecorded (case h5i|h5i\ *), mirroring the wrap-bash hook's own skip. Eliminates the hook+shim double-capture/overhead while keeping the shim as the non-duplicating floor: records only what the hook didn't wrap. H5I_SHIM set before the skip so h5i's sub-shells stay unrecorded. Live-tested (h5i capture run / bare h5i pass through; grep h5i still observed). Full suite green incl. container e2e. Open/related: managed-settings injection assumes h5i-in-image — on an image without h5i the injected hook would break commands (h5i: not found); consider gating injection on h5i-presence. Tee-shim confirmed as the image-agnostic primary for container (no h5i-in-box needed).
+
+---
+
