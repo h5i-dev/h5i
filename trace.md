@@ -1221,3 +1221,8 @@ _[Checkpoint: 6a2c5dcc — edited src/container.rs; edited tests/env_integration
 _[Checkpoint: 6a2c6077 — edited src/container.rs; edited tests/env_integration.rs; edited CLAUDE.md]_
 ---
 
+[19:50:08] THINK: ## My recommendation
+
+Two coherent ways forward, and they're not mutually exclusive:
+
+- **If you want the cheap win now:** I'll implement the supervised/process config ro-bind as a *prevent-during* upgrade to the existing seal.
