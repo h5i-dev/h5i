@@ -563,3 +563,16 @@ New src/hooks.rs: pure merge_hook_settings_json (7 unit tests) — idempotently 
 
 ---
 
+## Commit 6a2bf2d3 — 2026-06-12 11:51 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+New src/hooks.rs: pure merge_hook_settings_json (7 unit tests) — idempotently merges SessionStart/PostToolUse(Edit|Write|Read)/Stop wiring into .claude/settings.json; observe-bash is opt-in via --observe-bash (requires --write), default never adds it but won't strip an existing entry. CLI: hook setup gained --write/--scope/--observe-bash; print mode + init quick-start + README point at --write. Left manual: UserPromptSubmit jq prompt-capture script and MCP registration. Commit 1e514a5c.
+
+### This Commit's Contribution
+
+
+---
+
