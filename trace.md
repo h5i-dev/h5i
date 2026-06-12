@@ -709,3 +709,4 @@ _[Checkpoint: 6a2b5e6b — Added env integration coverage for poisoned shared ma
 _[Checkpoint: 6a2bf066 — edited /home/koukyosyumei/Dev/h5i/tests/env_integration.rs; edited /home/koukyosyumei/Dev/h5i/tests/env_integration.rs; …]_
 ---
 
+[11:44:33] NOTE: Implementing: h5i hook setup --write/--scope/--observe-bash (default excludes bash observation)
