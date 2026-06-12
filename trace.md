@@ -1132,3 +1132,4 @@ _[Checkpoint: 6a2c54e4 — Sealed agent hook setup configs from sandboxed envs: 
 [18:56:25] THINK: Let me set up a context workspace and read the key pieces carefully before writing any code.
 [18:56:25] THINK: Let me record the design decision and verify a couple of load-bearing facts (seccomp's treatment of `mknod`/`mkfifo`, and the exact container shim layout) before writing code.
 [18:56:25] THINK: Let me confirm the call sites and check how the actual hook (wrap-bash) is set up for both runtimes, plus whether the container tier does anything stronger.
+[18:56:25] NOTE: PLACEHOLDER (~/Dev/h5i/docs/environments-design.md): ript` (it's pure and tier-agnostic) plus preserved-original placeholder files under the env dir: `$ENVDIR/shim/sh`, `$ENVDIR/shim-orig/{sh,bash}`, `$E…
