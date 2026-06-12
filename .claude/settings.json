@@ -13,6 +13,15 @@
           }
         ],
         "matcher": "Edit|Write|Read"
+      },
+      {
+        "hooks": [
+          {
+            "command": "h5i hook observe-bash",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
       }
     ],
     "Stop": [

@@ -430,6 +430,98 @@ pub enum NetPlan {
     Proxy(u16),
 }
 
+/// The container-tier observation shim (`env shell`): the host paths of the
+/// generated shim script and the spool directory it tees into. Both are
+/// mounted into the box by [`build_run_argv`]; `env shell` ingests the spool
+/// into tagged captures at session end.
+pub struct ShimPlan {
+    /// Host path of the generated POSIX shim script (mounted over the image's
+    /// `/bin/sh` and `/bin/bash`).
+    pub shim: std::path::PathBuf,
+    /// Host spool directory (mounted rw at `/.h5i/spool`). Everything the box
+    /// writes here is **untrusted** — the ingest side caps and sanitizes.
+    pub spool: std::path::PathBuf,
+}
+
+/// In-container mountpoints for the shim machinery. `ORIG` is the container's
+/// own image self-mounted read-only, so the *unmodified* shell stays reachable
+/// at `/.h5i/orig/bin/sh` for any image — the shim is a `#!/.h5i/orig/bin/sh`
+/// script that uses only the image's own interpreter and utilities (no host
+/// binary enters the box, so there is no glibc/arch compatibility surface).
+const SHIM_ORIG_MOUNT: &str = "/.h5i/orig";
+const SHIM_SPOOL_MOUNT: &str = "/.h5i/spool";
+
+/// Generate the observation shim: a pass-through POSIX `sh` script that tees
+/// stdout/stderr of non-interactive `sh -c` / `bash -c` invocations into the
+/// spool while preserving argv, stdin, the TTY decision, and the exit code.
+/// Every guard fails OPEN to `exec` of the real shell — observation must never
+/// change what a command does or whether it runs. Pure; unit + live tested.
+pub fn shim_script(orig_prefix: &str, spool_dir: &str) -> String {
+    format!(
+        r#"#!{orig}/bin/sh
+# h5i observation shim (env shell, container tier). Pass-through tee:
+# real shell + image utilities only; every failure path execs the real shell.
+case "$0" in
+  /*) real="{orig}$0" ;;
+  *)  real="{orig}/bin/${{0##*/}}" ;;
+esac
+[ -x "$real" ] || real="{orig}/bin/sh"
+# Observe only top-level, non-interactive `-c` invocations: a TTY session, a
+# script run (`sh file.sh`), or a nested shell under an observed command all
+# pass straight through.
+if [ "$1" != "-c" ] || [ -n "$H5I_SHIM" ] || [ -t 1 ]; then
+  exec "$real" "$@"
+fi
+H5I_SHIM=1
+export H5I_SHIM
+d="{spool}"
+if [ ! -d "$d" ] || ! command -v tee >/dev/null 2>&1 || ! command -v mkfifo >/dev/null 2>&1; then
+  exec "$real" "$@"
+fi
+n=0
+while [ -e "$d/cmd-$$-$n.cmd" ] && [ "$n" -lt 1000 ]; do n=$((n+1)); done
+b="$d/cmd-$$-$n"
+{{ printf '%s' "$2" > "$b.cmd"; }} 2>/dev/null || exec "$real" "$@"
+mkfifo "$b.po" "$b.pe" 2>/dev/null || {{ rm -f "$b.cmd"; exec "$real" "$@"; }}
+tee "$b.out" < "$b.po" &
+po=$!
+tee "$b.err" < "$b.pe" >&2 &
+pe=$!
+"$real" "$@" > "$b.po" 2> "$b.pe"
+rc=$?
+wait "$po" "$pe" 2>/dev/null
+rm -f "$b.po" "$b.pe"
+printf '%s' "$rc" > "$b.exit" 2>/dev/null
+exit "$rc"
+"#,
+        orig = orig_prefix,
+        spool = spool_dir,
+    )
+}
+
+/// Prepare the shim for an interactive session: write the script + spool dir
+/// under the env directory (`work/..`). Returns `None` — observation disabled,
+/// session unaffected — on any failure, including paths Podman's `--mount`
+/// syntax can't carry safely.
+fn prepare_shim(work: &Path) -> Option<ShimPlan> {
+    let env_dir = work.parent()?;
+    let spool = env_dir.join("spool");
+    let shim_dir = env_dir.join("shim");
+    std::fs::create_dir_all(&spool).ok()?;
+    std::fs::create_dir_all(&shim_dir).ok()?;
+    let shim = shim_dir.join("sh");
+    std::fs::write(&shim, shim_script(SHIM_ORIG_MOUNT, SHIM_SPOOL_MOUNT)).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).ok()?;
+    }
+    if shim.display().to_string().contains(',') || spool.display().to_string().contains(',') {
+        return None;
+    }
+    Some(ShimPlan { shim, spool })
+}
+
 /// Build the `podman run` argv for `argv` under `policy`, fully
 /// hardened. `image` is the resolved base image; `name` is the (unique)
 /// container name used for cleanup. Pure — no process is spawned, so this is
@@ -448,6 +540,10 @@ pub fn build_run_argv(
     // (`-i`), allocating a pseudo-TTY (`-t`) when the caller has one — the
     // agent-in-box shell. Flags slot right after `run`, before the image.
     tty: Option<bool>,
+    // Interactive observation shim (`env shell`): self-mount the image at
+    // `/.h5i/orig`, shadow `/bin/sh` + `/bin/bash` with the tee shim, and mount
+    // the spool rw. `None` → no observation (captured runs, or shim prep failed).
+    shim: Option<&ShimPlan>,
 ) -> Vec<String> {
     let mut a: Vec<String> = vec![
         rt.bin.clone(),
@@ -478,6 +574,21 @@ pub fn build_run_argv(
         if want_tty {
             a.insert(3, "-t".into());
         }
+    }
+    // Observation shim (interactive only): the image self-mount keeps the real
+    // shell reachable at /.h5i/orig for ANY image; the shim shadows /bin/sh and
+    // /bin/bash (on merged-usr images the bind lands on the resolved
+    // /usr/bin/* file, covering both spellings); the spool is the only extra
+    // writable surface, and its contents are treated as untrusted on ingest.
+    if let Some(s) = shim {
+        a.push("--mount".into());
+        a.push(format!("type=image,source={image},destination={SHIM_ORIG_MOUNT}"));
+        for target in ["/bin/sh", "/bin/bash"] {
+            a.push("--mount".into());
+            a.push(format!("type=bind,source={},target={target},ro", s.shim.display()));
+        }
+        a.push("--mount".into());
+        a.push(format!("type=bind,source={},target={SHIM_SPOOL_MOUNT},rw", s.spool.display()));
     }
     // Rootless podman: keep the caller's uid so files in /work stay owned by us.
     if rt.rootless {
@@ -596,7 +707,7 @@ pub fn run(
         std::process::id(),
         PROBE_SEQ.fetch_add(1, Ordering::Relaxed)
     );
-    let full = build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, None);
+    let full = build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, None, None);
 
     let started = std::time::Instant::now();
     let mut cmd = std::process::Command::new(&full[0]);
@@ -668,7 +779,14 @@ pub fn run_interactive(
     // invocation must not request `-t`, which Podman would reject).
     let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     let name = format!("h5i-{}-{}", std::process::id(), PROBE_SEQ.fetch_add(1, Ordering::Relaxed));
-    let full = build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, Some(tty));
+    // Observation shim: best-effort. A session without it is fully functional —
+    // it just produces no in-box command evidence.
+    let shim = prepare_shim(work);
+    if shim.is_none() {
+        eprintln!("note: shell observation shim unavailable — session runs unobserved");
+    }
+    let full =
+        build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, Some(tty), shim.as_ref());
 
     // Inherited stdio (the default) — this is the interactive session. Secret
     // values are seeded into Podman's environment (forwarded by the `--env NAME`
@@ -858,6 +976,7 @@ mod tests {
             &["sh".into(), "-c".into(), "echo hi".into()],
             &[],
             None,
+            None,
         );
         let joined = argv.join(" ");
         assert_eq!(argv[0], "podman");
@@ -893,6 +1012,7 @@ mod tests {
             &["true".into()],
             &[],
             None,
+            None,
         );
         let joined = argv.join(" ");
         assert!(joined.contains("--network=slirp4netns:allow_host_loopback=true"));
@@ -915,6 +1035,7 @@ mod tests {
                 &["bash".into()],
                 &[],
                 tty,
+                None,
             )
         };
         // Capture run: no interactive flags at all.
@@ -932,6 +1053,129 @@ mod tests {
     }
 
     #[test]
+    fn run_argv_shim_mounts_image_shells_and_spool() {
+        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let plan = ShimPlan {
+            shim: "/envdir/shim/sh".into(),
+            spool: "/envdir/spool".into(),
+        };
+        let argv = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["bash".into()],
+            &[],
+            Some(true),
+            Some(&plan),
+        );
+        let joined = argv.join(" ");
+        // The image self-mount keeps the real shell reachable for any image.
+        assert!(joined.contains("type=image,source=img,destination=/.h5i/orig"));
+        // Both shell spellings are shadowed by the same shim, read-only.
+        assert!(joined.contains("type=bind,source=/envdir/shim/sh,target=/bin/sh,ro"));
+        assert!(joined.contains("type=bind,source=/envdir/shim/sh,target=/bin/bash,ro"));
+        // The spool is the only extra writable mount.
+        assert!(joined.contains("type=bind,source=/envdir/spool,target=/.h5i/spool,rw"));
+        // Captured runs must stay shim-free.
+        let plain = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            None,
+            None,
+        );
+        assert!(!plain.join(" ").contains("/.h5i/"));
+    }
+
+    // Live on-host: the generated shim is real POSIX sh — run it against the
+    // host's /bin/sh (as the "image" shell) and prove pass-through semantics
+    // (stdout, stderr, exit code, stdin) plus a complete spool record.
+    #[test]
+    #[cfg(unix)]
+    fn shim_script_tees_and_passes_through() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = std::env::temp_dir().join(format!("h5i-shim-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let orig_bin = tmp.join("orig/bin");
+        let spool = tmp.join("spool");
+        std::fs::create_dir_all(&orig_bin).unwrap();
+        std::fs::create_dir_all(&spool).unwrap();
+        // The "image's real shell": a symlink to the host's /bin/sh.
+        std::os::unix::fs::symlink("/bin/sh", orig_bin.join("sh")).unwrap();
+        let shim = tmp.join("sh");
+        std::fs::write(
+            &shim,
+            shim_script(&tmp.join("orig").display().to_string(), &spool.display().to_string()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Observed: `-c`, no TTY (Command pipes) → tee + spool + exit code.
+        let out = std::process::Command::new(&shim)
+            .args(["-c", "echo visible; echo err-line >&2; exit 3"])
+            .output()
+            .expect("run shim");
+        assert_eq!(out.status.code(), Some(3), "exit code must pass through");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "visible\n", "stdout must pass through");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("err-line"), "stderr must pass through");
+        let entries: Vec<_> = std::fs::read_dir(&spool)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+            .collect();
+        let cmd_file = entries.iter().find(|n| n.ends_with(".cmd")).expect("spooled .cmd");
+        let base = cmd_file.trim_end_matches(".cmd");
+        assert!(std::fs::read_to_string(spool.join(cmd_file)).unwrap().contains("echo visible"));
+        assert_eq!(
+            std::fs::read_to_string(spool.join(format!("{base}.out"))).unwrap(),
+            "visible\n"
+        );
+        assert!(std::fs::read_to_string(spool.join(format!("{base}.err")))
+            .unwrap()
+            .contains("err-line"));
+        assert_eq!(std::fs::read_to_string(spool.join(format!("{base}.exit"))).unwrap(), "3");
+
+        // Nested invocation (H5I_SHIM set) passes through unobserved.
+        let before = std::fs::read_dir(&spool).unwrap().count();
+        let nested = std::process::Command::new(&shim)
+            .args(["-c", "echo nested"])
+            .env("H5I_SHIM", "1")
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&nested.stdout), "nested\n");
+        assert_eq!(std::fs::read_dir(&spool).unwrap().count(), before, "no new spool entries");
+
+        // Non-`-c` (script execution) passes through unobserved.
+        let script = tmp.join("inner.sh");
+        std::fs::write(&script, "echo from-script\n").unwrap();
+        let run = std::process::Command::new(&shim).arg(&script).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&run.stdout), "from-script\n");
+        assert_eq!(std::fs::read_dir(&spool).unwrap().count(), before, "scripts are not observed");
+
+        // Stdin flows through an observed command untouched.
+        use std::io::Write as _;
+        let mut child = std::process::Command::new(&shim)
+            .args(["-c", "cat"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(b"ping\n").unwrap();
+        let fin = child.wait_with_output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&fin.stdout), "ping\n", "stdin must pass through");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn run_argv_injects_brokered_secret_env() {
         let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
         let injected = vec![("GITHUB_TOKEN".to_string(), "ghp_secret".to_string())];
@@ -944,6 +1188,7 @@ mod tests {
             &NetPlan::None,
             &["true".into()],
             &injected,
+            None,
             None,
         );
         // The broker's env grant is passed to the container by NAME only — the

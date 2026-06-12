@@ -1193,14 +1193,28 @@ pub fn shell(
         }
     };
 
+    // Ingest the session's observation spool (supervised exec log / container
+    // tee-shim records) into tagged captures BEFORE the final status event, so
+    // the manifest it persists already lists them. Best-effort: a failed
+    // ingest warns and never breaks the session.
+    let observed = match ingest_shell_spool(repo, h5i_root, m) {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("warning: shell observation ingest failed: {e}");
+            0
+        }
+    };
+
     let safe_cmd = crate::secrets::redact_text(&argv.join(" "));
+    let observed_note =
+        if observed > 0 { format!(" observed={observed}") } else { String::new() };
     set_status(
         repo,
         h5i_root,
         m,
         ST_IDLE,
         "shell",
-        Some(format!("interactive cmd=`{safe_cmd}` exit={exit_code}")),
+        Some(format!("interactive cmd=`{safe_cmd}` exit={exit_code}{observed_note}")),
         None,
     )?;
 
@@ -1219,6 +1233,167 @@ pub fn shell(
         )?;
     }
     Ok(exit_code)
+}
+
+// ─── shell-spool ingest (in-box observation evidence) ────────────────────────
+
+/// Ingest caps. Container-tier spool contents are written by the **box** (the
+/// tee shim) and are untrusted: bound entry count and sizes, accept regular
+/// files only, never follow a symlink, and redact before anything is stored or
+/// displayed. The supervised tier's `exec.jsonl` is supervisor-written (the box
+/// can't reach it) but shares the same caps for uniformity.
+const SPOOL_MAX_ENTRIES: usize = 200;
+const SPOOL_MAX_OUTPUT_BYTES: u64 = 4 * 1024 * 1024;
+const SPOOL_MAX_CMD_BYTES: u64 = 64 * 1024;
+
+/// Read one spool file defensively: regular file only (symlinks rejected),
+/// capped at `cap` bytes with an explicit truncation marker.
+fn read_spool_capped(p: &Path, cap: u64) -> Option<Vec<u8>> {
+    use std::io::Read as _;
+    let meta = std::fs::symlink_metadata(p).ok()?;
+    if !meta.file_type().is_file() {
+        return None;
+    }
+    let f = std::fs::File::open(p).ok()?;
+    let mut buf = Vec::new();
+    f.take(cap).read_to_end(&mut buf).ok()?;
+    if meta.len() > cap {
+        buf.extend_from_slice(b"\n----- h5i: spool entry truncated -----\n");
+    }
+    Some(buf)
+}
+
+/// Ingest the env's observation spool (`<env>/spool/`) into tagged captures —
+/// the evidence an interactive **container** session leaves behind:
+/// `cmd-<pid>-<n>.{cmd,out,err,exit}`, the container tee-shim's records (one per
+/// top-level `sh -c`/`bash -c` the in-box agent ran).
+///
+/// Each becomes a secret-redacted `objects` capture tagged with the env id +
+/// policy digest (same provenance stream as `env run` execs) plus an `exec`
+/// event, and the spool files are removed. Returns how many captures landed.
+fn ingest_shell_spool(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &mut EnvManifest,
+) -> Result<usize, H5iError> {
+    let spool = m.dir(h5i_root).join("spool");
+    if !spool.is_dir() {
+        return Ok(0);
+    }
+    let work = m.work_dir(h5i_root);
+    let wt_repo = Repository::open(&work)?;
+    let head_tree = wt_repo
+        .head()
+        .ok()
+        .and_then(|h| h.peel_to_tree().ok())
+        .map(|t| t.id().to_string());
+    let mut count = 0usize;
+
+    // The container tee-shim records. Filenames are box-controlled: accept
+    // only the shim's `cmd-…` shape with a conservative charset.
+    let mut bases: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&spool) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(base) = name.strip_suffix(".cmd") {
+                let ok = base.starts_with("cmd-")
+                    && base.len() <= 64
+                    && base.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+                if ok {
+                    bases.push(base.to_string());
+                }
+            }
+        }
+    }
+    bases.sort();
+    let dropped = bases.len().saturating_sub(SPOOL_MAX_ENTRIES);
+    for base in bases.iter().take(SPOOL_MAX_ENTRIES) {
+        let path_of = |ext: &str| spool.join(format!("{base}.{ext}"));
+        let cmd_text = read_spool_capped(&path_of("cmd"), SPOOL_MAX_CMD_BYTES)
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
+        let stdout = read_spool_capped(&path_of("out"), SPOOL_MAX_OUTPUT_BYTES).unwrap_or_default();
+        let stderr = read_spool_capped(&path_of("err"), SPOOL_MAX_OUTPUT_BYTES).unwrap_or_default();
+        let exit_code = read_spool_capped(&path_of("exit"), 16)
+            .and_then(|b| String::from_utf8_lossy(&b).trim().parse::<i32>().ok());
+
+        // Compose the raw payload exactly like `env run` (stdout + labeled
+        // stderr block) so summaries and `recall` views look identical.
+        let mut raw = stdout;
+        if !stderr.is_empty() {
+            if !raw.is_empty() && !raw.ends_with(b"\n") {
+                raw.push(b'\n');
+            }
+            raw.extend_from_slice(b"\n----- stderr -----\n");
+            raw.extend_from_slice(&stderr);
+        }
+
+        // The command string is box-controlled: redact secrets, flatten to one
+        // line, and cap it before it lands in a manifest or event detail.
+        let safe_cmd: String = crate::secrets::redact_text(&cmd_text)
+            .replace(['\n', '\r'], " ")
+            .chars()
+            .take(300)
+            .collect();
+        // A whitespace split of the observed command is only a *hint* for the
+        // structured-parser pick (pytest/cargo adapters) — never executed.
+        let argv_hint: Vec<String> =
+            cmd_text.split_whitespace().take(8).map(str::to_string).collect();
+        let opts = objects::CaptureOptions {
+            kind: crate::token_filter::OutputKind::Auto,
+            cmd: Some(safe_cmd.clone()),
+            cwd: Some(work.display().to_string()),
+            exit_code,
+            git_tree: head_tree.clone(),
+            files: Vec::new(),
+            cmd_argv: argv_hint.clone(),
+            filter: crate::token_filter::FilterConfig {
+                cmd: Some(argv_hint),
+                ..Default::default()
+            },
+            env_id: Some(m.id.clone()),
+            policy_digest: Some(m.policy_digest.clone()),
+            egress: None,
+            redact: true,
+        };
+        let captured = objects::capture(&wt_repo, h5i_root, &raw, opts)?;
+        m.captures.push(captured.manifest.id.clone());
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "exec".into(),
+                detail: Some(format!(
+                    "observed in shell: cmd=`{safe_cmd}` exit={}",
+                    exit_code.map(|c| c.to_string()).unwrap_or_else(|| "?".into())
+                )),
+                capture: Some(captured.manifest.id.clone()),
+            },
+        )?;
+        for ext in ["cmd", "out", "err", "exit"] {
+            let _ = std::fs::remove_file(path_of(ext));
+        }
+        count += 1;
+    }
+    if dropped > 0 {
+        // No silent caps: the event log must say coverage was bounded.
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "exec-log".into(),
+                detail: Some(format!(
+                    "spool ingest capped at {SPOOL_MAX_ENTRIES}: {dropped} record(s) dropped"
+                )),
+                capture: None,
+            },
+        )?;
+    }
+    Ok(count)
 }
 
 // ─── diff ───────────────────────────────────────────────────────────────────

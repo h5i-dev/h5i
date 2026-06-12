@@ -2172,6 +2172,13 @@ enum HookCommands {
     /// Summarises recent OBSERVE/THINK/ACT entries and calls `h5i context commit`.
     /// Register in .claude/settings.json under "Stop" hooks.
     Stop,
+
+    /// OPTIONAL PostToolUse handler for the Bash tool: observe-and-save. Stores
+    /// the command + its raw output as a secret-redacted capture (searchable via
+    /// `h5i recall`) WITHOUT changing what the agent sees — unlike `h5i capture
+    /// run` it never summarizes or wraps. Small successful output is skipped.
+    /// Register in .claude/settings.json under "PostToolUse" with matcher "Bash".
+    ObserveBash,
 }
 
 #[derive(Subcommand)]
@@ -6008,6 +6015,25 @@ jq -c '{
 
             println!();
             println!(
+                "{} Bash observation — store every Bash command + output as a",
+                style("Optional:").bold()
+            );
+            println!(
+                "  secret-redacted capture (searchable via {}; small successful",
+                style("h5i recall").yellow()
+            );
+            println!("  output is skipped). Observe-only: the agent still sees the raw output.");
+            println!("  Add a second PostToolUse entry:");
+            println!(
+                "{}",
+                style(
+                    r#"    { "matcher": "Bash", "hooks": [ { "type": "command", "command": "h5i hook observe-bash" } ] }"#
+                )
+                .dim()
+            );
+
+            println!();
+            println!(
                 "{} For cross-agent messaging ({}), run the one-liner — it sets your",
                 style("Messaging:").bold(),
                 style("h5i msg").yellow(),
@@ -6161,6 +6187,107 @@ jq -c '{
                     }
                 }
             }
+        }
+
+        Commands::Hook(HookCommands::ObserveBash) => {
+            use std::io::Read as _;
+            // Observe-only PostToolUse handler (matcher "Bash"): store the tool
+            // call + raw output as evidence. The agent already received the raw
+            // output — nothing is printed (hook stdout would re-inject it) and
+            // nothing is modified. Every failure path is a silent no-op: an
+            // observation hook must never break or slow the session.
+            let mut raw_in = String::new();
+            std::io::stdin().read_to_string(&mut raw_in).unwrap_or(0);
+            if raw_in.trim().is_empty() {
+                return Ok(());
+            }
+            let Ok(data) = serde_json::from_str::<serde_json::Value>(&raw_in) else {
+                return Ok(());
+            };
+            if data.get("tool_name").and_then(|v| v.as_str()) != Some("Bash") {
+                return Ok(());
+            }
+            let Some(command) = data.pointer("/tool_input/command").and_then(|v| v.as_str())
+            else {
+                return Ok(());
+            };
+            // Never observe h5i's own invocations: `h5i capture run`/`h5i env
+            // run` already store their own evidence, and re-capturing `h5i
+            // recall object` would re-store output the agent explicitly
+            // rehydrated.
+            let first = command.split_whitespace().next().unwrap_or("");
+            let first_base = std::path::Path::new(first)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if first_base == "h5i" {
+                return Ok(());
+            }
+
+            let resp = data.get("tool_response").cloned().unwrap_or(serde_json::Value::Null);
+            let stdout = resp
+                .get("stdout")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+                .or_else(|| resp.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            let stderr =
+                resp.get("stderr").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+            // Compose the raw payload exactly like `h5i capture run`.
+            let mut raw: Vec<u8> = Vec::with_capacity(stdout.len() + stderr.len() + 32);
+            raw.extend_from_slice(stdout.as_bytes());
+            if !stderr.is_empty() {
+                if !raw.is_empty() && !raw.ends_with(b"\n") {
+                    raw.push(b'\n');
+                }
+                raw.extend_from_slice(b"\n----- stderr -----\n");
+                raw.extend_from_slice(stderr.as_bytes());
+            }
+            // Same signal-aware gate as `capture run`, minus the exit code (the
+            // PostToolUse payload doesn't carry one): store when there's bulk
+            // worth searching, or any stderr (the failure-shaped signal).
+            if (raw.len() as u64) < h5i_core::objects::DEFAULT_CAPTURE_MIN_BYTES
+                && stderr.trim().is_empty()
+            {
+                return Ok(());
+            }
+
+            let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let Ok(git) = git2::Repository::discover(&workdir) else {
+                return Ok(());
+            };
+            let Ok(h5i_root) = h5i_core::storage::h5i_root_for_repo(&git) else {
+                return Ok(());
+            };
+            let head_tree =
+                git.head().ok().and_then(|h| h.peel_to_tree().ok()).map(|t| t.id().to_string());
+            // A whitespace split is only a parser hint (pytest/cargo adapters).
+            let argv_hint: Vec<String> =
+                command.split_whitespace().take(8).map(str::to_string).collect();
+            let cwd = data
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+                .or_else(|| Some(workdir.display().to_string()));
+            let opts = h5i_core::objects::CaptureOptions {
+                kind: h5i_core::token_filter::OutputKind::Auto,
+                cmd: Some(command.to_string()),
+                cwd,
+                exit_code: None,
+                git_tree: head_tree,
+                files: Vec::new(),
+                cmd_argv: argv_hint.clone(),
+                filter: h5i_core::token_filter::FilterConfig {
+                    cmd: Some(argv_hint),
+                    ..Default::default()
+                },
+                env_id: None,
+                policy_digest: None,
+                egress: None,
+                redact: true,
+            };
+            let _ = h5i_core::objects::capture(&git, &h5i_root, &raw, opts);
         }
 
         Commands::Hook(HookCommands::SessionStart) => {
