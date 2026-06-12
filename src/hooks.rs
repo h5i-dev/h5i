@@ -5,30 +5,39 @@ use crate::error::H5iError;
 use serde_json::{Map, Value};
 
 /// The hook entries `h5i hook setup --write` manages, as
-/// `(event, matcher, command)`. Bash observation is NOT here — it is opt-in
-/// (`--observe-bash`) because it stores every Bash command + output as
-/// evidence, which not every repo wants by default.
+/// `(event, matcher, command)`. Bash capture-wrapping is NOT here — it is
+/// opt-in (`--wrap-bash`) because it changes what the agent sees for
+/// large/failing commands (a `h5i capture run` summary instead of the raw
+/// output).
 const CORE_HOOKS: &[(&str, Option<&str>, &str)] = &[
     ("SessionStart", None, "h5i hook session-start"),
     ("PostToolUse", Some("Edit|Write|Read"), "h5i hook run"),
     ("Stop", None, "h5i hook stop"),
 ];
 
-/// The opt-in Bash observation entry.
-const OBSERVE_BASH_HOOK: (&str, Option<&str>, &str) =
-    ("PostToolUse", Some("Bash"), "h5i hook observe-bash");
+/// The opt-in Bash capture-wrap entry (PreToolUse: rewrites the command
+/// into `h5i capture run` via updatedInput).
+const WRAP_BASH_HOOK: (&str, Option<&str>, &str) =
+    ("PreToolUse", Some("Bash"), "h5i hook wrap-bash");
+
+/// The retired PostToolUse Bash observation hook: superseded by wrap-bash
+/// (which captures AND token-reduces). The subcommand no longer exists, so
+/// a surviving entry would error on every Bash call — the merge always
+/// strips it.
+const LEGACY_OBSERVE_BASH: &str = "h5i hook observe-bash";
 
 /// Idempotently merge the h5i hook wiring into a Claude Code `settings.json`
 /// document: SessionStart (context prelude), PostToolUse on Edit|Write|Read
-/// (auto-trace), Stop (auto-checkpoint), and — only when `observe_bash` —
-/// PostToolUse on Bash (`h5i hook observe-bash`). Each managed command is
+/// (auto-trace), Stop (auto-checkpoint), and — only when `wrap_bash` —
+/// PreToolUse on Bash (`h5i hook wrap-bash`). Each managed command is
 /// replaced in place if already present; everything else (env keys, the
-/// `h5i msg hook` Stop entry, user hooks) is preserved. Without
-/// `observe_bash` an *existing* observe-bash entry is left alone — opting
-/// out of adding it is not a request to remove it. `existing` may be empty
+/// `h5i msg hook` Stop entry, user hooks) is preserved, except the retired
+/// `h5i hook observe-bash` entry which is always removed. Without
+/// `wrap_bash` an *existing* wrap-bash entry is left alone — opting out of
+/// adding it is not a request to remove it. `existing` may be empty
 /// (treated as `{}`). Pure (no I/O) so it is unit-testable; the caller does
 /// the file read/write.
-pub fn merge_hook_settings_json(existing: &str, observe_bash: bool) -> Result<String, H5iError> {
+pub fn merge_hook_settings_json(existing: &str, wrap_bash: bool) -> Result<String, H5iError> {
     let mut root: Value = if existing.trim().is_empty() {
         Value::Object(Map::new())
     } else {
@@ -47,12 +56,76 @@ pub fn merge_hook_settings_json(existing: &str, observe_bash: bool) -> Result<St
     for &(event, matcher, command) in CORE_HOOKS {
         ensure_hook_entry(hooks_obj, event, matcher, command)?;
     }
-    if observe_bash {
-        let (event, matcher, command) = OBSERVE_BASH_HOOK;
+    if let Some(arr) = hooks_obj.get_mut("PostToolUse").and_then(|v| v.as_array_mut()) {
+        arr.retain(|entry| !entry_has_command(entry, LEGACY_OBSERVE_BASH));
+    }
+    if wrap_bash {
+        let (event, matcher, command) = WRAP_BASH_HOOK;
         ensure_hook_entry(hooks_obj, event, matcher, command)?;
     }
 
     Ok(serde_json::to_string_pretty(&root)?)
+}
+
+/// Rewrite a Bash tool command into a token-reducing `h5i capture run`
+/// invocation, or `None` when it must run untouched: h5i's own calls (a
+/// wrapped `h5i recall object` would re-summarize bytes the agent explicitly
+/// rehydrated, and `capture run`/`env run` already self-capture), commands
+/// with a top-level `cd` (the harness tracks the session cwd from the outer
+/// shell — a nested shell would swallow the change), and empty input.
+///
+/// A command made only of plain characters is passed straight as argv, so
+/// `capture run`'s command-aware summary adapters (cargo/pytest/git) still
+/// see the real argv[0]; anything with shell syntax (quotes, globs, pipes,
+/// `$`, redirects, newlines …) runs via `bash -c '<single-quoted>'`, which
+/// preserves its semantics exactly.
+pub fn wrap_bash_command(command: &str) -> Option<String> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let first = trimmed.split_whitespace().next().unwrap_or("");
+    let first_base = std::path::Path::new(first)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if first_base == "h5i" {
+        return None;
+    }
+    // `;`, `|`/`||`, `&`/`&&` and newlines all start a new top-level command.
+    let has_top_level_cd = trimmed
+        .split(['\n', ';', '|', '&'])
+        .map(|seg| seg.trim_start().trim_start_matches(['(', '{']).trim_start())
+        .any(|seg| seg == "cd" || seg.starts_with("cd ") || seg.starts_with("cd\t"));
+    if has_top_level_cd {
+        return None;
+    }
+
+    let simple = !trimmed.split_whitespace().next().unwrap_or("").contains('=')
+        && trimmed.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(c, ' ' | '_' | '-' | '.' | '/' | '=' | ':' | '@' | ',' | '+' | '%')
+        });
+    if simple {
+        Some(format!("h5i capture run -- {trimmed}"))
+    } else {
+        Some(format!("h5i capture run -- bash -c {}", shell_single_quote(trimmed)))
+    }
+}
+
+/// POSIX single-quoting: wrap in `'…'`, encoding embedded `'` as `'\''`.
+fn shell_single_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// Ensure `hooks.<event>` contains exactly one entry for `command`: drop any
@@ -120,13 +193,13 @@ mod tests {
     }
 
     #[test]
-    fn fresh_default_has_core_hooks_but_no_observe_bash() {
+    fn fresh_default_has_core_hooks_but_no_wrap_bash() {
         let out = merge_hook_settings_json("", false).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(commands_under(&v, "SessionStart"), vec!["h5i hook session-start"]);
         assert_eq!(commands_under(&v, "PostToolUse"), vec!["h5i hook run"]);
         assert_eq!(commands_under(&v, "Stop"), vec!["h5i hook stop"]);
-        assert!(!out.contains("observe-bash"));
+        assert!(!out.contains("wrap-bash"));
         // The Edit|Write|Read matcher rides along with `h5i hook run`.
         assert_eq!(
             v.pointer("/hooks/PostToolUse/0/matcher").and_then(|m| m.as_str()),
@@ -135,20 +208,32 @@ mod tests {
     }
 
     #[test]
-    fn observe_bash_flag_adds_bash_matcher_entry() {
+    fn wrap_bash_flag_adds_pretooluse_bash_entry() {
         let out = merge_hook_settings_json("{}", true).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
-        let cmds = commands_under(&v, "PostToolUse");
-        assert!(cmds.contains(&"h5i hook run".to_string()));
-        assert!(cmds.contains(&"h5i hook observe-bash".to_string()));
+        let cmds = commands_under(&v, "PreToolUse");
+        assert_eq!(cmds, vec!["h5i hook wrap-bash"]);
         let bash_entry = v
-            .pointer("/hooks/PostToolUse")
+            .pointer("/hooks/PreToolUse")
             .and_then(|a| a.as_array())
             .unwrap()
             .iter()
-            .find(|e| entry_has_command(e, "h5i hook observe-bash"))
+            .find(|e| entry_has_command(e, "h5i hook wrap-bash"))
             .unwrap();
         assert_eq!(bash_entry.get("matcher").and_then(|m| m.as_str()), Some("Bash"));
+    }
+
+    #[test]
+    fn legacy_observe_bash_entry_is_always_stripped() {
+        let existing = r#"{
+            "hooks": {
+                "PostToolUse": [
+                    { "matcher": "Bash", "hooks": [ { "type": "command", "command": "h5i hook observe-bash" } ] }
+                ]
+            }
+        }"#;
+        let out = merge_hook_settings_json(existing, false).unwrap();
+        assert!(!out.contains("observe-bash"));
     }
 
     #[test]
@@ -175,10 +260,10 @@ mod tests {
     }
 
     #[test]
-    fn default_leaves_existing_observe_bash_alone() {
-        let with_bash = merge_hook_settings_json("", true).unwrap();
-        let out = merge_hook_settings_json(&with_bash, false).unwrap();
-        assert!(out.contains("h5i hook observe-bash"));
+    fn default_leaves_existing_wrap_bash_alone() {
+        let with_wrap = merge_hook_settings_json("", true).unwrap();
+        let out = merge_hook_settings_json(&with_wrap, false).unwrap();
+        assert!(out.contains("h5i hook wrap-bash"));
     }
 
     #[test]
@@ -200,5 +285,55 @@ mod tests {
         // The unrelated `run-custom` survives next to the managed `h5i hook run`.
         assert!(cmds.contains(&"h5i hook run-custom".to_string()));
         assert!(cmds.contains(&"h5i hook run".to_string()));
+    }
+
+    #[test]
+    fn wrap_simple_command_keeps_real_argv() {
+        assert_eq!(
+            wrap_bash_command("cargo test --verbose").as_deref(),
+            Some("h5i capture run -- cargo test --verbose")
+        );
+        assert_eq!(
+            wrap_bash_command("  pytest -q tests/unit  ").as_deref(),
+            Some("h5i capture run -- pytest -q tests/unit")
+        );
+    }
+
+    #[test]
+    fn wrap_shell_syntax_goes_through_bash_c() {
+        assert_eq!(
+            wrap_bash_command("cargo test 2>&1 | tail -5").as_deref(),
+            Some("h5i capture run -- bash -c 'cargo test 2>&1 | tail -5'")
+        );
+        // Globs need a shell to expand.
+        assert_eq!(
+            wrap_bash_command("ls *.rs").as_deref(),
+            Some("h5i capture run -- bash -c 'ls *.rs'")
+        );
+        // Embedded single quotes survive the '\'' encoding.
+        assert_eq!(
+            wrap_bash_command("echo 'a b'").as_deref(),
+            Some(r#"h5i capture run -- bash -c 'echo '\''a b'\'''"#)
+        );
+        // A leading env assignment is shell syntax, not an executable.
+        assert_eq!(
+            wrap_bash_command("RUST_LOG=debug cargo run").as_deref(),
+            Some("h5i capture run -- bash -c 'RUST_LOG=debug cargo run'")
+        );
+    }
+
+    #[test]
+    fn wrap_skips_h5i_cd_and_empty() {
+        assert_eq!(wrap_bash_command("h5i recall object abc123"), None);
+        assert_eq!(wrap_bash_command("/usr/local/bin/h5i msg inbox"), None);
+        // A top-level cd must reach the session shell, in any position.
+        assert_eq!(wrap_bash_command("cd /tmp"), None);
+        assert_eq!(wrap_bash_command("git fetch && cd sub && make"), None);
+        assert_eq!(wrap_bash_command("cd"), None);
+        assert_eq!(wrap_bash_command("   "), None);
+        // …but `cd` as an argument is not a top-level command.
+        assert!(wrap_bash_command("grep -rn cd src/").is_some());
+        // An hd-, cdx-style prefix is not cd.
+        assert!(wrap_bash_command("cdk deploy").is_some());
     }
 }
