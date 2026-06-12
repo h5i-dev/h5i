@@ -166,6 +166,47 @@ impl Repo {
     }
 }
 
+fn synthetic_env_manifest(repo: &git2::Repository, agent: &str, slug: &str) -> h5i_core::env::EnvManifest {
+    let head = repo.head().unwrap().peel_to_commit().unwrap();
+    let tree = head.tree().unwrap();
+    h5i_core::env::EnvManifest {
+        id: format!("env/{agent}/{slug}"),
+        agent: agent.into(),
+        slug: slug.into(),
+        base_commit: head.id().to_string(),
+        base_tree: tree.id().to_string(),
+        parent_branch: "main".into(),
+        branch: format!("refs/heads/h5i/env/{agent}/{slug}"),
+        parent_context_branch: "main".into(),
+        context_branch: format!("env/{agent}/{slug}"),
+        profile: "default".into(),
+        policy_digest: "d".repeat(64),
+        isolation_claim: "workspace".into(),
+        backend: "worktree".into(),
+        created_at: "2026-06-11T00:00:00.000000Z".into(),
+        updated_at: "2026-06-11T00:00:00.000000Z".into(),
+        status: "proposed".into(),
+        captures: Vec::new(),
+    }
+}
+
+fn append_synthetic_env_manifest(repo: &git2::Repository, m: &h5i_core::env::EnvManifest) {
+    h5i_core::env::append_env_commit(
+        repo,
+        &h5i_core::env::EnvEvent {
+            ts: m.updated_at.clone(),
+            env_id: m.id.clone(),
+            agent: m.agent.clone(),
+            event: "created".into(),
+            detail: Some("synthetic test manifest".into()),
+            capture: None,
+        },
+        Some(m),
+        None,
+    )
+    .expect("append synthetic env manifest");
+}
+
 // ─── 1. create: the triple fusion ───────────────────────────────────────────
 
 #[test]
@@ -1458,6 +1499,47 @@ fn concurrent_runs_of_one_env_are_serialized() {
     r.h5i_ok(&["env", "run", "busy", "--", "sh", "-c", "echo after"]);
 }
 
+#[test]
+fn propose_refuses_while_run_is_active_and_does_not_clobber_status() {
+    use std::process::Stdio;
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "race"]);
+
+    let mut slow = Command::new(H5I)
+        .args(["env", "run", "race", "--", "sh", "-c", "echo from-run > slow.txt; sleep 2"])
+        .env("H5I_AGENT", "tester")
+        .env("H5I_DEFAULT_ISOLATION", "workspace")
+        .current_dir(&r.dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn slow run");
+
+    let mut saw_running = false;
+    for _ in 0..50 {
+        if r.manifest("race")["status"] == "running" {
+            saw_running = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(saw_running, "slow run should enter running state");
+
+    let out = r.h5i(&["env", "propose", "race"]);
+    assert!(!out.status.success(), "propose must fail while env run holds the lock");
+    assert!(out_str(&out).contains("busy"), "expected busy refusal:\n{}", out_str(&out));
+
+    assert!(slow.wait().unwrap().success());
+    assert_eq!(
+        r.manifest("race")["status"], "idle",
+        "failed propose must not leave the env proposed or clobber the run completion"
+    );
+
+    let proposed = out_str(&r.h5i_ok(&["env", "propose", "race"]));
+    assert!(proposed.contains("Proposal: env/tester/race"), "{proposed}");
+    assert_eq!(r.manifest("race")["status"], "proposed");
+}
+
 // ─── 10. event log is secret-safe and carries resource accounting ───────────
 
 #[test]
@@ -1636,6 +1718,7 @@ impl Clone {
         Command::new(H5I)
             .args(args)
             .env("H5I_AGENT", self.agent)
+            .env("H5I_DEFAULT_ISOLATION", "workspace")
             .current_dir(&self.dir)
             .output()
             .expect("run h5i")
@@ -1733,6 +1816,45 @@ fn env_travels_to_another_clone_for_review_and_apply() {
     let a_status = out_str(&a.ok(&["env", "status", "fix-auth", "--json"]));
     let av: serde_json::Value = serde_json::from_str(&a_status).unwrap();
     assert_eq!(av["status"], "applied", "applied status propagated back to A: {a_status}");
+}
+
+#[test]
+fn materialize_skips_poisoned_shared_manifest_but_keeps_valid_ones() {
+    let r = Repo::new();
+    let repo = git2::Repository::open(&r.dir).unwrap();
+
+    let good = synthetic_env_manifest(&repo, "peer", "good");
+    append_synthetic_env_manifest(&repo, &good);
+
+    // This is the old path-escape shape: without import validation, materializing
+    // would write `.git/.h5i/env/../escape/manifest.json`, outside env/.
+    let bad_traversal = synthetic_env_manifest(&repo, "..", "escape");
+    append_synthetic_env_manifest(&repo, &bad_traversal);
+
+    // Individually valid path components, but the identity fields disagree with
+    // the canonical env/<agent>/<slug> shape. This should also be skipped.
+    let mut bad_spoof = synthetic_env_manifest(&repo, "peer", "spoof");
+    bad_spoof.id = "env/peer/not-spoof".into();
+    append_synthetic_env_manifest(&repo, &bad_spoof);
+
+    let out = out_str(&r.h5i_ok(&["env", "list"]));
+    assert!(out.contains("env/peer/good"), "valid shared manifest materialized:\n{out}");
+    assert!(
+        out.contains("skipping shared env manifest"),
+        "poisoned manifests should produce a warning, not abort sync:\n{out}"
+    );
+    assert!(
+        r.dir.join(".git/.h5i/env/peer/good/manifest.json").is_file(),
+        "valid manifest written under env root"
+    );
+    assert!(
+        !r.dir.join(".git/.h5i/escape/manifest.json").exists(),
+        "traversal manifest must not write outside .git/.h5i/env"
+    );
+    assert!(
+        !r.dir.join(".git/.h5i/env/peer/spoof/manifest.json").exists(),
+        "identity-tampered manifest must not be materialized"
+    );
 }
 
 /// Option A: the env code branch travels under the hidden `refs/h5i/env/code/*`
