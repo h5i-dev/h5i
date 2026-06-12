@@ -1322,3 +1322,4 @@ _[Checkpoint: 6a2c6dad — edited docs/environments-design.md]_
 _[Checkpoint: 6a2c6e30 — edited docs/environments-design.md]_
 ---
 
+[20:40:25] OBSERVE: read src/container.rs
