@@ -1265,3 +1265,4 @@ _[Checkpoint: 6a2c6854 — Shipped config lockdown on process/supervised (commit
 _[Checkpoint: 6a2c6860 — edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md]_
 ---
 
+[20:19:39] THINK: Let me ground this precisely rather than hand-wave — I'll pull the trust section of the Codex doc, since the exact behavior (where trust is stored, whether the agent can flip it) determines the real answer.
