@@ -1205,3 +1205,4 @@ _[Checkpoint: 6a2c5cb9 — edited src/container.rs; edited tests/env_integration
 ---
 
 [19:28:12] THINK: And one prerequisite that matters more than the tee-shim regardless: **`h5i` must be reachable inside the box** for `h5i hook wrap-bash` to run — and we should confirm each runtime's behavior when a hook command *fails* (block vs.
+[19:28:12] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): So: **don't build the supervised tee-shim port; note it as future work.** I'd also *keep* the existing container tee-shim as-is — it's already shipp…
