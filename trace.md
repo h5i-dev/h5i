@@ -914,3 +914,9 @@ _[Checkpoint: 6a2c1913 — Committed sandbox primitives glossary update as 0f7f6
 _[Checkpoint: 6a2c1b63 — Expanded sandbox Parts 1 and 2 for non-systems readers: added mental model, primitive cheat sheet, stage separation, annotated policy TOML, resolver/path/launch pseudo-code, and beginner tables.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2c1fcd — Committed expanded sandbox Part 1/2 readability pass as 71f3e008 with h5i provenance.]_
+---
+
