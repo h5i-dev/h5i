@@ -1265,6 +1265,47 @@ fn process_tier_confines_fs_and_network() {
     );
 }
 
+/// Config lockdown: an interactive process-tier session ro-binds the project
+/// `.claude` directory so the in-box agent can read its config but can neither
+/// edit `settings.json` NOR create a `settings.local.json` (the
+/// `disableAllHooks` create-bypass). Writes elsewhere in `$WORK` still work,
+/// and the host file is untouched (the mount is ns-local).
+#[test]
+fn process_tier_config_lockdown_blocks_settings_tamper() {
+    if !process_tier_runnable() {
+        eprintln!("SKIP process_tier_config_lockdown_blocks_settings_tamper: process tier not runnable");
+        return;
+    }
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "cfg", "--isolation", "process"]);
+    let claude = r.work("cfg").join(".claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::write(claude.join("settings.json"), "{\"hooks\":{}}").unwrap();
+
+    // Inherits the real HOME (a temp HOME under /tmp would trip the
+    // granted-/tmp-contains-denied-~/.ssh lint). Any home-scope config locks are
+    // ns-local and harmless; the assertions below all concern $WORK/.claude.
+    let out = r.h5i(&[
+        "env", "shell", "cfg", "--", "sh", "-c",
+        "cat .claude/settings.json >/dev/null && echo READ-OK || echo READ-FAIL; \
+         (echo X > .claude/settings.json) 2>/dev/null && echo EDIT-OK || echo EDIT-BLOCKED; \
+         (echo X > .claude/settings.local.json) 2>/dev/null && echo CREATE-OK || echo CREATE-BLOCKED; \
+         (echo X > other.txt) 2>/dev/null && echo OTHER-OK || echo OTHER-BLOCKED",
+    ]);
+    let text = out_str(&out);
+    assert!(text.contains("READ-OK"), "config must stay readable: {text}");
+    assert!(text.contains("EDIT-BLOCKED"), "settings.json must be read-only: {text}");
+    assert!(text.contains("CREATE-BLOCKED"), "settings.local.json create must be blocked: {text}");
+    assert!(text.contains("OTHER-OK"), "writes outside .claude must still work: {text}");
+    // The host file is untouched (ns-local mount).
+    assert_eq!(
+        std::fs::read_to_string(claude.join("settings.json")).unwrap(),
+        "{\"hooks\":{}}",
+        "host config must be unchanged"
+    );
+    assert!(!claude.join("settings.local.json").exists(), "no local settings on host");
+}
+
 /// In-box git: the env worktree must be a *functional* checkout under the
 /// kernel sandbox. `git status` works, and a commit made inside the box lands
 /// on the env's code branch (visible to the host) while `main` is untouched.

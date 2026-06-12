@@ -410,6 +410,51 @@ fn default_fs_deny() -> Vec<String> {
         .collect()
 }
 
+/// Agent config paths whose mutation could disable the in-box observation hook,
+/// locked **read-only** (bind + remount,ro) inside the box's mount namespace
+/// for interactive agent sessions. Landlock is allowlist-only and cannot
+/// subtract a writable child from a granted parent, so this mount-level lock is
+/// how the kernel tiers make config immutable in-box without a managed-settings
+/// tier (which they can't reach — `/etc/claude-code` can't be created from the
+/// userns).
+///
+/// Two shapes, by scope:
+/// - **Project scope (`$WORK/.claude`, `$WORK/.codex`) — the whole directory.**
+///   A read-only directory blocks both editing existing config *and creating*
+///   `settings.local.json` (the `disableAllHooks` create-bypass that per-file
+///   pinning can't stop). Safe to lock: agents read project config but don't
+///   write it at runtime.
+/// - **User scope — the single settings file only** (`~/.claude/settings.json`,
+///   `~/.codex/config.toml`). `~/.claude` itself must stay writable (the agent
+///   stores session state there), and locking the whole dir would brick the
+///   runtime. There is no `~/.claude/settings.local.json` in Claude's
+///   precedence chain, and the Codex `[features] hooks=false` kill switch lives
+///   only in `config.toml`, so pinning the one file closes user scope.
+///
+/// Only **existing** paths are returned — a bind needs an existing target. An
+/// absent project config dir is a documented residual: the agent could create
+/// `$WORK/.claude` and a local-scope `disableAllHooks`. Closing that would mean
+/// shadowing the (possibly absent) dir, which the tee-shim floor covers instead.
+#[cfg(target_os = "linux")]
+fn config_lock_paths(work: &Path, home: Option<&Path>) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for dir in [".claude", ".codex"] {
+        let p = work.join(dir);
+        if p.is_dir() {
+            out.push(p);
+        }
+    }
+    if let Some(home) = home {
+        for file in [".claude/settings.json", ".codex/config.toml"] {
+            let p = home.join(file);
+            if p.is_file() {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
 // ── raw TOML schema (what users write; everything optional) ────────────────
 
 #[derive(Debug, Default, Deserialize)]
@@ -1393,6 +1438,20 @@ pub(crate) fn build_confined_command(
     let cgroup_procs_c: Option<std::ffi::CString> = cgroup_procs
         .and_then(|p| std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok());
 
+    // Config-lockdown targets (interactive agent sessions only), pre-resolved to
+    // CStrings so the post-fork child does no allocation when binding them. A
+    // non-empty list forces a mount namespace below — supervised is pidns=false,
+    // so without this there is no private mount ns and a bind would be unsafe.
+    let config_lock_c: Vec<std::ffi::CString> = if interactive {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        config_lock_paths(&work, home.as_deref())
+            .iter()
+            .filter_map(|p| std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(&work);
 
@@ -1443,6 +1502,13 @@ pub(crate) fn build_confined_command(
                 // /proc without touching the host). The userns in the same call
                 // grants the CAP_SYS_ADMIN both need, unprivileged.
                 flags |= libc::CLONE_NEWPID | libc::CLONE_NEWNS;
+            }
+            // Config lockdown needs a private mount namespace to ro-bind in
+            // (supervised is pidns=false, so it would otherwise have none). The
+            // bind is contained: a mount ns under a fresh userns reduces shared
+            // mounts to slave, so it never propagates to the host.
+            if !config_lock_c.is_empty() {
+                flags |= libc::CLONE_NEWNS;
             }
             if libc::unshare(flags) != 0 {
                 return Err(Error::last_os_error());
@@ -1596,6 +1662,39 @@ pub(crate) fn build_confined_command(
                     .add_rule(PathBeneath::new(proc_fd, AccessFs::from_read(ll_abi)))
                     .map_err(|e| Error::other(format!("pidns: landlock /proc re-grant failed: {e}")))?;
                 ruleset_slot = Some(rs);
+            }
+
+            // 1d. Config lockdown (interactive agent sessions). Bind each agent
+            //     config path read-only so the in-box agent cannot edit it — and,
+            //     for the project-scope DIRECTORIES, cannot create new files in it
+            //     (e.g. a `settings.local.json` carrying `disableAllHooks`). This
+            //     runs in our private mount namespace (forced above), before
+            //     Landlock/seccomp, while we still hold CAP_SYS_ADMIN in the
+            //     userns; `mount`/`umount2` are on the seccomp deny-list, so the
+            //     workload can neither undo nor stack over these. Fail-closed: a
+            //     lock we set out to apply but couldn't is an error, never a
+            //     silent run with mutable config.
+            for c in &config_lock_c {
+                let p = c.as_ptr();
+                if libc::mount(p, p, std::ptr::null(), libc::MS_BIND, std::ptr::null()) != 0 {
+                    return Err(Error::other(format!(
+                        "config lock bind failed: {}",
+                        Error::last_os_error()
+                    )));
+                }
+                if libc::mount(
+                    std::ptr::null(),
+                    p,
+                    std::ptr::null(),
+                    libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY,
+                    std::ptr::null(),
+                ) != 0
+                {
+                    return Err(Error::other(format!(
+                        "config lock remount-ro failed: {}",
+                        Error::last_os_error()
+                    )));
+                }
             }
 
             // 2. Resource caps (cooperative, no cgroups needed).
@@ -1998,6 +2097,35 @@ pub(crate) fn wait_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn config_lock_paths_picks_existing_project_dirs_and_home_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(work.join(".claude")).unwrap();
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        // Project scope: the .claude DIR exists; .codex does not.
+        std::fs::write(work.join(".claude/settings.json"), "{}").unwrap();
+        // User scope: the settings FILE exists; codex config.toml exists.
+        std::fs::write(home.join(".claude/settings.json"), "{}").unwrap();
+        std::fs::write(home.join(".codex/config.toml"), "").unwrap();
+
+        let locks = config_lock_paths(&work, Some(&home));
+        // Project: the .claude directory itself (not the file under it).
+        assert!(locks.contains(&work.join(".claude")), "project .claude dir locked: {locks:?}");
+        assert!(!locks.contains(&work.join(".codex")), "absent project .codex not locked");
+        // User: the single settings file (NOT the whole ~/.claude dir).
+        assert!(locks.contains(&home.join(".claude/settings.json")), "home claude settings locked");
+        assert!(!locks.contains(&home.join(".claude")), "home .claude dir must stay writable");
+        assert!(locks.contains(&home.join(".codex/config.toml")), "home codex config locked");
+
+        // No HOME → only project-scope locks.
+        let locks = config_lock_paths(&work, None);
+        assert_eq!(locks, vec![work.join(".claude")]);
+    }
 
     fn doc_example_toml() -> &'static str {
         r#"
