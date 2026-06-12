@@ -1473,3 +1473,4 @@ _[Checkpoint: 6a2c77be — session ended (auto-checkpoint)]_
 [21:51:41] OBSERVE: searched Cargo.toml
 [21:51:41] ACT: edited /home/koukyosyumei/Dev/h5i/src/objects.rs
 [21:51:41] ACT: edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs
+[21:51:41] ACT: edited /home/koukyosyumei/Dev/h5i/src/mcp.rs
