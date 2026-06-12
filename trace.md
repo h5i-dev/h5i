@@ -978,3 +978,4 @@ _[Checkpoint: 6a2c3b47 — edited docs/blog/agent-sandbox-env/index.html; edited
 [17:16:29] ACT: edited src/ctx.rs
 [17:18:18] ACT: edited src/env.rs
 [17:18:39] ACT: edited src/ctx.rs
+[17:21:34] ACT: edited tests/env_integration.rs
