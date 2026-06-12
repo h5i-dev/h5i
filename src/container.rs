@@ -565,6 +565,10 @@ pub fn build_run_argv(
     // `/.h5i/orig`, shadow `/bin/sh` + `/bin/bash` with the tee shim, and mount
     // the spool rw. `None` → no observation (captured runs, or shim prep failed).
     shim: Option<&ShimPlan>,
+    // In-box git plumbing (env::box_git_plumbing): each host path bind-mounted
+    // at its IDENTICAL path inside the container so the worktree's
+    // gitdir/commondir pointer files resolve. Empty → no extra mounts.
+    box_git: &[crate::sandbox::BoxGitPath],
 ) -> Vec<String> {
     let mut a: Vec<String> = vec![
         rt.bin.clone(),
@@ -580,15 +584,36 @@ pub fn build_run_argv(
         "--read-only".into(),
         "--tmpfs".into(),
         "/tmp:rw,nosuid,nodev,size=256m".into(),
-        // The env workspace is the only writable host path, mounted at /work.
-        // Use --mount rather than -v so ':' in a repository path cannot be
-        // parsed as a bind-mount option suffix by Podman.
+        // The env workspace, mounted at /work (the in-box git plumbing below
+        // adds the only other writable host paths — the env's own .git
+        // surface). Use --mount rather than -v so ':' in a repository path
+        // cannot be parsed as a bind-mount option suffix by Podman.
         "--mount".into(),
         format!("type=bind,source={},target=/work,rw", work.display()),
         "-w".into(),
         "/work".into(),
         "--ipc=private".into(),
     ];
+    // In-box git plumbing: every path mounted at its identical host path (the
+    // worktree's pointer files contain host-absolute paths). The list arrives
+    // parent-before-child (`refs` ro before its nested rw children) and is
+    // emitted in order — mount targets that don't exist in the image are
+    // auto-created on the rootfs overlay, same as the shim mounts below.
+    // Podman's `--mount` syntax cannot carry a comma in a path: in that case
+    // skip the WHOLE set (a partially mounted .git is worse than the old
+    // fail-closed "not a git repository").
+    if !box_git.is_empty()
+        && !box_git.iter().any(|b| b.host.display().to_string().contains(','))
+    {
+        for b in box_git {
+            a.push("--mount".into());
+            a.push(format!(
+                "type=bind,source={p},target={p},{mode}",
+                p = b.host.display(),
+                mode = if b.rw { "rw" } else { "ro" },
+            ));
+        }
+    }
     // Interactive (agent-in-box) flags, right after `run`.
     if let Some(want_tty) = tty {
         a.insert(2, "-i".into());
@@ -728,7 +753,7 @@ pub fn run(
         std::process::id(),
         PROBE_SEQ.fetch_add(1, Ordering::Relaxed)
     );
-    let full = build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, None, None);
+    let full = build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, None, None, &policy.box_git);
 
     let started = std::time::Instant::now();
     let mut cmd = std::process::Command::new(&full[0]);
@@ -807,7 +832,7 @@ pub fn run_interactive(
         eprintln!("note: shell observation shim unavailable — session runs unobserved");
     }
     let full =
-        build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, Some(tty), shim.as_ref());
+        build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, Some(tty), shim.as_ref(), &policy.box_git);
 
     // Inherited stdio (the default) — this is the interactive session. Secret
     // values are seeded into Podman's environment (forwarded by the `--env NAME`
@@ -998,6 +1023,7 @@ mod tests {
             &[],
             None,
             None,
+            &[],
         );
         let joined = argv.join(" ");
         assert_eq!(argv[0], "podman");
@@ -1020,6 +1046,70 @@ mod tests {
         assert!(img_idx < cmd_idx);
     }
 
+    // In-box git plumbing mounts: identical source/target host paths, ro/rw
+    // honored, list order preserved (nested binds need their parent first),
+    // and a comma in ANY path skips the whole set (Podman's `--mount` syntax
+    // cannot carry it; a partially mounted .git would be worse than none).
+    #[test]
+    fn run_argv_mounts_box_git_plumbing_at_identical_paths() {
+        use crate::sandbox::BoxGitPath;
+        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let box_git = vec![
+            BoxGitPath { host: "/repo/.git/refs".into(), rw: false },
+            BoxGitPath { host: "/repo/.git/objects".into(), rw: true },
+            BoxGitPath { host: "/repo/.git/refs/h5i/context".into(), rw: true },
+        ];
+        let argv = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            None,
+            None,
+            &box_git,
+        );
+        let joined = argv.join(" ");
+        assert!(joined.contains("type=bind,source=/repo/.git/refs,target=/repo/.git/refs,ro"));
+        assert!(
+            joined.contains("type=bind,source=/repo/.git/objects,target=/repo/.git/objects,rw")
+        );
+        // Parent `refs` (ro) is mounted before the rw child nested under it.
+        let parent = argv.iter().position(|x| x.ends_with("target=/repo/.git/refs,ro")).unwrap();
+        let child = argv
+            .iter()
+            .position(|x| x.ends_with("target=/repo/.git/refs/h5i/context,rw"))
+            .unwrap();
+        assert!(parent < child, "parent mount must precede nested child");
+
+        // A comma anywhere → the whole set is skipped, nothing partial.
+        let weird = vec![
+            BoxGitPath { host: "/repo/.git/objects".into(), rw: true },
+            BoxGitPath { host: "/re,po/.git/refs".into(), rw: false },
+        ];
+        let argv = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            None,
+            None,
+            &weird,
+        );
+        let joined = argv.join(" ");
+        assert!(
+            !joined.contains("target=/repo/.git/objects"),
+            "comma path must disable the whole box-git mount set: {joined}"
+        );
+    }
+
     #[test]
     fn run_argv_proxy_mode_sets_proxy_env() {
         let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
@@ -1034,6 +1124,7 @@ mod tests {
             &[],
             None,
             None,
+            &[],
         );
         let joined = argv.join(" ");
         assert!(joined.contains("--network=slirp4netns:allow_host_loopback=true"));
@@ -1057,6 +1148,7 @@ mod tests {
                 &[],
                 tty,
                 None,
+                &[],
             )
         };
         // Capture run: no interactive flags at all.
@@ -1091,6 +1183,7 @@ mod tests {
             &[],
             Some(true),
             Some(&plan),
+            &[],
         );
         let joined = argv.join(" ");
         // The image self-mount keeps the real shell reachable for any image.
@@ -1112,6 +1205,7 @@ mod tests {
             &[],
             None,
             None,
+            &[],
         );
         assert!(!plain.join(" ").contains("/.h5i/"));
     }
@@ -1272,6 +1366,7 @@ mod tests {
             &injected,
             None,
             None,
+            &[],
         );
         // The broker's env grant is passed to the container by NAME only — the
         // value is forwarded from Podman's own env, never placed in argv (which

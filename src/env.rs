@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::H5iError;
 use crate::objects;
-use crate::sandbox::{self, IsolationClaim, ResolvedPolicy};
+use crate::sandbox::{self, BoxGitPath, IsolationClaim, ResolvedPolicy};
 
 /// Git ref holding the shareable env state: the append-only event log plus the
 /// per-env manifests and resolved policies (so `h5i push`/`pull` carry an
@@ -1021,8 +1021,10 @@ fn no_workspace_err(m: &EnvManifest, op: &str) -> H5iError {
 
 // ─── in-box git plumbing grants ──────────────────────────────────────────────
 
-/// Filesystem grants that make the env's worktree a *functional* git checkout
-/// from inside the box (process/supervised tiers).
+/// The repo-`.git` plumbing surface that makes the env's worktree a
+/// *functional* git checkout from inside the box. Consumed per backend by
+/// [`grant_box_git`]: Landlock grants at process/supervised, identical-path
+/// bind mounts at container.
 ///
 /// `$WORK` alone is not enough: a native worktree's plumbing lives outside it.
 /// `$WORK/.git` is a pointer file into `<repo>/.git/worktrees/<wt>` (HEAD,
@@ -1076,10 +1078,7 @@ fn no_workspace_err(m: &EnvManifest, op: &str) -> H5iError {
 ///   paths, but for these structural grants a silent skip would brick in-box
 ///   git again (e.g. after a host-side `git pack-refs` pruned the loose-ref
 ///   directory).
-fn box_git_grants(
-    repo: &Repository,
-    m: &EnvManifest,
-) -> Result<(Vec<String>, Vec<String>), H5iError> {
+fn box_git_plumbing(repo: &Repository, m: &EnvManifest) -> Result<Vec<BoxGitPath>, H5iError> {
     let git_dir = repo.commondir().to_path_buf();
     // `refs/heads/h5i/env/<agent>` — `m.branch` is identity-validated against
     // agent+slug, so this parent can never leave the env namespace.
@@ -1091,9 +1090,12 @@ fn box_git_grants(
         })?
         .to_path_buf();
 
-    let ro: Vec<PathBuf> = ["HEAD", "config", "packed-refs", "refs", "info"]
+    // ro before rw: `refs` (ro) is the parent of two rw entries, and the
+    // container backend mounts in list order (nested binds need the parent
+    // mounted first; the kernel tiers don't care — Landlock rules are a set).
+    let mut paths: Vec<BoxGitPath> = ["HEAD", "config", "packed-refs", "refs", "info"]
         .iter()
-        .map(|p| git_dir.join(p))
+        .map(|p| BoxGitPath { host: git_dir.join(p), rw: false })
         .collect();
     let rw: Vec<PathBuf> = vec![
         git_dir.join("worktrees").join(m.worktree_name()),
@@ -1105,28 +1107,54 @@ fn box_git_grants(
     for d in &rw {
         std::fs::create_dir_all(d).map_err(|e| H5iError::with_path(e, d))?;
     }
-    let mut ro: Vec<String> = ro.into_iter().map(|p| p.display().to_string()).collect();
-    // Tilde paths expand inside the sandbox builder; missing ones are skipped.
-    ro.extend(["~/.gitconfig".into(), "~/.config/git".into()]);
-    Ok((ro, rw.into_iter().map(|p| p.display().to_string()).collect()))
+    paths.extend(rw.into_iter().map(|host| BoxGitPath { host, rw: true }));
+    Ok(paths)
 }
 
-/// Append the in-box git grants to a loaded policy. Kernel-enforced tiers
-/// only: `workspace` runs unconfined (nothing to grant), and the container
-/// backend mounts `$WORK` alone rather than consuming `fs.*` grants — its
-/// in-container git story is a separate, known gap (the worktree's gitdir
-/// pointer names a host path that does not exist in the container).
+/// Apply the in-box git plumbing to a loaded policy, per backend:
+///
+/// - **process/supervised:** appended as Landlock grants (`fs.read`/`fs.write`),
+///   plus ro `~/.gitconfig` + `~/.config/git` — git dies (not skips) on an
+///   existing-but-unreadable global config under Landlock.
+/// - **container:** stashed on `policy.box_git`; the backend bind-mounts each
+///   path at its *identical host path* inside the container, so the worktree's
+///   gitdir/commondir pointer files resolve. `$WORK` is dual-mounted at its
+///   host path too (the admin dir's `gitdir` back-pointer names it — libgit2
+///   resolves the workdir through it). No `~/.gitconfig` here: the host HOME
+///   is deliberately not mounted, and a *missing* global config is skippable.
+/// - **workspace:** unconfined — nothing to do.
 fn grant_box_git(
     repo: &Repository,
     m: &EnvManifest,
+    work: &Path,
     policy: &mut ResolvedPolicy,
 ) -> Result<(), H5iError> {
-    if !matches!(policy.claim, IsolationClaim::Process | IsolationClaim::Supervised) {
-        return Ok(());
+    match policy.claim {
+        IsolationClaim::Process | IsolationClaim::Supervised => {
+            for p in box_git_plumbing(repo, m)? {
+                let path = p.host.display().to_string();
+                if p.rw {
+                    policy.profile.fs_write.push(path);
+                } else {
+                    policy.profile.fs_read.push(path);
+                }
+            }
+            // Tilde paths expand inside the sandbox builder; missing are skipped.
+            policy
+                .profile
+                .fs_read
+                .extend(["~/.gitconfig".to_string(), "~/.config/git".to_string()]);
+        }
+        IsolationClaim::Container => {
+            let mut mounts = box_git_plumbing(repo, m)?;
+            mounts.push(BoxGitPath { host: work.to_path_buf(), rw: true });
+            // Podman errors on a missing bind source (unlike Landlock, which
+            // skips) — keep only what exists on the host.
+            mounts.retain(|b| b.host.exists());
+            policy.box_git = mounts;
+        }
+        _ => {}
     }
-    let (ro, rw) = box_git_grants(repo, m)?;
-    policy.profile.fs_read.extend(ro);
-    policy.profile.fs_write.extend(rw);
     Ok(())
 }
 
@@ -1163,7 +1191,7 @@ pub fn run(
     let mut policy = load_policy(h5i_root, m)?;
     // Structural grants (like the implicit `$WORK` rw): the worktree must be a
     // functional git checkout inside the box.
-    grant_box_git(repo, m, &mut policy)?;
+    grant_box_git(repo, m, &work, &mut policy)?;
 
     // Broker any declared secrets BEFORE marking the env running, so a
     // fail-closed grant (missing source, unsupported inject) aborts cleanly
@@ -1332,7 +1360,7 @@ pub fn shell(
     let mut policy = load_policy(h5i_root, m)?;
     // Same structural grants as `run`: an interactive boxed agent lives in
     // this worktree and must be able to use git / h5i context inside it.
-    grant_box_git(repo, m, &mut policy)?;
+    grant_box_git(repo, m, &work, &mut policy)?;
     let secret_dir = m.dir(h5i_root).join("secrets");
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
     let brokered =
@@ -2700,7 +2728,18 @@ mod tests {
         let git_dir = repo.commondir().to_path_buf();
         let m = canonical_manifest("claude", "fix");
 
-        let (ro, rw) = box_git_grants(&repo, &m).unwrap();
+        let paths = box_git_plumbing(&repo, &m).unwrap();
+        let ro: Vec<String> =
+            paths.iter().filter(|p| !p.rw).map(|p| p.host.display().to_string()).collect();
+        let rw: Vec<String> =
+            paths.iter().filter(|p| p.rw).map(|p| p.host.display().to_string()).collect();
+        // List order doubles as container mount order: the ro parent `refs`
+        // must precede the rw entries bind-nested under it.
+        let refs_pos =
+            paths.iter().position(|p| !p.rw && p.host.ends_with("refs")).unwrap();
+        let nested_pos =
+            paths.iter().position(|p| p.host.ends_with("refs/h5i/context")).unwrap();
+        assert!(refs_pos < nested_pos, "parent `refs` must come before nested rw children");
 
         let has = |v: &[String], suffix: &str| v.iter().any(|p| p.ends_with(suffix));
         // Reads: repo metadata files/dirs, never `.git` itself.
@@ -2736,8 +2775,64 @@ mod tests {
         // …including RE-creation after a host-side `git pack-refs` pruned the
         // loose-ref dir.
         std::fs::remove_dir_all(git_dir.join("refs/heads/h5i")).unwrap();
-        box_git_grants(&repo, &m).unwrap();
+        box_git_plumbing(&repo, &m).unwrap();
         assert!(git_dir.join("refs/heads/h5i/env/claude").is_dir(), "pruned ref dir recreated");
+    }
+
+    // The same plumbing is applied per backend: Landlock grants (+ global
+    // gitconfig reads) at process/supervised; identical-path bind mounts on
+    // `policy.box_git` (incl. the `$WORK` dual mount, exists-filtered, fs
+    // lists untouched) at container; nothing at workspace.
+    #[test]
+    fn grant_box_git_applies_per_backend() {
+        use crate::sandbox::Profile;
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path().join("repo")).unwrap();
+        let m = canonical_manifest("claude", "fix");
+        let work = dir.path().join("repo/.git/.h5i/env/claude/fix/work");
+        std::fs::create_dir_all(&work).unwrap();
+
+        // process: fs grants + ~/.gitconfig, box_git untouched.
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            Profile::builtin("default", IsolationClaim::Process),
+        );
+        grant_box_git(&repo, &m, &work, &mut pol).unwrap();
+        assert!(pol.profile.fs_write.iter().any(|p| p.ends_with("/objects")));
+        assert!(pol.profile.fs_read.iter().any(|p| p == "~/.gitconfig"));
+        assert!(pol.box_git.is_empty(), "kernel tiers use fs grants, not mounts");
+
+        // container: mounts on box_git (work included, all existing), fs lists untouched.
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Container,
+            Profile::builtin("default", IsolationClaim::Container),
+        );
+        let (read_before, write_before) =
+            (pol.profile.fs_read.clone(), pol.profile.fs_write.clone());
+        grant_box_git(&repo, &m, &work, &mut pol).unwrap();
+        assert!(!pol.box_git.is_empty());
+        assert!(
+            pol.box_git.iter().any(|b| b.rw && b.host == work),
+            "container must dual-mount $WORK at its host path: {:?}",
+            pol.box_git
+        );
+        assert!(pol.box_git.iter().all(|b| b.host.exists()), "podman needs existing sources");
+        assert!(
+            !pol.box_git.iter().any(|b| b.host.to_string_lossy().contains('~')),
+            "no tilde paths in mounts (host HOME is not the container's)"
+        );
+        assert_eq!(pol.profile.fs_read, read_before);
+        assert_eq!(pol.profile.fs_write, write_before);
+
+        // workspace: unconfined, nothing applied.
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Workspace,
+            Profile::builtin("default", IsolationClaim::Workspace),
+        );
+        let read_before = pol.profile.fs_read.clone();
+        grant_box_git(&repo, &m, &work, &mut pol).unwrap();
+        assert!(pol.box_git.is_empty());
+        assert_eq!(pol.profile.fs_read, read_before);
     }
 
     // Fix for the propose/rebase-vs-run race: every worktree/manifest-mutating

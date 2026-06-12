@@ -211,6 +211,16 @@ reach other worktrees' refs and the repo's hooks. Two mitigations, by tier:
   `h5i context`, but cannot move `main`, plant hooks, or touch another agent's
   branches. The only road into the *parent* branch is still the host-side
   mediated commit of `propose`.
+- **`container` tier — same surface as bind mounts:** the worktree's pointer
+  files (`$WORK/.git` gitlink, the admin dir's `commondir`/`gitdir`) contain
+  *host-absolute* paths, so the backend bind-mounts the identical plumbing
+  list at its **identical host paths** inside the box (ro/rw as above; targets
+  auto-created on the read-only rootfs overlay, like the shim mounts), and
+  dual-mounts `$WORK` at its host path so the admin back-pointer resolves.
+  Host HOME is *not* mounted (a missing `~/.gitconfig` is skippable; only an
+  existing-unreadable one is fatal — the Landlock case). A comma in any path
+  (unrepresentable in Podman `--mount` syntax) disables the whole set rather
+  than mounting a partial `.git`.
   - **Mediated-commit invariant (critical security boundary):** h5i computes the
     diff from the worktree *filesystem* and stages/commits host-side against an
     **explicit path allowlist rooted at `$WORK`**. Every staged path is

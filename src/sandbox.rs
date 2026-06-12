@@ -872,6 +872,16 @@ fn probe_userns() -> bool {
 
 // ─── claim resolution (fail-closed, §6) ─────────────────────────────────────
 
+/// One structural in-box git path: a piece of the repo's `.git` plumbing the
+/// container backend bind-mounts at its *identical host path* inside the box,
+/// so the worktree's gitdir/commondir pointer files resolve. Computed at run
+/// time from the env manifest (see `env::box_git_grants`).
+#[derive(Debug, Clone)]
+pub struct BoxGitPath {
+    pub host: PathBuf,
+    pub rw: bool,
+}
+
 /// The policy as actually enforced: profile + resolved claim. Serialized as
 /// `policy.resolved.toml`; its digest is pinned in the env manifest and in
 /// every capture taken inside the env.
@@ -879,9 +889,18 @@ fn probe_userns() -> bool {
 pub struct ResolvedPolicy {
     pub claim: IsolationClaim,
     pub profile: Profile,
+    /// Runtime-only in-box git mounts for the container backend — never
+    /// serialized (`policy.resolved.toml` and its pinned digest are unchanged;
+    /// these are structural like the implicit `$WORK` mount, not policy).
+    #[serde(skip)]
+    pub box_git: Vec<BoxGitPath>,
 }
 
 impl ResolvedPolicy {
+    pub fn new(claim: IsolationClaim, profile: Profile) -> Self {
+        ResolvedPolicy { claim, profile, box_git: Vec::new() }
+    }
+
     pub fn to_toml(&self) -> Result<String, H5iError> {
         toml::to_string(self).map_err(|e| H5iError::Metadata(format!("policy serialization failed: {e}")))
     }
@@ -986,10 +1005,7 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
             )));
         }
     }
-    Ok(ResolvedPolicy {
-        claim: profile.isolation,
-        profile: profile.clone(),
-    })
+    Ok(ResolvedPolicy::new(profile.isolation, profile.clone()))
 }
 
 // ─── confined execution (Linux, `process` tier) ─────────────────────────────
@@ -1196,7 +1212,7 @@ pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
     // command isn't rejected by a user-pinned list that omits `true`.
     let mut profile = policy.profile.clone();
     profile.tools.clear();
-    let probe = ResolvedPolicy { claim: policy.claim, profile };
+    let probe = ResolvedPolicy::new(policy.claim, profile);
     let result = run(&probe, &dir, &["true".to_string()]);
     let _ = std::fs::remove_dir_all(&dir);
     match result {
@@ -2033,8 +2049,8 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         let mut b = a.clone();
         a.fsize_bytes = None;
         b.fsize_bytes = Some(100 * 1024 * 1024);
-        let ra = ResolvedPolicy { claim: a.isolation, profile: a };
-        let rb = ResolvedPolicy { claim: b.isolation, profile: b };
+        let ra = ResolvedPolicy::new(a.isolation, a);
+        let rb = ResolvedPolicy::new(b.isolation, b);
         assert_ne!(ra.digest().unwrap(), rb.digest().unwrap());
     }
 
@@ -2349,13 +2365,13 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     fn policy_digest_is_stable_and_content_sensitive() {
         let p1 = load_from_str(doc_example_toml(), "default", None).unwrap();
         let p2 = load_from_str(doc_example_toml(), "default", None).unwrap();
-        let r1 = ResolvedPolicy { claim: p1.isolation, profile: p1 };
-        let r2 = ResolvedPolicy { claim: p2.isolation, profile: p2 };
+        let r1 = ResolvedPolicy::new(p1.isolation, p1);
+        let r2 = ResolvedPolicy::new(p2.isolation, p2);
         assert_eq!(r1.digest().unwrap(), r2.digest().unwrap());
 
         let mut p3 = r1.profile.clone();
         p3.net_mode = NetMode::Host;
-        let r3 = ResolvedPolicy { claim: p3.isolation, profile: p3 };
+        let r3 = ResolvedPolicy::new(p3.isolation, p3);
         assert_ne!(r1.digest().unwrap(), r3.digest().unwrap());
         assert_eq!(r1.digest().unwrap().len(), 64);
     }
@@ -2450,7 +2466,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     fn workspace_run_executes_in_workdir_with_wall_clock() {
         let dir = tempfile::tempdir().unwrap();
         let p = Profile::builtin("default", IsolationClaim::Workspace);
-        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        let policy = ResolvedPolicy::new(IsolationClaim::Workspace, p);
         let out = run(&policy, dir.path(), &["pwd".to_string()]).unwrap();
         assert_eq!(out.exit_code, Some(0));
         assert!(!out.timed_out);
@@ -2464,7 +2480,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let dir = tempfile::tempdir().unwrap();
         let mut p = Profile::builtin("default", IsolationClaim::Workspace);
         p.wall_secs = 1;
-        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        let policy = ResolvedPolicy::new(IsolationClaim::Workspace, p);
         let out = run(&policy, dir.path(), &["sleep".to_string(), "30".to_string()]).unwrap();
         assert!(out.timed_out, "expected the wall-clock kill to fire");
         assert_ne!(out.exit_code, Some(0));
@@ -2474,7 +2490,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     fn run_records_resource_usage() {
         let dir = tempfile::tempdir().unwrap();
         let p = Profile::builtin("default", IsolationClaim::Workspace);
-        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        let policy = ResolvedPolicy::new(IsolationClaim::Workspace, p);
         // A command that burns a little wall time so the numbers are non-trivial.
         let out = run(&policy, dir.path(), &["sh".into(), "-c".into(), "sleep 0.2".into()]).unwrap();
         assert_eq!(out.exit_code, Some(0));
@@ -2489,7 +2505,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let dir = tempfile::tempdir().unwrap();
         let mut p = Profile::builtin("default", IsolationClaim::Workspace);
         p.tools = vec!["echo".into(), "python".into()];
-        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        let policy = ResolvedPolicy::new(IsolationClaim::Workspace, p);
         // Listed program (by basename) runs.
         assert!(run(&policy, dir.path(), &["echo".into(), "hi".into()]).is_ok());
         // An unlisted program is refused before it ever executes.
@@ -2502,7 +2518,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let dir = tempfile::tempdir().unwrap();
         let p = Profile::builtin("default", IsolationClaim::Workspace);
         assert!(p.tools.is_empty());
-        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        let policy = ResolvedPolicy::new(IsolationClaim::Workspace, p);
         assert!(run(&policy, dir.path(), &["true".into()]).is_ok());
     }
 }

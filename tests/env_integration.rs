@@ -1505,6 +1505,63 @@ fn container_runs_with_workspace_mount_and_net_deny() {
     assert_eq!(r.manifest("box")["isolation_claim"], "container");
 }
 
+/// In-container git plumbing: a worktree's `.git` pointer files name
+/// host-absolute paths, so the backend bind-mounts the env's plumbing at
+/// *identical* paths inside the box (`env::box_git_plumbing`). Busybox ships
+/// no git binary, so this proves the mount surface directly: the pointer
+/// chain resolves, `objects` is writable, `config` is read-only, hooks stay
+/// unreachable.
+#[test]
+fn container_box_git_plumbing_mounted_at_host_paths() {
+    if !container_runnable() {
+        eprintln!("SKIP container_box_git_plumbing_mounted_at_host_paths: no rootless podman");
+        return;
+    }
+    let r = Repo::new();
+    write_profile(
+        &r,
+        &format!(
+            "[profile.default]\nisolation = \"container\"\nnet.mode = \"deny\"\ncontainer.image = \"{BUSYBOX}\"\n"
+        ),
+    );
+    r.h5i_ok(&["env", "create", "boxc"]);
+    let g = r.dir.join(".git");
+    let admin = g.join("worktrees/h5i-env-tester-boxc");
+
+    // The whole pointer chain is resolvable from inside: worktree admin dir,
+    // shared HEAD/config/objects, and $WORK dual-mounted at its host path
+    // (the admin `gitdir` back-pointer names it).
+    let out = r.h5i(&["env", "run", "boxc", "--", "sh", "-c", &format!(
+        "test -f {a}/commondir && test -r {g}/HEAD && test -r {g}/config && \
+         test -d {g}/objects && test -f {w}/.git && echo PLUMB-OK || echo PLUMB-MISSING",
+        a = admin.display(),
+        g = g.display(),
+        w = r.work("boxc").display(),
+    )]);
+    assert!(out_str(&out).contains("PLUMB-OK"), "git plumbing must be mounted: {}", out_str(&out));
+
+    // objects is writable (commits need it) …
+    let out = r.h5i(&["env", "run", "boxc", "--", "sh", "-c", &format!(
+        "touch {g}/objects/h5i-probe && rm {g}/objects/h5i-probe && echo OBJ-RW || echo OBJ-RO",
+        g = g.display(),
+    )]);
+    assert!(out_str(&out).contains("OBJ-RW"), "objects must be rw: {}", out_str(&out));
+
+    // … while config is read-only and hooks unreachable (never mounted).
+    let out = r.h5i(&["env", "run", "boxc", "--", "sh", "-c", &format!(
+        "(echo x >> {g}/config) 2>/dev/null && echo CFG-RW || echo CFG-RO; \
+         (touch {g}/hooks/pre-commit) 2>/dev/null && echo HOOK-PLANTED || echo HOOK-BLOCKED",
+        g = g.display(),
+    )]);
+    let text = out_str(&out);
+    assert!(text.contains("CFG-RO") && !text.contains("CFG-RW"), "config must be ro: {text}");
+    assert!(
+        text.contains("HOOK-BLOCKED") && !text.contains("HOOK-PLANTED"),
+        "hooks must stay unreachable: {text}"
+    );
+    assert!(!g.join("hooks/pre-commit").exists(), "no hook may appear on the host");
+}
+
 #[test]
 fn container_egress_allowlist_permits_only_listed_hosts() {
     if !container_runnable() {
