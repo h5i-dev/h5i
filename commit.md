@@ -1395,3 +1395,16 @@ improve default UX of h5i env shell so AI agents (claude/codex) can actually run
 
 ---
 
+## Commit 6a2c9c47 — 2026-06-12 23:54 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+apply now stamps the applied commit (FF + merge paths) with an h5i note carrying EnvProvenance (env_id, agent, isolation, policy_digest, base, capped capture ids + total, evidence count by trust lane). Lanes preserved (host-env-run/inbox-capture/tee-shim) so host-verified vs box-claimed stays distinguishable post-merge. From identity-validated manifest only; idempotent (ST_PROPOSED guard + force note); best-effort. h5i log renders From env:/Evidence:. Note ref refs/h5i/notes is read via git2 (git notes CLI won't resolve it outside refs/notes/) — tests read via git show refs/h5i/notes:<oid>. Tests: 1 unit (cap/unknown-lane) + 3 e2e (FF, merge, log). Full suite green (809 lib + 63 env). Still open: in-box h5i commit graceful-degrade + spool-note (separate from this apply carry-forward).
+
+---
+
