@@ -1013,3 +1013,4 @@ _[Checkpoint: 6a2c434b — edited src/env.rs; edited docs/environments-design.md
 [17:50:00] OBSERVE: read src/container.rs
 [17:50:13] ACT: edited src/container.rs
 [17:51:21] ACT: edited tests/env_integration.rs
+[17:56:27] OBSERVE: read src/container.rs
