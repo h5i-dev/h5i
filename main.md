@@ -688,11 +688,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited .claude/h5i.md; edited supervised-execve-notify-deadlock.md; edited MEMORY.md
 - [x] Added four-part AI agent sandboxing blog series with shared SVG diagram, blog index cards/JSON-LD entries, and sitemap URLs.
 - [x] Optimized SEO for sandbox blog series: shorter meta descriptions, PNG social card, article tags, BreadcrumbList JSON-LD, series cross-links, and keyword-focused H2s.
+- [x] Audited SEO for all blog posts: no critical metadata/sitemap/JSON-LD defects; found optimization warnings for long snippets/titles and low word-count posts.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 14:12 UTC] `improve-shell`: Audited SEO for all blog posts: no critical metadata/sitemap/JSON-LD defects; found optimization warnings for long snippets/titles and low word-count posts.
 - [2026-06-12 14:11 UTC] `improve-shell`: Optimized SEO for sandbox blog series: shorter meta descriptions, PNG social card, article tags, BreadcrumbList JSON-LD, series cross-links, and keyword-focused H2s.
 - [2026-06-12 12:25 UTC] `improve-shell`: Added four-part AI agent sandboxing blog series with shared SVG diagram, blog index cards/JSON-LD entries, and sitemap URLs.
 - [2026-06-12 12:09 UTC] `improve-shell`: edited .claude/h5i.md; edited supervised-execve-notify-deadlock.md; edited MEMORY.md
