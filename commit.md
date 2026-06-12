@@ -836,3 +836,16 @@ Fix options sketched: granular grants (.git/objects rw, .git/worktrees/<wt> rw, 
 
 ---
 
+## Commit 6a2c4336 — 2026-06-12 17:34 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+box_git_grants in env.rs wired into run+shell; ctx print_status honesty fix; design doc + CLAUDE.md updated; inverted stale GIT-BLOCKED assertion in process_tier_confines_fs_and_network; 3 new integration tests (positive git flow, fail-closed jail, h5i context flow) + 2 unit tests. Full suite green (798 lib + 223 integration). Verified supervised env shell end-to-end manually. Remaining gap: container tier in-box git (gitdir pointer names host path).
+
+---
+
