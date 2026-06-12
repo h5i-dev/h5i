@@ -1272,3 +1272,9 @@ _[Checkpoint: 6a2c6860 — edited tests/env_integration.rs; edited tests/env_int
 _[Checkpoint: 6a2c69db — edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2c6b05 — edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md]_
+---
+
