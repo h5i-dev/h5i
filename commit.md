@@ -446,3 +446,16 @@ Root-caused the '19-min test' hang: adding execve to the supervised seccomp-noti
 
 ---
 
+## Commit 6a2b53d9 — 2026-06-12 00:33 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+Root-caused the '19-min test' hang: adding execve to the supervised seccomp-notify filter deadlocks the bootstrap exec against the egress pre_exec handshake (mcp::tests::env_lifecycle_over_mcp). Reverted supervisor.rs + seccomp_notify.rs to baseline. SHIPPED: (1) container tee-shim (image self-mount /.h5i/orig keeps real shell for any image; shadows /bin/sh+bash; spools cmd-* records; passes stdout/stderr/exit/stdin through) + ingest_shell_spool (untrusted spool: caps+redaction); (2) optional h5i hook observe-bash PostToolUse handler (stores Bash cmd+output redacted, >=2KB or stderr, skips h5i's own); (3) Cargo.toml debug=line-tables-only (fixes -j4 OOM). All green: 782 lib + 52 env_integration + container/seccomp/supervisor suites.
+
+### This Commit's Contribution
+
+
+---
+
