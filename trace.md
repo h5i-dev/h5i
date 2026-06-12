@@ -773,3 +773,4 @@ _[Checkpoint: 6a2bf2f2 — edited src/main.rs; edited src/main.rs; edited README
 _[Checkpoint: 6a2bf6b9 — observe-bash replaced by wrap-bash PreToolUse rewrite]_
 ---
 
+[12:08:38] OBSERVE: read supervised-execve-notify-deadlock.md
