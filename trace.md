@@ -1414,3 +1414,4 @@ _[Checkpoint: 6a2c77be — session ended (auto-checkpoint)]_
 [21:51:40] OBSERVE: read tests/env_integration.rs
 [21:51:40] OBSERVE: read src/sandbox.rs
 [21:51:40] OBSERVE: read src/container.rs
+[21:51:40] OBSERVE: read src/env.rs
