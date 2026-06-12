@@ -19,31 +19,30 @@
   <text x="64" y="112" fill="#a0a0aa" font-family="Space Grotesk, Arial, sans-serif" font-size="18">Defense is a stack: workspace isolation, kernel policy, network control, resource budgets, and provenance.</text>
 
   <g filter="url(#shadow)">
-    <rect x="64" y="170" width="1072" height="386" rx="22" fill="#101015" stroke="rgba(255,255,255,0.14)"/>
-    <rect x="100" y="206" width="1000" height="314" rx="18" fill="#141419" stroke="#2a2a31"/>
-    <rect x="136" y="242" width="928" height="242" rx="16" fill="#18181f" stroke="#33333b"/>
-    <rect x="172" y="278" width="856" height="170" rx="14" fill="#1d1d25" stroke="#45454f"/>
-    <rect x="398" y="310" width="404" height="106" rx="12" fill="#09090d" stroke="#e0241b" stroke-width="2"/>
+    <rect x="64" y="160" width="1072" height="408" rx="22" fill="#101015" stroke="rgba(255,255,255,0.14)"/>
+    <rect x="112" y="236" width="976" height="292" rx="18" fill="#141419" stroke="#2a2a31"/>
+    <rect x="160" y="312" width="880" height="164" rx="16" fill="#18181f" stroke="#33333b"/>
+    <rect x="420" y="388" width="360" height="66" rx="12" fill="#09090d" stroke="#e0241b" stroke-width="2"/>
   </g>
 
-  <text x="600" y="358" fill="#fff" text-anchor="middle" font-family="Space Grotesk, Arial, sans-serif" font-size="29" font-weight="700">agent process</text>
-  <text x="600" y="391" fill="#a0a0aa" text-anchor="middle" font-family="Space Mono, monospace" font-size="15">model-driven shell, tools, build, tests</text>
+  <text x="600" y="417" fill="#fff" text-anchor="middle" font-family="Space Grotesk, Arial, sans-serif" font-size="28" font-weight="700">agent process</text>
+  <text x="600" y="440" fill="#a0a0aa" text-anchor="middle" font-family="Space Mono, monospace" font-size="14">model-driven shell, tools, build, tests</text>
 
   <g font-family="Space Grotesk, Arial, sans-serif" font-size="16" fill="#e8e8ec">
-    <text x="222" y="304" font-weight="700">process boundary</text>
-    <text x="222" y="329" fill="#a0a0aa">seccomp, namespaces, no-new-privs</text>
-    <text x="206" y="230" font-weight="700">filesystem boundary</text>
-    <text x="206" y="255" fill="#a0a0aa">Landlock, bind mounts, worktree root</text>
-    <text x="186" y="194" font-weight="700">workspace boundary</text>
-    <text x="186" y="219" fill="#a0a0aa">separate checkout, branch, index</text>
-    <text x="760" y="304" font-weight="700">network boundary</text>
-    <text x="760" y="329" fill="#a0a0aa">deny by default, egress allowlist</text>
-    <text x="760" y="230" font-weight="700">resource boundary</text>
-    <text x="760" y="255" fill="#a0a0aa">cgroups, rlimits, wall-clock kill</text>
+    <text x="150" y="191" font-weight="700">workspace boundary</text>
+    <text x="150" y="216" fill="#a0a0aa">separate checkout, branch, index</text>
+    <text x="198" y="267" font-weight="700">filesystem boundary</text>
+    <text x="198" y="292" fill="#a0a0aa">Landlock, bind mounts, worktree root</text>
+    <text x="220" y="343" font-weight="700">process boundary</text>
+    <text x="220" y="368" fill="#a0a0aa">seccomp, namespaces, no-new-privs</text>
+    <text x="790" y="267" font-weight="700">resource boundary</text>
+    <text x="790" y="292" fill="#a0a0aa">cgroups, rlimits, wall-clock kill</text>
+    <text x="790" y="343" font-weight="700">network boundary</text>
+    <text x="790" y="368" fill="#a0a0aa">deny by default, egress allowlist</text>
   </g>
 
   <g stroke="#e0241b" stroke-width="2" fill="none">
-    <path d="M600 416v94"/>
+    <path d="M600 454v56"/>
     <path d="M600 510h-190"/>
     <path d="M600 510h190"/>
   </g>
