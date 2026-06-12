@@ -2155,8 +2155,29 @@ enum ObjectsCommands {
 
 #[derive(Subcommand)]
 enum HookCommands {
-    /// Print install instructions for all Claude Code hooks
-    Setup,
+    /// Print install instructions for all Claude Code hooks, or write the
+    /// hook wiring into settings.json directly with --write.
+    Setup {
+        /// Write the SessionStart/PostToolUse/Stop wiring into
+        /// .claude/settings.json (idempotent merge) instead of printing
+        /// instructions.
+        #[arg(long)]
+        write: bool,
+
+        /// Where --write puts the settings: the repo's ./.claude/settings.json
+        /// or your ~/.claude/settings.json.
+        #[arg(long, value_enum, default_value_t = SetupScope::Project, requires = "write")]
+        scope: SetupScope,
+
+        /// Also register the OPTIONAL Bash capture-wrap hook
+        /// (`h5i hook wrap-bash`): routes every Bash command through
+        /// `h5i capture run`, so large/failing output reaches the agent as a
+        /// token-reduced summary (full raw stored for `h5i recall`). Off by
+        /// default. Note: permission allowlists then match the rewritten
+        /// `h5i capture run …` command, not the original.
+        #[arg(long, requires = "write")]
+        wrap_bash: bool,
+    },
 
     /// Run as the PostToolUse handler: reads JSON from stdin, emits h5i context traces.
     /// Register in .claude/settings.json as: { "command": "h5i hook run" }
@@ -2172,6 +2193,15 @@ enum HookCommands {
     /// Summarises recent OBSERVE/THINK/ACT entries and calls `h5i context commit`.
     /// Register in .claude/settings.json under "Stop" hooks.
     Stop,
+
+    /// OPTIONAL PreToolUse handler for the Bash tool: rewrites the command into
+    /// a `h5i capture run` wrapper (via updatedInput, Claude Code ≥ 2.0.10), so
+    /// the agent receives a token-reduced summary for large/failing output while
+    /// the full raw bytes are stored for `h5i recall`. Skips h5i's own commands,
+    /// top-level `cd` (session cwd tracking), and anything outside a git repo;
+    /// every failure path emits nothing, so the original command runs untouched.
+    /// Register in .claude/settings.json under "PreToolUse" with matcher "Bash".
+    WrapBash,
 }
 
 #[derive(Subcommand)]
@@ -4896,6 +4926,11 @@ fn main() -> anyhow::Result<()> {
                 style("h5i memory snapshot [--agent <claude-code|codex>]").cyan()
             );
             println!(
+                "    {}  wire the Claude Code hooks (add {} for token-reduced Bash output)",
+                style("h5i hook setup --write").cyan(),
+                style("--wrap-bash").bold()
+            );
+            println!(
                 "    {}  push all h5i data to your remote",
                 style("h5i push").cyan()
             );
@@ -5900,7 +5935,93 @@ fn main() -> anyhow::Result<()> {
             }
         },
 
-        Commands::Hook(HookCommands::Setup) => {
+        Commands::Hook(HookCommands::Setup { write, scope, wrap_bash }) => {
+            if write {
+                let path = match scope {
+                    SetupScope::User => {
+                        let home = std::env::var("HOME").map_err(|_| {
+                            anyhow::anyhow!("$HOME is not set — use --scope project")
+                        })?;
+                        PathBuf::from(home).join(".claude").join("settings.json")
+                    }
+                    SetupScope::Project => {
+                        let repo = git2::Repository::discover(".").map_err(|_| {
+                            anyhow::anyhow!("not inside a git repository — use --scope user")
+                        })?;
+                        let workdir = repo.workdir().ok_or_else(|| {
+                            anyhow::anyhow!("bare repository has no working dir — use --scope user")
+                        })?;
+                        workdir.join(".claude").join("settings.json")
+                    }
+                };
+
+                let existing = std::fs::read_to_string(&path).unwrap_or_default();
+                let merged = h5i_core::hooks::merge_hook_settings_json(&existing, wrap_bash)?;
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&path, merged)?;
+
+                println!(
+                    "{} Claude Code hooks configured in {}",
+                    SUCCESS,
+                    style(path.display()).cyan()
+                );
+                println!(
+                    "   {} {}   ·   {} {} ({})   ·   {} {}",
+                    style("SessionStart:").dim(),
+                    style("h5i hook session-start").bold(),
+                    style("PostToolUse:").dim(),
+                    style("h5i hook run").bold(),
+                    style("Edit|Write|Read").dim(),
+                    style("Stop:").dim(),
+                    style("h5i hook stop").bold(),
+                );
+                if wrap_bash {
+                    println!(
+                        "   {} {} ({}) — Bash commands run through {}: token-reduced\n\
+                         \x20  summaries for large/failing output, full raw stored for {}.",
+                        style("Bash capture-wrap:").dim(),
+                        style("h5i hook wrap-bash").bold(),
+                        style("PreToolUse · Bash").dim(),
+                        style("h5i capture run").yellow(),
+                        style("h5i recall").yellow(),
+                    );
+                    println!(
+                        "   {} permission allowlists now match the rewritten {} command.",
+                        style("note:").dim(),
+                        style("h5i capture run …").bold(),
+                    );
+                } else {
+                    println!(
+                        "   {} off — pass {} to route Bash commands through {}\n\
+                         \x20  (token-reduced summaries; full raw stored for {}).",
+                        style("Bash capture-wrap:").dim(),
+                        style("--wrap-bash").bold(),
+                        style("h5i capture run").yellow(),
+                        style("h5i recall").yellow(),
+                    );
+                }
+                println!();
+                println!(
+                    "   {} open {} once (or restart) so Claude Code reloads the hooks.",
+                    style("→").dim(),
+                    style("/hooks").bold()
+                );
+                println!(
+                    "   {} prompt capture (UserPromptSubmit) and the MCP server stay manual —\n\
+                     \x20    run {} for those instructions.",
+                    style("→").dim(),
+                    style("h5i hook setup").bold(),
+                );
+                println!(
+                    "   {} for messaging identity + turn delivery, run {}.",
+                    style("→").dim(),
+                    style("h5i msg setup <name>").bold(),
+                );
+                return Ok(());
+            }
+
             let hook_script = r#"#!/usr/bin/env bash
 # h5i Claude Code hook — writes the user prompt to .git/.h5i/pending_context.json
 # so that `h5i commit` can pick it up automatically without --prompt.
@@ -5915,6 +6036,16 @@ jq -c '{
   session_id: .session_id
 }' > "$H5I_DIR/pending_context.json"
 "#;
+
+            println!(
+                "{} {} writes the SessionStart/PostToolUse/Stop wiring below into\n\
+                 .claude/settings.json for you ({} for ~/.claude, {} to capture-wrap\n\
+                 Bash). The steps below cover the rest (prompt capture, MCP).\n",
+                style("Tip:").bold(),
+                style("h5i hook setup --write").cyan().bold(),
+                style("--scope user").bold(),
+                style("--wrap-bash").bold(),
+            );
 
             println!("{}", style("── Step 0: Installl `jq` ──").bold());
             println!(
@@ -6004,6 +6135,36 @@ jq -c '{
             );
             println!(
                 "         You never have to call `h5i context trace` by hand."
+            );
+
+            println!();
+            println!(
+                "{} Bash capture-wrap — rewrite every Bash command into {}",
+                style("Optional:").bold(),
+                style("h5i capture run").yellow()
+            );
+            println!(
+                "  (PreToolUse updatedInput, Claude Code ≥ 2.0.10): the agent receives a"
+            );
+            println!(
+                "  token-reduced summary for large/failing output; the full raw bytes stay"
+            );
+            println!(
+                "  stored and searchable via {}. h5i's own commands and top-level",
+                style("h5i recall").yellow()
+            );
+            println!("  `cd` are never wrapped, and any hook failure runs the command untouched.");
+            println!(
+                "  Not written by default — opt in with {},",
+                style("h5i hook setup --write --wrap-bash").cyan()
+            );
+            println!("  or add a PreToolUse entry by hand:");
+            println!(
+                "{}",
+                style(
+                    r#"    { "matcher": "Bash", "hooks": [ { "type": "command", "command": "h5i hook wrap-bash" } ] }"#
+                )
+                .dim()
             );
 
             println!();
@@ -6161,6 +6322,66 @@ jq -c '{
                     }
                 }
             }
+        }
+
+        Commands::Hook(HookCommands::WrapBash) => {
+            use std::io::Read as _;
+            // PreToolUse handler (matcher "Bash"): rewrite the command into a
+            // token-reducing `h5i capture run` wrapper via updatedInput. The
+            // agent then receives capture run's summary for large/failing
+            // output instead of the raw bytes (which stay stored for
+            // `h5i recall`). Every failure path emits nothing and exits 0, so
+            // the original command runs untouched — a wrapper hook must never
+            // break the session.
+            let mut raw_in = String::new();
+            std::io::stdin().read_to_string(&mut raw_in).unwrap_or(0);
+            if raw_in.trim().is_empty() {
+                return Ok(());
+            }
+            let Ok(data) = serde_json::from_str::<serde_json::Value>(&raw_in) else {
+                return Ok(());
+            };
+            if data.get("tool_name").and_then(|v| v.as_str()) != Some("Bash") {
+                return Ok(());
+            }
+            let Some(command) = data.pointer("/tool_input/command").and_then(|v| v.as_str())
+            else {
+                return Ok(());
+            };
+            // `capture run` stores into .git/.h5i — only wrap when the session
+            // cwd is inside a git repository.
+            let cwd = data
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .map(PathBuf::from)
+                .or_else(|| std::env::current_dir().ok());
+            let Some(cwd) = cwd else {
+                return Ok(());
+            };
+            if git2::Repository::discover(&cwd).is_err() {
+                return Ok(());
+            }
+            let Some(wrapped) = h5i_core::hooks::wrap_bash_command(command) else {
+                return Ok(());
+            };
+            // Patch only `command`, preserving the other tool_input fields
+            // (description, timeout, run_in_background, …). No
+            // permissionDecision: the permission flow stays untouched.
+            let mut updated =
+                data.pointer("/tool_input").cloned().unwrap_or_else(|| serde_json::json!({}));
+            let Some(obj) = updated.as_object_mut() else {
+                return Ok(());
+            };
+            obj.insert("command".to_string(), serde_json::Value::String(wrapped));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "updatedInput": updated,
+                    }
+                })
+            );
         }
 
         Commands::Hook(HookCommands::SessionStart) => {

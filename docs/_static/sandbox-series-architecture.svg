@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" role="img" aria-labelledby="title desc">
+  <title id="title">Layered AI agent sandbox architecture</title>
+  <desc id="desc">An AI agent runs inside a worktree, filesystem, process, network, resource, and audit boundary. Each layer blocks a different failure mode.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0b0f"/>
+      <stop offset="1" stop-color="#15151b"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="640" rx="28" fill="url(#bg)"/>
+  <g opacity="0.18" stroke="#fff" stroke-width="1">
+    <path d="M0 80h1200M0 160h1200M0 240h1200M0 320h1200M0 400h1200M0 480h1200M0 560h1200"/>
+    <path d="M120 0v640M240 0v640M360 0v640M480 0v640M600 0v640M720 0v640M840 0v640M960 0v640M1080 0v640"/>
+  </g>
+  <text x="64" y="74" fill="#fff" font-family="Space Grotesk, Arial, sans-serif" font-size="34" font-weight="700">Sandboxing an AI coding agent</text>
+  <text x="64" y="112" fill="#a0a0aa" font-family="Space Grotesk, Arial, sans-serif" font-size="18">Defense is a stack: workspace isolation, kernel policy, network control, resource budgets, and provenance.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="64" y="160" width="1072" height="408" rx="22" fill="#101015" stroke="rgba(255,255,255,0.14)"/>
+    <rect x="112" y="236" width="976" height="292" rx="18" fill="#141419" stroke="#2a2a31"/>
+    <rect x="160" y="312" width="880" height="164" rx="16" fill="#18181f" stroke="#33333b"/>
+    <rect x="420" y="388" width="360" height="66" rx="12" fill="#09090d" stroke="#e0241b" stroke-width="2"/>
+  </g>
+
+  <text x="600" y="417" fill="#fff" text-anchor="middle" font-family="Space Grotesk, Arial, sans-serif" font-size="28" font-weight="700">agent process</text>
+  <text x="600" y="440" fill="#a0a0aa" text-anchor="middle" font-family="Space Mono, monospace" font-size="14">model-driven shell, tools, build, tests</text>
+
+  <g font-family="Space Grotesk, Arial, sans-serif" font-size="16" fill="#e8e8ec">
+    <text x="150" y="191" font-weight="700">workspace boundary</text>
+    <text x="150" y="216" fill="#a0a0aa">separate checkout, branch, index</text>
+    <text x="198" y="267" font-weight="700">filesystem boundary</text>
+    <text x="198" y="292" fill="#a0a0aa">Landlock, bind mounts, worktree root</text>
+    <text x="220" y="343" font-weight="700">process boundary</text>
+    <text x="220" y="368" fill="#a0a0aa">seccomp, namespaces, no-new-privs</text>
+    <text x="790" y="267" font-weight="700">resource boundary</text>
+    <text x="790" y="292" fill="#a0a0aa">cgroups, rlimits, wall-clock kill</text>
+    <text x="790" y="343" font-weight="700">network boundary</text>
+    <text x="790" y="368" fill="#a0a0aa">deny by default, egress allowlist</text>
+  </g>
+
+  <g stroke="#e0241b" stroke-width="2" fill="none">
+    <path d="M600 454v56"/>
+    <path d="M600 510h-190"/>
+    <path d="M600 510h190"/>
+  </g>
+  <g font-family="Space Grotesk, Arial, sans-serif">
+    <rect x="230" y="522" width="360" height="62" rx="10" fill="#0e0e12" stroke="rgba(255,255,255,0.14)"/>
+    <text x="410" y="548" fill="#fff" text-anchor="middle" font-size="17" font-weight="700">policy digest</text>
+    <text x="410" y="572" fill="#a0a0aa" text-anchor="middle" font-size="14">what was supposed to be enforced</text>
+    <rect x="610" y="522" width="360" height="62" rx="10" fill="#0e0e12" stroke="rgba(255,255,255,0.14)"/>
+    <text x="790" y="548" fill="#fff" text-anchor="middle" font-size="17" font-weight="700">capture log</text>
+    <text x="790" y="572" fill="#a0a0aa" text-anchor="middle" font-size="14">what actually ran, changed, or was denied</text>
+  </g>
+
+  <g font-family="Space Mono, monospace" font-size="13" fill="#ff6258">
+    <text x="88" y="612">Rule of thumb: a sandbox is only as strong as the weakest layer that the workload can still bypass.</text>
+  </g>
+</svg>

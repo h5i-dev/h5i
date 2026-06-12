@@ -110,6 +110,9 @@
 <p>That can coexist with Git hooks for conventional repository policy. For example, Claude Code hooks can capture the prompt and tool trace, while a Git <code>pre-commit</code> hook runs tests or blocks secrets.</p>
 <h2>Practical rule</h2>
 <p>Use Claude Code hooks for agent observability and session memory. Use Git hooks for repository gates. Use h5i to connect the two into provenance that survives beyond the chat window.</p>
+<h2>Where teams get the boundary wrong</h2>
+<p>The common mistake is installing one hook system and assuming it covers the other system's job. A Claude Code <code>PreToolUse</code> hook can warn before a shell command, but it does not protect a teammate who commits outside Claude Code. A Git <code>pre-commit</code> hook can block a bad commit, but it cannot reconstruct which prompt caused the edit or which files the agent inspected before writing it.</p>
+<p>For AI-assisted repositories, the useful pattern is layered. Use Claude Code hooks to capture session context while the agent is working. Use Git hooks and CI to enforce rules at repository boundaries. Then use h5i to join the two records so the final review sees both the agent trace and the conventional Git result.</p>
 <h2>FAQ</h2>
 <h3>Can a Git hook capture Claude Code prompts?</h3>
 <p>Not reliably by itself. Git hooks run at Git operations and do not naturally receive Claude Code session context.</p>

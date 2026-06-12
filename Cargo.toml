@@ -43,3 +43,9 @@ seccompiler = "0.5.0"
 [dev-dependencies]
 tempfile = "3.8"
 serde_json = "1.0"
+
+# This crate's units are big (main.rs, repository.rs, env.rs): full debuginfo is
+# the dominant rustc-memory + link-time cost for test binaries, and it has
+# OOM'd parallel test compiles on 8GB hosts. Line tables keep usable backtraces.
+[profile.dev]
+debug = "line-tables-only"

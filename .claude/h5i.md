@@ -79,6 +79,8 @@ h5i recall object <id> --format yaml|compact|json   # re-view the structured fin
 
 `recall object --format` re-renders the *exact* structured view you saw at capture time (the normalized findings) without rehydrating the raw output — cheap to re-observe. `recall search` looks *inside* captures — it matches the normalized findings (message, rule, path, severity) across every captured tool, so `recall search --fingerprint <fp>` answers "has this exact failure happened before?". The `h5i_capture_run` MCP tool does the same capture without shell-quoting if the MCP server is configured. Don't wrap trivial commands you need to read in full.
 
+An optional **`h5i hook wrap-bash`** PreToolUse hook (registered via `h5i hook setup --write --wrap-bash`) rewrites Bash tool commands into `h5i capture run -- …` automatically, making the token reduction the default instead of agent discipline. When it is active you don't need to wrap commands yourself — but wrapping explicitly is always safe (h5i's own commands are never re-wrapped).
+
 ---
 
 ### Committing code

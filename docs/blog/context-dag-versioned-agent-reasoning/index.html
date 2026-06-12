@@ -188,6 +188,23 @@
       dashboard, handoff briefing, compliance report, or PR comment.
     </div>
 
+    <h2>What this changes for review</h2>
+
+    <p>
+      A context DAG gives reviewers a way to audit the path to the diff, not only the diff
+      itself. If an agent changed authentication code, the reviewer can ask whether it
+      observed the login tests, whether it recorded a risky assumption, and whether another
+      context branch already investigated the same failure. That turns review from transcript
+      archaeology into targeted verification.
+    </p>
+
+    <p>
+      The DAG also makes handoff cleaner. A second agent can inherit the current goal,
+      live claims, relevant observations, and unresolved notes without rereading the whole
+      repository. Humans get the same benefit when a branch sits for a week and the original
+      conversation is gone.
+    </p>
+
     <h2>What to read next</h2>
 
     <p>

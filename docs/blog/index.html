@@ -35,6 +35,10 @@
     "url": "https://h5i.dev/blog/",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "blogPost": [
+      {"@type": "BlogPosting", "headline": "Sandboxing AI Agents, Part 1: Foundations", "datePublished": "2026-06-12", "url": "https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},
+      {"@type": "BlogPosting", "headline": "Sandboxing AI Agents, Part 2: How to Implement One", "datePublished": "2026-06-12", "url": "https://h5i.dev/blog/sandboxing-ai-agents-implementation/"},
+      {"@type": "BlogPosting", "headline": "Sandboxing AI Agents, Part 3: How Popular Sandboxes Differ", "datePublished": "2026-06-12", "url": "https://h5i.dev/blog/sandboxing-ai-agents-landscape/"},
+      {"@type": "BlogPosting", "headline": "Sandboxing AI Agents, Part 4: How h5i Implements It", "datePublished": "2026-06-12", "url": "https://h5i.dev/blog/sandboxing-ai-agents-h5i/"},
       {"@type": "BlogPosting", "headline": "An Auditable Sandbox for AI Agents", "datePublished": "2026-06-10", "url": "https://h5i.dev/blog/agent-sandbox-env/"},
       {"@type": "BlogPosting", "headline": "What Is AI-Aware Version Control?", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/what-is-ai-aware-version-control/"},
       {"@type": "BlogPosting", "headline": "Why Git Diffs Are Not Enough for AI-Generated Code", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/"},
@@ -47,14 +51,14 @@
       {"@type": "BlogPosting", "headline": "Git-Native Messaging Between AI Coding Agents", "datePublished": "2026-05-31", "url": "https://h5i.dev/blog/i5h-agent-to-agent-messaging/"},
       {"@type": "BlogPosting", "headline": "Context DAG: Version-Controlled Reasoning for AI Agents", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/context-dag-versioned-agent-reasoning/"},
       {"@type": "BlogPosting", "headline": "The AI Pull Request Body: h5i's Review Surface for Agent Work", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/pr-body-ai-code-review/"},
-      {"@type": "BlogPosting", "headline": "Content-Addressed Claims: Reusable Facts for AI Coding Agents", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/content-addressed-claims-agent-memory/"},
+      {"@type": "BlogPosting", "headline": "Content-Addressed Claims for AI Agent Memory", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/content-addressed-claims-agent-memory/"},
       {"@type": "BlogPosting", "headline": "CVE-2026-33068: When a Repo's settings.json Decides Trust", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/cve-2026-33068-bypass-permissions-settings/"},
-      {"@type": "BlogPosting", "headline": "CVE-2025-59536: Code Execution Before the Claude Code Trust Dialog", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/cve-2025-59536-startup-trust-dialog/"},
+      {"@type": "BlogPosting", "headline": "CVE-2025-59536: Claude Code Trust Dialog Bypass", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/cve-2025-59536-startup-trust-dialog/"},
       {"@type": "BlogPosting", "headline": "Giving Claude Code Persistent Memory Across Sessions", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/persistent-memory-for-claude-code/"},
-      {"@type": "BlogPosting", "headline": "From git blame to AI blame: per-line provenance for AI-era code", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/from-git-blame-to-ai-blame/"},
+      {"@type": "BlogPosting", "headline": "From Git Blame to AI Blame for AI-Era Code", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/from-git-blame-to-ai-blame/"},
       {"@type": "BlogPosting", "headline": "One Schema for Every Tool: Structured Output for AI Agents", "datePublished": "2026-06-06", "url": "https://h5i.dev/blog/structured-tool-output-schema/"},
-      {"@type": "BlogPosting", "headline": "Cutting Agent Token Usage 95% by Keeping Tool Output Out of Context", "datePublished": "2026-06-05", "url": "https://h5i.dev/blog/token-reduction-object-store/"},
-      {"@type": "BlogPosting", "headline": "Cutting Claude Coding-Agent Costs 51% with Content-Addressed Claims", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/reduce-claude-token-costs/"},
+      {"@type": "BlogPosting", "headline": "Cut Agent Token Usage 95% with h5i Capture", "datePublished": "2026-06-05", "url": "https://h5i.dev/blog/token-reduction-object-store/"},
+      {"@type": "BlogPosting", "headline": "Cut Claude Agent Costs 51% with h5i Claims", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/reduce-claude-token-costs/"},
       {"@type": "BlogPosting", "headline": "Auditing AI-Generated Code: A Practical Framework", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/auditing-ai-generated-code/"},
       {"@type": "BlogPosting", "headline": "Detecting Prompt Injection in Agent Reasoning Traces", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/prompt-injection-in-agent-traces/"},
       {"@type": "BlogPosting", "headline": "Claude Code Uncertainty Heatmap for AI Code Review", "datePublished": "2026-04-15", "url": "https://h5i.dev/blog/uncertainty-heatmap/"}
@@ -93,11 +97,51 @@
   <p>
     Engineering posts on h5i features: AI-aware version control, context DAGs,
     PR surfaces, content-addressed claims, AI provenance, rollback, agent memory,
-    prompt-injection detection, and AI blame.
+    prompt-injection detection, sandboxed agent environments, and AI blame.
   </p>
 </section>
 
 <section class="post-list">
+
+  <a class="post-card" href="/blog/sandboxing-ai-agents-foundations/">
+    <div class="card-meta">
+      <span>Textbook · Sandbox series</span>
+      <span>2026-06-12</span>
+      <span>15 min read</span>
+    </div>
+    <h2>Sandboxing AI Agents, Part 1: Foundations</h2>
+    <p>What a sandbox is, what it can defend, what it cannot defend, and why AI coding agents require capability boundaries rather than permission prompts.</p>
+  </a>
+
+  <a class="post-card" href="/blog/sandboxing-ai-agents-implementation/">
+    <div class="card-meta">
+      <span>Tutorial · Sandbox series</span>
+      <span>2026-06-12</span>
+      <span>18 min read</span>
+    </div>
+    <h2>Sandboxing AI Agents, Part 2: How to Implement One</h2>
+    <p>A practical implementation guide covering worktrees, Landlock, seccomp, namespaces, cgroups, network egress allowlists, secrets brokers, and audit captures.</p>
+  </a>
+
+  <a class="post-card" href="/blog/sandboxing-ai-agents-landscape/">
+    <div class="card-meta">
+      <span>Comparison · Sandbox series</span>
+      <span>2026-06-12</span>
+      <span>17 min read</span>
+    </div>
+    <h2>Sandboxing AI Agents, Part 3: How Popular Sandboxes Differ</h2>
+    <p>container-use, sandbox-runtime, OpenSandbox, E2B, gVisor, Kata, Firecracker, and h5i compared by boundary, workflow, egress control, and provenance.</p>
+  </a>
+
+  <a class="post-card" href="/blog/sandboxing-ai-agents-h5i/">
+    <div class="card-meta">
+      <span>Deep dive · Sandbox series</span>
+      <span>2026-06-12</span>
+      <span>18 min read</span>
+    </div>
+    <h2>Sandboxing AI Agents, Part 4: How h5i Implements It</h2>
+    <p>h5i's env design in detail: tiered rootless isolation, supervised egress, mediated commits, secrets, captures, boundary pressure, and honest defense limits.</p>
+  </a>
 
   <a class="post-card" href="/blog/agent-sandbox-env/">
     <div class="card-meta">
@@ -125,7 +169,7 @@
       <span>2026-06-05</span>
       <span>8 min read</span>
     </div>
-    <h2>Cutting Agent Token Usage 95% by Keeping Tool Output Out of Context</h2>
+    <h2>Cut Agent Token Usage 95% with h5i Capture</h2>
     <p>A content-addressed object store keeps raw tool output (test logs, builds, big JSON) out of the context window and hands the agent a structured summary — ~95% fewer tokens in a reproducible benchmark, fully recoverable.</p>
   </a>
 
@@ -246,7 +290,7 @@
       <span>2026-05-24</span>
       <span>6 min read</span>
     </div>
-    <h2>Content-Addressed Claims: Reusable Facts for AI Coding Agents</h2>
+    <h2>Content-Addressed Claims for AI Agent Memory</h2>
     <p>Claims let agents reuse verified codebase facts without re-reading the same files every session. Facts stay live until their evidence changes.</p>
   </a>
 
@@ -266,7 +310,7 @@
       <span>2026-05-06</span>
       <span>7 min read</span>
     </div>
-    <h2>CVE-2025-59536: Code Execution Before the Claude Code Trust Dialog</h2>
+    <h2>CVE-2025-59536: Claude Code Trust Dialog Bypass</h2>
     <p>A load-order bug let project code execute before the user accepted Claude Code's startup trust prompt. CWE-94, fixed in 1.0.111. The mechanics, the patch, and the design lesson for any agentic CLI.</p>
   </a>
 
@@ -296,7 +340,7 @@
       <span>2026-05-06</span>
       <span>9 min read</span>
     </div>
-    <h2>Cutting Claude Coding-Agent Costs 51% with Content-Addressed Claims</h2>
+    <h2>Cut Claude Agent Costs 51% with h5i Claims</h2>
     <p>Prompt caching solves the cost of re-sending. It does not solve the cost of re-deriving. In a reproducible N=5 experiment, seeded claims cut estimated session cost from $4.35 to $2.13 with full task fidelity.</p>
   </a>
 

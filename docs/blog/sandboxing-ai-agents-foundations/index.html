@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sandboxing AI Agents, Part 1: Foundations — h5i</title>
+  <meta name="description" content="Learn AI agent sandboxing basics: threat models, isolation layers, enforcement boundaries, and why permission prompts are not enough.">
+  <meta name="keywords" content="AI agent sandbox, sandboxing basics, threat model, isolation, seccomp, Landlock, containers, microVMs">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/sandboxing-ai-agents-foundations/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Sandboxing AI Agents, Part 1: Foundations">
+  <meta property="og:description" content="Threat models, isolation layers, enforcement boundaries, and why AI coding agents need real sandboxes.">
+  <meta property="og:url" content="https://h5i.dev/blog/sandboxing-ai-agents-foundations/">
+  <meta property="og:image" content="https://h5i.dev/_static/sandbox-series-card.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="article:section" content="AI Agent Sandboxing">
+  <meta property="article:tag" content="AI agent sandbox">
+  <meta property="article:tag" content="Threat model">
+  <meta property="article:tag" content="Isolation">
+  <meta property="article:published_time" content="2026-06-12">
+  <meta property="article:modified_time" content="2026-06-12">
+  <meta property="article:author" content="Koukyosyumei">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Sandboxing AI Agents, Part 1: Foundations">
+  <meta name="twitter:description" content="Threat models, isolation layers, and enforcement boundaries for AI coding agents.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-series-card.png">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 1: Foundations","description":"Learn AI agent sandboxing basics: threat models, isolation layers, enforcement boundaries, and why permission prompts are not enough.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-12","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":2233,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox","threat model","process isolation","sandbox enforcement"],"keywords":"AI agent sandbox, threat model, isolation, containment"}
+  </script>
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://h5i.dev/blog/"},{"@type":"ListItem","position":3,"name":"Sandboxing AI Agents, Part 1","item":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"}]}
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+</head>
+<body>
+<div class="bg-grid"></div>
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub -&gt;</a></li>
+  </ul>
+</nav>
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Sandbox Series · Part 1 · 2026-06-12</div>
+      <h1>Sandboxing AI Agents, Part 1: Foundations</h1>
+      <p class="post-deck">A sandbox is not a magic box. It is a carefully stated security claim: this process may do these things, may not do those things, and there is evidence when it presses against the boundary.</p>
+      <div class="post-meta">
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 15 min</span>
+        <span><strong>Tags</strong> Sandbox · Threat model · AI agents</span>
+      </div>
+    </header>
+
+    <p>
+      An AI coding agent is a strange security subject. It is not exactly malware, because you invited it in. It is not exactly a normal developer tool, because it reads untrusted project text and then chooses commands. It is not exactly a compiler, because it can browse your repository, run package managers, inspect environment variables, invoke shells, and decide that the next step is a network request. Sandboxing is the discipline of making that power conditional.
+    </p>
+
+    <div class="callout">
+      <strong>Series map.</strong> Start here for the AI agent sandbox threat model, then read <a href="/blog/sandboxing-ai-agents-implementation/">implementation</a>, <a href="/blog/sandboxing-ai-agents-landscape/">sandbox comparison</a>, and <a href="/blog/sandboxing-ai-agents-h5i/">h5i's env design</a>.
+    </div>
+
+    <p>
+      The basic definition is simple: <strong>a sandbox is an enforcement boundary around a workload</strong>. The boundary gives the workload some capabilities and withholds others. A good sandbox answers four questions: what object is confined, which operations are allowed, who enforces the rule, and how violations are observed. If any of those are vague, the word "sandbox" is marketing rather than a security property.
+    </p>
+
+    <p>
+      If you are new to operating-system security, read "capability" as "permission to do one concrete thing." A process does not need a philosophical right to "use the machine." It needs specific handles: read this directory, write that checkout, open this network connection, create at most this many child processes, and run for this much time. A sandbox is the machinery that makes those handles smaller than the user's normal shell.
+    </p>
+
+    <figure class="feature-figure">
+      <img src="/_static/sandbox-series-architecture.svg" alt="Layered AI agent sandbox architecture diagram">
+      <figcaption>A useful AI-agent sandbox is layered. File isolation without network control still permits exfiltration. Network control without provenance still leaves review blind.</figcaption>
+    </figure>
+
+    <h2>A plain-language mental model</h2>
+    <p>
+      Imagine lending a contractor a room in your office. A weak arrangement says "please do not open the file cabinets." A sandboxed arrangement changes the room: the cabinets are not there, the phone can only dial approved numbers, the power strip has a breaker, and the door log records who entered and what they carried out. The contractor may still do useful work, but the room no longer has the full authority of the building.
+    </p>
+    <p>
+      For software, the "room" is the process environment. Filesystem rules decide which cabinets exist. Network rules decide which numbers can be dialed. Process rules decide whether the workload can inspect or signal other programs. Resource rules decide how much power it can draw. Audit rules decide what evidence remains after the work finishes.
+    </p>
+
+    <h2>AI agent sandbox threat model</h2>
+    <p>
+      Sandboxing starts with an adversary model, not with a tool. For AI agents, the most common adversary is not a person typing exploit code directly. It is a chain: repository content, dependency metadata, test output, package install scripts, web pages, generated code, and the model's own tool choices. Any of those can cause the agent to execute a command that the human never intended.
+    </p>
+    <p>
+      A practical threat model has three levels. First is <strong>accidental damage</strong>: a command writes outside the project, deletes state, consumes all memory, or sends data to the wrong host. Second is <strong>prompt-injected behavior</strong>: untrusted text instructs the agent to read secrets, bypass policy, or exfiltrate evidence. Third is <strong>hostile code execution</strong>: a dependency, test, binary, or generated program intentionally attacks the sandbox itself.
+    </p>
+    <p>
+      Those levels require different boundaries. Worktree isolation handles accidental file collisions between parallel agents. Kernel isolation handles ordinary process abuse. Network egress policy handles exfiltration. MicroVM isolation handles the uncomfortable case where the workload may be carrying a kernel exploit. One tier cannot honestly claim all of them unless it actually implements all of them.
+    </p>
+
+    <div class="callout">
+      <strong>Permissions prompts are not sandboxing.</strong> A prompt asks the user before a tool call. A sandbox enforces a rule after the user, model, dependency, and shell have all made mistakes. Prompts are useful workflow controls; they are not a containment boundary.
+    </div>
+
+    <h2>Capabilities, not vibes</h2>
+    <p>
+      A sandbox policy is best understood as a capability table. The process may read these paths, write those paths, open these sockets, fork this many children, allocate this much memory, and run for this much time. Everything else is denied. This is the same mental model as object capabilities: possession of a handle authorizes a specific operation, and absence of the handle means no ambient permission.
+    </p>
+    <p>
+      Ambient authority is the default danger of a developer shell. Your shell can usually read your SSH keys, cloud credentials, browser profile, package-manager tokens, local databases, and the full repository. When an agent inherits that shell, the agent inherits that authority. A sandbox tries to replace ambient authority with named authority.
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Capability</th><th>Bad default</th><th>Sandboxed form</th><th>Failure prevented</th></tr></thead>
+        <tbody>
+          <tr><td>Filesystem read</td><td>home directory</td><td>project worktree plus selected read-only system paths</td><td>secret discovery</td></tr>
+          <tr><td>Filesystem write</td><td>any path user can write</td><td>worktree only</td><td>host damage, dotfile poisoning</td></tr>
+          <tr><td>Network</td><td>full internet</td><td>deny, or explicit egress allowlist</td><td>data exfiltration, callback channels</td></tr>
+          <tr><td>Process</td><td>same PID space</td><td>private PID namespace, signal limits</td><td>host process inspection or signaling</td></tr>
+          <tr><td>Resources</td><td>host user limits</td><td>cgroups, rlimits, timeout</td><td>runaway builds, fork bombs, disk fill</td></tr>
+          <tr><td>Privilege</td><td>user's normal privilege surface</td><td>no-new-privs, dropped caps, syscall policy</td><td>privilege escalation paths</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Core sandbox primitives</h2>
+    <p>
+      The names in sandbox diagrams are easy to skim past, but each one protects a different axis of authority. <strong>Landlock</strong> is a Linux security module that lets an unprivileged process restrict its own filesystem access with allowlists: for example, read these system directories and write only this worktree. <strong>seccomp</strong> is a Linux syscall filter. It can deny or trap kernel calls such as <code>mount</code>, <code>ptrace</code>, <code>bpf</code>, or socket families the workload should not use.
+    </p>
+    <p>
+      <strong>Namespaces</strong> give a process a private view of some kernel resources. A PID namespace hides host processes, a mount namespace gives a private filesystem layout, a user namespace maps privilege inside the sandbox without giving host root, and a network namespace gives the workload its own network stack. <strong>cgroups</strong> are Linux resource controllers: they bound memory, process count, CPU, and sometimes I/O so a build, test, or generated program cannot consume the whole machine.
+    </p>
+    <p>
+      <strong>Egress</strong> means outbound communication from the sandbox to something else. In agent security, egress usually means network egress: can the workload contact the internet, package registries, model APIs, internal services, or raw IP addresses? A deny-network sandbox removes the channel. An egress allowlist permits only named destinations. This matters because filesystem isolation does not stop data theft if the process can still send the data somewhere.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">primitive cheat sheet</span></div>
+      <div class="terminal-body"><pre><span class="t-out">Landlock</span>    <span class="t-cmt"># file tree rules: this process may read/write only these paths</span>
+<span class="t-out">seccomp</span>     <span class="t-cmt"># syscall rules: this process may not ask the kernel for dangerous operations</span>
+<span class="t-out">namespace</span>   <span class="t-cmt"># private view: this process sees its own /proc, mounts, network, or users</span>
+<span class="t-out">cgroup</span>      <span class="t-cmt"># resource budget: this process group gets bounded memory, CPU, PIDs, I/O</span>
+<span class="t-out">egress</span>      <span class="t-cmt"># outbound channel: this process may contact only these destinations</span></pre></div>
+    </div>
+
+    <h2>Isolation versus mediation</h2>
+    <p>
+      There are two broad enforcement styles. <strong>Isolation</strong> changes what the workload can see: a private filesystem view, a private PID namespace, a private network namespace, or a whole virtual machine. <strong>Mediation</strong> leaves the world conceptually visible but inserts a decision point: a seccomp-notify supervisor, an HTTP proxy, a broker for secrets, or a file-open policy engine.
+    </p>
+    <p>
+      Isolation is simple to reason about when it is complete. If there is no network device, the process cannot send packets. Mediation is more flexible when decisions depend on runtime state. A proxy can allow <code>pypi.org</code> but deny <code>paste.example</code>; a secrets broker can release a token only to one command and redact it from logs. Most real sandboxes combine both styles.
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Question</th><th>Isolation answer</th><th>Mediation answer</th></tr></thead>
+        <tbody>
+          <tr><td>Can it read <code>~/.ssh</code>?</td><td>Do not mount or allow that path.</td><td>Ask a file broker whether this open is allowed.</td></tr>
+          <tr><td>Can it reach the internet?</td><td>Give it no network namespace route.</td><td>Route traffic through an allowlist proxy or socket gate.</td></tr>
+          <tr><td>Can it use a secret?</td><td>Do not put the secret in the environment.</td><td>Release a named secret through a broker and redact logs.</td></tr>
+          <tr><td>Can it fork forever?</td><td>Put it in a cgroup with a PID budget.</td><td>Supervisor kills the run when budget is exceeded.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>The AI-specific problem</h2>
+    <p>
+      AI agents create a new composition problem. A normal sandbox for untrusted code asks: can this program harm the host? An agent sandbox must also ask: can this program influence the agent into using its tools against the host? That is why repository text matters. A README can tell the model to run a curl command. A test failure can print a "fix" that copies credentials. A dependency script can alter files that the agent later reads as trusted context.
+    </p>
+    <p>
+      The hard case is the "lethal trifecta": private data, untrusted content, and network egress in the same decision context. If a process can read secrets, read attacker-controlled instructions, and talk to the internet, sandbox policy has already given the attack all three ingredients. Strong designs split stages: fetch untrusted content without secrets, process secrets without network, and publish only sanitized output.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">safe stage separation</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># Stage 1: fetch public/untrusted input, but no secrets are present.</span>
+fetch_untrusted:  <span class="t-out">network = allow</span>, <span class="t-out">secrets = none</span>
+
+<span class="t-cmt"># Stage 2: process private data, but no network exists.</span>
+process_private:  <span class="t-out">network = deny</span>,  <span class="t-out">secrets = needed</span>
+
+<span class="t-cmt"># Stage 3: publish a sanitized result to a narrow destination.</span>
+publish_result:   <span class="t-out">network = allowlist</span>, <span class="t-out">secrets = publish-token only</span></pre></div>
+    </div>
+
+    <h2>What sandboxes defend</h2>
+    <p>
+      A sandbox can defend against accidental writes, opportunistic exfiltration, many prompt-injection payloads, dependency scripts that expect a normal home directory, and a large class of process-level attacks. It can make risky work auditable and reversible. It can let several agents run at once without clobbering each other's checkouts. It can make a raw mistake cheap.
+    </p>
+    <p>
+      It cannot make arbitrary hostile code safe merely by naming itself a sandbox. Shared-kernel isolation still shares the host kernel. If the workload can reach a vulnerable kernel surface through an allowed syscall, a kernel exploit can become a host escape. Containers, Landlock, seccomp, and namespaces are important, but they are not the same category as a microVM with a separate guest kernel.
+    </p>
+
+    <div class="callout warn">
+      <strong>Security claims must name their ceiling.</strong> "Prevents accidental damage" is a different claim from "contains malicious code" and a different claim again from "safe for mutually hostile tenants." Honest sandbox documentation should say which one it means.
+    </div>
+
+    <h2>A simple taxonomy</h2>
+    <p>
+      Sandboxes for agents fall into five families. A <strong>worktree sandbox</strong> isolates edits but not execution. A <strong>process sandbox</strong> uses host-kernel primitives such as namespaces, seccomp, Landlock, Seatbelt, or bubblewrap. A <strong>container sandbox</strong> packages process isolation with an image and runtime. A <strong>user-space kernel</strong> such as gVisor intercepts much of the Linux ABI before it reaches the host kernel. A <strong>microVM</strong> such as Firecracker runs the workload behind a guest kernel and hypervisor boundary.
+    </p>
+    <p>
+      The categories are not a strict ladder for every workload. Worktrees are excellent for merge workflow and terrible as a security boundary. Process sandboxes are fast and local but share the kernel. Containers are ergonomic but frequently misconfigured. gVisor and Kata improve the kernel boundary at operational cost. MicroVMs raise the isolation ceiling but require VM images, KVM, boot plumbing, and careful network and file integration.
+    </p>
+
+    <h2>The audit requirement</h2>
+    <p>
+      AI-agent sandboxing is not only prevention. It is also evidence. Reviewers need to know which command ran, under which policy, with which denied operations, which secrets were released, which hosts were contacted, which files changed, and whether the policy was silently downgraded. A sandbox that blocks actions but leaves no reviewable record is useful for containment but weak for engineering governance.
+    </p>
+    <p>
+      This is where agent sandboxes differ from many classical sandboxes. The output is not just "program returned 0." The output is a proposed code change. The reviewer needs the diff and the story: why this environment existed, what the agent tried, what evidence it saw, and whether any boundary pressure appeared. That is why later parts of this series treat provenance as part of the sandbox rather than an afterthought.
+    </p>
+
+    <h2>Checklist for evaluating a sandbox</h2>
+    <ol>
+      <li>State the adversary: accident, prompt injection, hostile code, or hostile tenant.</li>
+      <li>List the exact capabilities granted to the workload.</li>
+      <li>Identify the enforcement primitive for each capability.</li>
+      <li>Ask whether the workload can modify the policy after start.</li>
+      <li>Ask whether DNS, raw IP sockets, proxies, and Unix sockets match the network claim.</li>
+      <li>Ask whether secrets are absent, brokered, or simply passed as environment variables.</li>
+      <li>Check whether resource limits are kernel-enforced or best-effort.</li>
+      <li>Check whether denied actions are recorded in a form reviewers can inspect.</li>
+      <li>Check whether the tool fails closed when a requested boundary cannot be enforced.</li>
+    </ol>
+
+    <h2>Further reading</h2>
+    <p>
+      Official references worth reading alongside this series: Anthropic's <a href="https://www.anthropic.com/engineering/claude-code-sandboxing">Claude Code sandboxing announcement</a>, the <a href="https://github.com/anthropic-experimental/sandbox-runtime">sandbox-runtime repository</a>, Dagger's <a href="https://github.com/dagger/container-use">container-use</a>, <a href="https://github.com/opensandbox-group/OpenSandbox">OpenSandbox</a>, <a href="https://e2b.dev/docs">E2B docs</a>, <a href="https://gvisor.dev/docs/">gVisor docs</a>, <a href="https://katacontainers.io/">Kata Containers</a>, and <a href="https://firecracker-microvm.github.io/">Firecracker</a>.
+    </p>
+
+    <div class="next-up">
+      <span class="label">Part 2</span>
+      <a href="/blog/sandboxing-ai-agents-implementation/">
+        <h3>How to Implement a Sandbox</h3>
+        <p>Landlock, seccomp, namespaces, cgroups, egress allowlists, and the engineering traps that break the security claim.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Sandboxing is an engineering claim</h3>
+      <p>h5i ties isolated execution to Git-native provenance, so the box and the review evidence travel together.</p>
+      <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/blog/" class="btn btn-ghost">Back to blog</a>
+    </div>
+  </article>
+</main>
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links"><a href="/">Home</a><a href="/blog/">Blog</a><a href="https://github.com/h5i-dev/h5i">GitHub</a><a href="https://github.com/h5i-dev/h5i/blob/main/MANUAL.md">Manual</a></nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>

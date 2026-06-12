@@ -236,6 +236,33 @@ pub fn validate_agent(agent: &str) -> Result<(), H5iError> {
     }
 }
 
+/// Validate a manifest imported from the shared ref (`refs/h5i/env`) BEFORE its
+/// `agent`/`slug` are used to compute on-disk paths. Pulled manifests are
+/// untrusted peer data: the local `create` path runs `validate_agent`/
+/// `validate_slug`, but [`materialize_from_ref`] would otherwise feed `agent`/
+/// `slug` straight into [`env_dir`] — a crafted `..`/absolute component would
+/// write outside `.git/.h5i/env`. The identity fields are deterministic
+/// (`create` always derives them from agent+slug), so anything other than the
+/// exact canonical shape is rejected fail-closed.
+fn validate_imported_manifest(m: &EnvManifest) -> Result<(), H5iError> {
+    validate_agent(&m.agent)?;
+    validate_slug(&m.slug)?;
+    let checks = [
+        ("id", &m.id, format!("env/{}/{}", m.agent, m.slug)),
+        ("branch", &m.branch, format!("refs/heads/{BRANCH_PREFIX}{}/{}", m.agent, m.slug)),
+        ("context_branch", &m.context_branch, format!("env/{}/{}", m.agent, m.slug)),
+    ];
+    for (field, got, want) in checks {
+        if *got != want {
+            return Err(H5iError::Metadata(format!(
+                "manifest {field} is not the canonical '{want}' (got '{}')",
+                crate::msg::sanitize_display(got)
+            )));
+        }
+    }
+    Ok(())
+}
+
 // ─── event log: CAS append + union merge (same pattern as objects/msg) ──────
 
 /// Replace (or append) the single JSONL line whose parsed `id` field equals
@@ -494,6 +521,16 @@ pub fn materialize_from_ref(repo: &Repository, h5i_root: &Path) -> Result<usize,
         read_ref_policies(repo).into_iter().collect();
     let mut written = 0usize;
     for m in read_ref_manifests(repo) {
+        // Untrusted peer data: validate identity/path components before any of
+        // them reach the filesystem. Skip (don't abort the whole sync) a bad
+        // manifest so one poisoned line can't suppress every legitimate env.
+        if let Err(e) = validate_imported_manifest(&m) {
+            eprintln!(
+                "warning: skipping shared env manifest '{}': {e}",
+                crate::msg::sanitize_display(&m.id)
+            );
+            continue;
+        }
         let dir = env_dir(h5i_root, &m.agent, &m.slug);
         let local_newer = load_manifest_at(&dir)
             .ok()
@@ -1193,14 +1230,28 @@ pub fn shell(
         }
     };
 
+    // Ingest the session's observation spool (supervised exec log / container
+    // tee-shim records) into tagged captures BEFORE the final status event, so
+    // the manifest it persists already lists them. Best-effort: a failed
+    // ingest warns and never breaks the session.
+    let observed = match ingest_shell_spool(repo, h5i_root, m) {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("warning: shell observation ingest failed: {e}");
+            0
+        }
+    };
+
     let safe_cmd = crate::secrets::redact_text(&argv.join(" "));
+    let observed_note =
+        if observed > 0 { format!(" observed={observed}") } else { String::new() };
     set_status(
         repo,
         h5i_root,
         m,
         ST_IDLE,
         "shell",
-        Some(format!("interactive cmd=`{safe_cmd}` exit={exit_code}")),
+        Some(format!("interactive cmd=`{safe_cmd}` exit={exit_code}{observed_note}")),
         None,
     )?;
 
@@ -1219,6 +1270,167 @@ pub fn shell(
         )?;
     }
     Ok(exit_code)
+}
+
+// ─── shell-spool ingest (in-box observation evidence) ────────────────────────
+
+/// Ingest caps. Container-tier spool contents are written by the **box** (the
+/// tee shim) and are untrusted: bound entry count and sizes, accept regular
+/// files only, never follow a symlink, and redact before anything is stored or
+/// displayed. The supervised tier's `exec.jsonl` is supervisor-written (the box
+/// can't reach it) but shares the same caps for uniformity.
+const SPOOL_MAX_ENTRIES: usize = 200;
+const SPOOL_MAX_OUTPUT_BYTES: u64 = 4 * 1024 * 1024;
+const SPOOL_MAX_CMD_BYTES: u64 = 64 * 1024;
+
+/// Read one spool file defensively: regular file only (symlinks rejected),
+/// capped at `cap` bytes with an explicit truncation marker.
+fn read_spool_capped(p: &Path, cap: u64) -> Option<Vec<u8>> {
+    use std::io::Read as _;
+    let meta = std::fs::symlink_metadata(p).ok()?;
+    if !meta.file_type().is_file() {
+        return None;
+    }
+    let f = std::fs::File::open(p).ok()?;
+    let mut buf = Vec::new();
+    f.take(cap).read_to_end(&mut buf).ok()?;
+    if meta.len() > cap {
+        buf.extend_from_slice(b"\n----- h5i: spool entry truncated -----\n");
+    }
+    Some(buf)
+}
+
+/// Ingest the env's observation spool (`<env>/spool/`) into tagged captures —
+/// the evidence an interactive **container** session leaves behind:
+/// `cmd-<pid>-<n>.{cmd,out,err,exit}`, the container tee-shim's records (one per
+/// top-level `sh -c`/`bash -c` the in-box agent ran).
+///
+/// Each becomes a secret-redacted `objects` capture tagged with the env id +
+/// policy digest (same provenance stream as `env run` execs) plus an `exec`
+/// event, and the spool files are removed. Returns how many captures landed.
+fn ingest_shell_spool(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &mut EnvManifest,
+) -> Result<usize, H5iError> {
+    let spool = m.dir(h5i_root).join("spool");
+    if !spool.is_dir() {
+        return Ok(0);
+    }
+    let work = m.work_dir(h5i_root);
+    let wt_repo = Repository::open(&work)?;
+    let head_tree = wt_repo
+        .head()
+        .ok()
+        .and_then(|h| h.peel_to_tree().ok())
+        .map(|t| t.id().to_string());
+    let mut count = 0usize;
+
+    // The container tee-shim records. Filenames are box-controlled: accept
+    // only the shim's `cmd-…` shape with a conservative charset.
+    let mut bases: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&spool) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(base) = name.strip_suffix(".cmd") {
+                let ok = base.starts_with("cmd-")
+                    && base.len() <= 64
+                    && base.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+                if ok {
+                    bases.push(base.to_string());
+                }
+            }
+        }
+    }
+    bases.sort();
+    let dropped = bases.len().saturating_sub(SPOOL_MAX_ENTRIES);
+    for base in bases.iter().take(SPOOL_MAX_ENTRIES) {
+        let path_of = |ext: &str| spool.join(format!("{base}.{ext}"));
+        let cmd_text = read_spool_capped(&path_of("cmd"), SPOOL_MAX_CMD_BYTES)
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
+        let stdout = read_spool_capped(&path_of("out"), SPOOL_MAX_OUTPUT_BYTES).unwrap_or_default();
+        let stderr = read_spool_capped(&path_of("err"), SPOOL_MAX_OUTPUT_BYTES).unwrap_or_default();
+        let exit_code = read_spool_capped(&path_of("exit"), 16)
+            .and_then(|b| String::from_utf8_lossy(&b).trim().parse::<i32>().ok());
+
+        // Compose the raw payload exactly like `env run` (stdout + labeled
+        // stderr block) so summaries and `recall` views look identical.
+        let mut raw = stdout;
+        if !stderr.is_empty() {
+            if !raw.is_empty() && !raw.ends_with(b"\n") {
+                raw.push(b'\n');
+            }
+            raw.extend_from_slice(b"\n----- stderr -----\n");
+            raw.extend_from_slice(&stderr);
+        }
+
+        // The command string is box-controlled: redact secrets, flatten to one
+        // line, and cap it before it lands in a manifest or event detail.
+        let safe_cmd: String = crate::secrets::redact_text(&cmd_text)
+            .replace(['\n', '\r'], " ")
+            .chars()
+            .take(300)
+            .collect();
+        // A whitespace split of the observed command is only a *hint* for the
+        // structured-parser pick (pytest/cargo adapters) — never executed.
+        let argv_hint: Vec<String> =
+            cmd_text.split_whitespace().take(8).map(str::to_string).collect();
+        let opts = objects::CaptureOptions {
+            kind: crate::token_filter::OutputKind::Auto,
+            cmd: Some(safe_cmd.clone()),
+            cwd: Some(work.display().to_string()),
+            exit_code,
+            git_tree: head_tree.clone(),
+            files: Vec::new(),
+            cmd_argv: argv_hint.clone(),
+            filter: crate::token_filter::FilterConfig {
+                cmd: Some(argv_hint),
+                ..Default::default()
+            },
+            env_id: Some(m.id.clone()),
+            policy_digest: Some(m.policy_digest.clone()),
+            egress: None,
+            redact: true,
+        };
+        let captured = objects::capture(&wt_repo, h5i_root, &raw, opts)?;
+        m.captures.push(captured.manifest.id.clone());
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "exec".into(),
+                detail: Some(format!(
+                    "observed in shell: cmd=`{safe_cmd}` exit={}",
+                    exit_code.map(|c| c.to_string()).unwrap_or_else(|| "?".into())
+                )),
+                capture: Some(captured.manifest.id.clone()),
+            },
+        )?;
+        for ext in ["cmd", "out", "err", "exit"] {
+            let _ = std::fs::remove_file(path_of(ext));
+        }
+        count += 1;
+    }
+    if dropped > 0 {
+        // No silent caps: the event log must say coverage was bounded.
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "exec-log".into(),
+                detail: Some(format!(
+                    "spool ingest capped at {SPOOL_MAX_ENTRIES}: {dropped} record(s) dropped"
+                )),
+                capture: None,
+            },
+        )?;
+    }
+    Ok(count)
 }
 
 // ─── diff ───────────────────────────────────────────────────────────────────
@@ -1779,6 +1991,14 @@ pub fn propose(
     h5i_root: &Path,
     m: &mut EnvManifest,
 ) -> Result<String, H5iError> {
+    // Hold the per-env lock for the whole mediated commit + status write: a
+    // concurrent `env run`/`shell` mutates the same worktree and manifest, and
+    // its terminal IDLE write would otherwise clobber the PROPOSED we set here.
+    // Taken before the status check so a LIVE run fails fast ("busy") while a
+    // stale `running` left by a crashed run (flock released on death) still lets
+    // propose through. See ST_RUNNING in the accepted set below.
+    #[cfg(unix)]
+    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     match m.status.as_str() {
         ST_CREATED | ST_RUNNING | ST_IDLE | ST_PROPOSED => {}
         other => {
@@ -1846,6 +2066,10 @@ pub fn apply(
     m: &mut EnvManifest,
     patch_mode: bool,
 ) -> Result<String, H5iError> {
+    // Serialize the PROPOSED→APPLIED transition (reads the env state, mutates
+    // the manifest) against any concurrent run/shell on the same env.
+    #[cfg(unix)]
+    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     if m.status != ST_PROPOSED {
         return Err(H5iError::Metadata(format!(
             "{} is '{}' — run `h5i env propose {}` first (apply is never automatic)",
@@ -1984,6 +2208,10 @@ pub fn rebase(
     h5i_root: &Path,
     m: &mut EnvManifest,
 ) -> Result<String, H5iError> {
+    // Rebase force-checks-out the worktree and re-pins the base in the manifest;
+    // serialize against a concurrent `env run`/`shell` exactly like propose.
+    #[cfg(unix)]
+    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     match m.status.as_str() {
         ST_CREATED | ST_RUNNING | ST_IDLE => {}
         other => {
@@ -2093,6 +2321,11 @@ pub fn rebase(
 /// Stop the env: mark it aborted and preserve the manifest + workspace for
 /// forensics (`gc` reclaims the workspace later).
 pub fn abort(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result<(), H5iError> {
+    // Mutates the manifest status; serialize against a concurrent run/shell so
+    // a run's terminal IDLE write can't clobber the ABORTED set here (a live run
+    // holds the lock → abort waits/fails "busy" until it ends or is killed).
+    #[cfg(unix)]
+    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     if m.status == ST_APPLIED {
         return Err(H5iError::Metadata(format!("{} is already applied — nothing to abort", m.id)));
     }
@@ -2287,6 +2520,84 @@ mod tests {
         assert!(validate_agent(".hidden").is_err());
         assert!(validate_agent("x.lock").is_err());
         assert!(validate_agent(&"a".repeat(65)).is_err());
+    }
+
+    // A manifest in the exact canonical shape `create` always produces.
+    fn canonical_manifest(agent: &str, slug: &str) -> EnvManifest {
+        EnvManifest {
+            id: format!("env/{agent}/{slug}"),
+            agent: agent.into(),
+            slug: slug.into(),
+            base_commit: "c".repeat(40),
+            base_tree: "t".repeat(40),
+            parent_branch: "main".into(),
+            branch: format!("refs/heads/h5i/env/{agent}/{slug}"),
+            parent_context_branch: "main".into(),
+            context_branch: format!("env/{agent}/{slug}"),
+            profile: "default".into(),
+            policy_digest: "d".repeat(64),
+            isolation_claim: "workspace".into(),
+            backend: "worktree".into(),
+            created_at: now_ts(),
+            updated_at: now_ts(),
+            status: ST_IDLE.into(),
+            captures: vec![],
+        }
+    }
+
+    #[test]
+    fn imported_manifest_validation_rejects_traversal_and_identity_tampering() {
+        // Canonical (what `create` produces) passes.
+        assert!(validate_imported_manifest(&canonical_manifest("claude", "fix")).is_ok());
+
+        // Traversal in the fields that become filesystem paths — the core of the
+        // path-escape: `env_dir(.., agent, slug)` joins them unchecked.
+        let mut m = canonical_manifest("claude", "fix");
+        m.agent = "../../../../tmp/evil".into();
+        assert!(validate_imported_manifest(&m).is_err(), "traversal agent rejected");
+        let mut m = canonical_manifest("claude", "fix");
+        m.slug = "../escape".into();
+        assert!(validate_imported_manifest(&m).is_err(), "traversal slug rejected");
+
+        // Identity fields must match the shape derived from agent/slug even when
+        // agent/slug are individually valid — defeats a manifest whose
+        // id/branch/context point elsewhere (e.g. spoofing another env's files).
+        for tamper in [
+            |m: &mut EnvManifest| m.id = "env/claude/other".into(),
+            |m: &mut EnvManifest| m.branch = "refs/heads/main".into(),
+            |m: &mut EnvManifest| m.context_branch = "env/claude/other".into(),
+        ] {
+            let mut m = canonical_manifest("claude", "fix");
+            tamper(&mut m);
+            assert!(validate_imported_manifest(&m).is_err(), "identity mismatch rejected");
+        }
+    }
+
+    // Fix for the propose/rebase-vs-run race: every worktree/manifest-mutating
+    // review op takes the per-env lock first, so a live run (which holds it)
+    // makes them fail fast instead of racing the run's writes. The lock is the
+    // first statement in each, so it refuses before touching repo/worktree.
+    #[cfg(unix)]
+    #[test]
+    fn review_ops_refuse_while_run_lock_is_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let repo = git2::Repository::init(h5i_root.join("repo")).unwrap();
+        let mut m = canonical_manifest("claude", "fix");
+        std::fs::create_dir_all(m.dir(h5i_root)).unwrap();
+
+        // Simulate a live `env run`/`shell` holding the per-env lock.
+        let _held = RunLock::acquire(&m.dir(h5i_root)).unwrap();
+
+        let busy = |r: Result<String, H5iError>, who: &str| {
+            let e = r.expect_err(who);
+            assert!(format!("{e}").contains("busy"), "{who}: expected busy, got: {e}");
+        };
+        busy(propose(&repo, h5i_root, &mut m), "propose");
+        busy(rebase(&repo, h5i_root, &mut m), "rebase");
+        busy(apply(&repo, h5i_root, h5i_root, &mut m, false).map(|_| String::new()), "apply");
+        let e = abort(&repo, h5i_root, &mut m).expect_err("abort");
+        assert!(format!("{e}").contains("busy"), "abort: {e}");
     }
 
     #[test]

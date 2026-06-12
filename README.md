@@ -80,7 +80,10 @@ h5i init
 For Claude Code hooks and MCP tools:
 
 ```bash
-h5i hook setup
+h5i hook setup --write    # writes the hook wiring into .claude/settings.json
+                          # add --wrap-bash to route Bash commands through `h5i capture run`
+                          # (token-reduced summaries; full raw kept for `h5i recall`)
+h5i hook setup            # or print the full manual instructions (prompt capture, MCP)
 ```
 
 Post the PR review brief:

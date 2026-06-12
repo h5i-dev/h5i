@@ -118,6 +118,9 @@
 <h2>What this gives reviewers</h2>
 <p>A reviewer can see the ordinary diff and the AI context around it. That context answers whether the prompt asked for exactly this behavior, whether the agent touched files outside scope, whether tests ran, and whether the agent recorded a risky assumption.</p>
 <p>The better workflow is not "trust Claude Code because it wrote a clean diff." It is "review Claude Code with the prompt, diff, tests, and trace in one packet."</p>
+<h2>What not to put in commit messages</h2>
+<p>Do not turn every Claude Code transcript into a commit message. Commit messages should stay readable for humans scanning history. Detailed prompts, tool traces, long test logs, and uncertainty notes belong in sidecar provenance where they can be queried, redacted, and rendered into review surfaces when needed.</p>
+<p>The split keeps Git useful. The commit title says what changed. h5i records why the agent changed it, which commands ran, which files were observed, and what evidence supports the result. Reviewers can expand that context without forcing every future <code>git log</code> reader through a transcript.</p>
 <h2>FAQ</h2>
 <h3>Does this require rewriting Git history?</h3>
 <p>No. h5i stores provenance alongside Git history rather than changing the commit object after the fact.</p>

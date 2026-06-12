@@ -116,6 +116,10 @@
   <li>A reviewer asks for a targeted fix and receives a done message linked to the work.</li>
   <li>The PR body includes relevant agent-message history for human review.</li>
 </ul>
+<h2>What belongs in an agent message</h2>
+<p>Agent messages should be sparse and actionable. A good message names the branch, the file or behavior at issue, the kind of response expected, and the evidence already known. "Review auth retry behavior in <code>src/auth.rs</code>; concern is duplicate refresh after timeout" is useful. "Look at this" is not.</p>
+<p>That distinction matters for search and audit. A durable Git message should be understandable after the chat session is gone. h5i keeps routine observations in context traces and reserves messages for coordination events: asks, risks, reviews, handoffs, acknowledgements, and completion. The message channel stays readable because it is not a dump of every agent thought.</p>
+<p>It also makes responsibility explicit. A handoff should say who owns the next step, what result counts as done, and whether the sender expects a reply, review, or fix. That small structure prevents two agents from silently duplicating work or assuming the other side handled a risk.</p>
 <h2>FAQ</h2>
 <h3>Is Git fast enough for agent messages?</h3>
 <p>For durable task handoffs, reviews, and risks, yes. h5i also provides wait and watch commands for agent workflows that need to wake on new messages.</p>
