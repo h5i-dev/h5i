@@ -991,3 +991,9 @@ _[Checkpoint: 6a2c3b47 — edited docs/blog/agent-sandbox-env/index.html; edited
 _[Checkpoint: 6a2c4336 — Option 1 implemented: in-box git works via narrow plumbing grants (commit 3ed695d7)]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2c434b — edited src/env.rs; edited docs/environments-design.md; edited CLAUDE.md]_
+---
+
