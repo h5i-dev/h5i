@@ -835,3 +835,4 @@ _[Checkpoint: 6a2c13d6 — Audited SEO for all blog posts: no critical metadata/
 [14:19:15] ACT: edited docs/blog/structured-tool-output-schema/index.html
 [14:19:15] ACT: edited docs/blog/token-reduction-object-store/index.html
 [14:19:15] ACT: edited docs/blog/content-addressed-claims-agent-memory/index.html
+[14:19:15] ACT: edited docs/blog/cve-2025-59536-startup-trust-dialog/index.html
