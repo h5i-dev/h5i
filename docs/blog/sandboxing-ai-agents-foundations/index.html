@@ -33,7 +33,7 @@
   <meta name="twitter:description" content="Threat models, isolation layers, and enforcement boundaries for AI coding agents.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-series-card.png">
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 1: Foundations","description":"Learn AI agent sandboxing basics: threat models, isolation layers, enforcement boundaries, and why permission prompts are not enough.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-12","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":1605,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox","threat model","process isolation","sandbox enforcement"],"keywords":"AI agent sandbox, threat model, isolation, containment"}
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 1: Foundations","description":"Learn AI agent sandboxing basics: threat models, isolation layers, enforcement boundaries, and why permission prompts are not enough.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-12","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":1814,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox","threat model","process isolation","sandbox enforcement"],"keywords":"AI agent sandbox, threat model, isolation, containment"}
   </script>
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://h5i.dev/blog/"},{"@type":"ListItem","position":3,"name":"Sandboxing AI Agents, Part 1","item":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"}]}
@@ -122,6 +122,17 @@
         </tbody>
       </table>
     </div>
+
+    <h2>Core sandbox primitives</h2>
+    <p>
+      The names in sandbox diagrams are easy to skim past, but each one protects a different axis of authority. <strong>Landlock</strong> is a Linux security module that lets an unprivileged process restrict its own filesystem access with allowlists: for example, read these system directories and write only this worktree. <strong>seccomp</strong> is a Linux syscall filter. It can deny or trap kernel calls such as <code>mount</code>, <code>ptrace</code>, <code>bpf</code>, or socket families the workload should not use.
+    </p>
+    <p>
+      <strong>Namespaces</strong> give a process a private view of some kernel resources. A PID namespace hides host processes, a mount namespace gives a private filesystem layout, a user namespace maps privilege inside the sandbox without giving host root, and a network namespace gives the workload its own network stack. <strong>cgroups</strong> are Linux resource controllers: they bound memory, process count, CPU, and sometimes I/O so a build, test, or generated program cannot consume the whole machine.
+    </p>
+    <p>
+      <strong>Egress</strong> means outbound communication from the sandbox to something else. In agent security, egress usually means network egress: can the workload contact the internet, package registries, model APIs, internal services, or raw IP addresses? A deny-network sandbox removes the channel. An egress allowlist permits only named destinations. This matters because filesystem isolation does not stop data theft if the process can still send the data somewhere.
+    </p>
 
     <h2>Isolation versus mediation</h2>
     <p>
