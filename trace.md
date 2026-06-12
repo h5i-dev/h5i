@@ -1151,3 +1151,4 @@ _[Checkpoint: 6a2c58b0 — Decision: harden in-box hook via managed-settings inj
 [19:07:13] OBSERVE: read src/sandbox.rs
 [19:07:46] ACT: edited src/sandbox.rs
 [19:07:57] ACT: edited src/hooks.rs
+[19:08:21] OBSERVE: read src/container.rs
