@@ -924,3 +924,4 @@ _[Checkpoint: 6a2c1fcd — Committed expanded sandbox Part 1/2 readability pass 
 [15:05:26] OBSERVE: read docs/blog/sandboxing-ai-agents-implementation/index.html
 [15:05:29] OBSERVE: read docs/blog/sandboxing-ai-agents-landscape/index.html
 [15:05:33] OBSERVE: read docs/blog/sandboxing-ai-agents-h5i/index.html
+[15:08:43] THINK: All four posts read. Now I'll verify the implementation-specific claims in Part 4 against the actual code — especially the supervised tier, secrets broker, cgroups, and isolation tiers.
