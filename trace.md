@@ -1029,3 +1029,9 @@ _[Checkpoint: 6a2c49a1 — Container tier in-box git fixed (commit f0e4de65): id
 _[Checkpoint: 6a2c49ae — edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2c4a90 — edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md]_
+---
+

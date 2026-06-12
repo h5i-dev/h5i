@@ -888,3 +888,16 @@ ResolvedPolicy.box_git serde-skipped field; build_run_argv emits ordered --mount
 
 ---
 
+## Commit 6a2c4a90 — 2026-06-12 18:06 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
