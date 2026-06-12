@@ -1,3 +1,3 @@
 # Git Branch Goal: fix-sandbox
 
-Assess and fix agent-in-box sandbox gaps: in-box git/h5i EACCES (worktree plumbing not granted)
+Port the container tee-shim to supervised/process interactive sessions via in-namespace bind mounts (runtime-agnostic per-command observation)
