@@ -852,3 +852,9 @@ _[Checkpoint: 6a2c13d6 — Audited SEO for all blog posts: no critical metadata/
 [14:19:15] ACT: edited docs/blog/index.html
 [14:19:15] ACT: edited docs/blog/intent-based-rollback-ai-generated-code/index.html
 [14:19:15] ACT: edited docs/blog/intent-based-rollback-ai-generated-code/index.html
+
+
+---
+_[Checkpoint: 6a2c1563 — Optimized SEO across existing blog posts: shortened long titles/descriptions, expanded thin posts, aligned blog index headlines, and verified all 27 posts pass local SEO audit.]_
+---
+
