@@ -1057,3 +1057,4 @@ _[Checkpoint: 6a2c4bbd — edited src/container.rs; edited CLAUDE.md; edited doc
 [18:26:39] OBSERVE: read tests/cli_integration.rs
 [18:26:39] OBSERVE: searched src/main.rs for "HookCommands|struct.*Hook|SetupScope|wrap_bash|clap""
 [18:26:39] OBSERVE: read Cargo.toml
+[18:26:39] OBSERVE: read src/main.rs
