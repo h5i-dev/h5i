@@ -1299,3 +1299,4 @@ _[Checkpoint: 6a2c6b91 — edited tests/env_integration.rs; edited CLAUDE.md; ed
 _[Checkpoint: 6a2c6c81 — edited docs/environments-design.md]_
 ---
 
+[20:33:03] OBSERVE: read src/container.rs
