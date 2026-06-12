@@ -691,11 +691,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Audited SEO for all blog posts: no critical metadata/sitemap/JSON-LD defects; found optimization warnings for long snippets/titles and low word-count posts.
 - [x] Optimized SEO across existing blog posts: shortened long titles/descriptions, expanded thin posts, aligned blog index headlines, and verified all 27 posts pass local SEO audit.
 - [x] Committed sandbox blog series and SEO polish as 8042ad43 with h5i provenance.
+- [x] Adjusted sandbox Part 1 architecture SVG spacing: moved agent-process box below boundary labels and increased label-row separation.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 14:25 UTC] `improve-shell`: Adjusted sandbox Part 1 architecture SVG spacing: moved agent-process box below boundary labels and increased label-row separation.
 - [2026-06-12 14:19 UTC] `improve-shell`: Committed sandbox blog series and SEO polish as 8042ad43 with h5i provenance.
 - [2026-06-12 14:19 UTC] `improve-shell`: Optimized SEO across existing blog posts: shortened long titles/descriptions, expanded thin posts, aligned blog index headlines, and verified all 27 posts pass local SEO audit.
 - [2026-06-12 14:12 UTC] `improve-shell`: Audited SEO for all blog posts: no critical metadata/sitemap/JSON-LD defects; found optimization warnings for long snippets/titles and low word-count posts.
