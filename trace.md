@@ -1286,3 +1286,9 @@ _[Checkpoint: 6a2c6b05 — edited tests/env_integration.rs; edited tests/env_int
 _[Checkpoint: 6a2c6b85 — Documented Codex bypass-hook-trust incantation; observation thread closed (commit 38633e26)]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2c6b91 — edited tests/env_integration.rs; edited CLAUDE.md; edited docs/environments-design.md]_
+---
+

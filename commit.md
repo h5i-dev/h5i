@@ -1135,3 +1135,16 @@ Added an operator-facing subsection to docs/environments-design.md under the age
 
 ---
 
+## Commit 6a2c6b91 — 2026-06-12 20:26 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+Added an operator-facing subsection to docs/environments-design.md under the agent-in-box profile: in-box observation layers (hook+config-lockdown / managed-settings / tee-shim) and the required 'codex --dangerously-bypass-hook-trust' launch for Codex env shell. Left to the human by design (config lockdown means agent can't disable/re-point the hook). Observation/hook-hardening thread now complete across tiers: Claude=managed-settings(container)+config-lockdown(kernel tiers); Codex=tee-shim(container)+config-lockdown+operator bypass-trust(kernel tiers). Supervised tee-shim port remains optional future work; not needed given the documented Codex incantation.
+
+### This Commit's Contribution
+
+
+---
+
