@@ -862,3 +862,16 @@ box_git_grants in env.rs wired into run+shell; ctx print_status honesty fix; des
 
 ---
 
+## Commit 6a2c49a1 — 2026-06-12 18:02 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+ResolvedPolicy.box_git serde-skipped field; build_run_argv emits ordered --mount flags; grant_box_git dispatches per claim. Unit tests (mount emission, per-backend grant application) + gated e2e (busybox mount surface) + live-verified real git commit in alpine+git container (commit lands on env branch, main move fails EROFS, hooks blocked). Full suite green incl. H5I_TEST_CONTAINER=1.
+
+---
+

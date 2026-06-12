@@ -1017,3 +1017,9 @@ _[Checkpoint: 6a2c434b — edited src/env.rs; edited docs/environments-design.md
 [17:56:34] ACT: edited src/container.rs
 [17:56:45] ACT: edited CLAUDE.md
 [17:56:57] ACT: edited docs/environments-design.md
+
+
+---
+_[Checkpoint: 6a2c49a1 — Container tier in-box git fixed (commit f0e4de65): identical-path plumbing bind mounts]_
+---
+
