@@ -585,3 +585,4 @@ _[Checkpoint: 6a2b53b5 — Observation auto-capture: ship container shim + hook;
 [00:33:29] THINK: Let me replace the `run_supervised` block (lines 736-801) with the serve-before-spawn structure:
 [00:33:29] THINK: The hang is `mcp::tests::env` — let me confirm it's the real run path:
 [00:33:29] THINK: Let me test the baseline (all my changes stashed) to know whether this test ever passed on this host:
+[00:33:29] THINK: All suites green. Let me rebuild/reinstall the release binary (so the live `observe-bash` hook matches the current tree), record the milestone, and commit:
