@@ -1188,3 +1188,4 @@ _[Checkpoint: 6a2c58b0 — Decision: harden in-box hook via managed-settings inj
 _[Checkpoint: 6a2c5b64 — Implemented + shipped: container managed-settings injection (commit 8904e4fc)]_
 ---
 
+[19:18:09] THINK: Let me record the plan and read the pieces I'll reuse — the wrap-bash hook structure and how the runtime is identified.
