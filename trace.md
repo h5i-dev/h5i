@@ -816,3 +816,9 @@ _[Checkpoint: 6a2bfab2 — Added four-part AI agent sandboxing blog series with 
 [14:11:13] ACT: edited docs/blog/sandboxing-ai-agents-implementation/index.html
 [14:11:13] ACT: edited docs/blog/sandboxing-ai-agents-landscape/index.html
 [14:11:13] ACT: edited docs/blog/sandboxing-ai-agents-h5i/index.html
+
+
+---
+_[Checkpoint: 6a2c1381 — Optimized SEO for sandbox blog series: shorter meta descriptions, PNG social card, article tags, BreadcrumbList JSON-LD, series cross-links, and keyword-focused H2s.]_
+---
+
