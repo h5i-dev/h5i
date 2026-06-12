@@ -1043,3 +1043,4 @@ _[Checkpoint: 6a2c4bbd — edited src/container.rs; edited CLAUDE.md; edited doc
 ---
 
 [18:13:16] OBSERVE: read src/container.rs
+[18:14:44] OBSERVE: read src/sandbox.rs
