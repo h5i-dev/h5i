@@ -920,3 +920,4 @@ _[Checkpoint: 6a2c1b63 — Expanded sandbox Parts 1 and 2 for non-systems reader
 _[Checkpoint: 6a2c1fcd — Committed expanded sandbox Part 1/2 readability pass as 71f3e008 with h5i provenance.]_
 ---
 
+[15:05:17] OBSERVE: read docs/blog/sandboxing-ai-agents-foundations/index.html
