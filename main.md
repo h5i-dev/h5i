@@ -705,11 +705,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-san…
 - [x] Option 1 implemented: in-box git works via narrow plumbing grants (commit 3ed695d7)
 - [x] edited src/env.rs; edited docs/environments-design.md; edited CLAUDE.md
+- [x] Container tier in-box git fixed (commit f0e4de65): identical-path plumbing bind mounts
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 18:02 UTC] `improve-shell`: Container tier in-box git fixed (commit f0e4de65): identical-path plumbing bind mounts
 - [2026-06-12 17:35 UTC] `improve-shell`: edited src/env.rs; edited docs/environments-design.md; edited CLAUDE.md
 - [2026-06-12 17:34 UTC] `improve-shell`: Option 1 implemented: in-box git works via narrow plumbing grants (commit 3ed695d7)
 - [2026-06-12 17:00 UTC] `improve-shell`: edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-san…
