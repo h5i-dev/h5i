@@ -1368,3 +1368,9 @@ _[Checkpoint: 6a2c72f5 — Added tee-shim h5i-skip guard (commit 6f629bc8)]_
 _[Checkpoint: 6a2c730b — edited src/container.rs; edited src/container.rs; edited CLAUDE.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2c7478 — edited src/container.rs; edited src/container.rs; edited CLAUDE.md]_
+---
+
