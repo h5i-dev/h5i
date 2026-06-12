@@ -1477,3 +1477,9 @@ _[Checkpoint: 6a2c77be — session ended (auto-checkpoint)]_
 [21:51:41] ACT: edited /home/koukyosyumei/Dev/h5i/src/risk.rs
 [21:51:41] ACT: edited /home/koukyosyumei/Dev/h5i/tests/filter_quality.rs
 [21:51:41] ACT: edited /home/koukyosyumei/Dev/h5i/src/container.rs
+
+
+---
+_[Checkpoint: 6a2c7f72 — Implemented env-aware capture run staging: sandboxed capture run writes cap spool records, host env run/shell ingests them as inbox-capture evidence with source labels, and env status/inspect show evidence source counts.]_
+---
+
