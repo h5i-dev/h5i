@@ -682,3 +682,4 @@ _[Checkpoint: 6a2b5a1e — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a2b5c5a — edited src/env.rs; edited src/env.rs; edited src/env.rs]_
 ---
 
+[01:18:29] OBSERVE: searched tests/env_integration.rs for "src/env.rs"
