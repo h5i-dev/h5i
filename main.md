@@ -672,11 +672,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited CLAUDE.md; edited CLAUDE.md; edited .claude/h5i.md
 - [x] edited CLAUDE.md; edited CLAUDE.md; edited .claude/h5i.md
 - [x] edited CLAUDE.md; edited .claude/h5i.md; edited Cargo.toml
+- [x] Observation auto-capture: ship container shim + hook; revert supervised exec-notify (deadlock)
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 00:32 UTC] `improve-shell`: Observation auto-capture: ship container shim + hook; revert supervised exec-notify (deadlock)
 - [2026-06-12 00:07 UTC] `improve-shell`: edited CLAUDE.md; edited .claude/h5i.md; edited Cargo.toml
 - [2026-06-11 23:42 UTC] `improve-shell`: edited CLAUDE.md; edited CLAUDE.md; edited .claude/h5i.md
 - [2026-06-11 23:41 UTC] `improve-shell`: edited CLAUDE.md; edited CLAUDE.md; edited .claude/h5i.md
