@@ -1035,3 +1035,4 @@ _[Checkpoint: 6a2c49ae — edited src/container.rs; edited CLAUDE.md; edited doc
 _[Checkpoint: 6a2c4a90 — edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md]_
 ---
 
+[18:11:09] NOTE: DEFERRAL (~/Dev/h5i/docs/environments-design.md): de only. Per-command exec observation via seccomp-notify is deferred (the execve-notify deadlocks against the egress bring-up handshake) | Honest gaps…
