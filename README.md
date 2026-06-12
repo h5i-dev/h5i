@@ -81,20 +81,12 @@ For Claude Code or Codex hooks:
 
 ```bash
 h5i hook setup --write    # writes .claude/settings.json and .codex/config.toml
-h5i hook setup --write --target codex
-                          # optional: write only .codex/config.toml
-h5i hook setup --write --target claude
-                          # optional: write only .claude/settings.json
-                          # add --wrap-bash to route Bash commands through `h5i capture run`
-                          # (token-reduced summaries; full raw kept for `h5i recall`)
-h5i hook setup            # or print the full manual instructions (prompt capture, MCP)
 ```
 
 Post the PR review brief:
 
 ```bash
-h5i share pr post --style review      # upsert sticky PR comment
-h5i share pr body --style review      # render markdown for CI
+h5i share pr post         # upsert sticky PR comment
 ```
 
 `h5i share pr post` requires the GitHub CLI (`gh`) to be installed and authenticated
