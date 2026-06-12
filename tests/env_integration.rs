@@ -2077,6 +2077,56 @@ fn container_box_git_plumbing_mounted_at_host_paths() {
     );
 }
 
+/// The container agent-in-box session injects the wrap-bash hook as Claude
+/// **managed settings**, read-only, at the unoverridable managed-settings path.
+/// The in-box agent cannot write it (root-owned path + ro mount) and — per
+/// Claude's merge rules — cannot disable a managed hook from its own config, so
+/// in-box command observation cannot be silenced. (`env shell` is the agent
+/// path; `env run` does not inject it.)
+#[test]
+fn container_injects_managed_settings_hook_read_only() {
+    if !container_runnable() {
+        eprintln!("SKIP container_injects_managed_settings_hook_read_only: no rootless podman");
+        return;
+    }
+    let r = Repo::new();
+    write_profile(
+        &r,
+        &format!(
+            "[profile.default]\nisolation = \"container\"\nnet.mode = \"deny\"\ncontainer.image = \"{BUSYBOX}\"\n"
+        ),
+    );
+    r.h5i_ok(&["env", "create", "boxm"]);
+
+    // The managed-settings file is present at the exact path, carries the
+    // wrap-bash hook, and is read-only inside the box.
+    let out = r.h5i(&[
+        "env",
+        "shell",
+        "boxm",
+        "--",
+        "sh",
+        "-c",
+        "cat /etc/claude-code/managed-settings.json; echo ---; \
+         (echo x >> /etc/claude-code/managed-settings.json) 2>/dev/null && echo MS-RW || echo MS-RO",
+    ]);
+    let text = out_str(&out);
+    assert!(text.contains("h5i hook wrap-bash"), "managed hook must be present: {text}");
+    assert!(text.contains("PreToolUse"), "managed hook must target PreToolUse: {text}");
+    assert!(
+        text.contains("MS-RO") && !text.contains("MS-RW"),
+        "managed settings must be read-only in-box: {text}"
+    );
+    // The host's real managed-settings path is never touched (mount is ns-local).
+    assert!(
+        !std::path::Path::new("/etc/claude-code/managed-settings.json").exists()
+            || std::fs::read_to_string("/etc/claude-code/managed-settings.json")
+                .map(|s| !s.contains("h5i hook wrap-bash"))
+                .unwrap_or(true),
+        "host managed-settings must not be created/modified by the box"
+    );
+}
+
 #[test]
 fn container_egress_allowlist_permits_only_listed_hosts() {
     if !container_runnable() {

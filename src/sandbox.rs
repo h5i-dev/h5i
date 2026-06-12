@@ -237,6 +237,17 @@ impl AgentRuntime {
         }
     }
 
+    /// Recover the runtime a profile name pins, if it is one of the built-in
+    /// agent profiles. `None` for `default`/custom profiles (which could run
+    /// either runtime). Used to decide runtime-specific box hardening.
+    pub fn from_profile_name(name: &str) -> Option<AgentRuntime> {
+        match name {
+            "agent-claude" => Some(AgentRuntime::Claude),
+            "agent-codex" => Some(AgentRuntime::Codex),
+            _ => None,
+        }
+    }
+
     /// Read-write HOME state this runtime needs — its *own* credentials/config
     /// only. Never the other runtime's.
     fn state_write(self) -> &'static [&'static str] {

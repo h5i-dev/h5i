@@ -28,7 +28,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream, ToSocketAddrs};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -556,6 +556,24 @@ fn prepare_shim(work: &Path) -> Option<ShimPlan> {
     Some(ShimPlan { shim, spool })
 }
 
+/// Write the managed-settings.json (carrying the unkillable wrap-bash
+/// observation hook) under the env dir, to be bind-mounted read-only into the
+/// box at [`crate::hooks::CLAUDE_MANAGED_SETTINGS_PATH`]. Best-effort: returns
+/// `None` (injection skipped, session otherwise unaffected) on any I/O failure
+/// or a path Podman's `--mount` syntax can't carry. Only the in-box Claude
+/// reads this file; it is inert for any other tooling.
+fn prepare_managed_settings(work: &Path) -> Option<PathBuf> {
+    let env_dir = work.parent()?;
+    let dir = env_dir.join("managed");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("managed-settings.json");
+    std::fs::write(&path, crate::hooks::managed_settings_wrap_bash_json()).ok()?;
+    if path.display().to_string().contains(',') {
+        return None;
+    }
+    Some(path)
+}
+
 /// Build the `podman run` argv for `argv` under `policy`, fully
 /// hardened. `image` is the resolved base image; `name` is the (unique)
 /// container name used for cleanup. Pure — no process is spawned, so this is
@@ -582,6 +600,10 @@ pub fn build_run_argv(
     // at its IDENTICAL path inside the container so the worktree's
     // gitdir/commondir pointer files resolve. Empty → no extra mounts.
     box_git: &[crate::sandbox::BoxGitPath],
+    // Managed-settings.json (the unkillable wrap-bash hook) to bind-mount
+    // read-only at the Claude managed-settings path. `None` → no injection
+    // (non-Claude box, captured run, or prep failed).
+    managed_settings: Option<&Path>,
 ) -> Vec<String> {
     let mut a: Vec<String> = vec![
         rt.bin.clone(),
@@ -636,6 +658,21 @@ pub fn build_run_argv(
                 "type=bind,source={p},target={p},{mode}",
                 p = b.host.display(),
                 mode = if b.rw { "rw" } else { "ro" },
+            ));
+        }
+    }
+    // Managed-settings injection: bind our wrap-bash hook read-only at Claude's
+    // managed-settings path. The in-box agent cannot write the (root-owned)
+    // path and cannot disable a managed hook from its own config, so in-box
+    // observation cannot be silenced. Podman auto-creates the nested target on
+    // the read-only rootfs overlay; the mount lives only in this box's ns.
+    if let Some(ms) = managed_settings {
+        if !ms.display().to_string().contains(',') {
+            a.push("--mount".into());
+            a.push(format!(
+                "type=bind,source={},target={},ro",
+                ms.display(),
+                crate::hooks::CLAUDE_MANAGED_SETTINGS_PATH
             ));
         }
     }
@@ -805,6 +842,7 @@ pub fn run(
         None,
         None,
         &policy.box_git,
+        None,
     );
 
     let started = std::time::Instant::now();
@@ -888,6 +926,13 @@ pub fn run_interactive(
     if shim.is_none() {
         eprintln!("note: shell observation shim unavailable — session runs unobserved");
     }
+    // Managed-settings injection (Claude only): pins the wrap-bash hook
+    // unkillably in-box. Skip for a known-Codex profile — the file is Claude's
+    // managed scope and inert for Codex (whose own hook hardening is separate);
+    // for `default`/custom profiles we inject, since they may run Claude.
+    let is_codex = crate::sandbox::AgentRuntime::from_profile_name(&p.name)
+        == Some(crate::sandbox::AgentRuntime::Codex);
+    let managed_settings = if is_codex { None } else { prepare_managed_settings(work) };
     let full = build_run_argv(
         &rt,
         p,
@@ -900,6 +945,7 @@ pub fn run_interactive(
         Some(tty),
         shim.as_ref(),
         &policy.box_git,
+        managed_settings.as_deref(),
     );
 
     // Inherited stdio (the default) — this is the interactive session. Secret
@@ -1105,6 +1151,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         );
         let joined = argv.join(" ");
         assert_eq!(argv[0], "podman");
@@ -1149,6 +1196,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         );
         let joined = argv.join(" ");
         assert!(joined.contains(&format!(
@@ -1195,6 +1243,7 @@ mod tests {
             None,
             None,
             &box_git,
+            None,
         );
         let joined = argv.join(" ");
         assert!(joined.contains("type=bind,source=/repo/.git/refs,target=/repo/.git/refs,ro"));
@@ -1233,12 +1282,73 @@ mod tests {
             None,
             None,
             &weird,
+            None,
         );
         let joined = argv.join(" ");
         assert!(
             !joined.contains("target=/repo/.git/objects"),
             "comma path must disable the whole box-git mount set: {joined}"
         );
+    }
+
+    // Managed-settings injection: when present, a read-only bind mount lands at
+    // the Claude managed-settings path; when absent, no such mount appears.
+    #[test]
+    fn run_argv_mounts_managed_settings_read_only() {
+        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let ms = Path::new("/env/managed/managed-settings.json");
+        let with = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            Some(true),
+            None,
+            &[],
+            Some(ms),
+        );
+        let joined = with.join(" ");
+        assert!(
+            joined.contains(&format!(
+                "type=bind,source=/env/managed/managed-settings.json,target={},ro",
+                crate::hooks::CLAUDE_MANAGED_SETTINGS_PATH
+            )),
+            "expected ro managed-settings mount: {joined}"
+        );
+
+        // None → no managed-settings mount at all.
+        let without = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            Some(true),
+            None,
+            &[],
+            None,
+        );
+        assert!(
+            !without.join(" ").contains(crate::hooks::CLAUDE_MANAGED_SETTINGS_PATH),
+            "no managed-settings mount when not requested"
+        );
+    }
+
+    // The Codex agent profile is detected as Codex (so the Claude-specific
+    // managed-settings injection is skipped for it); default/custom are not.
+    #[test]
+    fn codex_profile_is_detected_for_managed_settings_gating() {
+        use crate::sandbox::AgentRuntime;
+        assert_eq!(AgentRuntime::from_profile_name("agent-codex"), Some(AgentRuntime::Codex));
+        assert_eq!(AgentRuntime::from_profile_name("agent-claude"), Some(AgentRuntime::Claude));
+        assert_eq!(AgentRuntime::from_profile_name("default"), None);
     }
 
     #[test]
@@ -1256,6 +1366,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         );
         let joined = argv.join(" ");
         assert!(joined.contains("--network=slirp4netns:allow_host_loopback=true"));
@@ -1280,6 +1391,7 @@ mod tests {
                 tty,
                 None,
                 &[],
+                None,
             )
         };
         // Capture run: no interactive flags at all.
@@ -1315,6 +1427,7 @@ mod tests {
             Some(true),
             Some(&plan),
             &[],
+            None,
         );
         let joined = argv.join(" ");
         // The image self-mount keeps the real shell reachable for any image.
@@ -1337,6 +1450,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         );
         assert!(!plain.join(" ").contains("/.h5i/"));
     }
@@ -1564,6 +1678,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         );
         // The broker's env grant is passed to the container by NAME only — the
         // value is forwarded from Podman's own env, never placed in argv (which

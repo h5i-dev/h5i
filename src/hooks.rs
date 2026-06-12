@@ -71,6 +71,31 @@ pub fn merge_hook_settings_json(existing: &str, wrap_bash: bool) -> Result<Strin
     Ok(serde_json::to_string_pretty(&root)?)
 }
 
+/// The Linux path Claude Code reads as **managed settings** — the highest,
+/// unoverridable scope. A hook here cannot be removed by higher-precedence
+/// merge and survives a non-managed `disableAllHooks`. Injected at this exact
+/// path inside a sandboxed box's private mount namespace (read-only) so the
+/// in-box agent — which cannot write the root-owned `/etc` and cannot disable
+/// a managed hook from its own writable config — has no way to silence
+/// observation. Host-scoped to the box: the mount lives only in the box's ns.
+pub const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
+
+/// The minimal managed-settings.json injected into a sandboxed box: ONLY the
+/// wrap-bash enforcement hook, not the core SessionStart/PostToolUse/Stop set.
+/// The goal is to pin *observation* unkillably, not to override the agent's
+/// own workflow hooks (which it remains free to configure in user/project
+/// scope — managed hooks merge with, they don't replace, those). Pure.
+pub fn managed_settings_wrap_bash_json() -> String {
+    let mut hooks_obj = Map::new();
+    let (event, matcher, command) = WRAP_BASH_HOOK;
+    // ensure_hook_entry only errors if an existing entry has the wrong shape;
+    // on a fresh map it cannot fail.
+    let _ = ensure_hook_entry(&mut hooks_obj, event, matcher, command);
+    let mut root = Map::new();
+    root.insert("hooks".to_string(), Value::Object(hooks_obj));
+    serde_json::to_string_pretty(&Value::Object(root)).unwrap_or_default()
+}
+
 /// Idempotently merge the h5i hook wiring into a Codex `config.toml` document.
 /// Codex discovers inline `[hooks]` tables in `.codex/config.toml` or
 /// `~/.codex/config.toml`; the shape is otherwise equivalent to Claude's
@@ -340,6 +365,30 @@ mod tests {
             bash_entry.get("matcher").and_then(|m| m.as_str()),
             Some("Bash")
         );
+    }
+
+    #[test]
+    fn managed_settings_carries_only_wrap_bash() {
+        let out = managed_settings_wrap_bash_json();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        // Exactly the wrap-bash PreToolUse/Bash hook, and none of the core set
+        // (managed scope pins observation, it does not commandeer the agent's
+        // own SessionStart/PostToolUse/Stop wiring).
+        assert_eq!(commands_under(&v, "PreToolUse"), vec!["h5i hook wrap-bash"]);
+        for event in ["SessionStart", "PostToolUse", "Stop"] {
+            assert!(
+                v.pointer(&format!("/hooks/{event}")).is_none(),
+                "managed settings must not carry the {event} core hook"
+            );
+        }
+        let entry = v
+            .pointer("/hooks/PreToolUse")
+            .and_then(|a| a.as_array())
+            .unwrap()
+            .iter()
+            .find(|e| entry_has_command(e, "h5i hook wrap-bash"))
+            .unwrap();
+        assert_eq!(entry.get("matcher").and_then(|m| m.as_str()), Some("Bash"));
     }
 
     #[test]
