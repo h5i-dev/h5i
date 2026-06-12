@@ -112,7 +112,10 @@ pub fn probe() -> Option<Runtime> {
         return None;
     }
     if podman_rootless()? {
-        Some(Runtime { bin: "podman".into(), rootless: true })
+        Some(Runtime {
+            bin: "podman".into(),
+            rootless: true,
+        })
     } else {
         None
     }
@@ -187,10 +190,17 @@ impl AllowList {
                 (lower, false)
             };
             if !host.is_empty() {
-                entries.push(AllowEntry { host, wildcard, port });
+                entries.push(AllowEntry {
+                    host,
+                    wildcard,
+                    port,
+                });
             }
         }
-        AllowList { entries, pinned_ips: HashSet::new() }
+        AllowList {
+            entries,
+            pinned_ips: HashSet::new(),
+        }
     }
 
     /// Resolve every allowed host to IPs and pin them. Best-effort: a host that
@@ -315,7 +325,12 @@ pub fn spawn_proxy(allow: AllowList) -> Result<ProxyHandle, H5iError> {
         }
     });
 
-    Ok(ProxyHandle { port, stop, tally, join: Some(join) })
+    Ok(ProxyHandle {
+        port,
+        stop,
+        tally,
+        join: Some(join),
+    })
 }
 
 /// Read the request head (up to the blank line) from `s`.
@@ -380,9 +395,7 @@ fn handle_proxy_client(
         t.record(&host, port, permitted);
     }
     if !permitted {
-        let _ = client.write_all(
-            b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n",
-        );
+        let _ = client.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
         return Ok(());
     }
     let mut upstream = match TcpStream::connect((host.as_str(), port)) {
@@ -594,6 +607,16 @@ pub fn build_run_argv(
         "/work".into(),
         "--ipc=private".into(),
     ];
+    for rel in [".claude/settings.json", ".codex/config.toml"] {
+        let source = work.join(rel);
+        if source.exists() && !source.display().to_string().contains(',') {
+            a.push("--mount".into());
+            a.push(format!(
+                "type=bind,source={},target=/work/{rel},ro",
+                source.display()
+            ));
+        }
+    }
     // In-box git plumbing: every path mounted at its identical host path (the
     // worktree's pointer files contain host-absolute paths). The list arrives
     // parent-before-child (`refs` ro before its nested rw children) and is
@@ -603,7 +626,9 @@ pub fn build_run_argv(
     // skip the WHOLE set (a partially mounted .git is worse than the old
     // fail-closed "not a git repository").
     if !box_git.is_empty()
-        && !box_git.iter().any(|b| b.host.display().to_string().contains(','))
+        && !box_git
+            .iter()
+            .any(|b| b.host.display().to_string().contains(','))
     {
         for b in box_git {
             a.push("--mount".into());
@@ -628,13 +653,21 @@ pub fn build_run_argv(
     // writable surface, and its contents are treated as untrusted on ingest.
     if let Some(s) = shim {
         a.push("--mount".into());
-        a.push(format!("type=image,source={image},destination={SHIM_ORIG_MOUNT}"));
+        a.push(format!(
+            "type=image,source={image},destination={SHIM_ORIG_MOUNT}"
+        ));
         for target in ["/bin/sh", "/bin/bash"] {
             a.push("--mount".into());
-            a.push(format!("type=bind,source={},target={target},ro", s.shim.display()));
+            a.push(format!(
+                "type=bind,source={},target={target},ro",
+                s.shim.display()
+            ));
         }
         a.push("--mount".into());
-        a.push(format!("type=bind,source={},target={SHIM_SPOOL_MOUNT},rw", s.spool.display()));
+        a.push(format!(
+            "type=bind,source={},target={SHIM_SPOOL_MOUNT},rw",
+            s.spool.display()
+        ));
     }
     // Rootless podman: keep the caller's uid so files in /work stay owned by us.
     if rt.rootless {
@@ -664,7 +697,13 @@ pub fn build_run_argv(
             // that does not forward to host loopback.
             a.push("--network=slirp4netns:allow_host_loopback=true".into());
             let proxy = format!("http://10.0.2.2:{port}");
-            for var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY"] {
+            for var in [
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "http_proxy",
+                "https_proxy",
+                "ALL_PROXY",
+            ] {
                 a.push("--env".into());
                 a.push(format!("{var}={proxy}"));
             }
@@ -714,7 +753,8 @@ pub fn run(
         H5iError::Metadata(
             "isolation=container requires rootless Podman on PATH; Docker and rootful Podman are \
              intentionally not accepted in this Linux/WSL backend — install/configure rootless \
-             podman or re-request --isolation workspace/process".into(),
+             podman or re-request --isolation workspace/process"
+                .into(),
         )
     })?;
     let image = p.image.clone().ok_or_else(|| {
@@ -753,7 +793,19 @@ pub fn run(
         std::process::id(),
         PROBE_SEQ.fetch_add(1, Ordering::Relaxed)
     );
-    let full = build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, None, None, &policy.box_git);
+    let full = build_run_argv(
+        &rt,
+        p,
+        work,
+        &image,
+        &name,
+        &net,
+        argv,
+        injected_env,
+        None,
+        None,
+        &policy.box_git,
+    );
 
     let started = std::time::Instant::now();
     let mut cmd = std::process::Command::new(&full[0]);
@@ -792,7 +844,8 @@ pub fn run_interactive(
     let rt = probe().ok_or_else(|| {
         H5iError::Metadata(
             "isolation=container requires rootless Podman on PATH — install/configure rootless \
-             podman or re-request --isolation workspace/process".into(),
+             podman or re-request --isolation workspace/process"
+                .into(),
         )
     })?;
     let image = p.image.clone().ok_or_else(|| {
@@ -824,15 +877,30 @@ pub fn run_interactive(
     // Allocate a TTY only when we actually have one on both ends (a piped/CI
     // invocation must not request `-t`, which Podman would reject).
     let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    let name = format!("h5i-{}-{}", std::process::id(), PROBE_SEQ.fetch_add(1, Ordering::Relaxed));
+    let name = format!(
+        "h5i-{}-{}",
+        std::process::id(),
+        PROBE_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
     // Observation shim: best-effort. A session without it is fully functional —
     // it just produces no in-box command evidence.
     let shim = prepare_shim(work);
     if shim.is_none() {
         eprintln!("note: shell observation shim unavailable — session runs unobserved");
     }
-    let full =
-        build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, Some(tty), shim.as_ref(), &policy.box_git);
+    let full = build_run_argv(
+        &rt,
+        p,
+        work,
+        &image,
+        &name,
+        &net,
+        argv,
+        injected_env,
+        Some(tty),
+        shim.as_ref(),
+        &policy.box_git,
+    );
 
     // Inherited stdio (the default) — this is the interactive session. Secret
     // values are seeded into Podman's environment (forwarded by the `--env NAME`
@@ -863,7 +931,9 @@ fn wait_container(
     full: &[String],
 ) -> Result<ExecOutcome, H5iError> {
     use std::process::Stdio;
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = cmd
         .spawn()
         .map_err(|e| H5iError::Metadata(format!("failed to run `{}`: {e}", full.join(" "))))?;
@@ -922,7 +992,10 @@ mod tests {
     use super::*;
 
     fn rt() -> Runtime {
-        Runtime { bin: "podman".into(), rootless: true }
+        Runtime {
+            bin: "podman".into(),
+            rootless: true,
+        }
     }
 
     #[test]
@@ -972,11 +1045,17 @@ mod tests {
         assert!(a.allows("pypi.org", 80));
         // Port-restricted.
         assert!(a.allows("github.com", 443));
-        assert!(!a.allows("github.com", 80), "port 80 not allowed for github.com:443");
+        assert!(
+            !a.allows("github.com", 80),
+            "port 80 not allowed for github.com:443"
+        );
         // Subdomain wildcard (both . and *. forms).
         assert!(a.allows("raw.githubusercontent.com", 443));
         assert!(a.allows("files.pythonhosted.org", 443));
-        assert!(a.allows("pythonhosted.org", 443), "apex matches the wildcard too");
+        assert!(
+            a.allows("pythonhosted.org", 443),
+            "apex matches the wildcard too"
+        );
         // Not on the list → fail closed.
         assert!(!a.allows("evil.example.com", 443));
         assert!(!a.allows("notgithub.com", 443));
@@ -999,9 +1078,11 @@ mod tests {
     fn parse_target_connect_and_absolute() {
         let (h, p, c) = parse_target(b"CONNECT pypi.org:443 HTTP/1.1\r\n\r\n").unwrap();
         assert_eq!((h.as_str(), p, c), ("pypi.org", 443, true));
-        let (h, p, c) = parse_target(b"GET http://example.com/x HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let (h, p, c) =
+            parse_target(b"GET http://example.com/x HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
         assert_eq!((h.as_str(), p, c), ("example.com", 80, false));
-        let (h, p, c) = parse_target(b"GET https://example.com/x HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let (h, p, c) =
+            parse_target(b"GET https://example.com/x HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
         assert_eq!((h.as_str(), p, c), ("example.com", 443, false));
         let (h, p, _) = parse_target(b"GET http://example.com:8080/y HTTP/1.1\r\n\r\n").unwrap();
         assert_eq!((h.as_str(), p), ("example.com", 8080));
@@ -1046,6 +1127,40 @@ mod tests {
         assert!(img_idx < cmd_idx);
     }
 
+    #[test]
+    fn run_argv_mounts_agent_hook_configs_read_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path();
+        std::fs::create_dir_all(work.join(".claude")).unwrap();
+        std::fs::create_dir_all(work.join(".codex")).unwrap();
+        std::fs::write(work.join(".claude/settings.json"), "{}").unwrap();
+        std::fs::write(work.join(".codex/config.toml"), "").unwrap();
+
+        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let argv = build_run_argv(
+            &rt(),
+            &p,
+            work,
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            None,
+            None,
+            &[],
+        );
+        let joined = argv.join(" ");
+        assert!(joined.contains(&format!(
+            "type=bind,source={},target=/work/.claude/settings.json,ro",
+            work.join(".claude/settings.json").display()
+        )));
+        assert!(joined.contains(&format!(
+            "type=bind,source={},target=/work/.codex/config.toml,ro",
+            work.join(".codex/config.toml").display()
+        )));
+    }
+
     // In-box git plumbing mounts: identical source/target host paths, ro/rw
     // honored, list order preserved (nested binds need their parent first),
     // and a comma in ANY path skips the whole set (Podman's `--mount` syntax
@@ -1055,9 +1170,18 @@ mod tests {
         use crate::sandbox::BoxGitPath;
         let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
         let box_git = vec![
-            BoxGitPath { host: "/repo/.git/refs".into(), rw: false },
-            BoxGitPath { host: "/repo/.git/objects".into(), rw: true },
-            BoxGitPath { host: "/repo/.git/refs/h5i/context".into(), rw: true },
+            BoxGitPath {
+                host: "/repo/.git/refs".into(),
+                rw: false,
+            },
+            BoxGitPath {
+                host: "/repo/.git/objects".into(),
+                rw: true,
+            },
+            BoxGitPath {
+                host: "/repo/.git/refs/h5i/context".into(),
+                rw: true,
+            },
         ];
         let argv = build_run_argv(
             &rt(),
@@ -1074,11 +1198,12 @@ mod tests {
         );
         let joined = argv.join(" ");
         assert!(joined.contains("type=bind,source=/repo/.git/refs,target=/repo/.git/refs,ro"));
-        assert!(
-            joined.contains("type=bind,source=/repo/.git/objects,target=/repo/.git/objects,rw")
-        );
+        assert!(joined.contains("type=bind,source=/repo/.git/objects,target=/repo/.git/objects,rw"));
         // Parent `refs` (ro) is mounted before the rw child nested under it.
-        let parent = argv.iter().position(|x| x.ends_with("target=/repo/.git/refs,ro")).unwrap();
+        let parent = argv
+            .iter()
+            .position(|x| x.ends_with("target=/repo/.git/refs,ro"))
+            .unwrap();
         let child = argv
             .iter()
             .position(|x| x.ends_with("target=/repo/.git/refs/h5i/context,rw"))
@@ -1087,8 +1212,14 @@ mod tests {
 
         // A comma anywhere → the whole set is skipped, nothing partial.
         let weird = vec![
-            BoxGitPath { host: "/repo/.git/objects".into(), rw: true },
-            BoxGitPath { host: "/re,po/.git/refs".into(), rw: false },
+            BoxGitPath {
+                host: "/repo/.git/objects".into(),
+                rw: true,
+            },
+            BoxGitPath {
+                host: "/re,po/.git/refs".into(),
+                rw: false,
+            },
         ];
         let argv = build_run_argv(
             &rt(),
@@ -1228,7 +1359,10 @@ mod tests {
         let shim = tmp.join("sh");
         std::fs::write(
             &shim,
-            shim_script(&tmp.join("orig").display().to_string(), &spool.display().to_string()),
+            shim_script(
+                &tmp.join("orig").display().to_string(),
+                &spool.display().to_string(),
+            ),
         )
         .unwrap();
         std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1239,15 +1373,27 @@ mod tests {
             .output()
             .expect("run shim");
         assert_eq!(out.status.code(), Some(3), "exit code must pass through");
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "visible\n", "stdout must pass through");
-        assert!(String::from_utf8_lossy(&out.stderr).contains("err-line"), "stderr must pass through");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "visible\n",
+            "stdout must pass through"
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("err-line"),
+            "stderr must pass through"
+        );
         let entries: Vec<_> = std::fs::read_dir(&spool)
             .unwrap()
             .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
             .collect();
-        let cmd_file = entries.iter().find(|n| n.ends_with(".cmd")).expect("spooled .cmd");
+        let cmd_file = entries
+            .iter()
+            .find(|n| n.ends_with(".cmd"))
+            .expect("spooled .cmd");
         let base = cmd_file.trim_end_matches(".cmd");
-        assert!(std::fs::read_to_string(spool.join(cmd_file)).unwrap().contains("echo visible"));
+        assert!(std::fs::read_to_string(spool.join(cmd_file))
+            .unwrap()
+            .contains("echo visible"));
         assert_eq!(
             std::fs::read_to_string(spool.join(format!("{base}.out"))).unwrap(),
             "visible\n"
@@ -1255,7 +1401,10 @@ mod tests {
         assert!(std::fs::read_to_string(spool.join(format!("{base}.err")))
             .unwrap()
             .contains("err-line"));
-        assert_eq!(std::fs::read_to_string(spool.join(format!("{base}.exit"))).unwrap(), "3");
+        assert_eq!(
+            std::fs::read_to_string(spool.join(format!("{base}.exit"))).unwrap(),
+            "3"
+        );
 
         // Nested invocation (H5I_SHIM set) passes through unobserved.
         let before = std::fs::read_dir(&spool).unwrap().count();
@@ -1265,14 +1414,25 @@ mod tests {
             .output()
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&nested.stdout), "nested\n");
-        assert_eq!(std::fs::read_dir(&spool).unwrap().count(), before, "no new spool entries");
+        assert_eq!(
+            std::fs::read_dir(&spool).unwrap().count(),
+            before,
+            "no new spool entries"
+        );
 
         // Non-`-c` (script execution) passes through unobserved.
         let script = tmp.join("inner.sh");
         std::fs::write(&script, "echo from-script\n").unwrap();
-        let run = std::process::Command::new(&shim).arg(&script).output().unwrap();
+        let run = std::process::Command::new(&shim)
+            .arg(&script)
+            .output()
+            .unwrap();
         assert_eq!(String::from_utf8_lossy(&run.stdout), "from-script\n");
-        assert_eq!(std::fs::read_dir(&spool).unwrap().count(), before, "scripts are not observed");
+        assert_eq!(
+            std::fs::read_dir(&spool).unwrap().count(),
+            before,
+            "scripts are not observed"
+        );
 
         // Stdin flows through an observed command untouched.
         use std::io::Write as _;
@@ -1285,7 +1445,11 @@ mod tests {
             .unwrap();
         child.stdin.take().unwrap().write_all(b"ping\n").unwrap();
         let fin = child.wait_with_output().unwrap();
-        assert_eq!(String::from_utf8_lossy(&fin.stdout), "ping\n", "stdin must pass through");
+        assert_eq!(
+            String::from_utf8_lossy(&fin.stdout),
+            "ping\n",
+            "stdin must pass through"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -1312,7 +1476,10 @@ mod tests {
         let shim = tmp.join("sh");
         std::fs::write(
             &shim,
-            shim_script(&tmp.join("orig").display().to_string(), &spool.display().to_string()),
+            shim_script(
+                &tmp.join("orig").display().to_string(),
+                &spool.display().to_string(),
+            ),
         )
         .unwrap();
         std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1324,7 +1491,9 @@ mod tests {
                 let _ = std::fs::remove_file(e.unwrap().path());
             }
             let mut c = std::process::Command::new(&shim);
-            c.args(args).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+            c.args(args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null());
             for (k, v) in envs {
                 c.env(k, v);
             }
@@ -1337,16 +1506,44 @@ mod tests {
         };
 
         // Observed — every command-flag spelling is detected, command extracted.
-        assert_eq!(observe(&["-c", "AAA"], &[]).as_deref(), Some("AAA"), "plain -c (Claude)");
-        assert_eq!(observe(&["-lc", "BBB"], &[]).as_deref(), Some("BBB"), "-lc (Codex)");
+        assert_eq!(
+            observe(&["-c", "AAA"], &[]).as_deref(),
+            Some("AAA"),
+            "plain -c (Claude)"
+        );
+        assert_eq!(
+            observe(&["-lc", "BBB"], &[]).as_deref(),
+            Some("BBB"),
+            "-lc (Codex)"
+        );
         assert_eq!(observe(&["-ic", "CCC"], &[]).as_deref(), Some("CCC"), "-ic");
-        assert_eq!(observe(&["-i", "-c", "DDD"], &[]).as_deref(), Some("DDD"), "option before -c");
+        assert_eq!(
+            observe(&["-i", "-c", "DDD"], &[]).as_deref(),
+            Some("DDD"),
+            "option before -c"
+        );
 
         // Not observed — no command flag, or it's a nested/script invocation.
-        assert_eq!(observe(&["script.sh"], &[]), None, "a script run is not a command");
-        assert_eq!(observe(&["-i"], &[]), None, "an interactive shell has no -c");
-        assert_eq!(observe(&["--", "-c", "X"], &[]), None, "`--` ends option scan");
-        assert_eq!(observe(&["-c", "EEE"], &[("H5I_SHIM", "1")]), None, "nested shell passes through");
+        assert_eq!(
+            observe(&["script.sh"], &[]),
+            None,
+            "a script run is not a command"
+        );
+        assert_eq!(
+            observe(&["-i"], &[]),
+            None,
+            "an interactive shell has no -c"
+        );
+        assert_eq!(
+            observe(&["--", "-c", "X"], &[]),
+            None,
+            "`--` ends option scan"
+        );
+        assert_eq!(
+            observe(&["-c", "EEE"], &[("H5I_SHIM", "1")]),
+            None,
+            "nested shell passes through"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -1377,7 +1574,10 @@ mod tests {
             "secret VALUE must never appear in the container argv: {argv:?}"
         );
         let pos = argv.iter().position(|a| a == "GITHUB_TOKEN");
-        assert!(pos.is_some(), "injected secret must appear as a --env NAME: {argv:?}");
+        assert!(
+            pos.is_some(),
+            "injected secret must appear as a --env NAME: {argv:?}"
+        );
         // ...preceded by --env, and BEFORE the image (so it's a podman flag, not
         // an argument to the command).
         let i = pos.unwrap();
@@ -1397,18 +1597,27 @@ mod tests {
 
         // Denied host → 403, fail-closed.
         let mut c = TcpStream::connect(("127.0.0.1", proxy.port)).unwrap();
-        c.write_all(b"CONNECT evil.example.com:443 HTTP/1.1\r\n\r\n").unwrap();
+        c.write_all(b"CONNECT evil.example.com:443 HTTP/1.1\r\n\r\n")
+            .unwrap();
         let mut line = String::new();
-        BufReader::new(c.try_clone().unwrap()).read_line(&mut line).unwrap();
-        assert!(line.contains("403"), "denied host must get 403, got: {line:?}");
+        BufReader::new(c.try_clone().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        assert!(
+            line.contains("403"),
+            "denied host must get 403, got: {line:?}"
+        );
 
         // Allowed host → the gate passes and tries to connect upstream; since
         // `allowed.invalid` doesn't resolve, we get 502 (not 403) — proving the
         // allowlist verdict was "permit".
         let mut c2 = TcpStream::connect(("127.0.0.1", proxy.port)).unwrap();
-        c2.write_all(b"CONNECT allowed.invalid:443 HTTP/1.1\r\n\r\n").unwrap();
+        c2.write_all(b"CONNECT allowed.invalid:443 HTTP/1.1\r\n\r\n")
+            .unwrap();
         let mut line2 = String::new();
-        BufReader::new(c2.try_clone().unwrap()).read_line(&mut line2).unwrap();
+        BufReader::new(c2.try_clone().unwrap())
+            .read_line(&mut line2)
+            .unwrap();
         assert!(
             line2.contains("502") || line2.contains("200"),
             "allowed host must pass the gate (502/200), got: {line2:?}"

@@ -152,7 +152,9 @@ impl EnvManifest {
 
     /// Short branch name (without `refs/heads/`).
     pub fn branch_short(&self) -> &str {
-        self.branch.strip_prefix("refs/heads/").unwrap_or(&self.branch)
+        self.branch
+            .strip_prefix("refs/heads/")
+            .unwrap_or(&self.branch)
     }
 
     /// The libgit2 worktree registration name (flat, unique per env).
@@ -178,7 +180,9 @@ pub struct EnvEvent {
 }
 
 fn now_ts() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
+    chrono::Utc::now()
+        .format("%Y-%m-%dT%H:%M:%S%.6fZ")
+        .to_string()
 }
 
 pub fn env_dir(h5i_root: &Path, agent: &str, slug: &str) -> PathBuf {
@@ -191,7 +195,10 @@ pub fn env_dir(h5i_root: &Path, agent: &str, slug: &str) -> PathBuf {
 pub fn validate_slug(slug: &str) -> Result<(), H5iError> {
     let ok = !slug.is_empty()
         && slug.len() <= 64
-        && slug.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && slug
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
         && slug
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'))
@@ -249,8 +256,16 @@ fn validate_imported_manifest(m: &EnvManifest) -> Result<(), H5iError> {
     validate_slug(&m.slug)?;
     let checks = [
         ("id", &m.id, format!("env/{}/{}", m.agent, m.slug)),
-        ("branch", &m.branch, format!("refs/heads/{BRANCH_PREFIX}{}/{}", m.agent, m.slug)),
-        ("context_branch", &m.context_branch, format!("env/{}/{}", m.agent, m.slug)),
+        (
+            "branch",
+            &m.branch,
+            format!("refs/heads/{BRANCH_PREFIX}{}/{}", m.agent, m.slug),
+        ),
+        (
+            "context_branch",
+            &m.context_branch,
+            format!("env/{}/{}", m.agent, m.slug),
+        ),
     ];
     for (field, got, want) in checks {
         if *got != want {
@@ -355,13 +370,13 @@ pub fn append_env_commit(
 
         let mut files: Vec<(&str, String)> = vec![(EVENTS_FILE, log)];
         if let (Some(m), Some(line)) = (manifest, &manifest_line) {
-            let existing =
-                objects::read_blob_from_tree(repo, base_tree.as_ref(), MANIFESTS_FILE).unwrap_or_default();
+            let existing = objects::read_blob_from_tree(repo, base_tree.as_ref(), MANIFESTS_FILE)
+                .unwrap_or_default();
             files.push((MANIFESTS_FILE, upsert_jsonl_by_id(&existing, &m.id, line)));
         }
         if let (Some(m), Some(toml)) = (manifest, policy_toml) {
-            let existing =
-                objects::read_blob_from_tree(repo, base_tree.as_ref(), POLICIES_FILE).unwrap_or_default();
+            let existing = objects::read_blob_from_tree(repo, base_tree.as_ref(), POLICIES_FILE)
+                .unwrap_or_default();
             // Only write a policy once (it is immutable after create).
             if !existing.lines().any(|l| {
                 serde_json::from_str::<serde_json::Value>(l)
@@ -389,7 +404,9 @@ pub fn append_env_commit(
 
         let cas_ok = match tip {
             None => repo.reference(ENV_REF, new_oid, false, &message).is_ok(),
-            Some(old) => repo.reference_matching(ENV_REF, new_oid, true, old, &message).is_ok(),
+            Some(old) => repo
+                .reference_matching(ENV_REF, new_oid, true, old, &message)
+                .is_ok(),
         };
         if cas_ok {
             return Ok(());
@@ -454,7 +471,9 @@ fn append_removed_and_strip(repo: &Repository, ev: &EnvEvent) -> Result<(), H5iE
 
         let cas_ok = match tip {
             None => repo.reference(ENV_REF, new_oid, false, &message).is_ok(),
-            Some(old) => repo.reference_matching(ENV_REF, new_oid, true, old, &message).is_ok(),
+            Some(old) => repo
+                .reference_matching(ENV_REF, new_oid, true, old, &message)
+                .is_ok(),
         };
         if cas_ok {
             return Ok(());
@@ -588,13 +607,16 @@ pub fn union_merge_commits(
     let mut seen: HashSet<String> = HashSet::new();
     let mut events: Vec<EnvEvent> = Vec::new();
     // manifests: id → newest manifest.
-    let mut manifests: std::collections::HashMap<String, EnvManifest> = std::collections::HashMap::new();
+    let mut manifests: std::collections::HashMap<String, EnvManifest> =
+        std::collections::HashMap::new();
     // policies: id → toml (first seen wins; immutable).
-    let mut policies: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut policies: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
 
     for oid in [local_oid, incoming_oid] {
         let tree = repo.find_commit(oid)?.tree().ok();
-        let raw = objects::read_blob_from_tree(repo, tree.as_ref(), EVENTS_FILE).unwrap_or_default();
+        let raw =
+            objects::read_blob_from_tree(repo, tree.as_ref(), EVENTS_FILE).unwrap_or_default();
         for line in raw.lines() {
             if line.trim().is_empty() {
                 continue;
@@ -606,7 +628,8 @@ pub fn union_merge_commits(
                 }
             }
         }
-        let mraw = objects::read_blob_from_tree(repo, tree.as_ref(), MANIFESTS_FILE).unwrap_or_default();
+        let mraw =
+            objects::read_blob_from_tree(repo, tree.as_ref(), MANIFESTS_FILE).unwrap_or_default();
         for line in mraw.lines() {
             if let Ok(m) = serde_json::from_str::<EnvManifest>(line) {
                 match manifests.get(&m.id) {
@@ -617,14 +640,17 @@ pub fn union_merge_commits(
                 }
             }
         }
-        let praw = objects::read_blob_from_tree(repo, tree.as_ref(), POLICIES_FILE).unwrap_or_default();
+        let praw =
+            objects::read_blob_from_tree(repo, tree.as_ref(), POLICIES_FILE).unwrap_or_default();
         for line in praw.lines() {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
                 if let (Some(id), Some(toml)) = (
                     v.get("id").and_then(|i| i.as_str()),
                     v.get("toml").and_then(|t| t.as_str()),
                 ) {
-                    policies.entry(id.to_string()).or_insert_with(|| toml.to_string());
+                    policies
+                        .entry(id.to_string())
+                        .or_insert_with(|| toml.to_string());
                 }
             }
         }
@@ -647,7 +673,9 @@ pub fn union_merge_commits(
     }
     let mut plog = String::new();
     for (id, toml) in &policies {
-        plog.push_str(&serde_json::to_string(&serde_json::json!({"id": id, "toml": toml}))?);
+        plog.push_str(&serde_json::to_string(
+            &serde_json::json!({"id": id, "toml": toml}),
+        )?);
         plog.push('\n');
     }
 
@@ -663,7 +691,14 @@ pub fn union_merge_commits(
     let tree = repo.find_tree(tree_oid)?;
     let sig = objects::signature(repo)?;
     let parents = [&local_commit, &incoming_commit];
-    Ok(repo.commit(None, &sig, &sig, "h5i pull: union-merge of refs/h5i/env", &tree, &parents)?)
+    Ok(repo.commit(
+        None,
+        &sig,
+        &sig,
+        "h5i pull: union-merge of refs/h5i/env",
+        &tree,
+        &parents,
+    )?)
 }
 
 // ─── manifest persistence ───────────────────────────────────────────────────
@@ -713,9 +748,7 @@ pub fn find(h5i_root: &Path, name: &str) -> Result<EnvManifest, H5iError> {
     let all = list(h5i_root);
     let matches: Vec<&EnvManifest> = all
         .iter()
-        .filter(|m| {
-            m.id == name || m.id == format!("env/{name}") || m.slug == name
-        })
+        .filter(|m| m.id == name || m.id == format!("env/{name}") || m.slug == name)
         .collect();
     match matches.len() {
         0 => Err(H5iError::Metadata(format!(
@@ -724,7 +757,11 @@ pub fn find(h5i_root: &Path, name: &str) -> Result<EnvManifest, H5iError> {
         1 => Ok(matches[0].clone()),
         _ => Err(H5iError::Metadata(format!(
             "'{name}' is ambiguous — qualify it: {}",
-            matches.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", ")
+            matches
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         ))),
     }
 }
@@ -830,7 +867,9 @@ pub fn create(
     let branch_short = format!("{BRANCH_PREFIX}{agent}/{slug}");
     let branch_full = format!("refs/heads/{branch_short}");
     if dir.exists() {
-        return Err(H5iError::Metadata(format!("environment {id} already exists")));
+        return Err(H5iError::Metadata(format!(
+            "environment {id} already exists"
+        )));
     }
     if repo.find_reference(&branch_full).is_ok() {
         return Err(H5iError::Metadata(format!(
@@ -875,7 +914,9 @@ pub fn create(
     // (secure-by-default). The chosen tier is then pinned into the policy below.
     let claim = match opts.isolation {
         Some(sandbox::IsolationRequest::Claim(c)) => c,
-        Some(sandbox::IsolationRequest::Auto) => sandbox::effective_auto(workdir, profile_name, true)?,
+        Some(sandbox::IsolationRequest::Auto) => {
+            sandbox::effective_auto(workdir, profile_name, true)?
+        }
         None => sandbox::effective_auto(workdir, profile_name, false)?,
     };
 
@@ -913,9 +954,9 @@ pub fn create(
         let branch_ref = repo.find_reference(&branch_full)?;
         let mut wt_opts = git2::WorktreeAddOptions::new();
         wt_opts.reference(Some(&branch_ref));
-        let wt = repo.worktree(&wt_name, &work_path, Some(&wt_opts)).map_err(|e| {
-            H5iError::Metadata(format!("worktree creation failed for {id}: {e}"))
-        })?;
+        let wt = repo
+            .worktree(&wt_name, &work_path, Some(&wt_opts))
+            .map_err(|e| H5iError::Metadata(format!("worktree creation failed for {id}: {e}")))?;
         // Lock the worktree for the env's whole life so a stray
         // `git worktree prune` can't reclaim a live env out from under it;
         // `h5i env gc` is the only thing that unlocks+prunes it (and only when
@@ -931,7 +972,11 @@ pub fn create(
         repo,
         &env_ctx,
         &parent_ctx,
-        &format!("h5i environment {id} (profile {}, isolation {})", profile.name, policy.claim.as_str()),
+        &format!(
+            "h5i environment {id} (profile {}, isolation {})",
+            profile.name,
+            policy.claim.as_str()
+        ),
     )?;
     let wt_repo = Repository::open(&work_path)?;
     crate::ctx::pin_worktree_context(&wt_repo, &env_ctx)?;
@@ -958,8 +1003,7 @@ pub fn create(
 
     let policy_toml = policy.to_toml()?;
     let policy_path = dir.join(POLICY_RESOLVED_FILE);
-    std::fs::write(&policy_path, &policy_toml)
-        .map_err(|e| H5iError::with_path(e, &policy_path))?;
+    std::fs::write(&policy_path, &policy_toml).map_err(|e| H5iError::with_path(e, &policy_path))?;
     save_manifest(h5i_root, &manifest)?;
     // Mirror the manifest AND the resolved policy into refs/h5i/env so the
     // whole environment is shareable from creation.
@@ -1095,7 +1139,10 @@ fn box_git_plumbing(repo: &Repository, m: &EnvManifest) -> Result<Vec<BoxGitPath
     // mounted first; the kernel tiers don't care — Landlock rules are a set).
     let mut paths: Vec<BoxGitPath> = ["HEAD", "config", "packed-refs", "refs", "info"]
         .iter()
-        .map(|p| BoxGitPath { host: git_dir.join(p), rw: false })
+        .map(|p| BoxGitPath {
+            host: git_dir.join(p),
+            rw: false,
+        })
         .collect();
     let rw: Vec<PathBuf> = vec![
         git_dir.join("worktrees").join(m.worktree_name()),
@@ -1147,7 +1194,10 @@ fn grant_box_git(
         }
         IsolationClaim::Container => {
             let mut mounts = box_git_plumbing(repo, m)?;
-            mounts.push(BoxGitPath { host: work.to_path_buf(), rw: true });
+            mounts.push(BoxGitPath {
+                host: work.to_path_buf(),
+                rw: true,
+            });
             // Podman errors on a missing bind source (unlike Landlock, which
             // skips) — keep only what exists on the host.
             mounts.retain(|b| b.host.exists());
@@ -1156,6 +1206,144 @@ fn grant_box_git(
         _ => {}
     }
     Ok(())
+}
+
+const PROTECTED_HOOK_CONFIGS: &[&str] = &[".claude/settings.json", ".codex/config.toml"];
+
+enum ProtectedHookScope {
+    Worktree,
+    Home,
+}
+
+struct ProtectedHookConfig {
+    label: String,
+    path: PathBuf,
+    original: Option<Vec<u8>>,
+    sentinel_created: bool,
+    parent_created: bool,
+}
+
+struct ProtectedHookConfigGuard {
+    files: Vec<ProtectedHookConfig>,
+}
+
+impl ProtectedHookConfigGuard {
+    fn prepare(work: &Path, claim: IsolationClaim) -> Result<Self, H5iError> {
+        if claim < IsolationClaim::Process {
+            return Ok(Self { files: Vec::new() });
+        }
+        let mut files = Vec::new();
+        for rel in PROTECTED_HOOK_CONFIGS {
+            let path = work.join(rel);
+            push_protected_hook_config(
+                &mut files,
+                rel.to_string(),
+                path,
+                claim,
+                ProtectedHookScope::Worktree,
+            )?;
+        }
+        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+            for rel in PROTECTED_HOOK_CONFIGS {
+                push_protected_hook_config(
+                    &mut files,
+                    format!("~/{rel}"),
+                    home.join(rel),
+                    claim,
+                    ProtectedHookScope::Home,
+                )?;
+            }
+        }
+        Ok(Self { files })
+    }
+
+    fn finish(self) -> Result<(), H5iError> {
+        let mut touched = Vec::new();
+        for f in self.files {
+            match &f.original {
+                Some(original) => {
+                    let current = std::fs::read(&f.path).ok();
+                    if current.as_deref() != Some(original.as_slice()) {
+                        if let Some(parent) = f.path.parent() {
+                            std::fs::create_dir_all(parent)
+                                .map_err(|e| H5iError::with_path(e, parent))?;
+                        }
+                        std::fs::write(&f.path, original)
+                            .map_err(|e| H5iError::with_path(e, &f.path))?;
+                        touched.push(f.label);
+                    }
+                }
+                None => {
+                    let exists = f.path.exists();
+                    let unchanged_sentinel =
+                        f.sentinel_created && std::fs::read(&f.path).ok().as_deref() == Some(b"");
+                    if exists {
+                        remove_path_any(&f.path)?;
+                        if !unchanged_sentinel {
+                            touched.push(f.label);
+                        }
+                    }
+                    if f.parent_created {
+                        if let Some(parent) = f.path.parent() {
+                            let _ = std::fs::remove_dir(parent);
+                        }
+                    }
+                }
+            }
+        }
+        if touched.is_empty() {
+            Ok(())
+        } else {
+            Err(H5iError::Metadata(format!(
+                "sandbox refused protected hook config modification: {}",
+                touched.join(", ")
+            )))
+        }
+    }
+}
+
+fn push_protected_hook_config(
+    files: &mut Vec<ProtectedHookConfig>,
+    label: String,
+    path: PathBuf,
+    claim: IsolationClaim,
+    scope: ProtectedHookScope,
+) -> Result<(), H5iError> {
+    let original = std::fs::read(&path).ok();
+    let mut sentinel_created = false;
+    let mut parent_created = false;
+    if claim == IsolationClaim::Container
+        && matches!(scope, ProtectedHookScope::Worktree)
+        && original.is_none()
+    {
+        if let Some(parent) = path.parent() {
+            parent_created = !parent.exists();
+            std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+        }
+        std::fs::write(&path, b"").map_err(|e| H5iError::with_path(e, &path))?;
+        sentinel_created = true;
+    }
+    files.push(ProtectedHookConfig {
+        label,
+        path,
+        original,
+        sentinel_created,
+        parent_created,
+    });
+    Ok(())
+}
+
+fn remove_path_any(path: &Path) -> Result<(), H5iError> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(H5iError::with_path(e, path)),
+    };
+    if meta.is_dir() {
+        std::fs::remove_dir_all(path).map_err(|e| H5iError::with_path(e, path))
+    } else {
+        std::fs::remove_file(path).map_err(|e| H5iError::with_path(e, path))
+    }
 }
 
 /// Run `argv` inside the env's worktree under its pinned policy, and record
@@ -1201,17 +1389,47 @@ pub fn run(
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
     let brokered =
         crate::secrets_broker::broker(&policy.profile.secret_grants, &secret_dir, is_workspace)?;
+    let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
 
-    set_status(repo, h5i_root, m, ST_RUNNING, "status", Some("running".into()), None)?;
+    set_status(
+        repo,
+        h5i_root,
+        m,
+        ST_RUNNING,
+        "status",
+        Some("running".into()),
+        None,
+    )?;
     let result = sandbox::run_with_env(&policy, &work, argv, &brokered.env);
     // Whatever happened, leave the running state before propagating errors.
     let outcome = match result {
         Ok(o) => o,
         Err(e) => {
-            set_status(repo, h5i_root, m, ST_IDLE, "status", Some("idle (run failed to start)".into()), None)?;
+            let _ = protected_hook_configs.finish();
+            set_status(
+                repo,
+                h5i_root,
+                m,
+                ST_IDLE,
+                "status",
+                Some("idle (run failed to start)".into()),
+                None,
+            )?;
             return Err(e);
         }
     };
+    if let Err(e) = protected_hook_configs.finish() {
+        set_status(
+            repo,
+            h5i_root,
+            m,
+            ST_IDLE,
+            "violation",
+            Some(e.to_string()),
+            None,
+        )?;
+        return Err(e);
+    }
 
     // Compose the raw payload exactly like `h5i capture run` (stdout, then a
     // labeled stderr block), plus an explicit marker when the wall-clock
@@ -1290,7 +1508,10 @@ pub fn run(
         Some(format!(
             "cmd=`{}` exit={} wall={}ms cpu={}ms{}{}",
             safe_cmd,
-            outcome.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "signal".into()),
+            outcome
+                .exit_code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".into()),
             outcome.wall_ms,
             outcome.cpu_ms,
             rss,
@@ -1365,15 +1586,45 @@ pub fn shell(
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
     let brokered =
         crate::secrets_broker::broker(&policy.profile.secret_grants, &secret_dir, is_workspace)?;
+    let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
 
-    set_status(repo, h5i_root, m, ST_RUNNING, "status", Some("running (shell)".into()), None)?;
+    set_status(
+        repo,
+        h5i_root,
+        m,
+        ST_RUNNING,
+        "status",
+        Some("running (shell)".into()),
+        None,
+    )?;
     let exit_code = match sandbox::run_interactive(&policy, &work, argv, &brokered.env) {
         Ok(code) => code,
         Err(e) => {
-            set_status(repo, h5i_root, m, ST_IDLE, "status", Some("idle (shell failed to start)".into()), None)?;
+            let _ = protected_hook_configs.finish();
+            set_status(
+                repo,
+                h5i_root,
+                m,
+                ST_IDLE,
+                "status",
+                Some("idle (shell failed to start)".into()),
+                None,
+            )?;
             return Err(e);
         }
     };
+    if let Err(e) = protected_hook_configs.finish() {
+        set_status(
+            repo,
+            h5i_root,
+            m,
+            ST_IDLE,
+            "violation",
+            Some(e.to_string()),
+            None,
+        )?;
+        return Err(e);
+    }
 
     // Ingest the session's observation spool (supervised exec log / container
     // tee-shim records) into tagged captures BEFORE the final status event, so
@@ -1388,15 +1639,20 @@ pub fn shell(
     };
 
     let safe_cmd = crate::secrets::redact_text(&argv.join(" "));
-    let observed_note =
-        if observed > 0 { format!(" observed={observed}") } else { String::new() };
+    let observed_note = if observed > 0 {
+        format!(" observed={observed}")
+    } else {
+        String::new()
+    };
     set_status(
         repo,
         h5i_root,
         m,
         ST_IDLE,
         "shell",
-        Some(format!("interactive cmd=`{safe_cmd}` exit={exit_code}{observed_note}")),
+        Some(format!(
+            "interactive cmd=`{safe_cmd}` exit={exit_code}{observed_note}"
+        )),
         None,
     )?;
 
@@ -1519,8 +1775,11 @@ fn ingest_shell_spool(
             .collect();
         // A whitespace split of the observed command is only a *hint* for the
         // structured-parser pick (pytest/cargo adapters) — never executed.
-        let argv_hint: Vec<String> =
-            cmd_text.split_whitespace().take(8).map(str::to_string).collect();
+        let argv_hint: Vec<String> = cmd_text
+            .split_whitespace()
+            .take(8)
+            .map(str::to_string)
+            .collect();
         let opts = objects::CaptureOptions {
             kind: crate::token_filter::OutputKind::Auto,
             cmd: Some(safe_cmd.clone()),
@@ -1549,7 +1808,9 @@ fn ingest_shell_spool(
                 event: "exec".into(),
                 detail: Some(format!(
                     "observed in shell: cmd=`{safe_cmd}` exit={}",
-                    exit_code.map(|c| c.to_string()).unwrap_or_else(|| "?".into())
+                    exit_code
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "?".into())
                 )),
                 capture: Some(captured.manifest.id.clone()),
             },
@@ -1587,7 +1848,12 @@ fn ingest_shell_spool(
 /// When it is absent (a pulled "remote" env, or after gc) it falls back to the
 /// **committed** state on the env's code branch — i.e. what `propose`
 /// snapshotted — so a reviewer on another clone sees exactly the proposed diff.
-pub fn diff(repo: &Repository, h5i_root: &Path, m: &EnvManifest, stat_only: bool) -> Result<String, H5iError> {
+pub fn diff(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+    stat_only: bool,
+) -> Result<String, H5iError> {
     let render = |diff: git2::Diff| -> Result<String, H5iError> {
         if stat_only {
             let stats = diff.stats()?;
@@ -1610,7 +1876,9 @@ pub fn diff(repo: &Repository, h5i_root: &Path, m: &EnvManifest, stat_only: bool
         let wt_repo = Repository::open(&work)?;
         let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
         let mut opts = git2::DiffOptions::new();
-        opts.include_untracked(true).recurse_untracked_dirs(true).show_untracked_content(true);
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .show_untracked_content(true);
         let diff = wt_repo.diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))?;
         render(diff)
     } else {
@@ -1619,10 +1887,12 @@ pub fn diff(repo: &Repository, h5i_root: &Path, m: &EnvManifest, stat_only: bool
         let base_tree = repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
         let tip_tree = repo
             .find_reference(&m.branch)
-            .map_err(|_| H5iError::Metadata(format!(
-                "{}: env code branch '{}' is not present locally — `h5i pull` it first",
-                m.id, m.branch
-            )))?
+            .map_err(|_| {
+                H5iError::Metadata(format!(
+                    "{}: env code branch '{}' is not present locally — `h5i pull` it first",
+                    m.id, m.branch
+                ))
+            })?
             .peel_to_tree()?;
         let mut opts = git2::DiffOptions::new();
         let diff = repo.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), Some(&mut opts))?;
@@ -1679,7 +1949,9 @@ pub fn drift(repo: &Repository, m: &EnvManifest) -> Drift {
         return Drift::ParentGone;
     };
     let Ok(base) = git2::Oid::from_str(&m.base_commit) else {
-        return Drift::Diverged { tip: tip.to_string() };
+        return Drift::Diverged {
+            tip: tip.to_string(),
+        };
     };
     if tip == base {
         return Drift::UpToDate;
@@ -1690,9 +1962,14 @@ pub fn drift(repo: &Repository, m: &EnvManifest) -> Drift {
             .graph_ahead_behind(tip, base)
             .map(|(ahead, _)| ahead)
             .unwrap_or(0);
-        Drift::ParentAhead { tip: tip.to_string(), commits }
+        Drift::ParentAhead {
+            tip: tip.to_string(),
+            commits,
+        }
     } else {
-        Drift::Diverged { tip: tip.to_string() }
+        Drift::Diverged {
+            tip: tip.to_string(),
+        }
     }
 }
 
@@ -1725,10 +2002,16 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
             "  enforce  : net.mode={:?} fs.write={:?} mem={} procs={} wall={}s{}{}\n",
             p.net_mode,
             p.fs_write,
-            p.mem_bytes.map(|b| format!("{}MiB", b / 1024 / 1024)).unwrap_or_else(|| "∞".into()),
-            p.max_procs.map(|n| n.to_string()).unwrap_or_else(|| "∞".into()),
+            p.mem_bytes
+                .map(|b| format!("{}MiB", b / 1024 / 1024))
+                .unwrap_or_else(|| "∞".into()),
+            p.max_procs
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "∞".into()),
             p.wall_secs,
-            p.fsize_bytes.map(|b| format!(" fsize={}MiB", b / 1024 / 1024)).unwrap_or_default(),
+            p.fsize_bytes
+                .map(|b| format!(" fsize={}MiB", b / 1024 / 1024))
+                .unwrap_or_default(),
             p.cpu_secs.map(|s| format!(" cpu={s}s")).unwrap_or_default(),
         ));
         if !p.tools.is_empty() {
@@ -1738,7 +2021,11 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
     out.push_str(&format!(
         "  evidence : {} capture(s){}\n",
         m.captures.len(),
-        if m.captures.is_empty() { String::new() } else { format!(": {}", m.captures.join(", ")) }
+        if m.captures.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", m.captures.join(", "))
+        }
     ));
     let d = drift(repo, m);
     let marker = if d.is_current() { "✓" } else { "⚠" };
@@ -1769,13 +2056,19 @@ pub fn inspect(repo: &Repository, m: &EnvManifest, capture_id: &str) -> Result<S
     }
     out.push_str(&format!(
         "  exit     : {}\n",
-        manifest.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "signal".into())
+        manifest
+            .exit_code
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".into())
     ));
     if let Some(d) = &manifest.policy_digest {
         out.push_str(&format!("  policy   : {}\n", &d[..12.min(d.len())]));
     }
     if !manifest.redactions.is_empty() {
-        out.push_str(&format!("  redacted : {}\n", manifest.redactions.join(", ")));
+        out.push_str(&format!(
+            "  redacted : {}\n",
+            manifest.redactions.join(", ")
+        ));
     }
     out.push_str(&format!(
         "  raw      : {} bytes, {} lines (object {})\n",
@@ -1823,7 +2116,8 @@ pub fn compare(
     let mut rows = Vec::new();
     for name in names {
         let m = find(h5i_root, name)?;
-        let (files_changed, insertions, deletions) = diffstat_numbers(repo, h5i_root, &m).unwrap_or((0, 0, 0));
+        let (files_changed, insertions, deletions) =
+            diffstat_numbers(repo, h5i_root, &m).unwrap_or((0, 0, 0));
         let (last_exit, last_tool, last_result, last_counts) = match m.captures.last() {
             Some(cap) => match objects::resolve_manifest(repo, cap) {
                 Ok(man) => {
@@ -1860,7 +2154,11 @@ pub fn compare(
 /// `(files_changed, insertions, deletions)` of an env's changes vs. its pinned
 /// base. Uses the worktree when present, else the env branch tip (so pulled
 /// "remote" envs still compare).
-fn diffstat_numbers(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Option<(usize, usize, usize)> {
+fn diffstat_numbers(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+) -> Option<(usize, usize, usize)> {
     let triple = |diff: &git2::Diff| {
         diff.stats()
             .ok()
@@ -1869,7 +2167,9 @@ fn diffstat_numbers(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Opti
     let work = m.work_dir(h5i_root);
     if work.is_dir() {
         let wt_repo = Repository::open(&work).ok()?;
-        let base_tree = wt_repo.find_tree(git2::Oid::from_str(&m.base_tree).ok()?).ok()?;
+        let base_tree = wt_repo
+            .find_tree(git2::Oid::from_str(&m.base_tree).ok()?)
+            .ok()?;
         let mut opts = git2::DiffOptions::new();
         opts.include_untracked(true)
             .recurse_untracked_dirs(true)
@@ -1879,9 +2179,13 @@ fn diffstat_numbers(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Opti
             .ok()?;
         triple(&diff)
     } else {
-        let base_tree = repo.find_tree(git2::Oid::from_str(&m.base_tree).ok()?).ok()?;
+        let base_tree = repo
+            .find_tree(git2::Oid::from_str(&m.base_tree).ok()?)
+            .ok()?;
         let tip_tree = repo.find_reference(&m.branch).ok()?.peel_to_tree().ok()?;
-        let diff = repo.diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), None).ok()?;
+        let diff = repo
+            .diff_tree_to_tree(Some(&base_tree), Some(&tip_tree), None)
+            .ok()?;
         triple(&diff)
     }
 }
@@ -1910,14 +2214,21 @@ pub fn render_compare(rows: &[CompareRow]) -> String {
                 let counts: Vec<String> = r
                     .last_counts
                     .iter()
-                    .filter(|(k, _)| matches!(k.as_str(), "passed" | "failed" | "errors" | "warnings"))
+                    .filter(|(k, _)| {
+                        matches!(k.as_str(), "passed" | "failed" | "errors" | "warnings")
+                    })
                     .map(|(k, v)| format!("{k}={v}"))
                     .collect();
                 format!(
                     "{tool} {} (exit {}){}",
                     result.clone().unwrap_or_default(),
-                    exit.map(|c| c.to_string()).unwrap_or_else(|| "signal".into()),
-                    if counts.is_empty() { String::new() } else { format!(" [{}]", counts.join(" ")) }
+                    exit.map(|c| c.to_string())
+                        .unwrap_or_else(|| "signal".into()),
+                    if counts.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", counts.join(" "))
+                    }
                 )
             }
             _ => "— (no run yet)".to_string(),
@@ -1955,7 +2266,9 @@ pub fn mediated_commit(
         return Err(no_workspace_err(m, "propose/rebase"));
     }
     let wt_repo = Repository::open(&work)?;
-    let canon_work = work.canonicalize().map_err(|e| H5iError::with_path(e, &work))?;
+    let canon_work = work
+        .canonicalize()
+        .map_err(|e| H5iError::with_path(e, &work))?;
 
     // Pre-walk for nested git repositories. libgit2 either errors opaquely or
     // records a submodule gitlink when `add_all` meets a directory containing
@@ -1971,14 +2284,18 @@ pub fn mediated_commit(
     {
         let mut cb = |path: &Path, _matched: &[u8]| -> i32 {
             match staged_path_violation(&canon_work, path) {
-                None => 0,    // stage it
+                None => 0, // stage it
                 Some(v) => {
                     violations.push(v);
                     1 // skip — but any violation fails the commit below
                 }
             }
         };
-        index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, Some(&mut cb as &mut git2::IndexMatchedPath))?;
+        index.add_all(
+            ["*"].iter(),
+            git2::IndexAddOption::DEFAULT,
+            Some(&mut cb as &mut git2::IndexMatchedPath),
+        )?;
         index.update_all(["*"].iter(), None)?;
     }
 
@@ -2170,7 +2487,11 @@ pub fn propose(
 
     let mut brief = String::new();
     brief.push_str(&format!("── Proposal: {} ──\n", m.id));
-    brief.push_str(&format!("  base    : {} (from {})\n", &m.base_commit[..12], m.parent_branch));
+    brief.push_str(&format!(
+        "  base    : {} (from {})\n",
+        &m.base_commit[..12],
+        m.parent_branch
+    ));
     brief.push_str(&format!("  branch  : {}\n", m.branch));
     brief.push_str(&format!(
         "  policy  : profile={} isolation={} digest={}\n",
@@ -2178,7 +2499,11 @@ pub fn propose(
         m.isolation_claim,
         &m.policy_digest[..12.min(m.policy_digest.len())]
     ));
-    brief.push_str(&format!("  evidence: {} capture(s): {}\n", m.captures.len(), m.captures.join(", ")));
+    brief.push_str(&format!(
+        "  evidence: {} capture(s): {}\n",
+        m.captures.len(),
+        m.captures.join(", ")
+    ));
     let d = drift(repo, m);
     if !d.is_current() {
         brief.push_str(&format!("  drift   : ⚠ {}\n", d.summary()));
@@ -2244,8 +2569,19 @@ pub fn apply(
     let parent_tip = head.peel_to_commit()?;
     let env_tip = repo.find_reference(&m.branch)?.peel_to_commit()?;
     if env_tip.id() == parent_tip.id() {
-        set_status(repo, h5i_root, m, ST_APPLIED, "applied", Some("no-op (no divergence)".into()), None)?;
-        return Ok(format!("{}: nothing to apply (env tip == parent tip)", m.id));
+        set_status(
+            repo,
+            h5i_root,
+            m,
+            ST_APPLIED,
+            "applied",
+            Some("no-op (no divergence)".into()),
+            None,
+        )?;
+        return Ok(format!(
+            "{}: nothing to apply (env tip == parent tip)",
+            m.id
+        ));
     }
 
     let base_oid = repo.merge_base(parent_tip.id(), env_tip.id())?;
@@ -2305,14 +2641,17 @@ pub fn apply(
 
     // Fold the env's reasoning back into the parent context branch. The code
     // is already applied — a context-merge failure is surfaced, not fatal.
-    let ctx_note = match crate::ctx::gcc_merge_into(workdir, &m.parent_context_branch, &m.context_branch)
-    {
-        Ok(_) => format!("context '{}' merged into '{}'", m.context_branch, m.parent_context_branch),
-        Err(e) => format!(
-            "WARNING: context merge-back failed ({e}) — run `h5i context merge {}` manually",
-            m.context_branch
-        ),
-    };
+    let ctx_note =
+        match crate::ctx::gcc_merge_into(workdir, &m.parent_context_branch, &m.context_branch) {
+            Ok(_) => format!(
+                "context '{}' merged into '{}'",
+                m.context_branch, m.parent_context_branch
+            ),
+            Err(e) => format!(
+                "WARNING: context merge-back failed ({e}) — run `h5i context merge {}` manually",
+                m.context_branch
+            ),
+        };
 
     set_status(
         repo,
@@ -2333,7 +2672,11 @@ pub fn apply(
         m.id,
         m.parent_branch,
         &new_commit.to_string()[..12],
-        if base_oid == parent_tip.id() && !patch_mode { ", fast-forward" } else { "" },
+        if base_oid == parent_tip.id() && !patch_mode {
+            ", fast-forward"
+        } else {
+            ""
+        },
         ctx_note
     ))
 }
@@ -2348,11 +2691,7 @@ pub fn apply(
 /// branch), commit the rebased state on the env branch, re-pin
 /// `base_commit`/`base_tree` to the parent tip, and refresh the worktree to the
 /// rebased tree. Only valid before propose/apply.
-pub fn rebase(
-    repo: &Repository,
-    h5i_root: &Path,
-    m: &mut EnvManifest,
-) -> Result<String, H5iError> {
+pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result<String, H5iError> {
     // Rebase force-checks-out the worktree and re-pins the base in the manifest;
     // serialize against a concurrent `env run`/`shell` exactly like propose.
     #[cfg(unix)]
@@ -2368,7 +2707,10 @@ pub fn rebase(
     }
     match drift(repo, m) {
         Drift::UpToDate => {
-            return Ok(format!("{} is already on its parent tip — nothing to rebase", m.id))
+            return Ok(format!(
+                "{} is already on its parent tip — nothing to rebase",
+                m.id
+            ))
         }
         Drift::ParentGone => {
             return Err(H5iError::Metadata(format!(
@@ -2446,7 +2788,11 @@ pub fn rebase(
         repo,
         h5i_root,
         m,
-        if m.status == ST_CREATED { ST_CREATED } else { ST_IDLE },
+        if m.status == ST_CREATED {
+            ST_CREATED
+        } else {
+            ST_IDLE
+        },
         "rebased",
         Some(format!(
             "onto {} ({})",
@@ -2472,9 +2818,20 @@ pub fn abort(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result<
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     if m.status == ST_APPLIED {
-        return Err(H5iError::Metadata(format!("{} is already applied — nothing to abort", m.id)));
+        return Err(H5iError::Metadata(format!(
+            "{} is already applied — nothing to abort",
+            m.id
+        )));
     }
-    set_status(repo, h5i_root, m, ST_ABORTED, "aborted", Some("manifest preserved for forensics".into()), None)
+    set_status(
+        repo,
+        h5i_root,
+        m,
+        ST_ABORTED,
+        "aborted",
+        Some("manifest preserved for forensics".into()),
+        None,
+    )
 }
 
 /// Prune one env's git worktree registration and remove its `work/` directory.
@@ -2550,7 +2907,10 @@ pub fn rm(
     m: &EnvManifest,
     force: bool,
 ) -> Result<(), H5iError> {
-    let live = matches!(m.status.as_str(), ST_CREATED | ST_RUNNING | ST_IDLE | ST_PROPOSED);
+    let live = matches!(
+        m.status.as_str(),
+        ST_CREATED | ST_RUNNING | ST_IDLE | ST_PROPOSED
+    );
     if live && !force {
         return Err(H5iError::Metadata(format!(
             "{} is still live (status: {}) — abort it first (`h5i env abort {}`) or pass \
@@ -2595,7 +2955,11 @@ pub fn rm(
         std::fs::remove_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
     }
     let agent_dir = h5i_root.join(ENV_DIR).join(&m.agent);
-    if agent_dir.read_dir().map(|mut d| d.next().is_none()).unwrap_or(false) {
+    if agent_dir
+        .read_dir()
+        .map(|mut d| d.next().is_none())
+        .unwrap_or(false)
+    {
         let _ = std::fs::remove_dir(&agent_dir);
     }
     Ok(())
@@ -2699,10 +3063,16 @@ mod tests {
         // path-escape: `env_dir(.., agent, slug)` joins them unchecked.
         let mut m = canonical_manifest("claude", "fix");
         m.agent = "../../../../tmp/evil".into();
-        assert!(validate_imported_manifest(&m).is_err(), "traversal agent rejected");
+        assert!(
+            validate_imported_manifest(&m).is_err(),
+            "traversal agent rejected"
+        );
         let mut m = canonical_manifest("claude", "fix");
         m.slug = "../escape".into();
-        assert!(validate_imported_manifest(&m).is_err(), "traversal slug rejected");
+        assert!(
+            validate_imported_manifest(&m).is_err(),
+            "traversal slug rejected"
+        );
 
         // Identity fields must match the shape derived from agent/slug even when
         // agent/slug are individually valid — defeats a manifest whose
@@ -2714,7 +3084,10 @@ mod tests {
         ] {
             let mut m = canonical_manifest("claude", "fix");
             tamper(&mut m);
-            assert!(validate_imported_manifest(&m).is_err(), "identity mismatch rejected");
+            assert!(
+                validate_imported_manifest(&m).is_err(),
+                "identity mismatch rejected"
+            );
         }
     }
 
@@ -2729,17 +3102,30 @@ mod tests {
         let m = canonical_manifest("claude", "fix");
 
         let paths = box_git_plumbing(&repo, &m).unwrap();
-        let ro: Vec<String> =
-            paths.iter().filter(|p| !p.rw).map(|p| p.host.display().to_string()).collect();
-        let rw: Vec<String> =
-            paths.iter().filter(|p| p.rw).map(|p| p.host.display().to_string()).collect();
+        let ro: Vec<String> = paths
+            .iter()
+            .filter(|p| !p.rw)
+            .map(|p| p.host.display().to_string())
+            .collect();
+        let rw: Vec<String> = paths
+            .iter()
+            .filter(|p| p.rw)
+            .map(|p| p.host.display().to_string())
+            .collect();
         // List order doubles as container mount order: the ro parent `refs`
         // must precede the rw entries bind-nested under it.
-        let refs_pos =
-            paths.iter().position(|p| !p.rw && p.host.ends_with("refs")).unwrap();
-        let nested_pos =
-            paths.iter().position(|p| p.host.ends_with("refs/h5i/context")).unwrap();
-        assert!(refs_pos < nested_pos, "parent `refs` must come before nested rw children");
+        let refs_pos = paths
+            .iter()
+            .position(|p| !p.rw && p.host.ends_with("refs"))
+            .unwrap();
+        let nested_pos = paths
+            .iter()
+            .position(|p| p.host.ends_with("refs/h5i/context"))
+            .unwrap();
+        assert!(
+            refs_pos < nested_pos,
+            "parent `refs` must come before nested rw children"
+        );
 
         let has = |v: &[String], suffix: &str| v.iter().any(|p| p.ends_with(suffix));
         // Reads: repo metadata files/dirs, never `.git` itself.
@@ -2776,7 +3162,10 @@ mod tests {
         // loose-ref dir.
         std::fs::remove_dir_all(git_dir.join("refs/heads/h5i")).unwrap();
         box_git_plumbing(&repo, &m).unwrap();
-        assert!(git_dir.join("refs/heads/h5i/env/claude").is_dir(), "pruned ref dir recreated");
+        assert!(
+            git_dir.join("refs/heads/h5i/env/claude").is_dir(),
+            "pruned ref dir recreated"
+        );
     }
 
     // The same plumbing is applied per backend: Landlock grants (+ global
@@ -2800,7 +3189,10 @@ mod tests {
         grant_box_git(&repo, &m, &work, &mut pol).unwrap();
         assert!(pol.profile.fs_write.iter().any(|p| p.ends_with("/objects")));
         assert!(pol.profile.fs_read.iter().any(|p| p == "~/.gitconfig"));
-        assert!(pol.box_git.is_empty(), "kernel tiers use fs grants, not mounts");
+        assert!(
+            pol.box_git.is_empty(),
+            "kernel tiers use fs grants, not mounts"
+        );
 
         // container: mounts on box_git (work included, all existing), fs lists untouched.
         let mut pol = ResolvedPolicy::new(
@@ -2816,9 +3208,14 @@ mod tests {
             "container must dual-mount $WORK at its host path: {:?}",
             pol.box_git
         );
-        assert!(pol.box_git.iter().all(|b| b.host.exists()), "podman needs existing sources");
         assert!(
-            !pol.box_git.iter().any(|b| b.host.to_string_lossy().contains('~')),
+            pol.box_git.iter().all(|b| b.host.exists()),
+            "podman needs existing sources"
+        );
+        assert!(
+            !pol.box_git
+                .iter()
+                .any(|b| b.host.to_string_lossy().contains('~')),
             "no tilde paths in mounts (host HOME is not the container's)"
         );
         assert_eq!(pol.profile.fs_read, read_before);
@@ -2853,11 +3250,17 @@ mod tests {
 
         let busy = |r: Result<String, H5iError>, who: &str| {
             let e = r.expect_err(who);
-            assert!(format!("{e}").contains("busy"), "{who}: expected busy, got: {e}");
+            assert!(
+                format!("{e}").contains("busy"),
+                "{who}: expected busy, got: {e}"
+            );
         };
         busy(propose(&repo, h5i_root, &mut m), "propose");
         busy(rebase(&repo, h5i_root, &mut m), "rebase");
-        busy(apply(&repo, h5i_root, h5i_root, &mut m, false).map(|_| String::new()), "apply");
+        busy(
+            apply(&repo, h5i_root, h5i_root, &mut m, false).map(|_| String::new()),
+            "apply",
+        );
         let e = abort(&repo, h5i_root, &mut m).expect_err("abort");
         assert!(format!("{e}").contains("busy"), "abort: {e}");
     }
@@ -2877,7 +3280,11 @@ mod tests {
         assert_eq!(back.env_id, e.env_id);
         assert_eq!(back.capture, e.capture);
         // Optional fields are omitted when absent (the log stays lean).
-        let bare = EnvEvent { detail: None, capture: None, ..e };
+        let bare = EnvEvent {
+            detail: None,
+            capture: None,
+            ..e
+        };
         let line = serde_json::to_string(&bare).unwrap();
         assert!(!line.contains("detail"));
         assert!(!line.contains("capture"));
@@ -2989,7 +3396,10 @@ mod tests {
         let err = find(h5i_root, "fix").unwrap_err();
         assert!(err.to_string().contains("ambiguous"), "{err}");
         assert_eq!(find(h5i_root, "codex/fix").unwrap().id, "env/codex/fix");
-        assert_eq!(find(h5i_root, "env/claude/fix").unwrap().id, "env/claude/fix");
+        assert_eq!(
+            find(h5i_root, "env/claude/fix").unwrap().id,
+            "env/claude/fix"
+        );
         // Unknown name errors.
         assert!(find(h5i_root, "ghost").is_err());
     }

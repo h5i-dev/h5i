@@ -144,7 +144,10 @@ impl Repo {
     /// `<slug>`. Manifests are appended chronologically, so the last matching
     /// line is the newest capture — important when an env has several runs.
     fn capture_manifest(&self, slug: &str) -> serde_json::Value {
-        let blob = out_str(&git(&self.dir, &["show", "refs/h5i/objects:manifests.jsonl"]));
+        let blob = out_str(&git(
+            &self.dir,
+            &["show", "refs/h5i/objects:manifests.jsonl"],
+        ));
         let id = format!("env/tester/{slug}");
         let line = blob
             .lines()
@@ -166,7 +169,11 @@ impl Repo {
     }
 }
 
-fn synthetic_env_manifest(repo: &git2::Repository, agent: &str, slug: &str) -> h5i_core::env::EnvManifest {
+fn synthetic_env_manifest(
+    repo: &git2::Repository,
+    agent: &str,
+    slug: &str,
+) -> h5i_core::env::EnvManifest {
     let head = repo.head().unwrap().peel_to_commit().unwrap();
     let tree = head.tree().unwrap();
     h5i_core::env::EnvManifest {
@@ -223,12 +230,22 @@ fn create_builds_worktree_branch_context_policy_and_event() {
     assert!(work.join("README.md").is_file(), "worktree checked out");
     assert!(work.join(".git").is_file(), "worktree gitlink present");
     let st_after = out_str(&git(&r.dir, &["status", "--porcelain"]));
-    assert_eq!(st_after, st_before, "env create must not touch the main working tree");
+    assert_eq!(
+        st_after, st_before,
+        "env create must not touch the main working tree"
+    );
 
     // Code branch exists and points at the pinned base.
-    let branch = out_str(&git(&r.dir, &["rev-parse", "refs/heads/h5i/env/tester/fix-auth"]));
+    let branch = out_str(&git(
+        &r.dir,
+        &["rev-parse", "refs/heads/h5i/env/tester/fix-auth"],
+    ));
     let head = out_str(&git(&r.dir, &["rev-parse", "HEAD"]));
-    assert_eq!(branch.trim(), head.trim(), "env branch starts at the frozen base");
+    assert_eq!(
+        branch.trim(),
+        head.trim(),
+        "env branch starts at the frozen base"
+    );
 
     // Manifest pins base/branch/context/policy.
     let m = r.manifest("fix-auth");
@@ -244,9 +261,11 @@ fn create_builds_worktree_branch_context_policy_and_event() {
     assert!(r.env_dir("fix-auth").join("policy.resolved.toml").is_file());
 
     // Reasoning branch forked under refs/h5i/context/.
-    run_ok(Command::new("git")
-        .args(["rev-parse", "refs/h5i/context/env/tester/fix-auth"])
-        .current_dir(&r.dir));
+    run_ok(
+        Command::new("git")
+            .args(["rev-parse", "refs/h5i/context/env/tester/fix-auth"])
+            .current_dir(&r.dir),
+    );
 
     // Event log: refs/h5i/env carries the created event.
     let log = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:events.jsonl"]));
@@ -276,7 +295,9 @@ fn create_refuses_duplicates_and_bad_names() {
 #[test]
 fn create_pins_an_explicit_base_revision() {
     let r = Repo::new();
-    let first = out_str(&git(&r.dir, &["rev-parse", "HEAD"])).trim().to_string();
+    let first = out_str(&git(&r.dir, &["rev-parse", "HEAD"]))
+        .trim()
+        .to_string();
     std::fs::write(r.dir.join("later.txt"), "later\n").unwrap();
     git(&r.dir, &["add", "later.txt"]);
     git(&r.dir, &["commit", "-m", "later"]);
@@ -294,7 +315,15 @@ fn create_pins_an_explicit_base_revision() {
 fn run_captures_evidence_with_env_id_and_policy_digest() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "evidence"]);
-    r.h5i_ok(&["env", "run", "evidence", "--", "sh", "-c", "echo out-line; echo err-line >&2"]);
+    r.h5i_ok(&[
+        "env",
+        "run",
+        "evidence",
+        "--",
+        "sh",
+        "-c",
+        "echo out-line; echo err-line >&2",
+    ]);
 
     // The capture manifest in refs/h5i/objects carries the env tags.
     let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/objects:manifests.jsonl"]));
@@ -326,7 +355,15 @@ fn run_captures_evidence_with_env_id_and_policy_digest() {
 fn run_passes_the_exit_code_through() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "fails"]);
-    let out = r.h5i(&["env", "run", "fails", "--", "sh", "-c", "echo boom >&2; exit 7"]);
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "fails",
+        "--",
+        "sh",
+        "-c",
+        "echo boom >&2; exit 7",
+    ]);
     assert_eq!(out.status.code(), Some(7), "exit code must pass through");
     // The failed run is still evidence.
     let m = r.manifest("fails");
@@ -337,9 +374,20 @@ fn run_passes_the_exit_code_through() {
 fn run_executes_inside_the_worktree() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "whereami"]);
-    r.h5i_ok(&["env", "run", "whereami", "--", "sh", "-c", "echo probe > made-here.txt"]);
+    r.h5i_ok(&[
+        "env",
+        "run",
+        "whereami",
+        "--",
+        "sh",
+        "-c",
+        "echo probe > made-here.txt",
+    ]);
     assert!(r.work("whereami").join("made-here.txt").is_file());
-    assert!(!r.dir.join("made-here.txt").exists(), "parent tree untouched");
+    assert!(
+        !r.dir.join("made-here.txt").exists(),
+        "parent tree untouched"
+    );
 }
 
 // ─── 3. propose / apply: the only road into the parent branch ───────────────
@@ -348,8 +396,15 @@ fn run_executes_inside_the_worktree() {
 fn full_lifecycle_create_run_propose_apply() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "feature"]);
-    r.h5i_ok(&["env", "run", "feature", "--", "sh", "-c",
-        "printf 'def hello():\\n    return 2\\n' > lib.py && echo done"]);
+    r.h5i_ok(&[
+        "env",
+        "run",
+        "feature",
+        "--",
+        "sh",
+        "-c",
+        "printf 'def hello():\\n    return 2\\n' > lib.py && echo done",
+    ]);
 
     // Diff against the frozen base sees the change.
     let diff = out_str(&r.h5i_ok(&["env", "diff", "feature"]));
@@ -372,7 +427,10 @@ fn full_lifecycle_create_run_propose_apply() {
     let out = out_str(&r.h5i_ok(&["env", "apply", "feature"]));
     assert!(out.contains("applied onto main"), "{out}");
     let lib = std::fs::read_to_string(r.dir.join("lib.py")).unwrap();
-    assert!(lib.contains("return 2"), "apply must update the parent working tree");
+    assert!(
+        lib.contains("return 2"),
+        "apply must update the parent working tree"
+    );
     assert_eq!(r.manifest("feature")["status"], "applied");
 
     // Event log carries the whole lifecycle.
@@ -457,9 +515,15 @@ fn mediated_commit_fails_closed_on_nested_git_repo() {
     std::fs::write(nested.join("f.txt"), "x\n").unwrap();
 
     let out = r.h5i(&["env", "propose", "smuggle"]);
-    assert!(!out.status.success(), "nested .git must fail the mediated commit");
+    assert!(
+        !out.status.success(),
+        "nested .git must fail the mediated commit"
+    );
     let text = out_str(&out);
-    assert!(text.contains("fail-closed") || text.contains(".git"), "{text}");
+    assert!(
+        text.contains("fail-closed") || text.contains(".git"),
+        "{text}"
+    );
     // And the env did NOT advance to proposed.
     assert_eq!(r.manifest("smuggle")["status"], "created");
 
@@ -492,7 +556,15 @@ fn secret_grant_is_injected_then_redacted_and_audited() {
     // Run echoing the secret. The broker must inject MY_TOKEN from the host
     // source, and h5i must scrub the value out of the captured evidence.
     let out = Command::new(H5I)
-        .args(["env", "run", "needs-secret", "--", "sh", "-c", "echo TOKEN=[$MY_TOKEN]"])
+        .args([
+            "env",
+            "run",
+            "needs-secret",
+            "--",
+            "sh",
+            "-c",
+            "echo TOKEN=[$MY_TOKEN]",
+        ])
         .env("H5I_AGENT", "tester")
         .env("H5I_SECRET_MY_TOKEN", "supersecret-xyz")
         .current_dir(&r.dir)
@@ -513,13 +585,23 @@ fn secret_grant_is_injected_then_redacted_and_audited() {
         "expected the injected secret to be redacted (proves it was injected):\n{summary}"
     );
     // And the raw blob is scrubbed too, not just the summary.
-    let raw = String::from_utf8_lossy(&r.capture_raw(cap["raw_oid"].as_str().unwrap())).into_owned();
-    assert!(!raw.contains("supersecret-xyz"), "secret leaked into the raw blob:\n{raw}");
+    let raw =
+        String::from_utf8_lossy(&r.capture_raw(cap["raw_oid"].as_str().unwrap())).into_owned();
+    assert!(
+        !raw.contains("supersecret-xyz"),
+        "secret leaked into the raw blob:\n{raw}"
+    );
 
     // A `secret` event records the grant id + fingerprint, never the value.
     let log = out_str(&r.h5i_ok(&["env", "log", "needs-secret"]));
-    assert!(log.contains("secret") && log.contains("grant=MY_TOKEN"), "no secret audit event:\n{log}");
-    assert!(!log.contains("supersecret-xyz"), "secret value leaked into the event log:\n{log}");
+    assert!(
+        log.contains("secret") && log.contains("grant=MY_TOKEN"),
+        "no secret audit event:\n{log}"
+    );
+    assert!(
+        !log.contains("supersecret-xyz"),
+        "secret value leaked into the event log:\n{log}"
+    );
 }
 
 #[test]
@@ -538,7 +620,15 @@ fn secret_file_injection_writes_a_file_and_redacts() {
 
     // The broker sets DEPLOY_KEY_FILE → a path; the command reads it.
     let out = Command::new(H5I)
-        .args(["env", "run", "filesec", "--", "sh", "-c", "echo KEY=[$(cat $DEPLOY_KEY_FILE)]"])
+        .args([
+            "env",
+            "run",
+            "filesec",
+            "--",
+            "sh",
+            "-c",
+            "echo KEY=[$(cat $DEPLOY_KEY_FILE)]",
+        ])
         .env("H5I_AGENT", "tester")
         .env("H5I_SECRET_DEPLOY_KEY", "topsecret-deploy")
         .current_dir(&r.dir)
@@ -550,12 +640,21 @@ fn secret_file_injection_writes_a_file_and_redacts() {
     // delivered via the file and then scrubbed).
     let cap = r.capture_manifest("filesec");
     let summary = cap["summary"].as_str().unwrap_or("");
-    assert!(!summary.contains("topsecret-deploy"), "secret leaked: {summary}");
-    assert!(summary.contains("[redacted secret]"), "expected redaction marker: {summary}");
+    assert!(
+        !summary.contains("topsecret-deploy"),
+        "secret leaked: {summary}"
+    );
+    assert!(
+        summary.contains("[redacted secret]"),
+        "expected redaction marker: {summary}"
+    );
 
     // The audit event records the grant with inject=file, never the value.
     let log = out_str(&r.h5i_ok(&["env", "log", "filesec"]));
-    assert!(log.contains("grant=DEPLOY_KEY") && log.contains("inject=file"), "{log}");
+    assert!(
+        log.contains("grant=DEPLOY_KEY") && log.contains("inject=file"),
+        "{log}"
+    );
     assert!(!log.contains("topsecret-deploy"));
 }
 
@@ -574,7 +673,10 @@ fn secret_grant_missing_source_fails_closed() {
 
     // No host source for ABSENT_TOKEN → the run must refuse (fail-closed).
     let out = r.h5i(&["env", "run", "no-source", "--", "sh", "-c", "echo hi"]);
-    assert!(!out.status.success(), "run must fail closed when a grant can't be resolved");
+    assert!(
+        !out.status.success(),
+        "run must fail closed when a grant can't be resolved"
+    );
     assert!(out_str(&out).contains("fail-closed") || out_str(&out).contains("not set"));
     // The env did not get stuck in 'running'.
     assert_ne!(r.manifest("no-source")["status"], "running");
@@ -596,7 +698,8 @@ fn supervised_claim_refuses_when_stack_incomplete() {
     } else {
         let text = out_str(&out);
         assert!(
-            text.contains("supervised") && (text.contains("refus") || text.contains("cannot be satisfied")),
+            text.contains("supervised")
+                && (text.contains("refus") || text.contains("cannot be satisfied")),
             "supervised must fail closed with an explanation, got:\n{text}"
         );
     }
@@ -674,7 +777,9 @@ fn supervised_enforces_runtime_confinement() {
         eprintln!("skipping: python3 unavailable");
         return;
     }
-    let Some(r) = supervised_env("confine", "") else { return };
+    let Some(r) = supervised_env("confine", "") else {
+        return;
+    };
 
     // Run 1 (python): the socket gate + airtight network, in one process.
     let net_script = "import socket,errno\n\
@@ -693,19 +798,43 @@ fn supervised_enforces_runtime_confinement() {
         except OSError: print('NOCONNECT')\n";
     let net = supervised_run_raw(&r, "confine", &["python3", "-c", net_script]).expect("run 1");
     // Default-deny socket gate: only boring inet is allowed.
-    assert!(net.contains("RAW DENIED EPERM"), "raw socket denied:\n{net}");
-    assert!(net.contains("PACKET DENIED EPERM"), "packet socket denied:\n{net}");
-    assert!(net.contains("UNIX DENIED EPERM"), "ungranted AF_UNIX denied:\n{net}");
-    assert!(net.contains("INET ALLOWED"), "ordinary inet socket allowed:\n{net}");
+    assert!(
+        net.contains("RAW DENIED EPERM"),
+        "raw socket denied:\n{net}"
+    );
+    assert!(
+        net.contains("PACKET DENIED EPERM"),
+        "packet socket denied:\n{net}"
+    );
+    assert!(
+        net.contains("UNIX DENIED EPERM"),
+        "ungranted AF_UNIX denied:\n{net}"
+    );
+    assert!(
+        net.contains("INET ALLOWED"),
+        "ordinary inet socket allowed:\n{net}"
+    );
     // Airtight netns under net.mode=deny: no route to any external host.
-    assert!(net.contains("NOCONNECT") && !net.contains("CONNECTED"), "netns must have no egress:\n{net}");
+    assert!(
+        net.contains("NOCONNECT") && !net.contains("CONNECTED"),
+        "netns must have no egress:\n{net}"
+    );
 
     // The socket-gate verdicts are recorded in the run's capture EgressSummary.
     let cap = r.capture_manifest("confine");
     let eg = &cap["egress"];
-    assert!(eg.is_object(), "supervised capture must carry an egress summary: {cap}");
-    assert!(eg["denied"].as_u64().unwrap_or(0) >= 1, "denials counted: {eg}");
-    assert!(eg["allowed"].as_u64().unwrap_or(0) >= 1, "allows counted: {eg}");
+    assert!(
+        eg.is_object(),
+        "supervised capture must carry an egress summary: {cap}"
+    );
+    assert!(
+        eg["denied"].as_u64().unwrap_or(0) >= 1,
+        "denials counted: {eg}"
+    );
+    assert!(
+        eg["allowed"].as_u64().unwrap_or(0) >= 1,
+        "allows counted: {eg}"
+    );
 
     // Run 2 (sh): Landlock FS allowlist + seccomp deny-list (unshare).
     let fs_script = "echo in > inside.txt && echo WORK_OK; \
@@ -713,7 +842,10 @@ fn supervised_enforces_runtime_confinement() {
         unshare --mount /bin/true 2>&1; echo unshare_rc=$?";
     let fs = supervised_run_raw(&r, "confine", &["sh", "-c", fs_script]).expect("run 2");
     assert!(fs.contains("WORK_OK"), "writing $WORK succeeds:\n{fs}");
-    assert!(fs.contains("ETC_DENIED") && !fs.contains("ETC_WROTE"), "Landlock denies writes outside $WORK:\n{fs}");
+    assert!(
+        fs.contains("ETC_DENIED") && !fs.contains("ETC_WROTE"),
+        "Landlock denies writes outside $WORK:\n{fs}"
+    );
     assert!(
         fs.contains("Operation not permitted") || fs.contains("unshare_rc=1"),
         "seccomp deny-list blocks unshare:\n{fs}"
@@ -737,11 +869,18 @@ fn supervised_memory_limit_is_enforced() {
         for i in range(0,len(x),4096): x[i]=1\n\
         print('ALLOCATED')\n";
     let raw = supervised_run_raw(&r, "membox", &["python3", "-c", script]).expect("run");
-    assert!(!raw.contains("ALLOCATED"), "a 400MiB alloc under a 64MiB cap must not complete:\n{raw}");
+    assert!(
+        !raw.contains("ALLOCATED"),
+        "a 400MiB alloc under a 64MiB cap must not complete:\n{raw}"
+    );
 }
 
 fn have_bin(name: &str) -> bool {
-    std::process::Command::new(name).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    std::process::Command::new(name)
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Supervised increment 2: a `net.egress` allowlist confines the netns to
@@ -763,7 +902,9 @@ fn supervised_egress_allowlist_confines_to_pinned_hosts() {
         eprintln!("skipping: python3/slirp4netns unavailable");
         return;
     }
-    let Some(r) = supervised_env("egbox", "net.egress = [\"example.com\"]\n") else { return };
+    let Some(r) = supervised_env("egbox", "net.egress = [\"example.com\"]\n") else {
+        return;
+    };
 
     // example.com is allowlisted → pinned in /etc/hosts → connects.
     // cloudflare is NOT allowlisted → no /etc/hosts entry, no DNS → fails closed.
@@ -776,7 +917,10 @@ fn supervised_egress_allowlist_confines_to_pinned_hosts() {
         t('example.com')\n\
         t('www.cloudflare.com')\n";
     let raw = supervised_run_raw(&r, "egbox", &["python3", "-c", script]).expect("egress run");
-    assert!(raw.contains("example.com CONNECTED"), "allowlisted host must connect:\n{raw}");
+    assert!(
+        raw.contains("example.com CONNECTED"),
+        "allowlisted host must connect:\n{raw}"
+    );
     assert!(
         raw.contains("www.cloudflare.com BLOCKED") && !raw.contains("www.cloudflare.com CONNECTED"),
         "a non-allowlisted host must be blocked (fail-closed):\n{raw}"
@@ -817,10 +961,15 @@ fn abort_preserves_forensics_and_gc_reclaims_workspace() {
     let out = out_str(&r.h5i_ok(&["env", "gc"]));
     assert!(out.contains("doomed"), "{out}");
     assert!(!r.work("doomed").exists(), "workspace reclaimed");
-    assert!(r.env_dir("doomed").join("manifest.json").is_file(), "manifest retained");
-    run_ok(Command::new("git")
-        .args(["rev-parse", "refs/heads/h5i/env/tester/doomed"])
-        .current_dir(&r.dir));
+    assert!(
+        r.env_dir("doomed").join("manifest.json").is_file(),
+        "manifest retained"
+    );
+    run_ok(
+        Command::new("git")
+            .args(["rev-parse", "refs/heads/h5i/env/tester/doomed"])
+            .current_dir(&r.dir),
+    );
     // A live env is NOT gc'd.
     r.h5i_ok(&["env", "create", "alive"]);
     r.h5i_ok(&["env", "gc"]);
@@ -841,8 +990,14 @@ fn rm_erases_workspace_branches_and_manifest() {
     r.h5i_ok(&["env", "run", "scratch", "--", "sh", "-c", "echo evidence"]);
     // A live env refuses removal without --force.
     let out = r.h5i(&["env", "rm", "scratch"]);
-    assert!(!out.status.success(), "live env must refuse rm without --force");
-    assert!(r.env_dir("scratch").join("manifest.json").is_file(), "manifest still present");
+    assert!(
+        !out.status.success(),
+        "live env must refuse rm without --force"
+    );
+    assert!(
+        r.env_dir("scratch").join("manifest.json").is_file(),
+        "manifest still present"
+    );
 
     // --force removes everything: workspace, both branches, on-disk dir.
     r.h5i_ok(&["env", "rm", "scratch", "--force"]);
@@ -857,14 +1012,23 @@ fn rm_erases_workspace_branches_and_manifest() {
         assert!(!rp.status.success(), "{refname} should be deleted");
     }
     // Gone from the list, and a second rm reports no such env.
-    assert!(!out_str(&r.h5i_ok(&["env", "list"])).contains("scratch"), "not listed");
-    assert!(!r.h5i(&["env", "rm", "scratch", "--force"]).status.success(), "already gone");
+    assert!(
+        !out_str(&r.h5i_ok(&["env", "list"])).contains("scratch"),
+        "not listed"
+    );
+    assert!(
+        !r.h5i(&["env", "rm", "scratch", "--force"]).status.success(),
+        "already gone"
+    );
 
     // An applied/aborted env removes without --force.
     r.h5i_ok(&["env", "create", "done"]);
     r.h5i_ok(&["env", "abort", "done"]);
     r.h5i_ok(&["env", "rm", "done"]);
-    assert!(!r.env_dir("done").exists(), "aborted env removed without --force");
+    assert!(
+        !r.env_dir("done").exists(),
+        "aborted env removed without --force"
+    );
 }
 
 #[test]
@@ -878,11 +1042,18 @@ fn recall_objects_filters_by_env() {
     // Bare slug selects exactly that env's capture (and not the other's).
     let a = out_str(&r.h5i_ok(&["recall", "objects", "--env", "alpha"]));
     assert!(a.contains("alpha-out"), "alpha capture shown:\n{a}");
-    assert!(!a.contains("beta-out"), "beta capture must be excluded:\n{a}");
+    assert!(
+        !a.contains("beta-out"),
+        "beta capture must be excluded:\n{a}"
+    );
 
     // The <agent>/<slug> and full-id forms resolve the same env.
-    assert!(out_str(&r.h5i_ok(&["recall", "objects", "--env", "tester/beta"])).contains("beta-out"));
-    assert!(out_str(&r.h5i_ok(&["recall", "objects", "--env", "env/tester/beta"])).contains("beta-out"));
+    assert!(
+        out_str(&r.h5i_ok(&["recall", "objects", "--env", "tester/beta"])).contains("beta-out")
+    );
+    assert!(
+        out_str(&r.h5i_ok(&["recall", "objects", "--env", "env/tester/beta"])).contains("beta-out")
+    );
 
     // An unknown env matches nothing (filter message, not the empty-store one).
     let none = out_str(&r.h5i_ok(&["recall", "objects", "--env", "ghost"]));
@@ -891,13 +1062,18 @@ fn recall_objects_filters_by_env() {
     // search --env composes with the query and is env-scoped.
     let s = out_str(&r.h5i_ok(&["recall", "search", "alpha-out", "--env", "alpha"]));
     assert!(s.contains("alpha-out"), "{s}");
-    assert!(out_str(&r.h5i_ok(&["recall", "search", "alpha-out", "--env", "beta"]))
-        .contains("No captured findings"), "alpha-out must not match in beta");
+    assert!(
+        out_str(&r.h5i_ok(&["recall", "search", "alpha-out", "--env", "beta"]))
+            .contains("No captured findings"),
+        "alpha-out must not match in beta"
+    );
 
     // Captures survive their env's removal and stay queryable by env id.
     r.h5i_ok(&["env", "rm", "alpha", "--force"]);
-    assert!(out_str(&r.h5i_ok(&["recall", "objects", "--env", "alpha"])).contains("alpha-out"),
-        "captures of a removed env remain searchable by env id");
+    assert!(
+        out_str(&r.h5i_ok(&["recall", "objects", "--env", "alpha"])).contains("alpha-out"),
+        "captures of a removed env remain searchable by env id"
+    );
 }
 
 #[test]
@@ -907,13 +1083,19 @@ fn env_context_shows_the_reasoning_branch() {
 
     let out = out_str(&r.h5i_ok(&["env", "context", "scout"]));
     // Renders the env's reasoning branch (name under refs/h5i/context/).
-    assert!(out.contains("env/tester/scout"), "shows the env context branch:\n{out}");
+    assert!(
+        out.contains("env/tester/scout"),
+        "shows the env context branch:\n{out}"
+    );
 
     // --trace deepens to the full trace (depth 3) without erroring.
     r.h5i_ok(&["env", "context", "scout", "--trace"]);
 
     // An unknown env name is a clean error, not a panic.
-    assert!(!r.h5i(&["env", "context", "ghost"]).status.success(), "unknown env must fail");
+    assert!(
+        !r.h5i(&["env", "context", "ghost"]).status.success(),
+        "unknown env must fail"
+    );
 }
 
 // ─── 6. isolation claims fail closed ────────────────────────────────────────
@@ -928,7 +1110,11 @@ fn auto_isolation_picks_a_runnable_tier() {
     let _serial = supervised_guard();
     let r = Repo::new();
     let out = r.h5i(&["env", "create", "autobox", "--isolation", "auto"]);
-    assert!(out.status.success(), "auto create must succeed:\n{}", out_str(&out));
+    assert!(
+        out.status.success(),
+        "auto create must succeed:\n{}",
+        out_str(&out)
+    );
 
     let picked = r.manifest("autobox")["isolation_claim"]
         .as_str()
@@ -956,7 +1142,10 @@ fn unimplemented_backends_refuse_at_create() {
         let out = r.h5i(&["env", "create", "boxed", "--isolation", claim]);
         assert!(!out.status.success(), "claim {claim} must refuse");
         assert!(out_str(&out).contains("backend"), "{}", out_str(&out));
-        assert!(!r.env_dir("boxed").exists(), "no state left behind on refusal");
+        assert!(
+            !r.env_dir("boxed").exists(),
+            "no state left behind on refusal"
+        );
     }
     // An unknown claim name is rejected outright.
     let out = r.h5i(&["env", "create", "boxed", "--isolation", "docker"]);
@@ -973,7 +1162,10 @@ fn process_claim_is_all_or_nothing_per_host() {
     } else {
         // Fail closed: refuse with an explicit reason, never downgrade — whether
         // the bits are missing or the confinement simply can't exec on this host.
-        assert!(!out.status.success(), "must refuse when process tier is not runnable");
+        assert!(
+            !out.status.success(),
+            "must refuse when process tier is not runnable"
+        );
         let text = out_str(&out);
         assert!(
             text.contains("cannot be satisfied") || text.contains("not functional"),
@@ -991,20 +1183,35 @@ fn process_claim_is_all_or_nothing_per_host() {
 #[test]
 fn process_tier_confines_fs_and_network() {
     if !process_tier_runnable() {
-        eprintln!("SKIP process_tier_confines_fs_and_network: process tier not runnable on this host");
+        eprintln!(
+            "SKIP process_tier_confines_fs_and_network: process tier not runnable on this host"
+        );
         return;
     }
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "jail", "--isolation", "process"]);
 
     // Inside $WORK: writable.
-    r.h5i_ok(&["env", "run", "jail", "--", "sh", "-c", "echo ok > inside.txt"]);
+    r.h5i_ok(&[
+        "env",
+        "run",
+        "jail",
+        "--",
+        "sh",
+        "-c",
+        "echo ok > inside.txt",
+    ]);
     assert!(r.work("jail").join("inside.txt").is_file());
 
     // Outside $WORK (the parent repo!): must be blocked.
     let escape = r.dir.join("escaped.txt");
     let out = r.h5i(&[
-        "env", "run", "jail", "--", "sh", "-c",
+        "env",
+        "run",
+        "jail",
+        "--",
+        "sh",
+        "-c",
         &format!("echo pwned > {}", escape.display()),
     ]);
     assert!(!out.status.success(), "write outside $WORK must fail");
@@ -1015,23 +1222,47 @@ fn process_tier_confines_fs_and_network() {
     // see env::box_git_grants). A worktree that can't even `rev-parse HEAD`
     // bricks the boxed agent; the write-side jail is proven in
     // `box_git_grants_stay_fail_closed_outside_env_namespace`.
-    let out = r.h5i(&["env", "run", "jail", "--", "sh", "-c",
-        "git rev-parse HEAD >/dev/null 2>&1 && echo GIT-OK || echo GIT-BLOCKED"]);
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "jail",
+        "--",
+        "sh",
+        "-c",
+        "git rev-parse HEAD >/dev/null 2>&1 && echo GIT-OK || echo GIT-BLOCKED",
+    ]);
     let text = out_str(&out);
     assert!(text.contains("GIT-OK"), "in-box git must function: {text}");
 
     // Network: deny means even loopback TCP fails. Use a pure-shell probe.
-    let out = r.h5i(&["env", "run", "jail", "--", "sh", "-c",
-        "(exec 3<>/dev/tcp/127.0.0.1/22) 2>/dev/null && echo NET-OPEN || echo NET-CLOSED"]);
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "jail",
+        "--",
+        "sh",
+        "-c",
+        "(exec 3<>/dev/tcp/127.0.0.1/22) 2>/dev/null && echo NET-OPEN || echo NET-CLOSED",
+    ]);
     let text = out_str(&out);
     // bash-only /dev/tcp; dash prints an error and exits non-zero → also CLOSED-ish.
     assert!(!text.contains("NET-OPEN"), "network must be denied: {text}");
 
     // Dangerous syscalls are denied (unshare → EPERM).
-    let out = r.h5i(&["env", "run", "jail", "--", "sh", "-c",
-        "unshare -U true 2>/dev/null && echo UNSHARE-OK || echo UNSHARE-BLOCKED"]);
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "jail",
+        "--",
+        "sh",
+        "-c",
+        "unshare -U true 2>/dev/null && echo UNSHARE-OK || echo UNSHARE-BLOCKED",
+    ]);
     let text = out_str(&out);
-    assert!(!text.contains("UNSHARE-OK"), "unshare must be denied: {text}");
+    assert!(
+        !text.contains("UNSHARE-OK"),
+        "unshare must be denied: {text}"
+    );
 }
 
 /// In-box git: the env worktree must be a *functional* checkout under the
@@ -1043,7 +1274,9 @@ fn process_tier_confines_fs_and_network() {
 #[test]
 fn box_git_status_and_commit_work_inside_process_tier() {
     if !process_tier_runnable() {
-        eprintln!("SKIP box_git_status_and_commit_work_inside_process_tier: process tier not runnable");
+        eprintln!(
+            "SKIP box_git_status_and_commit_work_inside_process_tier: process tier not runnable"
+        );
         return;
     }
     let r = Repo::new();
@@ -1053,12 +1286,30 @@ fn box_git_status_and_commit_work_inside_process_tier() {
     r.h5i_ok(&["env", "run", "boxgit", "--", "git", "status", "--porcelain"]);
 
     // commit: objects rw + own branch ref dir rw (+ its reflog dir).
-    r.h5i_ok(&["env", "run", "boxgit", "--", "sh", "-c",
+    r.h5i_ok(&[
+        "env",
+        "run",
+        "boxgit",
+        "--",
+        "sh",
+        "-c",
         "echo boxed > boxed.txt && git add boxed.txt && \
-         git -c user.name=Box -c user.email=box@h5i.test commit -m in-box-commit"]);
+         git -c user.name=Box -c user.email=box@h5i.test commit -m in-box-commit",
+    ]);
 
-    let env_tip = out_str(&git(&r.dir, &["log", "-1", "--format=%s", "refs/heads/h5i/env/tester/boxgit"]));
-    assert!(env_tip.contains("in-box-commit"), "host must see the in-box commit: {env_tip}");
+    let env_tip = out_str(&git(
+        &r.dir,
+        &[
+            "log",
+            "-1",
+            "--format=%s",
+            "refs/heads/h5i/env/tester/boxgit",
+        ],
+    ));
+    assert!(
+        env_tip.contains("in-box-commit"),
+        "host must see the in-box commit: {env_tip}"
+    );
     let main_tip = out_str(&git(&r.dir, &["log", "-1", "--format=%s", "main"]));
     assert_eq!(main_tip.trim(), "seed", "main must be untouched");
 }
@@ -1071,7 +1322,9 @@ fn box_git_status_and_commit_work_inside_process_tier() {
 #[test]
 fn box_git_grants_stay_fail_closed_outside_env_namespace() {
     if !process_tier_runnable() {
-        eprintln!("SKIP box_git_grants_stay_fail_closed_outside_env_namespace: process tier not runnable");
+        eprintln!(
+            "SKIP box_git_grants_stay_fail_closed_outside_env_namespace: process tier not runnable"
+        );
         return;
     }
     let r = Repo::new();
@@ -1079,37 +1332,138 @@ fn box_git_grants_stay_fail_closed_outside_env_namespace() {
 
     // Diverge the env branch first — otherwise `update-ref main HEAD` would be
     // an undetectable no-op (same oid).
-    r.h5i_ok(&["env", "run", "boxjail", "--", "sh", "-c",
+    r.h5i_ok(&[
+        "env",
+        "run",
+        "boxjail",
+        "--",
+        "sh",
+        "-c",
         "echo x > f.txt && git add f.txt && \
-         git -c user.name=B -c user.email=b@h5i.test commit -m divergent"]);
+         git -c user.name=B -c user.email=b@h5i.test commit -m divergent",
+    ]);
 
     // Moving main is refused, and main does not move.
     let main_before = out_str(&git(&r.dir, &["rev-parse", "main"]));
-    let out = r.h5i(&["env", "run", "boxjail", "--", "git", "update-ref", "refs/heads/main", "HEAD"]);
-    assert!(!out.status.success(), "moving main from inside the box must fail: {}", out_str(&out));
-    assert_eq!(out_str(&git(&r.dir, &["rev-parse", "main"])), main_before, "main moved!");
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "boxjail",
+        "--",
+        "git",
+        "update-ref",
+        "refs/heads/main",
+        "HEAD",
+    ]);
+    assert!(
+        !out.status.success(),
+        "moving main from inside the box must fail: {}",
+        out_str(&out)
+    );
+    assert_eq!(
+        out_str(&git(&r.dir, &["rev-parse", "main"])),
+        main_before,
+        "main moved!"
+    );
 
     // Another agent's env namespace is refused too (grant is per-agent).
-    let out = r.h5i(&["env", "run", "boxjail", "--", "git", "update-ref",
-        "refs/heads/h5i/env/other/x", "HEAD"]);
-    assert!(!out.status.success(), "foreign env namespace must be unwritable: {}", out_str(&out));
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "boxjail",
+        "--",
+        "git",
+        "update-ref",
+        "refs/heads/h5i/env/other/x",
+        "HEAD",
+    ]);
+    assert!(
+        !out.status.success(),
+        "foreign env namespace must be unwritable: {}",
+        out_str(&out)
+    );
 
     // Repo config is read-only.
-    let out = r.h5i(&["env", "run", "boxjail", "--", "git", "config", "core.fsmonitor", "/bin/false"]);
-    assert!(!out.status.success(), "writing .git/config must fail: {}", out_str(&out));
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "boxjail",
+        "--",
+        "git",
+        "config",
+        "core.fsmonitor",
+        "/bin/false",
+    ]);
+    assert!(
+        !out.status.success(),
+        "writing .git/config must fail: {}",
+        out_str(&out)
+    );
     let cfg = std::fs::read_to_string(r.dir.join(".git/config")).unwrap();
-    assert!(!cfg.contains("fsmonitor"), "config must be unchanged: {cfg}");
+    assert!(
+        !cfg.contains("fsmonitor"),
+        "config must be unchanged: {cfg}"
+    );
 
     // The env's own manifest/policy dir (the sibling of $WORK) stays sealed.
-    let out = r.h5i(&["env", "run", "boxjail", "--", "sh", "-c", "echo x >> ../manifest.json"]);
-    assert!(!out.status.success(), "manifest must be unwritable from the box: {}", out_str(&out));
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "boxjail",
+        "--",
+        "sh",
+        "-c",
+        "echo x >> ../manifest.json",
+    ]);
+    assert!(
+        !out.status.success(),
+        "manifest must be unwritable from the box: {}",
+        out_str(&out)
+    );
 
     // Hooks are never granted: planting one from the box must fail.
     let hook = r.dir.join(".git/hooks/pre-commit");
-    let out = r.h5i(&["env", "run", "boxjail", "--", "sh", "-c",
-        &format!("printf '#!/bin/sh\\n' > {}", hook.display())]);
-    assert!(!out.status.success(), "hook planting must fail: {}", out_str(&out));
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "boxjail",
+        "--",
+        "sh",
+        "-c",
+        &format!("printf '#!/bin/sh\\n' > {}", hook.display()),
+    ]);
+    assert!(
+        !out.status.success(),
+        "hook planting must fail: {}",
+        out_str(&out)
+    );
     assert!(!hook.exists(), "no hook may appear: {}", hook.display());
+
+    // Agent hook config is reviewer-controlled: a boxed agent may not plant or
+    // rewrite repo-local Claude/Codex hook setup files.
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "boxjail",
+        "--",
+        "sh",
+        "-c",
+        "mkdir -p .claude .codex && echo pwn > .claude/settings.json && echo pwn > .codex/config.toml",
+    ]);
+    assert!(
+        !out.status.success(),
+        "hook config planting must fail closed: {}",
+        out_str(&out)
+    );
+    let work = r.dir.join(".git/.h5i/env/tester/boxjail/work");
+    assert!(
+        !work.join(".claude/settings.json").exists(),
+        "Claude hook config must be removed after tamper"
+    );
+    assert!(
+        !work.join(".codex/config.toml").exists(),
+        "Codex hook config must be removed after tamper"
+    );
 }
 
 /// In-box `h5i context` — the exact flow from the bug report: a boxed agent
@@ -1132,12 +1486,34 @@ fn box_h5i_context_flow_works_inside_process_tier() {
     // Before init: a clean "not initialized" (exit 0), not an EACCES disguise.
     r.h5i_ok(&["env", "run", "boxctx", "--", "./h5i", "context", "status"]);
 
-    r.h5i_ok(&["env", "run", "boxctx", "--", "./h5i", "context", "init", "--goal", "boxed goal"]);
-    r.h5i_ok(&["env", "run", "boxctx", "--", "./h5i", "context", "commit", "milestone from the box"]);
+    r.h5i_ok(&[
+        "env",
+        "run",
+        "boxctx",
+        "--",
+        "./h5i",
+        "context",
+        "init",
+        "--goal",
+        "boxed goal",
+    ]);
+    r.h5i_ok(&[
+        "env",
+        "run",
+        "boxctx",
+        "--",
+        "./h5i",
+        "context",
+        "commit",
+        "milestone from the box",
+    ]);
 
     // The reasoning is real git state, visible to the host.
     let refs = out_str(&git(&r.dir, &["show-ref"]));
-    assert!(refs.contains("refs/h5i/context/"), "context refs must exist: {refs}");
+    assert!(
+        refs.contains("refs/h5i/context/"),
+        "context refs must exist: {refs}"
+    );
 
     // And the box can read its own milestone back (via the run's capture).
     r.h5i_ok(&["env", "run", "boxctx", "--", "./h5i", "context", "status"]);
@@ -1169,10 +1545,18 @@ fn wall_clock_kill_reaps_descendant_processes() {
     // group-kill takes the grandchild with it, so the marker never appears.
     let t0 = std::time::Instant::now();
     let out = r.h5i(&[
-        "env", "run", "reap", "--", "sh", "-c",
+        "env",
+        "run",
+        "reap",
+        "--",
+        "sh",
+        "-c",
         "sh -c 'sleep 8; echo alive > survivor.txt' & echo started; sleep 60",
     ]);
-    assert!(!out.status.success(), "timed-out run should not report success");
+    assert!(
+        !out.status.success(),
+        "timed-out run should not report success"
+    );
 
     // Wait until we are safely past the grandchild's 8s write point, then the
     // marker must still be absent (it was group-killed at ~1s).
@@ -1202,8 +1586,20 @@ fn env_shell_runs_in_box_and_passes_exit_code() {
     r.h5i_ok(&["env", "create", "box"]);
 
     // A command after `--` runs (non-interactively) inside the box, in $WORK.
-    let out = r.h5i(&["env", "shell", "box", "--", "sh", "-c", "echo hi > from-shell.txt"]);
-    assert!(out.status.success(), "shell command should succeed:\n{}", out_str(&out));
+    let out = r.h5i(&[
+        "env",
+        "shell",
+        "box",
+        "--",
+        "sh",
+        "-c",
+        "echo hi > from-shell.txt",
+    ]);
+    assert!(
+        out.status.success(),
+        "shell command should succeed:\n{}",
+        out_str(&out)
+    );
     assert!(
         r.work("box").join("from-shell.txt").is_file(),
         "the shell session ran in $WORK"
@@ -1211,10 +1607,18 @@ fn env_shell_runs_in_box_and_passes_exit_code() {
 
     // The child's exit code passes through transparently (transparent wrapper).
     let bad = r.h5i(&["env", "shell", "box", "--", "sh", "-c", "exit 7"]);
-    assert_eq!(bad.status.code(), Some(7), "shell must pass the child exit code through");
+    assert_eq!(
+        bad.status.code(),
+        Some(7),
+        "shell must pass the child exit code through"
+    );
 
     // No capture is produced (interactive), but the env is back to idle.
-    assert_eq!(r.manifest("box")["status"], "idle", "env returns to idle after a shell");
+    assert_eq!(
+        r.manifest("box")["status"],
+        "idle",
+        "env returns to idle after a shell"
+    );
 }
 
 /// `isolation=process` with `net.mode=host` must STILL confine the filesystem
@@ -1223,7 +1627,9 @@ fn env_shell_runs_in_box_and_passes_exit_code() {
 #[test]
 fn process_tier_host_net_still_confines_fs() {
     if !process_tier_runnable() {
-        eprintln!("SKIP process_tier_host_net_still_confines_fs: process tier not runnable on this host");
+        eprintln!(
+            "SKIP process_tier_host_net_still_confines_fs: process tier not runnable on this host"
+        );
         return;
     }
     let r = Repo::new();
@@ -1236,16 +1642,32 @@ fn process_tier_host_net_still_confines_fs() {
     r.h5i_ok(&["env", "create", "hostnet"]);
 
     // Inside $WORK still writable …
-    r.h5i_ok(&["env", "run", "hostnet", "--", "sh", "-c", "echo ok > in.txt"]);
+    r.h5i_ok(&[
+        "env",
+        "run",
+        "hostnet",
+        "--",
+        "sh",
+        "-c",
+        "echo ok > in.txt",
+    ]);
     assert!(r.work("hostnet").join("in.txt").is_file());
     // … outside $WORK still blocked.
     let escape = r.dir.join("hostnet-escape.txt");
     let out = r.h5i(&[
-        "env", "run", "hostnet", "--", "sh", "-c",
+        "env",
+        "run",
+        "hostnet",
+        "--",
+        "sh",
+        "-c",
         &format!("echo x > {}", escape.display()),
     ]);
     assert!(!out.status.success());
-    assert!(!escape.exists(), "host-net env must still confine the filesystem");
+    assert!(
+        !escape.exists(),
+        "host-net env must still confine the filesystem"
+    );
 }
 
 /// Env-var allowlist: only `env.pass` variables reach the confined process.
@@ -1258,15 +1680,29 @@ fn process_tier_env_allowlist() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "envjail", "--isolation", "process"]);
     let out = Command::new(H5I)
-        .args(["env", "run", "envjail", "--", "sh", "-c", "echo SECRET=[$MY_SECRET] PATH_SET=${PATH:+yes}"])
+        .args([
+            "env",
+            "run",
+            "envjail",
+            "--",
+            "sh",
+            "-c",
+            "echo SECRET=[$MY_SECRET] PATH_SET=${PATH:+yes}",
+        ])
         .env("H5I_AGENT", "tester")
         .env("MY_SECRET", "hunter2")
         .current_dir(&r.dir)
         .output()
         .unwrap();
     let text = out_str(&out);
-    assert!(text.contains("SECRET=[]"), "secrets must not be inherited: {text}");
-    assert!(text.contains("PATH_SET=yes"), "allowlisted PATH must pass: {text}");
+    assert!(
+        text.contains("SECRET=[]"),
+        "secrets must not be inherited: {text}"
+    );
+    assert!(
+        text.contains("PATH_SET=yes"),
+        "allowlisted PATH must pass: {text}"
+    );
 }
 
 /// `resources.fsize` caps any single file the confined command writes — a
@@ -1288,14 +1724,25 @@ fn process_tier_fsize_caps_disk_bomb() {
 
     // Try to write 8 MiB into a single file; the 1 MiB RLIMIT_FSIZE kills it.
     let out = r.h5i(&[
-        "env", "run", "bomb", "--", "sh", "-c",
+        "env",
+        "run",
+        "bomb",
+        "--",
+        "sh",
+        "-c",
         "head -c 8388608 /dev/zero > big.bin",
     ]);
-    assert!(!out.status.success(), "writing past the fsize cap must fail");
+    assert!(
+        !out.status.success(),
+        "writing past the fsize cap must fail"
+    );
     let big = r.work("bomb").join("big.bin");
     if big.exists() {
         let sz = std::fs::metadata(&big).unwrap().len();
-        assert!(sz <= 2 * 1024 * 1024, "file should be capped near 1 MiB, got {sz} bytes");
+        assert!(
+            sz <= 2 * 1024 * 1024,
+            "file should be capped near 1 MiB, got {sz} bytes"
+        );
     }
 }
 
@@ -1343,7 +1790,12 @@ fn process_tier_pid_namespace_hides_host_processes_and_environ() {
     // Inside the box: the victim's PID does not exist in the new namespace, so its
     // /proc entry — and the secret — is unreachable.
     let out = r.h5i(&[
-        "env", "run", "pidjail", "--", "sh", "-c",
+        "env",
+        "run",
+        "pidjail",
+        "--",
+        "sh",
+        "-c",
         &format!("cat /proc/{vpid}/environ 2>&1 | tr '\\0' '\\n'; echo DONE"),
     ]);
     let leaked = out_str(&out);
@@ -1354,7 +1806,12 @@ fn process_tier_pid_namespace_hides_host_processes_and_environ() {
 
     // The box sees only its own namespace's handful of pids, not the host's many.
     let count_out = r.h5i(&[
-        "env", "run", "pidjail", "--", "sh", "-c",
+        "env",
+        "run",
+        "pidjail",
+        "--",
+        "sh",
+        "-c",
         "ls -1 /proc | grep -E '^[0-9]+$' | wc -l",
     ]);
     // h5i appends an evidence summary line, so pick the bare-integer line the
@@ -1489,17 +1946,37 @@ fn container_runs_with_workspace_mount_and_net_deny() {
     r.h5i_ok(&["env", "create", "box"]);
 
     // The command runs in the container, /work is the worktree (writable).
-    r.h5i_ok(&["env", "run", "box", "--", "sh", "-c", "echo from-container > made.txt"]);
+    r.h5i_ok(&[
+        "env",
+        "run",
+        "box",
+        "--",
+        "sh",
+        "-c",
+        "echo from-container > made.txt",
+    ]);
     let made = r.work("box").join("made.txt");
     assert!(made.is_file(), "container wrote into the mounted workspace");
-    assert_eq!(std::fs::read_to_string(&made).unwrap().trim(), "from-container");
+    assert_eq!(
+        std::fs::read_to_string(&made).unwrap().trim(),
+        "from-container"
+    );
 
     // net.mode=deny → no egress.
     let out = r.h5i(&[
-        "env", "run", "box", "--", "sh", "-c",
+        "env",
+        "run",
+        "box",
+        "--",
+        "sh",
+        "-c",
         "wget -T3 -q -O- http://example.com >/dev/null 2>&1 && echo REACHED || echo BLOCKED",
     ]);
-    assert!(out_str(&out).contains("BLOCKED"), "net deny must block egress: {}", out_str(&out));
+    assert!(
+        out_str(&out).contains("BLOCKED"),
+        "net deny must block egress: {}",
+        out_str(&out)
+    );
 
     // The capture records the container claim in the manifest.
     assert_eq!(r.manifest("box")["isolation_claim"], "container");
@@ -1531,35 +2008,73 @@ fn container_box_git_plumbing_mounted_at_host_paths() {
     // The whole pointer chain is resolvable from inside: worktree admin dir,
     // shared HEAD/config/objects, and $WORK dual-mounted at its host path
     // (the admin `gitdir` back-pointer names it).
-    let out = r.h5i(&["env", "run", "boxc", "--", "sh", "-c", &format!(
-        "test -f {a}/commondir && test -r {g}/HEAD && test -r {g}/config && \
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "boxc",
+        "--",
+        "sh",
+        "-c",
+        &format!(
+            "test -f {a}/commondir && test -r {g}/HEAD && test -r {g}/config && \
          test -d {g}/objects && test -f {w}/.git && echo PLUMB-OK || echo PLUMB-MISSING",
-        a = admin.display(),
-        g = g.display(),
-        w = r.work("boxc").display(),
-    )]);
-    assert!(out_str(&out).contains("PLUMB-OK"), "git plumbing must be mounted: {}", out_str(&out));
+            a = admin.display(),
+            g = g.display(),
+            w = r.work("boxc").display(),
+        ),
+    ]);
+    assert!(
+        out_str(&out).contains("PLUMB-OK"),
+        "git plumbing must be mounted: {}",
+        out_str(&out)
+    );
 
     // objects is writable (commits need it) …
-    let out = r.h5i(&["env", "run", "boxc", "--", "sh", "-c", &format!(
-        "touch {g}/objects/h5i-probe && rm {g}/objects/h5i-probe && echo OBJ-RW || echo OBJ-RO",
-        g = g.display(),
-    )]);
-    assert!(out_str(&out).contains("OBJ-RW"), "objects must be rw: {}", out_str(&out));
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "boxc",
+        "--",
+        "sh",
+        "-c",
+        &format!(
+            "touch {g}/objects/h5i-probe && rm {g}/objects/h5i-probe && echo OBJ-RW || echo OBJ-RO",
+            g = g.display(),
+        ),
+    ]);
+    assert!(
+        out_str(&out).contains("OBJ-RW"),
+        "objects must be rw: {}",
+        out_str(&out)
+    );
 
     // … while config is read-only and hooks unreachable (never mounted).
-    let out = r.h5i(&["env", "run", "boxc", "--", "sh", "-c", &format!(
-        "(echo x >> {g}/config) 2>/dev/null && echo CFG-RW || echo CFG-RO; \
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "boxc",
+        "--",
+        "sh",
+        "-c",
+        &format!(
+            "(echo x >> {g}/config) 2>/dev/null && echo CFG-RW || echo CFG-RO; \
          (touch {g}/hooks/pre-commit) 2>/dev/null && echo HOOK-PLANTED || echo HOOK-BLOCKED",
-        g = g.display(),
-    )]);
+            g = g.display(),
+        ),
+    ]);
     let text = out_str(&out);
-    assert!(text.contains("CFG-RO") && !text.contains("CFG-RW"), "config must be ro: {text}");
+    assert!(
+        text.contains("CFG-RO") && !text.contains("CFG-RW"),
+        "config must be ro: {text}"
+    );
     assert!(
         text.contains("HOOK-BLOCKED") && !text.contains("HOOK-PLANTED"),
         "hooks must stay unreachable: {text}"
     );
-    assert!(!g.join("hooks/pre-commit").exists(), "no hook may appear on the host");
+    assert!(
+        !g.join("hooks/pre-commit").exists(),
+        "no hook may appear on the host"
+    );
 }
 
 #[test]
@@ -1579,17 +2094,35 @@ fn container_egress_allowlist_permits_only_listed_hosts() {
 
     // Allowlisted host is reachable through the DNS-pinned proxy.
     let allowed = r.h5i(&[
-        "env", "run", "egr", "--", "sh", "-c",
+        "env",
+        "run",
+        "egr",
+        "--",
+        "sh",
+        "-c",
         "wget -T8 -q -O- http://example.com | grep -qi 'example domain' && echo OK || echo FAIL",
     ]);
-    assert!(out_str(&allowed).contains("OK"), "allowlisted host must be reachable: {}", out_str(&allowed));
+    assert!(
+        out_str(&allowed).contains("OK"),
+        "allowlisted host must be reachable: {}",
+        out_str(&allowed)
+    );
 
     // A non-allowlisted host is blocked (fail-closed at the proxy).
     let denied = r.h5i(&[
-        "env", "run", "egr", "--", "sh", "-c",
+        "env",
+        "run",
+        "egr",
+        "--",
+        "sh",
+        "-c",
         "wget -T8 -q -O- http://www.google.com >/dev/null 2>&1 && echo REACHED || echo BLOCKED",
     ]);
-    assert!(out_str(&denied).contains("BLOCKED"), "non-allowlisted host must be blocked: {}", out_str(&denied));
+    assert!(
+        out_str(&denied).contains("BLOCKED"),
+        "non-allowlisted host must be blocked: {}",
+        out_str(&denied)
+    );
 }
 
 // ─── 8. secret redaction in evidence (design §7) ────────────────────────────
@@ -1602,7 +2135,12 @@ fn run_redacts_secrets_from_evidence_blob_summary_and_command() {
     r.h5i_ok(&["env", "create", "leaky"]);
     // The secret appears both in the OUTPUT and in the command line itself.
     r.h5i_ok(&[
-        "env", "run", "leaky", "--", "sh", "-c",
+        "env",
+        "run",
+        "leaky",
+        "--",
+        "sh",
+        "-c",
         &format!("echo token={PLANTED_SECRET}"),
     ]);
 
@@ -1615,15 +2153,27 @@ fn run_redacts_secrets_from_evidence_blob_summary_and_command() {
     );
     // The secret must not survive ANYWHERE in the manifest line …
     let manifest_line = serde_json::to_string(&m).unwrap();
-    assert!(!manifest_line.contains(PLANTED_SECRET), "secret leaked into manifest: {manifest_line}");
+    assert!(
+        !manifest_line.contains(PLANTED_SECRET),
+        "secret leaked into manifest: {manifest_line}"
+    );
     // … including the command field (it was passed as an argument).
-    assert!(!m["cmd"].as_str().unwrap().contains(PLANTED_SECRET), "secret leaked into cmd");
+    assert!(
+        !m["cmd"].as_str().unwrap().contains(PLANTED_SECRET),
+        "secret leaked into cmd"
+    );
 
     // … and not in the content-addressed raw blob (which travels via push).
     let raw = r.capture_raw(m["raw_oid"].as_str().unwrap());
     let raw_str = String::from_utf8_lossy(&raw);
-    assert!(!raw_str.contains(PLANTED_SECRET), "secret leaked into raw blob: {raw_str}");
-    assert!(raw_str.contains("redacted"), "redaction marker expected in raw: {raw_str}");
+    assert!(
+        !raw_str.contains(PLANTED_SECRET),
+        "secret leaked into raw blob: {raw_str}"
+    );
+    assert!(
+        raw_str.contains("redacted"),
+        "redaction marker expected in raw: {raw_str}"
+    );
 }
 
 #[test]
@@ -1632,7 +2182,10 @@ fn inspect_renders_a_capture_and_refuses_foreign_ones() {
     r.h5i_ok(&["env", "create", "one"]);
     r.h5i_ok(&["env", "create", "two"]);
     r.h5i_ok(&["env", "run", "one", "--", "sh", "-c", "echo hello-from-one"]);
-    let cap = r.manifest("one")["captures"][0].as_str().unwrap().to_string();
+    let cap = r.manifest("one")["captures"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Inspect from the owning env: renders the capture.
     let out = out_str(&r.h5i_ok(&["env", "inspect", "one", "--capture", &cap]));
@@ -1643,7 +2196,11 @@ fn inspect_renders_a_capture_and_refuses_foreign_ones() {
     // is scoped to its environment.
     let out = r.h5i(&["env", "inspect", "two", "--capture", &cap]);
     assert!(!out.status.success(), "cross-env inspect must be refused");
-    assert!(out_str(&out).contains("not evidence for"), "{}", out_str(&out));
+    assert!(
+        out_str(&out).contains("not evidence for"),
+        "{}",
+        out_str(&out)
+    );
 }
 
 // ─── 9. concurrency: the run-lock serializes runs of one env ────────────────
@@ -1656,7 +2213,15 @@ fn concurrent_runs_of_one_env_are_serialized() {
 
     // Launch a slow run in the background; it holds the run-lock for ~2s.
     let mut slow = Command::new(H5I)
-        .args(["env", "run", "busy", "--", "sh", "-c", "sleep 2; echo slow-done"])
+        .args([
+            "env",
+            "run",
+            "busy",
+            "--",
+            "sh",
+            "-c",
+            "sleep 2; echo slow-done",
+        ])
         .env("H5I_AGENT", "tester")
         .current_dir(&r.dir)
         .stdout(Stdio::null())
@@ -1667,8 +2232,15 @@ fn concurrent_runs_of_one_env_are_serialized() {
     // Give it a moment to take the lock, then a second run must be refused.
     std::thread::sleep(std::time::Duration::from_millis(400));
     let contender = r.h5i(&["env", "run", "busy", "--", "sh", "-c", "echo fast"]);
-    assert!(!contender.status.success(), "second concurrent run must be refused");
-    assert!(out_str(&contender).contains("busy"), "{}", out_str(&contender));
+    assert!(
+        !contender.status.success(),
+        "second concurrent run must be refused"
+    );
+    assert!(
+        out_str(&contender).contains("busy"),
+        "{}",
+        out_str(&contender)
+    );
 
     assert!(slow.wait().unwrap().success());
     // After the lock is released, a new run succeeds.
@@ -1682,7 +2254,15 @@ fn propose_refuses_while_run_is_active_and_does_not_clobber_status() {
     r.h5i_ok(&["env", "create", "race"]);
 
     let mut slow = Command::new(H5I)
-        .args(["env", "run", "race", "--", "sh", "-c", "echo from-run > slow.txt; sleep 2"])
+        .args([
+            "env",
+            "run",
+            "race",
+            "--",
+            "sh",
+            "-c",
+            "echo from-run > slow.txt; sleep 2",
+        ])
         .env("H5I_AGENT", "tester")
         .env("H5I_DEFAULT_ISOLATION", "workspace")
         .current_dir(&r.dir)
@@ -1702,12 +2282,20 @@ fn propose_refuses_while_run_is_active_and_does_not_clobber_status() {
     assert!(saw_running, "slow run should enter running state");
 
     let out = r.h5i(&["env", "propose", "race"]);
-    assert!(!out.status.success(), "propose must fail while env run holds the lock");
-    assert!(out_str(&out).contains("busy"), "expected busy refusal:\n{}", out_str(&out));
+    assert!(
+        !out.status.success(),
+        "propose must fail while env run holds the lock"
+    );
+    assert!(
+        out_str(&out).contains("busy"),
+        "expected busy refusal:\n{}",
+        out_str(&out)
+    );
 
     assert!(slow.wait().unwrap().success());
     assert_eq!(
-        r.manifest("race")["status"], "idle",
+        r.manifest("race")["status"],
+        "idle",
         "failed propose must not leave the env proposed or clobber the run completion"
     );
 
@@ -1723,22 +2311,45 @@ fn event_log_redacts_command_and_records_resources() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "acct"]);
     r.h5i_ok(&[
-        "env", "run", "acct", "--", "sh", "-c",
+        "env",
+        "run",
+        "acct",
+        "--",
+        "sh",
+        "-c",
         &format!("echo deploying with {PLANTED_SECRET}"),
     ]);
 
     // The raw event log blob (refs/h5i/env) must not leak the secret passed on
     // the command line, and must carry wall/cpu resource accounting.
     let log = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:events.jsonl"]));
-    assert!(!log.contains(PLANTED_SECRET), "secret leaked into the env event log: {log}");
-    assert!(log.contains("redacted"), "command should be redacted in the event detail");
-    let exec_line = log.lines().find(|l| l.contains("\"event\":\"exec\"")).expect("exec event");
-    assert!(exec_line.contains("wall="), "exec event must record wall time: {exec_line}");
-    assert!(exec_line.contains("cpu="), "exec event must record cpu time: {exec_line}");
+    assert!(
+        !log.contains(PLANTED_SECRET),
+        "secret leaked into the env event log: {log}"
+    );
+    assert!(
+        log.contains("redacted"),
+        "command should be redacted in the event detail"
+    );
+    let exec_line = log
+        .lines()
+        .find(|l| l.contains("\"event\":\"exec\""))
+        .expect("exec event");
+    assert!(
+        exec_line.contains("wall="),
+        "exec event must record wall time: {exec_line}"
+    );
+    assert!(
+        exec_line.contains("cpu="),
+        "exec event must record cpu time: {exec_line}"
+    );
 
     // The CLI run line surfaces resources too.
     let out = out_str(&r.h5i_ok(&["env", "run", "acct", "--", "sh", "-c", "true"]));
-    assert!(out.contains("wall "), "run output should show wall time: {out}");
+    assert!(
+        out.contains("wall "),
+        "run output should show wall time: {out}"
+    );
 }
 
 // ─── 11. tool allowlist enforcement (defense in depth) ──────────────────────
@@ -1757,10 +2368,21 @@ fn tools_allowlist_is_enforced_at_run() {
     // Listed program runs.
     r.h5i_ok(&["env", "run", "pinned", "--", "true"]);
     // Unlisted program is refused (and never executes).
-    let out = r.h5i(&["env", "run", "pinned", "--", "sh", "-c", "echo nope > escaped.txt"]);
+    let out = r.h5i(&[
+        "env",
+        "run",
+        "pinned",
+        "--",
+        "sh",
+        "-c",
+        "echo nope > escaped.txt",
+    ]);
     assert!(!out.status.success(), "unlisted command must be refused");
     assert!(out_str(&out).contains("allowlist"), "{}", out_str(&out));
-    assert!(!r.work("pinned").join("escaped.txt").exists(), "refused command must not run");
+    assert!(
+        !r.work("pinned").join("escaped.txt").exists(),
+        "refused command must not run"
+    );
 }
 
 // ─── 12. the arena: compare environments from one base ──────────────────────
@@ -1779,7 +2401,10 @@ fn compare_ranks_environments_and_flags_split_bases() {
     assert_eq!(failed.status.code(), Some(2));
 
     let out = out_str(&r.h5i_ok(&["env", "compare", "cand-a", "cand-b"]));
-    assert!(out.contains("common base"), "shared-base envs report a common base: {out}");
+    assert!(
+        out.contains("common base"),
+        "shared-base envs report a common base: {out}"
+    );
     assert!(out.contains("env/tester/cand-a"), "{out}");
     assert!(out.contains("env/tester/cand-b"), "{out}");
     assert!(out.contains("exit 0"), "cand-a's passing run shows: {out}");
@@ -1789,7 +2414,12 @@ fn compare_ranks_environments_and_flags_split_bases() {
     let json = out_str(&r.h5i_ok(&["env", "compare", "cand-a", "cand-b", "--json"]));
     let rows: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(rows.as_array().unwrap().len(), 2);
-    let b = rows.as_array().unwrap().iter().find(|r| r["id"] == "env/tester/cand-b").unwrap();
+    let b = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == "env/tester/cand-b")
+        .unwrap();
     assert_eq!(b["insertions"], 3, "untracked-file lines counted: {json}");
     assert_eq!(b["last_exit"], 2);
 }
@@ -1797,7 +2427,9 @@ fn compare_ranks_environments_and_flags_split_bases() {
 #[test]
 fn compare_warns_when_bases_differ() {
     let r = Repo::new();
-    let first = out_str(&git(&r.dir, &["rev-parse", "HEAD"])).trim().to_string();
+    let first = out_str(&git(&r.dir, &["rev-parse", "HEAD"]))
+        .trim()
+        .to_string();
     r.h5i_ok(&["env", "create", "from-old", "--from", &first]);
     // Advance main, then create a second env off the new tip.
     std::fs::write(r.dir.join("moved.txt"), "moved\n").unwrap();
@@ -1806,7 +2438,10 @@ fn compare_warns_when_bases_differ() {
     r.h5i_ok(&["env", "create", "from-new"]);
 
     let out = out_str(&r.h5i_ok(&["env", "compare", "from-old", "from-new"]));
-    assert!(out.contains("do NOT share a base"), "must warn on split bases: {out}");
+    assert!(
+        out.contains("do NOT share a base"),
+        "must warn on split bases: {out}"
+    );
 }
 
 // ─── 13. base drift + rebase (§9) ───────────────────────────────────────────
@@ -1815,12 +2450,17 @@ fn compare_warns_when_bases_differ() {
 fn status_reports_drift_and_rebase_refreshes_the_base() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "drifter"]);
-    let base0 = out_str(&git(&r.dir, &["rev-parse", "HEAD"])).trim().to_string();
+    let base0 = out_str(&git(&r.dir, &["rev-parse", "HEAD"]))
+        .trim()
+        .to_string();
 
     // No drift initially.
     let st = out_str(&r.h5i_ok(&["env", "status", "drifter"]));
     assert!(st.contains("up to date with parent"), "{st}");
-    assert!(st.contains(&base0[..12]), "status shows the pinned base: {st}");
+    assert!(
+        st.contains(&base0[..12]),
+        "status shows the pinned base: {st}"
+    );
 
     // The env makes a change on a disjoint file …
     std::fs::write(r.work("drifter").join("env.txt"), "from env\n").unwrap();
@@ -1828,21 +2468,36 @@ fn status_reports_drift_and_rebase_refreshes_the_base() {
     std::fs::write(r.dir.join("lib.py"), "def hello():\n    return 99\n").unwrap();
     git(&r.dir, &["add", "lib.py"]);
     git(&r.dir, &["commit", "-m", "parent moves"]);
-    let base1 = out_str(&git(&r.dir, &["rev-parse", "HEAD"])).trim().to_string();
+    let base1 = out_str(&git(&r.dir, &["rev-parse", "HEAD"]))
+        .trim()
+        .to_string();
 
     // status (and the JSON manifest's base) now show drift.
     let st = out_str(&r.h5i_ok(&["env", "status", "drifter"]));
-    assert!(st.contains("parent advanced 1 commit"), "drift surfaced: {st}");
+    assert!(
+        st.contains("parent advanced 1 commit"),
+        "drift surfaced: {st}"
+    );
 
     // Rebase folds the parent's change in and re-pins the base.
     let out = out_str(&r.h5i_ok(&["env", "rebase", "drifter"]));
     assert!(out.contains("rebased onto main"), "{out}");
-    assert_eq!(r.manifest("drifter")["base_commit"].as_str().unwrap(), base1, "base re-pinned");
+    assert_eq!(
+        r.manifest("drifter")["base_commit"].as_str().unwrap(),
+        base1,
+        "base re-pinned"
+    );
 
     // Worktree now carries BOTH sides; drift is cleared.
     let lib = std::fs::read_to_string(r.work("drifter").join("lib.py")).unwrap();
-    assert!(lib.contains("return 99"), "parent's change folded in: {lib}");
-    assert!(r.work("drifter").join("env.txt").is_file(), "env's change preserved");
+    assert!(
+        lib.contains("return 99"),
+        "parent's change folded in: {lib}"
+    );
+    assert!(
+        r.work("drifter").join("env.txt").is_file(),
+        "env's change preserved"
+    );
     let st = out_str(&r.h5i_ok(&["env", "status", "drifter"]));
     assert!(st.contains("up to date with parent"), "drift cleared: {st}");
 
@@ -1856,7 +2511,9 @@ fn status_reports_drift_and_rebase_refreshes_the_base() {
 fn rebase_refuses_on_conflict_and_keeps_the_base() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "clash"]);
-    let base0 = out_str(&git(&r.dir, &["rev-parse", "HEAD"])).trim().to_string();
+    let base0 = out_str(&git(&r.dir, &["rev-parse", "HEAD"]))
+        .trim()
+        .to_string();
 
     // Both the env and the parent edit the same file differently.
     std::fs::write(r.work("clash").join("README.md"), "env version\n").unwrap();
@@ -1866,7 +2523,11 @@ fn rebase_refuses_on_conflict_and_keeps_the_base() {
 
     let out = r.h5i(&["env", "rebase", "clash"]);
     assert!(!out.status.success(), "conflicting rebase must refuse");
-    assert!(out_str(&out).contains("conflicts against the new base"), "{}", out_str(&out));
+    assert!(
+        out_str(&out).contains("conflicts against the new base"),
+        "{}",
+        out_str(&out)
+    );
     // The base is untouched after a refused rebase.
     assert_eq!(r.manifest("clash")["base_commit"].as_str().unwrap(), base0);
 }
@@ -1901,7 +2562,12 @@ impl Clone {
     }
     fn ok(&self, args: &[&str]) -> Output {
         let out = self.h5i(args);
-        assert!(out.status.success(), "h5i {} failed:\n{}", args.join(" "), out_str(&out));
+        assert!(
+            out.status.success(),
+            "h5i {} failed:\n{}",
+            args.join(" "),
+            out_str(&out)
+        );
         out
     }
 }
@@ -1910,7 +2576,11 @@ impl Clone {
 fn two_clones() -> (TempDir, Clone, Clone) {
     let root = TempDir::new().expect("tempdir");
     let bare = root.path().join("origin.git");
-    run_ok(Command::new("git").args(["init", "-q", "--bare", "-b", "main"]).arg(&bare));
+    run_ok(
+        Command::new("git")
+            .args(["init", "-q", "--bare", "-b", "main"])
+            .arg(&bare),
+    );
 
     let a = root.path().join("A");
     run_ok(Command::new("git").args(["clone", "-q"]).arg(&bare).arg(&a));
@@ -1920,14 +2590,20 @@ fn two_clones() -> (TempDir, Clone, Clone) {
     git(&a, &["add", "."]);
     git(&a, &["commit", "-m", "seed"]);
     git(&a, &["push", "-q", "origin", "main"]);
-    let ca = Clone { dir: a, agent: "claude" };
+    let ca = Clone {
+        dir: a,
+        agent: "claude",
+    };
     ca.ok(&["init"]);
 
     let b = root.path().join("B");
     run_ok(Command::new("git").args(["clone", "-q"]).arg(&bare).arg(&b));
     git(&b, &["config", "user.email", "b@h5i.test"]);
     git(&b, &["config", "user.name", "B"]);
-    let cb = Clone { dir: b, agent: "codex" };
+    let cb = Clone {
+        dir: b,
+        agent: "codex",
+    };
     cb.ok(&["init"]);
 
     (root, ca, cb)
@@ -1939,7 +2615,15 @@ fn env_travels_to_another_clone_for_review_and_apply() {
 
     // Clone A (claude): create, run, edit, propose, push.
     a.ok(&["env", "create", "fix-auth"]);
-    a.ok(&["env", "run", "fix-auth", "--", "sh", "-c", "echo running-tests"]);
+    a.ok(&[
+        "env",
+        "run",
+        "fix-auth",
+        "--",
+        "sh",
+        "-c",
+        "echo running-tests",
+    ]);
     std::fs::write(
         a.dir.join(".git/.h5i/env/claude/fix-auth/work/lib.py"),
         "def f():\n    return 2  # fixed\n",
@@ -1953,37 +2637,59 @@ fn env_travels_to_another_clone_for_review_and_apply() {
 
     // After pull, the env is materialized locally.
     let pulled = out_str(&b.ok(&["pull"]));
-    assert!(pulled.contains("materialized") || pulled.contains("refs/h5i/env"), "{pulled}");
+    assert!(
+        pulled.contains("materialized") || pulled.contains("refs/h5i/env"),
+        "{pulled}"
+    );
     let list = out_str(&b.ok(&["env", "list"]));
-    assert!(list.contains("env/claude/fix-auth"), "B sees the env: {list}");
+    assert!(
+        list.contains("env/claude/fix-auth"),
+        "B sees the env: {list}"
+    );
     assert!(list.contains("proposed"), "{list}");
 
     // B reviews the diff — from the pushed code branch (B has no worktree).
     let diff = out_str(&b.ok(&["env", "diff", "fix-auth"]));
-    assert!(diff.contains("return 2"), "B reviews the proposed diff: {diff}");
+    assert!(
+        diff.contains("return 2"),
+        "B reviews the proposed diff: {diff}"
+    );
 
     // B sees the policy digest + evidence in status, and the manifest via JSON.
     let json = out_str(&b.ok(&["env", "status", "fix-auth", "--json"]));
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(v["agent"], "claude", "manifest authorship preserved across clones");
+    assert_eq!(
+        v["agent"], "claude",
+        "manifest authorship preserved across clones"
+    );
     let cap = v["captures"][0].as_str().expect("a capture id").to_string();
 
     // B inspects the evidence (it travelled via refs/h5i/objects).
     let insp = out_str(&b.ok(&["env", "inspect", "fix-auth", "--capture", &cap]));
-    assert!(insp.contains("running-tests") || insp.contains("sh"), "B inspects evidence: {insp}");
+    assert!(
+        insp.contains("running-tests") || insp.contains("sh"),
+        "B inspects evidence: {insp}"
+    );
 
     // Workspace-mutating ops on B refuse clearly — the worktree is on A.
     // (propose passes the status guard, then the mediated commit needs work/.)
     let no_ws = b.h5i(&["env", "propose", "fix-auth"]);
     assert!(!no_ws.status.success());
-    assert!(out_str(&no_ws).contains("another clone"), "{}", out_str(&no_ws));
+    assert!(
+        out_str(&no_ws).contains("another clone"),
+        "{}",
+        out_str(&no_ws)
+    );
 
     // B applies onto main (the code branch was fetched).
     git(&b.dir, &["checkout", "-q", "main"]);
     let applied = out_str(&b.ok(&["env", "apply", "fix-auth"]));
     assert!(applied.contains("applied onto main"), "{applied}");
     let lib = std::fs::read_to_string(b.dir.join("lib.py")).unwrap();
-    assert!(lib.contains("return 2"), "apply updated B's working tree: {lib}");
+    assert!(
+        lib.contains("return 2"),
+        "apply updated B's working tree: {lib}"
+    );
 
     // The applied status round-trips back: B pushes, A pulls, A sees applied.
     git(&b.dir, &["push", "-q", "origin", "main"]);
@@ -1991,7 +2697,10 @@ fn env_travels_to_another_clone_for_review_and_apply() {
     a.ok(&["pull"]);
     let a_status = out_str(&a.ok(&["env", "status", "fix-auth", "--json"]));
     let av: serde_json::Value = serde_json::from_str(&a_status).unwrap();
-    assert_eq!(av["status"], "applied", "applied status propagated back to A: {a_status}");
+    assert_eq!(
+        av["status"], "applied",
+        "applied status propagated back to A: {a_status}"
+    );
 }
 
 #[test]
@@ -2014,13 +2723,18 @@ fn materialize_skips_poisoned_shared_manifest_but_keeps_valid_ones() {
     append_synthetic_env_manifest(&repo, &bad_spoof);
 
     let out = out_str(&r.h5i_ok(&["env", "list"]));
-    assert!(out.contains("env/peer/good"), "valid shared manifest materialized:\n{out}");
+    assert!(
+        out.contains("env/peer/good"),
+        "valid shared manifest materialized:\n{out}"
+    );
     assert!(
         out.contains("skipping shared env manifest"),
         "poisoned manifests should produce a warning, not abort sync:\n{out}"
     );
     assert!(
-        r.dir.join(".git/.h5i/env/peer/good/manifest.json").is_file(),
+        r.dir
+            .join(".git/.h5i/env/peer/good/manifest.json")
+            .is_file(),
         "valid manifest written under env root"
     );
     assert!(
@@ -2028,7 +2742,9 @@ fn materialize_skips_poisoned_shared_manifest_but_keeps_valid_ones() {
         "traversal manifest must not write outside .git/.h5i/env"
     );
     assert!(
-        !r.dir.join(".git/.h5i/env/peer/spoof/manifest.json").exists(),
+        !r.dir
+            .join(".git/.h5i/env/peer/spoof/manifest.json")
+            .exists(),
         "identity-tampered manifest must not be materialized"
     );
 }
@@ -2054,7 +2770,10 @@ fn push_keeps_env_refs_out_of_refs_heads() {
     };
 
     let refs = remote_refs(&a);
-    assert!(refs.lines().any(|r| r == "refs/h5i/env/meta"), "state ref present:\n{refs}");
+    assert!(
+        refs.lines().any(|r| r == "refs/h5i/env/meta"),
+        "state ref present:\n{refs}"
+    );
     assert!(
         refs.contains("refs/h5i/env/code/claude/scopecheck"),
         "code branch under hidden ns:\n{refs}"
@@ -2066,10 +2785,15 @@ fn push_keeps_env_refs_out_of_refs_heads() {
 
     // A stray env branch on the remote's head namespace (e.g. left by an older
     // h5i) is deleted on the next push.
-    git(&a.dir, &[
-        "push", "-q", "origin",
-        "refs/heads/h5i/env/claude/scopecheck:refs/heads/h5i/env/claude/oldone",
-    ]);
+    git(
+        &a.dir,
+        &[
+            "push",
+            "-q",
+            "origin",
+            "refs/heads/h5i/env/claude/scopecheck:refs/heads/h5i/env/claude/oldone",
+        ],
+    );
     assert!(
         remote_refs(&a).contains("refs/heads/h5i/env/claude/oldone"),
         "stray head branch staged"
@@ -2081,7 +2805,10 @@ fn push_keeps_env_refs_out_of_refs_heads() {
         !after.lines().any(|r| r.starts_with("refs/heads/h5i/env/")),
         "stray head branches cleaned:\n{after}"
     );
-    assert!(after.lines().any(|r| r == "refs/h5i/env/meta"), "state ref still present:\n{after}");
+    assert!(
+        after.lines().any(|r| r == "refs/h5i/env/meta"),
+        "state ref still present:\n{after}"
+    );
 }
 
 #[test]
@@ -2092,7 +2819,10 @@ fn env_ref_holds_manifest_and_policy_blobs() {
     let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:manifests.jsonl"]));
     assert!(manifests.contains("env/tester/shared"), "{manifests}");
     let policies = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:policies.jsonl"]));
-    assert!(policies.contains("env/tester/shared"), "policy blob present: {policies}");
+    assert!(
+        policies.contains("env/tester/shared"),
+        "policy blob present: {policies}"
+    );
     let events = out_str(&git(&r.dir, &["show", "refs/h5i/env/meta:events.jsonl"]));
     assert!(events.contains("\"event\":\"created\""), "{events}");
 }
@@ -2103,14 +2833,28 @@ fn env_ref_holds_manifest_and_policy_blobs() {
 fn probe_reports_all_capability_lines() {
     let r = Repo::new();
     let out = out_str(&r.h5i_ok(&["env", "probe"]));
-    for key in ["os", "landlock_abi", "userns", "seccomp", "workspace", "process"] {
+    for key in [
+        "os",
+        "landlock_abi",
+        "userns",
+        "seccomp",
+        "workspace",
+        "process",
+    ] {
         assert!(out.contains(key), "probe output missing {key}: {out}");
     }
     // Workspace is satisfiable everywhere.
     let ws_line = out.lines().find(|l| l.contains("workspace")).unwrap();
     assert!(ws_line.contains("yes"), "{ws_line}");
     // The functional self-test line is present and agrees with create.
-    let run_line = out.lines().find(|l| l.contains("runnable")).expect("runnable line");
+    let run_line = out
+        .lines()
+        .find(|l| l.contains("runnable"))
+        .expect("runnable line");
     let says_yes = run_line.contains("yes");
-    assert_eq!(says_yes, process_tier_runnable(), "probe 'runnable' must match create: {run_line}");
+    assert_eq!(
+        says_yes,
+        process_tier_runnable(),
+        "probe 'runnable' must match create: {run_line}"
+    );
 }
