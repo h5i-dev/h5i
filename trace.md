@@ -833,3 +833,4 @@ _[Checkpoint: 6a2c13d6 — Audited SEO for all blog posts: no critical metadata/
 [14:19:15] OBSERVE: read docs/blog/pr-body-ai-code-review/index.html
 [14:19:15] ACT: edited docs/blog/agent-sandbox-env/index.html
 [14:19:15] ACT: edited docs/blog/structured-tool-output-schema/index.html
+[14:19:15] ACT: edited docs/blog/token-reduction-object-store/index.html
