@@ -1212,3 +1212,4 @@ _[Checkpoint: 6a2c5cb9 — edited src/container.rs; edited tests/env_integration
 _[Checkpoint: 6a2c5dcc — edited src/container.rs; edited tests/env_integration.rs; edited CLAUDE.md]_
 ---
 
+[19:39:35] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): work, and accept cooperative-only monitoring at those tiers for now — Claude's managed-settings doesn't reach them cleanly either, so it's symmetric…
