@@ -715,11 +715,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited /home/koukyosyumei/Dev/h5i/src/container.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyu…
 - [x] Decision: harden in-box hook via managed-settings injection (container tier)
 - [x] Implemented + shipped: container managed-settings injection (commit 8904e4fc)
+- [x] edited src/container.rs; edited tests/env_integration.rs; edited CLAUDE.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 19:18 UTC] `improve-shell`: edited src/container.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [2026-06-12 19:17 UTC] `improve-shell`: Implemented + shipped: container managed-settings injection (commit 8904e4fc)
 - [2026-06-12 19:06 UTC] `improve-shell`: Decision: harden in-box hook via managed-settings injection (container tier)
 - [2026-06-12 18:56 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/container.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyu…
