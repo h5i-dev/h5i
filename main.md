@@ -709,11 +709,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md
 - [x] edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md
 - [x] edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md
+- [x] Added Codex hook setup target: writes .codex/config.toml, preserves Claude default, updates wrap-bash output for Codex permissionDecision, docs, and tests.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 18:29 UTC] `improve-shell`: Added Codex hook setup target: writes .codex/config.toml, preserves Claude default, updates wrap-bash output for Codex permissionDecision, docs, and tests.
 - [2026-06-12 18:11 UTC] `improve-shell`: edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md
 - [2026-06-12 18:06 UTC] `improve-shell`: edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md
 - [2026-06-12 18:02 UTC] `improve-shell`: edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md
