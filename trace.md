@@ -1293,3 +1293,9 @@ _[Checkpoint: 6a2c6b91 — edited tests/env_integration.rs; edited CLAUDE.md; ed
 ---
 
 [20:30:57] NOTE: DEFERRAL (~/Dev/h5i/docs/environments-design.md): ok-trust` | The supervised tee-shim port stays as optional future work — not needed for Codex now that the incantation is documented
+
+
+---
+_[Checkpoint: 6a2c6c81 — edited docs/environments-design.md]_
+---
+
