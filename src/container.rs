@@ -508,6 +508,14 @@ if [ -z "$found" ] || [ -n "$H5I_SHIM" ] || [ -t 1 ]; then
 fi
 H5I_SHIM=1
 export H5I_SHIM
+# h5i's own invocations are already captured by h5i itself: the wrap-bash hook
+# rewrites the agent's command to `h5i capture run -- <cmd>`, which captures it.
+# Recording it here would double-capture (and tee h5i's own summary output).
+# Pass through WITHOUT recording; H5I_SHIM (set above) also keeps any sub-shell
+# h5i spawns unrecorded. Mirrors the hook's own `first_base == "h5i"` skip.
+case "$cmd" in
+  h5i|h5i\ *) exec "$real" "$@" ;;
+esac
 d="{spool}"
 if [ ! -d "$d" ] || ! command -v tee >/dev/null 2>&1 || ! command -v mkfifo >/dev/null 2>&1; then
   exec "$real" "$@"
@@ -1657,6 +1665,21 @@ mod tests {
             observe(&["-c", "EEE"], &[("H5I_SHIM", "1")]),
             None,
             "nested shell passes through"
+        );
+
+        // h5i's own invocations are NOT recorded (the wrap-bash hook already
+        // captures them via `h5i capture run`) — no double-capture, no overhead.
+        assert_eq!(
+            observe(&["-lc", "h5i capture run -- cargo test"], &[]),
+            None,
+            "hook-wrapped `h5i capture run …` passes through unrecorded"
+        );
+        assert_eq!(observe(&["-c", "h5i"], &[]), None, "a bare `h5i` passes through");
+        // …but a command that merely CONTAINS h5i as an argument is still ours.
+        assert_eq!(
+            observe(&["-c", "grep h5i log.txt"], &[]).as_deref(),
+            Some("grep h5i log.txt"),
+            "h5i as a non-leading word is still observed"
         );
 
         let _ = std::fs::remove_dir_all(&tmp);
