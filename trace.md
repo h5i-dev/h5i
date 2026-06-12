@@ -694,3 +694,9 @@ _[Checkpoint: 6a2b5c5a — edited src/env.rs; edited src/env.rs; edited src/env.
 [01:18:30] ACT: edited /home/koukyosyumei/Dev/h5i/tests/env_integration.rs
 [01:18:30] ACT: edited /home/koukyosyumei/Dev/h5i/tests/env_integration.rs
 [01:18:30] ACT: edited /home/koukyosyumei/Dev/h5i/tests/env_integration.rs
+
+
+---
+_[Checkpoint: 6a2b5e6b — Added env integration coverage for poisoned shared manifest materialization and run/propose lock race; full env_integration suite green.]_
+---
+
