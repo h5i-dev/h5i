@@ -966,3 +966,16 @@ improve default UX of h5i env shell so AI agents (claude/codex) can actually run
 
 ---
 
+## Commit 6a2c58b0 — 2026-06-12 19:06 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Verified (claude-code-guide + live unshare experiment): ro self-bind-mount blocks overwrite/unlink/rename of an existing config file even under a rw Landlock parent grant, BUT agent can create settings.local.json with disableAllHooks:true to kill all non-managed hooks. Robust fix = inject our own /etc/claude-code/managed-settings.json (Claude managed scope survives non-managed disableAllHooks, agent can't write root-owned /etc) read-only into the box's private mount ns. Container: podman auto-creates mount target on overlay, host untouched. Chosen scope: container only; process/supervised stay on revert-seal + tee-shim floor. Prereq: h5i must be reachable in-box for 'h5i hook wrap-bash' to run. Codex managed-config story still unknown.
+
+---
+

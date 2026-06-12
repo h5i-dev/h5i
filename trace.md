@@ -1140,3 +1140,9 @@ _[Checkpoint: 6a2c5659 — edited /home/koukyosyumei/Dev/h5i/src/container.rs; e
 ---
 
 [19:01:35] OBSERVE: read .claude/settings.json
+
+
+---
+_[Checkpoint: 6a2c58b0 — Decision: harden in-box hook via managed-settings injection (container tier)]_
+---
+
