@@ -885,3 +885,4 @@ _[Checkpoint: 6a2c176f — Reworked sandbox architecture SVG boundary spacing so
 _[Checkpoint: 6a2c178e — Committed sandbox architecture SVG spacing fix as d71053ec with h5i provenance.]_
 ---
 
+[14:31:10] ACT: edited docs/blog/sandboxing-ai-agents-foundations/index.html
