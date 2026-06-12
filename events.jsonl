@@ -19,3 +19,4 @@
 {"ts":"2026-06-11T20:10:18.304637Z","env_id":"env/human/audit","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
 {"ts":"2026-06-12T02:55:17.562255Z","env_id":"env/codex/codexcheck","agent":"codex","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-12T02:55:30.328030Z","env_id":"env/human/audit","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
+{"ts":"2026-06-12T02:55:35.883777Z","env_id":"env/claude/scopecheck","agent":"claude","event":"removed","detail":"workspace + branches + manifest erased locally"}
