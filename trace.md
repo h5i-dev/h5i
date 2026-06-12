@@ -872,3 +872,4 @@ _[Checkpoint: 6a2c158f — Committed sandbox blog series and SEO polish as 8042a
 _[Checkpoint: 6a2c16dd — Adjusted sandbox Part 1 architecture SVG spacing: moved agent-process box below boundary labels and increased label-row separation.]_
 ---
 
+[14:27:59] ACT: edited docs/_static/sandbox-series-architecture.svg
