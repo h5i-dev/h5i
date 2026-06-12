@@ -1316,3 +1316,9 @@ _[Checkpoint: 6a2c6d2b — edited docs/environments-design.md]_
 _[Checkpoint: 6a2c6dad — edited docs/environments-design.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2c6e30 — edited docs/environments-design.md]_
+---
+
