@@ -121,6 +121,9 @@
   <li>Can this change be rolled back by intent if it fails?</li>
   <li>Is the provenance stored somewhere durable?</li>
 </ul>
+<h2>Common failure patterns</h2>
+<p>The highest-signal AI review findings often come from process, not syntax. Watch for plausible code built on an unverified assumption, tests that only prove the old happy path, broad refactors attached to a narrow prompt, and fixes that update a helper without checking every caller. These are the cases where a generated patch can look polished while still missing the real system constraint.</p>
+<p>Reviewers should also separate generated volume from generated risk. A large test fixture may be low risk, while a five-line authorization change may deserve deep scrutiny. The provenance packet should make that triage explicit: what the agent was asked, what it inspected, what it skipped, and what evidence supports the behavior change.</p>
 <h2>FAQ</h2>
 <h3>Should AI-generated code need stricter review?</h3>
 <p>It needs different review. The code may be high quality, but the reviewer needs extra evidence about intent, context, and tests because the agent's working state is otherwise invisible.</p>

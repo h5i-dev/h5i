@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sandboxing AI Agents, Part 2: Implementation — h5i</title>
+  <meta name="description" content="Implement an AI agent sandbox with worktrees, Landlock, seccomp, namespaces, cgroups, egress allowlists, secrets, and audit logs.">
+  <meta name="keywords" content="implement sandbox, Linux sandbox, Landlock, seccomp, namespaces, cgroups, network namespace, AI agent sandbox">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/sandboxing-ai-agents-implementation/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Sandboxing AI Agents, Part 2: Implementation">
+  <meta property="og:description" content="Build the boundary: filesystem, syscalls, namespaces, network, resources, secrets, and evidence.">
+  <meta property="og:url" content="https://h5i.dev/blog/sandboxing-ai-agents-implementation/">
+  <meta property="og:image" content="https://h5i.dev/_static/sandbox-series-card.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="article:section" content="AI Agent Sandboxing">
+  <meta property="article:tag" content="AI agent sandbox">
+  <meta property="article:tag" content="Landlock">
+  <meta property="article:tag" content="seccomp">
+  <meta property="article:tag" content="egress allowlist">
+  <meta property="article:published_time" content="2026-06-12">
+  <meta property="article:modified_time" content="2026-06-12">
+  <meta property="article:author" content="Koukyosyumei">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Sandboxing AI Agents, Part 2: Implementation">
+  <meta name="twitter:description" content="Worktrees, Landlock, seccomp, namespaces, cgroups, egress allowlists, secrets, and audit logs.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-series-card.png">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 2: Implementation","description":"Implement an AI agent sandbox with worktrees, Landlock, seccomp, namespaces, cgroups, egress allowlists, secrets, and audit logs.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-12","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-implementation/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":1686,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox implementation","Landlock","seccomp","network egress allowlist"],"keywords":"Landlock, seccomp, namespaces, cgroups, egress allowlist, AI agent sandbox"}
+  </script>
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://h5i.dev/blog/"},{"@type":"ListItem","position":3,"name":"Sandboxing AI Agents, Part 2","item":"https://h5i.dev/blog/sandboxing-ai-agents-implementation/"}]}
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+</head>
+<body>
+<div class="bg-grid"></div>
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub -&gt;</a></li>
+  </ul>
+</nav>
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Sandbox Series · Part 2 · 2026-06-12</div>
+      <h1>Sandboxing AI Agents, Part 2: How to Implement One</h1>
+      <p class="post-deck">Implementation is where most sandbox claims become precise or collapse. This part walks through a rootless Linux design and the checks that keep it honest.</p>
+      <div class="post-meta">
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 18 min</span>
+        <span><strong>Tags</strong> Landlock · seccomp · namespaces</span>
+      </div>
+    </header>
+
+    <p>
+      A sandbox implementation is not one mechanism. It is a launch protocol. You prepare a filesystem view, create namespaces, drop privileges, install syscall policy, install resource limits, configure networking, start the workload, observe the workload, and preserve enough evidence to review the result. The order matters because a process that runs before the boundary is complete is not confined by the boundary.
+    </p>
+
+    <div class="callout">
+      <strong>Series map.</strong> Review the <a href="/blog/sandboxing-ai-agents-foundations/">foundations</a>, then continue to <a href="/blog/sandboxing-ai-agents-landscape/">sandbox comparison</a> and <a href="/blog/sandboxing-ai-agents-h5i/">h5i's env design</a>.
+    </div>
+
+    <h2>Start with a policy type</h2>
+    <p>
+      The first implementation mistake is treating sandbox options as informal flags. Instead, define a policy object with explicit fields and a resolved form. The requested policy is what the user asked for. The resolved policy is what the host proved it can enforce. If the requested claim cannot be resolved, the implementation should refuse rather than silently downgrade.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">policy.toml</span></div>
+      <div class="terminal-body"><pre>isolation = "process"
+fs.read   = ["$WORK", "/usr", "/lib", "/nix"]
+fs.write  = ["$WORK"]
+net.mode  = "deny"
+net.egress = []
+limits.memory_mb = 4096
+limits.pids = 256
+limits.seconds = 900
+secrets = []</pre></div>
+    </div>
+
+    <p>
+      A good resolver returns both policy and evidence: Landlock ABI version, whether unprivileged user namespaces are enabled, whether seccomp can install the filter, whether cgroup v2 delegation exists, whether rootless Podman is available, and whether network allowlists can actually be enforced. That evidence should be stored with every run.
+    </p>
+
+    <h2>Workspace isolation</h2>
+    <p>
+      AI coding agents need a place to make changes. The lowest-cost answer is a separate checkout, usually a Git worktree. This prevents accidental edits to the developer's active tree and gives each agent its own branch, index, and working directory. It is not a security boundary by itself: the process still has the user's host permissions unless a stronger tier is applied.
+    </p>
+    <p>
+      The major worktree trap is the shared Git object store. A worktree's <code>.git</code> entry points back into the repository's common Git directory. If a confined process can follow that pointer, it may reach refs, hooks, config, and object storage outside the intended workspace. A process-tier sandbox should hide or replace <code>.git</code>, then have the host-side supervisor compute diffs and commit through a path-checked staging path.
+    </p>
+
+    <h2>Filesystem confinement</h2>
+    <p>
+      On Linux, the modern unprivileged primitive for per-process filesystem access control is Landlock. Landlock is allowlist-oriented. You grant read and write rights to specific trees. You cannot grant a parent directory and then subtract one child. That single detail shapes the whole design: do not grant the repository root and hope to deny <code>.git</code>; grant the worktree and selected system paths.
+    </p>
+    <p>
+      A practical file policy usually grants write access to <code>$WORK</code>, read-only access to runtime paths such as <code>/usr</code>, <code>/lib</code>, <code>/lib64</code>, <code>/bin</code>, <code>/etc/ssl</code>, and maybe language-store paths such as <code>/nix</code>. Everything sensitive in the home directory is absent by default. If an agent runtime needs its own state, grant only that runtime's directory and only in a profile that also controls egress.
+    </p>
+    <p>
+      Filesystem policy must also handle path escape during review. Symlinks, hardlinks, nested Git repositories, submodule gitdirs, and <code>..</code> traversal all matter. If the host commits changes after the workload exits, every staged path should be canonicalized and rejected when it escapes <code>$WORK</code>. Treat this as part of the sandbox boundary, not as cleanup.
+    </p>
+
+    <h2>Process and syscall confinement</h2>
+    <p>
+      Seccomp limits the Linux syscall surface. The strongest model is an allowlist: only syscalls needed by the workload are permitted. Many developer sandboxes start with a denylist because language toolchains need a broad surface and an allowlist takes time to tune. A denylist is still useful when it blocks obvious escalation tools: <code>mount</code>, <code>ptrace</code>, <code>bpf</code>, module loading, keyrings, and dangerous namespace operations.
+    </p>
+    <p>
+      Seccomp should be installed after <code>PR_SET_NO_NEW_PRIVS</code>. No-new-privs prevents later exec transitions from gaining privilege through setuid binaries or file capabilities. Drop Linux capabilities where possible. Use a private PID namespace so the workload cannot inspect or signal host processes, and mount a private <code>/proc</code> for that namespace rather than exposing the host process table.
+    </p>
+
+    <div class="callout warn">
+      <strong>Denylist seccomp is not a hostile-code proof.</strong> It reduces known-dangerous surface. It does not prove that every permitted syscall is safe against a future kernel bug. For malicious code with a kernel exploit budget, use a separate-kernel boundary such as a microVM.
+    </div>
+
+    <h2>AI agent sandbox network confinement</h2>
+    <p>
+      Network policy has three common modes. <strong>Deny</strong> creates an empty or loopback-only network namespace. <strong>Host</strong> leaves networking unrestricted and should be labeled as such. <strong>Allowlist</strong> permits specific destinations. Allowlist is the most useful mode for agents, but it is also the easiest to implement incorrectly.
+    </p>
+    <p>
+      A proxy-only allowlist blocks programs that use the proxy. It may not block a raw socket unless the runtime also prevents direct network access. DNS filtering alone is also insufficient: a program can connect to an IP literal, reuse a cached address, or encode data into DNS queries if port 53 is open. A serious egress design needs packet-level enforcement plus name resolution that cannot become a side channel.
+    </p>
+    <p>
+      One rootless Linux pattern is: create a network namespace, attach a user-space NAT such as <code>slirp4netns</code>, install default-drop <code>nftables</code> rules inside the namespace, resolve allowlisted hostnames at startup, bind a private <code>/etc/hosts</code>, and do not open general DNS. Then block <code>AF_NETLINK</code> after setup so the workload cannot rewrite routes or firewall rules.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">egress decision model</span></div>
+      <div class="terminal-body"><pre>allowlisted host  -&gt; resolve once -&gt; pin address -&gt; nftables allow -&gt; connect
+other hostname    -&gt; absent from private hosts file -&gt; no DNS path -&gt; fail
+raw IP literal    -&gt; packet hits default drop -&gt; fail
+firewall rewrite  -&gt; AF_NETLINK denied by socket gate -&gt; fail</pre></div>
+    </div>
+
+    <h2>Resources and time</h2>
+    <p>
+      Resource limits are part of security because denial of service is a security failure. Use cgroup v2 when available: <code>memory.max</code>, <code>pids.max</code>, CPU weight or quota, and I/O limits if needed. Use <code>RLIMIT_FSIZE</code> to prevent huge files, <code>RLIMIT_CPU</code> as a backstop, and a wall-clock supervisor timer because CPU limits do not catch every hang.
+    </p>
+    <p>
+      Limits should be visible in the audit log. If a test run failed because the sandbox killed it at 900 seconds or memory pressure terminated a process, the reviewer needs to distinguish that from a semantic test failure.
+    </p>
+
+    <h2>Secrets</h2>
+    <p>
+      Passing secrets as environment variables is convenient and dangerous. Child processes inherit them. Debug output prints them. <code>/proc</code> can reveal them if namespaces and procfs are wrong. A stronger pattern is a secrets broker: the workload asks for a named secret, the broker checks policy, releases the value only for the intended scope, and redacts matching fingerprints from captured output.
+    </p>
+    <p>
+      The broker should log the secret name, a fingerprint, the command scope, and whether release was allowed. It should not log the secret value. If the sandbox permits network egress, the policy should be stricter about which secrets are present; a stage with secrets and broad network is the dangerous combination.
+    </p>
+
+    <h2>Observation and evidence</h2>
+    <p>
+      Every run should produce a capture: command, arguments, working directory, start time, exit status, stdout and stderr pointers, policy digest, resource summary, egress summary, denied actions, and redactions. Large output should be content-addressed outside the model's context window, but recoverable. The summary should be small enough for an agent or reviewer to scan.
+    </p>
+    <p>
+      This evidence is not only debugging. It is how the sandbox becomes reviewable. A diff produced under a weak policy should not be reviewed the same way as a diff produced under deny-network confinement. A run with blocked raw-IP egress deserves more scrutiny than a run that only compiled.
+    </p>
+
+    <h2>Launch order</h2>
+    <ol>
+      <li>Create or select the isolated workspace and freeze the base revision.</li>
+      <li>Resolve policy against host capabilities; refuse if the claim cannot be enforced.</li>
+      <li>Prepare filesystem view, hiding shared Git state and sensitive host paths.</li>
+      <li>Create user, mount, PID, and network namespaces as required.</li>
+      <li>Set up network policy before the workload starts.</li>
+      <li>Install resource limits and cgroup membership.</li>
+      <li>Set no-new-privs, drop capabilities, and install seccomp or supervisor gates.</li>
+      <li>Start the workload and capture output, denials, resources, and egress decisions.</li>
+      <li>After exit, compute diff from the workspace filesystem using escape-checked paths.</li>
+      <li>Store policy, evidence, and diff together so review can reconstruct the run.</li>
+    </ol>
+
+    <h2>Common implementation bugs</h2>
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Bug</th><th>Why it matters</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr><td>Silent downgrade</td><td>User asks for network allowlist; host runs unrestricted</td><td>fail closed and print missing capability</td></tr>
+          <tr><td>Grant repo root to Landlock</td><td><code>.git</code> and hooks become reachable</td><td>grant worktree only; host mediates commits</td></tr>
+          <tr><td>Proxy-only network policy</td><td>Raw sockets bypass host allowlist</td><td>combine proxy with netns packet filtering or deny direct sockets</td></tr>
+          <tr><td>Host <code>/proc</code> mounted</td><td>Secrets and host process metadata leak</td><td>private PID namespace and private procfs</td></tr>
+          <tr><td>Secrets in argv</td><td>Process list and logs expose values</td><td>broker or file descriptor handoff; redact captures</td></tr>
+          <tr><td>No path canonicalization on apply</td><td>Symlink escape can write outside worktree</td><td>canonicalize and reject escaped paths</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Testing a sandbox</h2>
+    <p>
+      Unit tests should exercise policy parsing, path normalization, and resolver fail-closed cases. Integration tests should attempt real denied operations: read <code>~/.ssh</code>, write outside <code>$WORK</code>, connect to a raw IP, resolve an off-allowlist hostname, open <code>AF_NETLINK</code>, inspect host <code>/proc/1/environ</code>, fork past the PID limit, and fill a file past the file-size limit. Good tests prove both the refusal and the evidence record.
+    </p>
+    <p>
+      The most useful negative tests are boring. They assert that a command fails in the way the security model predicts. If a sandbox cannot test its own denials, reviewers have to trust prose.
+    </p>
+
+    <div class="next-up">
+      <span class="label">Part 3</span>
+      <a href="/blog/sandboxing-ai-agents-landscape/">
+        <h3>How Popular Agent Sandboxes Differ</h3>
+        <p>container-use, sandbox-runtime, OpenSandbox, E2B, gVisor, Kata, Firecracker, and where each boundary sits.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Implementation decides the claim</h3>
+      <p>h5i's sandbox work is designed around fail-closed resolution, layered confinement, and reviewable captures.</p>
+      <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/blog/sandboxing-ai-agents-foundations/" class="btn btn-ghost">Read part 1</a>
+    </div>
+  </article>
+</main>
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links"><a href="/">Home</a><a href="/blog/">Blog</a><a href="https://github.com/h5i-dev/h5i">GitHub</a><a href="https://github.com/h5i-dev/h5i/blob/main/MANUAL.md">Manual</a></nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>

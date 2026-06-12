@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sandboxing AI Agents, Part 3: Landscape — h5i</title>
+  <meta name="description" content="Compare AI agent sandboxes: container-use, sandbox-runtime, OpenSandbox, E2B, gVisor, Kata, Firecracker, and h5i env.">
+  <meta name="keywords" content="AI sandbox comparison, container-use, Anthropic sandbox-runtime, OpenSandbox, E2B, gVisor, Kata Containers, Firecracker, h5i env">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/sandboxing-ai-agents-landscape/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Sandboxing AI Agents, Part 3: How Popular Sandboxes Differ">
+  <meta property="og:description" content="Compare agent sandboxes by isolation boundary, workspace model, network control, provenance, and footprint.">
+  <meta property="og:url" content="https://h5i.dev/blog/sandboxing-ai-agents-landscape/">
+  <meta property="og:image" content="https://h5i.dev/_static/sandbox-series-card.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="article:section" content="AI Agent Sandboxing">
+  <meta property="article:tag" content="AI sandbox comparison">
+  <meta property="article:tag" content="container-use">
+  <meta property="article:tag" content="OpenSandbox">
+  <meta property="article:tag" content="Firecracker">
+  <meta property="article:published_time" content="2026-06-12">
+  <meta property="article:modified_time" content="2026-06-12">
+  <meta property="article:author" content="Koukyosyumei">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Sandboxing AI Agents, Part 3: Landscape">
+  <meta name="twitter:description" content="container-use, sandbox-runtime, OpenSandbox, E2B, gVisor, Kata, Firecracker, and h5i env.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-series-card.png">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 3: How Popular Sandboxes Differ","description":"Compare AI agent sandboxes: container-use, sandbox-runtime, OpenSandbox, E2B, gVisor, Kata, Firecracker, and h5i env.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-12","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-landscape/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":1621,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI sandbox comparison","container-use","OpenSandbox","Firecracker","h5i env"],"keywords":"AI sandbox comparison, container-use, sandbox-runtime, OpenSandbox, E2B, Firecracker"}
+  </script>
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://h5i.dev/blog/"},{"@type":"ListItem","position":3,"name":"Sandboxing AI Agents, Part 3","item":"https://h5i.dev/blog/sandboxing-ai-agents-landscape/"}]}
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+</head>
+<body>
+<div class="bg-grid"></div>
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub -&gt;</a></li>
+  </ul>
+</nav>
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Sandbox Series · Part 3 · 2026-06-12</div>
+      <h1>Sandboxing AI Agents, Part 3: How Popular Sandboxes Differ</h1>
+      <p class="post-deck">The sandbox landscape is not one ladder. Tools optimize for different axes: edit isolation, execution isolation, cloud scale, network control, provenance, and review workflow.</p>
+      <div class="post-meta">
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 17 min</span>
+        <span><strong>Tags</strong> Comparison · Containers · microVMs</span>
+      </div>
+    </header>
+
+    <p>
+      This comparison is current as of June 12, 2026 and is intentionally architectural. Specific flags, SDK names, and product limits change. The important question is more stable: where is the enforcement boundary, and does the tool also solve the agent workflow around that boundary?
+    </p>
+
+    <div class="callout">
+      <strong>Series map.</strong> This comparison builds on the <a href="/blog/sandboxing-ai-agents-foundations/">AI agent sandbox threat model</a> and <a href="/blog/sandboxing-ai-agents-implementation/">implementation guide</a>; finish with <a href="/blog/sandboxing-ai-agents-h5i/">h5i's env design</a>.
+    </div>
+
+    <h2>AI sandbox comparison dimensions</h2>
+    <p>
+      Agent sandboxes differ on at least six dimensions. <strong>Isolation boundary</strong> asks whether the workload shares the host kernel, runs behind a user-space kernel, or runs in a microVM. <strong>Workspace model</strong> asks where code changes live. <strong>Network policy</strong> asks whether egress is unrestricted, proxy-mediated, packet-filtered, or denied. <strong>Provenance</strong> asks what evidence survives. <strong>Review lifecycle</strong> asks how a human accepts or rejects the change. <strong>Footprint</strong> asks whether the tool is local, daemon-based, Kubernetes-based, or managed cloud.
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Tool family</th><th>Primary boundary</th><th>Best at</th><th>Main caution</th></tr></thead>
+        <tbody>
+          <tr><td>Git worktree</td><td>checkout and branch only</td><td>parallel edits</td><td>no execution sandbox</td></tr>
+          <tr><td>container-use</td><td>container plus worktree</td><td>parallel coding-agent workflow</td><td>container boundary and runtime configuration matter</td></tr>
+          <tr><td>Anthropic sandbox-runtime</td><td>native OS process sandbox</td><td>lightweight local command confinement</td><td>not a Git review/provenance system</td></tr>
+          <tr><td>OpenSandbox</td><td>Docker/Kubernetes sandbox platform</td><td>unified APIs and runtime backends</td><td>operational control plane complexity</td></tr>
+          <tr><td>E2B</td><td>managed cloud sandbox, Firecracker-backed</td><td>hosted code execution for agents</td><td>remote service and SDK lifecycle</td></tr>
+          <tr><td>gVisor</td><td>user-space Linux-like kernel</td><td>reducing host-kernel syscall exposure</td><td>compatibility and performance tradeoffs</td></tr>
+          <tr><td>Kata Containers</td><td>lightweight VM per container/pod</td><td>VM-strength container runtime</td><td>requires VM-capable infrastructure</td></tr>
+          <tr><td>Firecracker</td><td>KVM microVM</td><td>strong isolation substrate</td><td>not an agent workflow by itself</td></tr>
+          <tr><td>h5i env</td><td>tiered worktree + process/supervised/container</td><td>local reviewable agent work with provenance</td><td>no shipped microVM tier today</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Git worktree</h2>
+    <p>
+      A Git worktree is not usually marketed as a sandbox, but it is the base layer for many coding-agent systems. It gives each agent a separate directory, branch, index, and working state while sharing the repository object store. It is excellent for avoiding edit collisions and making experiments cheap.
+    </p>
+    <p>
+      Its security claim is almost zero. A process launched in a worktree still has the user's host permissions. It can read the home directory, use the network, inspect processes, and modify any writable path unless something else confines it. Treat a worktree as workspace isolation, not execution isolation.
+    </p>
+
+    <h2>container-use</h2>
+    <p>
+      Dagger's <a href="https://github.com/dagger/container-use">container-use</a> and the Zed integration described in <a href="https://zed.dev/blog/container-use-background-agents">Zed's background-agents post</a> combine containers with Git worktrees. That is a natural shape for coding agents: each agent gets isolated execution and a separate branch that a human can inspect, merge, or discard.
+    </p>
+    <p>
+      The key strength is workflow. You can run parallel agents without stashing, cloning repeatedly, or letting them overwrite the same checkout. The caution is that the isolation boundary is a container boundary. Containers share the host kernel unless paired with stronger runtimes. Exposed Docker sockets, privileged mode, broad bind mounts, shared PID namespaces, and retained capabilities can collapse the security claim.
+    </p>
+
+    <h2>Anthropic sandbox-runtime</h2>
+    <p>
+      Anthropic's <a href="https://github.com/anthropic-experimental/sandbox-runtime">sandbox-runtime</a> is a lightweight tool for filesystem and network restrictions around arbitrary processes. Anthropic's engineering writeup presents it as a way to run Claude Code bash commands, agents, local MCP servers, and other processes with defined directory and network access, without spinning up a container.
+    </p>
+    <p>
+      Architecturally, this sits in the process-sandbox family. It is attractive when you want low startup cost and local enforcement using native OS primitives. It is not, by itself, a branch lifecycle, review evidence, or Git provenance system. If your problem is "confine this command", it is close to the core. If your problem is "run five coding agents, compare their diffs, keep audit evidence, and merge one", you need additional workflow.
+    </p>
+
+    <h2>OpenSandbox</h2>
+    <p>
+      <a href="https://github.com/opensandbox-group/OpenSandbox">OpenSandbox</a> positions itself as a general sandbox platform for AI applications, with SDKs and Docker/Kubernetes runtimes for code execution, GUI agents, evaluations, and training. This is a platform shape rather than a single-process wrapper. It cares about lifecycle APIs, runtime backends, and production integration.
+    </p>
+    <p>
+      The advantage is breadth. A platform can standardize create, execute, file, network, and lifecycle operations across backends. The tradeoff is footprint: Docker or Kubernetes infrastructure, runtime configuration, and integration complexity. Its center of gravity is a sandbox service for applications; Git-native review and reasoning provenance are outside the core model.
+    </p>
+
+    <h2>E2B</h2>
+    <p>
+      <a href="https://e2b.dev/docs">E2B</a> provides isolated sandboxes for agents through SDKs, and E2B's public material describes sandboxes as Firecracker-powered microVM environments. This is the hosted API approach: developers ask for a sandbox, run code, manage files, and let the provider operate the isolation substrate.
+    </p>
+    <p>
+      The strength is time to integration and an isolation ceiling higher than ordinary shared-kernel containers. The tradeoff is that the environment is a remote service with account, SDK, lifecycle, and data-placement considerations. It is a strong fit for products that need code-interpreter-style execution. It is less directly a local Git workflow unless you build that layer around it.
+    </p>
+
+    <h2>gVisor and Kata</h2>
+    <p>
+      <a href="https://gvisor.dev/docs/">gVisor</a> is not an agent sandbox product; it is a container isolation runtime. It implements a Linux-like interface in a user-space application kernel, reducing how much of the host kernel a workload reaches directly. <a href="https://katacontainers.io/">Kata Containers</a> uses lightweight virtual machines that feel like containers but add hardware virtualization as a second boundary.
+    </p>
+    <p>
+      These are important because they can sit under higher-level agent platforms. If a tool says "container", ask which runtime. A runc container, a gVisor sandbox, and a Kata VM-backed container are not the same security claim. Compatibility, startup time, kernel feature coverage, observability, and infrastructure support differ substantially.
+    </p>
+
+    <h2>Firecracker</h2>
+    <p>
+      <a href="https://firecracker-microvm.github.io/">Firecracker</a> is a microVM monitor developed for serverless-style workloads. Its security value is category-level: the workload runs behind a guest kernel and KVM boundary, not merely inside host namespaces. This is why microVM-backed systems are the usual answer when the workload may be hostile rather than merely risky.
+    </p>
+    <p>
+      Firecracker is a substrate, not a full agent workflow. You still need root filesystems, networking, file transfer, snapshotting, policy, logging, identity, merge workflow, and cleanup. Teams that need the top isolation class should be willing to build or adopt that platform layer.
+    </p>
+
+    <h2>h5i env</h2>
+    <p>
+      h5i's <code>env</code> feature sits in a different part of the design space: local Git-native agent work where isolation, provenance, and review are one unit. It creates a worktree-backed environment, resolves a sandbox policy, records command captures and policy evidence, and lets a reviewer inspect or apply the resulting diff. Its tiers range from workspace isolation to rootless process confinement, supervised egress control, and a rootless Podman container backend.
+    </p>
+    <p>
+      The key distinction is not that h5i has the strongest raw boundary. It does not ship a microVM tier today. The distinction is that the sandbox is tied to the code branch, reasoning/context branch, policy digest, captures, denials, and review lifecycle. h5i is trying to make sandboxed work auditable in Git, not just executable somewhere else.
+    </p>
+
+    <h2>Boundary strength</h2>
+    <p>
+      A rough isolation ordering looks like this, with many configuration caveats:
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">not a total order, but a useful map</span></div>
+      <div class="terminal-body"><pre>worktree only
+  -&gt; process sandbox with namespaces/seccomp/Landlock
+  -&gt; hardened container runtime
+  -&gt; user-space kernel such as gVisor
+  -&gt; lightweight VM runtime such as Kata
+  -&gt; microVM substrate such as Firecracker</pre></div>
+    </div>
+    <p>
+      This order is about escape resistance, not developer experience. The strongest boundary may be the wrong tool for a quick local refactor. The lightest tool may be irresponsible for hostile code. Choose based on the adversary and the operational need.
+    </p>
+
+    <h2>Network control is the differentiator</h2>
+    <p>
+      Most tools can claim some filesystem isolation. Network policy separates mature sandboxes from directory wrappers. Ask whether egress is unrestricted, denied, proxy-filtered, DNS-filtered, packet-filtered, or VM-network-filtered. Then ask what happens with raw IP literals, DNS rebinding, IPv6, Unix sockets, package-manager mirrors, and tools that ignore HTTP proxy variables.
+    </p>
+    <p>
+      The strongest practical designs combine name policy with packet enforcement. The weakest designs rely on a proxy while leaving direct sockets available. That can still be useful for cooperative workloads, but it should not be described as an un-bypassable egress allowlist.
+    </p>
+
+    <h2>Provenance is the missing column</h2>
+    <p>
+      The agent-sandbox landscape is strong on execution substrates and weaker on durable review evidence. A human reviewer needs to know not only that a command was isolated, but what branch it changed, what prompt or context caused the work, what command output mattered, what policy was enforced, which denied operations occurred, and why this diff is safe to merge.
+    </p>
+    <p>
+      That is why a Git-native provenance layer is not a luxury. Without it, the sandbox is a safe place to do work but not necessarily a good place to review work. The best agent systems will combine a clear boundary with a replayable audit trail.
+    </p>
+
+    <h2>How to choose</h2>
+    <ol>
+      <li>For parallel trusted edits: use Git worktrees.</li>
+      <li>For local commands that need quick confinement: use a process sandbox.</li>
+      <li>For multi-agent coding with familiar dev environments: use container-plus-worktree systems.</li>
+      <li>For hosted code execution in an application: use an API sandbox such as E2B or a platform such as OpenSandbox.</li>
+      <li>For hostile code or multi-tenant workloads: prefer gVisor, Kata, or microVM-backed isolation.</li>
+      <li>For local agent work where audit and merge evidence matter: use a Git-native environment model such as h5i env.</li>
+    </ol>
+
+    <div class="next-up">
+      <span class="label">Part 4</span>
+      <a href="/blog/sandboxing-ai-agents-h5i/">
+        <h3>How h5i Implements Sandbox Environments</h3>
+        <p>The h5i design in detail: tiers, rootless egress, mediated commits, secrets, capture logs, and boundary-pressure review.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>The right sandbox depends on the claim</h3>
+      <p>h5i is strongest where isolated execution must become reviewable, shareable Git evidence.</p>
+      <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/blog/sandboxing-ai-agents-implementation/" class="btn btn-ghost">Read part 2</a>
+    </div>
+  </article>
+</main>
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links"><a href="/">Home</a><a href="/blog/">Blog</a><a href="https://github.com/h5i-dev/h5i">GitHub</a><a href="https://github.com/h5i-dev/h5i/blob/main/MANUAL.md">Manual</a></nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>

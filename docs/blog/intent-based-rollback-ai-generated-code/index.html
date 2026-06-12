@@ -115,6 +115,11 @@
   <li>Record decisions when the agent chooses between approaches.</li>
   <li>Use <code>--dry-run</code> before applying a rollback during triage.</li>
 </ul>
+<h2>What to verify before reverting</h2>
+<p>Intent matching should narrow the search, not skip review. Before applying a rollback, inspect the matched commit, the prompt or task summary, the files touched, and any follow-up commits that may depend on it. A generated change can be correct in isolation and still be entangled with later fixes, migrations, or tests.</p>
+<p>The safest incident workflow is two-step: use intent to find the likely target, then use normal Git review to verify the revert. h5i's value is preserving enough provenance that responders can make that decision under pressure without relying on memory or vague commit messages.</p>
+<p>After the revert, capture the rollback intent too. Future responders should be able to see not only which AI-generated change was undone, but why that intent matched the incident and which verification commands were run before the rollback shipped.</p>
+<p>That record turns the rollback itself into maintainable history rather than another unexplained emergency patch. It also improves the next incident review.</p>
 <h2>FAQ</h2>
 <h3>Does intent-based rollback replace incident review?</h3>
 <p>No. It speeds up target selection. Humans still need to verify the revert and run the appropriate tests.</p>

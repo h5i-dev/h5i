@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sandboxing AI Agents, Part 4: h5i's Design — h5i</title>
+  <meta name="description" content="How h5i env sandboxes AI agents with worktrees, tiered isolation, rootless egress, mediated commits, secrets, and audit captures.">
+  <meta name="keywords" content="h5i env, AI agent sandbox, rootless egress allowlist, Landlock seccomp, supervised sandbox, Git provenance">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/sandboxing-ai-agents-h5i/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Sandboxing AI Agents, Part 4: h5i's Design">
+  <meta property="og:description" content="h5i env: Git worktrees, policy tiers, rootless L3/L4 egress, captures, and review flow.">
+  <meta property="og:url" content="https://h5i.dev/blog/sandboxing-ai-agents-h5i/">
+  <meta property="og:image" content="https://h5i.dev/_static/sandbox-series-card.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="article:section" content="AI Agent Sandboxing">
+  <meta property="article:tag" content="h5i env">
+  <meta property="article:tag" content="AI agent sandbox">
+  <meta property="article:tag" content="Git provenance">
+  <meta property="article:tag" content="rootless egress">
+  <meta property="article:published_time" content="2026-06-12">
+  <meta property="article:modified_time" content="2026-06-12">
+  <meta property="article:author" content="Koukyosyumei">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Sandboxing AI Agents, Part 4: h5i's Design">
+  <meta name="twitter:description" content="Git worktrees, tiered isolation, rootless egress, captures, and review evidence.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-series-card.png">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 4: h5i's Design","description":"How h5i env sandboxes AI agents with worktrees, tiered isolation, rootless egress, mediated commits, secrets, and audit captures.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-12","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-h5i/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":1535,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["h5i env","AI agent sandbox","Git provenance","rootless egress allowlist"],"keywords":"h5i env, agent sandbox, Git provenance, rootless egress"}
+  </script>
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://h5i.dev/blog/"},{"@type":"ListItem","position":3,"name":"Sandboxing AI Agents, Part 4","item":"https://h5i.dev/blog/sandboxing-ai-agents-h5i/"}]}
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+</head>
+<body>
+<div class="bg-grid"></div>
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub -&gt;</a></li>
+  </ul>
+</nav>
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Sandbox Series · Part 4 · 2026-06-12</div>
+      <h1>Sandboxing AI Agents, Part 4: How h5i Implements It</h1>
+      <p class="post-deck">h5i treats a sandboxed agent run as a Git-addressed unit of work: code branch, reasoning context, policy, command evidence, denials, and review decision all travel together.</p>
+      <div class="post-meta">
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 18 min</span>
+        <span><strong>Tags</strong> h5i env · Provenance · Egress</span>
+      </div>
+    </header>
+
+    <p>
+      h5i's sandbox feature is named <code>env</code>. The name is deliberate. An environment is more than a container and more than a worktree. It is the place an agent works, the policy that confines it, the evidence that records it, and the review lifecycle that decides whether the result reaches the main branch.
+    </p>
+
+    <div class="callout">
+      <strong>Series map.</strong> This h5i deep dive follows the <a href="/blog/sandboxing-ai-agents-foundations/">foundations</a>, <a href="/blog/sandboxing-ai-agents-implementation/">implementation guide</a>, and <a href="/blog/sandboxing-ai-agents-landscape/">AI sandbox comparison</a>.
+    </div>
+
+    <h2>h5i env sandbox core abstraction</h2>
+    <p>
+      An h5i environment fuses three objects. The <strong>code branch</strong> is a Git worktree and branch for the agent's file changes. The <strong>context branch</strong> is the h5i reasoning and memory context associated with the work. The <strong>environment manifest</strong> records policy, identity, base commit, captures, and provenance. Together, they make the sandboxed run audit-reconstructable: not bit-for-bit replay, but a durable answer to who ran what, under which policy, against which tree, producing which diff.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">h5i env lifecycle</span></div>
+      <div class="terminal-body"><pre>$ h5i env create fix-auth --profile agent
+$ h5i env shell fix-auth
+box$ cargo test
+box$ exit
+$ h5i env log fix-auth
+$ h5i env diff fix-auth
+$ h5i env apply fix-auth</pre></div>
+    </div>
+
+    <p>
+      The user gets a normal review shape: create, run or shell, inspect logs, inspect diff, apply when satisfied. The agent gets a workspace that feels like a real project. The repository gets a durable record rather than an unstructured transcript.
+    </p>
+
+    <h2>Tiered isolation</h2>
+    <p>
+      h5i does not pretend every host supports every boundary. It resolves a requested isolation claim against the local machine and refuses when the claim cannot be met. The tiers are intentionally explicit:
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Tier</th><th>Boundary</th><th>Defends well against</th><th>Does not claim</th></tr></thead>
+        <tbody>
+          <tr><td><strong>workspace</strong></td><td>Git worktree only</td><td>parallel edit collisions</td><td>execution containment</td></tr>
+          <tr><td><strong>process</strong></td><td>Landlock, seccomp denylist, user/mount/PID/net namespaces, cgroups or rlimits</td><td>accidental damage, many prompt-injection effects, deny-network local runs</td><td>microVM-grade hostile-code isolation</td></tr>
+          <tr><td><strong>supervised</strong></td><td>process tier plus seccomp-notify socket gate and rootless L3/L4 egress</td><td>off-allowlist network, raw-IP bypass attempts, netlink firewall rewrites</td><td>dynamic policy patching or separate kernel</td></tr>
+          <tr><td><strong>container</strong></td><td>rootless Podman with dropped capabilities, read-only rootfs, no docker socket, L7 proxy egress</td><td>containerized toolchains and stronger filesystem packaging</td><td>un-bypassable raw-socket egress unless direct sockets are blocked by config</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The future slots are <code>hardened-container</code> and <code>microvm</code>, but h5i does not claim they are shipped when they are not. That is important: an isolation enum should express both current capability and a fail-closed upgrade path.
+    </p>
+
+    <h2>Worktree plus mediated commit</h2>
+    <p>
+      The worktree gives the agent a real checkout. At confined tiers, h5i hides the shared Git internals from the workload and treats the filesystem diff as the output. The host-side h5i process stages and commits after checking paths. This avoids giving the untrusted process direct write access to refs, hooks, shared objects, and other worktrees.
+    </p>
+    <p>
+      This design also makes review ordinary. You can inspect a diff, compare multiple environments, and apply the one you want. The sandbox does not auto-merge just because the command exited successfully.
+    </p>
+
+    <h2>Filesystem defense</h2>
+    <p>
+      In the process tier, h5i grants write access to the environment worktree and selected read-only system paths. It does not grant the user's whole home directory. It does not rely on "deny this child under an allowed parent" semantics because Landlock is allowlist-only. Profiles that need runtime state, such as an agent's own credential cache, must say so explicitly.
+    </p>
+    <p>
+      The defense here is against accidental host writes, prompt-injected commands that try to read common secret paths, and dependency scripts that assume normal home-directory access. It is not a promise that the host kernel is unreachable; this tier still shares the kernel.
+    </p>
+
+    <h2>Network defense</h2>
+    <p>
+      h5i's most distinctive enforcement detail is the supervised tier's rootless egress allowlist. The sandbox creates a private network namespace, uses a user-space uplink, installs a default-drop nftables ruleset inside the namespace, resolves allowlisted hosts once, pins them through a private <code>/etc/hosts</code>, and opens no general DNS path.
+    </p>
+    <p>
+      The remaining escape attempt is policy mutation: if the workload can call netlink, it can try to flush nftables or change routes. h5i places a seccomp-notify socket gate in front of socket creation and denies <code>AF_NETLINK</code>. That means tools such as <code>nft</code> and <code>ip</code> cannot open the control channel needed to rewrite the namespace's packet policy.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">supervised egress behavior</span></div>
+      <div class="terminal-body"><pre>curl https://pypi.org            # allowed when pypi.org is in net.egress
+curl https://example.invalid     # blocked: no DNS route
+curl https://1.1.1.1             # blocked: packet default-drop
+nft flush ruleset                # blocked: AF_NETLINK denied</pre></div>
+    </div>
+
+    <p>
+      The container tier has a different network shape: rootless Podman plus a proxy-oriented egress allowlist. That is useful and ergonomic, but h5i documents the difference. A proxy allowlist and a packet-enforced allowlist are not the same claim.
+    </p>
+
+    <h2>Secrets defense</h2>
+    <p>
+      h5i includes a secrets broker model rather than treating environment variables as invisible. The policy names which secrets may be released. Captures redact values and record fingerprints so a reviewer can see that a secret was involved without seeing the secret. The design goal is not simply "make the command work"; it is "make secret use reviewable without leaking the secret into evidence."
+    </p>
+    <p>
+      Profiles for real agents are scoped to one runtime. A Claude-oriented environment should not also receive Codex credentials and egress to OpenAI endpoints; a Codex-oriented environment should not also receive Claude state and egress to Anthropic endpoints. Combining runtime credentials expands the damage of a prompt-injected agent.
+    </p>
+
+    <h2>Resources defense</h2>
+    <p>
+      h5i uses cgroup v2 where possible and rlimits as fallback. Memory, process count, file size, CPU, and wall-clock duration are all part of the sandbox's operational boundary. This matters for agents because many failures are not clever attacks. They are runaway builds, recursive test fixtures, package managers that explode cache size, or generated code that forks too much.
+    </p>
+
+    <h2>Audit and boundary pressure</h2>
+    <p>
+      h5i records command captures, raw output pointers, structured summaries, policy digests, egress summaries, redactions, and denials. The web dashboard classifies "boundary pressure" across lanes such as filesystem, network, process, privilege, and resources. That copy is intentionally careful: a blocked off-allowlist request is important evidence, not proof of maliciousness. A sensitive access under workspace isolation is a weak-isolation gap, not a red alert.
+    </p>
+    <p>
+      This is the review advantage of binding sandboxing to provenance. A reviewer can prioritize the environment that attempted raw IP egress, touched sensitive paths, hit seccomp denials, or exceeded resource budgets. Clean runs and noisy runs should not consume the same review time.
+    </p>
+
+    <h2>What h5i defends</h2>
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Threat</th><th>h5i defense</th><th>Residual risk</th></tr></thead>
+        <tbody>
+          <tr><td>Agent clobbers user's checkout</td><td>separate worktree and branch</td><td>none for normal Git edits; malicious host writes need process tier</td></tr>
+          <tr><td>Command reads home secrets</td><td>Landlock/file view excludes home by default</td><td>explicit profiles can reintroduce state if too broad</td></tr>
+          <tr><td>Command exfiltrates over internet</td><td>network deny or supervised egress allowlist</td><td>host mode and broad allowlists are intentionally weaker</td></tr>
+          <tr><td>Raw socket bypasses proxy</td><td>supervised L3/L4 packet filter catches raw IP</td><td>container L7 proxy tier has different claim</td></tr>
+          <tr><td>Workload rewrites firewall</td><td>AF_NETLINK denied after setup</td><td>kernel bugs remain shared-kernel risk</td></tr>
+          <tr><td>Runaway process consumes host</td><td>cgroups, rlimits, timeout</td><td>hosts without delegation may get weaker fallback limits</td></tr>
+          <tr><td>Reviewer cannot tell what happened</td><td>content-addressed captures and policy digests</td><td>not deterministic replay of external services</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>What h5i does not defend</h2>
+    <p>
+      h5i's shipped tiers are shared-kernel tiers. They are useful against accidental damage, prompt-injection effects, many exfiltration attempts, and ordinary untrusted build scripts. They are not the same as a Firecracker or Kata-backed microVM boundary. A malicious binary with a working host-kernel exploit is outside the honest claim of the current implementation.
+    </p>
+    <p>
+      h5i also does not make a broad allowlist safe by magic. If a profile grants credentials and permits egress to a general-purpose endpoint, the policy has created a channel. Sandboxing reduces authority; it does not replace careful policy design.
+    </p>
+
+    <div class="callout danger">
+      <strong>The hard ceiling is the shared kernel.</strong> Process, supervised, and rootless-container tiers are strong local containment tools. They are not a substitute for separate-kernel isolation when the workload itself is a determined adversary.
+    </div>
+
+    <h2>The design lesson</h2>
+    <p>
+      h5i's answer to AI-agent sandboxing is not "one box to rule them all." It is a disciplined binding: create a disposable workspace, enforce the strongest local policy the host can actually satisfy, capture what happened, attach that evidence to the work, and let a reviewer choose whether the diff lands. The sandbox boundary and the review boundary are the same unit.
+    </p>
+    <p>
+      That is the difference between running an agent in a container and running agent work as an auditable environment. The former may be isolated. The latter can be reviewed, compared, pushed, pulled, and remembered.
+    </p>
+
+    <div class="next-up">
+      <span class="label">Series start</span>
+      <a href="/blog/sandboxing-ai-agents-foundations/">
+        <h3>Sandboxing AI Agents, Part 1: Foundations</h3>
+        <p>Return to the beginning: what sandboxing means, what threat models matter, and how to read security claims.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Give the agent a box and keep the receipt</h3>
+      <p>h5i is open source, local-first, and built around Git-native review evidence for AI-era work.</p>
+      <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/blog/sandboxing-ai-agents-landscape/" class="btn btn-ghost">Read part 3</a>
+    </div>
+  </article>
+</main>
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links"><a href="/">Home</a><a href="/blog/">Blog</a><a href="https://github.com/h5i-dev/h5i">GitHub</a><a href="https://github.com/h5i-dev/h5i/blob/main/MANUAL.md">Manual</a></nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">Sandboxing AI Agents blog series social card</title>
+  <desc id="desc">A dark h5i social preview card for a four-part technical series about sandboxing AI agents.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#08080b"/>
+      <stop offset="1" stop-color="#18181f"/>
+    </linearGradient>
+    <filter id="soft" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <g opacity="0.16" stroke="#fff" stroke-width="1">
+    <path d="M0 90h1200M0 180h1200M0 270h1200M0 360h1200M0 450h1200M0 540h1200"/>
+    <path d="M120 0v630M240 0v630M360 0v630M480 0v630M600 0v630M720 0v630M840 0v630M960 0v630M1080 0v630"/>
+  </g>
+  <rect x="72" y="70" width="1056" height="490" rx="28" fill="#101015" stroke="rgba(255,255,255,0.13)" filter="url(#soft)"/>
+  <g font-family="Space Mono, ui-monospace, monospace" font-size="20" fill="#ff6258">
+    <text x="110" y="130">h5i / textbook series</text>
+  </g>
+  <g font-family="Space Grotesk, Arial, sans-serif">
+    <text x="110" y="220" fill="#fff" font-size="66" font-weight="700">Sandboxing</text>
+    <text x="110" y="294" fill="#fff" font-size="66" font-weight="700">AI Agents</text>
+    <text x="110" y="350" fill="#a0a0aa" font-size="27">Threat models, implementation, sandbox landscape,</text>
+    <text x="110" y="388" fill="#a0a0aa" font-size="27">and h5i's Git-native sandbox design.</text>
+  </g>
+  <g transform="translate(760 170)">
+    <rect x="0" y="0" width="280" height="235" rx="18" fill="#08080b" stroke="#e0241b" stroke-width="2"/>
+    <rect x="32" y="36" width="216" height="164" rx="14" fill="#15151b" stroke="rgba(255,255,255,0.24)"/>
+    <rect x="64" y="68" width="152" height="100" rx="11" fill="#1e1e27" stroke="rgba(255,255,255,0.26)"/>
+    <circle cx="140" cy="118" r="34" fill="#e0241b"/>
+    <path d="M140 80v-34M140 190v-34M102 118H68M212 118h-34" stroke="#ff6258" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <g font-family="Space Mono, ui-monospace, monospace" font-size="18" fill="#e8e8ec">
+    <text x="110" y="490">Part 1 Foundations  ·  Part 2 Implementation  ·  Part 3 Landscape  ·  Part 4 h5i</text>
+  </g>
+  <rect x="110" y="526" width="86" height="10" fill="#e0241b"/>
+</svg>

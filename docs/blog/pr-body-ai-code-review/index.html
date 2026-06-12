@@ -177,6 +177,29 @@
       where it was uncertain, what tests ran, and which files deserve your attention."
     </div>
 
+    <h2>Reviewer workflow</h2>
+
+    <p>
+      A useful AI PR body should change review order. Start with the goal and scope, then
+      inspect the files h5i ranks as risky, then read the reasoning highlights, then compare
+      tests against the behavior that changed. The rendered comment is not meant to replace
+      the diff; it tells the reviewer where the diff is most likely to hide a mistake.
+    </p>
+
+    <p>
+      This matters most on large generated patches. Without provenance, a reviewer may spend
+      equal time on formatting churn and security-sensitive changes. With h5i, blind edits,
+      uncertainty notes, skipped tests, generated configuration, and high-churn files can move
+      to the top of the review queue.
+    </p>
+
+    <p>
+      The same workflow helps after merge. If a production issue appears later, the PR body
+      gives responders a compact record of the original task, the evidence available at review
+      time, and the assumptions that were accepted. That is useful incident context, not just
+      a nicer pull request comment.
+    </p>
+
     <h2>Requirements</h2>
 
     <p>
