@@ -684,3 +684,4 @@ _[Checkpoint: 6a2b5c5a — edited src/env.rs; edited src/env.rs; edited src/env.
 
 [01:18:29] OBSERVE: searched tests/env_integration.rs for "src/env.rs"
 [01:18:29] OBSERVE: read Cargo.toml
+[01:18:29] OBSERVE: searched src/main.rs for "tests"
