@@ -1292,3 +1292,4 @@ _[Checkpoint: 6a2c6b85 — Documented Codex bypass-hook-trust incantation; obser
 _[Checkpoint: 6a2c6b91 — edited tests/env_integration.rs; edited CLAUDE.md; edited docs/environments-design.md]_
 ---
 
+[20:30:57] NOTE: DEFERRAL (~/Dev/h5i/docs/environments-design.md): ok-trust` | The supervised tee-shim port stays as optional future work — not needed for Codex now that the incantation is documented
