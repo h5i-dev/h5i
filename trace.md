@@ -1146,3 +1146,4 @@ _[Checkpoint: 6a2c5659 — edited /home/koukyosyumei/Dev/h5i/src/container.rs; e
 _[Checkpoint: 6a2c58b0 — Decision: harden in-box hook via managed-settings injection (container tier)]_
 ---
 
+[19:06:29] OBSERVE: read src/hooks.rs
