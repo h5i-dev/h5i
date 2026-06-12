@@ -810,3 +810,4 @@ _[Checkpoint: 6a2bf6ff — edited .claude/h5i.md; edited supervised-execve-notif
 _[Checkpoint: 6a2bfab2 — Added four-part AI agent sandboxing blog series with shared SVG diagram, blog index cards/JSON-LD entries, and sitemap URLs.]_
 ---
 
+[14:11:13] OBSERVE: searched docs/sitemap.xml for "docs/blog/index.html"
