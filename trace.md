@@ -595,3 +595,9 @@ _[Checkpoint: 6a2b53d9 — wrote supervised-execve-notify-deadlock.md; edited ME
 ---
 
 [00:43:46] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/wsl2-cargo-test-oom.md): x through the crown-jewel security path. It's documented as deferred, with the mechanism written to memory so it isn't re-derived. **What shipped (bot…
+
+
+---
+_[Checkpoint: 6a2b5642 — wrote supervised-execve-notify-deadlock.md; edited MEMORY.md; edited wsl2-cargo-test-oom.md]_
+---
+
