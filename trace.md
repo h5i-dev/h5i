@@ -828,3 +828,4 @@ _[Checkpoint: 6a2c1381 — Optimized SEO for sandbox blog series: shorter meta d
 _[Checkpoint: 6a2c13d6 — Audited SEO for all blog posts: no critical metadata/sitemap/JSON-LD defects; found optimization warnings for long snippets/titles and low word-count posts.]_
 ---
 
+[14:19:15] OBSERVE: read docs/blog/claude-code-hooks-vs-git-hooks/index.html
