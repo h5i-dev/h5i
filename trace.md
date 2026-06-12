@@ -653,3 +653,4 @@ _[Checkpoint: 6a2b5856 — edited src/container.rs; edited src/container.rs; edi
 [00:57:22] OBSERVE: read src/env.rs
 [00:57:24] OBSERVE: read src/env.rs
 [00:59:09] OBSERVE: read src/env.rs
+[01:00:14] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): er command), and supervised-tier in-box capture remains the deferred piece
