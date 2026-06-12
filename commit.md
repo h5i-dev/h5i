@@ -992,3 +992,16 @@ Unkillable wrap-bash hook via ro bind-mount at /etc/claude-code/managed-settings
 
 ---
 
+## Commit 6a2c5b71 — 2026-06-12 19:18 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+Unkillable wrap-bash hook via ro bind-mount at /etc/claude-code/managed-settings.json in the container ns. Live-verified read-only + present. Codex-gated, interactive-only, complements tee-shim. Full suite green (806 lib + 59 container e2e). Open follow-ups: (1) Codex equivalent — needs Codex managed-config research before its hook can be made equally unkillable; (2) process/supervised managed-settings would need one-time sudo /etc/claude-code setup, currently still on revert-seal + tee-shim floor; (3) h5i must be in-box image for the hook command to run.
+
+### This Commit's Contribution
+
+
+---
+
