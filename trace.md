@@ -963,3 +963,9 @@ _[Checkpoint: 6a2c235b — edited docs/blog/agent-sandbox-env/index.html; edited
 _[Checkpoint: 6a2c3b31 — Assessed in-box failures: powerline-shell denial intended (pipx symlink outside narrowed share grant); commondir 'locked' error = real gap ($WORK-only grant excludes .git/worktrees + common dir, bricking all git/h5i ops inside the box)]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2c3b47 — edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-san…]_
+---
+
