@@ -969,3 +969,4 @@ _[Checkpoint: 6a2c3b31 — Assessed in-box failures: powerline-shell denial inte
 _[Checkpoint: 6a2c3b47 — edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-san…]_
 ---
 
+[17:06:14] OBSERVE: read src/ctx.rs
