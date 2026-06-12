@@ -699,11 +699,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Expanded sandbox Parts 1 and 2 for non-systems readers: added mental model, primitive cheat sheet, stage separation, annotated policy TOML, resolver/path/launch pseudo-code, and beginner tables.
 - [x] Committed expanded sandbox Part 1/2 readability pass as 71f3e008 with h5i provenance.
 - [x] edited docs/blog/sandboxing-ai-agents-implementation/index.html; edited docs/blog/sandboxing-ai-agents-foundations/index…
+- [x] edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-san…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 15:16 UTC] `improve-shell`: edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-sandbox-env/index.html; edited docs/blog/agent-san…
 - [2026-06-12 15:08 UTC] `improve-shell`: edited docs/blog/sandboxing-ai-agents-implementation/index.html; edited docs/blog/sandboxing-ai-agents-foundations/index…
 - [2026-06-12 15:03 UTC] `improve-shell`: Committed expanded sandbox Part 1/2 readability pass as 71f3e008 with h5i provenance.
 - [2026-06-12 14:44 UTC] `improve-shell`: Expanded sandbox Parts 1 and 2 for non-systems readers: added mental model, primitive cheat sheet, stage separation, annotated policy TOML, resolver/path/launch pseudo-code, and beginner tables.
