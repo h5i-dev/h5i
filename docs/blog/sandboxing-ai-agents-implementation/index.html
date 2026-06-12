@@ -34,7 +34,7 @@
   <meta name="twitter:description" content="Worktrees, Landlock, seccomp, namespaces, cgroups, egress allowlists, secrets, and audit logs.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-series-card.png">
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 2: Implementation","description":"Implement an AI agent sandbox with worktrees, Landlock, seccomp, namespaces, cgroups, egress allowlists, secrets, and audit logs.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-12","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-implementation/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":1686,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox implementation","Landlock","seccomp","network egress allowlist"],"keywords":"Landlock, seccomp, namespaces, cgroups, egress allowlist, AI agent sandbox"}
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 2: Implementation","description":"Implement an AI agent sandbox with worktrees, Landlock, seccomp, namespaces, cgroups, egress allowlists, secrets, and audit logs.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-12","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-implementation/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":2150,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox implementation","Landlock","seccomp","network egress allowlist"],"keywords":"Landlock, seccomp, namespaces, cgroups, egress allowlist, AI agent sandbox"}
   </script>
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://h5i.dev/blog/"},{"@type":"ListItem","position":3,"name":"Sandboxing AI Agents, Part 2","item":"https://h5i.dev/blog/sandboxing-ai-agents-implementation/"}]}
@@ -74,6 +74,10 @@
       A sandbox implementation is not one mechanism. It is a launch protocol. You prepare a filesystem view, create namespaces, drop privileges, install syscall policy, install resource limits, configure networking, start the workload, observe the workload, and preserve enough evidence to review the result. The order matters because a process that runs before the boundary is complete is not confined by the boundary.
     </p>
 
+    <p>
+      Think of implementation as building a small operating room for one command. The command should not inherit the whole developer laptop. It should receive a prepared directory, a small set of visible system files, a private process view, a controlled network path, a resource budget, and a recorder. The implementation work is making sure those pieces exist before the command gets its first instruction.
+    </p>
+
     <div class="callout">
       <strong>Series map.</strong> Review the <a href="/blog/sandboxing-ai-agents-foundations/">foundations</a>, then continue to <a href="/blog/sandboxing-ai-agents-landscape/">sandbox comparison</a> and <a href="/blog/sandboxing-ai-agents-h5i/">h5i's env design</a>.
     </div>
@@ -85,20 +89,54 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">policy.toml</span></div>
-      <div class="terminal-body"><pre>isolation = "process"
-fs.read   = ["$WORK", "/usr", "/lib", "/nix"]
-fs.write  = ["$WORK"]
-net.mode  = "deny"
-net.egress = []
-limits.memory_mb = 4096
-limits.pids = 256
-limits.seconds = 900
-secrets = []</pre></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># Minimum isolation claim. If the host cannot provide it, refuse.</span>
+<span class="t-out">isolation</span> = <span class="t-cmd">"process"</span>
+
+<span class="t-cmt"># Read access: the worktree plus read-only runtime files needed by tools.</span>
+<span class="t-out">fs.read</span>   = [<span class="t-cmd">"$WORK"</span>, <span class="t-cmd">"/usr"</span>, <span class="t-cmd">"/lib"</span>, <span class="t-cmd">"/nix"</span>]
+
+<span class="t-cmt"># Write access: only the disposable environment worktree.</span>
+<span class="t-out">fs.write</span>  = [<span class="t-cmd">"$WORK"</span>]
+
+<span class="t-cmt"># No outbound network in this profile.</span>
+<span class="t-out">net.mode</span>  = <span class="t-cmd">"deny"</span>
+<span class="t-out">net.egress</span> = []
+
+<span class="t-cmt"># Resource budget: memory, number of processes, and wall-clock time.</span>
+<span class="t-out">limits.memory_mb</span> = <span class="t-pass">4096</span>
+<span class="t-out">limits.pids</span> = <span class="t-pass">256</span>
+<span class="t-out">limits.seconds</span> = <span class="t-pass">900</span>
+
+<span class="t-cmt"># No credentials are injected unless explicitly named.</span>
+<span class="t-out">secrets</span> = []</pre></div>
     </div>
 
     <p>
       A good resolver returns both policy and evidence: Landlock ABI version, whether unprivileged user namespaces are enabled, whether seccomp can install the filter, whether cgroup v2 delegation exists, whether rootless Podman is available, and whether network allowlists can actually be enforced. That evidence should be stored with every run.
     </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">policy resolver pseudo-code</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># requested: what the user or profile asked for</span>
+<span class="t-cmt"># host: what the current machine can actually enforce</span>
+
+resolved = {}
+
+if requested.isolation == <span class="t-cmd">"process"</span>:
+    require(host.has_user_namespaces)
+    require(host.has_mount_namespaces)
+    require(host.has_pid_namespaces)
+    require(host.has_seccomp)
+    require(host.has_landlock)
+    resolved.isolation = <span class="t-cmd">"process"</span>
+
+if requested.net.egress is not empty:
+    require(host.can_enforce_egress_allowlist)
+    resolved.net.egress = pin_dns_and_addresses(requested.net.egress)
+
+if any require(...) failed:
+    refuse(<span class="t-red">"requested sandbox claim cannot be enforced"</span>)</pre></div>
+    </div>
 
     <h2>Workspace isolation</h2>
     <p>
@@ -107,6 +145,10 @@ secrets = []</pre></div>
     <p>
       The major worktree trap is the shared Git object store. A worktree's <code>.git</code> entry points back into the repository's common Git directory. If a confined process can follow that pointer, it may reach refs, hooks, config, and object storage outside the intended workspace. A process-tier sandbox should hide or replace <code>.git</code>, then have the host-side supervisor compute diffs and commit through a path-checked staging path.
     </p>
+
+    <div class="callout">
+      <strong>Worktree is not sandbox.</strong> A Git worktree protects your active checkout from messy edits. It does not stop a process from reading <code>~/.ssh</code>, opening the network, or inspecting host processes. Treat it as the file workspace layer, then add execution confinement around commands.
+    </div>
 
     <h2>Filesystem confinement</h2>
     <p>
@@ -119,6 +161,20 @@ secrets = []</pre></div>
       Filesystem policy must also handle path escape during review. Symlinks, hardlinks, nested Git repositories, submodule gitdirs, and <code>..</code> traversal all matter. If the host commits changes after the workload exits, every staged path should be canonicalized and rejected when it escapes <code>$WORK</code>. Treat this as part of the sandbox boundary, not as cleanup.
     </p>
 
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">path escape check</span></div>
+      <div class="terminal-body"><pre>for changed_path in diff_from_worktree():
+    real_path = canonicalize(<span class="t-out">$WORK</span> / changed_path)
+
+    if not real_path.starts_with(canonicalize(<span class="t-out">$WORK</span>)):
+        reject(<span class="t-red">"path escapes sandbox worktree"</span>)
+
+    if path_is_nested_gitdir_or_submodule(real_path):
+        reject(<span class="t-red">"nested repository boundary needs explicit handling"</span>)
+
+    stage_for_commit(real_path)</pre></div>
+    </div>
+
     <h2>Process and syscall confinement</h2>
     <p>
       Seccomp limits the Linux syscall surface. The strongest model is an allowlist: only syscalls needed by the workload are permitted. Many developer sandboxes start with a denylist because language toolchains need a broad surface and an allowlist takes time to tune. A denylist is still useful when it blocks obvious escalation tools: <code>mount</code>, <code>ptrace</code>, <code>bpf</code>, module loading, keyrings, and dangerous namespace operations.
@@ -126,6 +182,18 @@ secrets = []</pre></div>
     <p>
       Seccomp should be installed after <code>PR_SET_NO_NEW_PRIVS</code>. No-new-privs prevents later exec transitions from gaining privilege through setuid binaries or file capabilities. Drop Linux capabilities where possible. Use a private PID namespace so the workload cannot inspect or signal host processes, and mount a private <code>/proc</code> for that namespace rather than exposing the host process table.
     </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Primitive</th><th>Beginner translation</th><th>Example denial</th></tr></thead>
+        <tbody>
+          <tr><td><strong>seccomp</strong></td><td>Filter the questions a process may ask the kernel.</td><td>deny <code>mount()</code> or <code>bpf()</code></td></tr>
+          <tr><td><strong>no-new-privs</strong></td><td>Do not let future execs gain more privilege than this process has now.</td><td>setuid helper cannot elevate</td></tr>
+          <tr><td><strong>PID namespace</strong></td><td>Show the workload its own small process table.</td><td>cannot inspect host <code>/proc</code></td></tr>
+          <tr><td><strong>capabilities</strong></td><td>Split root-like power into smaller switches and turn them off.</td><td>no <code>CAP_SYS_ADMIN</code></td></tr>
+        </tbody>
+      </table>
+    </div>
 
     <div class="callout warn">
       <strong>Denylist seccomp is not a hostile-code proof.</strong> It reduces known-dangerous surface. It does not prove that every permitted syscall is safe against a future kernel bug. For malicious code with a kernel exploit budget, use a separate-kernel boundary such as a microVM.
@@ -140,6 +208,10 @@ secrets = []</pre></div>
     </p>
     <p>
       One rootless Linux pattern is: create a network namespace, attach a user-space NAT such as <code>slirp4netns</code>, install default-drop <code>nftables</code> rules inside the namespace, resolve allowlisted hostnames at startup, bind a private <code>/etc/hosts</code>, and do not open general DNS. Then block <code>AF_NETLINK</code> after setup so the workload cannot rewrite routes or firewall rules.
+    </p>
+
+    <p>
+      The detail to watch is bypass shape. If the policy says "only <code>github.com</code>," then a direct connection to <code>140.82.112.4</code> must not work unless that address was pinned for the allowed host. If the policy says "no DNS except pinned names," then a hostname such as <code>secret.attacker.example</code> should not even resolve. If the workload can edit firewall rules after launch, the allowlist is only advisory.
     </p>
 
     <div class="terminal">
@@ -175,6 +247,9 @@ firewall rewrite  -&gt; AF_NETLINK denied by socket gate -&gt; fail</pre></div>
     </p>
 
     <h2>Launch order</h2>
+    <p>
+      The launch sequence is easiest to understand as "host prepares, child enters, child loses power, workload starts." Anything that requires broad authority must happen before the untrusted command runs. Anything the command could use to escape must be removed or filtered before <code>exec</code>.
+    </p>
     <ol>
       <li>Create or select the isolated workspace and freeze the base revision.</li>
       <li>Resolve policy against host capabilities; refuse if the claim cannot be enforced.</li>
@@ -187,6 +262,31 @@ firewall rewrite  -&gt; AF_NETLINK denied by socket gate -&gt; fail</pre></div>
       <li>After exit, compute diff from the workspace filesystem using escape-checked paths.</li>
       <li>Store policy, evidence, and diff together so review can reconstruct the run.</li>
     </ol>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">launch pseudo-code</span></div>
+      <div class="terminal-body"><pre>manifest = create_env_manifest(base_commit, requested_policy)
+resolved = resolve_or_refuse(requested_policy, host_capabilities())
+
+work = create_git_worktree(base_commit)
+fs_view = prepare_mount_view(work, resolved.fs)
+network = prepare_network_namespace(resolved.net)
+resources = create_cgroup(resolved.limits)
+
+child = fork()
+if child:
+    enter_user_mount_pid_network_namespaces()
+    mount_private_proc()
+    apply_landlock(resolved.fs)
+    set_no_new_privs()
+    install_seccomp(resolved.syscalls)
+    join_cgroup(resources)
+    exec(command)
+
+capture_exit_status_output_denials()
+diff = compute_escape_checked_diff(work)
+store_evidence(manifest, resolved, capture, diff)</pre></div>
+    </div>
 
     <h2>Common implementation bugs</h2>
     <div class="tbl-wrap">

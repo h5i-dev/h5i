@@ -33,7 +33,7 @@
   <meta name="twitter:description" content="Threat models, isolation layers, and enforcement boundaries for AI coding agents.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-series-card.png">
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 1: Foundations","description":"Learn AI agent sandboxing basics: threat models, isolation layers, enforcement boundaries, and why permission prompts are not enough.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-12","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":1814,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox","threat model","process isolation","sandbox enforcement"],"keywords":"AI agent sandbox, threat model, isolation, containment"}
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Sandboxing AI Agents, Part 1: Foundations","description":"Learn AI agent sandboxing basics: threat models, isolation layers, enforcement boundaries, and why permission prompts are not enough.","author":{"@type":"Person","name":"Koukyosyumei","url":"https://github.com/Koukyosyumei"},"datePublished":"2026-06-12","dateModified":"2026-06-12","publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},"mainEntityOfPage":{"@type":"WebPage","@id":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"image":"https://h5i.dev/_static/sandbox-series-card.png","wordCount":2233,"isPartOf":{"@type":"CreativeWorkSeries","name":"Sandboxing AI Agents","url":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"},"about":["AI agent sandbox","threat model","process isolation","sandbox enforcement"],"keywords":"AI agent sandbox, threat model, isolation, containment"}
   </script>
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://h5i.dev/blog/"},{"@type":"ListItem","position":3,"name":"Sandboxing AI Agents, Part 1","item":"https://h5i.dev/blog/sandboxing-ai-agents-foundations/"}]}
@@ -81,10 +81,22 @@
       The basic definition is simple: <strong>a sandbox is an enforcement boundary around a workload</strong>. The boundary gives the workload some capabilities and withholds others. A good sandbox answers four questions: what object is confined, which operations are allowed, who enforces the rule, and how violations are observed. If any of those are vague, the word "sandbox" is marketing rather than a security property.
     </p>
 
+    <p>
+      If you are new to operating-system security, read "capability" as "permission to do one concrete thing." A process does not need a philosophical right to "use the machine." It needs specific handles: read this directory, write that checkout, open this network connection, create at most this many child processes, and run for this much time. A sandbox is the machinery that makes those handles smaller than the user's normal shell.
+    </p>
+
     <figure class="feature-figure">
       <img src="/_static/sandbox-series-architecture.svg" alt="Layered AI agent sandbox architecture diagram">
       <figcaption>A useful AI-agent sandbox is layered. File isolation without network control still permits exfiltration. Network control without provenance still leaves review blind.</figcaption>
     </figure>
+
+    <h2>A plain-language mental model</h2>
+    <p>
+      Imagine lending a contractor a room in your office. A weak arrangement says "please do not open the file cabinets." A sandboxed arrangement changes the room: the cabinets are not there, the phone can only dial approved numbers, the power strip has a breaker, and the door log records who entered and what they carried out. The contractor may still do useful work, but the room no longer has the full authority of the building.
+    </p>
+    <p>
+      For software, the "room" is the process environment. Filesystem rules decide which cabinets exist. Network rules decide which numbers can be dialed. Process rules decide whether the workload can inspect or signal other programs. Resource rules decide how much power it can draw. Audit rules decide what evidence remains after the work finishes.
+    </p>
 
     <h2>AI agent sandbox threat model</h2>
     <p>
@@ -134,6 +146,15 @@
       <strong>Egress</strong> means outbound communication from the sandbox to something else. In agent security, egress usually means network egress: can the workload contact the internet, package registries, model APIs, internal services, or raw IP addresses? A deny-network sandbox removes the channel. An egress allowlist permits only named destinations. This matters because filesystem isolation does not stop data theft if the process can still send the data somewhere.
     </p>
 
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">primitive cheat sheet</span></div>
+      <div class="terminal-body"><pre><span class="t-out">Landlock</span>    <span class="t-cmt"># file tree rules: this process may read/write only these paths</span>
+<span class="t-out">seccomp</span>     <span class="t-cmt"># syscall rules: this process may not ask the kernel for dangerous operations</span>
+<span class="t-out">namespace</span>   <span class="t-cmt"># private view: this process sees its own /proc, mounts, network, or users</span>
+<span class="t-out">cgroup</span>      <span class="t-cmt"># resource budget: this process group gets bounded memory, CPU, PIDs, I/O</span>
+<span class="t-out">egress</span>      <span class="t-cmt"># outbound channel: this process may contact only these destinations</span></pre></div>
+    </div>
+
     <h2>Isolation versus mediation</h2>
     <p>
       There are two broad enforcement styles. <strong>Isolation</strong> changes what the workload can see: a private filesystem view, a private PID namespace, a private network namespace, or a whole virtual machine. <strong>Mediation</strong> leaves the world conceptually visible but inserts a decision point: a seccomp-notify supervisor, an HTTP proxy, a broker for secrets, or a file-open policy engine.
@@ -142,6 +163,18 @@
       Isolation is simple to reason about when it is complete. If there is no network device, the process cannot send packets. Mediation is more flexible when decisions depend on runtime state. A proxy can allow <code>pypi.org</code> but deny <code>paste.example</code>; a secrets broker can release a token only to one command and redact it from logs. Most real sandboxes combine both styles.
     </p>
 
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead><tr><th>Question</th><th>Isolation answer</th><th>Mediation answer</th></tr></thead>
+        <tbody>
+          <tr><td>Can it read <code>~/.ssh</code>?</td><td>Do not mount or allow that path.</td><td>Ask a file broker whether this open is allowed.</td></tr>
+          <tr><td>Can it reach the internet?</td><td>Give it no network namespace route.</td><td>Route traffic through an allowlist proxy or socket gate.</td></tr>
+          <tr><td>Can it use a secret?</td><td>Do not put the secret in the environment.</td><td>Release a named secret through a broker and redact logs.</td></tr>
+          <tr><td>Can it fork forever?</td><td>Put it in a cgroup with a PID budget.</td><td>Supervisor kills the run when budget is exceeded.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
     <h2>The AI-specific problem</h2>
     <p>
       AI agents create a new composition problem. A normal sandbox for untrusted code asks: can this program harm the host? An agent sandbox must also ask: can this program influence the agent into using its tools against the host? That is why repository text matters. A README can tell the model to run a curl command. A test failure can print a "fix" that copies credentials. A dependency script can alter files that the agent later reads as trusted context.
@@ -149,6 +182,18 @@
     <p>
       The hard case is the "lethal trifecta": private data, untrusted content, and network egress in the same decision context. If a process can read secrets, read attacker-controlled instructions, and talk to the internet, sandbox policy has already given the attack all three ingredients. Strong designs split stages: fetch untrusted content without secrets, process secrets without network, and publish only sanitized output.
     </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">safe stage separation</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># Stage 1: fetch public/untrusted input, but no secrets are present.</span>
+fetch_untrusted:  <span class="t-out">network = allow</span>, <span class="t-out">secrets = none</span>
+
+<span class="t-cmt"># Stage 2: process private data, but no network exists.</span>
+process_private:  <span class="t-out">network = deny</span>,  <span class="t-out">secrets = needed</span>
+
+<span class="t-cmt"># Stage 3: publish a sanitized result to a narrow destination.</span>
+publish_result:   <span class="t-out">network = allowlist</span>, <span class="t-out">secrets = publish-token only</span></pre></div>
+    </div>
 
     <h2>What sandboxes defend</h2>
     <p>
