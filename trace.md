@@ -608,3 +608,4 @@ _[Checkpoint: 6a2b5642 — wrote supervised-execve-notify-deadlock.md; edited ME
 _[Checkpoint: 6a2b571a — wrote supervised-execve-notify-deadlock.md; edited MEMORY.md; edited wsl2-cargo-test-oom.md]_
 ---
 
+[00:48:20] OBSERVE: read src/container.rs
