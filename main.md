@@ -687,11 +687,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] observe-bash replaced by wrap-bash PreToolUse rewrite
 - [x] edited .claude/h5i.md; edited supervised-execve-notify-deadlock.md; edited MEMORY.md
 - [x] Added four-part AI agent sandboxing blog series with shared SVG diagram, blog index cards/JSON-LD entries, and sitemap URLs.
+- [x] Optimized SEO for sandbox blog series: shorter meta descriptions, PNG social card, article tags, BreadcrumbList JSON-LD, series cross-links, and keyword-focused H2s.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 14:11 UTC] `improve-shell`: Optimized SEO for sandbox blog series: shorter meta descriptions, PNG social card, article tags, BreadcrumbList JSON-LD, series cross-links, and keyword-focused H2s.
 - [2026-06-12 12:25 UTC] `improve-shell`: Added four-part AI agent sandboxing blog series with shared SVG diagram, blog index cards/JSON-LD entries, and sitemap URLs.
 - [2026-06-12 12:09 UTC] `improve-shell`: edited .claude/h5i.md; edited supervised-execve-notify-deadlock.md; edited MEMORY.md
 - [2026-06-12 12:08 UTC] `improve-shell`: observe-bash replaced by wrap-bash PreToolUse rewrite
