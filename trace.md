@@ -1111,3 +1111,4 @@ _[Checkpoint: 6a2c50ed — Changed hook setup default to write both Claude and C
 [18:46:52] OBSERVE: searched src/container.rs for "src/sandbox.rs"
 [18:46:52] OBSERVE: read src/sandbox.rs
 [18:46:52] OBSERVE: read src/container.rs
+[18:46:52] OBSERVE: read src/env.rs
