@@ -1417,3 +1417,4 @@ _[Checkpoint: 6a2c77be — session ended (auto-checkpoint)]_
 [21:51:40] OBSERVE: read src/env.rs
 [21:51:40] OBSERVE: searched EnvManifest|fn for "EnvManifest|impl"
 [21:51:40] OBSERVE: read src/env.rs
+[21:51:40] OBSERVE: read src/lib.rs
