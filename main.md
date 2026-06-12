@@ -708,11 +708,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Container tier in-box git fixed (commit f0e4de65): identical-path plumbing bind mounts
 - [x] edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md
 - [x] edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md
+- [x] edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 18:11 UTC] `improve-shell`: edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md
 - [2026-06-12 18:06 UTC] `improve-shell`: edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md
 - [2026-06-12 18:02 UTC] `improve-shell`: edited src/container.rs; edited CLAUDE.md; edited docs/environments-design.md
 - [2026-06-12 18:02 UTC] `improve-shell`: Container tier in-box git fixed (commit f0e4de65): identical-path plumbing bind mounts
