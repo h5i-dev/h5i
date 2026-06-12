@@ -724,11 +724,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Shipped config lockdown on process/supervised (commit 8a097689)
 - [x] edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [x] edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
+- [x] edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 20:24 UTC] `improve-shell`: edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [2026-06-12 20:19 UTC] `improve-shell`: edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [2026-06-12 20:13 UTC] `improve-shell`: edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [2026-06-12 20:13 UTC] `improve-shell`: Shipped config lockdown on process/supervised (commit 8a097689)
