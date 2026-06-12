@@ -1410,3 +1410,4 @@ _[Checkpoint: 6a2c77be — session ended (auto-checkpoint)]_
 [21:51:40] OBSERVE: read src/objects.rs
 [21:51:40] OBSERVE: read src/objects.rs
 [21:51:40] OBSERVE: read src/main.rs
+[21:51:40] OBSERVE: read src/env.rs
