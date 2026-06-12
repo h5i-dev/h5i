@@ -1239,3 +1239,4 @@ _[Checkpoint: 6a2c62f0 — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a2c6442 — session ended (auto-checkpoint)]_
 ---
 
+[20:00:37] OBSERVE: read src/sandbox.rs
