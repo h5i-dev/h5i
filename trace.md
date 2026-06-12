@@ -581,3 +581,4 @@ _[Checkpoint: 6a2b4dcc — edited CLAUDE.md; edited .claude/h5i.md; edited Cargo
 _[Checkpoint: 6a2b53b5 — Observation auto-capture: ship container shim + hook; revert supervised exec-notify (deadlock)]_
 ---
 
+[00:33:29] THINK: Let me restructure `run_supervised` to receive the listener and serve on a thread started before `spawn()`, using the stop-flag `serve()` variant.
