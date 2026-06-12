@@ -906,3 +906,4 @@ _[Checkpoint: 6a2c1913 — Committed sandbox primitives glossary update as 0f7f6
 [14:44:51] OBSERVE: searched docs/_static/blog.css
 [14:44:51] ACT: edited docs/blog/sandboxing-ai-agents-foundations/index.html
 [14:44:51] ACT: edited docs/blog/sandboxing-ai-agents-implementation/index.html
+[14:44:51] ACT: edited docs/blog/sandboxing-ai-agents-foundations/index.html
