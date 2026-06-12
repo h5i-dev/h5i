@@ -1376,3 +1376,9 @@ _[Checkpoint: 6a2c7478 — edited src/container.rs; edited src/container.rs; edi
 
 [21:09:02] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): ent design: 1. **Supervised has no tee-shim** (the port we deferred). So an interactive `env shell` session records *no* per-command captures. Contain…
 [21:09:02] NOTE: PLACEHOLDER (~/Dev/h5i/CLAUDE.md): ` in-box is the friction point. That's also why the agent's workaround — recording the milestone "with the sandbox disabled" afterward — was the o…
+
+
+---
+_[Checkpoint: 6a2c756e — edited src/container.rs; edited src/container.rs; edited CLAUDE.md]_
+---
+
