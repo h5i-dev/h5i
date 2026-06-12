@@ -1083,3 +1083,16 @@ ro-bind project .claude/.codex DIRS (blocks edit+create, closing the settings.lo
 
 ---
 
+## Commit 6a2c6860 — 2026-06-12 20:13 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+ro-bind project .claude/.codex DIRS (blocks edit+create, closing the settings.local.json disableAllHooks bypass) + pin user ~/.claude/settings.json & ~/.codex/config.toml FILES, in pre_exec before Landlock/seccomp, forcing CLONE_NEWNS for supervised (pidns=false). Contained by userns, unremovable (mount/umount2 seccomp-denied), fail-closed, interactive-only. Live-verified process + supervised: edit/create blocked, reads+other writes ok, host untouched. Full suite green (807 lib + 60 env_integration). Residual: absent project config dir could be created (tee-shim floor covers). Codex still needs trust-gate handling for its hook to actually RUN even with config locked.
+
+### This Commit's Contribution
+
+
+---
+

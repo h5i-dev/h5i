@@ -1259,3 +1259,9 @@ _[Checkpoint: 6a2c6854 — Shipped config lockdown on process/supervised (commit
 
 [20:13:20] THINK: Good. Let me implement the config lockdown on the process/supervised tier.
 [20:13:20] THINK: Let me gate the helper to Linux (its only caller is the Linux confinement path) to avoid a dead-code warning on other platforms:
+
+
+---
+_[Checkpoint: 6a2c6860 — edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md]_
+---
+
