@@ -564,3 +564,4 @@ _[Checkpoint: 6a2b4dcc — edited CLAUDE.md; edited .claude/h5i.md; edited Cargo
 [00:13:30] OBSERVE: read src/seccomp_notify.rs
 [00:14:03] ACT: edited src/supervisor.rs
 [00:17:54] OBSERVE: read src/mcp.rs
+[00:24:31] OBSERVE: read src/sandbox.rs
