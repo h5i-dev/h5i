@@ -1182,3 +1182,9 @@ _[Checkpoint: 6a2c58b0 — Decision: harden in-box hook via managed-settings inj
 [19:13:17] OBSERVE: read tests/env_integration.rs
 [19:13:49] ACT: edited tests/env_integration.rs
 [19:17:17] ACT: edited CLAUDE.md
+
+
+---
+_[Checkpoint: 6a2c5b64 — Implemented + shipped: container managed-settings injection (commit 8904e4fc)]_
+---
+
