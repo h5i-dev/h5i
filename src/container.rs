@@ -452,8 +452,17 @@ const SHIM_ORIG_MOUNT: &str = "/.h5i/orig";
 const SHIM_SPOOL_MOUNT: &str = "/.h5i/spool";
 
 /// Generate the observation shim: a pass-through POSIX `sh` script that tees
-/// stdout/stderr of non-interactive `sh -c` / `bash -c` invocations into the
-/// spool while preserving argv, stdin, the TTY decision, and the exit code.
+/// stdout/stderr of a non-interactive command-string invocation into the spool
+/// while preserving argv, stdin, the TTY decision, and the exit code.
+///
+/// The command flag is detected by **scanning argv for a short-option cluster
+/// ending in `c`** (`-c`, `-lc`, `-ic`, `-lic`, …) rather than checking `$1`
+/// literally — different runtimes spell it differently: Claude Code runs
+/// `bash -c`, Codex runs `bash -lc`. The command string is the argument that
+/// follows that flag. A leading non-`c` option (e.g. `bash -i -c …`) is skipped
+/// over; scanning stops at `--` or the first non-option (a `sh script.sh`
+/// invocation, which is not observed).
+///
 /// Every guard fails OPEN to `exec` of the real shell — observation must never
 /// change what a command does or whether it runs. Pure; unit + live tested.
 pub fn shim_script(orig_prefix: &str, spool_dir: &str) -> String {
@@ -466,10 +475,22 @@ case "$0" in
   *)  real="{orig}/bin/${{0##*/}}" ;;
 esac
 [ -x "$real" ] || real="{orig}/bin/sh"
-# Observe only top-level, non-interactive `-c` invocations: a TTY session, a
-# script run (`sh file.sh`), or a nested shell under an observed command all
-# pass straight through.
-if [ "$1" != "-c" ] || [ -n "$H5I_SHIM" ] || [ -t 1 ]; then
+# Locate a `-c` short option (possibly clustered: -c, -lc, -ic) and the command
+# string that follows it. Stop at `--` or the first non-option (a script run,
+# which we do not observe).
+want= ; cmd= ; found=
+for a in "$@"; do
+  if [ -n "$want" ]; then cmd=$a ; found=1 ; break ; fi
+  case "$a" in
+    --) break ;;
+    -*c) want=1 ;;
+    -*) ;;
+    *) break ;;
+  esac
+done
+# Observe only top-level, non-interactive command invocations: a TTY session, a
+# script run, or a nested shell under an already-observed command pass through.
+if [ -z "$found" ] || [ -n "$H5I_SHIM" ] || [ -t 1 ]; then
   exec "$real" "$@"
 fi
 H5I_SHIM=1
@@ -481,7 +502,7 @@ fi
 n=0
 while [ -e "$d/cmd-$$-$n.cmd" ] && [ "$n" -lt 1000 ]; do n=$((n+1)); done
 b="$d/cmd-$$-$n"
-{{ printf '%s' "$2" > "$b.cmd"; }} 2>/dev/null || exec "$real" "$@"
+{{ printf '%s' "$cmd" > "$b.cmd"; }} 2>/dev/null || exec "$real" "$@"
 mkfifo "$b.po" "$b.pe" 2>/dev/null || {{ rm -f "$b.cmd"; exec "$real" "$@"; }}
 tee "$b.out" < "$b.po" &
 po=$!
@@ -1171,6 +1192,67 @@ mod tests {
         child.stdin.take().unwrap().write_all(b"ping\n").unwrap();
         let fin = child.wait_with_output().unwrap();
         assert_eq!(String::from_utf8_lossy(&fin.stdout), "ping\n", "stdin must pass through");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // The argv-scan: different runtimes spell the command flag differently
+    // (Claude `bash -c`, Codex `bash -lc`). We assert only which invocations
+    // the shim *observes* (writes a `.cmd` for) and the command it extracted —
+    // not the output — so the dummy commands "failing" under the real shell is
+    // irrelevant; the `.cmd` is written before the real shell ever runs.
+    #[test]
+    #[cfg(unix)]
+    fn shim_detects_combined_c_flags_and_skips_non_commands() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = std::env::temp_dir().join(format!("h5i-shim-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let orig_bin = tmp.join("orig/bin");
+        let spool = tmp.join("spool");
+        std::fs::create_dir_all(&orig_bin).unwrap();
+        std::fs::create_dir_all(&spool).unwrap();
+        // The shim's shebang interpreter *and* its exec target both resolve to
+        // orig/bin/sh, so it must be the real shell (a stub would short-circuit
+        // the shim body itself).
+        std::os::unix::fs::symlink("/bin/sh", orig_bin.join("sh")).unwrap();
+        let shim = tmp.join("sh");
+        std::fs::write(
+            &shim,
+            shim_script(&tmp.join("orig").display().to_string(), &spool.display().to_string()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Run the shim with `args`, stdout piped (so `[ -t 1 ]` is false), and
+        // return the single `.cmd` payload it spooled this run (or None).
+        let observe = |args: &[&str], envs: &[(&str, &str)]| -> Option<String> {
+            for e in std::fs::read_dir(&spool).unwrap() {
+                let _ = std::fs::remove_file(e.unwrap().path());
+            }
+            let mut c = std::process::Command::new(&shim);
+            c.args(args).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+            for (k, v) in envs {
+                c.env(k, v);
+            }
+            c.output().unwrap();
+            std::fs::read_dir(&spool)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .find(|e| e.file_name().to_string_lossy().ends_with(".cmd"))
+                .map(|e| std::fs::read_to_string(e.path()).unwrap())
+        };
+
+        // Observed — every command-flag spelling is detected, command extracted.
+        assert_eq!(observe(&["-c", "AAA"], &[]).as_deref(), Some("AAA"), "plain -c (Claude)");
+        assert_eq!(observe(&["-lc", "BBB"], &[]).as_deref(), Some("BBB"), "-lc (Codex)");
+        assert_eq!(observe(&["-ic", "CCC"], &[]).as_deref(), Some("CCC"), "-ic");
+        assert_eq!(observe(&["-i", "-c", "DDD"], &[]).as_deref(), Some("DDD"), "option before -c");
+
+        // Not observed — no command flag, or it's a nested/script invocation.
+        assert_eq!(observe(&["script.sh"], &[]), None, "a script run is not a command");
+        assert_eq!(observe(&["-i"], &[]), None, "an interactive shell has no -c");
+        assert_eq!(observe(&["--", "-c", "X"], &[]), None, "`--` ends option scan");
+        assert_eq!(observe(&["-c", "EEE"], &[("H5I_SHIM", "1")]), None, "nested shell passes through");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
