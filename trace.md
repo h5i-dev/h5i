@@ -997,3 +997,4 @@ _[Checkpoint: 6a2c4336 — Option 1 implemented: in-box git works via narrow plu
 _[Checkpoint: 6a2c434b — edited src/env.rs; edited docs/environments-design.md; edited CLAUDE.md]_
 ---
 
+[17:40:24] ACT: edited src/sandbox.rs
