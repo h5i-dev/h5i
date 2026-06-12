@@ -712,11 +712,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Added Codex hook setup target: writes .codex/config.toml, preserves Claude default, updates wrap-bash output for Codex permissionDecision, docs, and tests.
 - [x] Changed hook setup default to write both Claude and Codex configs; --target claude/codex now narrows output; updated docs and tests.
 - [x] Sealed agent hook setup configs from sandboxed envs: protected worktree and user-scope .claude/settings.json and .codex/config.toml with tamper restore/fail-closed guard; container overlays worktree configs read-only; tests pass.
+- [x] edited /home/koukyosyumei/Dev/h5i/src/container.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyu…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 18:56 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/container.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyu…
 - [2026-06-12 18:50 UTC] `improve-shell`: Sealed agent hook setup configs from sandboxed envs: protected worktree and user-scope .claude/settings.json and .codex/config.toml with tamper restore/fail-closed guard; container overlays worktree configs read-only; tests pass.
 - [2026-06-12 18:33 UTC] `improve-shell`: Changed hook setup default to write both Claude and Codex configs; --target claude/codex now narrows output; updated docs and tests.
 - [2026-06-12 18:29 UTC] `improve-shell`: Added Codex hook setup target: writes .codex/config.toml, preserves Claude default, updates wrap-bash output for Codex permissionDecision, docs, and tests.
