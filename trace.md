@@ -1430,3 +1430,4 @@ _[Checkpoint: 6a2c77be — session ended (auto-checkpoint)]_
 [21:51:40] OBSERVE: searched status_report|fn for "\{|build_run_argv\(|fn"
 [21:51:40] OBSERVE: read src/env.rs
 [21:51:40] OBSERVE: read src/env.rs
+[21:51:40] OBSERVE: read src/main.rs
