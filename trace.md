@@ -1361,3 +1361,4 @@ _[Checkpoint: 6a2c70fd — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a2c72f5 — Added tee-shim h5i-skip guard (commit 6f629bc8)]_
 ---
 
+[20:58:51] THINK: Now I'll add the guard to the shim script — placing it right after `H5I_SHIM=1` is set (so h5i's own sub-shells also stay unrecorded):
