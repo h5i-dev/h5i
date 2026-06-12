@@ -586,3 +586,4 @@ _[Checkpoint: 6a2b53b5 — Observation auto-capture: ship container shim + hook;
 [00:33:29] THINK: The hang is `mcp::tests::env` — let me confirm it's the real run path:
 [00:33:29] THINK: Let me test the baseline (all my changes stashed) to know whether this test ever passed on this host:
 [00:33:29] THINK: All suites green. Let me rebuild/reinstall the release binary (so the live `observe-bash` hook matches the current tree), record the milestone, and commit:
+[00:33:29] THINK: Let me record this hard-won finding to memory (it's a non-obvious architectural constraint), update the context milestone, then commit:
