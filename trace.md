@@ -803,3 +803,4 @@ _[Checkpoint: 6a2bf6ff — edited .claude/h5i.md; edited supervised-execve-notif
 [12:25:21] OBSERVE: read docs/blog/index.html
 [12:25:21] ACT: edited docs/blog/index.html
 [12:25:21] OBSERVE: read docs/sitemap.xml
+[12:25:21] ACT: edited docs/sitemap.xml
