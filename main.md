@@ -682,11 +682,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Added env integration coverage for poisoned shared manifest materialization and run/propose lock race; full env_integration suite green.
 - [x] edited /home/koukyosyumei/Dev/h5i/tests/env_integration.rs; edited /home/koukyosyumei/Dev/h5i/tests/env_integration.rs; …
 - [x] hook setup --write implemented
+- [x] edited src/main.rs; edited src/main.rs; edited README.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 11:51 UTC] `improve-shell`: edited src/main.rs; edited src/main.rs; edited README.md
 - [2026-06-12 11:51 UTC] `improve-shell`: hook setup --write implemented
 - [2026-06-12 11:41 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/tests/env_integration.rs; edited /home/koukyosyumei/Dev/h5i/tests/env_integration.rs; …
 - [2026-06-12 01:18 UTC] `improve-shell`: Added env integration coverage for poisoned shared manifest materialization and run/propose lock race; full env_integration suite green.
