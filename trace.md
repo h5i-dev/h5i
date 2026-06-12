@@ -1251,3 +1251,9 @@ _[Checkpoint: 6a2c6442 — session ended (auto-checkpoint)]_
 [20:04:07] ACT: edited tests/env_integration.rs
 [20:06:24] ACT: edited tests/env_integration.rs
 [20:12:26] ACT: edited CLAUDE.md
+
+
+---
+_[Checkpoint: 6a2c6854 — Shipped config lockdown on process/supervised (commit 8a097689)]_
+---
+
