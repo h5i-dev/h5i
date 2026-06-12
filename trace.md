@@ -1389,3 +1389,9 @@ _[Checkpoint: 6a2c761f — edited src/container.rs; edited src/container.rs; edi
 ---
 
 [21:15:17] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): now, and sketch the staging-ingest for in-box capture as a follow-up
+
+
+---
+_[Checkpoint: 6a2c76e5 — edited src/container.rs; edited src/container.rs; edited CLAUDE.md]_
+---
+
