@@ -1309,3 +1309,4 @@ _[Checkpoint: 6a2c6d2b — edited docs/environments-design.md]_
 ---
 
 [20:35:57] NOTE: DEFERRAL (~/Dev/h5i/docs/environments-design.md): this is now a meaningfully smaller lift than when we first deferred it. Want me to do it
+[20:35:57] NOTE: PLACEHOLDER (~/Dev/h5i/docs/environments-design.md): e *real* `/bin/sh`, `/bin/bash` (+ `/usr/bin` spellings) to placeholder "orig" paths, *then* bind the shim over the originals — ordering matters (ca…
