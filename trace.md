@@ -616,3 +616,4 @@ _[Checkpoint: 6a2b571a — wrote supervised-execve-notify-deadlock.md; edited ME
 [00:52:10] ACT: edited CLAUDE.md
 [00:52:37] THINK: Now I'll rewrite the shim to scan argv for a `-c`-bearing flag cluster (`-c`, `-lc`, `-ic`, …) and extract the command that follows it, instead of checking `$1` literally:
 [00:52:37] THINK: Let me fix the test to use a real `/bin/sh` (I only assert the `.
+[00:52:37] NOTE: PLACEHOLDER (~/Dev/h5i/src/container.rs): The test's stub broke the shim's own shebang interpreter (both resolve to `orig/bin/sh`). The detection l
