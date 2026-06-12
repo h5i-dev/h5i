@@ -864,3 +864,4 @@ _[Checkpoint: 6a2c1563 — Optimized SEO across existing blog posts: shortened l
 _[Checkpoint: 6a2c158f — Committed sandbox blog series and SEO polish as 8042ad43 with h5i provenance.]_
 ---
 
+[14:25:33] ACT: edited docs/_static/sandbox-series-architecture.svg
