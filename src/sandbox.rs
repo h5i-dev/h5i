@@ -950,11 +950,20 @@ pub struct ResolvedPolicy {
     /// these are structural like the implicit `$WORK` mount, not policy).
     #[serde(skip)]
     pub box_git: Vec<BoxGitPath>,
+    /// Runtime-only env capture spool. In-box `h5i capture run` writes here;
+    /// the host ingests records into the real object store after the run/shell.
+    #[serde(skip)]
+    pub env_capture_spool: Option<PathBuf>,
 }
 
 impl ResolvedPolicy {
     pub fn new(claim: IsolationClaim, profile: Profile) -> Self {
-        ResolvedPolicy { claim, profile, box_git: Vec::new() }
+        ResolvedPolicy {
+            claim,
+            profile,
+            box_git: Vec::new(),
+            env_capture_spool: None,
+        }
     }
 
     pub fn to_toml(&self) -> Result<String, H5iError> {

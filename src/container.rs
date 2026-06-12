@@ -612,6 +612,9 @@ pub fn build_run_argv(
     // read-only at the Claude managed-settings path. `None` → no injection
     // (non-Claude box, captured run, or prep failed).
     managed_settings: Option<&Path>,
+    // Env capture spool for in-box `h5i capture run`. Mounted at
+    // `/.h5i/spool`, matching the tee-shim spool path.
+    env_capture_spool: Option<&Path>,
 ) -> Vec<String> {
     let mut a: Vec<String> = vec![
         rt.bin.clone(),
@@ -713,6 +716,14 @@ pub fn build_run_argv(
             "type=bind,source={},target={SHIM_SPOOL_MOUNT},rw",
             s.spool.display()
         ));
+    } else if let Some(spool) = env_capture_spool {
+        if !spool.display().to_string().contains(',') {
+            a.push("--mount".into());
+            a.push(format!(
+                "type=bind,source={},target={SHIM_SPOOL_MOUNT},rw",
+                spool.display()
+            ));
+        }
     }
     // Rootless podman: keep the caller's uid so files in /work stay owned by us.
     if rt.rootless {
@@ -851,6 +862,7 @@ pub fn run(
         None,
         &policy.box_git,
         None,
+        policy.env_capture_spool.as_deref(),
     );
 
     let started = std::time::Instant::now();
@@ -954,6 +966,7 @@ pub fn run_interactive(
         shim.as_ref(),
         &policy.box_git,
         managed_settings.as_deref(),
+        policy.env_capture_spool.as_deref(),
     );
 
     // Inherited stdio (the default) — this is the interactive session. Secret
@@ -1160,6 +1173,7 @@ mod tests {
             None,
             &[],
             None,
+            None,
         );
         let joined = argv.join(" ");
         assert_eq!(argv[0], "podman");
@@ -1204,6 +1218,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
             None,
         );
         let joined = argv.join(" ");
@@ -1252,6 +1267,7 @@ mod tests {
             None,
             &box_git,
             None,
+            None,
         );
         let joined = argv.join(" ");
         assert!(joined.contains("type=bind,source=/repo/.git/refs,target=/repo/.git/refs,ro"));
@@ -1291,6 +1307,7 @@ mod tests {
             None,
             &weird,
             None,
+            None,
         );
         let joined = argv.join(" ");
         assert!(
@@ -1318,6 +1335,7 @@ mod tests {
             None,
             &[],
             Some(ms),
+            None,
         );
         let joined = with.join(" ");
         assert!(
@@ -1341,6 +1359,7 @@ mod tests {
             Some(true),
             None,
             &[],
+            None,
             None,
         );
         assert!(
@@ -1375,6 +1394,7 @@ mod tests {
             None,
             &[],
             None,
+            None,
         );
         let joined = argv.join(" ");
         assert!(joined.contains("--network=slirp4netns:allow_host_loopback=true"));
@@ -1399,6 +1419,7 @@ mod tests {
                 tty,
                 None,
                 &[],
+                None,
                 None,
             )
         };
@@ -1436,6 +1457,7 @@ mod tests {
             Some(&plan),
             &[],
             None,
+            None,
         );
         let joined = argv.join(" ");
         // The image self-mount keeps the real shell reachable for any image.
@@ -1459,8 +1481,33 @@ mod tests {
             None,
             &[],
             None,
+            None,
         );
         assert!(!plain.join(" ").contains("/.h5i/"));
+    }
+
+    #[test]
+    fn run_argv_mounts_env_capture_spool_without_shim() {
+        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let argv = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            None,
+            None,
+            &[],
+            None,
+            Some(Path::new("/envdir/spool")),
+        );
+        let joined = argv.join(" ");
+        assert!(joined.contains("type=bind,source=/envdir/spool,target=/.h5i/spool,rw"));
+        assert!(!joined.contains("target=/bin/sh,ro"));
+        assert!(!joined.contains("target=/bin/bash,ro"));
     }
 
     // Live on-host: the generated shim is real POSIX sh — run it against the
@@ -1701,6 +1748,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
             None,
         );
         // The broker's env grant is passed to the container by NAME only — the

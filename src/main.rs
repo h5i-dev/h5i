@@ -7726,17 +7726,58 @@ jq -c '{
                         raw.extend_from_slice(&output.stderr);
                     }
 
+                    let env_spool = std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR)
+                        .map(PathBuf::from);
+                    let env_id = std::env::var(h5i_core::env::H5I_ENV_ID_VAR).ok();
+                    let env_policy = std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).ok();
+                    let in_env_capture =
+                        env_spool.is_some() && env_id.is_some() && env_policy.is_some();
+
                     // Signal-aware gate. Store when there's either token-reduction
                     // value (raw ≥ min_bytes) OR provenance/search value (the
-                    // command failed) — a small failure is exactly what
-                    // `recall search --fingerprint` recurrence-tracks, so it must
-                    // be kept regardless of size. Only small *successful* output is
-                    // passed straight through unstored, so wrapping a trivial
-                    // command stays a no-op. (`--min-bytes 0` still forces storage.)
-                    let worth_storing = (raw.len() as u64) >= min_bytes || exit_code != Some(0);
+                    // command failed). Inside an h5i env, stage every wrapped
+                    // command so env status reflects hook/capture activity even for
+                    // small successful commands; the host ingests the spool later.
+                    let worth_storing =
+                        in_env_capture || (raw.len() as u64) >= min_bytes || exit_code != Some(0);
                     if !worth_storing {
                         use std::io::Write;
                         std::io::stdout().write_all(&raw)?;
+                    } else if let (Some(spool), Some(_env_id), Some(_env_policy)) =
+                        (env_spool, env_id, env_policy)
+                    {
+                        let meta = h5i_core::env::InboxCaptureMeta {
+                            cmd: command.join(" "),
+                            cwd: cwd.clone(),
+                            exit_code,
+                            files: files.clone(),
+                            cmd_argv: command.clone(),
+                        };
+                        let staged = h5i_core::env::write_inbox_capture_spool(&spool, &meta, &raw)?;
+                        let text = String::from_utf8_lossy(&raw);
+                        let filtered = h5i_core::token_filter::filter(&text, &cfg);
+                        let structured = h5i_core::structured::parse(&command, &text, exit_code);
+                        match (format, &structured) {
+                            (CaptureFormat::Summary | CaptureFormat::Text, _) | (_, None) => {
+                                println!("{}", filtered.summary)
+                            }
+                            (CaptureFormat::Json, Some(s)) => {
+                                println!("{}", h5i_core::structured::render_json_pretty(s))
+                            }
+                            (CaptureFormat::Structured | CaptureFormat::Yaml, Some(s)) => {
+                                println!("{}", h5i_core::structured::render_yaml(s))
+                            }
+                            (CaptureFormat::Compact, Some(s)) => {
+                                println!("{}", h5i_core::structured::render_compact(s))
+                            }
+                        }
+                        if !quiet {
+                            eprintln!(
+                                "\n{} {} · inbox-capture · staged for host ingest",
+                                style("▢ h5i env capture").dim(),
+                                style(staged).cyan().bold(),
+                            );
+                        }
                     } else {
                         let opts = objects::CaptureOptions {
                             kind: kind_opt,
@@ -7749,6 +7790,7 @@ jq -c '{
                             filter: cfg,
                             env_id: None,
                             policy_digest: None,
+                            evidence_source: None,
                             egress: None,
                             redact: false,
                         };
@@ -7811,6 +7853,7 @@ jq -c '{
                         filter: cfg,
                         env_id: None,
                         policy_digest: None,
+                        evidence_source: None,
                         egress: None,
                         redact: false,
                     };

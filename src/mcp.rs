@@ -1532,6 +1532,7 @@ fn tool_capture_run(params: &Value, workdir: &Path) -> Result<Value> {
         filter: cfg,
         env_id: None,
         policy_digest: None,
+        evidence_source: None,
         egress: None,
         redact: false,
     };

@@ -335,6 +335,7 @@ fn run_captures_evidence_with_env_id_and_policy_digest() {
     assert_eq!(m["env_id"], "env/tester/evidence");
     let env_manifest = r.manifest("evidence");
     assert_eq!(m["policy_digest"], env_manifest["policy_digest"]);
+    assert_eq!(m["evidence_source"], "host-env-run");
     assert_eq!(m["exit_code"], 0);
     // Captured against the env branch, not the parent.
     assert_eq!(m["branch"], "h5i/env/tester/evidence");
@@ -349,6 +350,72 @@ fn run_captures_evidence_with_env_id_and_policy_digest() {
     let log = out_str(&r.h5i_ok(&["env", "log", "evidence"]));
     assert!(log.contains("exec"), "{log}");
     assert!(log.contains(m["id"].as_str().unwrap()), "{log}");
+}
+
+#[test]
+fn capture_run_inside_env_stages_for_host_ingest() {
+    if !process_tier_runnable() {
+        eprintln!("SKIP capture_run_inside_env_stages_for_host_ingest: process tier not runnable");
+        return;
+    }
+
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "inbox", "--isolation", "process"]);
+    let inbox_h5i = r.work("inbox").join("h5i-test-bin");
+    std::fs::copy(H5I, &inbox_h5i).expect("copy h5i into env worktree");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&inbox_h5i).unwrap().permissions();
+        perms.set_mode(perms.mode() | 0o755);
+        std::fs::set_permissions(&inbox_h5i, perms).unwrap();
+    }
+    r.h5i_ok(&[
+        "env",
+        "run",
+        "inbox",
+        "--",
+        "./h5i-test-bin",
+        "capture",
+        "run",
+        "--min-bytes",
+        "0",
+        "--",
+        "sh",
+        "-c",
+        "echo inbox-line",
+    ]);
+
+    let env_manifest = r.manifest("inbox");
+    let caps = env_manifest["captures"].as_array().unwrap();
+    assert_eq!(caps.len(), 2, "host env-run + staged inbox capture");
+
+    let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/objects:manifests.jsonl"]));
+    let inbox_caps: Vec<serde_json::Value> = manifests
+        .lines()
+        .filter(|l| l.contains("env/tester/inbox"))
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(inbox_caps.len(), 2, "{manifests}");
+    assert!(
+        inbox_caps
+            .iter()
+            .any(|m| m["evidence_source"] == "host-env-run"),
+        "{inbox_caps:#?}"
+    );
+    let staged = inbox_caps
+        .iter()
+        .find(|m| m["evidence_source"] == "inbox-capture")
+        .expect("inbox-capture manifest");
+    assert_eq!(staged["env_id"], "env/tester/inbox");
+    assert_eq!(staged["policy_digest"], env_manifest["policy_digest"]);
+    assert_eq!(staged["exit_code"], 0);
+    let raw = r.capture_raw(staged["raw_oid"].as_str().unwrap());
+    assert!(String::from_utf8_lossy(&raw).contains("inbox-line"));
+
+    let status = out_str(&r.h5i_ok(&["env", "status", "inbox"]));
+    assert!(status.contains("host-env-run=1"), "{status}");
+    assert!(status.contains("inbox-capture=1"), "{status}");
 }
 
 #[test]
@@ -1273,7 +1340,9 @@ fn process_tier_confines_fs_and_network() {
 #[test]
 fn process_tier_config_lockdown_blocks_settings_tamper() {
     if !process_tier_runnable() {
-        eprintln!("SKIP process_tier_config_lockdown_blocks_settings_tamper: process tier not runnable");
+        eprintln!(
+            "SKIP process_tier_config_lockdown_blocks_settings_tamper: process tier not runnable"
+        );
         return;
     }
     let r = Repo::new();
@@ -1293,17 +1362,32 @@ fn process_tier_config_lockdown_blocks_settings_tamper() {
          (echo X > other.txt) 2>/dev/null && echo OTHER-OK || echo OTHER-BLOCKED",
     ]);
     let text = out_str(&out);
-    assert!(text.contains("READ-OK"), "config must stay readable: {text}");
-    assert!(text.contains("EDIT-BLOCKED"), "settings.json must be read-only: {text}");
-    assert!(text.contains("CREATE-BLOCKED"), "settings.local.json create must be blocked: {text}");
-    assert!(text.contains("OTHER-OK"), "writes outside .claude must still work: {text}");
+    assert!(
+        text.contains("READ-OK"),
+        "config must stay readable: {text}"
+    );
+    assert!(
+        text.contains("EDIT-BLOCKED"),
+        "settings.json must be read-only: {text}"
+    );
+    assert!(
+        text.contains("CREATE-BLOCKED"),
+        "settings.local.json create must be blocked: {text}"
+    );
+    assert!(
+        text.contains("OTHER-OK"),
+        "writes outside .claude must still work: {text}"
+    );
     // The host file is untouched (ns-local mount).
     assert_eq!(
         std::fs::read_to_string(claude.join("settings.json")).unwrap(),
         "{\"hooks\":{}}",
         "host config must be unchanged"
     );
-    assert!(!claude.join("settings.local.json").exists(), "no local settings on host");
+    assert!(
+        !claude.join("settings.local.json").exists(),
+        "no local settings on host"
+    );
 }
 
 /// In-box git: the env worktree must be a *functional* checkout under the
@@ -2152,8 +2236,14 @@ fn container_injects_managed_settings_hook_read_only() {
          (echo x >> /etc/claude-code/managed-settings.json) 2>/dev/null && echo MS-RW || echo MS-RO",
     ]);
     let text = out_str(&out);
-    assert!(text.contains("h5i hook wrap-bash"), "managed hook must be present: {text}");
-    assert!(text.contains("PreToolUse"), "managed hook must target PreToolUse: {text}");
+    assert!(
+        text.contains("h5i hook wrap-bash"),
+        "managed hook must be present: {text}"
+    );
+    assert!(
+        text.contains("PreToolUse"),
+        "managed hook must target PreToolUse: {text}"
+    );
     assert!(
         text.contains("MS-RO") && !text.contains("MS-RW"),
         "managed settings must be read-only in-box: {text}"

@@ -56,6 +56,11 @@ const MANIFEST_FILE: &str = "manifest.json";
 const POLICY_RESOLVED_FILE: &str = "policy.resolved.toml";
 const STATUS_FILE: &str = "status";
 const WORK_DIR: &str = "work";
+
+pub const H5I_ENV_ID_VAR: &str = "H5I_ENV_ID";
+pub const H5I_ENV_POLICY_DIGEST_VAR: &str = "H5I_ENV_POLICY_DIGEST";
+pub const H5I_ENV_CAPTURE_SPOOL_VAR: &str = "H5I_ENV_CAPTURE_SPOOL";
+const CONTAINER_CAPTURE_SPOOL: &str = "/.h5i/spool";
 const RUN_LOCK_FILE: &str = "run.lock";
 
 /// An exclusive, advisory `flock` on `<env>/run.lock` that serializes
@@ -1208,6 +1213,73 @@ fn grant_box_git(
     Ok(())
 }
 
+fn prepare_env_capture_spool(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    policy: &mut ResolvedPolicy,
+) -> Result<Vec<(String, String)>, H5iError> {
+    if policy.claim < IsolationClaim::Process {
+        return Ok(Vec::new());
+    }
+    let spool = m.dir(h5i_root).join("spool");
+    std::fs::create_dir_all(&spool).map_err(|e| H5iError::with_path(e, &spool))?;
+    let spool_inside = match policy.claim {
+        IsolationClaim::Container => {
+            policy.env_capture_spool = Some(spool);
+            CONTAINER_CAPTURE_SPOOL.to_string()
+        }
+        IsolationClaim::Process | IsolationClaim::Supervised => {
+            policy.profile.fs_write.push(spool.display().to_string());
+            spool.display().to_string()
+        }
+        _ => return Ok(Vec::new()),
+    };
+    Ok(vec![
+        (H5I_ENV_ID_VAR.to_string(), m.id.clone()),
+        (
+            H5I_ENV_POLICY_DIGEST_VAR.to_string(),
+            m.policy_digest.clone(),
+        ),
+        (H5I_ENV_CAPTURE_SPOOL_VAR.to_string(), spool_inside),
+    ])
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InboxCaptureMeta {
+    pub cmd: String,
+    pub cwd: Option<String>,
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub files: Vec<String>,
+    #[serde(default)]
+    pub cmd_argv: Vec<String>,
+}
+
+pub fn write_inbox_capture_spool(
+    spool: &Path,
+    meta: &InboxCaptureMeta,
+    raw: &[u8],
+) -> Result<String, H5iError> {
+    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = format!("cap-{}-{nanos}", std::process::id());
+    let raw_path = spool.join(format!("{base}.raw"));
+    let meta_path = spool.join(format!("{base}.json"));
+    std::fs::write(&raw_path, raw).map_err(|e| H5iError::with_path(e, &raw_path))?;
+    let meta_json = serde_json::to_vec(meta)?;
+    std::fs::write(&meta_path, meta_json).map_err(|e| H5iError::with_path(e, &meta_path))?;
+    Ok(base)
+}
+
+fn merged_env(a: &[(String, String)], b: &[(String, String)]) -> Vec<(String, String)> {
+    let mut out = a.to_vec();
+    out.extend_from_slice(b);
+    out
+}
+
 const PROTECTED_HOOK_CONFIGS: &[&str] = &[".claude/settings.json", ".codex/config.toml"];
 
 enum ProtectedHookScope {
@@ -1380,6 +1452,7 @@ pub fn run(
     // Structural grants (like the implicit `$WORK` rw): the worktree must be a
     // functional git checkout inside the box.
     grant_box_git(repo, m, &work, &mut policy)?;
+    let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
 
     // Broker any declared secrets BEFORE marking the env running, so a
     // fail-closed grant (missing source, unsupported inject) aborts cleanly
@@ -1390,6 +1463,7 @@ pub fn run(
     let brokered =
         crate::secrets_broker::broker(&policy.profile.secret_grants, &secret_dir, is_workspace)?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
+    let injected_env = merged_env(&brokered.env, &env_capture_env);
 
     set_status(
         repo,
@@ -1400,7 +1474,7 @@ pub fn run(
         Some("running".into()),
         None,
     )?;
-    let result = sandbox::run_with_env(&policy, &work, argv, &brokered.env);
+    let result = sandbox::run_with_env(&policy, &work, argv, &injected_env);
     // Whatever happened, leave the running state before propagating errors.
     let outcome = match result {
         Ok(o) => o,
@@ -1480,6 +1554,7 @@ pub fn run(
         filter,
         env_id: Some(m.id.clone()),
         policy_digest: Some(m.policy_digest.clone()),
+        evidence_source: Some("host-env-run".into()),
         // Network egress verdicts (container tier's allowlist proxy); `None` for
         // workspace/process. This is the dashboard's NET-lane evidence.
         egress: outcome.egress.clone(),
@@ -1491,6 +1566,13 @@ pub fn run(
     let capture_id = captured.manifest.id.clone();
 
     m.captures.push(capture_id.clone());
+    let observed = match ingest_shell_spool(repo, h5i_root, m) {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("warning: env observation ingest failed: {e}");
+            0
+        }
+    };
     // The event log (refs/h5i/env) travels via `h5i push`, so the command —
     // which can carry a credential passed as an argument — is scrubbed before
     // it lands in the detail, exactly like the capture's cmd field.
@@ -1499,6 +1581,11 @@ pub fn run(
         .max_rss_kb
         .map(|kb| format!(" rss={}MiB", kb / 1024))
         .unwrap_or_default();
+    let observed_note = if observed > 0 {
+        format!(" observed={observed}")
+    } else {
+        String::new()
+    };
     set_status(
         repo,
         h5i_root,
@@ -1506,7 +1593,7 @@ pub fn run(
         ST_IDLE,
         "exec",
         Some(format!(
-            "cmd=`{}` exit={} wall={}ms cpu={}ms{}{}",
+            "cmd=`{}` exit={} wall={}ms cpu={}ms{}{}{}",
             safe_cmd,
             outcome
                 .exit_code
@@ -1515,7 +1602,8 @@ pub fn run(
             outcome.wall_ms,
             outcome.cpu_ms,
             rss,
-            if outcome.timed_out { " timed-out" } else { "" }
+            if outcome.timed_out { " timed-out" } else { "" },
+            observed_note
         )),
         Some(capture_id.clone()),
     )?;
@@ -1582,11 +1670,13 @@ pub fn shell(
     // Same structural grants as `run`: an interactive boxed agent lives in
     // this worktree and must be able to use git / h5i context inside it.
     grant_box_git(repo, m, &work, &mut policy)?;
+    let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
     let secret_dir = m.dir(h5i_root).join("secrets");
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
     let brokered =
         crate::secrets_broker::broker(&policy.profile.secret_grants, &secret_dir, is_workspace)?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
+    let injected_env = merged_env(&brokered.env, &env_capture_env);
 
     set_status(
         repo,
@@ -1597,7 +1687,7 @@ pub fn shell(
         Some("running (shell)".into()),
         None,
     )?;
-    let exit_code = match sandbox::run_interactive(&policy, &work, argv, &brokered.env) {
+    let exit_code = match sandbox::run_interactive(&policy, &work, argv, &injected_env) {
         Ok(code) => code,
         Err(e) => {
             let _ = protected_hook_configs.finish();
@@ -1794,6 +1884,7 @@ fn ingest_shell_spool(
             },
             env_id: Some(m.id.clone()),
             policy_digest: Some(m.policy_digest.clone()),
+            evidence_source: Some("tee-shim".into()),
             egress: None,
             redact: true,
         };
@@ -1820,6 +1911,87 @@ fn ingest_shell_spool(
         }
         count += 1;
     }
+
+    // In-box `h5i capture run` records. These are written by the boxed process
+    // into the same quarantined spool and materialized by the host here.
+    let mut cap_bases: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&spool) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(base) = name.strip_suffix(".json") {
+                let ok = base.starts_with("cap-")
+                    && base.len() <= 96
+                    && base.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+                if ok {
+                    cap_bases.push(base.to_string());
+                }
+            }
+        }
+    }
+    cap_bases.sort();
+    let cap_dropped = cap_bases.len().saturating_sub(SPOOL_MAX_ENTRIES);
+    for base in cap_bases.iter().take(SPOOL_MAX_ENTRIES) {
+        let path_of = |ext: &str| spool.join(format!("{base}.{ext}"));
+        let meta_bytes = match read_spool_capped(&path_of("json"), SPOOL_MAX_CMD_BYTES) {
+            Some(b) => b,
+            None => continue,
+        };
+        let meta: InboxCaptureMeta = match serde_json::from_slice(&meta_bytes) {
+            Ok(m) => m,
+            Err(_) => {
+                let _ = std::fs::remove_file(path_of("json"));
+                let _ = std::fs::remove_file(path_of("raw"));
+                continue;
+            }
+        };
+        let raw = read_spool_capped(&path_of("raw"), SPOOL_MAX_OUTPUT_BYTES).unwrap_or_default();
+        let safe_cmd: String = crate::secrets::redact_text(&meta.cmd)
+            .replace(['\n', '\r'], " ")
+            .chars()
+            .take(300)
+            .collect();
+        let argv_hint: Vec<String> = meta.cmd_argv.into_iter().take(16).collect();
+        let files: Vec<String> = meta.files.into_iter().take(64).collect();
+        let opts = objects::CaptureOptions {
+            kind: crate::token_filter::OutputKind::Auto,
+            cmd: Some(safe_cmd.clone()),
+            cwd: meta.cwd,
+            exit_code: meta.exit_code,
+            git_tree: head_tree.clone(),
+            files,
+            cmd_argv: argv_hint.clone(),
+            filter: crate::token_filter::FilterConfig {
+                cmd: Some(argv_hint),
+                ..Default::default()
+            },
+            env_id: Some(m.id.clone()),
+            policy_digest: Some(m.policy_digest.clone()),
+            evidence_source: Some("inbox-capture".into()),
+            egress: None,
+            redact: true,
+        };
+        let captured = objects::capture(&wt_repo, h5i_root, &raw, opts)?;
+        m.captures.push(captured.manifest.id.clone());
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "exec".into(),
+                detail: Some(format!(
+                    "inbox capture: cmd=`{safe_cmd}` exit={} source=inbox-capture",
+                    meta.exit_code
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "?".into())
+                )),
+                capture: Some(captured.manifest.id.clone()),
+            },
+        )?;
+        let _ = std::fs::remove_file(path_of("json"));
+        let _ = std::fs::remove_file(path_of("raw"));
+        count += 1;
+    }
     if dropped > 0 {
         // No silent caps: the event log must say coverage was bounded.
         append_event(
@@ -1831,6 +2003,21 @@ fn ingest_shell_spool(
                 event: "exec-log".into(),
                 detail: Some(format!(
                     "spool ingest capped at {SPOOL_MAX_ENTRIES}: {dropped} record(s) dropped"
+                )),
+                capture: None,
+            },
+        )?;
+    }
+    if cap_dropped > 0 {
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "exec-log".into(),
+                detail: Some(format!(
+                    "inbox capture spool capped at {SPOOL_MAX_ENTRIES}: {cap_dropped} record(s) dropped"
                 )),
                 capture: None,
             },
@@ -2018,14 +2205,28 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
             out.push_str(&format!("  tools    : {}\n", p.tools.join(", ")));
         }
     }
+    let evidence_detail = if m.captures.is_empty() {
+        String::new()
+    } else {
+        let mut by_source = std::collections::BTreeMap::<String, usize>::new();
+        for id in &m.captures {
+            let source = objects::resolve_manifest(repo, id)
+                .ok()
+                .and_then(|manifest| manifest.evidence_source)
+                .unwrap_or_else(|| "unknown".into());
+            *by_source.entry(source).or_default() += 1;
+        }
+        let sources = by_source
+            .into_iter()
+            .map(|(source, n)| format!("{source}={n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(": {} [{}]", m.captures.join(", "), sources)
+    };
     out.push_str(&format!(
         "  evidence : {} capture(s){}\n",
         m.captures.len(),
-        if m.captures.is_empty() {
-            String::new()
-        } else {
-            format!(": {}", m.captures.join(", "))
-        }
+        evidence_detail
     ));
     let d = drift(repo, m);
     let marker = if d.is_current() { "✓" } else { "⚠" };
@@ -2063,6 +2264,9 @@ pub fn inspect(repo: &Repository, m: &EnvManifest, capture_id: &str) -> Result<S
     ));
     if let Some(d) = &manifest.policy_digest {
         out.push_str(&format!("  policy   : {}\n", &d[..12.min(d.len())]));
+    }
+    if let Some(source) = &manifest.evidence_source {
+        out.push_str(&format!("  source   : {source}\n"));
     }
     if !manifest.redactions.is_empty() {
         out.push_str(&format!(

@@ -172,6 +172,10 @@ pub struct Manifest {
     /// env capture was taken — what was *actually* enforced, not requested.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_digest: Option<String>,
+    /// Trust/source lane for env evidence, e.g. "host-env-run",
+    /// "tee-shim", or "inbox-capture".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_source: Option<String>,
     /// Summary + pointer for the env's egress decisions (supervisor tier;
     /// never an unbounded inline log). Absent until that phase ships.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -394,6 +398,7 @@ pub struct CaptureOptions {
     /// digest of the policy enforced while producing it.
     pub env_id: Option<String>,
     pub policy_digest: Option<String>,
+    pub evidence_source: Option<String>,
     /// Network egress verdicts observed while producing this capture (the
     /// `isolation=container` allowlist proxy populates it; `None` otherwise).
     pub egress: Option<EgressSummary>,
@@ -569,6 +574,7 @@ pub fn capture(
         structured,
         env_id: opts.env_id,
         policy_digest: opts.policy_digest,
+        evidence_source: opts.evidence_source,
         egress: opts.egress,
         redactions,
     };
@@ -1642,6 +1648,7 @@ mod tests {
             filter: FilterConfig::default(),
             env_id: None,
             policy_digest: None,
+            evidence_source: None,
             egress: None,
             redact: false,
         }
@@ -1854,6 +1861,7 @@ mod tests {
             structured: None,
             env_id: None,
             policy_digest: None,
+            evidence_source: None,
             egress: None,
             redactions: Vec::new(),
         }
