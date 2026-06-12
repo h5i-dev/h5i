@@ -700,3 +700,4 @@ _[Checkpoint: 6a2b5c5a — edited src/env.rs; edited src/env.rs; edited src/env.
 _[Checkpoint: 6a2b5e6b — Added env integration coverage for poisoned shared manifest materialization and run/propose lock race; full env_integration suite green.]_
 ---
 
+[11:40:35] OBSERVE: read .claude/settings.json
