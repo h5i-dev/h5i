@@ -575,3 +575,9 @@ _[Checkpoint: 6a2b4dcc — edited CLAUDE.md; edited .claude/h5i.md; edited Cargo
 [00:32:31] ACT: edited MEMORY.md
 [00:32:35] OBSERVE: read wsl2-cargo-test-oom.md
 [00:32:45] ACT: edited wsl2-cargo-test-oom.md
+
+
+---
+_[Checkpoint: 6a2b53b5 — Observation auto-capture: ship container shim + hook; revert supervised exec-notify (deadlock)]_
+---
+
