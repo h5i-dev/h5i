@@ -2155,8 +2155,26 @@ enum ObjectsCommands {
 
 #[derive(Subcommand)]
 enum HookCommands {
-    /// Print install instructions for all Claude Code hooks
-    Setup,
+    /// Print install instructions for all Claude Code hooks, or write the
+    /// hook wiring into settings.json directly with --write.
+    Setup {
+        /// Write the SessionStart/PostToolUse/Stop wiring into
+        /// .claude/settings.json (idempotent merge) instead of printing
+        /// instructions.
+        #[arg(long)]
+        write: bool,
+
+        /// Where --write puts the settings: the repo's ./.claude/settings.json
+        /// or your ~/.claude/settings.json.
+        #[arg(long, value_enum, default_value_t = SetupScope::Project, requires = "write")]
+        scope: SetupScope,
+
+        /// Also register the OPTIONAL Bash observation hook
+        /// (`h5i hook observe-bash`): stores every Bash command + output as a
+        /// secret-redacted, searchable capture. Off by default.
+        #[arg(long, requires = "write")]
+        observe_bash: bool,
+    },
 
     /// Run as the PostToolUse handler: reads JSON from stdin, emits h5i context traces.
     /// Register in .claude/settings.json as: { "command": "h5i hook run" }
@@ -4903,6 +4921,11 @@ fn main() -> anyhow::Result<()> {
                 style("h5i memory snapshot [--agent <claude-code|codex>]").cyan()
             );
             println!(
+                "    {}  wire the Claude Code hooks (add {} for Bash evidence)",
+                style("h5i hook setup --write").cyan(),
+                style("--observe-bash").bold()
+            );
+            println!(
                 "    {}  push all h5i data to your remote",
                 style("h5i push").cyan()
             );
@@ -5907,7 +5930,84 @@ fn main() -> anyhow::Result<()> {
             }
         },
 
-        Commands::Hook(HookCommands::Setup) => {
+        Commands::Hook(HookCommands::Setup { write, scope, observe_bash }) => {
+            if write {
+                let path = match scope {
+                    SetupScope::User => {
+                        let home = std::env::var("HOME").map_err(|_| {
+                            anyhow::anyhow!("$HOME is not set — use --scope project")
+                        })?;
+                        PathBuf::from(home).join(".claude").join("settings.json")
+                    }
+                    SetupScope::Project => {
+                        let repo = git2::Repository::discover(".").map_err(|_| {
+                            anyhow::anyhow!("not inside a git repository — use --scope user")
+                        })?;
+                        let workdir = repo.workdir().ok_or_else(|| {
+                            anyhow::anyhow!("bare repository has no working dir — use --scope user")
+                        })?;
+                        workdir.join(".claude").join("settings.json")
+                    }
+                };
+
+                let existing = std::fs::read_to_string(&path).unwrap_or_default();
+                let merged = h5i_core::hooks::merge_hook_settings_json(&existing, observe_bash)?;
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&path, merged)?;
+
+                println!(
+                    "{} Claude Code hooks configured in {}",
+                    SUCCESS,
+                    style(path.display()).cyan()
+                );
+                println!(
+                    "   {} {}   ·   {} {} ({})   ·   {} {}",
+                    style("SessionStart:").dim(),
+                    style("h5i hook session-start").bold(),
+                    style("PostToolUse:").dim(),
+                    style("h5i hook run").bold(),
+                    style("Edit|Write|Read").dim(),
+                    style("Stop:").dim(),
+                    style("h5i hook stop").bold(),
+                );
+                if observe_bash {
+                    println!(
+                        "   {} {} ({}) — every Bash command + output stored as a searchable capture",
+                        style("Bash observation:").dim(),
+                        style("h5i hook observe-bash").bold(),
+                        style("Bash").dim(),
+                    );
+                } else {
+                    println!(
+                        "   {} off — pass {} to also store every Bash command + output\n\
+                         \x20  as secret-redacted, searchable evidence ({}).",
+                        style("Bash observation:").dim(),
+                        style("--observe-bash").bold(),
+                        style("h5i recall").yellow(),
+                    );
+                }
+                println!();
+                println!(
+                    "   {} open {} once (or restart) so Claude Code reloads the hooks.",
+                    style("→").dim(),
+                    style("/hooks").bold()
+                );
+                println!(
+                    "   {} prompt capture (UserPromptSubmit) and the MCP server stay manual —\n\
+                     \x20    run {} for those instructions.",
+                    style("→").dim(),
+                    style("h5i hook setup").bold(),
+                );
+                println!(
+                    "   {} for messaging identity + turn delivery, run {}.",
+                    style("→").dim(),
+                    style("h5i msg setup <name>").bold(),
+                );
+                return Ok(());
+            }
+
             let hook_script = r#"#!/usr/bin/env bash
 # h5i Claude Code hook — writes the user prompt to .git/.h5i/pending_context.json
 # so that `h5i commit` can pick it up automatically without --prompt.
@@ -5922,6 +6022,16 @@ jq -c '{
   session_id: .session_id
 }' > "$H5I_DIR/pending_context.json"
 "#;
+
+            println!(
+                "{} {} writes the SessionStart/PostToolUse/Stop wiring below into\n\
+                 .claude/settings.json for you ({} for ~/.claude, {} to also\n\
+                 observe Bash). The steps below cover the rest (prompt capture, MCP).\n",
+                style("Tip:").bold(),
+                style("h5i hook setup --write").cyan().bold(),
+                style("--scope user").bold(),
+                style("--observe-bash").bold(),
+            );
 
             println!("{}", style("── Step 0: Installl `jq` ──").bold());
             println!(
@@ -6023,7 +6133,11 @@ jq -c '{
                 style("h5i recall").yellow()
             );
             println!("  output is skipped). Observe-only: the agent still sees the raw output.");
-            println!("  Add a second PostToolUse entry:");
+            println!(
+                "  Not written by default — opt in with {},",
+                style("h5i hook setup --write --observe-bash").cyan()
+            );
+            println!("  or add a second PostToolUse entry by hand:");
             println!(
                 "{}",
                 style(
