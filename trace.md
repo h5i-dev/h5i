@@ -1071,3 +1071,9 @@ _[Checkpoint: 6a2c4bbd — edited src/container.rs; edited CLAUDE.md; edited doc
 [18:29:06] OBSERVE: read src/error.rs
 [18:29:06] ACT: edited /home/koukyosyumei/Dev/h5i/src/error.rs
 [18:29:06] ACT: edited /home/koukyosyumei/Dev/h5i/src/main.rs
+
+
+---
+_[Checkpoint: 6a2c4ff7 — Added Codex hook setup target: writes .codex/config.toml, preserves Claude default, updates wrap-bash output for Codex permissionDecision, docs, and tests.]_
+---
+
