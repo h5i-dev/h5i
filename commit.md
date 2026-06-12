@@ -810,3 +810,16 @@ improve default UX of h5i env shell so AI agents (claude/codex) can actually run
 
 ---
 
+## Commit 6a2c3b31 — 2026-06-12 17:00 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Fix options sketched: granular grants (.git/objects rw, .git/worktrees/<wt> rw, env branch ref rw, HEAD/packed-refs ro — avoid .git/config token leak + hooks) vs declaring in-box git unsupported with honest error. ctx::is_initialized also swallows EACCES.
+
+---
+
