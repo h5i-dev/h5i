@@ -237,6 +237,7 @@ impl H5iRepository {
             timestamp: chrono::Utc::now(),
             caused_by: resolved_caused_by,
             decisions,
+            env_provenance: None,
         };
         let metadata_json = serde_json::to_string(&record)?;
         self.git_repo
@@ -547,6 +548,34 @@ impl H5iRepository {
                             println!("             {}", style(&d.reason).italic());
                         }
                     }
+                }
+
+                if let Some(ep) = &r.env_provenance {
+                    // Self-describing applied commit: which env it came from and
+                    // the evidence carried forward, by trust lane.
+                    let lanes = ep
+                        .evidence_sources
+                        .iter()
+                        .map(|(s, n)| format!("{s}={n}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!(
+                        "{:<10} {} {}",
+                        style("From env:").dim(),
+                        style(&ep.env_id).cyan().bold(),
+                        style(format!("(by {}, {})", ep.agent, ep.isolation_claim)).dim(),
+                    );
+                    println!(
+                        "{:<10} {} {}",
+                        style("Evidence:").dim(),
+                        style(format!("{} capture(s)", ep.captures_total)).green(),
+                        style(if lanes.is_empty() {
+                            "none".into()
+                        } else {
+                            format!("[{lanes}]")
+                        })
+                        .dim(),
+                    );
                 }
             }
             println!("\n    {}\n", style(commit.message().unwrap_or("")).bold());

@@ -2208,15 +2208,7 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
     let evidence_detail = if m.captures.is_empty() {
         String::new()
     } else {
-        let mut by_source = std::collections::BTreeMap::<String, usize>::new();
-        for id in &m.captures {
-            let source = objects::resolve_manifest(repo, id)
-                .ok()
-                .and_then(|manifest| manifest.evidence_source)
-                .unwrap_or_else(|| "unknown".into());
-            *by_source.entry(source).or_default() += 1;
-        }
-        let sources = by_source
+        let sources = evidence_sources_by_lane(repo, m)
             .into_iter()
             .map(|(source, n)| format!("{source}={n}"))
             .collect::<Vec<_>>()
@@ -2232,6 +2224,99 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
     let marker = if d.is_current() { "✓" } else { "⚠" };
     out.push_str(&format!("  drift    : {marker} {}\n", d.summary()));
     out
+}
+
+/// Count the env's captures by trust lane (`host-env-run`, `inbox-capture`,
+/// `tee-shim`, `unknown`). Shared by `status` and the apply provenance note so
+/// they always agree. An unresolvable capture id counts as `unknown` rather
+/// than being dropped.
+fn evidence_sources_by_lane(
+    repo: &Repository,
+    m: &EnvManifest,
+) -> std::collections::BTreeMap<String, usize> {
+    let mut by_source = std::collections::BTreeMap::<String, usize>::new();
+    for id in &m.captures {
+        let source = objects::resolve_manifest(repo, id)
+            .ok()
+            .and_then(|manifest| manifest.evidence_source)
+            .unwrap_or_else(|| "unknown".into());
+        *by_source.entry(source).or_default() += 1;
+    }
+    by_source
+}
+
+/// Max capture ids inlined into an apply provenance note (the full count is
+/// always recorded; `recall objects --env` has the complete list).
+const APPLY_PROVENANCE_CAP: usize = 64;
+
+/// Build the provenance stamped onto a commit produced by `h5i env apply`.
+/// Derived **only** from the identity-validated env manifest — never from
+/// box-writable state — and preserves the per-lane evidence breakdown so
+/// host-verified and box-claimed evidence stay distinguishable on the parent.
+fn build_env_provenance(repo: &Repository, m: &EnvManifest) -> crate::metadata::EnvProvenance {
+    crate::metadata::EnvProvenance {
+        env_id: m.id.clone(),
+        agent: m.agent.clone(),
+        isolation_claim: m.isolation_claim.clone(),
+        policy_digest: m.policy_digest.clone(),
+        base_commit: m.base_commit.clone(),
+        captures: m
+            .captures
+            .iter()
+            .take(APPLY_PROVENANCE_CAP)
+            .cloned()
+            .collect(),
+        captures_total: m.captures.len(),
+        evidence_sources: evidence_sources_by_lane(repo, m),
+    }
+}
+
+/// Stamp the commit `apply` produced on the parent branch with an h5i note that
+/// links it to the env and summarizes the (labeled) evidence carried forward —
+/// so the parent-branch commit is self-describing. Best-effort: a note failure
+/// must not undo an already-applied merge, so it returns a human note rather
+/// than erroring. Idempotent by construction (apply runs once per env — the
+/// `ST_PROPOSED` guard — and the note is written with `force`).
+fn stamp_apply_provenance(repo: &Repository, m: &EnvManifest, applied: git2::Oid) -> String {
+    let prov = build_env_provenance(repo, m);
+    let parent_oid = repo
+        .find_commit(applied)
+        .ok()
+        .filter(|c| c.parent_count() > 0)
+        .and_then(|c| c.parent_id(0).ok())
+        .map(|o| o.to_string());
+    let record = crate::metadata::H5iCommitRecord {
+        git_oid: applied.to_string(),
+        parent_oid,
+        ai_metadata: None,
+        test_metrics: None,
+        ast_hashes: None,
+        timestamp: chrono::Utc::now(),
+        caused_by: Vec::new(),
+        decisions: Vec::new(),
+        env_provenance: Some(prov.clone()),
+    };
+    let sig = match objects::signature(repo) {
+        Ok(s) => s,
+        Err(e) => return format!("WARNING: apply note skipped (no signature: {e})"),
+    };
+    let json = match serde_json::to_string(&record) {
+        Ok(j) => j,
+        Err(e) => return format!("WARNING: apply note skipped (serialize: {e})"),
+    };
+    match repo.note(&sig, &sig, Some(crate::repository::H5I_NOTES_REF), applied, &json, true) {
+        Ok(_) => {
+            let lanes = prov
+                .evidence_sources
+                .iter()
+                .map(|(s, n)| format!("{s}={n}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let lanes = if lanes.is_empty() { "none".into() } else { lanes };
+            format!("provenance note on {}: {} capture(s) [{}]", &applied.to_string()[..12], prov.captures_total, lanes)
+        }
+        Err(e) => format!("WARNING: apply provenance note failed ({e})"),
+    }
 }
 
 // ─── inspect (§9) ───────────────────────────────────────────────────────────
@@ -2843,6 +2928,11 @@ pub fn apply(
         &format!("h5i env apply: {}", m.id),
     )?;
 
+    // Stamp the applied commit with env provenance (links it back to the env +
+    // a labeled evidence summary) so the parent-branch commit is
+    // self-describing. Best-effort — the merge is already committed.
+    let prov_note = stamp_apply_provenance(repo, m, new_commit);
+
     // Fold the env's reasoning back into the parent context branch. The code
     // is already applied — a context-merge failure is surfaced, not fatal.
     let ctx_note =
@@ -2857,6 +2947,19 @@ pub fn apply(
             ),
         };
 
+    // Evidence summary on the `applied` event, linking the env's captures to the
+    // commit they now live on (the dashboards/event log resolve env → result).
+    let lanes = evidence_sources_by_lane(repo, m)
+        .into_iter()
+        .map(|(s, n)| format!("{s}={n}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let evidence_note = if m.captures.is_empty() {
+        String::new()
+    } else {
+        format!(" evidence={} [{}]", m.captures.len(), lanes)
+    };
+
     set_status(
         repo,
         h5i_root,
@@ -2864,7 +2967,7 @@ pub fn apply(
         ST_APPLIED,
         "applied",
         Some(format!(
-            "{} {} → {} ({new_commit})",
+            "{} {} → {} ({new_commit}){evidence_note}",
             if patch_mode { "patch" } else { "merge" },
             m.branch_short(),
             m.parent_branch
@@ -2872,7 +2975,7 @@ pub fn apply(
         None,
     )?;
     Ok(format!(
-        "{} applied onto {} ({}{})\n{}",
+        "{} applied onto {} ({}{})\n{}\n{}",
         m.id,
         m.parent_branch,
         &new_commit.to_string()[..12],
@@ -2881,6 +2984,7 @@ pub fn apply(
         } else {
             ""
         },
+        prov_note,
         ctx_note
     ))
 }
@@ -3256,6 +3360,34 @@ mod tests {
             status: ST_IDLE.into(),
             captures: vec![],
         }
+    }
+
+    #[test]
+    fn build_env_provenance_caps_captures_and_counts_lanes() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let mut m = canonical_manifest("claude", "fix");
+        // 100 capture ids; none resolve in this fresh repo → all "unknown".
+        m.captures = (0..100).map(|i| format!("env/claude/fix/cap{i}")).collect();
+
+        let prov = build_env_provenance(&repo, &m);
+        // Identity fields come straight from the (validated) manifest.
+        assert_eq!(prov.env_id, "env/claude/fix");
+        assert_eq!(prov.agent, "claude");
+        assert_eq!(prov.isolation_claim, "workspace");
+        assert_eq!(prov.base_commit, "c".repeat(40));
+        // Inlined ids are capped; the true total is preserved.
+        assert_eq!(prov.captures.len(), APPLY_PROVENANCE_CAP);
+        assert_eq!(prov.captures_total, 100);
+        // Unresolvable ids are counted as `unknown`, never dropped.
+        assert_eq!(prov.evidence_sources.get("unknown"), Some(&100));
+
+        // No captures → empty lanes, zero total.
+        let mut empty = canonical_manifest("claude", "fix");
+        empty.captures.clear();
+        let prov = build_env_provenance(&repo, &empty);
+        assert_eq!(prov.captures_total, 0);
+        assert!(prov.evidence_sources.is_empty());
     }
 
     #[test]

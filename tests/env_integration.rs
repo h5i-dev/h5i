@@ -507,6 +507,80 @@ fn full_lifecycle_create_run_propose_apply() {
     }
 }
 
+/// `apply` stamps the commit it lands on the parent with an h5i note that links
+/// it back to the env and summarizes the (lane-labeled) evidence — so a reviewer
+/// of the parent branch can see the provenance without trusting the box.
+#[test]
+fn apply_stamps_commit_with_env_provenance_note() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "prov"]);
+    // An `env run` leaves a host-verified capture on the env.
+    r.h5i_ok(&[
+        "env", "run", "prov", "--", "sh", "-c",
+        "printf 'def hello():\\n    return 9\\n' > lib.py && echo done",
+    ]);
+    r.h5i_ok(&["env", "propose", "prov"]);
+    let out = out_str(&r.h5i_ok(&["env", "apply", "prov"]));
+    assert!(out.contains("applied onto main"), "{out}");
+    assert!(out.contains("provenance note on"), "apply must report the note: {out}");
+
+    // The applied commit (now main's tip) carries an h5i note whose
+    // `env_provenance` links to the env and labels the evidence by lane.
+    let applied = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let applied = applied.trim();
+    // The note ref lives at refs/h5i/notes (outside refs/notes/, read via git2 by
+    // h5i) — read the note blob directly at its commit-oid path.
+    let note = out_str(&git(&r.dir, &["show", &format!("refs/h5i/notes:{applied}")]));
+    let rec: serde_json::Value =
+        serde_json::from_str(note.trim()).expect("note must be H5iCommitRecord JSON");
+    let prov = &rec["env_provenance"];
+    assert_eq!(prov["env_id"], "env/tester/prov", "{rec}");
+    assert_eq!(prov["agent"], "tester");
+    assert_eq!(prov["base_commit"], r.manifest("prov")["base_commit"]);
+    assert_eq!(prov["evidence_sources"]["host-env-run"], 1, "{rec}");
+    assert!(prov["captures_total"].as_u64().unwrap() >= 1, "{rec}");
+    // The inlined capture ids are exactly the env manifest's captures.
+    assert_eq!(prov["captures"], r.manifest("prov")["captures"], "{rec}");
+
+    // The `applied` event also carries the evidence summary.
+    let log = out_str(&r.h5i_ok(&["env", "log", "prov"]));
+    assert!(
+        log.contains("evidence=") && log.contains("host-env-run="),
+        "applied event must summarize evidence: {log}"
+    );
+
+    // `h5i log` renders the provenance so the applied commit is self-describing.
+    let clog = out_str(&r.h5i_ok(&["recall", "log", "--limit", "1"]));
+    assert!(clog.contains("From env:") && clog.contains("env/tester/prov"), "{clog}");
+    assert!(clog.contains("Evidence:") && clog.contains("host-env-run=1"), "{clog}");
+}
+
+/// The provenance note is attached in the merge path too (parent advanced →
+/// a fresh merge commit gets the note, not just the fast-forward case).
+#[test]
+fn apply_stamps_provenance_on_merge_commit() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "mp"]);
+    r.h5i_ok(&["env", "run", "mp", "--", "sh", "-c", "echo x > envfile.txt"]);
+    r.h5i_ok(&["env", "propose", "mp"]);
+
+    // Advance the parent on an unrelated file so apply must MERGE (no FF).
+    std::fs::write(r.dir.join("parentfile.txt"), "p\n").unwrap();
+    git(&r.dir, &["add", "parentfile.txt"]);
+    git(&r.dir, &["commit", "-m", "advance parent"]);
+
+    let out = out_str(&r.h5i_ok(&["env", "apply", "mp"]));
+    assert!(out.contains("provenance note on"), "{out}");
+    let applied = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let applied = applied.trim();
+    // It's a real merge commit (two parents), and it carries the note.
+    let parents = out_str(&git(&r.dir, &["rev-list", "--parents", "-n", "1", applied]));
+    assert!(parents.split_whitespace().count() >= 3, "expected a merge commit: {parents}");
+    let note = out_str(&git(&r.dir, &["show", &format!("refs/h5i/notes:{applied}")]));
+    let rec: serde_json::Value = serde_json::from_str(note.trim()).unwrap();
+    assert_eq!(rec["env_provenance"]["env_id"], "env/tester/mp");
+}
+
 #[test]
 fn apply_refuses_without_propose() {
     let r = Repo::new();
