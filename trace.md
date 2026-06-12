@@ -570,3 +570,4 @@ _[Checkpoint: 6a2b4dcc — edited CLAUDE.md; edited .claude/h5i.md; edited Cargo
 [00:26:55] ACT: edited src/env.rs
 [00:27:22] OBSERVE: read CLAUDE.md
 [00:27:32] ACT: edited CLAUDE.md
+[00:32:18] ACT: wrote supervised-execve-notify-deadlock.md
