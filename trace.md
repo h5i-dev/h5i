@@ -840,3 +840,4 @@ _[Checkpoint: 6a2c13d6 — Audited SEO for all blog posts: no critical metadata/
 [14:19:15] ACT: edited docs/blog/reduce-claude-token-costs/index.html
 [14:19:15] ACT: edited docs/blog/claude-code-hooks-vs-git-hooks/index.html
 [14:19:15] ACT: edited docs/blog/context-dag-versioned-agent-reasoning/index.html
+[14:19:15] ACT: edited docs/blog/git-communication-layer-ai-agents/index.html
