@@ -784,3 +784,4 @@ _[Checkpoint: 6a2bf6b9 — observe-bash replaced by wrap-bash PreToolUse rewrite
 _[Checkpoint: 6a2bf6ff — edited .claude/h5i.md; edited supervised-execve-notify-deadlock.md; edited MEMORY.md]_
 ---
 
+[12:17:25] OBSERVE: listed files under docs
