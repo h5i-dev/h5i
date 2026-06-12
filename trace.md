@@ -623,3 +623,4 @@ _[Checkpoint: 6a2b571a — wrote supervised-execve-notify-deadlock.md; edited ME
 _[Checkpoint: 6a2b5856 — edited src/container.rs; edited src/container.rs; edited CLAUDE.md]_
 ---
 
+[00:54:54] OBSERVE: listed files under .
