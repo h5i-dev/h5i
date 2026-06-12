@@ -1483,3 +1483,9 @@ _[Checkpoint: 6a2c77be — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a2c7f72 — Implemented env-aware capture run staging: sandboxed capture run writes cap spool records, host env run/shell ingests them as inbox-capture evidence with source labels, and env status/inspect show evidence source counts.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2c89e8 — edited /home/koukyosyumei/Dev/h5i/src/risk.rs; edited /home/koukyosyumei/Dev/h5i/tests/filter_quality.rs; edited /home/k…]_
+---
+
