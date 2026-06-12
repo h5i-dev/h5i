@@ -722,11 +722,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] session ended (auto-checkpoint)
 - [x] session ended (auto-checkpoint)
 - [x] Shipped config lockdown on process/supervised (commit 8a097689)
+- [x] edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 20:13 UTC] `improve-shell`: edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [2026-06-12 20:13 UTC] `improve-shell`: Shipped config lockdown on process/supervised (commit 8a097689)
 - [2026-06-12 19:55 UTC] `improve-shell`: session ended (auto-checkpoint)
 - [2026-06-12 19:50 UTC] `improve-shell`: session ended (auto-checkpoint)
