@@ -236,6 +236,33 @@ pub fn validate_agent(agent: &str) -> Result<(), H5iError> {
     }
 }
 
+/// Validate a manifest imported from the shared ref (`refs/h5i/env`) BEFORE its
+/// `agent`/`slug` are used to compute on-disk paths. Pulled manifests are
+/// untrusted peer data: the local `create` path runs `validate_agent`/
+/// `validate_slug`, but [`materialize_from_ref`] would otherwise feed `agent`/
+/// `slug` straight into [`env_dir`] — a crafted `..`/absolute component would
+/// write outside `.git/.h5i/env`. The identity fields are deterministic
+/// (`create` always derives them from agent+slug), so anything other than the
+/// exact canonical shape is rejected fail-closed.
+fn validate_imported_manifest(m: &EnvManifest) -> Result<(), H5iError> {
+    validate_agent(&m.agent)?;
+    validate_slug(&m.slug)?;
+    let checks = [
+        ("id", &m.id, format!("env/{}/{}", m.agent, m.slug)),
+        ("branch", &m.branch, format!("refs/heads/{BRANCH_PREFIX}{}/{}", m.agent, m.slug)),
+        ("context_branch", &m.context_branch, format!("env/{}/{}", m.agent, m.slug)),
+    ];
+    for (field, got, want) in checks {
+        if *got != want {
+            return Err(H5iError::Metadata(format!(
+                "manifest {field} is not the canonical '{want}' (got '{}')",
+                crate::msg::sanitize_display(got)
+            )));
+        }
+    }
+    Ok(())
+}
+
 // ─── event log: CAS append + union merge (same pattern as objects/msg) ──────
 
 /// Replace (or append) the single JSONL line whose parsed `id` field equals
@@ -494,6 +521,16 @@ pub fn materialize_from_ref(repo: &Repository, h5i_root: &Path) -> Result<usize,
         read_ref_policies(repo).into_iter().collect();
     let mut written = 0usize;
     for m in read_ref_manifests(repo) {
+        // Untrusted peer data: validate identity/path components before any of
+        // them reach the filesystem. Skip (don't abort the whole sync) a bad
+        // manifest so one poisoned line can't suppress every legitimate env.
+        if let Err(e) = validate_imported_manifest(&m) {
+            eprintln!(
+                "warning: skipping shared env manifest '{}': {e}",
+                crate::msg::sanitize_display(&m.id)
+            );
+            continue;
+        }
         let dir = env_dir(h5i_root, &m.agent, &m.slug);
         let local_newer = load_manifest_at(&dir)
             .ok()
@@ -1954,6 +1991,14 @@ pub fn propose(
     h5i_root: &Path,
     m: &mut EnvManifest,
 ) -> Result<String, H5iError> {
+    // Hold the per-env lock for the whole mediated commit + status write: a
+    // concurrent `env run`/`shell` mutates the same worktree and manifest, and
+    // its terminal IDLE write would otherwise clobber the PROPOSED we set here.
+    // Taken before the status check so a LIVE run fails fast ("busy") while a
+    // stale `running` left by a crashed run (flock released on death) still lets
+    // propose through. See ST_RUNNING in the accepted set below.
+    #[cfg(unix)]
+    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     match m.status.as_str() {
         ST_CREATED | ST_RUNNING | ST_IDLE | ST_PROPOSED => {}
         other => {
@@ -2021,6 +2066,10 @@ pub fn apply(
     m: &mut EnvManifest,
     patch_mode: bool,
 ) -> Result<String, H5iError> {
+    // Serialize the PROPOSED→APPLIED transition (reads the env state, mutates
+    // the manifest) against any concurrent run/shell on the same env.
+    #[cfg(unix)]
+    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     if m.status != ST_PROPOSED {
         return Err(H5iError::Metadata(format!(
             "{} is '{}' — run `h5i env propose {}` first (apply is never automatic)",
@@ -2159,6 +2208,10 @@ pub fn rebase(
     h5i_root: &Path,
     m: &mut EnvManifest,
 ) -> Result<String, H5iError> {
+    // Rebase force-checks-out the worktree and re-pins the base in the manifest;
+    // serialize against a concurrent `env run`/`shell` exactly like propose.
+    #[cfg(unix)]
+    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     match m.status.as_str() {
         ST_CREATED | ST_RUNNING | ST_IDLE => {}
         other => {
@@ -2268,6 +2321,11 @@ pub fn rebase(
 /// Stop the env: mark it aborted and preserve the manifest + workspace for
 /// forensics (`gc` reclaims the workspace later).
 pub fn abort(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result<(), H5iError> {
+    // Mutates the manifest status; serialize against a concurrent run/shell so
+    // a run's terminal IDLE write can't clobber the ABORTED set here (a live run
+    // holds the lock → abort waits/fails "busy" until it ends or is killed).
+    #[cfg(unix)]
+    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     if m.status == ST_APPLIED {
         return Err(H5iError::Metadata(format!("{} is already applied — nothing to abort", m.id)));
     }
@@ -2462,6 +2520,84 @@ mod tests {
         assert!(validate_agent(".hidden").is_err());
         assert!(validate_agent("x.lock").is_err());
         assert!(validate_agent(&"a".repeat(65)).is_err());
+    }
+
+    // A manifest in the exact canonical shape `create` always produces.
+    fn canonical_manifest(agent: &str, slug: &str) -> EnvManifest {
+        EnvManifest {
+            id: format!("env/{agent}/{slug}"),
+            agent: agent.into(),
+            slug: slug.into(),
+            base_commit: "c".repeat(40),
+            base_tree: "t".repeat(40),
+            parent_branch: "main".into(),
+            branch: format!("refs/heads/h5i/env/{agent}/{slug}"),
+            parent_context_branch: "main".into(),
+            context_branch: format!("env/{agent}/{slug}"),
+            profile: "default".into(),
+            policy_digest: "d".repeat(64),
+            isolation_claim: "workspace".into(),
+            backend: "worktree".into(),
+            created_at: now_ts(),
+            updated_at: now_ts(),
+            status: ST_IDLE.into(),
+            captures: vec![],
+        }
+    }
+
+    #[test]
+    fn imported_manifest_validation_rejects_traversal_and_identity_tampering() {
+        // Canonical (what `create` produces) passes.
+        assert!(validate_imported_manifest(&canonical_manifest("claude", "fix")).is_ok());
+
+        // Traversal in the fields that become filesystem paths — the core of the
+        // path-escape: `env_dir(.., agent, slug)` joins them unchecked.
+        let mut m = canonical_manifest("claude", "fix");
+        m.agent = "../../../../tmp/evil".into();
+        assert!(validate_imported_manifest(&m).is_err(), "traversal agent rejected");
+        let mut m = canonical_manifest("claude", "fix");
+        m.slug = "../escape".into();
+        assert!(validate_imported_manifest(&m).is_err(), "traversal slug rejected");
+
+        // Identity fields must match the shape derived from agent/slug even when
+        // agent/slug are individually valid — defeats a manifest whose
+        // id/branch/context point elsewhere (e.g. spoofing another env's files).
+        for tamper in [
+            |m: &mut EnvManifest| m.id = "env/claude/other".into(),
+            |m: &mut EnvManifest| m.branch = "refs/heads/main".into(),
+            |m: &mut EnvManifest| m.context_branch = "env/claude/other".into(),
+        ] {
+            let mut m = canonical_manifest("claude", "fix");
+            tamper(&mut m);
+            assert!(validate_imported_manifest(&m).is_err(), "identity mismatch rejected");
+        }
+    }
+
+    // Fix for the propose/rebase-vs-run race: every worktree/manifest-mutating
+    // review op takes the per-env lock first, so a live run (which holds it)
+    // makes them fail fast instead of racing the run's writes. The lock is the
+    // first statement in each, so it refuses before touching repo/worktree.
+    #[cfg(unix)]
+    #[test]
+    fn review_ops_refuse_while_run_lock_is_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let repo = git2::Repository::init(h5i_root.join("repo")).unwrap();
+        let mut m = canonical_manifest("claude", "fix");
+        std::fs::create_dir_all(m.dir(h5i_root)).unwrap();
+
+        // Simulate a live `env run`/`shell` holding the per-env lock.
+        let _held = RunLock::acquire(&m.dir(h5i_root)).unwrap();
+
+        let busy = |r: Result<String, H5iError>, who: &str| {
+            let e = r.expect_err(who);
+            assert!(format!("{e}").contains("busy"), "{who}: expected busy, got: {e}");
+        };
+        busy(propose(&repo, h5i_root, &mut m), "propose");
+        busy(rebase(&repo, h5i_root, &mut m), "rebase");
+        busy(apply(&repo, h5i_root, h5i_root, &mut m, false).map(|_| String::new()), "apply");
+        let e = abort(&repo, h5i_root, &mut m).expect_err("abort");
+        assert!(format!("{e}").contains("busy"), "abort: {e}");
     }
 
     #[test]
