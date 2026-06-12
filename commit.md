@@ -615,3 +615,16 @@ Deleted hook observe-bash (~100 LOC PostToolUse observer). New: h5i hook wrap-ba
 
 ---
 
+## Commit 6a2bfab2 — 2026-06-12 12:25 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
