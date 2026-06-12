@@ -774,3 +774,4 @@ _[Checkpoint: 6a2bf6b9 — observe-bash replaced by wrap-bash PreToolUse rewrite
 ---
 
 [12:08:38] OBSERVE: read supervised-execve-notify-deadlock.md
+[12:08:48] ACT: edited supervised-execve-notify-deadlock.md
