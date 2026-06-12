@@ -738,11 +738,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Added tee-shim h5i-skip guard (commit 6f629bc8)
 - [x] edited src/container.rs; edited src/container.rs; edited CLAUDE.md
 - [x] edited src/container.rs; edited src/container.rs; edited CLAUDE.md
+- [x] edited src/container.rs; edited src/container.rs; edited CLAUDE.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 21:09 UTC] `improve-shell`: edited src/container.rs; edited src/container.rs; edited CLAUDE.md
 - [2026-06-12 21:04 UTC] `improve-shell`: edited src/container.rs; edited src/container.rs; edited CLAUDE.md
 - [2026-06-12 20:58 UTC] `improve-shell`: edited src/container.rs; edited src/container.rs; edited CLAUDE.md
 - [2026-06-12 20:58 UTC] `improve-shell`: Added tee-shim h5i-skip guard (commit 6f629bc8)
