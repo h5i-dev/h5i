@@ -688,3 +688,4 @@ _[Checkpoint: 6a2b5c5a — edited src/env.rs; edited src/env.rs; edited src/env.
 [01:18:29] OBSERVE: read src/lib.rs
 [01:18:29] ACT: edited /home/koukyosyumei/Dev/h5i/tests/env_integration.rs
 [01:18:29] ACT: edited /home/koukyosyumei/Dev/h5i/tests/env_integration.rs
+[01:18:29] ACT: edited /home/koukyosyumei/Dev/h5i/tests/env_integration.rs
