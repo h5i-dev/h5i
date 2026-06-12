@@ -767,3 +767,9 @@ _[Checkpoint: 6a2bf2f2 — edited src/main.rs; edited src/main.rs; edited README
 [12:04:43] ACT: edited .claude/settings.json
 [12:04:43] OBSERVE: read .claude/h5i.md
 [12:04:52] ACT: edited .claude/h5i.md
+
+
+---
+_[Checkpoint: 6a2bf6b9 — observe-bash replaced by wrap-bash PreToolUse rewrite]_
+---
+

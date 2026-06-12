@@ -589,3 +589,16 @@ improve default UX of h5i env shell so AI agents (claude/codex) can actually run
 
 ---
 
+## Commit 6a2bf6b9 — 2026-06-12 12:08 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Deleted hook observe-bash (~100 LOC PostToolUse observer). New: h5i hook wrap-bash (PreToolUse, updatedInput) rewrites Bash commands into h5i capture run — automatic token reduction. Pure wrap_bash_command in hooks.rs (simple→argv for adapters, complex→bash -c single-quoted; skips h5i cmds, top-level cd for cwd tracking, outside-repo; fail-open). merge_hook_settings_json: wrap_bash opt-in param, always strips legacy observe-bash entries. Repo settings.json migrated (observe-bash removed, wrap-bash NOT added per opt-in default). Caveat documented: permission allowlists match rewritten command. 11 unit tests + live e2e. Commit c375e3c0.
+
+---
+
