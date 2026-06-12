@@ -1089,3 +1089,9 @@ _[Checkpoint: 6a2c4ff7 — Added Codex hook setup target: writes .codex/config.t
 [18:32:46] ACT: edited /home/koukyosyumei/Dev/h5i/tests/cli_integration.rs
 [18:32:46] ACT: edited /home/koukyosyumei/Dev/h5i/README.md
 [18:32:46] ACT: edited /home/koukyosyumei/Dev/h5i/MANUAL.md
+
+
+---
+_[Checkpoint: 6a2c50ed — Changed hook setup default to write both Claude and Codex configs; --target claude/codex now narrows output; updated docs and tests.]_
+---
+
