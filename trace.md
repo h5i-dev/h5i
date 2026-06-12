@@ -1302,3 +1302,9 @@ _[Checkpoint: 6a2c6c81 — edited docs/environments-design.md]_
 [20:33:03] OBSERVE: read src/container.rs
 [20:33:47] THINK: Let me lay out the mental model, because the answer is "no, config lockdown isn't a subset" — and the real asymmetry is the opposite of what the question implies.
 [20:33:47] NOTE: DEFERRAL (~/Dev/h5i/docs/environments-design.md): e. - On **process/supervised**, there's **no tee-shim** (we deferred the port), so the hook *is* the observation — which makes config lockdown **loa…
+
+
+---
+_[Checkpoint: 6a2c6d2b — edited docs/environments-design.md]_
+---
+
