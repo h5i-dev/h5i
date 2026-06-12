@@ -584,3 +584,4 @@ _[Checkpoint: 6a2b53b5 — Observation auto-capture: ship container shim + hook;
 [00:33:29] THINK: Let me restructure `run_supervised` to receive the listener and serve on a thread started before `spawn()`, using the stop-flag `serve()` variant.
 [00:33:29] THINK: Let me replace the `run_supervised` block (lines 736-801) with the serve-before-spawn structure:
 [00:33:29] THINK: The hang is `mcp::tests::env` — let me confirm it's the real run path:
+[00:33:29] THINK: Let me test the baseline (all my changes stashed) to know whether this test ever passed on this host:
