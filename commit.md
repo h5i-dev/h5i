@@ -576,3 +576,16 @@ New src/hooks.rs: pure merge_hook_settings_json (7 unit tests) — idempotently 
 
 ---
 
+## Commit 6a2bf2f2 — 2026-06-12 11:52 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+
