@@ -274,13 +274,13 @@ network = prepare_network_namespace(resolved.net)
 resources = create_cgroup(resolved.limits)
 
 child = fork()
-if child:
+if child == 0:
     enter_user_mount_pid_network_namespaces()
     mount_private_proc()
+    join_cgroup(resources)
     apply_landlock(resolved.fs)
     set_no_new_privs()
     install_seccomp(resolved.syscalls)
-    join_cgroup(resources)
     exec(command)
 
 capture_exit_status_output_denials()

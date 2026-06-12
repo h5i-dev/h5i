@@ -91,11 +91,12 @@ box$ cargo test
 box$ exit
 $ h5i env log fix-auth
 $ h5i env diff fix-auth
+$ h5i env propose fix-auth
 $ h5i env apply fix-auth</pre></div>
     </div>
 
     <p>
-      The user gets a normal review shape: create, run or shell, inspect logs, inspect diff, apply when satisfied. The agent gets a workspace that feels like a real project. The repository gets a durable record rather than an unstructured transcript.
+      The user gets a normal review shape: create, run or shell, inspect logs, inspect diff, propose the mediated commit, and apply when satisfied. Apply refuses an unproposed environment — the mediated-commit step is mandatory, never implicit. The agent gets a workspace that feels like a real project. The repository gets a durable record rather than an unstructured transcript.
     </p>
 
     <h2>Tiered isolation</h2>
@@ -170,7 +171,7 @@ nft flush ruleset                # blocked: AF_NETLINK denied</pre></div>
 
     <h2>Audit and boundary pressure</h2>
     <p>
-      h5i records command captures, raw output pointers, structured summaries, policy digests, egress summaries, redactions, and denials. The web dashboard classifies "boundary pressure" across lanes such as filesystem, network, process, privilege, and resources. That copy is intentionally careful: a blocked off-allowlist request is important evidence, not proof of maliciousness. A sensitive access under workspace isolation is a weak-isolation gap, not a red alert.
+      h5i records command captures, raw output pointers, structured summaries, policy digests, egress summaries, redactions, and denials. The web dashboard classifies "boundary pressure" across five lanes: filesystem, network, process and privilege, resources, and provenance. That copy is intentionally careful: a blocked off-allowlist request is important evidence, not proof of maliciousness. A sensitive access under workspace isolation is a weak-isolation gap, not a red alert.
     </p>
     <p>
       This is the review advantage of binding sandboxing to provenance. A reviewer can prioritize the environment that attempted raw IP egress, touched sensitive paths, hit seccomp denials, or exceeded resource budgets. Clean runs and noisy runs should not consume the same review time.
