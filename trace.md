@@ -879,3 +879,9 @@ _[Checkpoint: 6a2c16dd — Adjusted sandbox Part 1 architecture SVG spacing: mov
 _[Checkpoint: 6a2c176f — Reworked sandbox architecture SVG boundary spacing so labels no longer overlap nested borders.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2c178e — Committed sandbox architecture SVG spacing fix as d71053ec with h5i provenance.]_
+---
+
