@@ -1127,3 +1127,4 @@ _[Checkpoint: 6a2c50ed — Changed hook setup default to write both Claude and C
 _[Checkpoint: 6a2c54e4 — Sealed agent hook setup configs from sandboxed envs: protected worktree and user-scope .claude/settings.json and .codex/config.toml with tamper restore/fail-closed guard; container overlays worktree configs read-only; tests pass.]_
 ---
 
+[18:54:43] OBSERVE: read src/env.rs
