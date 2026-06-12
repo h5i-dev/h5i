@@ -684,11 +684,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] hook setup --write implemented
 - [x] edited src/main.rs; edited src/main.rs; edited README.md
 - [x] edited src/main.rs; edited src/main.rs; edited README.md
+- [x] observe-bash replaced by wrap-bash PreToolUse rewrite
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 12:08 UTC] `improve-shell`: observe-bash replaced by wrap-bash PreToolUse rewrite
 - [2026-06-12 11:52 UTC] `improve-shell`: edited src/main.rs; edited src/main.rs; edited README.md
 - [2026-06-12 11:51 UTC] `improve-shell`: edited src/main.rs; edited src/main.rs; edited README.md
 - [2026-06-12 11:51 UTC] `improve-shell`: hook setup --write implemented
