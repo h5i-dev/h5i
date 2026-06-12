@@ -1215,3 +1215,9 @@ _[Checkpoint: 6a2c5dcc — edited src/container.rs; edited tests/env_integration
 [19:39:35] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): work, and accept cooperative-only monitoring at those tiers for now — Claude's managed-settings doesn't reach them cleanly either, so it's symmetric…
 [19:39:35] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): efer only the supervised/process tee-shim port** as genuine future work, and accept cooperative-only monitoring at those tiers for now — Claude's ma…
 [19:39:35] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): fragile, and you'd still be guessing at undocumented paths. Not worth it. ## The clean resolution: the tee-shim IS Codex's unkillable floor Here's my …
+
+
+---
+_[Checkpoint: 6a2c6077 — edited src/container.rs; edited tests/env_integration.rs; edited CLAUDE.md]_
+---
+
