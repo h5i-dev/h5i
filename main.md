@@ -725,11 +725,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [x] edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [x] edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
+- [x] Documented Codex bypass-hook-trust incantation; observation thread closed (commit 38633e26)
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 20:26 UTC] `improve-shell`: Documented Codex bypass-hook-trust incantation; observation thread closed (commit 38633e26)
 - [2026-06-12 20:24 UTC] `improve-shell`: edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [2026-06-12 20:19 UTC] `improve-shell`: edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [2026-06-12 20:13 UTC] `improve-shell`: edited tests/env_integration.rs; edited tests/env_integration.rs; edited CLAUDE.md
