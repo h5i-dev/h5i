@@ -1406,3 +1406,4 @@ _[Checkpoint: 6a2c77be — session ended (auto-checkpoint)]_
 [21:22:39] OBSERVE: read src/main.rs
 [21:23:05] OBSERVE: read src/main.rs
 [21:25:08] OBSERVE: read src/error.rs
+[21:51:40] OBSERVE: searched objects|env_id|policy_digest|ingest_shell_spool|spool|H5I_ENV" for "run|CaptureOptions|objects::capture|capture\(|recall"
