@@ -207,9 +207,12 @@ h5i init
 ```
 h5i hook setup   # print install instructions
 h5i hook run     # PostToolUse handler (reads JSON from stdin)
+h5i hook setup --write   # write Claude and Codex hook config
+h5i hook setup --write --target codex   # optional: Codex only
+h5i hook setup --write --target claude  # optional: Claude only
 ```
 
-`h5i hook setup` prints the two configuration steps needed to activate automatic prompt capture and context tracing.
+`h5i hook setup` prints the configuration steps needed to activate automatic prompt capture and context tracing. `h5i hook setup --write` writes Claude Code hook wiring to `.claude/settings.json` and equivalent Codex wiring to `.codex/config.toml`. Add `--target claude` or `--target codex` to write only one agent's config.
 
 `h5i hook setup` outputs two steps:
 
@@ -243,7 +246,33 @@ h5i hook run     # PostToolUse handler (reads JSON from stdin)
 
    Once registered, Claude Code gains native access to h5i tools (`h5i_log`, `h5i_blame`, `h5i_context_trace`, `h5i_notes_show`, etc.) without needing shell commands. See [h5i mcp](#h5i-mcp) for the full tool list.
 
-`h5i hook` is currently Claude-specific. Codex does not expose an equivalent repo-local hook configuration, so h5i provides the explicit `h5i codex` workflow instead.
+For Codex-only setup, run:
+
+```bash
+h5i hook setup --write --target codex
+```
+
+This idempotently merges inline hook tables into `.codex/config.toml`:
+
+```toml
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "h5i hook session-start"
+
+[[hooks.PostToolUse]]
+matcher = "Edit|Write|Read"
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "h5i hook run"
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "h5i hook stop"
+```
+
+Add `--wrap-bash` to register `h5i hook wrap-bash` as a `PreToolUse` Bash hook. Codex requires reviewing/trusting local hooks via `/hooks`; project-local hooks only load after the project `.codex/` layer is trusted.
 
 ---
 

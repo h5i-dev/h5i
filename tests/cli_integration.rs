@@ -150,7 +150,10 @@ fn doctor_repair_creates_storage_layout() {
 
     let out = repo.h5i_ok(&["doctor", "--repair"]);
     let s = stdout(&out);
-    assert!(s.contains("storage healthy"), "unexpected doctor output: {s}");
+    assert!(
+        s.contains("storage healthy"),
+        "unexpected doctor output: {s}"
+    );
 
     let h5i_dir = repo.path().join(".git").join(".h5i");
     assert!(h5i_dir.join("storage-version").exists());
@@ -164,7 +167,10 @@ fn doctor_without_repair_reports_missing_sidecar() {
     let out = repo.h5i(&["doctor"]);
     assert_eq!(out.status.code(), Some(2));
     let s = stdout(&out);
-    assert!(s.contains("missing_sidecar"), "unexpected doctor output: {s}");
+    assert!(
+        s.contains("missing_sidecar"),
+        "unexpected doctor output: {s}"
+    );
 }
 
 #[test]
@@ -181,7 +187,10 @@ fn codex_prelude_does_not_run_smart_recall_by_default() {
 
     let out = repo.h5i_ok(&["codex", "prelude"]);
     let s = stdout(&out);
-    assert!(s.contains("Context workspace active"), "unexpected prelude output: {s}");
+    assert!(
+        s.contains("Context workspace active"),
+        "unexpected prelude output: {s}"
+    );
     assert!(
         !s.contains("Smart recall for task"),
         "smart recall must stay off by default: {s}"
@@ -210,8 +219,14 @@ fn recall_context_smart_returns_task_aware_results() {
         "3",
     ]);
     let s = stdout(&out);
-    assert!(s.contains("Smart recall for task: token validation"), "unexpected output: {s}");
-    assert!(s.contains("auth.rs"), "expected recalled file in output: {s}");
+    assert!(
+        s.contains("Smart recall for task: token validation"),
+        "unexpected output: {s}"
+    );
+    assert!(
+        s.contains("auth.rs"),
+        "expected recalled file in output: {s}"
+    );
 }
 
 // ─── commit ─────────────────────────────────────────────────────────────────
@@ -294,7 +309,11 @@ fn log_respects_limit() {
     repo.h5i_ok(&["init"]);
 
     for i in 0..5 {
-        repo.make_commit(&format!("file{i}.txt"), &format!("content{i}"), &format!("commit {i}"));
+        repo.make_commit(
+            &format!("file{i}.txt"),
+            &format!("content{i}"),
+            &format!("commit {i}"),
+        );
     }
 
     let out_1 = repo.h5i_ok(&["log", "--limit", "1"]);
@@ -317,7 +336,10 @@ fn context_init_creates_workspace() {
     let out = repo.h5i_ok(&["context", "init", "--goal", "test the CLI"]);
     let s = stdout(&out);
     assert!(
-        s.contains("test the CLI") || s.contains("Goal") || s.contains("init") || out.status.success(),
+        s.contains("test the CLI")
+            || s.contains("Goal")
+            || s.contains("init")
+            || out.status.success(),
         "context init output unexpected: {s}"
     );
 }
@@ -344,7 +366,13 @@ fn context_trace_observe() {
     repo.h5i_ok(&["init"]);
     repo.h5i_ok(&["context", "init", "--goal", "trace test"]);
 
-    repo.h5i_ok(&["context", "trace", "--kind", "OBSERVE", "found main entry point"]);
+    repo.h5i_ok(&[
+        "context",
+        "trace",
+        "--kind",
+        "OBSERVE",
+        "found main entry point",
+    ]);
 }
 
 #[test]
@@ -353,7 +381,13 @@ fn context_trace_think() {
     repo.h5i_ok(&["init"]);
     repo.h5i_ok(&["context", "init", "--goal", "trace test"]);
 
-    repo.h5i_ok(&["context", "trace", "--kind", "THINK", "use exponential backoff"]);
+    repo.h5i_ok(&[
+        "context",
+        "trace",
+        "--kind",
+        "THINK",
+        "use exponential backoff",
+    ]);
 }
 
 #[test]
@@ -433,7 +467,13 @@ fn context_show_depth_1_is_compact() {
     repo.h5i_ok(&["context", "init", "--goal", "depth test"]);
 
     for i in 0..10 {
-        repo.h5i_ok(&["context", "trace", "--kind", "OBSERVE", &format!("observation {i}")]);
+        repo.h5i_ok(&[
+            "context",
+            "trace",
+            "--kind",
+            "OBSERVE",
+            &format!("observation {i}"),
+        ]);
     }
 
     let d1 = stdout(&repo.h5i_ok(&["context", "show", "--depth", "1"]));
@@ -529,10 +569,7 @@ fn context_branch_and_checkout() {
     // Checkout main
     repo.h5i_ok(&["context", "checkout", "main"]);
     let s2 = stdout(&repo.h5i_ok(&["context", "status"]));
-    assert!(
-        s2.contains("main"),
-        "not back on main after checkout: {s2}"
-    );
+    assert!(s2.contains("main"), "not back on main after checkout: {s2}");
 }
 
 #[test]
@@ -566,7 +603,8 @@ fn context_restore_requires_valid_sha() {
     // Invalid SHA must fail gracefully (non-zero exit or error message)
     let out = repo.h5i(&["context", "restore", "deadbeef00000000"]);
     // Either an error exit code or an error message on stderr
-    let failed = !out.status.success() || stderr(&out).contains("error") || stderr(&out).contains("Error");
+    let failed =
+        !out.status.success() || stderr(&out).contains("error") || stderr(&out).contains("Error");
     let s = stdout(&out);
     let e = stderr(&out);
     assert!(
@@ -605,7 +643,13 @@ fn context_pack_runs_cleanly() {
 
     // Add a batch of OBSERVE entries to give pack something to do
     for i in 0..8 {
-        repo.h5i_ok(&["context", "trace", "--kind", "OBSERVE", &format!("read file {i}")]);
+        repo.h5i_ok(&[
+            "context",
+            "trace",
+            "--kind",
+            "OBSERVE",
+            &format!("read file {i}"),
+        ]);
     }
     repo.h5i_ok(&["context", "trace", "--kind", "THINK", "keep this decision"]);
 
@@ -777,6 +821,84 @@ fn hook_run_with_invalid_json_does_not_crash() {
     );
 }
 
+#[test]
+fn hook_setup_write_default_writes_claude_and_codex_configs() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["hook", "setup", "--write", "--wrap-bash"]);
+
+    let claude = fs::read_to_string(repo.path().join(".claude/settings.json")).unwrap();
+    assert!(
+        claude.contains("\"command\": \"h5i hook session-start\""),
+        "{claude}"
+    );
+    assert!(claude.contains("\"command\": \"h5i hook run\""), "{claude}");
+    assert!(
+        claude.contains("\"command\": \"h5i hook stop\""),
+        "{claude}"
+    );
+    assert!(
+        claude.contains("\"command\": \"h5i hook wrap-bash\""),
+        "{claude}"
+    );
+
+    let config = fs::read_to_string(repo.path().join(".codex/config.toml")).unwrap();
+    assert!(
+        config.contains("command = \"h5i hook session-start\""),
+        "{config}"
+    );
+    assert!(config.contains("command = \"h5i hook run\""), "{config}");
+    assert!(config.contains("command = \"h5i hook stop\""), "{config}");
+    assert!(
+        config.contains("command = \"h5i hook wrap-bash\""),
+        "{config}"
+    );
+}
+
+#[test]
+fn hook_setup_write_explicit_target_codex_only_writes_codex_config() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["hook", "setup", "--write", "--target", "codex"]);
+
+    assert!(repo.path().join(".codex/config.toml").exists());
+    assert!(!repo.path().join(".claude/settings.json").exists());
+}
+
+#[test]
+fn hook_wrap_bash_codex_payload_emits_allow_with_updated_input() {
+    let repo = Repo::new();
+    let payload = serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "cargo test" },
+        "cwd": repo.path()
+    });
+
+    let out = Command::new(H5I)
+        .args(["hook", "wrap-bash"])
+        .current_dir(repo.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(stdin) = child.stdin.as_mut() {
+                let _ = stdin.write_all(payload.to_string().as_bytes());
+            }
+            child.wait_with_output()
+        })
+        .expect("hook wrap-bash failed to spawn");
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let h = &v["hookSpecificOutput"];
+    assert_eq!(h["permissionDecision"].as_str(), Some("allow"));
+    assert_eq!(
+        h["updatedInput"]["command"].as_str(),
+        Some("h5i capture run -- cargo test")
+    );
+}
+
 // ─── context scan ────────────────────────────────────────────────────────────
 
 #[test]
@@ -851,7 +973,13 @@ fn codex_sync_replays_session_activity_into_context() {
     repo.h5i_ok(&["context", "init", "--goal", "codex sync test"]);
 
     let home = TempDir::new().unwrap();
-    let session_dir = home.path().join(".codex").join("sessions").join("2026").join("04").join("21");
+    let session_dir = home
+        .path()
+        .join(".codex")
+        .join("sessions")
+        .join("2026")
+        .join("04")
+        .join("21");
     fs::create_dir_all(&session_dir).unwrap();
     let session_path = session_dir.join("rollout-test.jsonl");
     let session = format!(
@@ -866,12 +994,22 @@ fn codex_sync_replays_session_activity_into_context() {
     fs::write(&session_path, session).unwrap();
 
     let sync = repo.h5i_with_home(home.path(), &["codex", "sync"]);
-    assert!(sync.status.success(), "codex sync failed: {}", stderr(&sync));
+    assert!(
+        sync.status.success(),
+        "codex sync failed: {}",
+        stderr(&sync)
+    );
 
     let show = repo.h5i_with_home(home.path(), &["context", "show", "--trace"]);
     let s = stdout(&show);
-    assert!(s.contains("read src/main.rs"), "context trace missing read: {s}");
-    assert!(s.contains("edited src/main.rs"), "context trace missing edit: {s}");
+    assert!(
+        s.contains("read src/main.rs"),
+        "context trace missing read: {s}"
+    );
+    assert!(
+        s.contains("edited src/main.rs"),
+        "context trace missing edit: {s}"
+    );
 }
 
 // ─── error handling ──────────────────────────────────────────────────────────
@@ -1547,8 +1685,14 @@ fn setup_remote_writes_all_fetch_refspecs() {
 
     let out = repo.h5i_ok(&["share", "setup-remote"]);
     let s = stdout(&out);
-    assert!(s.contains("Configuring h5i fetch refspecs"), "banner missing:\n{s}");
-    assert!(s.contains("8 refspec(s) added"), "should add 8 refspecs:\n{s}");
+    assert!(
+        s.contains("Configuring h5i fetch refspecs"),
+        "banner missing:\n{s}"
+    );
+    assert!(
+        s.contains("8 refspec(s) added"),
+        "should add 8 refspecs:\n{s}"
+    );
 
     let fetch = git_in(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
     let fetch_s = String::from_utf8_lossy(&fetch.stdout);
@@ -1563,7 +1707,10 @@ fn setup_remote_writes_all_fetch_refspecs() {
         // env code branch: hidden remote ns → local branch, fast-forward only (no +)
         "refs/h5i/env/code/*:refs/heads/h5i/env/*",
     ] {
-        assert!(fetch_s.contains(pat), "missing fetch refspec {pat}:\n{fetch_s}");
+        assert!(
+            fetch_s.contains(pat),
+            "missing fetch refspec {pat}:\n{fetch_s}"
+        );
     }
     // The default branch refspec must survive untouched.
     assert!(
@@ -1649,7 +1796,10 @@ fn migrate_remote_moves_legacy_context_to_per_branch_layout() {
     );
 
     let out = stdout(&repo.h5i_ok(&["share", "migrate-remote"]));
-    assert!(out.contains("migration complete"), "expected success:\n{out}");
+    assert!(
+        out.contains("migration complete"),
+        "expected success:\n{out}"
+    );
 
     // Legacy ref is gone; the per-branch refs and a backup now exist.
     let names = ls_remote_names(repo.path(), "origin", "refs/h5i/*");
@@ -1657,8 +1807,14 @@ fn migrate_remote_moves_legacy_context_to_per_branch_layout() {
         !names.iter().any(|n| n == "refs/h5i/context"),
         "legacy ref should be deleted:\n{names:?}"
     );
-    assert!(names.iter().any(|n| n == "refs/h5i/context/main"), "{names:?}");
-    assert!(names.iter().any(|n| n == "refs/h5i/context/feature"), "{names:?}");
+    assert!(
+        names.iter().any(|n| n == "refs/h5i/context/main"),
+        "{names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "refs/h5i/context/feature"),
+        "{names:?}"
+    );
     assert!(
         names.iter().any(|n| n == "refs/h5i/context-legacy"),
         "backup ref should be created:\n{names:?}"
@@ -1700,8 +1856,14 @@ fn migrate_remote_dry_run_leaves_remote_untouched() {
     // Remote is unchanged: legacy still present, no per-branch refs, no backup.
     let names = ls_remote_names(repo.path(), "origin", "refs/h5i/*");
     assert!(names.iter().any(|n| n == "refs/h5i/context"), "{names:?}");
-    assert!(!names.iter().any(|n| n == "refs/h5i/context/main"), "{names:?}");
-    assert!(!names.iter().any(|n| n == "refs/h5i/context-legacy"), "{names:?}");
+    assert!(
+        !names.iter().any(|n| n == "refs/h5i/context/main"),
+        "{names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n == "refs/h5i/context-legacy"),
+        "{names:?}"
+    );
 }
 
 #[test]
@@ -1726,14 +1888,21 @@ fn migrate_remote_preserves_an_existing_backup() {
     .to_string();
     run_ok(
         Command::new("git")
-            .args(["push", "origin", &format!("{other_oid}:refs/h5i/context-legacy")])
+            .args([
+                "push",
+                "origin",
+                &format!("{other_oid}:refs/h5i/context-legacy"),
+            ])
             .current_dir(repo.path()),
     );
 
     repo.h5i_ok(&["share", "migrate-remote"]);
 
     // The pre-existing backup must be intact (still the distinct commit).
-    let out = git_in(repo.path(), &["ls-remote", "origin", "refs/h5i/context-legacy"]);
+    let out = git_in(
+        repo.path(),
+        &["ls-remote", "origin", "refs/h5i/context-legacy"],
+    );
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(
         s.contains(&other_oid),
