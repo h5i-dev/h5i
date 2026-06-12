@@ -889,3 +889,9 @@ _[Checkpoint: 6a2c178e — Committed sandbox architecture SVG spacing fix as d71
 [14:31:10] OBSERVE: read docs/blog/sandboxing-ai-agents-foundations/index.html
 [14:31:10] ACT: edited docs/blog/sandboxing-ai-agents-foundations/index.html
 [14:31:10] ACT: edited docs/blog/sandboxing-ai-agents-foundations/index.html
+
+
+---
+_[Checkpoint: 6a2c182e — Added Part 1 glossary section explaining Landlock, seccomp, namespaces, cgroups, and egress; updated JSON-LD word count.]_
+---
+
