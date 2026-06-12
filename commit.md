@@ -1005,3 +1005,16 @@ Unkillable wrap-bash hook via ro bind-mount at /etc/claude-code/managed-settings
 
 ---
 
+## Commit 6a2c5cb9 — 2026-06-12 19:23 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+
+
+---
+

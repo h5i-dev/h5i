@@ -1198,3 +1198,9 @@ _[Checkpoint: 6a2c5b71 — edited src/container.rs; edited tests/env_integration
 ---
 
 [19:23:37] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): e is Claude-specific. ## Three honest caveats (recorded as follow-ups) 1. **Codex isn't covered yet.** The guide doesn't know Codex's config model. Be…
+
+
+---
+_[Checkpoint: 6a2c5cb9 — edited src/container.rs; edited tests/env_integration.rs; edited CLAUDE.md]_
+---
+
