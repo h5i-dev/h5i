@@ -1204,3 +1204,4 @@ _[Checkpoint: 6a2c5b71 — edited src/container.rs; edited tests/env_integration
 _[Checkpoint: 6a2c5cb9 — edited src/container.rs; edited tests/env_integration.rs; edited CLAUDE.md]_
 ---
 
+[19:28:12] THINK: And one prerequisite that matters more than the tee-shim regardless: **`h5i` must be reachable inside the box** for `h5i hook wrap-bash` to run — and we should confirm each runtime's behavior when a hook command *fails* (block vs.
