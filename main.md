@@ -675,11 +675,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Observation auto-capture: ship container shim + hook; revert supervised exec-notify (deadlock)
 - [x] wrote supervised-execve-notify-deadlock.md; edited MEMORY.md; edited wsl2-cargo-test-oom.md
 - [x] wrote supervised-execve-notify-deadlock.md; edited MEMORY.md; edited wsl2-cargo-test-oom.md
+- [x] wrote supervised-execve-notify-deadlock.md; edited MEMORY.md; edited wsl2-cargo-test-oom.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 00:47 UTC] `improve-shell`: wrote supervised-execve-notify-deadlock.md; edited MEMORY.md; edited wsl2-cargo-test-oom.md
 - [2026-06-12 00:43 UTC] `improve-shell`: wrote supervised-execve-notify-deadlock.md; edited MEMORY.md; edited wsl2-cargo-test-oom.md
 - [2026-06-12 00:33 UTC] `improve-shell`: wrote supervised-execve-notify-deadlock.md; edited MEMORY.md; edited wsl2-cargo-test-oom.md
 - [2026-06-12 00:32 UTC] `improve-shell`: Observation auto-capture: ship container shim + hook; revert supervised exec-notify (deadlock)
