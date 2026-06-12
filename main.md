@@ -696,11 +696,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Committed sandbox architecture SVG spacing fix as d71053ec with h5i provenance.
 - [x] Added Part 1 glossary section explaining Landlock, seccomp, namespaces, cgroups, and egress; updated JSON-LD word count.
 - [x] Committed sandbox primitives glossary update as 0f7f6b53 with h5i provenance.
+- [x] Expanded sandbox Parts 1 and 2 for non-systems readers: added mental model, primitive cheat sheet, stage separation, annotated policy TOML, resolver/path/launch pseudo-code, and beginner tables.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 14:44 UTC] `improve-shell`: Expanded sandbox Parts 1 and 2 for non-systems readers: added mental model, primitive cheat sheet, stage separation, annotated policy TOML, resolver/path/launch pseudo-code, and beginner tables.
 - [2026-06-12 14:34 UTC] `improve-shell`: Committed sandbox primitives glossary update as 0f7f6b53 with h5i provenance.
 - [2026-06-12 14:31 UTC] `improve-shell`: Added Part 1 glossary section explaining Landlock, seccomp, namespaces, cgroups, and egress; updated JSON-LD word count.
 - [2026-06-12 14:28 UTC] `improve-shell`: Committed sandbox architecture SVG spacing fix as d71053ec with h5i provenance.
