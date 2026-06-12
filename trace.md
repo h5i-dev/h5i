@@ -1350,3 +1350,4 @@ _[Checkpoint: 6a2c7045 — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a2c70fd — session ended (auto-checkpoint)]_
 ---
 
+[20:52:11] OBSERVE: read src/container.rs
