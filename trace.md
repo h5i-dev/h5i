@@ -1300,3 +1300,4 @@ _[Checkpoint: 6a2c6c81 — edited docs/environments-design.md]_
 ---
 
 [20:33:03] OBSERVE: read src/container.rs
+[20:33:47] THINK: Let me lay out the mental model, because the answer is "no, config lockdown isn't a subset" — and the real asymmetry is the opposite of what the question implies.
