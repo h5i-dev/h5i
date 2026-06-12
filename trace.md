@@ -1095,3 +1095,4 @@ _[Checkpoint: 6a2c4ff7 — Added Codex hook setup target: writes .codex/config.t
 _[Checkpoint: 6a2c50ed — Changed hook setup default to write both Claude and Codex configs; --target claude/codex now narrows output; updated docs and tests.]_
 ---
 
+[18:46:52] OBSERVE: searched src/container.rs for "src/env.rs"
