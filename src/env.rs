@@ -1019,6 +1019,117 @@ fn no_workspace_err(m: &EnvManifest, op: &str) -> H5iError {
     ))
 }
 
+// ─── in-box git plumbing grants ──────────────────────────────────────────────
+
+/// Filesystem grants that make the env's worktree a *functional* git checkout
+/// from inside the box (process/supervised tiers).
+///
+/// `$WORK` alone is not enough: a native worktree's plumbing lives outside it.
+/// `$WORK/.git` is a pointer file into `<repo>/.git/worktrees/<wt>` (HEAD,
+/// index, `commondir`), which in turn points at the shared `<repo>/.git`
+/// (objects, refs, config). With no grant, every `git`/`h5i` invocation inside
+/// the box dies on EACCES — which libgit2 renders as a misleading
+/// `GIT_ELOCKED` ("failed open - '…/commondir' is locked").
+///
+/// The grants restore exactly the surface a boxed agent needs, nothing more:
+///
+/// - **rw** `worktrees/<wt>` — this env's own admin dir (HEAD, index, reflog,
+///   the `h5i/HEAD` context pin).
+/// - **rw** `objects` — the content-addressed store. It is shared: a hostile
+///   box can add garbage or delete loose objects (an *availability* risk,
+///   recoverable from any clone), but it cannot move a ref it is not granted,
+///   so history integrity is preserved.
+/// - **rw** the parent dir of the env's own branch ref, plus its reflog dir —
+///   loose-ref updates create `<slug>.lock` siblings, so the grant must be the
+///   directory. Scope: the box can move *its own agent's* env branches under
+///   `refs/heads/h5i/env/<agent>/` and nothing else in `refs/heads`.
+/// - **rw** `refs/h5i/context` — the reasoning store, so in-box
+///   `h5i context init/trace/commit` works (`init` records the goal on the
+///   `main` context branch). Context is a shared advisory record, already
+///   union-merged across clones — not a protected code ref.
+/// - **ro** `HEAD`, `config`, `packed-refs`, `refs`, `info` — the minimum
+///   reads `git status`/`commit` need. A repo-local `config` carrying
+///   credentials in remote URLs becomes readable in-box; it stays strictly
+///   read-only (a writable `core.fsmonitor`/`hooksPath` would execute code on
+///   the host the next time *anyone* runs git there).
+/// - **ro** `~/.gitconfig` + `~/.config/git` — git *dies* (not skips) when an
+///   existing global config can't be opened: Landlock lets the `access()`
+///   probe pass on DAC bits, then the open fails and git reports "unknown
+///   error occurred while reading the configuration files". The agent profile
+///   already grants these (commit identity); deny-home profiles get exactly
+///   these two paths and nothing else under `$HOME` (`~/.git-credentials`
+///   stays out — it is only consulted by credential helpers on network ops).
+///
+/// Deliberately **not** granted: `.git` itself, `hooks`, `refs/h5i/env` (a box
+/// that could rewrite manifests/policies could widen its own sandbox on the
+/// next run), the env's manifest/policy dir beside `$WORK`, and the on-disk
+/// h5i stores (`.h5i/claims`, notes, msg) — captures, claims and messages stay
+/// host-mediated evidence channels by design.
+///
+/// Two invariants:
+/// - Paths derive only from the identity-validated manifest and the host repo
+///   handle — never from box-writable state (the `$WORK/.git` pointer file is
+///   exactly the kind of thing a previous run could have rewritten to point
+///   anywhere).
+/// - Missing rw dirs are (re)created here. The Landlock builder skips
+///   non-existent grant paths — the right fail-closed default for *policy*
+///   paths, but for these structural grants a silent skip would brick in-box
+///   git again (e.g. after a host-side `git pack-refs` pruned the loose-ref
+///   directory).
+fn box_git_grants(
+    repo: &Repository,
+    m: &EnvManifest,
+) -> Result<(Vec<String>, Vec<String>), H5iError> {
+    let git_dir = repo.commondir().to_path_buf();
+    // `refs/heads/h5i/env/<agent>` — `m.branch` is identity-validated against
+    // agent+slug, so this parent can never leave the env namespace.
+    let branch_parent = Path::new(&m.branch)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .ok_or_else(|| {
+            H5iError::Metadata(format!("{}: malformed branch ref '{}'", m.id, m.branch))
+        })?
+        .to_path_buf();
+
+    let ro: Vec<PathBuf> = ["HEAD", "config", "packed-refs", "refs", "info"]
+        .iter()
+        .map(|p| git_dir.join(p))
+        .collect();
+    let rw: Vec<PathBuf> = vec![
+        git_dir.join("worktrees").join(m.worktree_name()),
+        git_dir.join("objects"),
+        git_dir.join(&branch_parent),
+        git_dir.join("logs").join(&branch_parent),
+        git_dir.join("refs/h5i/context"),
+    ];
+    for d in &rw {
+        std::fs::create_dir_all(d).map_err(|e| H5iError::with_path(e, d))?;
+    }
+    let mut ro: Vec<String> = ro.into_iter().map(|p| p.display().to_string()).collect();
+    // Tilde paths expand inside the sandbox builder; missing ones are skipped.
+    ro.extend(["~/.gitconfig".into(), "~/.config/git".into()]);
+    Ok((ro, rw.into_iter().map(|p| p.display().to_string()).collect()))
+}
+
+/// Append the in-box git grants to a loaded policy. Kernel-enforced tiers
+/// only: `workspace` runs unconfined (nothing to grant), and the container
+/// backend mounts `$WORK` alone rather than consuming `fs.*` grants — its
+/// in-container git story is a separate, known gap (the worktree's gitdir
+/// pointer names a host path that does not exist in the container).
+fn grant_box_git(
+    repo: &Repository,
+    m: &EnvManifest,
+    policy: &mut ResolvedPolicy,
+) -> Result<(), H5iError> {
+    if !matches!(policy.claim, IsolationClaim::Process | IsolationClaim::Supervised) {
+        return Ok(());
+    }
+    let (ro, rw) = box_git_grants(repo, m)?;
+    policy.profile.fs_read.extend(ro);
+    policy.profile.fs_write.extend(rw);
+    Ok(())
+}
+
 /// Run `argv` inside the env's worktree under its pinned policy, and record
 /// the execution as evidence (a tagged capture). Every exec is captured —
 /// provenance is the point (§8) — regardless of output size.
@@ -1049,7 +1160,10 @@ pub fn run(
 
     // The stored policy, digest-verified, then re-resolved against a fresh
     // host probe (fail closed if the host can no longer satisfy the claim).
-    let policy = load_policy(h5i_root, m)?;
+    let mut policy = load_policy(h5i_root, m)?;
+    // Structural grants (like the implicit `$WORK` rw): the worktree must be a
+    // functional git checkout inside the box.
+    grant_box_git(repo, m, &mut policy)?;
 
     // Broker any declared secrets BEFORE marking the env running, so a
     // fail-closed grant (missing source, unsupported inject) aborts cleanly
@@ -1215,7 +1329,10 @@ pub fn shell(
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
 
-    let policy = load_policy(h5i_root, m)?;
+    let mut policy = load_policy(h5i_root, m)?;
+    // Same structural grants as `run`: an interactive boxed agent lives in
+    // this worktree and must be able to use git / h5i context inside it.
+    grant_box_git(repo, m, &mut policy)?;
     let secret_dir = m.dir(h5i_root).join("secrets");
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
     let brokered =
@@ -2571,6 +2688,56 @@ mod tests {
             tamper(&mut m);
             assert!(validate_imported_manifest(&m).is_err(), "identity mismatch rejected");
         }
+    }
+
+    // In-box git grants: the exact plumbing surface a boxed agent needs to use
+    // git/h5i in its worktree — and nothing protected (`.git` root, hooks,
+    // `refs/h5i/env` meta, the manifest dir).
+    #[test]
+    fn box_git_grants_cover_worktree_plumbing_and_nothing_protected() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path().join("repo")).unwrap();
+        let git_dir = repo.commondir().to_path_buf();
+        let m = canonical_manifest("claude", "fix");
+
+        let (ro, rw) = box_git_grants(&repo, &m).unwrap();
+
+        let has = |v: &[String], suffix: &str| v.iter().any(|p| p.ends_with(suffix));
+        // Reads: repo metadata files/dirs, never `.git` itself.
+        for want in ["/HEAD", "/config", "/packed-refs", "/refs", "/info"] {
+            assert!(has(&ro, want), "ro grant {want} missing: {ro:?}");
+        }
+        assert!(
+            !ro.iter().chain(rw.iter()).any(|p| Path::new(p) == git_dir),
+            "the .git dir itself must never be granted"
+        );
+        // Writes: own admin dir, objects, own agent's ref ns (+ reflog), context ns.
+        for want in [
+            "/worktrees/h5i-env-claude-fix",
+            "/objects",
+            "/refs/heads/h5i/env/claude",
+            "/logs/refs/heads/h5i/env/claude",
+            "/refs/h5i/context",
+        ] {
+            assert!(has(&rw, want), "rw grant {want} missing: {rw:?}");
+        }
+        // Protected surfaces stay out of every grant.
+        for never in ["hooks", "refs/h5i/env", "manifest", "policy"] {
+            assert!(
+                !ro.iter().chain(rw.iter()).any(|p| p.ends_with(never)),
+                "protected path '{never}' must not be granted"
+            );
+        }
+        // rw dirs exist afterwards (the Landlock builder skips missing paths,
+        // which would silently brick in-box git)…
+        for d in &rw {
+            assert!(Path::new(d).is_dir(), "rw grant {d} not materialized");
+        }
+        // …including RE-creation after a host-side `git pack-refs` pruned the
+        // loose-ref dir.
+        std::fs::remove_dir_all(git_dir.join("refs/heads/h5i")).unwrap();
+        box_git_grants(&repo, &m).unwrap();
+        assert!(git_dir.join("refs/heads/h5i/env/claude").is_dir(), "pruned ref dir recreated");
     }
 
     // Fix for the propose/rebase-vs-run race: every worktree/manifest-mutating

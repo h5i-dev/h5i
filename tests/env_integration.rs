@@ -1010,11 +1010,15 @@ fn process_tier_confines_fs_and_network() {
     assert!(!out.status.success(), "write outside $WORK must fail");
     assert!(!escape.exists(), "no file may appear outside $WORK");
 
-    // The shared .git must be unreachable through the worktree gitlink.
+    // The shared .git IS reachable through the worktree gitlink — but only on
+    // the narrow in-box surface (own admin dir + objects + own ref namespace;
+    // see env::box_git_grants). A worktree that can't even `rev-parse HEAD`
+    // bricks the boxed agent; the write-side jail is proven in
+    // `box_git_grants_stay_fail_closed_outside_env_namespace`.
     let out = r.h5i(&["env", "run", "jail", "--", "sh", "-c",
-        "git -C . rev-parse HEAD 2>/dev/null || echo GIT-BLOCKED"]);
+        "git rev-parse HEAD >/dev/null 2>&1 && echo GIT-OK || echo GIT-BLOCKED"]);
     let text = out_str(&out);
-    assert!(text.contains("GIT-BLOCKED"), "shared .git must be hidden: {text}");
+    assert!(text.contains("GIT-OK"), "in-box git must function: {text}");
 
     // Network: deny means even loopback TCP fails. Use a pure-shell probe.
     let out = r.h5i(&["env", "run", "jail", "--", "sh", "-c",
@@ -1028,6 +1032,121 @@ fn process_tier_confines_fs_and_network() {
         "unshare -U true 2>/dev/null && echo UNSHARE-OK || echo UNSHARE-BLOCKED"]);
     let text = out_str(&out);
     assert!(!text.contains("UNSHARE-OK"), "unshare must be denied: {text}");
+}
+
+/// In-box git: the env worktree must be a *functional* checkout under the
+/// kernel sandbox. `git status` works, and a commit made inside the box lands
+/// on the env's code branch (visible to the host) while `main` is untouched.
+/// This is the regression test for the agent-in-box bug where every git/h5i
+/// command died on EACCES at the worktree's `commondir` (rendered by libgit2
+/// as a misleading "is locked").
+#[test]
+fn box_git_status_and_commit_work_inside_process_tier() {
+    if !process_tier_runnable() {
+        eprintln!("SKIP box_git_status_and_commit_work_inside_process_tier: process tier not runnable");
+        return;
+    }
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "boxgit", "--isolation", "process"]);
+
+    // status: worktree admin dir (index refresh) + commondir reads.
+    r.h5i_ok(&["env", "run", "boxgit", "--", "git", "status", "--porcelain"]);
+
+    // commit: objects rw + own branch ref dir rw (+ its reflog dir).
+    r.h5i_ok(&["env", "run", "boxgit", "--", "sh", "-c",
+        "echo boxed > boxed.txt && git add boxed.txt && \
+         git -c user.name=Box -c user.email=box@h5i.test commit -m in-box-commit"]);
+
+    let env_tip = out_str(&git(&r.dir, &["log", "-1", "--format=%s", "refs/heads/h5i/env/tester/boxgit"]));
+    assert!(env_tip.contains("in-box-commit"), "host must see the in-box commit: {env_tip}");
+    let main_tip = out_str(&git(&r.dir, &["log", "-1", "--format=%s", "main"]));
+    assert_eq!(main_tip.trim(), "seed", "main must be untouched");
+}
+
+/// The in-box git grants stay narrow: the box can commit to its own env
+/// branch, but moving refs outside `refs/heads/h5i/env/<agent>/`, rewriting
+/// the repo config (a writable `core.fsmonitor` would execute code on the
+/// host), and touching its own manifest (which would let it widen its sandbox
+/// on the next run) all fail closed.
+#[test]
+fn box_git_grants_stay_fail_closed_outside_env_namespace() {
+    if !process_tier_runnable() {
+        eprintln!("SKIP box_git_grants_stay_fail_closed_outside_env_namespace: process tier not runnable");
+        return;
+    }
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "boxjail", "--isolation", "process"]);
+
+    // Diverge the env branch first — otherwise `update-ref main HEAD` would be
+    // an undetectable no-op (same oid).
+    r.h5i_ok(&["env", "run", "boxjail", "--", "sh", "-c",
+        "echo x > f.txt && git add f.txt && \
+         git -c user.name=B -c user.email=b@h5i.test commit -m divergent"]);
+
+    // Moving main is refused, and main does not move.
+    let main_before = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let out = r.h5i(&["env", "run", "boxjail", "--", "git", "update-ref", "refs/heads/main", "HEAD"]);
+    assert!(!out.status.success(), "moving main from inside the box must fail: {}", out_str(&out));
+    assert_eq!(out_str(&git(&r.dir, &["rev-parse", "main"])), main_before, "main moved!");
+
+    // Another agent's env namespace is refused too (grant is per-agent).
+    let out = r.h5i(&["env", "run", "boxjail", "--", "git", "update-ref",
+        "refs/heads/h5i/env/other/x", "HEAD"]);
+    assert!(!out.status.success(), "foreign env namespace must be unwritable: {}", out_str(&out));
+
+    // Repo config is read-only.
+    let out = r.h5i(&["env", "run", "boxjail", "--", "git", "config", "core.fsmonitor", "/bin/false"]);
+    assert!(!out.status.success(), "writing .git/config must fail: {}", out_str(&out));
+    let cfg = std::fs::read_to_string(r.dir.join(".git/config")).unwrap();
+    assert!(!cfg.contains("fsmonitor"), "config must be unchanged: {cfg}");
+
+    // The env's own manifest/policy dir (the sibling of $WORK) stays sealed.
+    let out = r.h5i(&["env", "run", "boxjail", "--", "sh", "-c", "echo x >> ../manifest.json"]);
+    assert!(!out.status.success(), "manifest must be unwritable from the box: {}", out_str(&out));
+
+    // Hooks are never granted: planting one from the box must fail.
+    let hook = r.dir.join(".git/hooks/pre-commit");
+    let out = r.h5i(&["env", "run", "boxjail", "--", "sh", "-c",
+        &format!("printf '#!/bin/sh\\n' > {}", hook.display())]);
+    assert!(!out.status.success(), "hook planting must fail: {}", out_str(&out));
+    assert!(!hook.exists(), "no hook may appear: {}", hook.display());
+}
+
+/// In-box `h5i context` — the exact flow from the bug report: a boxed agent
+/// runs `context status` (honest output), `context init`, and
+/// `context commit`; the reasoning lands in `refs/h5i/context/*` where the
+/// host can see it.
+#[test]
+fn box_h5i_context_flow_works_inside_process_tier() {
+    if !process_tier_runnable() {
+        eprintln!("SKIP box_h5i_context_flow_works_inside_process_tier: process tier not runnable");
+        return;
+    }
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "boxctx", "--isolation", "process"]);
+
+    // The host build dir is (correctly) not granted — stage the binary into
+    // $WORK, the box's own rw+exec mount.
+    std::fs::copy(H5I, r.work("boxctx").join("h5i")).unwrap();
+
+    // Before init: a clean "not initialized" (exit 0), not an EACCES disguise.
+    r.h5i_ok(&["env", "run", "boxctx", "--", "./h5i", "context", "status"]);
+
+    r.h5i_ok(&["env", "run", "boxctx", "--", "./h5i", "context", "init", "--goal", "boxed goal"]);
+    r.h5i_ok(&["env", "run", "boxctx", "--", "./h5i", "context", "commit", "milestone from the box"]);
+
+    // The reasoning is real git state, visible to the host.
+    let refs = out_str(&git(&r.dir, &["show-ref"]));
+    assert!(refs.contains("refs/h5i/context/"), "context refs must exist: {refs}");
+
+    // And the box can read its own milestone back (via the run's capture).
+    r.h5i_ok(&["env", "run", "boxctx", "--", "./h5i", "context", "status"]);
+    let cap = r.capture_manifest("boxctx");
+    let raw = String::from_utf8_lossy(&r.capture_raw(cap["raw_oid"].as_str().unwrap())).to_string();
+    assert!(
+        raw.contains("boxed goal") || raw.contains("milestone from the box"),
+        "in-box context status must show the recorded reasoning: {raw}"
+    );
 }
 
 /// The wall-clock kill must reap the WHOLE process tree (process-group kill),

@@ -191,12 +191,26 @@ hole at `process`+ tiers: a confined process that can traverse the gitlink can
 reach other worktrees' refs and the repo's hooks. Two mitigations, by tier:
 
 - **`workspace` tier:** accept the shared store (trusted, no confinement).
-- **`process`+ tiers — mediated commit:** the confined process's filesystem
-  view is restricted to *its own working directory + read-only system paths*;
-  it never sees the shared `.git`. h5i runs the command, captures stdout/diff on
-  the host side, and performs the git commit on the env branch itself. The agent
-  edits files; h5i owns the refs. This also makes `.git/hooks` unreachable from
-  inside the sandbox (an EscapeBench footgun).
+- **`process`+ tiers — narrow plumbing grants + mediated commit:** the confined
+  filesystem view is `$WORK` + read-only system paths **plus the minimum git
+  plumbing that makes the worktree a functional checkout** (`env::box_git_grants`
+  — without it every `git`/`h5i` call inside the box dies on EACCES at the
+  worktree's `commondir`, which bricks the agent-in-box): rw on the env's own
+  `worktrees/<wt>` admin dir, the shared `objects` store (an availability
+  trade: a hostile box can vandalize loose objects, recoverable from any
+  clone, but cannot move any ref it isn't granted), the agent's own
+  `refs/heads/h5i/env/<agent>` + its reflog dir, and `refs/h5i/context`
+  (reasoning is a shared advisory record); ro on
+  `HEAD`/`config`/`packed-refs`/`refs`/`info` and `~/.gitconfig`/`~/.config/git`
+  (git dies — not skips — on an existing-but-unreadable global config).
+  Everything else stays sealed: `.git/hooks` (EscapeBench footgun), repo
+  `config` writes (`core.fsmonitor`/`hooksPath` would execute host-side),
+  `refs/h5i/env` meta and the env's manifest/policy dir (a box that could
+  rewrite its own policy could widen its sandbox on the next run). Net effect:
+  a boxed agent can `git status`/`commit` on **its own env branch** and use
+  `h5i context`, but cannot move `main`, plant hooks, or touch another agent's
+  branches. The only road into the *parent* branch is still the host-side
+  mediated commit of `propose`.
   - **Mediated-commit invariant (critical security boundary):** h5i computes the
     diff from the worktree *filesystem* and stages/commits host-side against an
     **explicit path allowlist rooted at `$WORK`**. Every staged path is
