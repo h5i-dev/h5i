@@ -744,11 +744,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] session ended (auto-checkpoint)
 - [x] Implemented env-aware capture run staging: sandboxed capture run writes cap spool records, host env run/shell ingests them as inbox-capture evidence with source labels, and env status/inspect show evidence source counts.
 - [x] edited /home/koukyosyumei/Dev/h5i/src/risk.rs; edited /home/koukyosyumei/Dev/h5i/tests/filter_quality.rs; edited /home/k…
+- [x] edited /home/koukyosyumei/Dev/h5i/src/risk.rs; edited /home/koukyosyumei/Dev/h5i/tests/filter_quality.rs; edited /home/k…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-12 23:28 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/risk.rs; edited /home/koukyosyumei/Dev/h5i/tests/filter_quality.rs; edited /home/k…
 - [2026-06-12 22:36 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/risk.rs; edited /home/koukyosyumei/Dev/h5i/tests/filter_quality.rs; edited /home/k…
 - [2026-06-12 21:51 UTC] `improve-shell`: Implemented env-aware capture run staging: sandboxed capture run writes cap spool records, host env run/shell ingests them as inbox-capture evidence with source labels, and env status/inspect show evidence source counts.
 - [2026-06-12 21:18 UTC] `improve-shell`: session ended (auto-checkpoint)
