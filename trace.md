@@ -1227,3 +1227,9 @@ Two coherent ways forward, and they're not mutually exclusive:
 
 - **If you want the cheap win now:** I'll implement the supervised/process config ro-bind as a *prevent-during* upgrade to the existing seal.
 [19:50:08] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): ee** — the unkillable *floor* is still the tee-shim port (deferred) or a one-time `sudo` to seed `/etc/claude-code` for managed-settings. ## My reco…
+
+
+---
+_[Checkpoint: 6a2c62f0 — session ended (auto-checkpoint)]_
+---
+
