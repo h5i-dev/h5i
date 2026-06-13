@@ -1969,3 +1969,9 @@ _[Checkpoint: 6a2dbb8d — edited tests/objects_e2e.rs; edited tests/objects_e2e
 [20:37:24] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/running-h5i-suite-in-box.md): int the skip message exactly when nested. Also recorded the deferred-notes behavior in the `running-h5i-suite-in-box` memory. This was the fourth i…
 [20:37:24] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/running-h5i-suite-in-box.md): log shows the model/agent/prompt from that note), which is deferred to host-ingest in-box. Rather than keep going one failure at a time, let me fix…
 [20:37:24] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/running-h5i-suite-in-box.md): g piecemeal, let me check the exact condition that triggers deferred notes — if it keys purely on `$H5I_ENV_ID`, there's a cleaner one-shot fix tha…
+
+
+---
+_[Checkpoint: 6a2dbf84 — edited running-h5i-suite-in-box.md; edited src/sandbox.rs; edited src/sandbox.rs]_
+---
+
