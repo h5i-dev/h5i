@@ -1955,3 +1955,9 @@ _[Checkpoint: 6a2db6e4 — edited tests/cli_integration.rs; edited tests/cli_int
 [20:20:29] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/running-h5i-suite-in-box.md): g piecemeal, let me check the exact condition that triggers deferred notes — if it keys purely on `$H5I_ENV_ID`, there's a cleaner one-shot fix tha…
 [20:20:29] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/running-h5i-suite-in-box.md): The deferred-note behavior triggers only when **all three** host-injected vars are present: `H5I_ENV_C
 [20:20:29] NOTE: DEFERRAL (~/Dev/h5i/tests/objects_e2e.rs): ote or capture-object deferral path, so it's unaffected — I'll leave it (and its 4 spawn sites) alone. Scope is now the two deferral mechanisms: not…
+
+
+---
+_[Checkpoint: 6a2dbb8d — edited tests/objects_e2e.rs; edited tests/objects_e2e.rs; edited running-h5i-suite-in-box.md]_
+---
+
