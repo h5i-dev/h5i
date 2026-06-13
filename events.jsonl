@@ -158,3 +158,4 @@
 {"ts":"2026-06-13T20:21:59.429736Z","env_id":"env/human/codex-1","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
 {"ts":"2026-06-13T20:22:03.116986Z","env_id":"env/human/codex-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-13T20:22:15.444078Z","env_id":"env/human/codex-1","agent":"human","event":"created","detail":"base=98a5d630c718 profile=agent-codex isolation=supervised backend=worktree"}
+{"ts":"2026-06-13T20:22:22.657657Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
