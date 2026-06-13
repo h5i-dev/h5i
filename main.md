@@ -763,11 +763,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Added env unit and e2e coverage for pending spool reporting and status name resolution
 - [x] edited src/env.rs; edited tests/env_integration.rs; edited src/env.rs
 - [x] Fixed hook setup regressions: SessionStart emits JSON context, wrap-bash skips unwritable capture stores, agent sandbox grants rustup read metadata.
+- [x] edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-13 12:38 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/…
 - [2026-06-13 12:37 UTC] `improve-shell`: Fixed hook setup regressions: SessionStart emits JSON context, wrap-bash skips unwritable capture stores, agent sandbox grants rustup read metadata.
 - [2026-06-13 12:26 UTC] `env/human/codex-1`: edited src/env.rs; edited tests/env_integration.rs; edited src/env.rs
 - [2026-06-13 12:25 UTC] `env/human/codex-1`: Added env unit and e2e coverage for pending spool reporting and status name resolution
