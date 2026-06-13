@@ -167,3 +167,4 @@
 {"ts":"2026-06-13T20:41:21.564727Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo test` exit=101 source=inbox-capture","capture":"0959ae24d8728318"}
 {"ts":"2026-06-13T20:41:21.575426Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130 observed=1"}
 {"ts":"2026-06-13T20:41:24.205408Z","env_id":"env/human/codex-1","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
+{"ts":"2026-06-13T20:41:30.304702Z","env_id":"env/human/codex-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
