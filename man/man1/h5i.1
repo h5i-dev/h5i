@@ -476,9 +476,12 @@ Run a command inside the env, policy-enforced + capture-wrapped.
 .BI "shell " "NAME " "[\-\- COMMAND]"
 Open an interactive confined session inside the env (the "agent-in-box"): stdio
 is inherited, so every command the session spawns is confined by the box.
-Defaults to a login shell; exit code passes through; a
+Defaults to a login shell; exit code passes through. The session is observed (a
 .B shell
-event is logged (nothing is captured).
+event is logged and per-command evidence is staged + ingested where the tier
+supports it) and the agent's config is locked read-only. See
+.B IN-BOX GIT, CAPTURE & COMMIT
+below.
 .TP
 .B probe
 Report what isolation this host can enforce (Landlock, user namespaces, seccomp,
@@ -512,6 +515,9 @@ Mediated commit (path-allowlist: rejects nested \fB.git\fR, symlink escapes,
 .TP
 .BI "apply " "NAME " "[\-\-patch]"
 Apply a proposal onto its parent (reviewer-selected). Default merges; \fB\-\-patch\fR squashes.
+The applied commit is stamped with env provenance: a note linking it to the env
+and summarizing evidence by trust lane (\fBhost-env-run\fR vs box-claimed
+\fBinbox-capture\fR), shown in \fBh5i recall log\fR.
 .TP
 .BI "abort " NAME
 Discard the env; manifest + workspace retained for forensics.
@@ -568,6 +574,27 @@ fail-closed. The fully-resolved policy's sha256 digest is pinned in the manifest
 and every capture (tamper-evident). The
 .B h5i_env_*
 MCP tools mirror these subcommands.
+.PP
+.B IN-BOX GIT, CAPTURE & COMMIT
+.RS 4
+.PP
+At the confined tiers the env worktree is a functional git checkout from inside
+the box: \fBgit\fR plumbing and \fBh5i context\fR work against the env's own
+branch (the box cannot move \fBmain\fR, plant hooks, or touch other branches).
+Interactive sessions lock the agent config read-only and observe per command:
+in-box \fBh5i capture run\fR / \fBh5i commit\fR work even though the evidence
+store is sealed \(em the git commit lands on the env branch and the evidence (and
+commit note) are staged to a spool the host ingests at session end, labeled
+\fBinbox-capture\fR (box-claimed) vs host-verified \fBhost-env-run\fR. On
+\fBcontainer\fR the observation hook is pinned via injected managed-settings; for
+Codex, launch \fBcodex \-\-dangerously\-bypass\-hook\-trust\fR so its hook runs.
+.PP
+.B Troubleshooting:
+a capture/commit that fails with \fI"h5i data store not writable"\fR means
+\fB.git/.h5i\fR is owned by another user (usually root, from an earlier
+\fBsudo\fR run). Repair with
+.BR "sudo chown \-R \(dq$(id \-u):$(id \-g)\(dq .git/.h5i" .
+.RE
 .
 .\" ─── share push ─────────────────────────────────────────────────────────────
 .SS h5i share push [\fIOPTIONS\fR] (alias: h5i push)
