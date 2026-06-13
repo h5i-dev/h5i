@@ -37,3 +37,4 @@
 {"ts":"2026-06-13T12:48:29.610841Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130 observed=1"}
 {"ts":"2026-06-13T12:48:43.714262Z","env_id":"env/human/codex-1","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
 {"ts":"2026-06-13T12:48:47.513703Z","env_id":"env/human/codex-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
+{"ts":"2026-06-13T12:48:59.921607Z","env_id":"env/human/codex-1","agent":"human","event":"created","detail":"base=cffaf91c065f profile=agent-codex isolation=supervised backend=worktree"}
