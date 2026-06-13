@@ -1473,3 +1473,16 @@ improve default UX of h5i env shell so AI agents (claude/codex) can actually run
 
 ---
 
+## Commit 6a2cb656 — 2026-06-13 01:45 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+3 new e2e: (1) inbox_commit_on_supervised — in-box commit→spool→host-apply on supervised (the original report's tier), passes; (2) container_env_capture_spool_is_mounted_and_ingested — proves /.h5i/spool rw mount + host ingest via busybox sh writing a synthetic inbox-capture (sidesteps glibc/h5i-in-image), passes with H5I_TEST_CONTAINER=1; (3) apply_provenance_preserves_inbox_and_host_lanes — integrity: inbox-capture + host-env-run lanes survive apply as distinct lanes in the provenance note (no laundering). All gated, skip cleanly. Full suite green: 810 lib + 68 env_integration (supervised+container opted in). Remaining open (lower priority, flagged earlier): root-owned .h5i/objects is a host-state issue not addressed by code (needs chown / ownership-aware creation); the exact original .h5i/objects writer was a capture path (not the commit itself), now covered by the capture-spool + these tier tests.
+
+### This Commit's Contribution
+
+
+---
+

@@ -1589,3 +1589,9 @@ _[Checkpoint: 6a2cb2ff — edited tests/env_integration.rs; edited src/env.rs; e
 _[Checkpoint: 6a2cb64a — Added supervised + container + lane-through-apply e2e (commit e5b04e89)]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2cb656 — edited tests/env_integration.rs; edited tests/env_integration.rs; edited tests/env_integration.rs]_
+---
+
