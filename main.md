@@ -751,11 +751,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] In-box h5i commit graceful-degrade + spool-note shipped (commit 5d5489d0)
 - [x] edited tests/env_integration.rs; edited src/env.rs; edited tests/env_integration.rs
 - [x] edited tests/env_integration.rs; edited src/env.rs; edited tests/env_integration.rs
+- [x] Added supervised + container + lane-through-apply e2e (commit e5b04e89)
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-13 01:45 UTC] `improve-shell`: Added supervised + container + lane-through-apply e2e (commit e5b04e89)
 - [2026-06-13 01:31 UTC] `improve-shell`: edited tests/env_integration.rs; edited src/env.rs; edited tests/env_integration.rs
 - [2026-06-13 01:17 UTC] `improve-shell`: edited tests/env_integration.rs; edited src/env.rs; edited tests/env_integration.rs
 - [2026-06-13 01:17 UTC] `improve-shell`: In-box h5i commit graceful-degrade + spool-note shipped (commit 5d5489d0)
