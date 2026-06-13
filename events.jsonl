@@ -40,3 +40,4 @@
 {"ts":"2026-06-13T12:48:59.921607Z","env_id":"env/human/codex-1","agent":"human","event":"created","detail":"base=cffaf91c065f profile=agent-codex isolation=supervised backend=worktree"}
 {"ts":"2026-06-13T12:49:21.567476Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-13T13:20:33.820919Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo fmt --check` exit=1 source=inbox-capture","capture":"c4afdf5f388714c9"}
+{"ts":"2026-06-13T13:20:34.136760Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo fmt --manifest-path ./Cargo.toml --check` exit=1 source=inbox-capture","capture":"c4afdf5f388714c9"}
