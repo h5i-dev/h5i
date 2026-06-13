@@ -1672,3 +1672,4 @@ _[Checkpoint: 6a2cd4d0 — edited src/env.rs; edited src/env.rs; edited tests/en
 _[Checkpoint: 6a2d3598 — edited tests/env_integration.rs; edited src/env.rs; edited src/env.rs]_
 ---
 
+[12:37:00] OBSERVE: searched perm|sandbox|read" for "setup|wrap-bash|settings.toml|rustup|read"
