@@ -714,6 +714,11 @@ fn hook_stop_auto_checkpoints() {
     // hook stop should auto-commit the workspace
     let out = repo.h5i(&["hook", "stop"]);
     // Success or at most a non-fatal warning
+    assert!(
+        out.stdout.is_empty(),
+        "hook stop must not emit non-JSON stdout: {}",
+        stdout(&out)
+    );
     let e = stderr(&out);
     assert!(
         !e.contains("panic") && !e.contains("thread"),

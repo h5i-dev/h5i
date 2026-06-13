@@ -3052,7 +3052,11 @@ fn autotrace_state_path(workdir: &Path) -> anyhow::Result<PathBuf> {
     Ok(h5i_dir.join("claude_autotrace_state.json"))
 }
 
-fn auto_checkpoint_context(workdir: &Path, explicit_summary: Option<&str>) -> anyhow::Result<()> {
+fn auto_checkpoint_context(
+    workdir: &Path,
+    explicit_summary: Option<&str>,
+    quiet: bool,
+) -> anyhow::Result<()> {
     let has_ctx = match git2::Repository::discover(workdir) {
         Ok(r) => r.find_reference("refs/h5i/context/main").is_ok(),
         Err(_) => false,
@@ -3099,11 +3103,13 @@ fn auto_checkpoint_context(workdir: &Path, explicit_summary: Option<&str>) -> an
     };
 
     ctx::gcc_commit(workdir, &summary, "")?;
-    println!(
-        "{} Auto-checkpointed context: {}",
-        SUCCESS,
-        style(summary).italic()
-    );
+    if !quiet {
+        println!(
+            "{} Auto-checkpointed context: {}",
+            SUCCESS,
+            style(summary).italic()
+        );
+    }
     Ok(())
 }
 
@@ -6924,7 +6930,7 @@ jq -c '{
                 Err(e) => eprintln!("{} Auto-trace failed: {e}", style("warn:").yellow()),
             }
             // 2. Checkpoint the context workspace milestone.
-            if let Err(e) = auto_checkpoint_context(&workdir, None) {
+            if let Err(e) = auto_checkpoint_context(&workdir, None, true) {
                 eprintln!("{} Context checkpoint failed: {e}", style("warn:").yellow());
             }
         }
@@ -6970,7 +6976,7 @@ jq -c '{
                             WARN
                         ),
                     }
-                    auto_checkpoint_context(&workdir, summary.as_deref())?;
+                    auto_checkpoint_context(&workdir, summary.as_deref(), false)?;
                     deliver_codex_inbox(&workdir);
                 }
             }

@@ -1110,6 +1110,9 @@ fn no_workspace_err(m: &EnvManifest, op: &str) -> H5iError {
 ///   already grants these (commit identity); deny-home profiles get exactly
 ///   these two paths and nothing else under `$HOME` (`~/.git-credentials`
 ///   stays out — it is only consulted by credential helpers on network ops).
+/// - **ro** the main repo's `Cargo.toml` when it exists. Cargo walks upward
+///   from nested env worktrees looking for a workspace root; without read
+///   access, ordinary `cargo build`/`cargo test` fails before compiling.
 ///
 /// Deliberately **not** granted: `.git` itself, `hooks`, `refs/h5i/env` (a box
 /// that could rewrite manifests/policies could widen its own sandbox on the
@@ -1210,6 +1213,13 @@ fn grant_box_git(
                         policy.profile.fs_read.push(p.display().to_string());
                     }
                 }
+                let cargo_manifest = main_root.join("Cargo.toml");
+                if cargo_manifest.is_file() {
+                    policy
+                        .profile
+                        .fs_read
+                        .push(cargo_manifest.display().to_string());
+                }
             }
         }
         IsolationClaim::Container => {
@@ -1218,6 +1228,15 @@ fn grant_box_git(
                 host: work.to_path_buf(),
                 rw: true,
             });
+            if let Some(main_root) = repo.commondir().parent() {
+                let cargo_manifest = main_root.join("Cargo.toml");
+                if cargo_manifest.is_file() {
+                    mounts.push(BoxGitPath {
+                        host: cargo_manifest,
+                        rw: false,
+                    });
+                }
+            }
             // Podman errors on a missing bind source (unlike Landlock, which
             // skips) — keep only what exists on the host.
             mounts.retain(|b| b.host.exists());
@@ -1226,6 +1245,19 @@ fn grant_box_git(
         _ => {}
     }
     Ok(())
+}
+
+fn prepare_cargo_env(work: &Path, policy: &ResolvedPolicy) -> Result<Vec<(String, String)>, H5iError> {
+    if policy.claim < IsolationClaim::Process {
+        return Ok(Vec::new());
+    }
+    let h5i_dir = work.join(".h5i");
+    let target_dir = h5i_dir.join("cargo-target");
+    std::fs::create_dir_all(&target_dir).map_err(|e| H5iError::with_path(e, &target_dir))?;
+    Ok(vec![(
+        "CARGO_TARGET_DIR".to_string(),
+        target_dir.display().to_string(),
+    )])
 }
 
 fn prepare_env_capture_spool(
@@ -1489,6 +1521,7 @@ pub fn run(
     // functional git checkout inside the box.
     grant_box_git(repo, m, &work, &mut policy)?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
+    let cargo_env = prepare_cargo_env(&work, &policy)?;
 
     // Broker any declared secrets BEFORE marking the env running, so a
     // fail-closed grant (missing source, unsupported inject) aborts cleanly
@@ -1499,7 +1532,7 @@ pub fn run(
     let brokered =
         crate::secrets_broker::broker(&policy.profile.secret_grants, &secret_dir, is_workspace)?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
-    let injected_env = merged_env(&brokered.env, &env_capture_env);
+    let injected_env = merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env);
 
     set_status(
         repo,
@@ -1707,12 +1740,13 @@ pub fn shell(
     // this worktree and must be able to use git / h5i context inside it.
     grant_box_git(repo, m, &work, &mut policy)?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
+    let cargo_env = prepare_cargo_env(&work, &policy)?;
     let secret_dir = m.dir(h5i_root).join("secrets");
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
     let brokered =
         crate::secrets_broker::broker(&policy.profile.secret_grants, &secret_dir, is_workspace)?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
-    let injected_env = merged_env(&brokered.env, &env_capture_env);
+    let injected_env = merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env);
 
     set_status(
         repo,
@@ -3827,6 +3861,11 @@ mod tests {
         use crate::sandbox::Profile;
         let dir = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(dir.path().join("repo")).unwrap();
+        std::fs::write(
+            dir.path().join("repo/Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
         let m = canonical_manifest("claude", "fix");
         let work = dir.path().join("repo/.git/.h5i/env/claude/fix/work");
         std::fs::create_dir_all(&work).unwrap();
@@ -3839,6 +3878,14 @@ mod tests {
         grant_box_git(&repo, &m, &work, &mut pol).unwrap();
         assert!(pol.profile.fs_write.iter().any(|p| p.ends_with("/objects")));
         assert!(pol.profile.fs_read.iter().any(|p| p == "~/.gitconfig"));
+        assert!(
+            pol.profile
+                .fs_read
+                .iter()
+                .any(|p| p.ends_with("/repo/Cargo.toml")),
+            "cargo workspace discovery needs parent Cargo.toml read: {:?}",
+            pol.profile.fs_read
+        );
         assert!(
             pol.box_git.is_empty(),
             "kernel tiers use fs grants, not mounts"
@@ -3856,6 +3903,13 @@ mod tests {
         assert!(
             pol.box_git.iter().any(|b| b.rw && b.host == work),
             "container must dual-mount $WORK at its host path: {:?}",
+            pol.box_git
+        );
+        assert!(
+            pol.box_git
+                .iter()
+                .any(|b| !b.rw && b.host.ends_with("Cargo.toml")),
+            "container must bind parent Cargo.toml for workspace discovery: {:?}",
             pol.box_git
         );
         assert!(
@@ -3880,6 +3934,31 @@ mod tests {
         grant_box_git(&repo, &m, &work, &mut pol).unwrap();
         assert!(pol.box_git.is_empty());
         assert_eq!(pol.profile.fs_read, read_before);
+    }
+
+    #[test]
+    fn prepare_cargo_env_keeps_target_outputs_inside_worktree() {
+        use crate::sandbox::Profile;
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let pol = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            Profile::builtin("default", IsolationClaim::Process),
+        );
+
+        let env = prepare_cargo_env(&work, &pol).unwrap();
+        let target = env
+            .iter()
+            .find(|(k, _)| k == "CARGO_TARGET_DIR")
+            .map(|(_, v)| PathBuf::from(v))
+            .unwrap();
+        assert!(target.starts_with(&work), "{target:?}");
+        assert!(target.is_dir(), "{target:?}");
+        assert!(
+            env.iter().all(|(k, _)| k != "CARGO_INSTALL_ROOT"),
+            "cargo install is not part of the default sandbox workflow: {env:?}"
+        );
     }
 
     // Fix for the propose/rebase-vs-run race: every worktree/manifest-mutating
