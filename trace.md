@@ -1869,3 +1869,4 @@ _[Checkpoint: 6a2d64a1 — edited src/cgroup.rs; edited docs/comparison.md; edit
 [14:22:30] OBSERVE: read src/mcp.rs
 [14:23:06] OBSERVE: read src/env.rs
 [14:24:52] THINK: claude`. Now let me pin down the lock leak by reading the `run` function's lock scope and how it spawns the confined process:
+[14:24:52] THINK: Let me confirm what isolation tier the test env uses (decides whether #2 is a nested-confinement artifact):
