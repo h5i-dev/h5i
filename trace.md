@@ -1628,3 +1628,4 @@ _[Checkpoint: 6a2cbdb4 — edited src/objects.rs; edited src/storage.rs; edited 
 [02:33:47] ACT: edited MANUAL.md
 [02:34:05] ACT: edited MANUAL.md
 [02:34:24] ACT: edited MANUAL.md
+[02:34:32] OBSERVE: read man/man1/h5i.1
