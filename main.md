@@ -778,11 +778,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Tightened Cargo sandbox patch: keep parent Cargo.toml read and in-work CARGO_TARGET_DIR, remove Cargo install/root and host Cargo cache write grants.
 - [x] edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyume…
 - [x] edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyume…
+- [x] Added h5i env propose/apply integration tests for no-op proposals and patch-mode apply
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-13 13:43 UTC] `env/human/codex-1`: Added h5i env propose/apply integration tests for no-op proposals and patch-mode apply
 - [2026-06-13 13:18 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyume…
 - [2026-06-13 13:14 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyume…
 - [2026-06-13 13:14 UTC] `improve-shell`: Tightened Cargo sandbox patch: keep parent Cargo.toml read and in-work CARGO_TARGET_DIR, remove Cargo install/root and host Cargo cache write grants.
