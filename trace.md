@@ -1932,3 +1932,4 @@ _[Checkpoint: 6a2db422 — edited src/mcp.rs; wrote running-h5i-suite-in-box.md;
 _[Checkpoint: 6a2db6e4 — edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited running-h5i-suite-in-box.md]_
 ---
 
+[20:08:36] OBSERVE: read tests/e2e_noun_workflow.rs
