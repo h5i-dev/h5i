@@ -1896,3 +1896,9 @@ _[Checkpoint: 6a2db325 — edited src/mcp.rs; wrote running-h5i-suite-in-box.md;
 ---
 
 [19:47:17] THINK: Let me prove it by running the whole `--lib` suite (no filter) so you see the real total:
+
+
+---
+_[Checkpoint: 6a2db3c5 — edited src/mcp.rs; wrote running-h5i-suite-in-box.md; edited MEMORY.md]_
+---
+
