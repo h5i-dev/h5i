@@ -1676,3 +1676,4 @@ _[Checkpoint: 6a2d3598 — edited tests/env_integration.rs; edited src/env.rs; e
 [12:37:00] OBSERVE: read .claude/settings.json
 [12:37:00] OBSERVE: read .codex/config.toml
 [12:37:00] OBSERVE: read src/hooks.rs
+[12:37:00] OBSERVE: read src/sandbox.rs
