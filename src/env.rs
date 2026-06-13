@@ -1196,6 +1196,21 @@ fn grant_box_git(
                 .profile
                 .fs_read
                 .extend(["~/.gitconfig".to_string(), "~/.config/git".to_string()]);
+            // The env worktree is nested inside the main repo, so agent runtimes
+            // (claude/codex) discover the PROJECT config by walking up to the
+            // main repo's `.claude`/`.codex`. Grant READ so discovery works —
+            // and so the observation hook defined there actually loads — without
+            // granting write (the agent still cannot disable a project hook).
+            // `commondir().parent()` is the main repo root whether `repo` is the
+            // main handle or a worktree handle.
+            if let Some(main_root) = repo.commondir().parent() {
+                for d in [".claude", ".codex"] {
+                    let p = main_root.join(d);
+                    if p.is_dir() {
+                        policy.profile.fs_read.push(p.display().to_string());
+                    }
+                }
+            }
         }
         IsolationClaim::Container => {
             let mut mounts = box_git_plumbing(repo, m)?;
@@ -3760,6 +3775,47 @@ mod tests {
             git_dir.join("refs/heads/h5i/env/claude").is_dir(),
             "pruned ref dir recreated"
         );
+    }
+
+    // The nested worktree means agent runtimes discover the PROJECT config by
+    // walking up to the main repo root; the box must be able to READ it (so
+    // config discovery + the observation hook work) but not write it.
+    #[test]
+    fn grant_box_git_reads_main_repo_project_config() {
+        use crate::sandbox::Profile;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo"); // == commondir().parent()
+        let repo = git2::Repository::init(&root).unwrap();
+        std::fs::create_dir_all(root.join(".codex")).unwrap();
+        std::fs::write(root.join(".codex/config.toml"), "[hooks]\n").unwrap();
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        let m = canonical_manifest("claude", "fix");
+        let work = root.join(".git/.h5i/env/claude/fix/work");
+        std::fs::create_dir_all(&work).unwrap();
+
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            Profile::builtin("default", IsolationClaim::Process),
+        );
+        grant_box_git(&repo, &m, &work, &mut pol).unwrap();
+
+        let codex = root.join(".codex").display().to_string();
+        let claude = root.join(".claude").display().to_string();
+        // Existing project-config dirs are READ-granted, never write-granted.
+        assert!(pol.profile.fs_read.contains(&codex), "main-repo .codex read: {:?}", pol.profile.fs_read);
+        assert!(pol.profile.fs_read.contains(&claude), "main-repo .claude read");
+        assert!(!pol.profile.fs_write.contains(&codex), "stays immutable");
+        assert!(!pol.profile.fs_write.contains(&claude), "stays immutable");
+
+        // An absent dir is not granted (no phantom grant), and container leaves
+        // fs lists alone (it doesn't share the host repo tree).
+        std::fs::remove_dir_all(root.join(".claude")).unwrap();
+        let mut pol2 = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            Profile::builtin("default", IsolationClaim::Process),
+        );
+        grant_box_git(&repo, &m, &work, &mut pol2).unwrap();
+        assert!(!pol2.profile.fs_read.contains(&claude), "absent dir not granted");
     }
 
     // The same plumbing is applied per backend: Landlock grants (+ global
