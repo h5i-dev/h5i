@@ -76,3 +76,4 @@
 {"ts":"2026-06-13T19:58:52.993230Z","env_id":"env/claude/pulldiag","agent":"claude","event":"aborted","detail":"manifest preserved for forensics"}
 {"ts":"2026-06-13T19:58:53.033247Z","env_id":"env/claude/pulldiag","agent":"claude","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-13T20:01:53.218624Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo test` exit=101 source=inbox-capture","capture":"19015d7ce2018f48"}
+{"ts":"2026-06-13T20:01:53.402461Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo test` exit=101 source=inbox-capture","capture":"e4a556a00f9384a5"}
