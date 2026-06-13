@@ -748,11 +748,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited /home/koukyosyumei/Dev/h5i/src/risk.rs; edited /home/koukyosyumei/Dev/h5i/tests/filter_quality.rs; edited /home/k…
 - [x] Implemented apply provenance carry-forward (commit 261a445e)
 - [x] edited tests/env_integration.rs; edited src/repository.rs; edited tests/env_integration.rs
+- [x] In-box h5i commit graceful-degrade + spool-note shipped (commit 5d5489d0)
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-13 01:17 UTC] `improve-shell`: In-box h5i commit graceful-degrade + spool-note shipped (commit 5d5489d0)
 - [2026-06-12 23:55 UTC] `improve-shell`: edited tests/env_integration.rs; edited src/repository.rs; edited tests/env_integration.rs
 - [2026-06-12 23:54 UTC] `improve-shell`: Implemented apply provenance carry-forward (commit 261a445e)
 - [2026-06-12 23:31 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/risk.rs; edited /home/koukyosyumei/Dev/h5i/tests/filter_quality.rs; edited /home/k…
