@@ -1041,8 +1041,20 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
             }
         }
         IsolationClaim::Container => {
-            // Rootless Podman adapter (opt-in shell-out). Require the
-            // runtime AND an image — fail closed, never silently downgrade.
+            // Rootless Podman adapter (opt-in shell-out). Require an image AND
+            // the runtime — fail closed, never silently downgrade. Validate the
+            // declared config (image) BEFORE probing host capability (podman):
+            // a missing image is a static profile error, true regardless of the
+            // host, so reporting it first keeps the error host-independent — a
+            // box (or CI) without podman still gets the actionable
+            // "set container.image" message rather than a podman-not-found one.
+            if profile.image.is_none() {
+                return Err(H5iError::Metadata(format!(
+                    "isolation claim 'container' requires a base image — set `container.image = \
+                     \"…\"` in profile '{}' (e.g. your toolchain image)",
+                    profile.name
+                )));
+            }
             if caps.container_runtime.is_none() {
                 return Err(H5iError::Metadata(
                     "isolation claim 'container' requires rootless Podman on PATH; Docker and \
@@ -1050,13 +1062,6 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
                      install/configure rootless podman, or re-request --isolation workspace/process"
                         .into(),
                 ));
-            }
-            if profile.image.is_none() {
-                return Err(H5iError::Metadata(format!(
-                    "isolation claim 'container' requires a base image — set `container.image = \
-                     \"…\"` in profile '{}' (e.g. your toolchain image)",
-                    profile.name
-                )));
             }
         }
         IsolationClaim::Supervised => {
@@ -2630,6 +2635,14 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let no_img = Profile::builtin("default", IsolationClaim::Container);
         let err = resolve(&no_img, &caps_with_container(Some("podman"))).unwrap_err();
         assert!(err.to_string().contains("image"), "{err}");
+
+        // Neither image nor runtime → the static config error (image) takes
+        // precedence over the host-capability error (podman), so the message is
+        // host-independent: a box / CI without podman still gets the actionable
+        // "set container.image" message, not a podman-not-found one.
+        let err = resolve(&no_img, &caps_with_container(None)).unwrap_err();
+        assert!(err.to_string().contains("image"), "{err}");
+        assert!(!err.to_string().contains("podman"), "image error must win: {err}");
 
         // Runtime + image → resolves.
         assert!(resolve(&p, &caps_with_container(Some("podman"))).is_ok());
