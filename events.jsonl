@@ -66,3 +66,4 @@
 {"ts":"2026-06-13T14:11:51.767822Z","env_id":"env/human/codex-1","agent":"human","event":"created","detail":"base=4a46d91e3710 profile=agent-codex isolation=supervised backend=worktree"}
 {"ts":"2026-06-13T14:12:12.135637Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-13T19:39:42.175405Z","env_id":"env/human/codex-1","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
+{"ts":"2026-06-13T19:39:49.331481Z","env_id":"env/human/codex-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
