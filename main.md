@@ -765,11 +765,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Fixed hook setup regressions: SessionStart emits JSON context, wrap-bash skips unwritable capture stores, agent sandbox grants rustup read metadata.
 - [x] edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/…
 - [x] edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/…
+- [x] Added env integration coverage for diff stat, patch apply, abort guard, and inspect redaction rendering
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-13 12:47 UTC] `env/human/codex-1`: Added env integration coverage for diff stat, patch apply, abort guard, and inspect redaction rendering
 - [2026-06-13 12:38 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/…
 - [2026-06-13 12:38 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/…
 - [2026-06-13 12:37 UTC] `improve-shell`: Fixed hook setup regressions: SessionStart emits JSON context, wrap-bash skips unwritable capture stores, agent sandbox grants rustup read metadata.
