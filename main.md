@@ -773,11 +773,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Fixed Stop hook protocol output: auto-checkpoint status is quiet under h5i hook stop, with regression coverage.
 - [x] edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/…
 - [x] edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/…
+- [x] Patched env sandbox Cargo support: parent Cargo.toml discovery grant, in-work Cargo target/install dirs, and narrow Cargo cache grants.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-13 13:09 UTC] `improve-shell`: Patched env sandbox Cargo support: parent Cargo.toml discovery grant, in-work Cargo target/install dirs, and narrow Cargo cache grants.
 - [2026-06-13 13:02 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/…
 - [2026-06-13 13:01 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/…
 - [2026-06-13 13:00 UTC] `improve-shell`: Fixed Stop hook protocol output: auto-checkpoint status is quiet under h5i hook stop, with regression coverage.
