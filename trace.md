@@ -1682,3 +1682,4 @@ _[Checkpoint: 6a2d3598 — edited tests/env_integration.rs; edited src/env.rs; e
 [12:37:00] OBSERVE: read tests/msg_integration.rs
 [12:37:00] OBSERVE: read tests/cli_integration.rs
 [12:37:00] OBSERVE: read src/sandbox.rs
+[12:37:00] OBSERVE: searched src/main.rs for "hook|Hook|session_start|wrap_bash|hook_session|subcommand|HookCommands|Hook""
