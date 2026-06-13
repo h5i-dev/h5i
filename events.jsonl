@@ -34,3 +34,4 @@
 {"ts":"2026-06-13T12:43:00.169080Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130"}
 {"ts":"2026-06-13T12:44:01.299868Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-13T12:48:29.609960Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo fmt --check` exit=1 source=inbox-capture","capture":"3088de511e546876"}
+{"ts":"2026-06-13T12:48:29.610841Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130 observed=1"}
