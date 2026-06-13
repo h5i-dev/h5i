@@ -108,3 +108,4 @@
 {"ts":"2026-06-13T20:01:53.602702Z","env_id":"env/human/codex-1","agent":"human","event":"exec-log","detail":"rejected in-box commit note for d555199f0c6a — not an env-owned commit"}
 {"ts":"2026-06-13T20:01:53.603935Z","env_id":"env/human/codex-1","agent":"human","event":"exec-log","detail":"rejected in-box commit note for d75c9d177a92 — not an env-owned commit"}
 {"ts":"2026-06-13T20:01:53.604848Z","env_id":"env/human/codex-1","agent":"human","event":"exec-log","detail":"rejected in-box commit note for ea71f3eff113 — not an env-owned commit"}
+{"ts":"2026-06-13T20:01:53.605737Z","env_id":"env/human/codex-1","agent":"human","event":"exec-log","detail":"rejected in-box commit note for ef934dbcdbf4 — not an env-owned commit"}
