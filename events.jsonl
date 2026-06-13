@@ -80,3 +80,4 @@
 {"ts":"2026-06-13T20:01:53.561186Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo test` exit=101 source=inbox-capture","capture":"8f45f84eaca05611"}
 {"ts":"2026-06-13T20:01:53.573330Z","env_id":"env/human/codex-1","agent":"human","event":"exec-log","detail":"rejected in-box commit note for 0648e3fd4df0 — not an env-owned commit"}
 {"ts":"2026-06-13T20:01:53.574398Z","env_id":"env/human/codex-1","agent":"human","event":"exec-log","detail":"rejected in-box commit note for 0ba6d14497f8 — not an env-owned commit"}
+{"ts":"2026-06-13T20:01:53.575238Z","env_id":"env/human/codex-1","agent":"human","event":"exec-log","detail":"rejected in-box commit note for 10d0f8343240 — not an env-owned commit"}
