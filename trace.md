@@ -1784,3 +1784,9 @@ _[Checkpoint: 6a2d54e2 — edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited
 [13:09:44] ACT: edited /home/koukyosyumei/Dev/h5i/src/env.rs
 [13:09:44] ACT: edited /home/koukyosyumei/Dev/h5i/src/env.rs
 [13:09:44] ACT: edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs
+
+
+---
+_[Checkpoint: 6a2d5698 — Patched env sandbox Cargo support: parent Cargo.toml discovery grant, in-work Cargo target/install dirs, and narrow Cargo cache grants.]_
+---
+
