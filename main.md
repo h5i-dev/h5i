@@ -783,11 +783,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyume…
 - [x] edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edited src/sandbox.rs; edited src/sandbox.rs
 - [x] edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edited src/sandbox.rs; edited src/sandbox.rs
+- [x] edited src/cgroup.rs; edited docs/comparison.md; edited tests/env_integration.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-13 14:09 UTC] `improve-shell`: edited src/cgroup.rs; edited docs/comparison.md; edited tests/env_integration.rs
 - [2026-06-13 13:55 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edited src/sandbox.rs; edited src/sandbox.rs
 - [2026-06-13 13:55 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edited src/sandbox.rs; edited src/sandbox.rs
 - [2026-06-13 13:51 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyume…
