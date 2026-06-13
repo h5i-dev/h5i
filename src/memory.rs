@@ -1073,6 +1073,27 @@ mod tests {
 
     #[test]
     fn restore_snapshot_returns_correct_count() {
+        // `restore_snapshot` writes into `claude_memory_dir(workdir)`, which
+        // derives its path from `$HOME` (not `workdir` — that is only slugified
+        // into the path). Point HOME at a tempdir so the test is hermetic:
+        // otherwise it litters the developer's real ~/.claude/projects/ and
+        // fails closed in a sandbox that denies ~/.claude writes. The other
+        // `claude_memory_dir` tests assert only on path suffixes/encoding, not
+        // the HOME value, so this transient change cannot race them; the guard
+        // restores HOME even if an assert below panics.
+        struct HomeGuard(Option<std::ffi::OsString>);
+        impl Drop for HomeGuard {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(h) => std::env::set_var("HOME", h),
+                    None => std::env::remove_var("HOME"),
+                }
+            }
+        }
+        let home = tempdir().unwrap();
+        let _home_guard = HomeGuard(std::env::var_os("HOME"));
+        std::env::set_var("HOME", home.path());
+
         let src = tempdir().unwrap();
         let h5i = tempdir().unwrap();
         let workdir = tempdir().unwrap();
