@@ -360,11 +360,19 @@ impl Profile {
                 "~/.local/lib",
                 "~/.nvm",
                 // PATH shims + rustup toolchain metadata only — NOT ~/.cargo
-                // itself (credentials.toml).
+                // itself (credentials.toml). The crate caches (registry/git)
+                // are granted read-only below: pure download caches with no
+                // secrets, so offline `cargo build/test` resolves deps in-box.
                 "~/.cargo/env",
                 "~/.cargo/bin",
                 "~/.cargo/config",
                 "~/.cargo/config.toml",
+                // Read-only crate caches so an offline cargo build can resolve
+                // dependencies in-box (network egress is API-only). These hold
+                // the downloaded registry index + crate sources / git checkouts,
+                // never credentials (`~/.cargo/credentials.toml` stays ungranted).
+                "~/.cargo/registry",
+                "~/.cargo/git",
                 "~/.rustup/settings.toml",
                 "~/.rustup/toolchains",
                 "~/.bashrc",
@@ -2257,9 +2265,18 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         assert!(p.fs_read.iter().any(|s| s == "~/.cargo/bin"));
         assert!(p.fs_read.iter().any(|s| s == "~/.cargo/config"));
         assert!(p.fs_read.iter().any(|s| s == "~/.cargo/config.toml"));
+        // Read-only crate caches for offline dependency resolution in-box.
+        assert!(p.fs_read.iter().any(|s| s == "~/.cargo/registry"));
+        assert!(p.fs_read.iter().any(|s| s == "~/.cargo/git"));
         assert!(p.fs_read.iter().any(|s| s == "~/.rustup/settings.toml"));
         assert!(p.fs_read.iter().any(|s| s == "~/.rustup/toolchains"));
         assert!(!p.fs_read.iter().any(|s| s == "~/.cargo"), "blanket ~/.cargo removed");
+        // Credentials stay ungranted even though the caches are now readable.
+        assert!(
+            !p.fs_read.iter().any(|s| s == "~/.cargo/credentials"
+                || s == "~/.cargo/credentials.toml"),
+            "cargo credentials never granted"
+        );
         assert!(!p.fs_write.iter().any(|s| s == "~/.cargo"), "blanket ~/.cargo write removed");
         assert!(
             !p.fs_write.iter().any(|s| s.starts_with("~/.cargo/")),
