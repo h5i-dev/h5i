@@ -459,6 +459,49 @@ mod tests {
         assert!(err.contains("not writable") && err.contains("chown"), "{err}");
     }
 
+    /// The owner-mismatch detail (the *actual* root-owned-store scenario) — a
+    /// real store owned by a different uid yields the "owned by uid X" hint. We
+    /// can't `chown` without root, so we point at a known root-owned path (`/`).
+    #[test]
+    #[cfg(unix)]
+    fn store_owner_hint_reports_uid_mismatch() {
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipping: running as root — no mismatch to report");
+            return;
+        }
+        // `/` is owned by uid 0 on every reasonable system; we are not root.
+        let hint = store_owner_hint(std::path::Path::new("/"));
+        assert!(hint.contains("owned by uid 0"), "expected owner mismatch: {hint:?}");
+        assert!(hint.contains("you are uid"), "{hint:?}");
+
+        // A path we own yields no mismatch noise.
+        let dir = tempdir().unwrap();
+        assert_eq!(store_owner_hint(dir.path()), "");
+    }
+
+    /// `ensure_layout` (the early, on-open path) also surfaces the actionable
+    /// error when the store can't be created — not just `LocalStore.put`.
+    #[test]
+    #[cfg(unix)]
+    fn ensure_layout_actionable_when_parent_unwritable() {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipping: running as root (mode bits don't bind)");
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let parent = dir.path().join("locked");
+        std::fs::create_dir(&parent).unwrap();
+        // r-x, no write: a child `.h5i` can't be created even by the owner.
+        let orig = std::fs::metadata(&parent).unwrap().permissions();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let err = ensure_layout(&parent.join(".h5i")).unwrap_err().to_string();
+
+        std::fs::set_permissions(&parent, orig).unwrap();
+        assert!(err.contains("not writable") && err.contains("chown"), "{err}");
+    }
+
     fn git_repo() -> (tempfile::TempDir, Repository) {
         let dir = tempdir().unwrap();
         let repo = Repository::init(dir.path()).unwrap();
