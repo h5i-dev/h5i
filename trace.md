@@ -1948,3 +1948,4 @@ _[Checkpoint: 6a2db6e4 — edited tests/cli_integration.rs; edited tests/cli_int
 [20:14:31] ACT: edited tests/objects_e2e.rs
 [20:20:16] ACT: edited running-h5i-suite-in-box.md
 [20:20:29] THINK: I'll extend the **generic temp-repo spawners that do `h5i commit`/`capture`** — `objects_e2e` (objects also defer in-box per `main.
+[20:20:29] THINK: `msg_integration` tests messaging (`refs/h5i/msg`), which doesn't go through the commit-note or capture-object deferral path, so it's unaffected — I'll leave it (and its 4 spawn sites) alone.
