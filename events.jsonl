@@ -123,3 +123,4 @@
 {"ts":"2026-06-13T20:10:40.611253Z","env_id":"env/claude/pulldiag2","agent":"claude","event":"status","detail":"running"}
 {"ts":"2026-06-13T20:10:47.867558Z","env_id":"env/claude/pulldiag2","agent":"claude","event":"exec","detail":"cmd=`bash /tmp/pulldiag2.sh` exit=0 wall=146ms cpu=0ms rss=0MiB","capture":"9dda9f3329ad586b"}
 {"ts":"2026-06-13T20:10:47.895183Z","env_id":"env/claude/pulldiag2","agent":"claude","event":"aborted","detail":"manifest preserved for forensics"}
+{"ts":"2026-06-13T20:10:47.938898Z","env_id":"env/claude/pulldiag2","agent":"claude","event":"removed","detail":"workspace + branches + manifest erased locally"}
