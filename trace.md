@@ -1924,3 +1924,4 @@ _[Checkpoint: 6a2db422 — edited src/mcp.rs; wrote running-h5i-suite-in-box.md;
 [19:59:43] ACT: edited tests/cli_integration.rs
 [19:59:47] ACT: edited tests/cli_integration.rs
 [20:00:26] ACT: edited running-h5i-suite-in-box.md
+[20:00:36] THINK: All 5 share the same first body line, so I'll match on the unique `fn …() {` signature + that line:
