@@ -767,11 +767,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/…
 - [x] Added env integration coverage for diff stat, patch apply, abort guard, and inspect redaction rendering
 - [x] edited tests/env_integration.rs; edited tests/env_integration.rs; edited tests/env_integration.rs
+- [x] Added h5i env integration coverage for empty list, missing/ambiguous env lookup, run-without-command usage, and gc no-op behavior.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-13 12:55 UTC] `env/human/codex-1`: Added h5i env integration coverage for empty list, missing/ambiguous env lookup, run-without-command usage, and gc no-op behavior.
 - [2026-06-13 12:47 UTC] `env/human/codex-1`: edited tests/env_integration.rs; edited tests/env_integration.rs; edited tests/env_integration.rs
 - [2026-06-13 12:47 UTC] `env/human/codex-1`: Added env integration coverage for diff stat, patch apply, abort guard, and inspect redaction rendering
 - [2026-06-13 12:38 UTC] `improve-shell`: edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/…
