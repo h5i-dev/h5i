@@ -1966,3 +1966,4 @@ _[Checkpoint: 6a2dbb8d — edited tests/objects_e2e.rs; edited tests/objects_e2e
 [20:30:35] OBSERVE: read src/sandbox.rs
 [20:31:07] ACT: edited src/sandbox.rs
 [20:31:24] ACT: edited src/sandbox.rs
+[20:37:24] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/running-h5i-suite-in-box.md): int the skip message exactly when nested. Also recorded the deferred-notes behavior in the `running-h5i-suite-in-box` memory. This was the fourth i…
