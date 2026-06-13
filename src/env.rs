@@ -2366,10 +2366,102 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
         m.captures.len(),
         evidence_detail
     ));
+    // Staged-but-not-yet-ingested spool evidence (visible mid-session, before
+    // the host materializes it at run/shell end).
+    let pending = scan_spool_pending(h5i_root, m);
+    if pending.total() > 0 {
+        out.push_str(&format!(
+            "  pending  : {} staged in spool ({}) — host-ingested on run/shell end\n",
+            pending.total(),
+            pending.breakdown(),
+        ));
+        for cmd in pending.captures.iter().take(5) {
+            out.push_str(&format!("             ↳ capture `{cmd}`\n"));
+        }
+        for oid in pending.notes.iter().take(5) {
+            out.push_str(&format!(
+                "             ↳ note for {}\n",
+                &oid[..12.min(oid.len())]
+            ));
+        }
+    }
     let d = drift(repo, m);
     let marker = if d.is_current() { "✓" } else { "⚠" };
     out.push_str(&format!("  drift    : {marker} {}\n", d.summary()));
     out
+}
+
+/// Evidence staged in the env's spool but not yet materialized into the object
+/// store / notes ref (an in-box `h5i capture run`/`commit` or a tee-shim record
+/// the host ingests at the next `run`/`shell` end). Surfaced by `status` so
+/// in-flight evidence during a long interactive session is visible, not opaque.
+#[derive(Default)]
+struct SpoolPending {
+    /// Redacted commands of staged in-box captures (`cap-*.json`).
+    captures: Vec<String>,
+    /// Commit oids of staged in-box notes (`note-*.json`).
+    notes: Vec<String>,
+    /// Count of tee-shim observation records (`cmd-*.cmd`).
+    shim: usize,
+}
+
+impl SpoolPending {
+    fn total(&self) -> usize {
+        self.captures.len() + self.notes.len() + self.shim
+    }
+    /// "2 capture, 1 note, 3 shim" — omitting zero lanes.
+    fn breakdown(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.captures.is_empty() {
+            parts.push(format!("{} capture", self.captures.len()));
+        }
+        if !self.notes.is_empty() {
+            parts.push(format!("{} note", self.notes.len()));
+        }
+        if self.shim > 0 {
+            parts.push(format!("{} shim", self.shim));
+        }
+        parts.join(", ")
+    }
+}
+
+/// Scan the env's spool for staged-but-not-ingested records. Best-effort and
+/// concurrency-tolerant: a missing spool, an unreadable or half-written record
+/// (the box may be writing it now) is simply skipped, never an error.
+fn scan_spool_pending(h5i_root: &Path, m: &EnvManifest) -> SpoolPending {
+    let mut p = SpoolPending::default();
+    let spool = m.dir(h5i_root).join("spool");
+    let Ok(rd) = std::fs::read_dir(&spool) else {
+        return p;
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if let Some(base) = name.strip_suffix(".json") {
+            if base.starts_with("cap-") {
+                let cmd = std::fs::read(e.path())
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<InboxCaptureMeta>(&b).ok())
+                    .map(|meta| meta.cmd)
+                    .unwrap_or_default();
+                let safe: String = crate::secrets::redact_text(&cmd)
+                    .replace(['\n', '\r'], " ")
+                    .chars()
+                    .take(120)
+                    .collect();
+                p.captures.push(safe);
+            } else if base.starts_with("note-") {
+                let oid = std::fs::read(e.path())
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<crate::metadata::H5iCommitRecord>(&b).ok())
+                    .map(|r| r.git_oid)
+                    .unwrap_or_default();
+                p.notes.push(oid);
+            }
+        } else if name.starts_with("cmd-") && name.ends_with(".cmd") {
+            p.shim += 1;
+        }
+    }
+    p
 }
 
 /// Count the env's captures by trust lane (`host-env-run`, `inbox-capture`,

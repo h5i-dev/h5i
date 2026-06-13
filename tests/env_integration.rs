@@ -508,6 +508,46 @@ fn inbox_commit_note_off_env_range_is_rejected() {
     assert!(!note.status.success(), "no note may be attached to the inherited commit");
 }
 
+/// `env status` surfaces evidence STAGED in the spool but not yet ingested
+/// (visible mid-session, before the host materializes it at run/shell end) —
+/// staged captures, notes, and tee-shim records, with the pending commands.
+#[test]
+fn env_status_shows_pending_spool_evidence() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "pend"]);
+    let spool = r.env_dir("pend").join("spool");
+    std::fs::create_dir_all(&spool).unwrap();
+
+    // A staged in-box capture (+ its raw), a staged commit note, a shim record.
+    std::fs::write(
+        spool.join("cap-1-0.json"),
+        r#"{"cmd":"pytest -q","cwd":null,"exit_code":0,"files":[],"cmd_argv":["pytest","-q"]}"#,
+    )
+    .unwrap();
+    std::fs::write(spool.join("cap-1-0.raw"), b"...output...").unwrap();
+    std::fs::write(
+        spool.join("note-f3a1b2c4d5e6.json"),
+        r#"{"git_oid":"f3a1b2c4d5e6f7a8","parent_oid":null,"ai_metadata":null,"test_metrics":null,"ast_hashes":null,"timestamp":"2026-01-01T00:00:00Z"}"#,
+    )
+    .unwrap();
+    std::fs::write(spool.join("cmd-9-0.cmd"), b"ls").unwrap();
+
+    let status = out_str(&r.h5i_ok(&["env", "status", "pend"]));
+    assert!(status.contains("pending"), "{status}");
+    assert!(
+        status.contains("1 capture") && status.contains("1 note") && status.contains("1 shim"),
+        "breakdown by lane: {status}"
+    );
+    // The pending command + note oid are listed (the useful detail).
+    assert!(status.contains("pytest -q"), "{status}");
+    assert!(status.contains("note for f3a1b2c4d5e6"), "{status}");
+
+    // No spool → no pending line at all.
+    std::fs::remove_dir_all(&spool).unwrap();
+    let status = out_str(&r.h5i_ok(&["env", "status", "pend"]));
+    assert!(!status.contains("pending"), "no pending line when spool empty: {status}");
+}
+
 /// End-to-end integrity property: an in-box `h5i capture run` (the
 /// `inbox-capture`, box-claimed lane) and the env run itself (`host-env-run`,
 /// host-verified lane) BOTH survive `apply` as distinct lanes in the applied
