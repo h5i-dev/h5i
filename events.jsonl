@@ -119,3 +119,4 @@
 {"ts":"2026-06-13T20:02:56.981799Z","env_id":"env/human/codex-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-13T20:03:29.593031Z","env_id":"env/human/codex-1","agent":"human","event":"created","detail":"base=9abc7f7ded14 profile=agent-codex isolation=supervised backend=worktree"}
 {"ts":"2026-06-13T20:03:39.039251Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
+{"ts":"2026-06-13T20:10:39.228407Z","env_id":"env/claude/pulldiag2","agent":"claude","event":"created","detail":"base=9abc7f7ded14 profile=agent-claude isolation=supervised backend=worktree"}
