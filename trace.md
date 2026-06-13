@@ -1812,3 +1812,9 @@ _[Checkpoint: 6a2d57c9 — Tightened Cargo sandbox patch: keep parent Cargo.toml
 _[Checkpoint: 6a2d57d0 — edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyume…]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2d58b6 — edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyume…]_
+---
+
