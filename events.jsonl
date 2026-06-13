@@ -49,3 +49,4 @@
 {"ts":"2026-06-13T13:21:02.791097Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-13T13:24:23.346841Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo test --test env_integration empty_env_commands_are_clean_and_run_requires_command diff_stat_reports_live_worktree_changes env_log_is_scoped_and_shows_capture_ids status_reports_when_parent_branch_is_gone -- --nocapture` exit=1 source=inbox-capture","capture":"fe72b109222f3e7a"}
 {"ts":"2026-06-13T13:24:23.626791Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo fmt --check` exit=1 source=inbox-capture","capture":"c4afdf5f388714c9"}
+{"ts":"2026-06-13T13:24:23.905089Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo fmt --manifest-path Cargo.toml --check` exit=1 source=inbox-capture","capture":"c4afdf5f388714c9"}
