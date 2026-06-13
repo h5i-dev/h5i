@@ -1853,3 +1853,9 @@ _[Checkpoint: 6a2d616d — edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edi
 [14:08:15] OBSERVE: read tests/env_integration.rs
 [14:08:33] ACT: edited tests/env_integration.rs
 [14:09:37] NOTE: UNFULFILLED (~/Dev/h5i/src/sandbox.rs): de `cargo fetch`, offline cargo builds resolve deps in-box. Remember to rebuild/reinstall `h5i` before spinning up the env you'll test in, since the profile is c
+
+
+---
+_[Checkpoint: 6a2d64a1 — edited src/cgroup.rs; edited docs/comparison.md; edited tests/env_integration.rs]_
+---
+
