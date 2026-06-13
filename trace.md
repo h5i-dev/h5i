@@ -1926,3 +1926,9 @@ _[Checkpoint: 6a2db422 — edited src/mcp.rs; wrote running-h5i-suite-in-box.md;
 [20:00:26] ACT: edited running-h5i-suite-in-box.md
 [20:00:36] THINK: All 5 share the same first body line, so I'll match on the unique `fn …() {` signature + that line:
 [20:00:36] THINK: Let me add this finding to the in-box testing memory, since it's a non-obvious behavior (in-box commits defer notes to host ingest):
+
+
+---
+_[Checkpoint: 6a2db6e4 — edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited running-h5i-suite-in-box.md]_
+---
+
