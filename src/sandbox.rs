@@ -1721,8 +1721,20 @@ pub(crate) fn build_confined_command(
 
             // 2. Resource caps (cooperative, no cgroups needed).
             if let Some(bytes) = mem {
+                // RLIMIT_DATA, not RLIMIT_AS. RLIMIT_AS caps *virtual address
+                // space*, which modern runtimes over-reserve by design: V8/Node
+                // maps a ~1TiB PROT_NONE heap-sandbox cage at startup, Go reserves
+                // large arenas — none of it resident. An AS cap rejects those
+                // reservations and the process aborts at trivial RSS ("JavaScript
+                // heap out of memory" at ~100MiB). RLIMIT_DATA caps the writable
+                // data segment (brk + writable-anonymous mmaps, Linux >=4.7), so
+                // it bounds actual heap growth without counting PROT_NONE
+                // reservations (is_data_mapping() requires VM_WRITE). This is the
+                // rlimit-tier fallback; cgroup `memory.max` (when the host
+                // delegates one — see cgroup.rs) is the accurate whole-subtree
+                // RSS cap layered on top.
                 let lim = libc::rlimit { rlim_cur: bytes, rlim_max: bytes };
-                if libc::setrlimit(libc::RLIMIT_AS, &lim) != 0 {
+                if libc::setrlimit(libc::RLIMIT_DATA, &lim) != 0 {
                     return Err(Error::last_os_error());
                 }
             }

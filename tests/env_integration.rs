@@ -1202,7 +1202,7 @@ fn inbox_commit_on_supervised_stages_and_applies_note() {
 }
 
 /// A memory limit is enforced for a supervised run: a large allocation under a
-/// tight cap does not complete (cgroup memory.max / RLIMIT_AS). Separate env
+/// tight cap does not complete (cgroup memory.max / RLIMIT_DATA). Separate env
 /// because it needs a `resources.mem` profile.
 #[test]
 fn supervised_memory_limit_is_enforced() {
