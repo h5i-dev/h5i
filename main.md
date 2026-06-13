@@ -758,11 +758,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/objects.rs; edited src/storage.rs; edited src/storage.rs
 - [x] Reference docs updated for the env in-box work (commit 410e1485)
 - [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
+- [x] edited src/env.rs; edited src/env.rs; edited tests/env_integration.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-13 03:56 UTC] `improve-shell`: edited src/env.rs; edited src/env.rs; edited tests/env_integration.rs
 - [2026-06-13 02:46 UTC] `improve-shell`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
 - [2026-06-13 02:45 UTC] `improve-shell`: Reference docs updated for the env in-box work (commit 410e1485)
 - [2026-06-13 02:17 UTC] `improve-shell`: edited src/objects.rs; edited src/storage.rs; edited src/storage.rs
