@@ -22,3 +22,4 @@
 {"ts":"2026-06-12T02:55:35.883777Z","env_id":"env/claude/scopecheck","agent":"claude","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-13T11:27:54.816653Z","env_id":"env/human/codex-1","agent":"human","event":"created","detail":"base=4ad9bccb83ec profile=agent-codex isolation=supervised backend=worktree"}
 {"ts":"2026-06-13T11:28:18.884445Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
+{"ts":"2026-06-13T11:31:16.177241Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130"}
