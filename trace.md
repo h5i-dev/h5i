@@ -1946,3 +1946,4 @@ _[Checkpoint: 6a2db6e4 — edited tests/cli_integration.rs; edited tests/cli_int
 [20:14:05] ACT: edited tests/objects_e2e.rs
 [20:14:27] ACT: edited tests/objects_e2e.rs
 [20:14:31] ACT: edited tests/objects_e2e.rs
+[20:20:16] ACT: edited running-h5i-suite-in-box.md
