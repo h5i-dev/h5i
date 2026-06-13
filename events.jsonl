@@ -72,3 +72,4 @@
 {"ts":"2026-06-13T19:57:50.263430Z","env_id":"env/claude/pulldiag","agent":"claude","event":"created","detail":"base=82fdb2b47545 profile=agent-claude isolation=supervised backend=worktree"}
 {"ts":"2026-06-13T19:58:02.679891Z","env_id":"env/claude/pulldiag","agent":"claude","event":"status","detail":"running"}
 {"ts":"2026-06-13T19:58:06.817931Z","env_id":"env/claude/pulldiag","agent":"claude","event":"exec-log","detail":"rejected in-box commit note for 8b3667284311 — not an env-owned commit"}
+{"ts":"2026-06-13T19:58:06.819443Z","env_id":"env/claude/pulldiag","agent":"claude","event":"exec","detail":"cmd=`bash /tmp/pulldiag.sh` exit=0 wall=140ms cpu=0ms rss=0MiB","capture":"4a9a8cbdce30a19c"}
