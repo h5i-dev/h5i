@@ -51,3 +51,4 @@
 {"ts":"2026-06-13T13:24:23.626791Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo fmt --check` exit=1 source=inbox-capture","capture":"c4afdf5f388714c9"}
 {"ts":"2026-06-13T13:24:23.905089Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo fmt --manifest-path Cargo.toml --check` exit=1 source=inbox-capture","capture":"c4afdf5f388714c9"}
 {"ts":"2026-06-13T13:24:23.908147Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130 observed=3"}
+{"ts":"2026-06-13T13:34:23.600100Z","env_id":"env/human/codex-1","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
