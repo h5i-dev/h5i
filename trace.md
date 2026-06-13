@@ -1691,3 +1691,4 @@ _[Checkpoint: 6a2d3598 — edited tests/env_integration.rs; edited src/env.rs; e
 [12:37:00] OBSERVE: read src/main.rs
 [12:37:00] OBSERVE: read src/main.rs
 [12:37:00] OBSERVE: read src/main.rs
+[12:37:00] OBSERVE: read src/main.rs
