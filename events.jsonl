@@ -25,3 +25,4 @@
 {"ts":"2026-06-13T11:31:16.177241Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130"}
 {"ts":"2026-06-13T12:21:51.044185Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-13T12:37:50.950485Z","env_id":"env/human/codex-1","agent":"human","event":"violation","detail":"Metadata error: sandbox refused protected hook config modification: ~/.codex/config.toml"}
+{"ts":"2026-06-13T12:39:34.053817Z","env_id":"env/human/codex-1","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
