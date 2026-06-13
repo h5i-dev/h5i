@@ -1547,3 +1547,4 @@ _[Checkpoint: 6a2c9c55 — edited tests/env_integration.rs; edited src/repositor
 [00:25:43] ACT: edited src/repository.rs
 [00:25:48] OBSERVE: read src/env.rs
 [00:26:11] ACT: edited src/env.rs
+[00:26:23] OBSERVE: read src/mcp.rs
