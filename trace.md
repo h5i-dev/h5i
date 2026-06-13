@@ -1876,3 +1876,4 @@ _[Checkpoint: 6a2d64a1 — edited src/cgroup.rs; edited docs/comparison.md; edit
 _[Checkpoint: 6a2d6835 — edited src/cgroup.rs; edited docs/comparison.md; edited tests/env_integration.rs]_
 ---
 
+[14:27:05] OBSERVE: read src/memory.rs
