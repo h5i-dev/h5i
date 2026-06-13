@@ -28,3 +28,4 @@
 {"ts":"2026-06-13T12:39:34.053817Z","env_id":"env/human/codex-1","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
 {"ts":"2026-06-13T12:39:38.201670Z","env_id":"env/human/codex-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-13T12:40:12.860982Z","env_id":"env/human/codex-1","agent":"human","event":"created","detail":"base=cffaf91c065f profile=agent-codex isolation=supervised backend=worktree"}
+{"ts":"2026-06-13T12:40:31.979898Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
