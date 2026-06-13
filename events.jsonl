@@ -63,3 +63,4 @@
 {"ts":"2026-06-13T14:10:16.494191Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130"}
 {"ts":"2026-06-13T14:11:38.472671Z","env_id":"env/human/codex-1","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
 {"ts":"2026-06-13T14:11:41.041913Z","env_id":"env/human/codex-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
+{"ts":"2026-06-13T14:11:51.767822Z","env_id":"env/human/codex-1","agent":"human","event":"created","detail":"base=4a46d91e3710 profile=agent-codex isolation=supervised backend=worktree"}
