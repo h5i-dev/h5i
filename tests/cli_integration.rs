@@ -675,10 +675,17 @@ fn hook_session_start_prints_context() {
 
     let out = repo.h5i_ok(&["hook", "session-start"]);
     let s = stdout(&out);
+    let v: serde_json::Value = serde_json::from_str(&s).expect("SessionStart hook must emit JSON");
+    let context = v
+        .pointer("/hookSpecificOutput/additionalContext")
+        .and_then(|v| v.as_str())
+        .expect("SessionStart hook missing additionalContext");
 
     assert!(
-        s.contains("session start hook test") || s.contains("h5i") || s.contains("Context"),
-        "hook session-start missing goal or context header: {s}"
+        context.contains("session start hook test")
+            || context.contains("h5i")
+            || context.contains("Context"),
+        "hook session-start missing goal or context header: {context}"
     );
 }
 
@@ -866,6 +873,7 @@ fn hook_setup_write_explicit_target_codex_only_writes_codex_config() {
 #[test]
 fn hook_wrap_bash_codex_payload_emits_allow_with_updated_input() {
     let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
     let payload = serde_json::json!({
         "hook_event_name": "PreToolUse",
         "tool_name": "Bash",
@@ -897,6 +905,36 @@ fn hook_wrap_bash_codex_payload_emits_allow_with_updated_input() {
         h["updatedInput"]["command"].as_str(),
         Some("h5i capture run -- cargo test")
     );
+}
+
+#[test]
+fn hook_wrap_bash_without_writable_capture_store_leaves_command_untouched() {
+    let repo = Repo::new();
+    let payload = serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "cargo test" },
+        "cwd": repo.path()
+    });
+
+    let out = Command::new(H5I)
+        .args(["hook", "wrap-bash"])
+        .current_dir(repo.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(stdin) = child.stdin.as_mut() {
+                let _ = stdin.write_all(payload.to_string().as_bytes());
+            }
+            child.wait_with_output()
+        })
+        .expect("hook wrap-bash failed to spawn");
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(out.stdout.is_empty(), "unexpected stdout: {}", stdout(&out));
 }
 
 // ─── context scan ────────────────────────────────────────────────────────────

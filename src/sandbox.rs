@@ -359,9 +359,12 @@ impl Profile {
                 "~/.local/bin",
                 "~/.local/lib",
                 "~/.nvm",
-                // PATH shims only — NOT ~/.cargo itself (credentials.toml).
+                // PATH shims + rustup toolchain metadata only — NOT ~/.cargo
+                // itself (credentials.toml).
                 "~/.cargo/env",
                 "~/.cargo/bin",
+                "~/.rustup/settings.toml",
+                "~/.rustup/toolchains",
                 "~/.bashrc",
                 "~/.bash_profile",
                 "~/.profile",
@@ -2247,6 +2250,13 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         assert!(p.fs_read.iter().any(|s| s == "~/.local/bin"));
         assert!(!p.fs_read.iter().any(|s| s == "~/.local"), "blanket ~/.local removed");
         assert!(p.fs_read.iter().any(|s| s == "~/.local/share/claude"));
+        // Rustup shims under ~/.cargo/bin need read-only rustup metadata to
+        // locate the active toolchain, but ~/.cargo and ~/.rustup stay ungranted.
+        assert!(p.fs_read.iter().any(|s| s == "~/.cargo/bin"));
+        assert!(p.fs_read.iter().any(|s| s == "~/.rustup/settings.toml"));
+        assert!(p.fs_read.iter().any(|s| s == "~/.rustup/toolchains"));
+        assert!(!p.fs_read.iter().any(|s| s == "~/.cargo"), "blanket ~/.cargo removed");
+        assert!(!p.fs_read.iter().any(|s| s == "~/.rustup"), "blanket ~/.rustup removed");
         // Own state read-write; the OTHER runtime's state is NOT granted.
         assert!(p.fs_write.iter().any(|s| s == "~/.claude"));
         assert!(!p.fs_write.iter().any(|s| s == "~/.codex"), "no cross-runtime state");
