@@ -1908,3 +1908,4 @@ _[Checkpoint: 6a2db3c5 — edited src/mcp.rs; wrote running-h5i-suite-in-box.md;
 _[Checkpoint: 6a2db422 — edited src/mcp.rs; wrote running-h5i-suite-in-box.md; edited MEMORY.md]_
 ---
 
+[19:52:14] OBSERVE: read tests/cli_integration.rs
