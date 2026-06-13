@@ -71,3 +71,4 @@
 {"ts":"2026-06-13T19:40:38.425432Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-13T19:57:50.263430Z","env_id":"env/claude/pulldiag","agent":"claude","event":"created","detail":"base=82fdb2b47545 profile=agent-claude isolation=supervised backend=worktree"}
 {"ts":"2026-06-13T19:58:02.679891Z","env_id":"env/claude/pulldiag","agent":"claude","event":"status","detail":"running"}
+{"ts":"2026-06-13T19:58:06.817931Z","env_id":"env/claude/pulldiag","agent":"claude","event":"exec-log","detail":"rejected in-box commit note for 8b3667284311 — not an env-owned commit"}
