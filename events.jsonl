@@ -29,3 +29,4 @@
 {"ts":"2026-06-13T12:39:38.201670Z","env_id":"env/human/codex-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-13T12:40:12.860982Z","env_id":"env/human/codex-1","agent":"human","event":"created","detail":"base=cffaf91c065f profile=agent-codex isolation=supervised backend=worktree"}
 {"ts":"2026-06-13T12:40:31.979898Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
+{"ts":"2026-06-13T12:41:26.145375Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130"}
