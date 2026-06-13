@@ -31,3 +31,4 @@
 {"ts":"2026-06-13T12:40:31.979898Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-13T12:41:26.145375Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130"}
 {"ts":"2026-06-13T12:42:14.541213Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
+{"ts":"2026-06-13T12:43:00.169080Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130"}
