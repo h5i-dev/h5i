@@ -5,6 +5,13 @@ matcher = "Edit|Write|Read"
 command = "h5i hook run"
 type = "command"
 
+[[hooks.PreToolUse]]
+matcher = "Bash"
+
+[[hooks.PreToolUse.hooks]]
+command = "h5i hook wrap-bash"
+type = "command"
+
 [[hooks.SessionStart]]
 
 [[hooks.SessionStart.hooks]]
