@@ -1806,3 +1806,9 @@ _[Checkpoint: 6a2d56df — edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited 
 _[Checkpoint: 6a2d57c9 — Tightened Cargo sandbox patch: keep parent Cargo.toml read and in-work CARGO_TARGET_DIR, remove Cargo install/root and host Cargo cache write grants.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2d57d0 — edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyume…]_
+---
+
