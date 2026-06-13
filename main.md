@@ -789,11 +789,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/mcp.rs; wrote running-h5i-suite-in-box.md; edited MEMORY.md
 - [x] edited src/mcp.rs; wrote running-h5i-suite-in-box.md; edited MEMORY.md
 - [x] edited src/mcp.rs; wrote running-h5i-suite-in-box.md; edited MEMORY.md
+- [x] edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited running-h5i-suite-in-box.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-13 20:00 UTC] `improve-shell`: edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited running-h5i-suite-in-box.md
 - [2026-06-13 19:48 UTC] `improve-shell`: edited src/mcp.rs; wrote running-h5i-suite-in-box.md; edited MEMORY.md
 - [2026-06-13 19:47 UTC] `improve-shell`: edited src/mcp.rs; wrote running-h5i-suite-in-box.md; edited MEMORY.md
 - [2026-06-13 19:44 UTC] `improve-shell`: edited src/mcp.rs; wrote running-h5i-suite-in-box.md; edited MEMORY.md
