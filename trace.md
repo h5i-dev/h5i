@@ -1961,3 +1961,4 @@ _[Checkpoint: 6a2db6e4 — edited tests/cli_integration.rs; edited tests/cli_int
 _[Checkpoint: 6a2dbb8d — edited tests/objects_e2e.rs; edited tests/objects_e2e.rs; edited running-h5i-suite-in-box.md]_
 ---
 
+[20:29:53] OBSERVE: read tests/env_integration.rs
