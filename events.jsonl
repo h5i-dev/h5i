@@ -60,3 +60,4 @@
 {"ts":"2026-06-13T13:59:09.248789Z","env_id":"env/human/codex-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-13T13:59:20.700185Z","env_id":"env/human/codex-1","agent":"human","event":"created","detail":"base=2f9400d62382 profile=agent-codex isolation=supervised backend=worktree"}
 {"ts":"2026-06-13T13:59:25.266121Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
+{"ts":"2026-06-13T14:10:16.494191Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130"}
