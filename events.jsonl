@@ -57,3 +57,4 @@
 {"ts":"2026-06-13T13:36:03.472490Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-13T13:56:56.622861Z","env_id":"env/human/codex-1","agent":"human","event":"violation","detail":"Metadata error: sandbox refused protected hook config modification: ~/.claude/settings.json"}
 {"ts":"2026-06-13T13:59:03.328091Z","env_id":"env/human/codex-1","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
+{"ts":"2026-06-13T13:59:09.248789Z","env_id":"env/human/codex-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
