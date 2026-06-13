@@ -165,3 +165,4 @@
 {"ts":"2026-06-13T20:37:04.917387Z","env_id":"env/claude/verifyimg","agent":"claude","event":"aborted","detail":"manifest preserved for forensics"}
 {"ts":"2026-06-13T20:37:05.201887Z","env_id":"env/claude/verifyimg","agent":"claude","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-13T20:41:21.564727Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo test` exit=101 source=inbox-capture","capture":"0959ae24d8728318"}
+{"ts":"2026-06-13T20:41:21.575426Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130 observed=1"}
