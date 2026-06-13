@@ -45,3 +45,4 @@
 {"ts":"2026-06-13T13:20:34.725976Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo test --test env_integration list_without_envs_prints_create_hint env_lookup_reports_missing_and_ambiguous_names run_without_command_prints_usage_error gc_with_nothing_reclaimable_is_noop -- --nocapture` exit=1 source=inbox-capture","capture":"da311ac9b9fd518f"}
 {"ts":"2026-06-13T13:20:43.645815Z","env_id":"env/human/codex-1","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
 {"ts":"2026-06-13T13:20:47.846268Z","env_id":"env/human/codex-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
+{"ts":"2026-06-13T13:20:56.931180Z","env_id":"env/human/codex-1","agent":"human","event":"created","detail":"base=359ab0510f7d profile=agent-codex isolation=supervised backend=worktree"}
