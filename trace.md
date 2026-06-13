@@ -1634,3 +1634,9 @@ _[Checkpoint: 6a2cbdb4 — edited src/objects.rs; edited src/storage.rs; edited 
 [02:34:57] ACT: edited man/man1/h5i.1
 [02:42:13] OBSERVE: read man/man1/h5i.1
 [02:42:24] ACT: edited man/man1/h5i.1
+
+
+---
+_[Checkpoint: 6a2cc465 — Reference docs updated for the env in-box work (commit 410e1485)]_
+---
+
