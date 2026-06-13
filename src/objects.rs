@@ -268,6 +268,12 @@ impl LocalStore {
         }
     }
 
+    /// The `.h5i` root (the objects dir's parent) — used to attach an
+    /// ownership/repair hint to permission failures.
+    fn h5i_root(&self) -> &Path {
+        self.root.parent().unwrap_or(&self.root)
+    }
+
     /// Sharded path for a digest: `objects/<a><b>/<c><d>/<full hex>`.
     pub fn blob_path(&self, hex: &str) -> PathBuf {
         // Defensive: callers validate, but never index out of range.
@@ -329,11 +335,13 @@ impl Backend for LocalStore {
             return Ok(()); // content-addressed: identical content already stored
         }
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| crate::storage::store_io_error(self.h5i_root(), parent, e))?;
         }
         // Write to a temp file then rename for atomicity.
         let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, bytes).map_err(|e| H5iError::with_path(e, &tmp))?;
+        std::fs::write(&tmp, bytes)
+            .map_err(|e| crate::storage::store_io_error(self.h5i_root(), &tmp, e))?;
         std::fs::rename(&tmp, &path).map_err(|e| H5iError::with_path(e, &path))?;
         Ok(())
     }
