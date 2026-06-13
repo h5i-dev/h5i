@@ -47,9 +47,17 @@ impl Repo {
     }
 
     fn h5i(&self, args: &[&str]) -> Output {
+        // Strip the box's env-capture vars: if the suite runs inside an h5i env
+        // box, these leak in and make `h5i commit` stage notes for host ingest
+        // instead of writing `refs/h5i/notes` (main.rs ~5559), breaking the
+        // notes/provenance assertions. This temp repo is not the box's env, so
+        // the vars don't belong here. No-op on host/CI.
         Command::new(H5I)
             .args(args)
             .current_dir(self.path())
+            .env_remove("H5I_ENV_ID")
+            .env_remove("H5I_ENV_POLICY_DIGEST")
+            .env_remove("H5I_ENV_CAPTURE_SPOOL")
             .output()
             .expect("failed to run h5i")
     }

@@ -49,19 +49,31 @@ impl Repo {
         self.dir.path()
     }
 
+    /// Base `h5i` command in this repo, with the box's env-capture vars
+    /// stripped. When the suite itself runs inside an h5i env box, the host
+    /// injects H5I_ENV_{ID,POLICY_DIGEST} + H5I_ENV_CAPTURE_SPOOL; if those
+    /// leak into the `h5i` we spawn against an *unrelated* temp repo, `h5i
+    /// commit` thinks it is committing inside that box and stages the note for
+    /// host ingest instead of writing `refs/h5i/notes` (main.rs ~5559) — which
+    /// breaks every test that asserts on notes/provenance. These temp repos are
+    /// not the box's env, so the vars don't belong here. No-op on host/CI.
+    fn h5i_cmd(&self) -> Command {
+        let mut cmd = Command::new(H5I);
+        cmd.current_dir(self.path())
+            .env_remove("H5I_ENV_ID")
+            .env_remove("H5I_ENV_POLICY_DIGEST")
+            .env_remove("H5I_ENV_CAPTURE_SPOOL");
+        cmd
+    }
+
     fn h5i(&self, args: &[&str]) -> Output {
-        Command::new(H5I)
-            .args(args)
-            .current_dir(self.path())
-            .output()
-            .expect("failed to run h5i")
+        self.h5i_cmd().args(args).output().expect("failed to run h5i")
     }
 
     fn h5i_with_home(&self, home: &Path, args: &[&str]) -> Output {
-        Command::new(H5I)
+        self.h5i_cmd()
             .args(args)
             .env("HOME", home)
-            .current_dir(self.path())
             .output()
             .expect("failed to run h5i")
     }
@@ -1099,24 +1111,6 @@ fn context_init_outside_git_repo_fails_gracefully() {
 
 // ─── h5i pull ───────────────────────────────────────────────────────────────
 
-/// Several pull round-trip tests rely on `h5i commit` synchronously creating a
-/// pushable `refs/h5i/notes`. Inside an h5i env box that note is instead staged
-/// for host ingest at session end (see main.rs ~5559) — so mid-session the ref
-/// does not exist, `h5i push` legitimately skips it ("no AI-provenance commits
-/// yet"), the remote stays empty, and the round-trip can't complete. That is
-/// correct box behavior, not a bug, so these tests skip when nested (the box
-/// injects $H5I_ENV_ID). Host/CI run them normally.
-fn skip_if_nested_in_box() -> bool {
-    if std::env::var("H5I_ENV_ID").is_ok() {
-        eprintln!(
-            "skipping: nested inside an h5i box — `h5i commit` defers notes to host \
-             ingest, so refs/h5i/notes can't round-trip mid-session"
-        );
-        return true;
-    }
-    false
-}
-
 /// End-to-end push/pull round-trip:
 ///
 ///   sender  ── h5i push ──▶  bare remote  ◀── h5i pull ──  receiver
@@ -1125,9 +1119,6 @@ fn skip_if_nested_in_box() -> bool {
 /// h5i refs from sender, and verify they land in receiver after `h5i pull`.
 #[test]
 fn pull_roundtrips_h5i_refs_through_a_bare_remote() {
-    if skip_if_nested_in_box() {
-        return;
-    }
     // 1. Bare remote that both clones can talk to.
     let remote = TempDir::new().expect("tempdir");
     run_ok(
@@ -1304,9 +1295,6 @@ fn resolve_ref_in(repo: &Repo, refname: &str) -> Option<String> {
 /// and report `up to date` for the previously-fetched ref.
 #[test]
 fn pull_is_idempotent_when_already_up_to_date() {
-    if skip_if_nested_in_box() {
-        return;
-    }
     let remote = TempDir::new().expect("tempdir");
     run_ok(
         Command::new("git")
@@ -1342,9 +1330,6 @@ fn pull_is_idempotent_when_already_up_to_date() {
 /// fast-forward without prompting.
 #[test]
 fn pull_fast_forwards_when_remote_extends_local() {
-    if skip_if_nested_in_box() {
-        return;
-    }
     let remote = TempDir::new().expect("tempdir");
     run_ok(
         Command::new("git")
@@ -1389,9 +1374,6 @@ fn pull_fast_forwards_when_remote_extends_local() {
 /// the local ref untouched.
 #[test]
 fn pull_keeps_local_when_local_is_ahead() {
-    if skip_if_nested_in_box() {
-        return;
-    }
     let remote = TempDir::new().expect("tempdir");
     run_ok(
         Command::new("git")
@@ -1433,9 +1415,6 @@ fn pull_keeps_local_when_local_is_ahead() {
 /// union-merge so neither side loses its annotations.
 #[test]
 fn pull_union_merges_diverged_notes_so_no_annotations_are_lost() {
-    if skip_if_nested_in_box() {
-        return;
-    }
     let remote = TempDir::new().expect("tempdir");
     run_ok(
         Command::new("git")
@@ -1605,9 +1584,6 @@ fn pull_force_overwrites_diverged_context() {
 /// merging path so notes from both sides are preserved.
 #[test]
 fn pull_force_still_union_merges_notes() {
-    if skip_if_nested_in_box() {
-        return;
-    }
     let remote = TempDir::new().expect("tempdir");
     run_ok(
         Command::new("git")
