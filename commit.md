@@ -1434,3 +1434,16 @@ repository.rs::commit gains note_spool param: when host env-capture vars present
 
 ---
 
+## Commit 6a2cafc6 — 2026-06-13 01:17 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+repository.rs::commit gains note_spool param: when host env-capture vars present, stage the H5iCommitRecord to the spool (skip AST/sealed-store writes) instead of EACCES-ing the notes ref. Git commit still lands on env branch; exits 0 with 'staged for host ingest'. Host ingest_shell_spool drains note-*.json, applies via git2 note, SCOPED to base..env_tip (rejects inherited/arbitrary commits like main, logged). Live-verified process tier end-to-end. Tests: write_note_spool sanitize unit + 2 e2e (apply happy path, off-range rejection). Full suite green (810 lib + 65 env + cli/objects/metrics). Completes the in-box provenance path: capture-run spool (28d509b8) + apply carry-forward (261a445e) + commit spool-note (this). Note: refs/h5i/notes read via git2/git show <ref>:<oid>, not git notes CLI.
+
+### This Commit's Contribution
+
+
+---
+

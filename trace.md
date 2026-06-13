@@ -1565,3 +1565,9 @@ _[Checkpoint: 6a2c9c55 — edited tests/env_integration.rs; edited src/repositor
 _[Checkpoint: 6a2cafb7 — In-box h5i commit graceful-degrade + spool-note shipped (commit 5d5489d0)]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2cafc6 — edited tests/env_integration.rs; edited src/env.rs; edited tests/env_integration.rs]_
+---
+
