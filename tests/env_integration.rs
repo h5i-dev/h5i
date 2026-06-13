@@ -508,6 +508,46 @@ fn inbox_commit_note_off_env_range_is_rejected() {
     assert!(!note.status.success(), "no note may be attached to the inherited commit");
 }
 
+/// End-to-end integrity property: an in-box `h5i capture run` (the
+/// `inbox-capture`, box-claimed lane) and the env run itself (`host-env-run`,
+/// host-verified lane) BOTH survive `apply` as distinct lanes in the applied
+/// commit's provenance note — box-claimed evidence is never laundered into
+/// host-verified.
+#[test]
+fn apply_provenance_preserves_inbox_and_host_lanes() {
+    if !process_tier_runnable() {
+        eprintln!("SKIP apply_provenance_preserves_inbox_and_host_lanes: process tier not runnable");
+        return;
+    }
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "lanes", "--isolation", "process"]);
+    let bin = r.work("lanes").join("h5i-bin");
+    std::fs::copy(H5I, &bin).expect("copy h5i");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut p = std::fs::metadata(&bin).unwrap().permissions();
+        p.set_mode(p.mode() | 0o755);
+        std::fs::set_permissions(&bin, p).unwrap();
+    }
+    // One env run: makes a change (so propose/apply has content) AND fires an
+    // in-box capture → host-env-run + inbox-capture lanes on the env.
+    r.h5i_ok(&[
+        "env", "run", "lanes", "--", "sh", "-c",
+        "echo changed > lib.py && ./h5i-bin capture run --min-bytes 0 -- sh -c 'echo inbox-evidence'",
+    ]);
+    r.h5i_ok(&["env", "propose", "lanes"]);
+    r.h5i_ok(&["env", "apply", "lanes"]);
+
+    let applied = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let applied = applied.trim();
+    let note = out_str(&git(&r.dir, &["show", &format!("refs/h5i/notes:{applied}")]));
+    let rec: serde_json::Value = serde_json::from_str(note.trim()).expect("apply note JSON");
+    let sources = &rec["env_provenance"]["evidence_sources"];
+    // Both lanes are present and distinct — not collapsed into one.
+    assert_eq!(sources["host-env-run"], 1, "host lane preserved: {rec}");
+    assert_eq!(sources["inbox-capture"], 1, "box-claimed lane preserved + labeled: {rec}");
+}
+
 #[test]
 fn run_passes_the_exit_code_through() {
     let r = Repo::new();
@@ -1081,6 +1121,44 @@ fn supervised_enforces_runtime_confinement() {
         fs.contains("Operation not permitted") || fs.contains("unshare_rc=1"),
         "seccomp deny-list blocks unshare:\n{fs}"
     );
+}
+
+/// In-box `h5i commit` on the **supervised** tier (the agent-in-box tier):
+/// the git commit lands on the env branch, the note is spooled, and the host
+/// applies it on ingest — the same graceful-degrade as process, on the tier the
+/// original report came from.
+#[test]
+fn inbox_commit_on_supervised_stages_and_applies_note() {
+    let _serial = supervised_guard();
+    let Some(r) = supervised_env("ibs", "") else {
+        return;
+    };
+    let bin = r.work("ibs").join("h5i-bin");
+    std::fs::copy(H5I, &bin).expect("copy h5i into worktree");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut p = std::fs::metadata(&bin).unwrap().permissions();
+        p.set_mode(p.mode() | 0o755);
+        std::fs::set_permissions(&bin, p).unwrap();
+    }
+    let base = out_str(&git(&r.dir, &["rev-parse", "refs/heads/h5i/env/tester/ibs"]));
+    let base = base.trim().to_string();
+
+    r.h5i_ok(&[
+        "env", "run", "ibs", "--", "sh", "-c",
+        "echo hi > f.txt && git add f.txt && \
+         ./h5i-bin commit -m 'in-box change' --model claude-fable-5 --agent claude-code",
+    ]);
+
+    let env_tip = out_str(&git(&r.dir, &["rev-parse", "refs/heads/h5i/env/tester/ibs"]));
+    let env_tip = env_tip.trim();
+    assert_ne!(env_tip, base, "in-box commit must advance the env branch");
+    let note = out_str(&git(&r.dir, &["show", &format!("refs/h5i/notes:{env_tip}")]));
+    let rec: serde_json::Value =
+        serde_json::from_str(note.trim()).expect("note applied + valid JSON");
+    assert_eq!(rec["ai_metadata"]["model_name"], "claude-fable-5", "{rec}");
+    let log = out_str(&r.h5i_ok(&["env", "log", "ibs"]));
+    assert!(log.contains("in-box commit note applied"), "{log}");
 }
 
 /// A memory limit is enforced for a supervised run: a large allocation under a
@@ -2420,6 +2498,57 @@ fn container_injects_managed_settings_hook_read_only() {
                 .unwrap_or(true),
         "host managed-settings must not be created/modified by the box"
     );
+}
+
+/// Container tier: the in-box capture spool is mounted at `/.h5i/spool` (rw,
+/// despite the read-only rootfs) and the host ingests what the box writes into
+/// it. We write a synthetic `inbox-capture` record from inside the box —
+/// sidestepping the need for a glibc-matched `h5i` binary in the image — and
+/// prove the mount + host-side ingest end-to-end on container.
+#[test]
+fn container_env_capture_spool_is_mounted_and_ingested() {
+    if !container_runnable() {
+        eprintln!("SKIP container_env_capture_spool_is_mounted_and_ingested: no rootless podman");
+        return;
+    }
+    let r = Repo::new();
+    write_profile(
+        &r,
+        &format!(
+            "[profile.default]\nisolation = \"container\"\nnet.mode = \"deny\"\ncontainer.image = \"{BUSYBOX}\"\n"
+        ),
+    );
+    r.h5i_ok(&["env", "create", "cspool"]);
+
+    // The box writes a well-formed inbox-capture pair into the mounted spool
+    // (what an in-box `h5i capture run` would stage). The rootfs is read-only;
+    // /.h5i/spool must be writable because it's a bind mount.
+    r.h5i_ok(&[
+        "env", "run", "cspool", "--", "sh", "-c",
+        "printf '%s' '{\"cmd\":\"echo boxed\",\"cwd\":null,\"exit_code\":0,\"files\":[],\"cmd_argv\":[\"echo\",\"boxed\"]}' \
+           > /.h5i/spool/cap-7-0.json && \
+         printf 'boxed-output' > /.h5i/spool/cap-7-0.raw && echo staged",
+    ]);
+
+    // The host ingested it: env now has the host-env-run capture (the run
+    // itself) AND the synthetic inbox-capture.
+    let env_manifest = r.manifest("cspool");
+    assert!(
+        env_manifest["captures"].as_array().unwrap().len() >= 2,
+        "host-env-run + ingested inbox-capture: {env_manifest}"
+    );
+    let manifests = out_str(&git(&r.dir, &["show", "refs/h5i/objects:manifests.jsonl"]));
+    let inbox = manifests
+        .lines()
+        .filter(|l| l.contains("env/tester/cspool"))
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+        .find(|m| m["evidence_source"] == "inbox-capture")
+        .expect("an inbox-capture manifest");
+    let raw = r.capture_raw(inbox["raw_oid"].as_str().unwrap());
+    assert!(String::from_utf8_lossy(&raw).contains("boxed-output"), "{inbox}");
+
+    let status = out_str(&r.h5i_ok(&["env", "status", "cspool"]));
+    assert!(status.contains("inbox-capture=1"), "{status}");
 }
 
 #[test]
