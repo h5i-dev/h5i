@@ -1841,3 +1841,4 @@ _[Checkpoint: 6a2d616d — edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edi
 ---
 
 [14:01:47] OBSERVE: read build.rs
+[14:02:18] OBSERVE: read src/sandbox.rs
