@@ -115,3 +115,4 @@
 {"ts":"2026-06-13T20:01:53.609331Z","env_id":"env/human/codex-1","agent":"human","event":"exec-log","detail":"rejected in-box commit note for f7fdac84e256 — not an env-owned commit"}
 {"ts":"2026-06-13T20:01:53.610135Z","env_id":"env/human/codex-1","agent":"human","event":"exec-log","detail":"rejected in-box commit note for f92767c4bb36 — not an env-owned commit"}
 {"ts":"2026-06-13T20:01:53.612192Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=101 observed=3"}
+{"ts":"2026-06-13T20:02:52.471803Z","env_id":"env/human/codex-1","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
