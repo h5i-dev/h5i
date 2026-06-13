@@ -1615,3 +1615,4 @@ _[Checkpoint: 6a2cbb16 — Actionable unwritable-store error shipped (commit d85
 _[Checkpoint: 6a2cbb24 — edited src/objects.rs; edited src/objects.rs; edited src/storage.rs]_
 ---
 
+[02:14:11] OBSERVE: read src/storage.rs
