@@ -2,9 +2,7 @@
 
 This repository uses **h5i** (a Git sidecar for AI-era version control).
 
-**Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, `h5i_claims_add`, the `h5i_env_*` sandbox family, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
-
-The `h5i_env_*` tools (`h5i_env_create/run/list/status/diff/inspect/compare/propose/apply/rebase/abort`) drive isolated agent environments — a git worktree + sandbox + provenance. Prefer creating an env for risky/exploratory work (a refactor, an upgrade, an untrusted build) instead of editing the main tree in place: `h5i_env_create` → `h5i_env_run` (policy-enforced, capture-wrapped) → `h5i_env_propose` → `h5i_env_apply`. Use `h5i_env_diff`/`h5i_env_inspect` to review another agent's pulled environment before applying.
+**Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, `h5i_claims_add`, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
 
 h5i metadata lives in `refs/h5i/*` and is NOT pushed by plain `git push`. Use `h5i push` to share it.
 
@@ -70,16 +68,14 @@ h5i capture run --file <path> -- <command>    # tag the files it relates to
 It prints only the summary (errors/failures/counts), passes the exit code through, and stores the full raw output out-of-band. Small *successful* output (under ~2 KB) passes through unstored — but failures are always captured regardless of size, so they stay searchable. Safe to wrap anything. Rehydrate the full raw only if the summary isn't enough:
 
 ```bash
-h5i recall objects [--branch <b>|--file <p>|--env <name>]   # list captures
-h5i recall search <query> [--severity|--rule|--path|--fingerprint|--tool|--env|--since]
+h5i recall objects [--branch <b>|--file <p>|--env <e>]   # list captures
+h5i recall search <query> [--severity|--rule|--path|--fingerprint|--tool|--since]
                                                # query findings across captures
 h5i recall object <id>                         # full raw bytes
 h5i recall object <id> --format yaml|compact|json   # re-view the structured findings (no raw)
 ```
 
 `recall object --format` re-renders the *exact* structured view you saw at capture time (the normalized findings) without rehydrating the raw output — cheap to re-observe. `recall search` looks *inside* captures — it matches the normalized findings (message, rule, path, severity) across every captured tool, so `recall search --fingerprint <fp>` answers "has this exact failure happened before?". The `h5i_capture_run` MCP tool does the same capture without shell-quoting if the MCP server is configured. Don't wrap trivial commands you need to read in full.
-
-An optional **`h5i hook wrap-bash`** PreToolUse hook (registered via `h5i hook setup --write --wrap-bash`) rewrites Bash tool commands into `h5i capture run -- …` automatically, making the token reduction the default instead of agent discipline. When it is active you don't need to wrap commands yourself — but wrapping explicitly is always safe (h5i's own commands are never re-wrapped).
 
 ---
 
