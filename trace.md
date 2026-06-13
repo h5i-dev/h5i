@@ -1697,3 +1697,4 @@ _[Checkpoint: 6a2d3598 — edited tests/env_integration.rs; edited src/env.rs; e
 [12:37:00] ACT: edited /home/koukyosyumei/Dev/h5i/src/main.rs
 [12:37:00] ACT: edited /home/koukyosyumei/Dev/h5i/src/main.rs
 [12:37:00] ACT: edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs
+[12:37:00] ACT: edited /home/koukyosyumei/Dev/h5i/tests/cli_integration.rs
