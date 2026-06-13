@@ -131,3 +131,4 @@
 {"ts":"2026-06-13T20:19:56.051325Z","env_id":"env/claude/verifystrip","agent":"claude","event":"exec","detail":"cmd=`bash -lc cd \"$WORK\" && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 H5I_SKIP_WEB_BUILD=1 cargo test --test e2e_noun_workflow --test cli_integration 2>&1 | grep -E \"test result|^error|FAILED|capture_commit\" | head -30` exit=0 wall=30390ms cpu=0ms rss=0MiB","capture":"20b0efb061dadc41"}
 {"ts":"2026-06-13T20:20:02.742693Z","env_id":"env/claude/verifystrip","agent":"claude","event":"aborted","detail":"manifest preserved for forensics"}
 {"ts":"2026-06-13T20:20:03.016865Z","env_id":"env/claude/verifystrip","agent":"claude","event":"removed","detail":"workspace + branches + manifest erased locally"}
+{"ts":"2026-06-13T20:21:55.731693Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo test` exit=101 source=inbox-capture","capture":"694756f0c4daf127"}
