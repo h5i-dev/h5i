@@ -1595,3 +1595,4 @@ _[Checkpoint: 6a2cb64a — Added supervised + container + lane-through-apply e2e
 _[Checkpoint: 6a2cb656 — edited tests/env_integration.rs; edited tests/env_integration.rs; edited tests/env_integration.rs]_
 ---
 
+[01:51:36] OBSERVE: read src/storage.rs
