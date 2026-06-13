@@ -126,3 +126,4 @@
 {"ts":"2026-06-13T20:10:47.938898Z","env_id":"env/claude/pulldiag2","agent":"claude","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-13T20:16:16.520274Z","env_id":"env/claude/verifystrip","agent":"claude","event":"created","detail":"base=98a5d630c718 profile=agent-claude isolation=supervised backend=worktree"}
 {"ts":"2026-06-13T20:16:17.752775Z","env_id":"env/claude/verifystrip","agent":"claude","event":"status","detail":"running"}
+{"ts":"2026-06-13T20:19:00.749165Z","env_id":"env/claude/verifystrip","agent":"claude","event":"exec","detail":"cmd=`bash -lc cd \"$WORK\" && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 H5I_SKIP_WEB_BUILD=1 cargo test --test e2e_noun_workflow --test cli_integration 2>&1 | grep -E \"test result|^error|FAILED|capture_commit|pull_roundtrips|pull_is_idempotent\" | head -30` exit=0 wall=144373ms cpu=0ms rss=0MiB","capture":"1e474c648969b1d2"}
