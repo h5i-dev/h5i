@@ -1539,3 +1539,4 @@ _[Checkpoint: 6a2c9c47 — Implemented apply provenance carry-forward (commit 26
 _[Checkpoint: 6a2c9c55 — edited tests/env_integration.rs; edited src/repository.rs; edited tests/env_integration.rs]_
 ---
 
+[00:24:54] OBSERVE: read src/repository.rs
