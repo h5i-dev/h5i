@@ -1705,3 +1705,4 @@ _[Checkpoint: 6a2d3598 — edited tests/env_integration.rs; edited src/env.rs; e
 [12:37:00] OBSERVE: searched open\(|h5i_root|commondir|\.h5i" for "H5iRepository|fn"
 [12:37:00] OBSERVE: read src/repository.rs
 [12:37:00] OBSERVE: searched src/main.rs for "run|Capture|objects|store|h5i_root""
+[12:37:00] OBSERVE: read src/lib.rs
