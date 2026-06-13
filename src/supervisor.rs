@@ -982,7 +982,7 @@ mod tests {
         // tests/env_integration.rs proves real enforcement.)
         let mut p = crate::sandbox::Profile::builtin("p", crate::sandbox::IsolationClaim::Supervised);
         p.net_egress = vec!["example.com".into()];
-        let pol = crate::sandbox::ResolvedPolicy { claim: p.isolation, profile: p };
+        let pol = crate::sandbox::ResolvedPolicy::new(p.isolation, p);
         let usable = probe().usable && slirp4netns_path().is_some();
         if usable {
             // Can't assert a refusal on a capable host; that path is the e2e test.

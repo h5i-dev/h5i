@@ -172,6 +172,10 @@ pub struct Manifest {
     /// env capture was taken — what was *actually* enforced, not requested.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_digest: Option<String>,
+    /// Trust/source lane for env evidence, e.g. "host-env-run",
+    /// "tee-shim", or "inbox-capture".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_source: Option<String>,
     /// Summary + pointer for the env's egress decisions (supervisor tier;
     /// never an unbounded inline log). Absent until that phase ships.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -264,6 +268,12 @@ impl LocalStore {
         }
     }
 
+    /// The `.h5i` root (the objects dir's parent) — used to attach an
+    /// ownership/repair hint to permission failures.
+    fn h5i_root(&self) -> &Path {
+        self.root.parent().unwrap_or(&self.root)
+    }
+
     /// Sharded path for a digest: `objects/<a><b>/<c><d>/<full hex>`.
     pub fn blob_path(&self, hex: &str) -> PathBuf {
         // Defensive: callers validate, but never index out of range.
@@ -325,11 +335,13 @@ impl Backend for LocalStore {
             return Ok(()); // content-addressed: identical content already stored
         }
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| crate::storage::store_io_error(self.h5i_root(), parent, e))?;
         }
         // Write to a temp file then rename for atomicity.
         let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, bytes).map_err(|e| H5iError::with_path(e, &tmp))?;
+        std::fs::write(&tmp, bytes)
+            .map_err(|e| crate::storage::store_io_error(self.h5i_root(), &tmp, e))?;
         std::fs::rename(&tmp, &path).map_err(|e| H5iError::with_path(e, &path))?;
         Ok(())
     }
@@ -394,6 +406,7 @@ pub struct CaptureOptions {
     /// digest of the policy enforced while producing it.
     pub env_id: Option<String>,
     pub policy_digest: Option<String>,
+    pub evidence_source: Option<String>,
     /// Network egress verdicts observed while producing this capture (the
     /// `isolation=container` allowlist proxy populates it; `None` otherwise).
     pub egress: Option<EgressSummary>,
@@ -569,6 +582,7 @@ pub fn capture(
         structured,
         env_id: opts.env_id,
         policy_digest: opts.policy_digest,
+        evidence_source: opts.evidence_source,
         egress: opts.egress,
         redactions,
     };
@@ -1642,6 +1656,7 @@ mod tests {
             filter: FilterConfig::default(),
             env_id: None,
             policy_digest: None,
+            evidence_source: None,
             egress: None,
             redact: false,
         }
@@ -1854,6 +1869,7 @@ mod tests {
             structured: None,
             env_id: None,
             policy_digest: None,
+            evidence_source: None,
             egress: None,
             redactions: Vec::new(),
         }

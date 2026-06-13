@@ -40,6 +40,38 @@ pub struct H5iCommitRecord {
     /// Structured design decisions recorded at commit time via `--decisions`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decisions: Vec<Decision>,
+    /// Set when this commit was produced by `h5i env apply` — links the applied
+    /// commit back to the sandboxed environment it came from and summarizes the
+    /// evidence carried forward, so the commit on the parent branch is
+    /// self-describing. `None` for ordinary `h5i commit`s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_provenance: Option<EnvProvenance>,
+}
+
+/// Provenance stamped onto a commit created by `h5i env apply`. Carries the
+/// origin env + a *labeled* evidence summary so a reviewer of the parent
+/// branch can tell host-verified evidence (`host-env-run`) from box-claimed
+/// evidence (`inbox-capture`) without trusting the box — the trust lanes
+/// survive the merge rather than being laundered into one.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct EnvProvenance {
+    /// `env/<agent>/<slug>` the commit was applied from.
+    pub env_id: String,
+    /// The agent that owned the env.
+    pub agent: String,
+    /// Resolved isolation tier (`process`/`supervised`/`container`/…).
+    pub isolation_claim: String,
+    /// sha256 of the policy enforced in the env.
+    pub policy_digest: String,
+    /// The env's pinned base commit (where it forked from).
+    pub base_commit: String,
+    /// Evidence capture ids carried by the env (capped; `captures_total` is the
+    /// true count when this was truncated).
+    pub captures: Vec<String>,
+    /// True count of env captures (may exceed `captures.len()`).
+    pub captures_total: usize,
+    /// Capture count by trust lane, e.g. `{"host-env-run": 3, "inbox-capture": 5}`.
+    pub evidence_sources: std::collections::BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -256,6 +288,7 @@ impl H5iCommitRecord {
                 timestamp: Utc::now(),
                 caused_by: Vec::new(),
                 decisions: Vec::new(),
+                env_provenance: None,
             };
         };
 
@@ -282,6 +315,7 @@ impl H5iCommitRecord {
             timestamp,
             caused_by: vec![],
             decisions: vec![],
+            env_provenance: None,
         }
     }
 }

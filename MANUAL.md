@@ -85,6 +85,7 @@ Command reference for all h5i subcommands and flags.
 - [h5i compliance](#h5i-compliance)
 - [h5i env (isolated agent sandboxes)](#h5i-env-isolated-agent-sandboxes)
   - [Lifecycle commands](#env-lifecycle-commands)
+  - [In-box git, capture & commit](#env-in-box)
   - [Isolation tiers](#env-isolation-tiers)
   - [Policy file (.h5i/env.toml)](#env-policy-file-h5ienvtoml)
   - [Secrets broker](#env-secrets-broker)
@@ -207,9 +208,12 @@ h5i init
 ```
 h5i hook setup   # print install instructions
 h5i hook run     # PostToolUse handler (reads JSON from stdin)
+h5i hook setup --write   # write Claude and Codex hook config
+h5i hook setup --write --target codex   # optional: Codex only
+h5i hook setup --write --target claude  # optional: Claude only
 ```
 
-`h5i hook setup` prints the two configuration steps needed to activate automatic prompt capture and context tracing.
+`h5i hook setup` prints the configuration steps needed to activate automatic prompt capture and context tracing. `h5i hook setup --write` writes Claude Code hook wiring to `.claude/settings.json` and equivalent Codex wiring to `.codex/config.toml`. Add `--target claude` or `--target codex` to write only one agent's config.
 
 `h5i hook setup` outputs two steps:
 
@@ -243,7 +247,33 @@ h5i hook run     # PostToolUse handler (reads JSON from stdin)
 
    Once registered, Claude Code gains native access to h5i tools (`h5i_log`, `h5i_blame`, `h5i_context_trace`, `h5i_notes_show`, etc.) without needing shell commands. See [h5i mcp](#h5i-mcp) for the full tool list.
 
-`h5i hook` is currently Claude-specific. Codex does not expose an equivalent repo-local hook configuration, so h5i provides the explicit `h5i codex` workflow instead.
+For Codex-only setup, run:
+
+```bash
+h5i hook setup --write --target codex
+```
+
+This idempotently merges inline hook tables into `.codex/config.toml`:
+
+```toml
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "h5i hook session-start"
+
+[[hooks.PostToolUse]]
+matcher = "Edit|Write|Read"
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "h5i hook run"
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "h5i hook stop"
+```
+
+Add `--wrap-bash` to register `h5i hook wrap-bash` as a `PreToolUse` Bash hook. Codex requires reviewing/trusting local hooks via `/hooks`; project-local hooks only load after the project `.codex/` layer is trusted.
 
 ---
 
@@ -2583,7 +2613,7 @@ another reviews and applies). See `docs/environments-design.md` and the live
 |---------|-------------|
 | `h5i env create <name> [--from REV] [--profile P] [--isolation TIER]` | Create an env: code branch + worktree + reasoning branch + pinned policy. Base frozen at creation. With no `--isolation` (or `--isolation auto`) it **auto-picks the strongest tier the host can run**; an explicit tier fails closed if the host can't satisfy it. |
 | `h5i env run <name> -- <cmd> [args…]` | Run a command inside the env, policy-enforced + capture-wrapped. Exit code passes through; evidence is captured. |
-| `h5i env shell <name> [-- <cmd>]` | Open an **interactive** confined session *inside* the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. Defaults to a login shell. Exit code passes through; nothing is captured (a `shell` event is logged). |
+| `h5i env shell <name> [-- <cmd>]` | Open an **interactive** confined session *inside* the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. Defaults to a login shell. Exit code passes through. The session is **observed**: a `shell` event is logged, and per-command evidence is staged + ingested where the tier supports it (see [In-box git, capture & commit](#env-in-box)). |
 | `h5i env probe` | Show what isolation this host can actually provide (Landlock ABI, user namespaces, seccomp, seccomp-notif, cgroup v2 delegation, rootless Podman) and which claims are satisfiable. |
 | `h5i env list` | List environments on this clone. |
 | `h5i env status <name> [--json]` | Lifecycle state + enforced policy + evidence + base drift. `--json` emits the raw manifest. |
@@ -2593,7 +2623,7 @@ another reviews and applies). See `docs/environments-design.md` and the live
 | `h5i env compare <names…> [--json]` | The "arena": rank N envs side by side (changes + latest run results). Best on envs sharing one base. |
 | `h5i env rebase <name>` | Re-pin the base onto the parent branch's advanced tip (3-way; refuses on conflict). |
 | `h5i env propose <name>` | Mediated commit (path-allowlist enforced: rejects nested `.git`, symlink escapes, `..`) + review brief. Never writes the parent. |
-| `h5i env apply <name> [--patch]` | Apply a proposed env onto its parent (reviewer-selected). Default merges; `--patch` squashes into one commit. |
+| `h5i env apply <name> [--patch]` | Apply a proposed env onto its parent (reviewer-selected). Default merges; `--patch` squashes into one commit. The applied commit is **stamped with env provenance** — a note linking it back to the env and summarizing the evidence by trust lane (`host-env-run` vs box-claimed `inbox-capture`), visible in `h5i recall log`. |
 | `h5i env abort <name>` | Discard the env; manifest + workspace retained for forensics. |
 | `h5i env gc` | Reclaim worktrees of applied/aborted envs. Manifests, branches, and captures are retained. |
 
@@ -2604,6 +2634,47 @@ The same operations are available as native MCP tools (`h5i_env_create`,
 `h5i_env_compare`, `h5i_env_propose`, `h5i_env_apply`, `h5i_env_rebase`,
 `h5i_env_abort`, `h5i_env_list`) when the MCP server is configured — see
 [`h5i mcp`](#h5i-mcp).
+
+<a name="env-in-box"></a>
+### In-box git, capture & commit
+
+At the confined tiers (`process`/`supervised`/`container`) the env worktree is a
+**functional git checkout from inside the box**: `git status`/`add`/`commit`,
+`h5i context …`, and other plumbing work against the env's own branch
+(`refs/heads/h5i/env/<agent>/<slug>`). The box gets exactly the surface it needs
+(its own worktree admin dir, the object store, its own ref namespace + reasoning
+ref) and nothing protected — it **cannot** move `main`, plant git hooks, touch
+another agent's branches, or rewrite its own policy.
+
+Interactive sessions are also **locked down and observed**:
+
+- **Config lockdown** — the project config dirs (`.claude`/`.codex`) are mounted
+  read-only and the user settings files pinned, so the in-box agent can't edit
+  *or create* config (e.g. a `settings.local.json` disabling a hook). On
+  `container` the observation hook is additionally pinned via injected
+  **managed-settings**; for Codex, launch with `codex
+  --dangerously-bypass-hook-trust` so its hook actually runs (Codex skips
+  untrusted hooks). See `docs/environments-design.md`.
+- **In-box `h5i capture run` / `h5i commit`** work even though the evidence store
+  is sealed from the box: the git commit lands on the env branch, and the
+  evidence (and commit note) are **staged to a spool** the host ingests at
+  session end — labeled `inbox-capture` (box-claimed) so it stays distinct from
+  host-verified `host-env-run` evidence. The trust lanes survive `env apply`
+  (stamped onto the applied commit's note). No `h5i` binary is required in a
+  container image for shell-level observation (the tee-shim writes plain spool
+  files, ingested host-side).
+
+**Troubleshooting — "h5i data store not writable".** If a capture/commit fails
+with this, the on-disk store under `.git/.h5i` is owned by another user — almost
+always left **root-owned** by an earlier `sudo`/root run. h5i prints the exact
+repair:
+
+```bash
+sudo chown -R "$(id -u):$(id -g)" .git/.h5i
+```
+
+(Inside an env sandbox the store is *intentionally* sealed; that case is handled
+by the spool above, not by changing ownership.)
 
 <a name="env-isolation-tiers"></a>
 ### Isolation tiers

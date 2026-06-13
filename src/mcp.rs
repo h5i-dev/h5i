@@ -1060,7 +1060,7 @@ fn tool_commit(params: &Value, workdir: &Path) -> Result<Value> {
     };
 
     let oid = repo.commit(
-        message, &sig, &sig, ai_meta, TestSource::None, None, vec![], vec![],
+        message, &sig, &sig, ai_meta, TestSource::None, None, vec![], vec![], None,
     )?;
 
     // Snapshot context if initialized.
@@ -1532,6 +1532,7 @@ fn tool_capture_run(params: &Value, workdir: &Path) -> Result<Value> {
         filter: cfg,
         env_id: None,
         policy_digest: None,
+        evidence_source: None,
         egress: None,
         redact: false,
     };

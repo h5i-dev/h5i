@@ -44,6 +44,9 @@ pub enum H5iError {
 
     #[error("TOML parse error: {0}")]
     TomlParse(#[from] toml::de::Error),
+
+    #[error("TOML serialization error: {0}")]
+    TomlSerialize(#[from] toml::ser::Error),
 }
 
 impl H5iError {

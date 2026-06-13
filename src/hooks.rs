@@ -1,8 +1,9 @@
-//! Claude Code hook wiring — the pure settings.json merge behind
+//! Agent hook wiring — the pure config merges behind
 //! `h5i hook setup --write`.
 
 use crate::error::H5iError;
 use serde_json::{Map, Value};
+use toml::value::Table;
 
 /// The hook entries `h5i hook setup --write` manages, as
 /// `(event, matcher, command)`. Bash capture-wrapping is NOT here — it is
@@ -56,7 +57,10 @@ pub fn merge_hook_settings_json(existing: &str, wrap_bash: bool) -> Result<Strin
     for &(event, matcher, command) in CORE_HOOKS {
         ensure_hook_entry(hooks_obj, event, matcher, command)?;
     }
-    if let Some(arr) = hooks_obj.get_mut("PostToolUse").and_then(|v| v.as_array_mut()) {
+    if let Some(arr) = hooks_obj
+        .get_mut("PostToolUse")
+        .and_then(|v| v.as_array_mut())
+    {
         arr.retain(|entry| !entry_has_command(entry, LEGACY_OBSERVE_BASH));
     }
     if wrap_bash {
@@ -65,6 +69,68 @@ pub fn merge_hook_settings_json(existing: &str, wrap_bash: bool) -> Result<Strin
     }
 
     Ok(serde_json::to_string_pretty(&root)?)
+}
+
+/// The Linux path Claude Code reads as **managed settings** — the highest,
+/// unoverridable scope. A hook here cannot be removed by higher-precedence
+/// merge and survives a non-managed `disableAllHooks`. Injected at this exact
+/// path inside a sandboxed box's private mount namespace (read-only) so the
+/// in-box agent — which cannot write the root-owned `/etc` and cannot disable
+/// a managed hook from its own writable config — has no way to silence
+/// observation. Host-scoped to the box: the mount lives only in the box's ns.
+pub const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
+
+/// The minimal managed-settings.json injected into a sandboxed box: ONLY the
+/// wrap-bash enforcement hook, not the core SessionStart/PostToolUse/Stop set.
+/// The goal is to pin *observation* unkillably, not to override the agent's
+/// own workflow hooks (which it remains free to configure in user/project
+/// scope — managed hooks merge with, they don't replace, those). Pure.
+pub fn managed_settings_wrap_bash_json() -> String {
+    let mut hooks_obj = Map::new();
+    let (event, matcher, command) = WRAP_BASH_HOOK;
+    // ensure_hook_entry only errors if an existing entry has the wrong shape;
+    // on a fresh map it cannot fail.
+    let _ = ensure_hook_entry(&mut hooks_obj, event, matcher, command);
+    let mut root = Map::new();
+    root.insert("hooks".to_string(), Value::Object(hooks_obj));
+    serde_json::to_string_pretty(&Value::Object(root)).unwrap_or_default()
+}
+
+/// Idempotently merge the h5i hook wiring into a Codex `config.toml` document.
+/// Codex discovers inline `[hooks]` tables in `.codex/config.toml` or
+/// `~/.codex/config.toml`; the shape is otherwise equivalent to Claude's
+/// JSON hook arrays. User settings and unrelated hooks are preserved.
+pub fn merge_codex_config_toml(existing: &str, wrap_bash: bool) -> Result<String, H5iError> {
+    let mut root: toml::Value = if existing.trim().is_empty() {
+        toml::Value::Table(Table::new())
+    } else {
+        toml::from_str(existing)?
+    };
+    let root_table = root
+        .as_table_mut()
+        .ok_or_else(|| H5iError::Metadata("config.toml is not a TOML table".into()))?;
+    let hooks = root_table
+        .entry("hooks".to_string())
+        .or_insert_with(|| toml::Value::Table(Table::new()));
+    let hooks_table = hooks
+        .as_table_mut()
+        .ok_or_else(|| H5iError::Metadata("config 'hooks' is not a table".into()))?;
+
+    for &(event, matcher, command) in CORE_HOOKS {
+        ensure_toml_hook_entry(hooks_table, event, matcher, command)?;
+    }
+    if let Some(arr) = hooks_table
+        .get_mut("PostToolUse")
+        .and_then(|v| v.as_array_mut())
+    {
+        arr.retain(|entry| !toml_entry_has_command(entry, LEGACY_OBSERVE_BASH));
+    }
+    if wrap_bash {
+        let (event, matcher, command) = WRAP_BASH_HOOK;
+        ensure_toml_hook_entry(hooks_table, event, matcher, command)?;
+    }
+
+    Ok(toml::to_string_pretty(&root)?)
 }
 
 /// Rewrite a Bash tool command into a token-reducing `h5i capture run`
@@ -101,15 +167,25 @@ pub fn wrap_bash_command(command: &str) -> Option<String> {
         return None;
     }
 
-    let simple = !trimmed.split_whitespace().next().unwrap_or("").contains('=')
+    let simple = !trimmed
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .contains('=')
         && trimmed.chars().all(|c| {
             c.is_ascii_alphanumeric()
-                || matches!(c, ' ' | '_' | '-' | '.' | '/' | '=' | ':' | '@' | ',' | '+' | '%')
+                || matches!(
+                    c,
+                    ' ' | '_' | '-' | '.' | '/' | '=' | ':' | '@' | ',' | '+' | '%'
+                )
         });
     if simple {
         Some(format!("h5i capture run -- {trimmed}"))
     } else {
-        Some(format!("h5i capture run -- bash -c {}", shell_single_quote(trimmed)))
+        Some(format!(
+            "h5i capture run -- bash -c {}",
+            shell_single_quote(trimmed)
+        ))
     }
 }
 
@@ -155,10 +231,62 @@ fn ensure_hook_entry(
     Ok(())
 }
 
+fn ensure_toml_hook_entry(
+    hooks_table: &mut Table,
+    event: &str,
+    matcher: Option<&str>,
+    command: &str,
+) -> Result<(), H5iError> {
+    let arr = hooks_table
+        .entry(event.to_string())
+        .or_insert_with(|| toml::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| H5iError::Metadata(format!("config hooks.{event} is not an array")))?;
+    arr.retain(|entry| !toml_entry_has_command(entry, command));
+
+    let mut entry = Table::new();
+    if let Some(m) = matcher {
+        entry.insert("matcher".to_string(), toml::Value::String(m.to_string()));
+    }
+    let mut hook = Table::new();
+    hook.insert(
+        "type".to_string(),
+        toml::Value::String("command".to_string()),
+    );
+    hook.insert(
+        "command".to_string(),
+        toml::Value::String(command.to_string()),
+    );
+    entry.insert(
+        "hooks".to_string(),
+        toml::Value::Array(vec![toml::Value::Table(hook)]),
+    );
+    arr.push(toml::Value::Table(entry));
+    Ok(())
+}
+
 /// True if a hooks-array entry contains an inner command that is `command`
 /// (exactly, or followed by arguments). Exact-or-space matching so
 /// `h5i hook run` never claims `h5i hook run-something-else`.
 fn entry_has_command(entry: &Value, command: &str) -> bool {
+    entry
+        .get("hooks")
+        .and_then(|h| h.as_array())
+        .map(|hs| {
+            hs.iter().any(|hk| {
+                hk.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(|s| {
+                        let s = s.trim_start();
+                        s == command || s.strip_prefix(command).is_some_and(|r| r.starts_with(' '))
+                    })
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn toml_entry_has_command(entry: &toml::Value, command: &str) -> bool {
     entry
         .get("hooks")
         .and_then(|h| h.as_array())
@@ -185,8 +313,17 @@ mod tests {
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
-                    .flat_map(|e| e.get("hooks").and_then(|h| h.as_array()).cloned().unwrap_or_default())
-                    .filter_map(|hk| hk.get("command").and_then(|c| c.as_str()).map(str::to_owned))
+                    .flat_map(|e| {
+                        e.get("hooks")
+                            .and_then(|h| h.as_array())
+                            .cloned()
+                            .unwrap_or_default()
+                    })
+                    .filter_map(|hk| {
+                        hk.get("command")
+                            .and_then(|c| c.as_str())
+                            .map(str::to_owned)
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -196,13 +333,17 @@ mod tests {
     fn fresh_default_has_core_hooks_but_no_wrap_bash() {
         let out = merge_hook_settings_json("", false).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(commands_under(&v, "SessionStart"), vec!["h5i hook session-start"]);
+        assert_eq!(
+            commands_under(&v, "SessionStart"),
+            vec!["h5i hook session-start"]
+        );
         assert_eq!(commands_under(&v, "PostToolUse"), vec!["h5i hook run"]);
         assert_eq!(commands_under(&v, "Stop"), vec!["h5i hook stop"]);
         assert!(!out.contains("wrap-bash"));
         // The Edit|Write|Read matcher rides along with `h5i hook run`.
         assert_eq!(
-            v.pointer("/hooks/PostToolUse/0/matcher").and_then(|m| m.as_str()),
+            v.pointer("/hooks/PostToolUse/0/matcher")
+                .and_then(|m| m.as_str()),
             Some("Edit|Write|Read")
         );
     }
@@ -220,7 +361,63 @@ mod tests {
             .iter()
             .find(|e| entry_has_command(e, "h5i hook wrap-bash"))
             .unwrap();
-        assert_eq!(bash_entry.get("matcher").and_then(|m| m.as_str()), Some("Bash"));
+        assert_eq!(
+            bash_entry.get("matcher").and_then(|m| m.as_str()),
+            Some("Bash")
+        );
+    }
+
+    #[test]
+    fn managed_settings_carries_only_wrap_bash() {
+        let out = managed_settings_wrap_bash_json();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        // Exactly the wrap-bash PreToolUse/Bash hook, and none of the core set
+        // (managed scope pins observation, it does not commandeer the agent's
+        // own SessionStart/PostToolUse/Stop wiring).
+        assert_eq!(commands_under(&v, "PreToolUse"), vec!["h5i hook wrap-bash"]);
+        for event in ["SessionStart", "PostToolUse", "Stop"] {
+            assert!(
+                v.pointer(&format!("/hooks/{event}")).is_none(),
+                "managed settings must not carry the {event} core hook"
+            );
+        }
+        let entry = v
+            .pointer("/hooks/PreToolUse")
+            .and_then(|a| a.as_array())
+            .unwrap()
+            .iter()
+            .find(|e| entry_has_command(e, "h5i hook wrap-bash"))
+            .unwrap();
+        assert_eq!(entry.get("matcher").and_then(|m| m.as_str()), Some("Bash"));
+    }
+
+    #[test]
+    fn codex_config_toml_adds_core_hooks_and_preserves_settings() {
+        let existing = r#"
+model = "gpt-5.4"
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "h5i msg hook"
+"#;
+        let out = merge_codex_config_toml(existing, false).unwrap();
+        let v: toml::Value = toml::from_str(&out).unwrap();
+        assert_eq!(v["model"].as_str(), Some("gpt-5.4"));
+        assert!(out.contains("command = \"h5i hook session-start\""));
+        assert!(out.contains("command = \"h5i hook run\""));
+        assert!(out.contains("command = \"h5i hook stop\""));
+        assert!(out.contains("command = \"h5i msg hook\""));
+        assert!(!out.contains("wrap-bash"));
+    }
+
+    #[test]
+    fn codex_config_toml_wrap_bash_is_idempotent() {
+        let once = merge_codex_config_toml("", true).unwrap();
+        let twice = merge_codex_config_toml(&once, true).unwrap();
+        assert_eq!(once, twice);
+        assert!(once.contains("matcher = \"Bash\""));
+        assert!(once.contains("command = \"h5i hook wrap-bash\""));
     }
 
     #[test]
@@ -253,7 +450,10 @@ mod tests {
         }"#;
         let out = merge_hook_settings_json(existing, false).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v.pointer("/env/H5I_AGENT").and_then(|x| x.as_str()), Some("claude"));
+        assert_eq!(
+            v.pointer("/env/H5I_AGENT").and_then(|x| x.as_str()),
+            Some("claude")
+        );
         let stop = commands_under(&v, "Stop");
         assert!(stop.contains(&"h5i msg hook --block".to_string()));
         assert!(stop.contains(&"h5i hook stop".to_string()));

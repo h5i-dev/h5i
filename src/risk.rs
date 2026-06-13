@@ -684,6 +684,7 @@ mod tests {
             structured: None,
             env_id: Some("env/claude/x".into()),
             policy_digest: Some("d".into()),
+            evidence_source: None,
             egress: None,
             redactions: vec![],
         }

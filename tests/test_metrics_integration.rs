@@ -247,6 +247,7 @@ fn test_commit_with_provided_test_metrics() {
             None,
             vec![],
             vec![],
+            None,
         )
         .expect("commit failed");
 
@@ -271,7 +272,7 @@ fn test_commit_with_test_source_none_stores_no_metrics() {
 
     let s = sig(&repo);
     let oid = repo
-        .commit("chore: empty", &s, &s, None, TestSource::None, None, vec![], vec![])
+        .commit("chore: empty", &s, &s, None, TestSource::None, None, vec![], vec![], None)
         .expect("commit failed");
 
     let record = repo.load_h5i_record(oid).expect("load_h5i_record failed");
@@ -295,7 +296,7 @@ fn test_add() { assert_eq!(2 + 2, 4); }
 
     let s = sig(&repo);
     let oid = repo
-        .commit("test: add basic test", &s, &s, None, TestSource::ScanMarkers, None, vec![], vec![])
+        .commit("test: add basic test", &s, &s, None, TestSource::ScanMarkers, None, vec![], vec![], None)
         .expect("commit failed");
 
     let record = repo.load_h5i_record(oid).expect("load_h5i_record failed");
@@ -341,6 +342,7 @@ fn test_commit_provided_metrics_from_file() {
             None,
             vec![],
             vec![],
+            None,
         )
         .expect("commit failed");
 
@@ -399,7 +401,7 @@ fn test_commit_with_caused_by_stores_link() {
     stage_file(&repo, "lib.rs", "fn first() {}");
     let s = sig(&repo);
     let first_oid = repo
-        .commit("feat: first commit", &s, &s, None, TestSource::None, None, vec![], vec![])
+        .commit("feat: first commit", &s, &s, None, TestSource::None, None, vec![], vec![], None)
         .expect("first commit failed");
 
     // Second commit that declares caused_by = [first_oid]
@@ -415,6 +417,7 @@ fn test_commit_with_caused_by_stores_link() {
             None,
             vec![first_oid.to_string()],
             vec![],
+            None,
         )
         .expect("second commit failed");
 
@@ -433,21 +436,21 @@ fn test_causal_ancestors_traversal() {
     // Commit A (root cause)
     stage_file(&repo, "a.rs", "fn a() {}");
     let oid_a = repo
-        .commit("A: root cause", &s, &s, None, TestSource::None, None, vec![], vec![])
+        .commit("A: root cause", &s, &s, None, TestSource::None, None, vec![], vec![], None)
         .expect("commit A failed");
 
     // Commit B caused by A
     stage_file(&repo, "b.rs", "fn b() {}");
     let s = sig(&repo);
     let oid_b = repo
-        .commit("B: caused by A", &s, &s, None, TestSource::None, None, vec![oid_a.to_string()], vec![])
+        .commit("B: caused by A", &s, &s, None, TestSource::None, None, vec![oid_a.to_string()], vec![], None)
         .expect("commit B failed");
 
     // Commit C caused by B
     stage_file(&repo, "c.rs", "fn c() {}");
     let s = sig(&repo);
     let oid_c = repo
-        .commit("C: caused by B", &s, &s, None, TestSource::None, None, vec![oid_b.to_string()], vec![])
+        .commit("C: caused by B", &s, &s, None, TestSource::None, None, vec![oid_b.to_string()], vec![], None)
         .expect("commit C failed");
 
     // causal_ancestors(C) should return [B, A] in BFS order
@@ -467,14 +470,14 @@ fn test_causal_dependents_finds_downstream() {
     // Commit A
     stage_file(&repo, "a.rs", "fn a() {}");
     let oid_a = repo
-        .commit("A: original", &s, &s, None, TestSource::None, None, vec![], vec![])
+        .commit("A: original", &s, &s, None, TestSource::None, None, vec![], vec![], None)
         .expect("commit A failed");
 
     // Commit B with caused_by = [A]
     stage_file(&repo, "b.rs", "fn b() {}");
     let s = sig(&repo);
     let oid_b = repo
-        .commit("B: fixes bug from A", &s, &s, None, TestSource::None, None, vec![oid_a.to_string()], vec![])
+        .commit("B: fixes bug from A", &s, &s, None, TestSource::None, None, vec![oid_a.to_string()], vec![], None)
         .expect("commit B failed");
 
     // causal_dependents(A) should contain B

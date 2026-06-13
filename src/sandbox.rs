@@ -237,6 +237,17 @@ impl AgentRuntime {
         }
     }
 
+    /// Recover the runtime a profile name pins, if it is one of the built-in
+    /// agent profiles. `None` for `default`/custom profiles (which could run
+    /// either runtime). Used to decide runtime-specific box hardening.
+    pub fn from_profile_name(name: &str) -> Option<AgentRuntime> {
+        match name {
+            "agent-claude" => Some(AgentRuntime::Claude),
+            "agent-codex" => Some(AgentRuntime::Codex),
+            _ => None,
+        }
+    }
+
     /// Read-write HOME state this runtime needs — its *own* credentials/config
     /// only. Never the other runtime's.
     fn state_write(self) -> &'static [&'static str] {
@@ -397,6 +408,51 @@ fn default_fs_deny() -> Vec<String> {
         .iter()
         .map(|s| s.to_string())
         .collect()
+}
+
+/// Agent config paths whose mutation could disable the in-box observation hook,
+/// locked **read-only** (bind + remount,ro) inside the box's mount namespace
+/// for interactive agent sessions. Landlock is allowlist-only and cannot
+/// subtract a writable child from a granted parent, so this mount-level lock is
+/// how the kernel tiers make config immutable in-box without a managed-settings
+/// tier (which they can't reach — `/etc/claude-code` can't be created from the
+/// userns).
+///
+/// Two shapes, by scope:
+/// - **Project scope (`$WORK/.claude`, `$WORK/.codex`) — the whole directory.**
+///   A read-only directory blocks both editing existing config *and creating*
+///   `settings.local.json` (the `disableAllHooks` create-bypass that per-file
+///   pinning can't stop). Safe to lock: agents read project config but don't
+///   write it at runtime.
+/// - **User scope — the single settings file only** (`~/.claude/settings.json`,
+///   `~/.codex/config.toml`). `~/.claude` itself must stay writable (the agent
+///   stores session state there), and locking the whole dir would brick the
+///   runtime. There is no `~/.claude/settings.local.json` in Claude's
+///   precedence chain, and the Codex `[features] hooks=false` kill switch lives
+///   only in `config.toml`, so pinning the one file closes user scope.
+///
+/// Only **existing** paths are returned — a bind needs an existing target. An
+/// absent project config dir is a documented residual: the agent could create
+/// `$WORK/.claude` and a local-scope `disableAllHooks`. Closing that would mean
+/// shadowing the (possibly absent) dir, which the tee-shim floor covers instead.
+#[cfg(target_os = "linux")]
+fn config_lock_paths(work: &Path, home: Option<&Path>) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for dir in [".claude", ".codex"] {
+        let p = work.join(dir);
+        if p.is_dir() {
+            out.push(p);
+        }
+    }
+    if let Some(home) = home {
+        for file in [".claude/settings.json", ".codex/config.toml"] {
+            let p = home.join(file);
+            if p.is_file() {
+                out.push(p);
+            }
+        }
+    }
+    out
 }
 
 // ── raw TOML schema (what users write; everything optional) ────────────────
@@ -872,6 +928,16 @@ fn probe_userns() -> bool {
 
 // ─── claim resolution (fail-closed, §6) ─────────────────────────────────────
 
+/// One structural in-box git path: a piece of the repo's `.git` plumbing the
+/// container backend bind-mounts at its *identical host path* inside the box,
+/// so the worktree's gitdir/commondir pointer files resolve. Computed at run
+/// time from the env manifest (see `env::box_git_grants`).
+#[derive(Debug, Clone)]
+pub struct BoxGitPath {
+    pub host: PathBuf,
+    pub rw: bool,
+}
+
 /// The policy as actually enforced: profile + resolved claim. Serialized as
 /// `policy.resolved.toml`; its digest is pinned in the env manifest and in
 /// every capture taken inside the env.
@@ -879,9 +945,27 @@ fn probe_userns() -> bool {
 pub struct ResolvedPolicy {
     pub claim: IsolationClaim,
     pub profile: Profile,
+    /// Runtime-only in-box git mounts for the container backend — never
+    /// serialized (`policy.resolved.toml` and its pinned digest are unchanged;
+    /// these are structural like the implicit `$WORK` mount, not policy).
+    #[serde(skip)]
+    pub box_git: Vec<BoxGitPath>,
+    /// Runtime-only env capture spool. In-box `h5i capture run` writes here;
+    /// the host ingests records into the real object store after the run/shell.
+    #[serde(skip)]
+    pub env_capture_spool: Option<PathBuf>,
 }
 
 impl ResolvedPolicy {
+    pub fn new(claim: IsolationClaim, profile: Profile) -> Self {
+        ResolvedPolicy {
+            claim,
+            profile,
+            box_git: Vec::new(),
+            env_capture_spool: None,
+        }
+    }
+
     pub fn to_toml(&self) -> Result<String, H5iError> {
         toml::to_string(self).map_err(|e| H5iError::Metadata(format!("policy serialization failed: {e}")))
     }
@@ -986,10 +1070,7 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
             )));
         }
     }
-    Ok(ResolvedPolicy {
-        claim: profile.isolation,
-        profile: profile.clone(),
-    })
+    Ok(ResolvedPolicy::new(profile.isolation, profile.clone()))
 }
 
 // ─── confined execution (Linux, `process` tier) ─────────────────────────────
@@ -1196,7 +1277,7 @@ pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
     // command isn't rejected by a user-pinned list that omits `true`.
     let mut profile = policy.profile.clone();
     profile.tools.clear();
-    let probe = ResolvedPolicy { claim: policy.claim, profile };
+    let probe = ResolvedPolicy::new(policy.claim, profile);
     let result = run(&probe, &dir, &["true".to_string()]);
     let _ = std::fs::remove_dir_all(&dir);
     match result {
@@ -1366,6 +1447,20 @@ pub(crate) fn build_confined_command(
     let cgroup_procs_c: Option<std::ffi::CString> = cgroup_procs
         .and_then(|p| std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok());
 
+    // Config-lockdown targets (interactive agent sessions only), pre-resolved to
+    // CStrings so the post-fork child does no allocation when binding them. A
+    // non-empty list forces a mount namespace below — supervised is pidns=false,
+    // so without this there is no private mount ns and a bind would be unsafe.
+    let config_lock_c: Vec<std::ffi::CString> = if interactive {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        config_lock_paths(&work, home.as_deref())
+            .iter()
+            .filter_map(|p| std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(&work);
 
@@ -1416,6 +1511,13 @@ pub(crate) fn build_confined_command(
                 // /proc without touching the host). The userns in the same call
                 // grants the CAP_SYS_ADMIN both need, unprivileged.
                 flags |= libc::CLONE_NEWPID | libc::CLONE_NEWNS;
+            }
+            // Config lockdown needs a private mount namespace to ro-bind in
+            // (supervised is pidns=false, so it would otherwise have none). The
+            // bind is contained: a mount ns under a fresh userns reduces shared
+            // mounts to slave, so it never propagates to the host.
+            if !config_lock_c.is_empty() {
+                flags |= libc::CLONE_NEWNS;
             }
             if libc::unshare(flags) != 0 {
                 return Err(Error::last_os_error());
@@ -1569,6 +1671,39 @@ pub(crate) fn build_confined_command(
                     .add_rule(PathBeneath::new(proc_fd, AccessFs::from_read(ll_abi)))
                     .map_err(|e| Error::other(format!("pidns: landlock /proc re-grant failed: {e}")))?;
                 ruleset_slot = Some(rs);
+            }
+
+            // 1d. Config lockdown (interactive agent sessions). Bind each agent
+            //     config path read-only so the in-box agent cannot edit it — and,
+            //     for the project-scope DIRECTORIES, cannot create new files in it
+            //     (e.g. a `settings.local.json` carrying `disableAllHooks`). This
+            //     runs in our private mount namespace (forced above), before
+            //     Landlock/seccomp, while we still hold CAP_SYS_ADMIN in the
+            //     userns; `mount`/`umount2` are on the seccomp deny-list, so the
+            //     workload can neither undo nor stack over these. Fail-closed: a
+            //     lock we set out to apply but couldn't is an error, never a
+            //     silent run with mutable config.
+            for c in &config_lock_c {
+                let p = c.as_ptr();
+                if libc::mount(p, p, std::ptr::null(), libc::MS_BIND, std::ptr::null()) != 0 {
+                    return Err(Error::other(format!(
+                        "config lock bind failed: {}",
+                        Error::last_os_error()
+                    )));
+                }
+                if libc::mount(
+                    std::ptr::null(),
+                    p,
+                    std::ptr::null(),
+                    libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY,
+                    std::ptr::null(),
+                ) != 0
+                {
+                    return Err(Error::other(format!(
+                        "config lock remount-ro failed: {}",
+                        Error::last_os_error()
+                    )));
+                }
             }
 
             // 2. Resource caps (cooperative, no cgroups needed).
@@ -1972,6 +2107,35 @@ pub(crate) fn wait_loop(
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn config_lock_paths_picks_existing_project_dirs_and_home_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(work.join(".claude")).unwrap();
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        // Project scope: the .claude DIR exists; .codex does not.
+        std::fs::write(work.join(".claude/settings.json"), "{}").unwrap();
+        // User scope: the settings FILE exists; codex config.toml exists.
+        std::fs::write(home.join(".claude/settings.json"), "{}").unwrap();
+        std::fs::write(home.join(".codex/config.toml"), "").unwrap();
+
+        let locks = config_lock_paths(&work, Some(&home));
+        // Project: the .claude directory itself (not the file under it).
+        assert!(locks.contains(&work.join(".claude")), "project .claude dir locked: {locks:?}");
+        assert!(!locks.contains(&work.join(".codex")), "absent project .codex not locked");
+        // User: the single settings file (NOT the whole ~/.claude dir).
+        assert!(locks.contains(&home.join(".claude/settings.json")), "home claude settings locked");
+        assert!(!locks.contains(&home.join(".claude")), "home .claude dir must stay writable");
+        assert!(locks.contains(&home.join(".codex/config.toml")), "home codex config locked");
+
+        // No HOME → only project-scope locks.
+        let locks = config_lock_paths(&work, None);
+        assert_eq!(locks, vec![work.join(".claude")]);
+    }
+
     fn doc_example_toml() -> &'static str {
         r#"
 [profile.default]
@@ -2033,8 +2197,8 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         let mut b = a.clone();
         a.fsize_bytes = None;
         b.fsize_bytes = Some(100 * 1024 * 1024);
-        let ra = ResolvedPolicy { claim: a.isolation, profile: a };
-        let rb = ResolvedPolicy { claim: b.isolation, profile: b };
+        let ra = ResolvedPolicy::new(a.isolation, a);
+        let rb = ResolvedPolicy::new(b.isolation, b);
         assert_ne!(ra.digest().unwrap(), rb.digest().unwrap());
     }
 
@@ -2349,13 +2513,13 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     fn policy_digest_is_stable_and_content_sensitive() {
         let p1 = load_from_str(doc_example_toml(), "default", None).unwrap();
         let p2 = load_from_str(doc_example_toml(), "default", None).unwrap();
-        let r1 = ResolvedPolicy { claim: p1.isolation, profile: p1 };
-        let r2 = ResolvedPolicy { claim: p2.isolation, profile: p2 };
+        let r1 = ResolvedPolicy::new(p1.isolation, p1);
+        let r2 = ResolvedPolicy::new(p2.isolation, p2);
         assert_eq!(r1.digest().unwrap(), r2.digest().unwrap());
 
         let mut p3 = r1.profile.clone();
         p3.net_mode = NetMode::Host;
-        let r3 = ResolvedPolicy { claim: p3.isolation, profile: p3 };
+        let r3 = ResolvedPolicy::new(p3.isolation, p3);
         assert_ne!(r1.digest().unwrap(), r3.digest().unwrap());
         assert_eq!(r1.digest().unwrap().len(), 64);
     }
@@ -2450,7 +2614,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     fn workspace_run_executes_in_workdir_with_wall_clock() {
         let dir = tempfile::tempdir().unwrap();
         let p = Profile::builtin("default", IsolationClaim::Workspace);
-        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        let policy = ResolvedPolicy::new(IsolationClaim::Workspace, p);
         let out = run(&policy, dir.path(), &["pwd".to_string()]).unwrap();
         assert_eq!(out.exit_code, Some(0));
         assert!(!out.timed_out);
@@ -2464,7 +2628,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let dir = tempfile::tempdir().unwrap();
         let mut p = Profile::builtin("default", IsolationClaim::Workspace);
         p.wall_secs = 1;
-        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        let policy = ResolvedPolicy::new(IsolationClaim::Workspace, p);
         let out = run(&policy, dir.path(), &["sleep".to_string(), "30".to_string()]).unwrap();
         assert!(out.timed_out, "expected the wall-clock kill to fire");
         assert_ne!(out.exit_code, Some(0));
@@ -2474,7 +2638,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     fn run_records_resource_usage() {
         let dir = tempfile::tempdir().unwrap();
         let p = Profile::builtin("default", IsolationClaim::Workspace);
-        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        let policy = ResolvedPolicy::new(IsolationClaim::Workspace, p);
         // A command that burns a little wall time so the numbers are non-trivial.
         let out = run(&policy, dir.path(), &["sh".into(), "-c".into(), "sleep 0.2".into()]).unwrap();
         assert_eq!(out.exit_code, Some(0));
@@ -2489,7 +2653,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let dir = tempfile::tempdir().unwrap();
         let mut p = Profile::builtin("default", IsolationClaim::Workspace);
         p.tools = vec!["echo".into(), "python".into()];
-        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        let policy = ResolvedPolicy::new(IsolationClaim::Workspace, p);
         // Listed program (by basename) runs.
         assert!(run(&policy, dir.path(), &["echo".into(), "hi".into()]).is_ok());
         // An unlisted program is refused before it ever executes.
@@ -2502,7 +2666,7 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let dir = tempfile::tempdir().unwrap();
         let p = Profile::builtin("default", IsolationClaim::Workspace);
         assert!(p.tools.is_empty());
-        let policy = ResolvedPolicy { claim: IsolationClaim::Workspace, profile: p };
+        let policy = ResolvedPolicy::new(IsolationClaim::Workspace, p);
         assert!(run(&policy, dir.path(), &["true".into()]).is_ok());
     }
 }

@@ -224,6 +224,7 @@ fn aggressive_summary_still_has_lossless_raw_in_store() {
             filter: cfg(OutputKind::Log, None),
             env_id: None,
             policy_digest: None,
+            evidence_source: None,
             egress: None,
             redact: false,
         },

@@ -148,6 +148,13 @@ impl H5iRepository {
         ast_parser: Option<&dyn Fn(&Path) -> Option<String>>, // Optional externally injected parser
         caused_by: Vec<String>,
         decisions: Vec<Decision>,
+        // When `Some`, the process is running inside a sandboxed env where the
+        // h5i sidecar store + notes ref are sealed: the git commit still lands
+        // (the box has its own object/ref grants), but the note is STAGED to
+        // this spool dir for the host to apply after the session, instead of
+        // written to `refs/h5i/notes` (which would EACCES). AST harvest is also
+        // skipped in this mode (it writes the sealed object store).
+        note_spool: Option<&Path>,
     ) -> Result<Oid, H5iError> {
         let _span = tracing::info_span!(
             "h5i_commit",
@@ -176,12 +183,15 @@ impl H5iRepository {
             })?;
             let full_path = workdir.join(path_str);
 
-            // Harvest AST (Optional)
-            if let Some(parser) = ast_parser {
-                let hashes = ast_hashes.get_or_insert_with(HashMap::new);
-                if let Some(sexp) = parser(&full_path) {
-                    let hash = self.save_ast_to_sidecar(path_str, &sexp)?;
-                    hashes.insert(path_str.to_string(), hash);
+            // Harvest AST (Optional) — skipped in spool mode: `save_ast_to_sidecar`
+            // writes the sealed `.h5i/objects` store the box can't reach.
+            if note_spool.is_none() {
+                if let Some(parser) = ast_parser {
+                    let hashes = ast_hashes.get_or_insert_with(HashMap::new);
+                    if let Some(sexp) = parser(&full_path) {
+                        let hash = self.save_ast_to_sidecar(path_str, &sexp)?;
+                        hashes.insert(path_str.to_string(), hash);
+                    }
                 }
             }
 
@@ -237,10 +247,26 @@ impl H5iRepository {
             timestamp: chrono::Utc::now(),
             caused_by: resolved_caused_by,
             decisions,
+            env_provenance: None,
         };
         let metadata_json = serde_json::to_string(&record)?;
-        self.git_repo
-            .note(author, committer, Some(H5I_NOTES_REF), commit_oid, &metadata_json, true)?;
+        match note_spool {
+            // In-box: stage the note; the host applies it (scoped to the env
+            // branch) on the next ingest. The git commit already succeeded.
+            Some(spool) => {
+                crate::env::write_note_spool(spool, &commit_oid.to_string(), &metadata_json)?
+            }
+            None => {
+                self.git_repo.note(
+                    author,
+                    committer,
+                    Some(H5I_NOTES_REF),
+                    commit_oid,
+                    &metadata_json,
+                    true,
+                )?;
+            }
+        }
 
         let short = commit_oid.to_string();
         let short = &short[..short.len().min(8)];
@@ -547,6 +573,34 @@ impl H5iRepository {
                             println!("             {}", style(&d.reason).italic());
                         }
                     }
+                }
+
+                if let Some(ep) = &r.env_provenance {
+                    // Self-describing applied commit: which env it came from and
+                    // the evidence carried forward, by trust lane.
+                    let lanes = ep
+                        .evidence_sources
+                        .iter()
+                        .map(|(s, n)| format!("{s}={n}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!(
+                        "{:<10} {} {}",
+                        style("From env:").dim(),
+                        style(&ep.env_id).cyan().bold(),
+                        style(format!("(by {}, {})", ep.agent, ep.isolation_claim)).dim(),
+                    );
+                    println!(
+                        "{:<10} {} {}",
+                        style("Evidence:").dim(),
+                        style(format!("{} capture(s)", ep.captures_total)).green(),
+                        style(if lanes.is_empty() {
+                            "none".into()
+                        } else {
+                            format!("[{lanes}]")
+                        })
+                        .dim(),
+                    );
                 }
             }
             println!("\n    {}\n", style(commit.message().unwrap_or("")).bold());
@@ -3001,6 +3055,7 @@ mod tests {
             None, // ast_parser
             vec![],
             vec![],
+            None, // note_spool
         )?;
 
         // Verify standard git commit

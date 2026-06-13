@@ -2906,6 +2906,7 @@ mod tests {
             timestamp: chrono::Utc::now(),
             caused_by: Vec::new(),
             decisions: Vec::new(),
+            env_provenance: None,
         }
     }
 

@@ -85,13 +85,51 @@ pub fn h5i_root_for_repo(repo: &Repository) -> Result<PathBuf, H5iError> {
 }
 
 pub fn ensure_layout(h5i_root: &Path) -> Result<(), H5iError> {
-    fs::create_dir_all(h5i_root).map_err(|e| H5iError::with_path(e, h5i_root))?;
+    fs::create_dir_all(h5i_root).map_err(|e| store_io_error(h5i_root, h5i_root, e))?;
     for dir in REQUIRED_DIRS {
         let path = h5i_root.join(dir);
-        fs::create_dir_all(&path).map_err(|e| H5iError::with_path(e, path))?;
+        fs::create_dir_all(&path).map_err(|e| store_io_error(h5i_root, &path, e))?;
     }
     write_schema_version_if_missing(h5i_root)?;
     Ok(())
+}
+
+/// Best-effort owner-mismatch detail for an unwritable store (Unix only).
+#[cfg(unix)]
+fn store_owner_hint(h5i_root: &Path) -> String {
+    use std::os::unix::fs::MetadataExt;
+    let me = unsafe { libc::geteuid() };
+    match fs::metadata(h5i_root) {
+        Ok(m) if m.uid() != me => format!(" — store owned by uid {}, you are uid {}", m.uid(), me),
+        _ => String::new(),
+    }
+}
+#[cfg(not(unix))]
+fn store_owner_hint(_h5i_root: &Path) -> String {
+    String::new()
+}
+
+/// Turn an I/O error on the h5i data store into an actionable message when it's
+/// a permission failure. A raw "Permission denied" deep in a sharded object
+/// path — classically the store left root-owned by an earlier `sudo` run — is a
+/// notorious head-scratcher; spell out the likely cause and the one-line repair.
+/// Non-permission errors pass through with plain path context.
+pub fn store_io_error(h5i_root: &Path, path: &Path, source: std::io::Error) -> H5iError {
+    if source.kind() == std::io::ErrorKind::PermissionDenied {
+        H5iError::Metadata(format!(
+            "h5i data store not writable: {path}{owner}\n  \
+             The store under {root} appears owned by another user — commonly from an earlier \
+             `sudo`/root run.\n  \
+             Repair:  sudo chown -R \"$(id -u):$(id -g)\" {root}\n  \
+             (Inside an `h5i env` sandbox this is expected: the store is sealed and writes are \
+             staged to the spool for host ingest.)",
+            path = path.display(),
+            owner = store_owner_hint(h5i_root),
+            root = h5i_root.display(),
+        ))
+    } else {
+        H5iError::with_path(source, path)
+    }
 }
 
 pub fn doctor(
@@ -374,6 +412,95 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), H5iError> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn store_io_error_is_actionable_on_permission_denied() {
+        let root = std::path::Path::new("/tmp/repo/.git/.h5i");
+        let path = root.join("objects/41/f4/abc");
+        let denied =
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Permission denied");
+        let msg = store_io_error(root, &path, denied).to_string();
+        // Names the path, explains the likely cause, and gives the repair.
+        assert!(msg.contains("not writable"), "{msg}");
+        assert!(msg.contains("objects/41/f4/abc"), "{msg}");
+        assert!(msg.contains("chown"), "{msg}");
+        assert!(msg.contains("sandbox"), "{msg}");
+
+        // A non-permission error keeps plain path context (no scary chown advice).
+        let other = std::io::Error::new(std::io::ErrorKind::NotFound, "nope");
+        let msg = store_io_error(root, &path, other).to_string();
+        assert!(!msg.contains("chown"), "non-permission errors stay plain: {msg}");
+    }
+
+    /// Functional: a store dir the process genuinely can't write into surfaces
+    /// the actionable error (not a raw EACCES) through `LocalStore.put`.
+    #[test]
+    #[cfg(unix)]
+    fn unwritable_objects_dir_yields_actionable_put_error() {
+        use crate::objects::{Backend, LocalStore};
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipping: running as root (mode bits don't bind)");
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let h5i_root = dir.path().join(".h5i");
+        ensure_layout(&h5i_root).unwrap();
+        let objects = h5i_root.join("objects");
+        // Remove all perms: even the owner can't create entries (needs wx).
+        let orig = std::fs::metadata(&objects).unwrap().permissions();
+        std::fs::set_permissions(&objects, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let store = LocalStore::new(&h5i_root);
+        let err = store.put(&"a".repeat(64), b"data").unwrap_err().to_string();
+
+        // Restore before asserting so tempdir cleanup always works.
+        std::fs::set_permissions(&objects, orig).unwrap();
+        assert!(err.contains("not writable") && err.contains("chown"), "{err}");
+    }
+
+    /// The owner-mismatch detail (the *actual* root-owned-store scenario) — a
+    /// real store owned by a different uid yields the "owned by uid X" hint. We
+    /// can't `chown` without root, so we point at a known root-owned path (`/`).
+    #[test]
+    #[cfg(unix)]
+    fn store_owner_hint_reports_uid_mismatch() {
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipping: running as root — no mismatch to report");
+            return;
+        }
+        // `/` is owned by uid 0 on every reasonable system; we are not root.
+        let hint = store_owner_hint(std::path::Path::new("/"));
+        assert!(hint.contains("owned by uid 0"), "expected owner mismatch: {hint:?}");
+        assert!(hint.contains("you are uid"), "{hint:?}");
+
+        // A path we own yields no mismatch noise.
+        let dir = tempdir().unwrap();
+        assert_eq!(store_owner_hint(dir.path()), "");
+    }
+
+    /// `ensure_layout` (the early, on-open path) also surfaces the actionable
+    /// error when the store can't be created — not just `LocalStore.put`.
+    #[test]
+    #[cfg(unix)]
+    fn ensure_layout_actionable_when_parent_unwritable() {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipping: running as root (mode bits don't bind)");
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let parent = dir.path().join("locked");
+        std::fs::create_dir(&parent).unwrap();
+        // r-x, no write: a child `.h5i` can't be created even by the owner.
+        let orig = std::fs::metadata(&parent).unwrap().permissions();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let err = ensure_layout(&parent.join(".h5i")).unwrap_err().to_string();
+
+        std::fs::set_permissions(&parent, orig).unwrap();
+        assert!(err.contains("not writable") && err.contains("chown"), "{err}");
+    }
 
     fn git_repo() -> (tempfile::TempDir, Repository) {
         let dir = tempdir().unwrap();

@@ -28,7 +28,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream, ToSocketAddrs};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -112,7 +112,10 @@ pub fn probe() -> Option<Runtime> {
         return None;
     }
     if podman_rootless()? {
-        Some(Runtime { bin: "podman".into(), rootless: true })
+        Some(Runtime {
+            bin: "podman".into(),
+            rootless: true,
+        })
     } else {
         None
     }
@@ -187,10 +190,17 @@ impl AllowList {
                 (lower, false)
             };
             if !host.is_empty() {
-                entries.push(AllowEntry { host, wildcard, port });
+                entries.push(AllowEntry {
+                    host,
+                    wildcard,
+                    port,
+                });
             }
         }
-        AllowList { entries, pinned_ips: HashSet::new() }
+        AllowList {
+            entries,
+            pinned_ips: HashSet::new(),
+        }
     }
 
     /// Resolve every allowed host to IPs and pin them. Best-effort: a host that
@@ -315,7 +325,12 @@ pub fn spawn_proxy(allow: AllowList) -> Result<ProxyHandle, H5iError> {
         }
     });
 
-    Ok(ProxyHandle { port, stop, tally, join: Some(join) })
+    Ok(ProxyHandle {
+        port,
+        stop,
+        tally,
+        join: Some(join),
+    })
 }
 
 /// Read the request head (up to the blank line) from `s`.
@@ -380,9 +395,7 @@ fn handle_proxy_client(
         t.record(&host, port, permitted);
     }
     if !permitted {
-        let _ = client.write_all(
-            b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n",
-        );
+        let _ = client.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
         return Ok(());
     }
     let mut upstream = match TcpStream::connect((host.as_str(), port)) {
@@ -495,6 +508,14 @@ if [ -z "$found" ] || [ -n "$H5I_SHIM" ] || [ -t 1 ]; then
 fi
 H5I_SHIM=1
 export H5I_SHIM
+# h5i's own invocations are already captured by h5i itself: the wrap-bash hook
+# rewrites the agent's command to `h5i capture run -- <cmd>`, which captures it.
+# Recording it here would double-capture (and tee h5i's own summary output).
+# Pass through WITHOUT recording; H5I_SHIM (set above) also keeps any sub-shell
+# h5i spawns unrecorded. Mirrors the hook's own `first_base == "h5i"` skip.
+case "$cmd" in
+  h5i|h5i\ *) exec "$real" "$@" ;;
+esac
 d="{spool}"
 if [ ! -d "$d" ] || ! command -v tee >/dev/null 2>&1 || ! command -v mkfifo >/dev/null 2>&1; then
   exec "$real" "$@"
@@ -543,6 +564,24 @@ fn prepare_shim(work: &Path) -> Option<ShimPlan> {
     Some(ShimPlan { shim, spool })
 }
 
+/// Write the managed-settings.json (carrying the unkillable wrap-bash
+/// observation hook) under the env dir, to be bind-mounted read-only into the
+/// box at [`crate::hooks::CLAUDE_MANAGED_SETTINGS_PATH`]. Best-effort: returns
+/// `None` (injection skipped, session otherwise unaffected) on any I/O failure
+/// or a path Podman's `--mount` syntax can't carry. Only the in-box Claude
+/// reads this file; it is inert for any other tooling.
+fn prepare_managed_settings(work: &Path) -> Option<PathBuf> {
+    let env_dir = work.parent()?;
+    let dir = env_dir.join("managed");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("managed-settings.json");
+    std::fs::write(&path, crate::hooks::managed_settings_wrap_bash_json()).ok()?;
+    if path.display().to_string().contains(',') {
+        return None;
+    }
+    Some(path)
+}
+
 /// Build the `podman run` argv for `argv` under `policy`, fully
 /// hardened. `image` is the resolved base image; `name` is the (unique)
 /// container name used for cleanup. Pure — no process is spawned, so this is
@@ -565,6 +604,17 @@ pub fn build_run_argv(
     // `/.h5i/orig`, shadow `/bin/sh` + `/bin/bash` with the tee shim, and mount
     // the spool rw. `None` → no observation (captured runs, or shim prep failed).
     shim: Option<&ShimPlan>,
+    // In-box git plumbing (env::box_git_plumbing): each host path bind-mounted
+    // at its IDENTICAL path inside the container so the worktree's
+    // gitdir/commondir pointer files resolve. Empty → no extra mounts.
+    box_git: &[crate::sandbox::BoxGitPath],
+    // Managed-settings.json (the unkillable wrap-bash hook) to bind-mount
+    // read-only at the Claude managed-settings path. `None` → no injection
+    // (non-Claude box, captured run, or prep failed).
+    managed_settings: Option<&Path>,
+    // Env capture spool for in-box `h5i capture run`. Mounted at
+    // `/.h5i/spool`, matching the tee-shim spool path.
+    env_capture_spool: Option<&Path>,
 ) -> Vec<String> {
     let mut a: Vec<String> = vec![
         rt.bin.clone(),
@@ -580,15 +630,63 @@ pub fn build_run_argv(
         "--read-only".into(),
         "--tmpfs".into(),
         "/tmp:rw,nosuid,nodev,size=256m".into(),
-        // The env workspace is the only writable host path, mounted at /work.
-        // Use --mount rather than -v so ':' in a repository path cannot be
-        // parsed as a bind-mount option suffix by Podman.
+        // The env workspace, mounted at /work (the in-box git plumbing below
+        // adds the only other writable host paths — the env's own .git
+        // surface). Use --mount rather than -v so ':' in a repository path
+        // cannot be parsed as a bind-mount option suffix by Podman.
         "--mount".into(),
         format!("type=bind,source={},target=/work,rw", work.display()),
         "-w".into(),
         "/work".into(),
         "--ipc=private".into(),
     ];
+    for rel in [".claude/settings.json", ".codex/config.toml"] {
+        let source = work.join(rel);
+        if source.exists() && !source.display().to_string().contains(',') {
+            a.push("--mount".into());
+            a.push(format!(
+                "type=bind,source={},target=/work/{rel},ro",
+                source.display()
+            ));
+        }
+    }
+    // In-box git plumbing: every path mounted at its identical host path (the
+    // worktree's pointer files contain host-absolute paths). The list arrives
+    // parent-before-child (`refs` ro before its nested rw children) and is
+    // emitted in order — mount targets that don't exist in the image are
+    // auto-created on the rootfs overlay, same as the shim mounts below.
+    // Podman's `--mount` syntax cannot carry a comma in a path: in that case
+    // skip the WHOLE set (a partially mounted .git is worse than the old
+    // fail-closed "not a git repository").
+    if !box_git.is_empty()
+        && !box_git
+            .iter()
+            .any(|b| b.host.display().to_string().contains(','))
+    {
+        for b in box_git {
+            a.push("--mount".into());
+            a.push(format!(
+                "type=bind,source={p},target={p},{mode}",
+                p = b.host.display(),
+                mode = if b.rw { "rw" } else { "ro" },
+            ));
+        }
+    }
+    // Managed-settings injection: bind our wrap-bash hook read-only at Claude's
+    // managed-settings path. The in-box agent cannot write the (root-owned)
+    // path and cannot disable a managed hook from its own config, so in-box
+    // observation cannot be silenced. Podman auto-creates the nested target on
+    // the read-only rootfs overlay; the mount lives only in this box's ns.
+    if let Some(ms) = managed_settings {
+        if !ms.display().to_string().contains(',') {
+            a.push("--mount".into());
+            a.push(format!(
+                "type=bind,source={},target={},ro",
+                ms.display(),
+                crate::hooks::CLAUDE_MANAGED_SETTINGS_PATH
+            ));
+        }
+    }
     // Interactive (agent-in-box) flags, right after `run`.
     if let Some(want_tty) = tty {
         a.insert(2, "-i".into());
@@ -603,13 +701,29 @@ pub fn build_run_argv(
     // writable surface, and its contents are treated as untrusted on ingest.
     if let Some(s) = shim {
         a.push("--mount".into());
-        a.push(format!("type=image,source={image},destination={SHIM_ORIG_MOUNT}"));
+        a.push(format!(
+            "type=image,source={image},destination={SHIM_ORIG_MOUNT}"
+        ));
         for target in ["/bin/sh", "/bin/bash"] {
             a.push("--mount".into());
-            a.push(format!("type=bind,source={},target={target},ro", s.shim.display()));
+            a.push(format!(
+                "type=bind,source={},target={target},ro",
+                s.shim.display()
+            ));
         }
         a.push("--mount".into());
-        a.push(format!("type=bind,source={},target={SHIM_SPOOL_MOUNT},rw", s.spool.display()));
+        a.push(format!(
+            "type=bind,source={},target={SHIM_SPOOL_MOUNT},rw",
+            s.spool.display()
+        ));
+    } else if let Some(spool) = env_capture_spool {
+        if !spool.display().to_string().contains(',') {
+            a.push("--mount".into());
+            a.push(format!(
+                "type=bind,source={},target={SHIM_SPOOL_MOUNT},rw",
+                spool.display()
+            ));
+        }
     }
     // Rootless podman: keep the caller's uid so files in /work stay owned by us.
     if rt.rootless {
@@ -639,7 +753,13 @@ pub fn build_run_argv(
             // that does not forward to host loopback.
             a.push("--network=slirp4netns:allow_host_loopback=true".into());
             let proxy = format!("http://10.0.2.2:{port}");
-            for var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY"] {
+            for var in [
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "http_proxy",
+                "https_proxy",
+                "ALL_PROXY",
+            ] {
                 a.push("--env".into());
                 a.push(format!("{var}={proxy}"));
             }
@@ -689,7 +809,8 @@ pub fn run(
         H5iError::Metadata(
             "isolation=container requires rootless Podman on PATH; Docker and rootful Podman are \
              intentionally not accepted in this Linux/WSL backend — install/configure rootless \
-             podman or re-request --isolation workspace/process".into(),
+             podman or re-request --isolation workspace/process"
+                .into(),
         )
     })?;
     let image = p.image.clone().ok_or_else(|| {
@@ -728,7 +849,21 @@ pub fn run(
         std::process::id(),
         PROBE_SEQ.fetch_add(1, Ordering::Relaxed)
     );
-    let full = build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, None, None);
+    let full = build_run_argv(
+        &rt,
+        p,
+        work,
+        &image,
+        &name,
+        &net,
+        argv,
+        injected_env,
+        None,
+        None,
+        &policy.box_git,
+        None,
+        policy.env_capture_spool.as_deref(),
+    );
 
     let started = std::time::Instant::now();
     let mut cmd = std::process::Command::new(&full[0]);
@@ -767,7 +902,8 @@ pub fn run_interactive(
     let rt = probe().ok_or_else(|| {
         H5iError::Metadata(
             "isolation=container requires rootless Podman on PATH — install/configure rootless \
-             podman or re-request --isolation workspace/process".into(),
+             podman or re-request --isolation workspace/process"
+                .into(),
         )
     })?;
     let image = p.image.clone().ok_or_else(|| {
@@ -799,15 +935,39 @@ pub fn run_interactive(
     // Allocate a TTY only when we actually have one on both ends (a piped/CI
     // invocation must not request `-t`, which Podman would reject).
     let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    let name = format!("h5i-{}-{}", std::process::id(), PROBE_SEQ.fetch_add(1, Ordering::Relaxed));
+    let name = format!(
+        "h5i-{}-{}",
+        std::process::id(),
+        PROBE_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
     // Observation shim: best-effort. A session without it is fully functional —
     // it just produces no in-box command evidence.
     let shim = prepare_shim(work);
     if shim.is_none() {
         eprintln!("note: shell observation shim unavailable — session runs unobserved");
     }
-    let full =
-        build_run_argv(&rt, p, work, &image, &name, &net, argv, injected_env, Some(tty), shim.as_ref());
+    // Managed-settings injection (Claude only): pins the wrap-bash hook
+    // unkillably in-box. Skip for a known-Codex profile — the file is Claude's
+    // managed scope and inert for Codex (whose own hook hardening is separate);
+    // for `default`/custom profiles we inject, since they may run Claude.
+    let is_codex = crate::sandbox::AgentRuntime::from_profile_name(&p.name)
+        == Some(crate::sandbox::AgentRuntime::Codex);
+    let managed_settings = if is_codex { None } else { prepare_managed_settings(work) };
+    let full = build_run_argv(
+        &rt,
+        p,
+        work,
+        &image,
+        &name,
+        &net,
+        argv,
+        injected_env,
+        Some(tty),
+        shim.as_ref(),
+        &policy.box_git,
+        managed_settings.as_deref(),
+        policy.env_capture_spool.as_deref(),
+    );
 
     // Inherited stdio (the default) — this is the interactive session. Secret
     // values are seeded into Podman's environment (forwarded by the `--env NAME`
@@ -838,7 +998,9 @@ fn wait_container(
     full: &[String],
 ) -> Result<ExecOutcome, H5iError> {
     use std::process::Stdio;
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = cmd
         .spawn()
         .map_err(|e| H5iError::Metadata(format!("failed to run `{}`: {e}", full.join(" "))))?;
@@ -897,7 +1059,10 @@ mod tests {
     use super::*;
 
     fn rt() -> Runtime {
-        Runtime { bin: "podman".into(), rootless: true }
+        Runtime {
+            bin: "podman".into(),
+            rootless: true,
+        }
     }
 
     #[test]
@@ -947,11 +1112,17 @@ mod tests {
         assert!(a.allows("pypi.org", 80));
         // Port-restricted.
         assert!(a.allows("github.com", 443));
-        assert!(!a.allows("github.com", 80), "port 80 not allowed for github.com:443");
+        assert!(
+            !a.allows("github.com", 80),
+            "port 80 not allowed for github.com:443"
+        );
         // Subdomain wildcard (both . and *. forms).
         assert!(a.allows("raw.githubusercontent.com", 443));
         assert!(a.allows("files.pythonhosted.org", 443));
-        assert!(a.allows("pythonhosted.org", 443), "apex matches the wildcard too");
+        assert!(
+            a.allows("pythonhosted.org", 443),
+            "apex matches the wildcard too"
+        );
         // Not on the list → fail closed.
         assert!(!a.allows("evil.example.com", 443));
         assert!(!a.allows("notgithub.com", 443));
@@ -974,9 +1145,11 @@ mod tests {
     fn parse_target_connect_and_absolute() {
         let (h, p, c) = parse_target(b"CONNECT pypi.org:443 HTTP/1.1\r\n\r\n").unwrap();
         assert_eq!((h.as_str(), p, c), ("pypi.org", 443, true));
-        let (h, p, c) = parse_target(b"GET http://example.com/x HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let (h, p, c) =
+            parse_target(b"GET http://example.com/x HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
         assert_eq!((h.as_str(), p, c), ("example.com", 80, false));
-        let (h, p, c) = parse_target(b"GET https://example.com/x HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let (h, p, c) =
+            parse_target(b"GET https://example.com/x HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
         assert_eq!((h.as_str(), p, c), ("example.com", 443, false));
         let (h, p, _) = parse_target(b"GET http://example.com:8080/y HTTP/1.1\r\n\r\n").unwrap();
         assert_eq!((h.as_str(), p), ("example.com", 8080));
@@ -995,6 +1168,9 @@ mod tests {
             "h5i-test",
             &NetPlan::None,
             &["sh".into(), "-c".into(), "echo hi".into()],
+            &[],
+            None,
+            None,
             &[],
             None,
             None,
@@ -1021,6 +1197,188 @@ mod tests {
     }
 
     #[test]
+    fn run_argv_mounts_agent_hook_configs_read_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path();
+        std::fs::create_dir_all(work.join(".claude")).unwrap();
+        std::fs::create_dir_all(work.join(".codex")).unwrap();
+        std::fs::write(work.join(".claude/settings.json"), "{}").unwrap();
+        std::fs::write(work.join(".codex/config.toml"), "").unwrap();
+
+        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let argv = build_run_argv(
+            &rt(),
+            &p,
+            work,
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            None,
+            None,
+            &[],
+            None,
+            None,
+        );
+        let joined = argv.join(" ");
+        assert!(joined.contains(&format!(
+            "type=bind,source={},target=/work/.claude/settings.json,ro",
+            work.join(".claude/settings.json").display()
+        )));
+        assert!(joined.contains(&format!(
+            "type=bind,source={},target=/work/.codex/config.toml,ro",
+            work.join(".codex/config.toml").display()
+        )));
+    }
+
+    // In-box git plumbing mounts: identical source/target host paths, ro/rw
+    // honored, list order preserved (nested binds need their parent first),
+    // and a comma in ANY path skips the whole set (Podman's `--mount` syntax
+    // cannot carry it; a partially mounted .git would be worse than none).
+    #[test]
+    fn run_argv_mounts_box_git_plumbing_at_identical_paths() {
+        use crate::sandbox::BoxGitPath;
+        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let box_git = vec![
+            BoxGitPath {
+                host: "/repo/.git/refs".into(),
+                rw: false,
+            },
+            BoxGitPath {
+                host: "/repo/.git/objects".into(),
+                rw: true,
+            },
+            BoxGitPath {
+                host: "/repo/.git/refs/h5i/context".into(),
+                rw: true,
+            },
+        ];
+        let argv = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            None,
+            None,
+            &box_git,
+            None,
+            None,
+        );
+        let joined = argv.join(" ");
+        assert!(joined.contains("type=bind,source=/repo/.git/refs,target=/repo/.git/refs,ro"));
+        assert!(joined.contains("type=bind,source=/repo/.git/objects,target=/repo/.git/objects,rw"));
+        // Parent `refs` (ro) is mounted before the rw child nested under it.
+        let parent = argv
+            .iter()
+            .position(|x| x.ends_with("target=/repo/.git/refs,ro"))
+            .unwrap();
+        let child = argv
+            .iter()
+            .position(|x| x.ends_with("target=/repo/.git/refs/h5i/context,rw"))
+            .unwrap();
+        assert!(parent < child, "parent mount must precede nested child");
+
+        // A comma anywhere → the whole set is skipped, nothing partial.
+        let weird = vec![
+            BoxGitPath {
+                host: "/repo/.git/objects".into(),
+                rw: true,
+            },
+            BoxGitPath {
+                host: "/re,po/.git/refs".into(),
+                rw: false,
+            },
+        ];
+        let argv = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            None,
+            None,
+            &weird,
+            None,
+            None,
+        );
+        let joined = argv.join(" ");
+        assert!(
+            !joined.contains("target=/repo/.git/objects"),
+            "comma path must disable the whole box-git mount set: {joined}"
+        );
+    }
+
+    // Managed-settings injection: when present, a read-only bind mount lands at
+    // the Claude managed-settings path; when absent, no such mount appears.
+    #[test]
+    fn run_argv_mounts_managed_settings_read_only() {
+        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let ms = Path::new("/env/managed/managed-settings.json");
+        let with = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            Some(true),
+            None,
+            &[],
+            Some(ms),
+            None,
+        );
+        let joined = with.join(" ");
+        assert!(
+            joined.contains(&format!(
+                "type=bind,source=/env/managed/managed-settings.json,target={},ro",
+                crate::hooks::CLAUDE_MANAGED_SETTINGS_PATH
+            )),
+            "expected ro managed-settings mount: {joined}"
+        );
+
+        // None → no managed-settings mount at all.
+        let without = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            Some(true),
+            None,
+            &[],
+            None,
+            None,
+        );
+        assert!(
+            !without.join(" ").contains(crate::hooks::CLAUDE_MANAGED_SETTINGS_PATH),
+            "no managed-settings mount when not requested"
+        );
+    }
+
+    // The Codex agent profile is detected as Codex (so the Claude-specific
+    // managed-settings injection is skipped for it); default/custom are not.
+    #[test]
+    fn codex_profile_is_detected_for_managed_settings_gating() {
+        use crate::sandbox::AgentRuntime;
+        assert_eq!(AgentRuntime::from_profile_name("agent-codex"), Some(AgentRuntime::Codex));
+        assert_eq!(AgentRuntime::from_profile_name("agent-claude"), Some(AgentRuntime::Claude));
+        assert_eq!(AgentRuntime::from_profile_name("default"), None);
+    }
+
+    #[test]
     fn run_argv_proxy_mode_sets_proxy_env() {
         let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
         let argv = build_run_argv(
@@ -1031,6 +1389,9 @@ mod tests {
             "n",
             &NetPlan::Proxy(8123),
             &["true".into()],
+            &[],
+            None,
+            None,
             &[],
             None,
             None,
@@ -1056,6 +1417,9 @@ mod tests {
                 &["bash".into()],
                 &[],
                 tty,
+                None,
+                &[],
+                None,
                 None,
             )
         };
@@ -1091,6 +1455,9 @@ mod tests {
             &[],
             Some(true),
             Some(&plan),
+            &[],
+            None,
+            None,
         );
         let joined = argv.join(" ");
         // The image self-mount keeps the real shell reachable for any image.
@@ -1112,8 +1479,35 @@ mod tests {
             &[],
             None,
             None,
+            &[],
+            None,
+            None,
         );
         assert!(!plain.join(" ").contains("/.h5i/"));
+    }
+
+    #[test]
+    fn run_argv_mounts_env_capture_spool_without_shim() {
+        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let argv = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            None,
+            None,
+            &[],
+            None,
+            Some(Path::new("/envdir/spool")),
+        );
+        let joined = argv.join(" ");
+        assert!(joined.contains("type=bind,source=/envdir/spool,target=/.h5i/spool,rw"));
+        assert!(!joined.contains("target=/bin/sh,ro"));
+        assert!(!joined.contains("target=/bin/bash,ro"));
     }
 
     // Live on-host: the generated shim is real POSIX sh — run it against the
@@ -1134,7 +1528,10 @@ mod tests {
         let shim = tmp.join("sh");
         std::fs::write(
             &shim,
-            shim_script(&tmp.join("orig").display().to_string(), &spool.display().to_string()),
+            shim_script(
+                &tmp.join("orig").display().to_string(),
+                &spool.display().to_string(),
+            ),
         )
         .unwrap();
         std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1145,15 +1542,27 @@ mod tests {
             .output()
             .expect("run shim");
         assert_eq!(out.status.code(), Some(3), "exit code must pass through");
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "visible\n", "stdout must pass through");
-        assert!(String::from_utf8_lossy(&out.stderr).contains("err-line"), "stderr must pass through");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "visible\n",
+            "stdout must pass through"
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("err-line"),
+            "stderr must pass through"
+        );
         let entries: Vec<_> = std::fs::read_dir(&spool)
             .unwrap()
             .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
             .collect();
-        let cmd_file = entries.iter().find(|n| n.ends_with(".cmd")).expect("spooled .cmd");
+        let cmd_file = entries
+            .iter()
+            .find(|n| n.ends_with(".cmd"))
+            .expect("spooled .cmd");
         let base = cmd_file.trim_end_matches(".cmd");
-        assert!(std::fs::read_to_string(spool.join(cmd_file)).unwrap().contains("echo visible"));
+        assert!(std::fs::read_to_string(spool.join(cmd_file))
+            .unwrap()
+            .contains("echo visible"));
         assert_eq!(
             std::fs::read_to_string(spool.join(format!("{base}.out"))).unwrap(),
             "visible\n"
@@ -1161,7 +1570,10 @@ mod tests {
         assert!(std::fs::read_to_string(spool.join(format!("{base}.err")))
             .unwrap()
             .contains("err-line"));
-        assert_eq!(std::fs::read_to_string(spool.join(format!("{base}.exit"))).unwrap(), "3");
+        assert_eq!(
+            std::fs::read_to_string(spool.join(format!("{base}.exit"))).unwrap(),
+            "3"
+        );
 
         // Nested invocation (H5I_SHIM set) passes through unobserved.
         let before = std::fs::read_dir(&spool).unwrap().count();
@@ -1171,14 +1583,25 @@ mod tests {
             .output()
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&nested.stdout), "nested\n");
-        assert_eq!(std::fs::read_dir(&spool).unwrap().count(), before, "no new spool entries");
+        assert_eq!(
+            std::fs::read_dir(&spool).unwrap().count(),
+            before,
+            "no new spool entries"
+        );
 
         // Non-`-c` (script execution) passes through unobserved.
         let script = tmp.join("inner.sh");
         std::fs::write(&script, "echo from-script\n").unwrap();
-        let run = std::process::Command::new(&shim).arg(&script).output().unwrap();
+        let run = std::process::Command::new(&shim)
+            .arg(&script)
+            .output()
+            .unwrap();
         assert_eq!(String::from_utf8_lossy(&run.stdout), "from-script\n");
-        assert_eq!(std::fs::read_dir(&spool).unwrap().count(), before, "scripts are not observed");
+        assert_eq!(
+            std::fs::read_dir(&spool).unwrap().count(),
+            before,
+            "scripts are not observed"
+        );
 
         // Stdin flows through an observed command untouched.
         use std::io::Write as _;
@@ -1191,7 +1614,11 @@ mod tests {
             .unwrap();
         child.stdin.take().unwrap().write_all(b"ping\n").unwrap();
         let fin = child.wait_with_output().unwrap();
-        assert_eq!(String::from_utf8_lossy(&fin.stdout), "ping\n", "stdin must pass through");
+        assert_eq!(
+            String::from_utf8_lossy(&fin.stdout),
+            "ping\n",
+            "stdin must pass through"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -1218,7 +1645,10 @@ mod tests {
         let shim = tmp.join("sh");
         std::fs::write(
             &shim,
-            shim_script(&tmp.join("orig").display().to_string(), &spool.display().to_string()),
+            shim_script(
+                &tmp.join("orig").display().to_string(),
+                &spool.display().to_string(),
+            ),
         )
         .unwrap();
         std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1230,7 +1660,9 @@ mod tests {
                 let _ = std::fs::remove_file(e.unwrap().path());
             }
             let mut c = std::process::Command::new(&shim);
-            c.args(args).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+            c.args(args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null());
             for (k, v) in envs {
                 c.env(k, v);
             }
@@ -1243,16 +1675,59 @@ mod tests {
         };
 
         // Observed — every command-flag spelling is detected, command extracted.
-        assert_eq!(observe(&["-c", "AAA"], &[]).as_deref(), Some("AAA"), "plain -c (Claude)");
-        assert_eq!(observe(&["-lc", "BBB"], &[]).as_deref(), Some("BBB"), "-lc (Codex)");
+        assert_eq!(
+            observe(&["-c", "AAA"], &[]).as_deref(),
+            Some("AAA"),
+            "plain -c (Claude)"
+        );
+        assert_eq!(
+            observe(&["-lc", "BBB"], &[]).as_deref(),
+            Some("BBB"),
+            "-lc (Codex)"
+        );
         assert_eq!(observe(&["-ic", "CCC"], &[]).as_deref(), Some("CCC"), "-ic");
-        assert_eq!(observe(&["-i", "-c", "DDD"], &[]).as_deref(), Some("DDD"), "option before -c");
+        assert_eq!(
+            observe(&["-i", "-c", "DDD"], &[]).as_deref(),
+            Some("DDD"),
+            "option before -c"
+        );
 
         // Not observed — no command flag, or it's a nested/script invocation.
-        assert_eq!(observe(&["script.sh"], &[]), None, "a script run is not a command");
-        assert_eq!(observe(&["-i"], &[]), None, "an interactive shell has no -c");
-        assert_eq!(observe(&["--", "-c", "X"], &[]), None, "`--` ends option scan");
-        assert_eq!(observe(&["-c", "EEE"], &[("H5I_SHIM", "1")]), None, "nested shell passes through");
+        assert_eq!(
+            observe(&["script.sh"], &[]),
+            None,
+            "a script run is not a command"
+        );
+        assert_eq!(
+            observe(&["-i"], &[]),
+            None,
+            "an interactive shell has no -c"
+        );
+        assert_eq!(
+            observe(&["--", "-c", "X"], &[]),
+            None,
+            "`--` ends option scan"
+        );
+        assert_eq!(
+            observe(&["-c", "EEE"], &[("H5I_SHIM", "1")]),
+            None,
+            "nested shell passes through"
+        );
+
+        // h5i's own invocations are NOT recorded (the wrap-bash hook already
+        // captures them via `h5i capture run`) — no double-capture, no overhead.
+        assert_eq!(
+            observe(&["-lc", "h5i capture run -- cargo test"], &[]),
+            None,
+            "hook-wrapped `h5i capture run …` passes through unrecorded"
+        );
+        assert_eq!(observe(&["-c", "h5i"], &[]), None, "a bare `h5i` passes through");
+        // …but a command that merely CONTAINS h5i as an argument is still ours.
+        assert_eq!(
+            observe(&["-c", "grep h5i log.txt"], &[]).as_deref(),
+            Some("grep h5i log.txt"),
+            "h5i as a non-leading word is still observed"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -1272,6 +1747,9 @@ mod tests {
             &injected,
             None,
             None,
+            &[],
+            None,
+            None,
         );
         // The broker's env grant is passed to the container by NAME only — the
         // value is forwarded from Podman's own env, never placed in argv (which
@@ -1282,7 +1760,10 @@ mod tests {
             "secret VALUE must never appear in the container argv: {argv:?}"
         );
         let pos = argv.iter().position(|a| a == "GITHUB_TOKEN");
-        assert!(pos.is_some(), "injected secret must appear as a --env NAME: {argv:?}");
+        assert!(
+            pos.is_some(),
+            "injected secret must appear as a --env NAME: {argv:?}"
+        );
         // ...preceded by --env, and BEFORE the image (so it's a podman flag, not
         // an argument to the command).
         let i = pos.unwrap();
@@ -1302,18 +1783,27 @@ mod tests {
 
         // Denied host → 403, fail-closed.
         let mut c = TcpStream::connect(("127.0.0.1", proxy.port)).unwrap();
-        c.write_all(b"CONNECT evil.example.com:443 HTTP/1.1\r\n\r\n").unwrap();
+        c.write_all(b"CONNECT evil.example.com:443 HTTP/1.1\r\n\r\n")
+            .unwrap();
         let mut line = String::new();
-        BufReader::new(c.try_clone().unwrap()).read_line(&mut line).unwrap();
-        assert!(line.contains("403"), "denied host must get 403, got: {line:?}");
+        BufReader::new(c.try_clone().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        assert!(
+            line.contains("403"),
+            "denied host must get 403, got: {line:?}"
+        );
 
         // Allowed host → the gate passes and tries to connect upstream; since
         // `allowed.invalid` doesn't resolve, we get 502 (not 403) — proving the
         // allowlist verdict was "permit".
         let mut c2 = TcpStream::connect(("127.0.0.1", proxy.port)).unwrap();
-        c2.write_all(b"CONNECT allowed.invalid:443 HTTP/1.1\r\n\r\n").unwrap();
+        c2.write_all(b"CONNECT allowed.invalid:443 HTTP/1.1\r\n\r\n")
+            .unwrap();
         let mut line2 = String::new();
-        BufReader::new(c2.try_clone().unwrap()).read_line(&mut line2).unwrap();
+        BufReader::new(c2.try_clone().unwrap())
+            .read_line(&mut line2)
+            .unwrap();
         assert!(
             line2.contains("502") || line2.contains("200"),
             "allowed host must pass the gate (502/200), got: {line2:?}"

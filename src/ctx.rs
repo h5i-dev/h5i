@@ -2794,6 +2794,12 @@ pub fn reconcile_git_vs_ctx(workdir: &Path) -> Result<ReconciliationReport, H5iE
 pub fn print_status(workdir: &Path) -> Result<(), H5iError> {
     use console::style;
 
+    // A repo we cannot open (e.g. EACCES under a sandbox that doesn't grant
+    // the worktree's git plumbing) must surface as the error it is —
+    // `is_initialized` swallows it, and misreporting it as "not initialized"
+    // sends users chasing `h5i context init`, which then fails with the real
+    // error anyway.
+    ctx_git_repo(workdir)?;
     if !is_initialized(workdir) {
         println!(
             "{} {} not initialized. Run {} to initialize.",
@@ -3991,6 +3997,29 @@ mod tests {
         init(dir.path(), "Build something great").unwrap();
         assert!(is_initialized(dir.path()));
         assert!(list_branches(dir.path()).contains(&"main".to_string()));
+    }
+
+    // A repo that exists but cannot be opened (EACCES — e.g. a sandbox that
+    // doesn't grant the git plumbing) must error from `context status`, not
+    // masquerade as "not initialized".
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn print_status_surfaces_unreadable_repo_as_error() {
+        use std::os::unix::fs::PermissionsExt;
+        // DAC mode bits don't bind root — the denial below wouldn't happen.
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipping: running as root");
+            return;
+        }
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        let git_dir = dir.path().join(".git");
+        let orig = std::fs::metadata(&git_dir).unwrap().permissions();
+        std::fs::set_permissions(&git_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let res = print_status(dir.path());
+        // Restore before asserting so tempdir cleanup works on every path.
+        std::fs::set_permissions(&git_dir, orig).unwrap();
+        assert!(res.is_err(), "unreadable .git must surface as an error");
     }
 
     #[test]
