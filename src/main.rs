@@ -5442,6 +5442,23 @@ fn main() -> anyhow::Result<()> {
                 vec![]
             };
 
+            // In a sandboxed env the h5i sidecar (notes ref + object store) is
+            // sealed, so the git commit lands but the note is STAGED to the env
+            // capture spool for the host to apply after the session — instead of
+            // failing the commit mid-way. Detected by the env-capture vars the
+            // host injects (same gate as in-box `h5i capture run`).
+            let note_spool = {
+                let spool =
+                    std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR).map(PathBuf::from);
+                let in_env = spool.is_some()
+                    && std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok()
+                    && std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
+                if in_env {
+                    spool
+                } else {
+                    None
+                }
+            };
             let oid = repo.commit(
                 &message,
                 &sig,
@@ -5451,6 +5468,7 @@ fn main() -> anyhow::Result<()> {
                 ast_parser,
                 caused_by,
                 decisions,
+                note_spool.as_deref(),
             )?;
             repo.clear_pending_context()?;
             println!(
@@ -5459,6 +5477,12 @@ fn main() -> anyhow::Result<()> {
                 style("h5i Commit Created:").green(),
                 style(oid).magenta().bold()
             );
+            if note_spool.is_some() {
+                println!(
+                    "  {} sandboxed env — h5i note staged for host ingest (applied on session end)",
+                    style("▢").cyan().dim()
+                );
+            }
 
             // Auto-snapshot the context workspace state linked to this git commit.
             let workdir = repo

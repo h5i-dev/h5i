@@ -1060,7 +1060,7 @@ fn tool_commit(params: &Value, workdir: &Path) -> Result<Value> {
     };
 
     let oid = repo.commit(
-        message, &sig, &sig, ai_meta, TestSource::None, None, vec![], vec![],
+        message, &sig, &sig, ai_meta, TestSource::None, None, vec![], vec![], None,
     )?;
 
     // Snapshot context if initialized.

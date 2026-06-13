@@ -418,6 +418,96 @@ fn capture_run_inside_env_stages_for_host_ingest() {
     assert!(status.contains("inbox-capture=1"), "{status}");
 }
 
+/// In-box `h5i commit` doesn't fail on the sealed sidecar store: the git commit
+/// lands on the env branch, the note is STAGED to the spool, and the host
+/// applies it (to the env's own commit) on ingest — no info lost, no mid-commit
+/// crash.
+#[test]
+fn inbox_commit_stages_note_and_host_applies_it() {
+    if !process_tier_runnable() {
+        eprintln!("SKIP inbox_commit_stages_note_and_host_applies_it: process tier not runnable");
+        return;
+    }
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "ibc", "--isolation", "process"]);
+    let bin = r.work("ibc").join("h5i-bin");
+    std::fs::copy(H5I, &bin).expect("copy h5i into worktree");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut p = std::fs::metadata(&bin).unwrap().permissions();
+        p.set_mode(p.mode() | 0o755);
+        std::fs::set_permissions(&bin, p).unwrap();
+    }
+    let base = out_str(&git(&r.dir, &["rev-parse", "refs/heads/h5i/env/tester/ibc"]));
+    let base = base.trim().to_string();
+
+    // In-box: stage + commit. The output must report the commit landing AND the
+    // note being staged (not a Permission-denied crash).
+    let out = r.h5i_ok(&[
+        "env", "run", "ibc", "--", "sh", "-c",
+        "echo hi > f.txt && git add f.txt && \
+         ./h5i-bin commit -m 'in-box change' --model claude-fable-5 --agent claude-code",
+    ]);
+    let raw = {
+        let m = r.capture_manifest("ibc");
+        String::from_utf8_lossy(&r.capture_raw(m["raw_oid"].as_str().unwrap())).to_string()
+    };
+    assert!(
+        raw.contains("h5i Commit Created") && raw.contains("staged for host ingest"),
+        "in-box commit must land + stage the note: {raw}"
+    );
+    let _ = out;
+
+    // The commit advanced the env branch, and the host applied the note to it.
+    let env_tip = out_str(&git(&r.dir, &["rev-parse", "refs/heads/h5i/env/tester/ibc"]));
+    let env_tip = env_tip.trim();
+    assert_ne!(env_tip, base, "in-box commit must advance the env branch");
+    let note = out_str(&git(&r.dir, &["show", &format!("refs/h5i/notes:{env_tip}")]));
+    let rec: serde_json::Value =
+        serde_json::from_str(note.trim()).expect("note applied + valid JSON");
+    assert_eq!(rec["ai_metadata"]["model_name"], "claude-fable-5", "{rec}");
+    assert_eq!(rec["ai_metadata"]["agent_id"], "claude-code");
+
+    let log = out_str(&r.h5i_ok(&["env", "log", "ibc"]));
+    assert!(log.contains("in-box commit note applied"), "{log}");
+}
+
+/// The host applies in-box notes only to the env's OWN commits: a staged note
+/// for a commit outside `base..env_tip` (e.g. the inherited base / `main`) is
+/// rejected, so a box can't attach provenance to arbitrary history.
+#[test]
+fn inbox_commit_note_off_env_range_is_rejected() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "rej"]);
+    // The env branch sits at the base (no in-box commits) → base == main tip.
+    let main_oid = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let main_oid = main_oid.trim().to_string();
+
+    // Forge a note for an inherited commit (main/base) into the spool.
+    let spool = r.env_dir("rej").join("spool");
+    std::fs::create_dir_all(&spool).unwrap();
+    let forged = format!(
+        "{{\"git_oid\":\"{main_oid}\",\"parent_oid\":null,\"ai_metadata\":null,\
+         \"test_metrics\":null,\"ast_hashes\":null,\"timestamp\":\"2026-01-01T00:00:00Z\"}}"
+    );
+    std::fs::write(spool.join(format!("note-{main_oid}.json")), forged).unwrap();
+
+    // An env run triggers ingest, which must reject the forged note.
+    r.h5i_ok(&["env", "run", "rej", "--", "sh", "-c", "echo trigger"]);
+
+    // No note was attached to main, and the rejection is logged.
+    let log = out_str(&r.h5i_ok(&["env", "log", "rej"]));
+    assert!(log.contains("rejected in-box commit note"), "must log rejection: {log}");
+    // Non-asserting git (the note ref may not exist at all → command fails).
+    let note = Command::new("git")
+        .args(["show", &format!("refs/h5i/notes:{main_oid}")])
+        .current_dir(&r.dir)
+        .output()
+        .expect("git show");
+    assert!(!note.status.success(), "no note may be attached to the inherited commit");
+}
+
 #[test]
 fn run_passes_the_exit_code_through() {
     let r = Repo::new();

@@ -1280,6 +1280,27 @@ fn merged_env(a: &[(String, String)], b: &[(String, String)]) -> Vec<(String, St
     out
 }
 
+/// Stage an in-box `h5i commit` note for host ingest. The notes ref
+/// (`refs/h5i/notes`) is sealed in the box, so the commit lands on the env
+/// branch but its `H5iCommitRecord` JSON is written here; the host applies it
+/// (scoped to the env branch) on the next [`ingest_shell_spool`]. The filename
+/// carries the commit oid so the ingest can dedup/validate it.
+pub fn write_note_spool(spool: &Path, oid: &str, record_json: &str) -> Result<(), H5iError> {
+    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
+    // `oid` is a git hex id; constrain the filename to that charset defensively.
+    let safe: String = oid
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(64)
+        .collect();
+    if safe.is_empty() {
+        return Err(H5iError::Metadata("empty commit oid for note spool".into()));
+    }
+    let path = spool.join(format!("note-{safe}.json"));
+    std::fs::write(&path, record_json).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(())
+}
+
 const PROTECTED_HOOK_CONFIGS: &[&str] = &[".claude/settings.json", ".codex/config.toml"];
 
 enum ProtectedHookScope {
@@ -2018,6 +2039,131 @@ fn ingest_shell_spool(
                 event: "exec-log".into(),
                 detail: Some(format!(
                     "inbox capture spool capped at {SPOOL_MAX_ENTRIES}: {cap_dropped} record(s) dropped"
+                )),
+                capture: None,
+            },
+        )?;
+    }
+
+    // In-box `h5i commit` notes. The box can land a commit on its own env
+    // branch but can't write `refs/h5i/notes`; the note is staged here and
+    // applied host-side, **scoped to commits reachable from the env branch** so
+    // a box can't attach provenance to arbitrary commits (e.g. `main`). The
+    // note's fields are agent-claimed, exactly like a normal `h5i commit`.
+    let env_tip = repo
+        .find_reference(&m.branch)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+        .map(|c| c.id());
+    let base_oid = git2::Oid::from_str(&m.base_commit).ok();
+    // A commit is the env's OWN iff it's reachable from the env tip but NOT from
+    // the pinned base — i.e. in the range `base..env_tip`. This excludes the
+    // inherited history (base, `main`, ancestors) so a box can only stamp
+    // commits it actually created, never arbitrary historical ones.
+    let in_env_range = |oid: git2::Oid| -> bool {
+        let Some(tip) = env_tip else { return false };
+        let reachable = tip == oid || repo.graph_descendant_of(tip, oid).unwrap_or(false);
+        let inherited = base_oid
+            .map(|b| b == oid || repo.graph_descendant_of(b, oid).unwrap_or(false))
+            .unwrap_or(false);
+        reachable && !inherited
+    };
+    let mut note_bases: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&spool) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(base) = name.strip_suffix(".json") {
+                let ok = base.starts_with("note-")
+                    && base.len() <= 96
+                    && base.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+                if ok {
+                    note_bases.push(base.to_string());
+                }
+            }
+        }
+    }
+    note_bases.sort();
+    let note_dropped = note_bases.len().saturating_sub(SPOOL_MAX_ENTRIES);
+    for base in note_bases.iter().take(SPOOL_MAX_ENTRIES) {
+        let path = spool.join(format!("{base}.json"));
+        let bytes = match read_spool_capped(&path, SPOOL_MAX_CMD_BYTES) {
+            Some(b) => b,
+            None => continue,
+        };
+        let record: crate::metadata::H5iCommitRecord = match serde_json::from_slice(&bytes) {
+            Ok(r) => r,
+            Err(_) => {
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+        };
+        let oid = match git2::Oid::from_str(&record.git_oid) {
+            Ok(o) => o,
+            Err(_) => {
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+        };
+        // Scope guard: only the env's OWN commits (base..env_tip) may be stamped.
+        if !in_env_range(oid) {
+            append_event(
+                repo,
+                &EnvEvent {
+                    ts: now_ts(),
+                    env_id: m.id.clone(),
+                    agent: m.agent.clone(),
+                    event: "exec-log".into(),
+                    detail: Some(format!(
+                        "rejected in-box commit note for {} — not an env-owned commit",
+                        &record.git_oid[..12.min(record.git_oid.len())]
+                    )),
+                    capture: None,
+                },
+            )?;
+            let _ = std::fs::remove_file(&path);
+            continue;
+        }
+        let sig = objects::signature(repo)?;
+        let json = String::from_utf8_lossy(&bytes);
+        match repo.note(
+            &sig,
+            &sig,
+            Some(crate::repository::H5I_NOTES_REF),
+            oid,
+            &json,
+            true,
+        ) {
+            Ok(_) => {
+                append_event(
+                    repo,
+                    &EnvEvent {
+                        ts: now_ts(),
+                        env_id: m.id.clone(),
+                        agent: m.agent.clone(),
+                        event: "note".into(),
+                        detail: Some(format!(
+                            "in-box commit note applied to {}",
+                            &record.git_oid[..12.min(record.git_oid.len())]
+                        )),
+                        capture: None,
+                    },
+                )?;
+                count += 1;
+            }
+            Err(e) => eprintln!("warning: applying in-box commit note failed: {e}"),
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+    if note_dropped > 0 {
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "exec-log".into(),
+                detail: Some(format!(
+                    "in-box commit note spool capped at {SPOOL_MAX_ENTRIES}: {note_dropped} dropped"
                 )),
                 capture: None,
             },
@@ -3360,6 +3506,26 @@ mod tests {
             status: ST_IDLE.into(),
             captures: vec![],
         }
+    }
+
+    #[test]
+    fn write_note_spool_sanitizes_filename_and_rejects_empty_oid() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path().join("spool");
+        // A normal hex oid → `note-<oid>.json`.
+        let oid = "a".repeat(40);
+        write_note_spool(&spool, &oid, "{\"x\":1}").unwrap();
+        assert!(spool.join(format!("note-{oid}.json")).is_file());
+        // A hostile "oid" with path/shell chars is stripped to its alnum run.
+        write_note_spool(&spool, "../../evil-#$", "{}").unwrap();
+        let names: Vec<String> = std::fs::read_dir(&spool)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.iter().all(|n| n.starts_with("note-") && n.ends_with(".json")));
+        assert!(!names.iter().any(|n| n.contains("..") || n.contains('/') || n.contains('#')));
+        // An all-non-alnum oid leaves nothing to name → error, no file written.
+        assert!(write_note_spool(&spool, "../", "{}").is_err());
     }
 
     #[test]
