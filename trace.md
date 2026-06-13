@@ -1623,3 +1623,4 @@ _[Checkpoint: 6a2cbb24 — edited src/objects.rs; edited src/objects.rs; edited 
 _[Checkpoint: 6a2cbdb4 — edited src/objects.rs; edited src/storage.rs; edited src/storage.rs]_
 ---
 
+[02:33:23] OBSERVE: read MANUAL.md
