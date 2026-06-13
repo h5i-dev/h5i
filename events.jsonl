@@ -36,3 +36,4 @@
 {"ts":"2026-06-13T12:48:29.609960Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo fmt --check` exit=1 source=inbox-capture","capture":"3088de511e546876"}
 {"ts":"2026-06-13T12:48:29.610841Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=130 observed=1"}
 {"ts":"2026-06-13T12:48:43.714262Z","env_id":"env/human/codex-1","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
+{"ts":"2026-06-13T12:48:47.513703Z","env_id":"env/human/codex-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
