@@ -1848,3 +1848,4 @@ _[Checkpoint: 6a2d616d — edited /home/koukyosyumei/Dev/h5i/src/sandbox.rs; edi
 [14:07:46] ACT: edited src/sandbox.rs
 [14:07:50] OBSERVE: read src/sandbox.rs
 [14:07:59] ACT: edited src/cgroup.rs
+[14:08:03] OBSERVE: read docs/comparison.md
