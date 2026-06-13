@@ -162,3 +162,4 @@
 {"ts":"2026-06-13T20:33:55.073159Z","env_id":"env/claude/verifyimg","agent":"claude","event":"created","detail":"base=f4bf68ef1c6e profile=agent-claude isolation=supervised backend=worktree"}
 {"ts":"2026-06-13T20:33:56.354545Z","env_id":"env/claude/verifyimg","agent":"claude","event":"status","detail":"running"}
 {"ts":"2026-06-13T20:37:04.884659Z","env_id":"env/claude/verifyimg","agent":"claude","event":"exec","detail":"cmd=`bash -lc cd \"$WORK\" && CARGO_BUILD_JOBS=1 CARGO_PROFILE_TEST_DEBUG=0 H5I_SKIP_WEB_BUILD=1 cargo test --test env_integration container_create_fails_closed_without_image 2>&1 | grep -E \"test result|^error|FAILED|container_create\" | head` exit=0 wall=169685ms cpu=0ms rss=0MiB","capture":"fb426070d3e6e4f3"}
+{"ts":"2026-06-13T20:37:04.917387Z","env_id":"env/claude/verifyimg","agent":"claude","event":"aborted","detail":"manifest preserved for forensics"}
