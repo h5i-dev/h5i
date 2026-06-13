@@ -1603,3 +1603,9 @@ _[Checkpoint: 6a2cb656 — edited tests/env_integration.rs; edited tests/env_int
 [01:52:09] ACT: edited src/objects.rs
 [01:53:24] OBSERVE: read src/storage.rs
 [01:53:36] ACT: edited src/storage.rs
+
+
+---
+_[Checkpoint: 6a2cbb16 — Actionable unwritable-store error shipped (commit d8513bb3)]_
+---
+

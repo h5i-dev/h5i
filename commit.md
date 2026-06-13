@@ -1486,3 +1486,16 @@ improve default UX of h5i env shell so AI agents (claude/codex) can actually run
 
 ---
 
+## Commit 6a2cbb16 — 2026-06-13 02:06 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+store_io_error() converts a PermissionDenied on .h5i/objects into a clear diagnostic: names path, reports owner-uid mismatch, explains likely cause (earlier sudo/root run), gives exact chown repair, notes the env-sandbox-sealed case. Wired into LocalStore.put + ensure_layout. Non-permission errors unchanged. Live-verified: 'h5i capture run' on a chmod-000 store now prints the repair command instead of raw EACCES. Tests: unit (permission vs other message shape) + functional (chmod 000 → actionable put error, root-skipped). Full suite green (812 lib + objects_e2e 25). This addresses the original report's actual blocker (root-owned .git/.h5i/objects) at the diagnostic level — the spool redirect handles the in-box write path; this handles the host-side ownership case with a clear, self-repairing message.
+
+---
+
