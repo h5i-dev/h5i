@@ -1640,3 +1640,9 @@ _[Checkpoint: 6a2cbdb4 — edited src/objects.rs; edited src/storage.rs; edited 
 _[Checkpoint: 6a2cc465 — Reference docs updated for the env in-box work (commit 410e1485)]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2cc476 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1]_
+---
+

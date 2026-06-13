@@ -1538,3 +1538,16 @@ MANUAL.md + man/man1/h5i.1: corrected stale 'env shell nothing is captured', add
 
 ---
 
+## Commit 6a2cc476 — 2026-06-13 02:46 UTC
+
+### Branch Purpose
+improve default UX of h5i env shell so AI agents (claude/codex) can actually run inside the sandbox
+
+### Previous Progress Summary
+MANUAL.md + man/man1/h5i.1: corrected stale 'env shell nothing is captured', added apply-provenance to the apply entry, new 'In-box git, capture & commit' subsection (functional in-box git, spool-staged in-box capture/commit, container managed-settings, Codex --dangerously-bypass-hook-trust), and the 'h5i data store not writable'/chown troubleshooting. TOC + anchor added; groff clean (warnings pre-existing decorative dividers). Blog posts: reviewed the sandbox series (agent-sandbox-env, sandboxing-ai-agents-*) — conceptual/educational, NOT contradicted by our changes (they discuss provenance/observation generally, which the work strengthens), and they're hand-authored HTML with no markdown source — left unchanged per 'if necessary'.
+
+### This Commit's Contribution
+
+
+---
+
