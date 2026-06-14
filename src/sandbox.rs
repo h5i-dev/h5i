@@ -1913,6 +1913,14 @@ fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
     // safe. We deliberately do NOT deny clone/clone3/fork (needed for normal
     // subprocesses); the documented clone-with-CLONE_NEWUSER gap is closed by
     // the hardened allowlist profile (a later phase), not here.
+    // libc's musl/aarch64 module omits SYS_kexec_file_load (it is present on
+    // glibc and on musl/x86_64). Supply the arch syscall number ourselves so the
+    // deny-list still blocks it there; everywhere else use libc's constant.
+    #[cfg(all(target_env = "musl", target_arch = "aarch64"))]
+    const SYS_KEXEC_FILE_LOAD: libc::c_long = 294;
+    #[cfg(not(all(target_env = "musl", target_arch = "aarch64")))]
+    const SYS_KEXEC_FILE_LOAD: libc::c_long = libc::SYS_kexec_file_load;
+
     #[allow(unused_mut)] // `mut` is used only on arches with the extend below
     let mut denied: Vec<libc::c_long> = vec![
         // mount / rootfs manipulation
@@ -1938,7 +1946,7 @@ fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
         libc::SYS_delete_module,
         // kexec
         libc::SYS_kexec_load,
-        libc::SYS_kexec_file_load,
+        SYS_KEXEC_FILE_LOAD,
         // filesystem handles (bypass path-based confinement / Landlock)
         libc::SYS_open_by_handle_at,
         libc::SYS_name_to_handle_at,

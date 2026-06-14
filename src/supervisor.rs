@@ -443,6 +443,15 @@ fn slirp4netns_path() -> Option<std::path::PathBuf> {
     find_bin("slirp4netns")
 }
 
+/// Non-Linux stub: `slirp4netns` is a Linux-only netns uplink, so there is never
+/// a path to find. Keeps the cross-platform `preflight` (called by the public
+/// `run`/`run_interactive`) compiling on the macOS/Windows release targets,
+/// where the supervised tier is already refused by `probe()` / `run_supervised`.
+#[cfg(not(target_os = "linux"))]
+fn slirp4netns_path() -> Option<std::path::PathBuf> {
+    None
+}
+
 /// Distinct temp-dir suffixes for concurrent supervised egress runs.
 #[cfg(target_os = "linux")]
 static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
