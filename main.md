@@ -800,11 +800,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/env.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [x] edited src/env.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [x] edited tests/env_integration.rs; edited tests/env_integration.rs
+- [x] edited src/env.rs; edited tests/env_integration.rs; edited CLAUDE.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-14 03:51 UTC] `improve-shell`: edited src/env.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [2026-06-14 03:45 UTC] `env/human/claude-1`: edited tests/env_integration.rs; edited tests/env_integration.rs
 - [2026-06-14 03:11 UTC] `improve-shell`: edited src/env.rs; edited tests/env_integration.rs; edited CLAUDE.md
 - [2026-06-14 03:11 UTC] `improve-shell`: edited src/env.rs; edited tests/env_integration.rs; edited CLAUDE.md
