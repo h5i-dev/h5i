@@ -192,3 +192,4 @@
 {"ts":"2026-06-14T03:56:55.552070Z","env_id":"env/human/claude-1","agent":"human","event":"aborted","detail":"manifest preserved for forensics"}
 {"ts":"2026-06-14T03:57:00.214429Z","env_id":"env/human/claude-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-14T03:57:25.162673Z","env_id":"env/human/claude-1","agent":"human","event":"created","detail":"base=dd1638d33ebf profile=agent-claude isolation=supervised backend=worktree"}
+{"ts":"2026-06-14T03:58:12.242748Z","env_id":"env/human/claude-1","agent":"human","event":"status","detail":"running (shell)"}
