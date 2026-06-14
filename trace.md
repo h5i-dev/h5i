@@ -25,3 +25,9 @@
 _[Checkpoint: 6a2e16f7 — Added env propose integration tests for no-op proposals and idempotent re-propose behavior]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2e16fc — edited tests/env_integration.rs; edited tests/env_integration.rs; edited tests/env_integration.rs]_
+---
+
