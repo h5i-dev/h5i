@@ -195,3 +195,4 @@
 {"ts":"2026-06-14T03:58:12.242748Z","env_id":"env/human/claude-1","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-14T04:07:34.983344Z","env_id":"env/human/claude-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=0"}
 {"ts":"2026-06-14T04:07:49.706987Z","env_id":"env/human/claude-1","agent":"human","event":"proposed","detail":"snapshot=637b9f1f51a8a585a448aea24ed9ce0093a55965"}
+{"ts":"2026-06-14T04:07:58.565294Z","env_id":"env/human/claude-1","agent":"human","event":"applied","detail":"merge h5i/env/human/claude-1 → fix-spool-evidence (637b9f1f51a8a585a448aea24ed9ce0093a55965)"}
