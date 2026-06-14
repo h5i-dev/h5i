@@ -810,11 +810,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited src/seccomp_notify.rs; edited src/seccomp_notify.rs; edited src/seccomp_notify.rs
 - [x] edited src/seccomp_notify.rs; edited src/seccomp_notify.rs; edited .github/workflows/test.yaml
 - [x] edited .github/workflows/test.yaml
+- [x] edited .github/workflows/test.yaml; edited src/env.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-14 10:14 UTC] `improve-shell`: edited .github/workflows/test.yaml; edited src/env.rs
 - [2026-06-14 10:07 UTC] `improve-shell`: edited .github/workflows/test.yaml
 - [2026-06-14 10:06 UTC] `improve-shell`: edited src/seccomp_notify.rs; edited src/seccomp_notify.rs; edited .github/workflows/test.yaml
 - [2026-06-14 10:01 UTC] `improve-shell`: edited src/seccomp_notify.rs; edited src/seccomp_notify.rs; edited src/seccomp_notify.rs
