@@ -1982,3 +1982,4 @@ _[Checkpoint: 6a2dbf84 — edited running-h5i-suite-in-box.md; edited src/sandbo
 _[Checkpoint: 6a2e1889 — edited running-h5i-suite-in-box.md; edited src/sandbox.rs; edited src/sandbox.rs]_
 ---
 
+[02:57:39] OBSERVE: read src/env.rs
