@@ -84,3 +84,4 @@ _[Checkpoint: 6a2e7c06 — edited src/seccomp_notify.rs; edited src/seccomp_noti
 
 [10:02:12] OBSERVE: read .github/workflows/release.yaml
 [10:02:35] OBSERVE: read build.rs
+[10:04:28] ACT: edited .github/workflows/test.yaml
