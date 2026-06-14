@@ -61,6 +61,7 @@ pub const H5I_ENV_ID_VAR: &str = "H5I_ENV_ID";
 pub const H5I_ENV_POLICY_DIGEST_VAR: &str = "H5I_ENV_POLICY_DIGEST";
 pub const H5I_ENV_CAPTURE_SPOOL_VAR: &str = "H5I_ENV_CAPTURE_SPOOL";
 const CONTAINER_CAPTURE_SPOOL: &str = "/.h5i/spool";
+#[cfg(unix)] // only the unix-gated RunLock references this
 const RUN_LOCK_FILE: &str = "run.lock";
 
 /// An exclusive, advisory `flock` on `<env>/run.lock` that serializes
