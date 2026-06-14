@@ -43,6 +43,14 @@ impl Clone {
         Command::new(H5I)
             .args(args)
             .env_remove("H5I_AGENT")
+            // Strip the box's env-capture vars: if the suite runs inside an h5i
+            // env box they leak in and make `h5i commit`/`capture run` stage to
+            // the env spool for host ingest instead of writing the note/object
+            // locally (main.rs ~5559, ~7879), breaking provenance assertions.
+            // This temp repo is not the box's env. No-op on host/CI.
+            .env_remove("H5I_ENV_ID")
+            .env_remove("H5I_ENV_POLICY_DIGEST")
+            .env_remove("H5I_ENV_CAPTURE_SPOOL")
             .current_dir(&self.dir)
             .output()
             .expect("run h5i")
@@ -310,6 +318,9 @@ fn capture_emits_structured_default_and_is_queryable() {
         .args(["capture", "run", "--", "pytest", "-q"])
         .env("PATH", &path)
         .env_remove("H5I_AGENT")
+        .env_remove("H5I_ENV_ID")
+        .env_remove("H5I_ENV_POLICY_DIGEST")
+        .env_remove("H5I_ENV_CAPTURE_SPOOL")
         .current_dir(&a.dir)
         .output()
         .expect("run");
@@ -449,6 +460,11 @@ fn h5i_path(c: &Clone, args: &[&str]) -> Output {
         .args(args)
         .env("PATH", path)
         .env_remove("H5I_AGENT")
+        // See Clone::h5i: keep the box's env-capture vars from making
+        // `capture run` stage to the env spool instead of storing locally.
+        .env_remove("H5I_ENV_ID")
+        .env_remove("H5I_ENV_POLICY_DIGEST")
+        .env_remove("H5I_ENV_CAPTURE_SPOOL")
         .current_dir(&c.dir)
         .output()
         .expect("run h5i")
@@ -624,6 +640,9 @@ fn put_reads_from_stdin() {
     let mut child = Command::new(H5I)
         .args(["objects", "put", "-"])
         .env_remove("H5I_AGENT")
+        .env_remove("H5I_ENV_ID")
+        .env_remove("H5I_ENV_POLICY_DIGEST")
+        .env_remove("H5I_ENV_CAPTURE_SPOOL")
         .current_dir(&a.dir)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

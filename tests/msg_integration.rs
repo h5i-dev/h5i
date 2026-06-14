@@ -482,6 +482,56 @@ fn hook_emits_systemmessage_json_by_default_plain_with_flag() {
 }
 
 #[test]
+fn hook_is_a_clean_noop_inside_an_env_box() {
+    // Regression: inside a confined env box ($H5I_ENV_ID set) the msg store
+    // (.git/.h5i/msg) is sealed by design. The Stop hook is inherited from the
+    // project settings and would otherwise hit EACCES advancing the per-agent
+    // read cursor. It must no-op cleanly (exit 0, no output, no error) and leave
+    // the message unread for the *host* session to deliver.
+    let (_root, a, _b) = two_clones();
+    a.h5i_ok(&["msg", "send", "--from", "lead", "dev", "in-box ping"]);
+
+    // Run the hook as if nested in a box.
+    let boxed = Command::new(H5I)
+        .args(["msg", "hook", "--as", "dev"])
+        .env_remove("H5I_AGENT")
+        .env("H5I_ENV_ID", "env/dev/sandbox")
+        .current_dir(&a.dir)
+        .output()
+        .expect("run h5i");
+    assert!(
+        boxed.status.success(),
+        "in-box hook must exit 0: {}",
+        out_str(&boxed)
+    );
+    assert!(
+        boxed.stdout.is_empty(),
+        "in-box hook must deliver nothing: {}",
+        out_str(&boxed)
+    );
+    assert!(
+        boxed.stderr.is_empty(),
+        "in-box hook must not error: {}",
+        String::from_utf8_lossy(&boxed.stderr)
+    );
+
+    // Read-state untouched → the host hook (no $H5I_ENV_ID) still delivers it.
+    let host = Command::new(H5I)
+        .args(["msg", "hook", "--as", "dev"])
+        .env_remove("H5I_AGENT")
+        .env_remove("H5I_ENV_ID")
+        .current_dir(&a.dir)
+        .output()
+        .expect("run h5i");
+    assert!(host.status.success(), "host hook failed: {}", out_str(&host));
+    assert!(
+        out_str(&host).contains("in-box ping"),
+        "host hook must still deliver the unread message: {}",
+        out_str(&host)
+    );
+}
+
+#[test]
 fn codex_sync_auto_delivers_inbox_then_clears() {
     let (_root, a, _b) = two_clones();
     // A claude send (also writes "claude" to the shared stored identity).

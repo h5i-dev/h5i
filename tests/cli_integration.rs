@@ -49,19 +49,31 @@ impl Repo {
         self.dir.path()
     }
 
+    /// Base `h5i` command in this repo, with the box's env-capture vars
+    /// stripped. When the suite itself runs inside an h5i env box, the host
+    /// injects H5I_ENV_{ID,POLICY_DIGEST} + H5I_ENV_CAPTURE_SPOOL; if those
+    /// leak into the `h5i` we spawn against an *unrelated* temp repo, `h5i
+    /// commit` thinks it is committing inside that box and stages the note for
+    /// host ingest instead of writing `refs/h5i/notes` (main.rs ~5559) — which
+    /// breaks every test that asserts on notes/provenance. These temp repos are
+    /// not the box's env, so the vars don't belong here. No-op on host/CI.
+    fn h5i_cmd(&self) -> Command {
+        let mut cmd = Command::new(H5I);
+        cmd.current_dir(self.path())
+            .env_remove("H5I_ENV_ID")
+            .env_remove("H5I_ENV_POLICY_DIGEST")
+            .env_remove("H5I_ENV_CAPTURE_SPOOL");
+        cmd
+    }
+
     fn h5i(&self, args: &[&str]) -> Output {
-        Command::new(H5I)
-            .args(args)
-            .current_dir(self.path())
-            .output()
-            .expect("failed to run h5i")
+        self.h5i_cmd().args(args).output().expect("failed to run h5i")
     }
 
     fn h5i_with_home(&self, home: &Path, args: &[&str]) -> Output {
-        Command::new(H5I)
+        self.h5i_cmd()
             .args(args)
             .env("HOME", home)
-            .current_dir(self.path())
             .output()
             .expect("failed to run h5i")
     }
@@ -675,10 +687,17 @@ fn hook_session_start_prints_context() {
 
     let out = repo.h5i_ok(&["hook", "session-start"]);
     let s = stdout(&out);
+    let v: serde_json::Value = serde_json::from_str(&s).expect("SessionStart hook must emit JSON");
+    let context = v
+        .pointer("/hookSpecificOutput/additionalContext")
+        .and_then(|v| v.as_str())
+        .expect("SessionStart hook missing additionalContext");
 
     assert!(
-        s.contains("session start hook test") || s.contains("h5i") || s.contains("Context"),
-        "hook session-start missing goal or context header: {s}"
+        context.contains("session start hook test")
+            || context.contains("h5i")
+            || context.contains("Context"),
+        "hook session-start missing goal or context header: {context}"
     );
 }
 
@@ -707,6 +726,11 @@ fn hook_stop_auto_checkpoints() {
     // hook stop should auto-commit the workspace
     let out = repo.h5i(&["hook", "stop"]);
     // Success or at most a non-fatal warning
+    assert!(
+        out.stdout.is_empty(),
+        "hook stop must not emit non-JSON stdout: {}",
+        stdout(&out)
+    );
     let e = stderr(&out);
     assert!(
         !e.contains("panic") && !e.contains("thread"),
@@ -866,6 +890,7 @@ fn hook_setup_write_explicit_target_codex_only_writes_codex_config() {
 #[test]
 fn hook_wrap_bash_codex_payload_emits_allow_with_updated_input() {
     let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
     let payload = serde_json::json!({
         "hook_event_name": "PreToolUse",
         "tool_name": "Bash",
@@ -897,6 +922,36 @@ fn hook_wrap_bash_codex_payload_emits_allow_with_updated_input() {
         h["updatedInput"]["command"].as_str(),
         Some("h5i capture run -- cargo test")
     );
+}
+
+#[test]
+fn hook_wrap_bash_without_writable_capture_store_leaves_command_untouched() {
+    let repo = Repo::new();
+    let payload = serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "cargo test" },
+        "cwd": repo.path()
+    });
+
+    let out = Command::new(H5I)
+        .args(["hook", "wrap-bash"])
+        .current_dir(repo.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(stdin) = child.stdin.as_mut() {
+                let _ = stdin.write_all(payload.to_string().as_bytes());
+            }
+            child.wait_with_output()
+        })
+        .expect("hook wrap-bash failed to spawn");
+
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(out.stdout.is_empty(), "unexpected stdout: {}", stdout(&out));
 }
 
 // ─── context scan ────────────────────────────────────────────────────────────

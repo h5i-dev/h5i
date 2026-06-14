@@ -508,6 +508,46 @@ fn inbox_commit_note_off_env_range_is_rejected() {
     assert!(!note.status.success(), "no note may be attached to the inherited commit");
 }
 
+/// `env status` surfaces evidence STAGED in the spool but not yet ingested
+/// (visible mid-session, before the host materializes it at run/shell end) —
+/// staged captures, notes, and tee-shim records, with the pending commands.
+#[test]
+fn env_status_shows_pending_spool_evidence() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "pend"]);
+    let spool = r.env_dir("pend").join("spool");
+    std::fs::create_dir_all(&spool).unwrap();
+
+    // A staged in-box capture (+ its raw), a staged commit note, a shim record.
+    std::fs::write(
+        spool.join("cap-1-0.json"),
+        r#"{"cmd":"pytest -q","cwd":null,"exit_code":0,"files":[],"cmd_argv":["pytest","-q"]}"#,
+    )
+    .unwrap();
+    std::fs::write(spool.join("cap-1-0.raw"), b"...output...").unwrap();
+    std::fs::write(
+        spool.join("note-f3a1b2c4d5e6.json"),
+        r#"{"git_oid":"f3a1b2c4d5e6f7a8","parent_oid":null,"ai_metadata":null,"test_metrics":null,"ast_hashes":null,"timestamp":"2026-01-01T00:00:00Z"}"#,
+    )
+    .unwrap();
+    std::fs::write(spool.join("cmd-9-0.cmd"), b"ls").unwrap();
+
+    let status = out_str(&r.h5i_ok(&["env", "status", "pend"]));
+    assert!(status.contains("pending"), "{status}");
+    assert!(
+        status.contains("1 capture") && status.contains("1 note") && status.contains("1 shim"),
+        "breakdown by lane: {status}"
+    );
+    // The pending command + note oid are listed (the useful detail).
+    assert!(status.contains("pytest -q"), "{status}");
+    assert!(status.contains("note for f3a1b2c4d5e6"), "{status}");
+
+    // No spool → no pending line at all.
+    std::fs::remove_dir_all(&spool).unwrap();
+    let status = out_str(&r.h5i_ok(&["env", "status", "pend"]));
+    assert!(!status.contains("pending"), "no pending line when spool empty: {status}");
+}
+
 /// End-to-end integrity property: an in-box `h5i capture run` (the
 /// `inbox-capture`, box-claimed lane) and the env run itself (`host-env-run`,
 /// host-verified lane) BOTH survive `apply` as distinct lanes in the applied
@@ -721,6 +761,83 @@ fn apply_refuses_without_propose() {
 }
 
 #[test]
+fn propose_accepts_noop_env_and_records_reviewable_state() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "noop"]);
+
+    let main_before = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let branch_before = out_str(&git(
+        &r.dir,
+        &["rev-parse", "refs/heads/h5i/env/tester/noop"],
+    ));
+
+    let brief = out_str(&r.h5i_ok(&["env", "propose", "noop"]));
+    assert!(brief.contains("Proposal: env/tester/noop"), "{brief}");
+    assert!(brief.contains("0 files changed"), "{brief}");
+    assert!(brief.contains("never automatic"), "{brief}");
+    assert_eq!(r.manifest("noop")["status"], "proposed");
+    assert_eq!(
+        out_str(&git(&r.dir, &["rev-parse", "main"])),
+        main_before,
+        "noop propose must not touch the parent branch"
+    );
+    assert_eq!(
+        out_str(&git(
+            &r.dir,
+            &["rev-parse", "refs/heads/h5i/env/tester/noop"],
+        )),
+        branch_before,
+        "noop propose must not create an empty env-branch commit"
+    );
+
+    let log = out_str(&r.h5i_ok(&["env", "log", "noop"]));
+    assert!(
+        log.contains("proposed") && log.contains("no new changes"),
+        "noop proposal should leave an auditable proposed event:\n{log}"
+    );
+}
+
+#[test]
+fn propose_is_idempotent_after_snapshot_without_new_worktree_changes() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "again"]);
+    std::fs::write(r.work("again").join("new.txt"), "from env\n").unwrap();
+
+    let first = out_str(&r.h5i_ok(&["env", "propose", "again"]));
+    assert!(first.contains("new.txt"), "{first}");
+    let branch_after_first = out_str(&git(
+        &r.dir,
+        &["rev-parse", "refs/heads/h5i/env/tester/again"],
+    ));
+
+    let second = out_str(&r.h5i_ok(&["env", "propose", "again"]));
+    assert!(second.contains("Proposal: env/tester/again"), "{second}");
+    assert!(
+        second.contains("new.txt"),
+        "second proposal should still show the proposed diff: {second}"
+    );
+    assert_eq!(r.manifest("again")["status"], "proposed");
+    assert_eq!(
+        out_str(&git(
+            &r.dir,
+            &["rev-parse", "refs/heads/h5i/env/tester/again"],
+        )),
+        branch_after_first,
+        "re-proposing unchanged worktree must not add another snapshot commit"
+    );
+
+    let log = out_str(&r.h5i_ok(&["env", "log", "again"]));
+    assert!(
+        log.matches("proposed").count() >= 2,
+        "both proposal attempts should be auditable:\n{log}"
+    );
+    assert!(
+        log.contains("no new changes"),
+        "second proposal should record why no snapshot commit was made:\n{log}"
+    );
+}
+
+#[test]
 fn apply_merges_when_parent_advanced_and_refuses_conflicts() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "merge-me"]);
@@ -774,6 +891,118 @@ fn apply_requires_parent_branch_and_clean_tree() {
     r.h5i_ok(&["env", "apply", "guard"]);
 }
 
+/// `--patch` squashes the env's divergence into a single-parent commit on the
+/// parent branch, even when a fast-forward would otherwise be possible. The
+/// resulting commit carries the env's content but no second (merge) parent.
+#[test]
+fn apply_patch_mode_squashes_into_single_parent_commit() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "squash"]);
+    std::fs::write(r.work("squash").join("env-file.txt"), "from env\n").unwrap();
+    r.h5i_ok(&["env", "propose", "squash"]);
+
+    // Parent has NOT moved → a plain `apply` would fast-forward. `--patch`
+    // must instead synthesize a fresh squash commit (no fast-forward).
+    let out = out_str(&r.h5i_ok(&["env", "apply", "squash", "--patch"]));
+    assert!(out.contains("applied onto main"), "{out}");
+    assert!(
+        !out.contains("fast-forward"),
+        "patch mode must never fast-forward: {out}"
+    );
+
+    // The env content landed on the parent working tree.
+    assert!(r.dir.join("env-file.txt").is_file());
+    assert_eq!(r.manifest("squash")["status"], "applied");
+
+    // The applied commit is a single-parent (squash) commit, not a merge.
+    let applied = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let applied = applied.trim();
+    let parents = out_str(&git(&r.dir, &["rev-list", "--parents", "-n", "1", applied]));
+    assert_eq!(
+        parents.split_whitespace().count(),
+        2,
+        "patch mode must produce exactly one parent (commit + 1 parent): {parents}"
+    );
+    let msg = out_str(&git(&r.dir, &["log", "-1", "--format=%s", applied]));
+    assert!(msg.contains("--patch"), "squash commit subject: {msg}");
+}
+
+/// `--patch` also squashes when the parent has advanced — the result is a
+/// single-parent commit on top of the advanced parent (a 3-way merge tree with
+/// only the parent recorded as a parent), not a two-parent merge.
+#[test]
+fn apply_patch_mode_squashes_over_advanced_parent() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "squash2"]);
+    std::fs::write(r.work("squash2").join("env-file.txt"), "from env\n").unwrap();
+    r.h5i_ok(&["env", "propose", "squash2"]);
+
+    // Advance the parent on a disjoint file so a 3-way merge is required.
+    std::fs::write(r.dir.join("parent-file.txt"), "from parent\n").unwrap();
+    git(&r.dir, &["add", "parent-file.txt"]);
+    git(&r.dir, &["commit", "-m", "advance parent"]);
+
+    r.h5i_ok(&["env", "apply", "squash2", "--patch"]);
+    assert!(r.dir.join("env-file.txt").is_file());
+    assert!(r.dir.join("parent-file.txt").is_file());
+
+    let applied = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let applied = applied.trim();
+    let parents = out_str(&git(&r.dir, &["rev-list", "--parents", "-n", "1", applied]));
+    assert_eq!(
+        parents.split_whitespace().count(),
+        2,
+        "patch over an advanced parent stays single-parent: {parents}"
+    );
+}
+
+/// Applying a proposed env that never diverged from its parent is a clean
+/// no-op: it reports "nothing to apply", marks the env applied, and leaves the
+/// parent branch untouched (no empty commit).
+#[test]
+fn apply_noop_env_reports_nothing_to_apply() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "empty"]);
+    // Propose with no worktree changes — the env branch tip stays at base.
+    r.h5i_ok(&["env", "propose", "empty"]);
+
+    let before = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let out = out_str(&r.h5i_ok(&["env", "apply", "empty"]));
+    assert!(out.contains("nothing to apply"), "{out}");
+    assert_eq!(r.manifest("empty")["status"], "applied");
+    assert_eq!(
+        out_str(&git(&r.dir, &["rev-parse", "main"])),
+        before,
+        "no-op apply must not write the parent branch"
+    );
+    let log = out_str(&r.h5i_ok(&["env", "log", "empty"]));
+    assert!(
+        log.contains("applied") && log.contains("no-op"),
+        "no-op apply should record why nothing was applied:\n{log}"
+    );
+}
+
+/// Apply is a one-shot PROPOSED→APPLIED transition: once an env is applied it
+/// is no longer 'proposed', so a second `apply` refuses (apply is never
+/// automatic / idempotent-repeat).
+#[test]
+fn apply_refuses_second_apply() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "once"]);
+    std::fs::write(r.work("once").join("once.txt"), "x\n").unwrap();
+    r.h5i_ok(&["env", "propose", "once"]);
+    r.h5i_ok(&["env", "apply", "once"]);
+    assert_eq!(r.manifest("once")["status"], "applied");
+
+    let out = r.h5i(&["env", "apply", "once"]);
+    assert!(!out.status.success(), "re-applying an applied env must refuse");
+    assert!(
+        out_str(&out).contains("propose"),
+        "second apply should point back at propose: {}",
+        out_str(&out)
+    );
+}
+
 #[test]
 fn mediated_commit_fails_closed_on_nested_git_repo() {
     let r = Repo::new();
@@ -805,6 +1034,92 @@ fn mediated_commit_fails_closed_on_nested_git_repo() {
         log.contains("violation"),
         "boundary trip must be persisted as a violation event:\n{log}"
     );
+}
+
+/// Register a real submodule at `sub_path` in the repo's base commit, sourced
+/// from a fresh standalone repo. Returns the gitlink commit OID. Uses the local
+/// `file://` protocol (explicitly allowed) so no network is touched.
+fn add_base_submodule(r: &Repo, src_name: &str, sub_path: &str) -> String {
+    let src = r.dir.parent().unwrap().join(src_name);
+    run_ok(Command::new("git").args(["init", "-b", "main"]).arg(&src));
+    git(&src, &["config", "user.name", "Sub"]);
+    git(&src, &["config", "user.email", "sub@h5i.test"]);
+    std::fs::write(src.join("m.txt"), "module\n").unwrap();
+    git(&src, &["add", "."]);
+    git(&src, &["commit", "-m", "sub seed"]);
+    run_ok(
+        Command::new("git")
+            .args(["-c", "protocol.file.allow=always", "submodule", "add"])
+            .arg(&src)
+            .arg(sub_path)
+            .current_dir(&r.dir),
+    );
+    git(&r.dir, &["add", "."]);
+    git(&r.dir, &["commit", "-m", "add submodule"]);
+    out_str(&git(&r.dir, &["rev-parse", &format!("HEAD:{sub_path}")]))
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn mediated_commit_allows_unchanged_base_submodule() {
+    // Regression: a repo that legitimately uses a git submodule must still be
+    // proposable. The submodule is an upstream gitlink the env inherited at
+    // create time — not an agent-smuggled pointer — so it round-trips unchanged
+    // instead of tripping the fail-closed gitlink refusal.
+    let r = Repo::new();
+    let gitlink = add_base_submodule(&r, "sub-src", "examples/dep");
+
+    r.h5i_ok(&["env", "create", "sub"]);
+    // The agent makes an ordinary edit, so the mediated commit has real changes
+    // to write — the inherited gitlink must survive alongside them.
+    std::fs::write(r.work("sub").join("new.txt"), "agent work\n").unwrap();
+
+    // Propose must SUCCEED (previously refused with a gitlink violation).
+    r.h5i_ok(&["env", "propose", "sub"]);
+    assert_eq!(r.manifest("sub")["status"], "proposed");
+
+    // The committed env-branch tree still carries the submodule at the same OID.
+    let tree_line = out_str(&git(
+        &r.dir,
+        &["ls-tree", "refs/heads/h5i/env/tester/sub", "examples/dep"],
+    ));
+    assert!(
+        tree_line.contains("160000"),
+        "gitlink mode preserved: {tree_line}"
+    );
+    assert!(
+        tree_line.contains(&gitlink),
+        "gitlink OID {gitlink} preserved: {tree_line}"
+    );
+}
+
+#[test]
+fn mediated_commit_still_rejects_new_gitlink_beside_submodule() {
+    // The exemption is scoped to the *registered* base submodule path — it is
+    // NOT a blanket "any gitlink allowed". A new nested repo the agent drops at
+    // a different path must still fail the mediated commit, even when a legit
+    // submodule is present.
+    let r = Repo::new();
+    add_base_submodule(&r, "sub-src", "examples/dep");
+
+    r.h5i_ok(&["env", "create", "sub"]);
+    let nested = r.work("sub").join("vendor/evil");
+    std::fs::create_dir_all(&nested).unwrap();
+    run_ok(Command::new("git").args(["init"]).arg(&nested));
+    std::fs::write(nested.join("f.txt"), "x\n").unwrap();
+
+    let out = r.h5i(&["env", "propose", "sub"]);
+    assert!(
+        !out.status.success(),
+        "a new nested repo must still fail closed: {}",
+        out_str(&out)
+    );
+    let text = out_str(&out);
+    assert!(text.contains("vendor/evil"), "{text}");
+    // The legit submodule was NOT what tripped it, and the env did not advance.
+    assert!(!text.contains("examples/dep"), "{text}");
+    assert_eq!(r.manifest("sub")["status"], "created");
 }
 
 // ─── 3b. secrets broker ─────────────────────────────────────────────────────
@@ -1162,7 +1477,7 @@ fn inbox_commit_on_supervised_stages_and_applies_note() {
 }
 
 /// A memory limit is enforced for a supervised run: a large allocation under a
-/// tight cap does not complete (cgroup memory.max / RLIMIT_AS). Separate env
+/// tight cap does not complete (cgroup memory.max / RLIMIT_DATA). Separate env
 /// because it needs a `resources.mem` profile.
 #[test]
 fn supervised_memory_limit_is_enforced() {

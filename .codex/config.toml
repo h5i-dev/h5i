@@ -1,0 +1,25 @@
+[[hooks.PostToolUse]]
+matcher = "Edit|Write|Read"
+
+[[hooks.PostToolUse.hooks]]
+command = "h5i hook run"
+type = "command"
+
+[[hooks.PreToolUse]]
+matcher = "Bash"
+
+[[hooks.PreToolUse.hooks]]
+command = "h5i hook wrap-bash"
+type = "command"
+
+[[hooks.SessionStart]]
+
+[[hooks.SessionStart.hooks]]
+command = "h5i hook session-start"
+type = "command"
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+command = "h5i hook stop"
+type = "command"

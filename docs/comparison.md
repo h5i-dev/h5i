@@ -150,9 +150,11 @@ sandboxing, all documented, none introduced by the audit): seccomp is a
 **deny-list, not an allow-list**; `clone(CLONE_NEWUSER)` is **not argument-filtered**
 (a confined process can still nest a user namespace — bounded by no-new-privs +
 Landlock + the inherited seccomp filter, but it widens kernel attack surface);
-and on hosts without cgroup delegation the memory cap falls back to the weak
-`RLIMIT_AS`. The deny-list → allow-list move is the `process`-tier hardening with
-the most leverage.
+and on hosts without cgroup delegation the memory cap falls back to the weaker
+`RLIMIT_DATA` (writable data segment, not resident memory — chosen over
+`RLIMIT_AS`, which caps virtual address space and aborts runtimes that reserve
+huge PROT_NONE regions like V8/Node and Go). The deny-list → allow-list move is
+the `process`-tier hardening with the most leverage.
 
 **Honest one-liner.** For untrusted code, `h5i env` today is *"a solid
 shared-kernel sandbox — peer to leading rootless agent sandboxes, plus a

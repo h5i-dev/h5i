@@ -80,7 +80,7 @@ h5i init
 For Claude Code or Codex hooks:
 
 ```bash
-h5i hook setup --write    # writes .claude/settings.json and .codex/config.toml
+h5i hook setup --write --wrap-bash    # writes .claude/settings.json and .codex/config.toml
 ```
 
 Post the PR review brief:

@@ -23,7 +23,7 @@
 
 use git2::{build::CheckoutBuilder, Repository};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::error::H5iError;
@@ -1110,6 +1110,9 @@ fn no_workspace_err(m: &EnvManifest, op: &str) -> H5iError {
 ///   already grants these (commit identity); deny-home profiles get exactly
 ///   these two paths and nothing else under `$HOME` (`~/.git-credentials`
 ///   stays out — it is only consulted by credential helpers on network ops).
+/// - **ro** the main repo's `Cargo.toml` when it exists. Cargo walks upward
+///   from nested env worktrees looking for a workspace root; without read
+///   access, ordinary `cargo build`/`cargo test` fails before compiling.
 ///
 /// Deliberately **not** granted: `.git` itself, `hooks`, `refs/h5i/env` (a box
 /// that could rewrite manifests/policies could widen its own sandbox on the
@@ -1196,6 +1199,28 @@ fn grant_box_git(
                 .profile
                 .fs_read
                 .extend(["~/.gitconfig".to_string(), "~/.config/git".to_string()]);
+            // The env worktree is nested inside the main repo, so agent runtimes
+            // (claude/codex) discover the PROJECT config by walking up to the
+            // main repo's `.claude`/`.codex`. Grant READ so discovery works —
+            // and so the observation hook defined there actually loads — without
+            // granting write (the agent still cannot disable a project hook).
+            // `commondir().parent()` is the main repo root whether `repo` is the
+            // main handle or a worktree handle.
+            if let Some(main_root) = repo.commondir().parent() {
+                for d in [".claude", ".codex"] {
+                    let p = main_root.join(d);
+                    if p.is_dir() {
+                        policy.profile.fs_read.push(p.display().to_string());
+                    }
+                }
+                let cargo_manifest = main_root.join("Cargo.toml");
+                if cargo_manifest.is_file() {
+                    policy
+                        .profile
+                        .fs_read
+                        .push(cargo_manifest.display().to_string());
+                }
+            }
         }
         IsolationClaim::Container => {
             let mut mounts = box_git_plumbing(repo, m)?;
@@ -1203,6 +1228,15 @@ fn grant_box_git(
                 host: work.to_path_buf(),
                 rw: true,
             });
+            if let Some(main_root) = repo.commondir().parent() {
+                let cargo_manifest = main_root.join("Cargo.toml");
+                if cargo_manifest.is_file() {
+                    mounts.push(BoxGitPath {
+                        host: cargo_manifest,
+                        rw: false,
+                    });
+                }
+            }
             // Podman errors on a missing bind source (unlike Landlock, which
             // skips) — keep only what exists on the host.
             mounts.retain(|b| b.host.exists());
@@ -1211,6 +1245,19 @@ fn grant_box_git(
         _ => {}
     }
     Ok(())
+}
+
+fn prepare_cargo_env(work: &Path, policy: &ResolvedPolicy) -> Result<Vec<(String, String)>, H5iError> {
+    if policy.claim < IsolationClaim::Process {
+        return Ok(Vec::new());
+    }
+    let h5i_dir = work.join(".h5i");
+    let target_dir = h5i_dir.join("cargo-target");
+    std::fs::create_dir_all(&target_dir).map_err(|e| H5iError::with_path(e, &target_dir))?;
+    Ok(vec![(
+        "CARGO_TARGET_DIR".to_string(),
+        target_dir.display().to_string(),
+    )])
 }
 
 fn prepare_env_capture_spool(
@@ -1474,6 +1521,7 @@ pub fn run(
     // functional git checkout inside the box.
     grant_box_git(repo, m, &work, &mut policy)?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
+    let cargo_env = prepare_cargo_env(&work, &policy)?;
 
     // Broker any declared secrets BEFORE marking the env running, so a
     // fail-closed grant (missing source, unsupported inject) aborts cleanly
@@ -1484,7 +1532,7 @@ pub fn run(
     let brokered =
         crate::secrets_broker::broker(&policy.profile.secret_grants, &secret_dir, is_workspace)?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
-    let injected_env = merged_env(&brokered.env, &env_capture_env);
+    let injected_env = merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env);
 
     set_status(
         repo,
@@ -1692,12 +1740,13 @@ pub fn shell(
     // this worktree and must be able to use git / h5i context inside it.
     grant_box_git(repo, m, &work, &mut policy)?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
+    let cargo_env = prepare_cargo_env(&work, &policy)?;
     let secret_dir = m.dir(h5i_root).join("secrets");
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
     let brokered =
         crate::secrets_broker::broker(&policy.profile.secret_grants, &secret_dir, is_workspace)?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
-    let injected_env = merged_env(&brokered.env, &env_capture_env);
+    let injected_env = merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env);
 
     set_status(
         repo,
@@ -2366,10 +2415,102 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
         m.captures.len(),
         evidence_detail
     ));
+    // Staged-but-not-yet-ingested spool evidence (visible mid-session, before
+    // the host materializes it at run/shell end).
+    let pending = scan_spool_pending(h5i_root, m);
+    if pending.total() > 0 {
+        out.push_str(&format!(
+            "  pending  : {} staged in spool ({}) — host-ingested on run/shell end\n",
+            pending.total(),
+            pending.breakdown(),
+        ));
+        for cmd in pending.captures.iter().take(5) {
+            out.push_str(&format!("             ↳ capture `{cmd}`\n"));
+        }
+        for oid in pending.notes.iter().take(5) {
+            out.push_str(&format!(
+                "             ↳ note for {}\n",
+                &oid[..12.min(oid.len())]
+            ));
+        }
+    }
     let d = drift(repo, m);
     let marker = if d.is_current() { "✓" } else { "⚠" };
     out.push_str(&format!("  drift    : {marker} {}\n", d.summary()));
     out
+}
+
+/// Evidence staged in the env's spool but not yet materialized into the object
+/// store / notes ref (an in-box `h5i capture run`/`commit` or a tee-shim record
+/// the host ingests at the next `run`/`shell` end). Surfaced by `status` so
+/// in-flight evidence during a long interactive session is visible, not opaque.
+#[derive(Default)]
+struct SpoolPending {
+    /// Redacted commands of staged in-box captures (`cap-*.json`).
+    captures: Vec<String>,
+    /// Commit oids of staged in-box notes (`note-*.json`).
+    notes: Vec<String>,
+    /// Count of tee-shim observation records (`cmd-*.cmd`).
+    shim: usize,
+}
+
+impl SpoolPending {
+    fn total(&self) -> usize {
+        self.captures.len() + self.notes.len() + self.shim
+    }
+    /// "2 capture, 1 note, 3 shim" — omitting zero lanes.
+    fn breakdown(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.captures.is_empty() {
+            parts.push(format!("{} capture", self.captures.len()));
+        }
+        if !self.notes.is_empty() {
+            parts.push(format!("{} note", self.notes.len()));
+        }
+        if self.shim > 0 {
+            parts.push(format!("{} shim", self.shim));
+        }
+        parts.join(", ")
+    }
+}
+
+/// Scan the env's spool for staged-but-not-ingested records. Best-effort and
+/// concurrency-tolerant: a missing spool, an unreadable or half-written record
+/// (the box may be writing it now) is simply skipped, never an error.
+fn scan_spool_pending(h5i_root: &Path, m: &EnvManifest) -> SpoolPending {
+    let mut p = SpoolPending::default();
+    let spool = m.dir(h5i_root).join("spool");
+    let Ok(rd) = std::fs::read_dir(&spool) else {
+        return p;
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if let Some(base) = name.strip_suffix(".json") {
+            if base.starts_with("cap-") {
+                let cmd = std::fs::read(e.path())
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<InboxCaptureMeta>(&b).ok())
+                    .map(|meta| meta.cmd)
+                    .unwrap_or_default();
+                let safe: String = crate::secrets::redact_text(&cmd)
+                    .replace(['\n', '\r'], " ")
+                    .chars()
+                    .take(120)
+                    .collect();
+                p.captures.push(safe);
+            } else if base.starts_with("note-") {
+                let oid = std::fs::read(e.path())
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<crate::metadata::H5iCommitRecord>(&b).ok())
+                    .map(|r| r.git_oid)
+                    .unwrap_or_default();
+                p.notes.push(oid);
+            }
+        } else if name.starts_with("cmd-") && name.ends_with(".cmd") {
+            p.shim += 1;
+        }
+    }
+    p
 }
 
 /// Count the env's captures by trust lane (`host-env-run`, `inbox-capture`,
@@ -2705,11 +2846,22 @@ pub fn mediated_commit(
         .canonicalize()
         .map_err(|e| H5iError::with_path(e, &work))?;
 
+    // The env branch tip is the host-controlled base for this mediated commit.
+    // Any gitlink it already carries is an upstream submodule the env inherited
+    // at create time — not something the agent introduced (the agent never
+    // drives `git` at process+ tiers; every commit on this branch came through
+    // *this* function, which only ever lets through gitlinks already in HEAD).
+    // We let those round-trip unchanged while still refusing any gitlink the
+    // agent *added* or *re-pointed*.
+    let head = wt_repo.head()?.peel_to_commit()?;
+    let base_gitlinks = base_gitlinks(&head.tree()?);
+
     // Pre-walk for nested git repositories. libgit2 either errors opaquely or
     // records a submodule gitlink when `add_all` meets a directory containing
     // `.git` — both are wrong here. Detect them OURSELVES, first, and refuse
-    // with a precise diagnostic (fail closed).
-    let mut violations: Vec<String> = scan_nested_git(&canon_work);
+    // with a precise diagnostic (fail closed). Registered submodules from the
+    // base tree are gitlink boundaries and are exempt from the walk.
+    let mut violations: Vec<String> = scan_nested_git(&canon_work, &base_gitlinks);
     if !violations.is_empty() {
         return Err(record_commit_violation(repo, m, violations));
     }
@@ -2736,12 +2888,17 @@ pub fn mediated_commit(
 
     // Post-stage sweep: reject submodule gitlink entries (mode 160000) that
     // libgit2 may have recorded for a nested repo — an agent could otherwise
-    // smuggle a pointer to an arbitrary commit.
+    // smuggle a pointer to an arbitrary commit. A gitlink that is byte-identical
+    // to the base tree (same path, same OID) is a pre-existing upstream
+    // submodule and round-trips; anything *new* or *re-pointed* fails closed.
     for entry in index.iter() {
         if entry.mode == 0o160000 {
+            let path = String::from_utf8_lossy(&entry.path).into_owned();
+            if base_gitlinks.get(&path) == Some(&entry.id) {
+                continue; // unchanged upstream submodule
+            }
             violations.push(format!(
-                "{}: nested git repository (gitlink) — not allowed in a mediated commit",
-                String::from_utf8_lossy(&entry.path)
+                "{path}: nested git repository (gitlink) — not allowed in a mediated commit"
             ));
         }
     }
@@ -2751,7 +2908,6 @@ pub fn mediated_commit(
     }
 
     let tree_oid = index.write_tree()?;
-    let head = wt_repo.head()?.peel_to_commit()?;
     if head.tree_id() == tree_oid {
         return Ok(None);
     }
@@ -2803,12 +2959,44 @@ fn record_commit_violation(
     ))
 }
 
+/// Gitlinks (mode 160000) recorded in `tree`, keyed by repo-relative path →
+/// committed OID. These are the upstream submodules the env inherited from its
+/// base; the mediated commit lets them round-trip unchanged (see
+/// [`mediated_commit`]). Paths use git's forward-slash form.
+fn base_gitlinks(tree: &git2::Tree) -> HashMap<String, git2::Oid> {
+    let mut out = HashMap::new();
+    // `dir` is the parent prefix ("" at the root, "examples/" one level down).
+    let _ = tree.walk(git2::TreeWalkMode::PreOrder, |dir, entry| {
+        if entry.filemode() == 0o160000 {
+            if let Some(name) = entry.name() {
+                out.insert(format!("{dir}{name}"), entry.id());
+            }
+        }
+        git2::TreeWalkResult::Ok
+    });
+    out
+}
+
 /// Walk the worktree (without following symlinks) and report every nested
 /// `.git` entry — a directory (embedded repo) or file (gitlink) anywhere
 /// below the root. The root's own `.git` gitlink is the worktree's plumbing
-/// and is exempt.
-fn scan_nested_git(work: &Path) -> Vec<String> {
-    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+/// and is exempt; so is any registered upstream submodule (a path present as a
+/// gitlink in `base_gitlinks`), whose entire subtree is a boundary owned by the
+/// submodule, not the parent commit.
+fn scan_nested_git(work: &Path, base_gitlinks: &HashMap<String, git2::Oid>) -> Vec<String> {
+    fn rel(path: &Path, root: &Path) -> String {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+    fn walk(dir: &Path, root: &Path, base: &HashMap<String, git2::Oid>, out: &mut Vec<String>) {
+        // A registered submodule is a gitlink boundary: its whole subtree belongs
+        // to the submodule, not the parent. Skip it wholesale — the gitlink
+        // itself round-trips through the post-stage sweep, validated by OID.
+        if dir != root && base.contains_key(&rel(dir, root)) {
+            return;
+        }
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
@@ -2829,12 +3017,12 @@ fn scan_nested_git(work: &Path) -> Vec<String> {
                 continue;
             };
             if md.is_dir() {
-                walk(&path, root, out);
+                walk(&path, root, base, out);
             }
         }
     }
     let mut out = Vec::new();
-    walk(work, work, &mut out);
+    walk(work, work, base_gitlinks, &mut out);
     out
 }
 
@@ -3670,6 +3858,47 @@ mod tests {
         );
     }
 
+    // The nested worktree means agent runtimes discover the PROJECT config by
+    // walking up to the main repo root; the box must be able to READ it (so
+    // config discovery + the observation hook work) but not write it.
+    #[test]
+    fn grant_box_git_reads_main_repo_project_config() {
+        use crate::sandbox::Profile;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo"); // == commondir().parent()
+        let repo = git2::Repository::init(&root).unwrap();
+        std::fs::create_dir_all(root.join(".codex")).unwrap();
+        std::fs::write(root.join(".codex/config.toml"), "[hooks]\n").unwrap();
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        let m = canonical_manifest("claude", "fix");
+        let work = root.join(".git/.h5i/env/claude/fix/work");
+        std::fs::create_dir_all(&work).unwrap();
+
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            Profile::builtin("default", IsolationClaim::Process),
+        );
+        grant_box_git(&repo, &m, &work, &mut pol).unwrap();
+
+        let codex = root.join(".codex").display().to_string();
+        let claude = root.join(".claude").display().to_string();
+        // Existing project-config dirs are READ-granted, never write-granted.
+        assert!(pol.profile.fs_read.contains(&codex), "main-repo .codex read: {:?}", pol.profile.fs_read);
+        assert!(pol.profile.fs_read.contains(&claude), "main-repo .claude read");
+        assert!(!pol.profile.fs_write.contains(&codex), "stays immutable");
+        assert!(!pol.profile.fs_write.contains(&claude), "stays immutable");
+
+        // An absent dir is not granted (no phantom grant), and container leaves
+        // fs lists alone (it doesn't share the host repo tree).
+        std::fs::remove_dir_all(root.join(".claude")).unwrap();
+        let mut pol2 = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            Profile::builtin("default", IsolationClaim::Process),
+        );
+        grant_box_git(&repo, &m, &work, &mut pol2).unwrap();
+        assert!(!pol2.profile.fs_read.contains(&claude), "absent dir not granted");
+    }
+
     // The same plumbing is applied per backend: Landlock grants (+ global
     // gitconfig reads) at process/supervised; identical-path bind mounts on
     // `policy.box_git` (incl. the `$WORK` dual mount, exists-filtered, fs
@@ -3679,6 +3908,11 @@ mod tests {
         use crate::sandbox::Profile;
         let dir = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(dir.path().join("repo")).unwrap();
+        std::fs::write(
+            dir.path().join("repo/Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
         let m = canonical_manifest("claude", "fix");
         let work = dir.path().join("repo/.git/.h5i/env/claude/fix/work");
         std::fs::create_dir_all(&work).unwrap();
@@ -3691,6 +3925,14 @@ mod tests {
         grant_box_git(&repo, &m, &work, &mut pol).unwrap();
         assert!(pol.profile.fs_write.iter().any(|p| p.ends_with("/objects")));
         assert!(pol.profile.fs_read.iter().any(|p| p == "~/.gitconfig"));
+        assert!(
+            pol.profile
+                .fs_read
+                .iter()
+                .any(|p| p.ends_with("/repo/Cargo.toml")),
+            "cargo workspace discovery needs parent Cargo.toml read: {:?}",
+            pol.profile.fs_read
+        );
         assert!(
             pol.box_git.is_empty(),
             "kernel tiers use fs grants, not mounts"
@@ -3708,6 +3950,13 @@ mod tests {
         assert!(
             pol.box_git.iter().any(|b| b.rw && b.host == work),
             "container must dual-mount $WORK at its host path: {:?}",
+            pol.box_git
+        );
+        assert!(
+            pol.box_git
+                .iter()
+                .any(|b| !b.rw && b.host.ends_with("Cargo.toml")),
+            "container must bind parent Cargo.toml for workspace discovery: {:?}",
             pol.box_git
         );
         assert!(
@@ -3732,6 +3981,31 @@ mod tests {
         grant_box_git(&repo, &m, &work, &mut pol).unwrap();
         assert!(pol.box_git.is_empty());
         assert_eq!(pol.profile.fs_read, read_before);
+    }
+
+    #[test]
+    fn prepare_cargo_env_keeps_target_outputs_inside_worktree() {
+        use crate::sandbox::Profile;
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let pol = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            Profile::builtin("default", IsolationClaim::Process),
+        );
+
+        let env = prepare_cargo_env(&work, &pol).unwrap();
+        let target = env
+            .iter()
+            .find(|(k, _)| k == "CARGO_TARGET_DIR")
+            .map(|(_, v)| PathBuf::from(v))
+            .unwrap();
+        assert!(target.starts_with(&work), "{target:?}");
+        assert!(target.is_dir(), "{target:?}");
+        assert!(
+            env.iter().all(|(k, _)| k != "CARGO_INSTALL_ROOT"),
+            "cargo install is not part of the default sandbox workflow: {env:?}"
+        );
     }
 
     // Fix for the propose/rebase-vs-run race: every worktree/manifest-mutating
@@ -3864,6 +4138,31 @@ mod tests {
         let v = staged_path_violation(&canon, Path::new("sneaky/secret.txt"));
         assert!(v.is_some(), "dir-symlink traversal must be rejected");
         assert!(v.unwrap().contains("escapes $WORK"));
+    }
+
+    #[test]
+    fn scan_nested_git_exempts_registered_submodules_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        // Two checked-out nested repos: one is a registered base submodule, the
+        // other is an embedded repo the agent dropped in.
+        std::fs::create_dir_all(work.join("examples/sub")).unwrap();
+        std::fs::create_dir_all(work.join("vendor/dep")).unwrap();
+        std::fs::write(work.join("examples/sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
+        std::fs::write(work.join("vendor/dep/.git"), "gitdir: elsewhere\n").unwrap();
+        let canon = work.canonicalize().unwrap();
+
+        // No base submodules → every nested repo is a violation (legacy behavior).
+        let empty: HashMap<String, git2::Oid> = HashMap::new();
+        assert_eq!(scan_nested_git(&canon, &empty).len(), 2);
+
+        // Register examples/sub as a base gitlink → only it is exempt; the
+        // agent-introduced vendor/dep still fails closed.
+        let mut base = HashMap::new();
+        base.insert("examples/sub".to_string(), git2::Oid::zero());
+        let v = scan_nested_git(&canon, &base);
+        assert_eq!(v.len(), 1, "only the unregistered nested repo flagged: {v:?}");
+        assert!(v[0].contains("vendor/dep"), "{v:?}");
     }
 
     #[test]

@@ -1,10 +1,12 @@
 //! cgroup v2 resource control for the `process` tier (rootless, best-effort).
 //!
-//! `RLIMIT_AS` (what the process tier uses today for `mem`) caps a process's
-//! *virtual address space*, which over-counts for many runtimes (Go, the JVM,
-//! sanitizers) and is per-process, not per-tree. cgroup v2 `memory.max` /
-//! `pids.max` are the production-grade controls: a hierarchical, whole-subtree
-//! limit plus accurate `memory.peak` / `cpu.stat` accounting.
+//! The rlimit the process tier falls back to for `mem` (`RLIMIT_DATA`) caps the
+//! writable data segment, not resident memory, and is per-process, not per-tree.
+//! (It is deliberately *not* `RLIMIT_AS`: capping virtual address space breaks
+//! runtimes that reserve huge PROT_NONE regions — V8/Node, Go, the JVM,
+//! sanitizers — see the note in sandbox.rs's resource-caps block.) cgroup v2
+//! `memory.max` / `pids.max` are the production-grade controls: a hierarchical,
+//! whole-subtree limit plus accurate `memory.peak` / `cpu.stat` accounting.
 //!
 //! ## Rootless reality (honest)
 //!

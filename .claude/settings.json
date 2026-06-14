@@ -15,11 +15,40 @@
         "matcher": "Edit|Write|Read"
       }
     ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "h5i hook wrap-bash",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "h5i hook session-start",
+            "type": "command"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
           {
             "command": "h5i msg hook --block",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "h5i hook stop",
             "type": "command"
           }
         ]

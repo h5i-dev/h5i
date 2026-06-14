@@ -359,9 +359,22 @@ impl Profile {
                 "~/.local/bin",
                 "~/.local/lib",
                 "~/.nvm",
-                // PATH shims only — NOT ~/.cargo itself (credentials.toml).
+                // PATH shims + rustup toolchain metadata only — NOT ~/.cargo
+                // itself (credentials.toml). The crate caches (registry/git)
+                // are granted read-only below: pure download caches with no
+                // secrets, so offline `cargo build/test` resolves deps in-box.
                 "~/.cargo/env",
                 "~/.cargo/bin",
+                "~/.cargo/config",
+                "~/.cargo/config.toml",
+                // Read-only crate caches so an offline cargo build can resolve
+                // dependencies in-box (network egress is API-only). These hold
+                // the downloaded registry index + crate sources / git checkouts,
+                // never credentials (`~/.cargo/credentials.toml` stays ungranted).
+                "~/.cargo/registry",
+                "~/.cargo/git",
+                "~/.rustup/settings.toml",
+                "~/.rustup/toolchains",
                 "~/.bashrc",
                 "~/.bash_profile",
                 "~/.profile",
@@ -1028,8 +1041,20 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
             }
         }
         IsolationClaim::Container => {
-            // Rootless Podman adapter (opt-in shell-out). Require the
-            // runtime AND an image — fail closed, never silently downgrade.
+            // Rootless Podman adapter (opt-in shell-out). Require an image AND
+            // the runtime — fail closed, never silently downgrade. Validate the
+            // declared config (image) BEFORE probing host capability (podman):
+            // a missing image is a static profile error, true regardless of the
+            // host, so reporting it first keeps the error host-independent — a
+            // box (or CI) without podman still gets the actionable
+            // "set container.image" message rather than a podman-not-found one.
+            if profile.image.is_none() {
+                return Err(H5iError::Metadata(format!(
+                    "isolation claim 'container' requires a base image — set `container.image = \
+                     \"…\"` in profile '{}' (e.g. your toolchain image)",
+                    profile.name
+                )));
+            }
             if caps.container_runtime.is_none() {
                 return Err(H5iError::Metadata(
                     "isolation claim 'container' requires rootless Podman on PATH; Docker and \
@@ -1037,13 +1062,6 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
                      install/configure rootless podman, or re-request --isolation workspace/process"
                         .into(),
                 ));
-            }
-            if profile.image.is_none() {
-                return Err(H5iError::Metadata(format!(
-                    "isolation claim 'container' requires a base image — set `container.image = \
-                     \"…\"` in profile '{}' (e.g. your toolchain image)",
-                    profile.name
-                )));
             }
         }
         IsolationClaim::Supervised => {
@@ -1708,8 +1726,20 @@ pub(crate) fn build_confined_command(
 
             // 2. Resource caps (cooperative, no cgroups needed).
             if let Some(bytes) = mem {
+                // RLIMIT_DATA, not RLIMIT_AS. RLIMIT_AS caps *virtual address
+                // space*, which modern runtimes over-reserve by design: V8/Node
+                // maps a ~1TiB PROT_NONE heap-sandbox cage at startup, Go reserves
+                // large arenas — none of it resident. An AS cap rejects those
+                // reservations and the process aborts at trivial RSS ("JavaScript
+                // heap out of memory" at ~100MiB). RLIMIT_DATA caps the writable
+                // data segment (brk + writable-anonymous mmaps, Linux >=4.7), so
+                // it bounds actual heap growth without counting PROT_NONE
+                // reservations (is_data_mapping() requires VM_WRITE). This is the
+                // rlimit-tier fallback; cgroup `memory.max` (when the host
+                // delegates one — see cgroup.rs) is the accurate whole-subtree
+                // RSS cap layered on top.
                 let lim = libc::rlimit { rlim_cur: bytes, rlim_max: bytes };
-                if libc::setrlimit(libc::RLIMIT_AS, &lim) != 0 {
+                if libc::setrlimit(libc::RLIMIT_DATA, &lim) != 0 {
                     return Err(Error::last_os_error());
                 }
             }
@@ -2247,6 +2277,29 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         assert!(p.fs_read.iter().any(|s| s == "~/.local/bin"));
         assert!(!p.fs_read.iter().any(|s| s == "~/.local"), "blanket ~/.local removed");
         assert!(p.fs_read.iter().any(|s| s == "~/.local/share/claude"));
+        // Rustup shims under ~/.cargo/bin need read-only rustup metadata to
+        // locate the active toolchain, but ~/.cargo and ~/.rustup stay ungranted.
+        assert!(p.fs_read.iter().any(|s| s == "~/.cargo/bin"));
+        assert!(p.fs_read.iter().any(|s| s == "~/.cargo/config"));
+        assert!(p.fs_read.iter().any(|s| s == "~/.cargo/config.toml"));
+        // Read-only crate caches for offline dependency resolution in-box.
+        assert!(p.fs_read.iter().any(|s| s == "~/.cargo/registry"));
+        assert!(p.fs_read.iter().any(|s| s == "~/.cargo/git"));
+        assert!(p.fs_read.iter().any(|s| s == "~/.rustup/settings.toml"));
+        assert!(p.fs_read.iter().any(|s| s == "~/.rustup/toolchains"));
+        assert!(!p.fs_read.iter().any(|s| s == "~/.cargo"), "blanket ~/.cargo removed");
+        // Credentials stay ungranted even though the caches are now readable.
+        assert!(
+            !p.fs_read.iter().any(|s| s == "~/.cargo/credentials"
+                || s == "~/.cargo/credentials.toml"),
+            "cargo credentials never granted"
+        );
+        assert!(!p.fs_write.iter().any(|s| s == "~/.cargo"), "blanket ~/.cargo write removed");
+        assert!(
+            !p.fs_write.iter().any(|s| s.starts_with("~/.cargo/")),
+            "default agent profile does not mutate host Cargo cache"
+        );
+        assert!(!p.fs_read.iter().any(|s| s == "~/.rustup"), "blanket ~/.rustup removed");
         // Own state read-write; the OTHER runtime's state is NOT granted.
         assert!(p.fs_write.iter().any(|s| s == "~/.claude"));
         assert!(!p.fs_write.iter().any(|s| s == "~/.codex"), "no cross-runtime state");
@@ -2582,6 +2635,14 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let no_img = Profile::builtin("default", IsolationClaim::Container);
         let err = resolve(&no_img, &caps_with_container(Some("podman"))).unwrap_err();
         assert!(err.to_string().contains("image"), "{err}");
+
+        // Neither image nor runtime → the static config error (image) takes
+        // precedence over the host-capability error (podman), so the message is
+        // host-independent: a box / CI without podman still gets the actionable
+        // "set container.image" message, not a podman-not-found one.
+        let err = resolve(&no_img, &caps_with_container(None)).unwrap_err();
+        assert!(err.to_string().contains("image"), "{err}");
+        assert!(!err.to_string().contains("podman"), "image error must win: {err}");
 
         // Runtime + image → resolves.
         assert!(resolve(&p, &caps_with_container(Some("podman"))).is_ok());
