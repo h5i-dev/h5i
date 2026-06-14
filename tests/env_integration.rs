@@ -891,6 +891,118 @@ fn apply_requires_parent_branch_and_clean_tree() {
     r.h5i_ok(&["env", "apply", "guard"]);
 }
 
+/// `--patch` squashes the env's divergence into a single-parent commit on the
+/// parent branch, even when a fast-forward would otherwise be possible. The
+/// resulting commit carries the env's content but no second (merge) parent.
+#[test]
+fn apply_patch_mode_squashes_into_single_parent_commit() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "squash"]);
+    std::fs::write(r.work("squash").join("env-file.txt"), "from env\n").unwrap();
+    r.h5i_ok(&["env", "propose", "squash"]);
+
+    // Parent has NOT moved → a plain `apply` would fast-forward. `--patch`
+    // must instead synthesize a fresh squash commit (no fast-forward).
+    let out = out_str(&r.h5i_ok(&["env", "apply", "squash", "--patch"]));
+    assert!(out.contains("applied onto main"), "{out}");
+    assert!(
+        !out.contains("fast-forward"),
+        "patch mode must never fast-forward: {out}"
+    );
+
+    // The env content landed on the parent working tree.
+    assert!(r.dir.join("env-file.txt").is_file());
+    assert_eq!(r.manifest("squash")["status"], "applied");
+
+    // The applied commit is a single-parent (squash) commit, not a merge.
+    let applied = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let applied = applied.trim();
+    let parents = out_str(&git(&r.dir, &["rev-list", "--parents", "-n", "1", applied]));
+    assert_eq!(
+        parents.split_whitespace().count(),
+        2,
+        "patch mode must produce exactly one parent (commit + 1 parent): {parents}"
+    );
+    let msg = out_str(&git(&r.dir, &["log", "-1", "--format=%s", applied]));
+    assert!(msg.contains("--patch"), "squash commit subject: {msg}");
+}
+
+/// `--patch` also squashes when the parent has advanced — the result is a
+/// single-parent commit on top of the advanced parent (a 3-way merge tree with
+/// only the parent recorded as a parent), not a two-parent merge.
+#[test]
+fn apply_patch_mode_squashes_over_advanced_parent() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "squash2"]);
+    std::fs::write(r.work("squash2").join("env-file.txt"), "from env\n").unwrap();
+    r.h5i_ok(&["env", "propose", "squash2"]);
+
+    // Advance the parent on a disjoint file so a 3-way merge is required.
+    std::fs::write(r.dir.join("parent-file.txt"), "from parent\n").unwrap();
+    git(&r.dir, &["add", "parent-file.txt"]);
+    git(&r.dir, &["commit", "-m", "advance parent"]);
+
+    r.h5i_ok(&["env", "apply", "squash2", "--patch"]);
+    assert!(r.dir.join("env-file.txt").is_file());
+    assert!(r.dir.join("parent-file.txt").is_file());
+
+    let applied = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let applied = applied.trim();
+    let parents = out_str(&git(&r.dir, &["rev-list", "--parents", "-n", "1", applied]));
+    assert_eq!(
+        parents.split_whitespace().count(),
+        2,
+        "patch over an advanced parent stays single-parent: {parents}"
+    );
+}
+
+/// Applying a proposed env that never diverged from its parent is a clean
+/// no-op: it reports "nothing to apply", marks the env applied, and leaves the
+/// parent branch untouched (no empty commit).
+#[test]
+fn apply_noop_env_reports_nothing_to_apply() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "empty"]);
+    // Propose with no worktree changes — the env branch tip stays at base.
+    r.h5i_ok(&["env", "propose", "empty"]);
+
+    let before = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let out = out_str(&r.h5i_ok(&["env", "apply", "empty"]));
+    assert!(out.contains("nothing to apply"), "{out}");
+    assert_eq!(r.manifest("empty")["status"], "applied");
+    assert_eq!(
+        out_str(&git(&r.dir, &["rev-parse", "main"])),
+        before,
+        "no-op apply must not write the parent branch"
+    );
+    let log = out_str(&r.h5i_ok(&["env", "log", "empty"]));
+    assert!(
+        log.contains("applied") && log.contains("no-op"),
+        "no-op apply should record why nothing was applied:\n{log}"
+    );
+}
+
+/// Apply is a one-shot PROPOSED→APPLIED transition: once an env is applied it
+/// is no longer 'proposed', so a second `apply` refuses (apply is never
+/// automatic / idempotent-repeat).
+#[test]
+fn apply_refuses_second_apply() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "once"]);
+    std::fs::write(r.work("once").join("once.txt"), "x\n").unwrap();
+    r.h5i_ok(&["env", "propose", "once"]);
+    r.h5i_ok(&["env", "apply", "once"]);
+    assert_eq!(r.manifest("once")["status"], "applied");
+
+    let out = r.h5i(&["env", "apply", "once"]);
+    assert!(!out.status.success(), "re-applying an applied env must refuse");
+    assert!(
+        out_str(&out).contains("propose"),
+        "second apply should point back at propose: {}",
+        out_str(&out)
+    );
+}
+
 #[test]
 fn mediated_commit_fails_closed_on_nested_git_repo() {
     let r = Repo::new();
