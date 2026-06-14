@@ -194,3 +194,4 @@
 {"ts":"2026-06-14T03:57:25.162673Z","env_id":"env/human/claude-1","agent":"human","event":"created","detail":"base=dd1638d33ebf profile=agent-claude isolation=supervised backend=worktree"}
 {"ts":"2026-06-14T03:58:12.242748Z","env_id":"env/human/claude-1","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-14T04:07:34.983344Z","env_id":"env/human/claude-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=0"}
+{"ts":"2026-06-14T04:07:49.706987Z","env_id":"env/human/claude-1","agent":"human","event":"proposed","detail":"snapshot=637b9f1f51a8a585a448aea24ed9ce0093a55965"}
