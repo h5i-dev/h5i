@@ -106,3 +106,4 @@ _[Checkpoint: 6a2e7d41 — edited src/seccomp_notify.rs; edited src/seccomp_noti
 _[Checkpoint: 6a2e7d75 — edited .github/workflows/test.yaml]_
 ---
 
+[10:12:09] OBSERVE: read src/env.rs
