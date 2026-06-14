@@ -847,6 +847,92 @@ fn mediated_commit_fails_closed_on_nested_git_repo() {
     );
 }
 
+/// Register a real submodule at `sub_path` in the repo's base commit, sourced
+/// from a fresh standalone repo. Returns the gitlink commit OID. Uses the local
+/// `file://` protocol (explicitly allowed) so no network is touched.
+fn add_base_submodule(r: &Repo, src_name: &str, sub_path: &str) -> String {
+    let src = r.dir.parent().unwrap().join(src_name);
+    run_ok(Command::new("git").args(["init", "-b", "main"]).arg(&src));
+    git(&src, &["config", "user.name", "Sub"]);
+    git(&src, &["config", "user.email", "sub@h5i.test"]);
+    std::fs::write(src.join("m.txt"), "module\n").unwrap();
+    git(&src, &["add", "."]);
+    git(&src, &["commit", "-m", "sub seed"]);
+    run_ok(
+        Command::new("git")
+            .args(["-c", "protocol.file.allow=always", "submodule", "add"])
+            .arg(&src)
+            .arg(sub_path)
+            .current_dir(&r.dir),
+    );
+    git(&r.dir, &["add", "."]);
+    git(&r.dir, &["commit", "-m", "add submodule"]);
+    out_str(&git(&r.dir, &["rev-parse", &format!("HEAD:{sub_path}")]))
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn mediated_commit_allows_unchanged_base_submodule() {
+    // Regression: a repo that legitimately uses a git submodule must still be
+    // proposable. The submodule is an upstream gitlink the env inherited at
+    // create time — not an agent-smuggled pointer — so it round-trips unchanged
+    // instead of tripping the fail-closed gitlink refusal.
+    let r = Repo::new();
+    let gitlink = add_base_submodule(&r, "sub-src", "examples/dep");
+
+    r.h5i_ok(&["env", "create", "sub"]);
+    // The agent makes an ordinary edit, so the mediated commit has real changes
+    // to write — the inherited gitlink must survive alongside them.
+    std::fs::write(r.work("sub").join("new.txt"), "agent work\n").unwrap();
+
+    // Propose must SUCCEED (previously refused with a gitlink violation).
+    r.h5i_ok(&["env", "propose", "sub"]);
+    assert_eq!(r.manifest("sub")["status"], "proposed");
+
+    // The committed env-branch tree still carries the submodule at the same OID.
+    let tree_line = out_str(&git(
+        &r.dir,
+        &["ls-tree", "refs/heads/h5i/env/tester/sub", "examples/dep"],
+    ));
+    assert!(
+        tree_line.contains("160000"),
+        "gitlink mode preserved: {tree_line}"
+    );
+    assert!(
+        tree_line.contains(&gitlink),
+        "gitlink OID {gitlink} preserved: {tree_line}"
+    );
+}
+
+#[test]
+fn mediated_commit_still_rejects_new_gitlink_beside_submodule() {
+    // The exemption is scoped to the *registered* base submodule path — it is
+    // NOT a blanket "any gitlink allowed". A new nested repo the agent drops at
+    // a different path must still fail the mediated commit, even when a legit
+    // submodule is present.
+    let r = Repo::new();
+    add_base_submodule(&r, "sub-src", "examples/dep");
+
+    r.h5i_ok(&["env", "create", "sub"]);
+    let nested = r.work("sub").join("vendor/evil");
+    std::fs::create_dir_all(&nested).unwrap();
+    run_ok(Command::new("git").args(["init"]).arg(&nested));
+    std::fs::write(nested.join("f.txt"), "x\n").unwrap();
+
+    let out = r.h5i(&["env", "propose", "sub"]);
+    assert!(
+        !out.status.success(),
+        "a new nested repo must still fail closed: {}",
+        out_str(&out)
+    );
+    let text = out_str(&out);
+    assert!(text.contains("vendor/evil"), "{text}");
+    // The legit submodule was NOT what tripped it, and the env did not advance.
+    assert!(!text.contains("examples/dep"), "{text}");
+    assert_eq!(r.manifest("sub")["status"], "created");
+}
+
 // ─── 3b. secrets broker ─────────────────────────────────────────────────────
 
 #[test]

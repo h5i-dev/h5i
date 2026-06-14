@@ -23,7 +23,7 @@
 
 use git2::{build::CheckoutBuilder, Repository};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::error::H5iError;
@@ -2846,11 +2846,22 @@ pub fn mediated_commit(
         .canonicalize()
         .map_err(|e| H5iError::with_path(e, &work))?;
 
+    // The env branch tip is the host-controlled base for this mediated commit.
+    // Any gitlink it already carries is an upstream submodule the env inherited
+    // at create time — not something the agent introduced (the agent never
+    // drives `git` at process+ tiers; every commit on this branch came through
+    // *this* function, which only ever lets through gitlinks already in HEAD).
+    // We let those round-trip unchanged while still refusing any gitlink the
+    // agent *added* or *re-pointed*.
+    let head = wt_repo.head()?.peel_to_commit()?;
+    let base_gitlinks = base_gitlinks(&head.tree()?);
+
     // Pre-walk for nested git repositories. libgit2 either errors opaquely or
     // records a submodule gitlink when `add_all` meets a directory containing
     // `.git` — both are wrong here. Detect them OURSELVES, first, and refuse
-    // with a precise diagnostic (fail closed).
-    let mut violations: Vec<String> = scan_nested_git(&canon_work);
+    // with a precise diagnostic (fail closed). Registered submodules from the
+    // base tree are gitlink boundaries and are exempt from the walk.
+    let mut violations: Vec<String> = scan_nested_git(&canon_work, &base_gitlinks);
     if !violations.is_empty() {
         return Err(record_commit_violation(repo, m, violations));
     }
@@ -2877,12 +2888,17 @@ pub fn mediated_commit(
 
     // Post-stage sweep: reject submodule gitlink entries (mode 160000) that
     // libgit2 may have recorded for a nested repo — an agent could otherwise
-    // smuggle a pointer to an arbitrary commit.
+    // smuggle a pointer to an arbitrary commit. A gitlink that is byte-identical
+    // to the base tree (same path, same OID) is a pre-existing upstream
+    // submodule and round-trips; anything *new* or *re-pointed* fails closed.
     for entry in index.iter() {
         if entry.mode == 0o160000 {
+            let path = String::from_utf8_lossy(&entry.path).into_owned();
+            if base_gitlinks.get(&path) == Some(&entry.id) {
+                continue; // unchanged upstream submodule
+            }
             violations.push(format!(
-                "{}: nested git repository (gitlink) — not allowed in a mediated commit",
-                String::from_utf8_lossy(&entry.path)
+                "{path}: nested git repository (gitlink) — not allowed in a mediated commit"
             ));
         }
     }
@@ -2892,7 +2908,6 @@ pub fn mediated_commit(
     }
 
     let tree_oid = index.write_tree()?;
-    let head = wt_repo.head()?.peel_to_commit()?;
     if head.tree_id() == tree_oid {
         return Ok(None);
     }
@@ -2944,12 +2959,44 @@ fn record_commit_violation(
     ))
 }
 
+/// Gitlinks (mode 160000) recorded in `tree`, keyed by repo-relative path →
+/// committed OID. These are the upstream submodules the env inherited from its
+/// base; the mediated commit lets them round-trip unchanged (see
+/// [`mediated_commit`]). Paths use git's forward-slash form.
+fn base_gitlinks(tree: &git2::Tree) -> HashMap<String, git2::Oid> {
+    let mut out = HashMap::new();
+    // `dir` is the parent prefix ("" at the root, "examples/" one level down).
+    let _ = tree.walk(git2::TreeWalkMode::PreOrder, |dir, entry| {
+        if entry.filemode() == 0o160000 {
+            if let Some(name) = entry.name() {
+                out.insert(format!("{dir}{name}"), entry.id());
+            }
+        }
+        git2::TreeWalkResult::Ok
+    });
+    out
+}
+
 /// Walk the worktree (without following symlinks) and report every nested
 /// `.git` entry — a directory (embedded repo) or file (gitlink) anywhere
 /// below the root. The root's own `.git` gitlink is the worktree's plumbing
-/// and is exempt.
-fn scan_nested_git(work: &Path) -> Vec<String> {
-    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+/// and is exempt; so is any registered upstream submodule (a path present as a
+/// gitlink in `base_gitlinks`), whose entire subtree is a boundary owned by the
+/// submodule, not the parent commit.
+fn scan_nested_git(work: &Path, base_gitlinks: &HashMap<String, git2::Oid>) -> Vec<String> {
+    fn rel(path: &Path, root: &Path) -> String {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+    fn walk(dir: &Path, root: &Path, base: &HashMap<String, git2::Oid>, out: &mut Vec<String>) {
+        // A registered submodule is a gitlink boundary: its whole subtree belongs
+        // to the submodule, not the parent. Skip it wholesale — the gitlink
+        // itself round-trips through the post-stage sweep, validated by OID.
+        if dir != root && base.contains_key(&rel(dir, root)) {
+            return;
+        }
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
@@ -2970,12 +3017,12 @@ fn scan_nested_git(work: &Path) -> Vec<String> {
                 continue;
             };
             if md.is_dir() {
-                walk(&path, root, out);
+                walk(&path, root, base, out);
             }
         }
     }
     let mut out = Vec::new();
-    walk(work, work, &mut out);
+    walk(work, work, base_gitlinks, &mut out);
     out
 }
 
@@ -4091,6 +4138,31 @@ mod tests {
         let v = staged_path_violation(&canon, Path::new("sneaky/secret.txt"));
         assert!(v.is_some(), "dir-symlink traversal must be rejected");
         assert!(v.unwrap().contains("escapes $WORK"));
+    }
+
+    #[test]
+    fn scan_nested_git_exempts_registered_submodules_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        // Two checked-out nested repos: one is a registered base submodule, the
+        // other is an embedded repo the agent dropped in.
+        std::fs::create_dir_all(work.join("examples/sub")).unwrap();
+        std::fs::create_dir_all(work.join("vendor/dep")).unwrap();
+        std::fs::write(work.join("examples/sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
+        std::fs::write(work.join("vendor/dep/.git"), "gitdir: elsewhere\n").unwrap();
+        let canon = work.canonicalize().unwrap();
+
+        // No base submodules → every nested repo is a violation (legacy behavior).
+        let empty: HashMap<String, git2::Oid> = HashMap::new();
+        assert_eq!(scan_nested_git(&canon, &empty).len(), 2);
+
+        // Register examples/sub as a base gitlink → only it is exempt; the
+        // agent-introduced vendor/dep still fails closed.
+        let mut base = HashMap::new();
+        base.insert("examples/sub".to_string(), git2::Oid::zero());
+        let v = scan_nested_git(&canon, &base);
+        assert_eq!(v.len(), 1, "only the unregistered nested repo flagged: {v:?}");
+        assert!(v[0].contains("vendor/dep"), "{v:?}");
     }
 
     #[test]
