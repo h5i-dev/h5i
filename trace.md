@@ -98,3 +98,4 @@ _[Checkpoint: 6a2e7d41 — edited src/seccomp_notify.rs; edited src/seccomp_noti
 
 [10:07:06] OBSERVE: read bqgwhh2z6.output
 [10:07:49] THINK: Let me confirm the working tree is clean (only the workflow changed) before committing:
+[10:07:49] NOTE: PLACEHOLDER (~/Dev/h5i/.github/workflows/test.yaml): The stub-dist validation is compiling in the background (it has a guaranteed `trap` to restore the
