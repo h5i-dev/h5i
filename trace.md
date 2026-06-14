@@ -42,3 +42,4 @@ _[Checkpoint: 6a2e2d39 — edited tests/env_integration.rs; edited Cargo.toml]_
 _[Checkpoint: 6a2e7645 — edited tests/env_integration.rs; edited Cargo.toml]_
 ---
 
+[09:42:06] OBSERVE: read src/supervisor.rs
