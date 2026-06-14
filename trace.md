@@ -124,3 +124,4 @@ _[Checkpoint: 6a2e7f51 — edited .github/workflows/test.yaml; edited src/env.rs
 ---
 
 [11:14:47] THINK: Local `v0.1.8` still points at the old broken commit (`fc4be4c7`) — I need to delete it before re-tagging.
+[11:14:47] THINK: Let me watch it to completion (it'll build all 4 targets then create the release — ~8–10 min):
