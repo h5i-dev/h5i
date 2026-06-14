@@ -49,7 +49,7 @@ Use `h5i` if you want your AI agents to stop leaving their work in thin air.
 
 ### Recent News
 
-- **New in v0.1.8: Auditable Sandbox.**
+- **New in v0.1.8: Auditable Sandbox.** Run risky AI-generated code in a confined, reviewable environment. [Jump to Agent Sandbox ↓](#32-agent-sandbox--a-confined-fully-auditable-environment)
 - **New in v0.1.7: Token Reduction with Unified Form.** Agents see a compact summary while the full output stays out of context, shared via Git LFS. [Jump to Token Reduction ↓](#43-token-reduction-with-unified-form)
 - **Agent Radio reached 100+ points on Hacker News.** Read the discussion [here](https://news.ycombinator.com/item?id=48345837).
 - **New in v0.1.5: Agent Radio.** Since your agents' context already lives in Git, they can now talk to each other through it. `h5i msg` adds a cross-agent message channel stored in `refs/h5i/msg`. [Jump to Agent Radio ↓](#41-agent-radio--agents-that-talk-over-git)
