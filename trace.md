@@ -8,3 +8,4 @@
 [03:59:34] OBSERVE: read tests/env_integration.rs
 [03:59:39] OBSERVE: read tests/env_integration.rs
 [03:59:46] OBSERVE: read src/env.rs
+[03:59:50] OBSERVE: read src/main.rs
