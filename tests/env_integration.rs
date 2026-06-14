@@ -761,6 +761,83 @@ fn apply_refuses_without_propose() {
 }
 
 #[test]
+fn propose_accepts_noop_env_and_records_reviewable_state() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "noop"]);
+
+    let main_before = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let branch_before = out_str(&git(
+        &r.dir,
+        &["rev-parse", "refs/heads/h5i/env/tester/noop"],
+    ));
+
+    let brief = out_str(&r.h5i_ok(&["env", "propose", "noop"]));
+    assert!(brief.contains("Proposal: env/tester/noop"), "{brief}");
+    assert!(brief.contains("0 files changed"), "{brief}");
+    assert!(brief.contains("never automatic"), "{brief}");
+    assert_eq!(r.manifest("noop")["status"], "proposed");
+    assert_eq!(
+        out_str(&git(&r.dir, &["rev-parse", "main"])),
+        main_before,
+        "noop propose must not touch the parent branch"
+    );
+    assert_eq!(
+        out_str(&git(
+            &r.dir,
+            &["rev-parse", "refs/heads/h5i/env/tester/noop"],
+        )),
+        branch_before,
+        "noop propose must not create an empty env-branch commit"
+    );
+
+    let log = out_str(&r.h5i_ok(&["env", "log", "noop"]));
+    assert!(
+        log.contains("proposed") && log.contains("no new changes"),
+        "noop proposal should leave an auditable proposed event:\n{log}"
+    );
+}
+
+#[test]
+fn propose_is_idempotent_after_snapshot_without_new_worktree_changes() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "again"]);
+    std::fs::write(r.work("again").join("new.txt"), "from env\n").unwrap();
+
+    let first = out_str(&r.h5i_ok(&["env", "propose", "again"]));
+    assert!(first.contains("new.txt"), "{first}");
+    let branch_after_first = out_str(&git(
+        &r.dir,
+        &["rev-parse", "refs/heads/h5i/env/tester/again"],
+    ));
+
+    let second = out_str(&r.h5i_ok(&["env", "propose", "again"]));
+    assert!(second.contains("Proposal: env/tester/again"), "{second}");
+    assert!(
+        second.contains("new.txt"),
+        "second proposal should still show the proposed diff: {second}"
+    );
+    assert_eq!(r.manifest("again")["status"], "proposed");
+    assert_eq!(
+        out_str(&git(
+            &r.dir,
+            &["rev-parse", "refs/heads/h5i/env/tester/again"],
+        )),
+        branch_after_first,
+        "re-proposing unchanged worktree must not add another snapshot commit"
+    );
+
+    let log = out_str(&r.h5i_ok(&["env", "log", "again"]));
+    assert!(
+        log.matches("proposed").count() >= 2,
+        "both proposal attempts should be auditable:\n{log}"
+    );
+    assert!(
+        log.contains("no new changes"),
+        "second proposal should record why no snapshot commit was made:\n{log}"
+    );
+}
+
+#[test]
 fn apply_merges_when_parent_advanced_and_refuses_conflicts() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "merge-me"]);
