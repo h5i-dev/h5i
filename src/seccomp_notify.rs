@@ -347,7 +347,10 @@ fn set_nonblocking(fd: RawFd) {
 /// by both serve loops so the security-critical decision/reply logic exists once.
 fn handle_one(listener: RawFd, unix_granted: bool, stats: &mut ServeStats) -> Flow {
     let mut req: SeccompNotif = unsafe { std::mem::zeroed() };
-    let rc = unsafe { libc::ioctl(listener, ioctl_recv(), &mut req as *mut SeccompNotif) };
+    // `ioctl`'s request arg is `c_ulong` on glibc but `c_int` on musl — `as _`
+    // casts to whichever the target's signature expects (the 32-bit request
+    // code's bit pattern is preserved either way).
+    let rc = unsafe { libc::ioctl(listener, ioctl_recv() as _, &mut req as *mut SeccompNotif) };
     if rc != 0 {
         let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
         if err == libc::EAGAIN || err == libc::EINTR {
@@ -383,11 +386,12 @@ fn handle_one(listener: RawFd, unix_granted: bool, stats: &mut ServeStats) -> Fl
 
     // Re-validate the id right before SEND: if the tracee died or the syscall
     // was interrupted, the id is stale and SEND would mis-target — skip.
-    let valid = unsafe { libc::ioctl(listener, ioctl_id_valid(), &req.id as *const u64) } == 0;
+    let valid = unsafe { libc::ioctl(listener, ioctl_id_valid() as _, &req.id as *const u64) } == 0;
     if !valid {
         return Flow::Handled; // consumed a notification (stale); keep draining
     }
-    let send_rc = unsafe { libc::ioctl(listener, ioctl_send(), &resp as *const SeccompNotifResp) };
+    let send_rc =
+        unsafe { libc::ioctl(listener, ioctl_send() as _, &resp as *const SeccompNotifResp) };
     if send_rc != 0 {
         let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
         // The tracee can die between ID_VALID and SEND → ENOENT (stale, benign).
