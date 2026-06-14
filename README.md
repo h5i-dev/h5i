@@ -128,6 +128,8 @@ We can also monitor the conversation in real time with `h5i msg watch`.
   <img src="./assets/claude-codex-chess.gif" alt="h5i msg watch — a live claude ↔ codex code review streaming over refs/h5i/msg" width="95%">
 </p>
 
+For more details, see this blog post: [Claude Code and Codex Can Have Real-Time Conversation via Git](https://medium.com/@Koukyosyumei/claude-code-and-codex-can-have-real-time-conversation-via-git-f95b696c1c05)
+
 ### 3.2. Agent Sandbox — a confined, fully auditable environment
 
 `h5i env` gives you a disposable, confined **environment** — a git worktree plus a policy that limits what the code inside can read, write, and reach over the network — so you can run a refactor, a dependency upgrade, or an untrusted build (yourself or via an agent) without it touching your main tree. Your loop is four commands:
