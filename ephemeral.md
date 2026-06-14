@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: improve-shell
+# Ephemeral traces — Branch: env/human/codex-1
 
