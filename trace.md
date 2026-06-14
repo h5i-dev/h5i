@@ -57,3 +57,4 @@ _[Checkpoint: 6a2e7645 — edited tests/env_integration.rs; edited Cargo.toml]_
 [09:56:06] THINK: Let me validate the exact expressions in an isolated `libc`-only crate for both musl targets:
 [09:56:06] NOTE: PLACEHOLDER (~/Dev/h5i/Cargo.toml): on. `probe()` and `run_supervised()` already have non-Linux stubs; `slirp4netns_path` is the only gap. Let me confirm that
 [09:56:06] NOTE: PLACEHOLDER (~/Dev/h5i/Cargo.toml): supervised` has a `#[cfg(not(all(linux, x86_64/aarch64)))]` stub but `slirp4netns_path` has no non-Linux counterpart. That's the gap. Adding the stub
+[09:56:06] NOTE: PLACEHOLDER (~/Dev/h5i/src/supervisor.rs): nt. The fix mirrors the existing `run_supervised` non-Linux stub exactly, and CI reported exactly one error (`slirp4netns_path`), so this is complete.…
