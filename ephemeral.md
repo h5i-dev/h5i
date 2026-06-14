@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: env/human/claude-1
+# Ephemeral traces — Branch: improve-shell
 
