@@ -133,10 +133,11 @@ We can also monitor the conversation in real time with `h5i msg watch`.
 `h5i env` gives you a disposable, confined **environment** — a git worktree plus a policy that limits what the code inside can read, write, and reach over the network — so you can run a refactor, a dependency upgrade, or an untrusted build (yourself or via an agent) without it touching your main tree. Your loop is four commands:
 
 ```bash
-h5i env create fix-auth          # make a confined box (picks the strongest isolation the host supports)
-h5i env shell  fix-auth          # work inside it — or hand the box to an agent
-h5i env diff   fix-auth          # see exactly what changed, against the frozen starting point
-h5i env apply  fix-auth          # merge it into your branch (only when you choose to)
+h5i env create env-name --profile agent-claude  # make a confined box (picks the strongest isolation the host supports)
+# h5i env create env-name --profile agent-codex 
+h5i env shell  env-name                         # work inside it — or hand the box to an agent
+h5i env propose env-name                        # mediated commit + review brief
+h5i env apply  fix-auth                         # merge it into your branch (only when you choose to)
 ```
 
 Inside the box, **every command is confined**: reading `/etc/shadow`, opening a raw socket, reaching a host that isn't on the allowlist, or calling `mount` / `unshare` / `ptrace` is blocked by Landlock + seccomp + namespaces, while normal work runs and is recorded. (`h5i env run <name> -- <cmd>` runs a single confined command the same way.)
@@ -149,7 +150,7 @@ Inside the box, **every command is confined**: reading `/etc/shadow`, opening a 
 |------|-------------|
 | `workspace` | git worktree only — trusted code |
 | `process` | Landlock + seccomp deny-list + user/net namespaces + cgroup v2 (rootless) |
-| `supervised` | process tier + a live seccomp-notify socket gate (default-deny sockets) **plus a real L3/L4 `net.egress` allowlist** — slirp4netns uplink + nftables default-drop + `/etc/hosts` DNS pinning (no raw-socket bypass) |
+| `supervised` | process tier + a live seccomp-notify socket gate (default-deny sockets) **plus a real L3/L4 `net.egress` allowlist** — slirp4netns uplink + nftables default-drop + `/etc/hosts` DNS pinning |
 | `container` | rootless Podman + a DNS-pinned **`net.egress` domain allowlist** (L7) |
 
 <p align="center">
