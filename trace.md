@@ -87,3 +87,4 @@ _[Checkpoint: 6a2e7c06 — edited src/seccomp_notify.rs; edited src/seccomp_noti
 [10:04:28] ACT: edited .github/workflows/test.yaml
 [10:06:57] THINK: Let me validate the workflow YAML, and reproduce the exact `cargo check` the new native musl job runs (stub + skip-web) to be sure that command path actually compiles:
 [10:06:57] NOTE: PLACEHOLDER (~/Dev/h5i/src/seccomp_notify.rs): dist/` is committed (determines if the check needs to build/stub it) and the rust-embed feature setup
+[10:06:57] NOTE: PLACEHOLDER (~/Dev/h5i/src/seccomp_notify.rs): o *exist* at compile time). So the cross-check just needs a stub `web/dist/` + `H5I_SKIP_WEB_BUILD=1` — far cheaper than running npm on every runner…
