@@ -53,3 +53,4 @@ _[Checkpoint: 6a2e7645 — edited tests/env_integration.rs; edited Cargo.toml]_
 [09:50:04] ACT: edited src/seccomp_notify.rs
 [09:50:07] ACT: edited src/seccomp_notify.rs
 [09:50:10] ACT: edited src/seccomp_notify.rs
+[09:56:06] THINK: Host build clean. Let me attempt the real musl cross-check to validate the musl-only cfg paths (this is what CI actually exercises):
