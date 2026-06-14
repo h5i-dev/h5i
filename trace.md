@@ -20,3 +20,4 @@
 [04:01:59] OBSERVE: read tests/env_integration.rs
 [04:03:57] ACT: edited tests/env_integration.rs
 [04:06:46] THINK: Let me add four new tests covering genuine gaps: `--patch` mode (squash semantics + content), patch mode when the parent advanced, the no-op apply path, and the double-apply guard.
+[04:06:46] THINK: Let me run clippy on the test file to make sure it's clean (CI runs `-D warnings`).
