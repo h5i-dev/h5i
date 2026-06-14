@@ -175,3 +175,4 @@
 {"ts":"2026-06-14T02:44:31.620678Z","env_id":"env/human/codex-1","agent":"human","event":"created","detail":"base=f4bf68ef1c6e profile=agent-codex isolation=supervised backend=worktree"}
 {"ts":"2026-06-14T02:44:51.240157Z","env_id":"env/human/codex-1","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-14T02:54:40.277644Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo test --test env_integration propose_is_idempotent_after_snapshot_without_new_worktree_changes -- --nocapture` exit=0 source=inbox-capture","capture":"a6e5e45932f1d392"}
+{"ts":"2026-06-14T02:54:40.526586Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo test --test env_integration propose_accepts_noop_env_and_records_reviewable_state -- --nocapture` exit=101 source=inbox-capture","capture":"5034efe397066329"}
