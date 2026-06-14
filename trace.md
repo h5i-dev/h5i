@@ -68,3 +68,9 @@ _[Checkpoint: 6a2e7ab6 — edited src/seccomp_notify.rs; edited src/seccomp_noti
 [09:59:08] THINK: Let me run it (openssl/ring will build from source, so this takes a while):
 [09:59:08] NOTE: DEFERRAL (~/Dev/h5i/src/seccomp_notify.rs): per target, `src/seccomp_notify.rs` | | `slirp4netns_path` not in scope (macOS/Windows) | linux-only fn called by the cross-platform `preflight`, with…
 [09:59:08] NOTE: PLACEHOLDER (~/Dev/h5i/src/seccomp_notify.rs): called by the cross-platform `preflight`, with no non-Linux stub | added `#[cfg(not(target_os = "linux"))]` stub returning `None` — `src/supervisor.…
+
+
+---
+_[Checkpoint: 6a2e7b6c — edited src/seccomp_notify.rs; edited src/seccomp_notify.rs; edited src/seccomp_notify.rs]_
+---
+
