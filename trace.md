@@ -65,3 +65,4 @@ _[Checkpoint: 6a2e7ab6 — edited src/seccomp_notify.rs; edited src/seccomp_noti
 ---
 
 [09:59:01] OBSERVE: read bro39hk1d.output
+[09:59:08] THINK: Let me run it (openssl/ring will build from source, so this takes a while):
