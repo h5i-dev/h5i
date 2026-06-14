@@ -14,3 +14,4 @@
 [02:46:47] OBSERVE: searched changes|worktree for "new"
 [02:46:48] OBSERVE: read tests/env_integration.rs
 [02:46:48] OBSERVE: read tests/env_integration.rs
+[02:46:48] OBSERVE: read tests/env_integration.rs
