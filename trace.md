@@ -31,3 +31,9 @@ _[Checkpoint: 6a2e16f7 — Added env propose integration tests for no-op proposa
 _[Checkpoint: 6a2e16fc — edited tests/env_integration.rs; edited tests/env_integration.rs; edited tests/env_integration.rs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2e1768 — edited tests/env_integration.rs; edited tests/env_integration.rs; edited tests/env_integration.rs]_
+---
+
