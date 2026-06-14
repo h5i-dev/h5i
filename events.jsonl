@@ -187,3 +187,4 @@
 {"ts":"2026-06-14T03:22:22.948970Z","env_id":"env/human/codex-1","agent":"human","event":"proposed","detail":"no new changes (worktree == branch tip)"}
 {"ts":"2026-06-14T03:22:35.808621Z","env_id":"env/human/codex-1","agent":"human","event":"applied","detail":"merge h5i/env/human/codex-1 → fix-spool-evidence (b3543d0a6e4fda2d5170a9c90ec0d51f8281948d) evidence=6 [inbox-capture=6]"}
 {"ts":"2026-06-14T03:25:30.771751Z","env_id":"env/human/codex-1","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
+{"ts":"2026-06-14T03:28:25.256666Z","env_id":"env/human/claude-1","agent":"human","event":"created","detail":"base=b3543d0a6e4f profile=agent-claude isolation=supervised backend=worktree"}
