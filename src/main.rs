@@ -5001,6 +5001,16 @@ fn main() -> anyhow::Result<()> {
                 },
 
                 Some(MsgCommands::Hook { as_agent, block }) => {
+                    // Inside a confined env box ($H5I_ENV_ID set) the msg store
+                    // (.git/.h5i/msg) is deliberately sealed — it stays a
+                    // host-mediated coordination channel, so the box can't write
+                    // read-state (cursors/views). The Stop hook is inherited from
+                    // the project settings and would otherwise hit EACCES advancing
+                    // the cursor; turn-delivery isn't the confined agent's job, so
+                    // no-op cleanly rather than erroring at the user.
+                    if std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok() {
+                        return Ok(());
+                    }
                     // Turn-delivery: meant to run from a Stop hook. Resolve the
                     // identity quietly; if none is configured there is nothing
                     // to deliver, so exit cleanly rather than erroring out.
