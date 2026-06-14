@@ -182,3 +182,4 @@
 {"ts":"2026-06-14T02:54:41.791853Z","env_id":"env/human/codex-1","agent":"human","event":"exec","detail":"inbox capture: cmd=`cargo test --test env_integration propose -- --nocapture` exit=0 source=inbox-capture","capture":"df6eb640616ae6c3"}
 {"ts":"2026-06-14T02:54:41.812825Z","env_id":"env/human/codex-1","agent":"human","event":"note","detail":"in-box commit note applied to fa20198df320"}
 {"ts":"2026-06-14T02:54:41.816778Z","env_id":"env/human/codex-1","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=0 observed=7"}
+{"ts":"2026-06-14T02:54:45.153878Z","env_id":"env/human/codex-1","agent":"human","event":"violation","detail":"mediated commit refused (fail-closed) — 1 path violation(s): examples/dnn-from-scratch: nested git repository (gitlink) — not allowed in a mediated commit"}
