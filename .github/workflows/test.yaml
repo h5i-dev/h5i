@@ -40,3 +40,74 @@ jobs:
 
       - name: cargo test
         run: cargo test --verbose
+
+  # Compile-check every release target on PRs/main so cross-target breakage
+  # (musl-vs-glibc libc cfg, arch-specific syscall consts, `target_os` gaps) is
+  # caught BEFORE a tag is cut — not in `release.yaml`, which only runs on tags.
+  # `cargo check` (not a full build) is enough: every such failure is a
+  # front-end compile/type/cfg error. Keep this matrix in sync with
+  # `release.yaml`'s build matrix.
+  cross-check:
+    name: cross-check ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: false
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: true
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            use_cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            use_cross: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Compile-only gate: we don't need the real React bundle, only a `web/dist/`
+      # so rust-embed's `#[folder = "web/dist/"]` resolves at derive time. Stub it
+      # and skip the npm build (H5I_SKIP_WEB_BUILD=1) — much cheaper than Node on
+      # every runner, and the bundle is irrelevant to whether the crate compiles.
+      - name: Stub web/dist for rust-embed
+        shell: bash
+        run: |
+          mkdir -p web/dist
+          echo '<!doctype html><title>stub</title>' > web/dist/index.html
+
+      # musl linker/compiler for the native musl target; OpenSSL is vendored.
+      - name: Install musl-tools (Linux, native)
+        if: runner.os == 'Linux' && !matrix.use_cross
+        run: sudo apt-get update -q && sudo apt-get install -y musl-tools
+
+      - name: Install cross
+        if: matrix.use_cross
+        uses: taiki-e/install-action@cross
+
+      - name: cargo check (native)
+        if: "!matrix.use_cross"
+        env:
+          H5I_SKIP_WEB_BUILD: '1'
+        run: cargo check --locked --target ${{ matrix.target }}
+
+      - name: cross check (container)
+        if: matrix.use_cross
+        env:
+          H5I_SKIP_WEB_BUILD: '1'
+          # Forward both into cross's Docker container (no Node there → skip web
+          # build; keep the `-D warnings` RUSTFLAGS from the workflow env).
+          CROSS_CONTAINER_OPTS: '-e H5I_SKIP_WEB_BUILD -e RUSTFLAGS'
+        run: cross check --locked --target ${{ matrix.target }}
