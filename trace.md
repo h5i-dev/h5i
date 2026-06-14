@@ -18,3 +18,4 @@
 [03:31:50] OBSERVE: read tests/env_integration.rs
 [03:32:14] OBSERVE: read src/env.rs
 [03:32:38] OBSERVE: read src/ctx.rs
+[03:33:02] OBSERVE: read src/main.rs
