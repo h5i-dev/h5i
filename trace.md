@@ -1995,3 +1995,9 @@ _[Checkpoint: 6a2e1889 — edited running-h5i-suite-in-box.md; edited src/sandbo
 [03:09:39] ACT: edited tests/env_integration.rs
 [03:11:09] ACT: edited CLAUDE.md
 [03:11:30] THINK: All three pass. Let me run clippy (CI gate is `-D warnings`) on the changed code:
+
+
+---
+_[Checkpoint: 6a2e1be2 — edited src/env.rs; edited tests/env_integration.rs; edited CLAUDE.md]_
+---
+
