@@ -55,3 +55,4 @@ _[Checkpoint: 6a2e7645 — edited tests/env_integration.rs; edited Cargo.toml]_
 [09:50:10] ACT: edited src/seccomp_notify.rs
 [09:56:06] THINK: Host build clean. Let me attempt the real musl cross-check to validate the musl-only cfg paths (this is what CI actually exercises):
 [09:56:06] THINK: Let me validate the exact expressions in an isolated `libc`-only crate for both musl targets:
+[09:56:06] NOTE: PLACEHOLDER (~/Dev/h5i/Cargo.toml): on. `probe()` and `run_supervised()` already have non-Linux stubs; `slirp4netns_path` is the only gap. Let me confirm that
