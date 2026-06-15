@@ -1054,3 +1054,9 @@ _[Checkpoint: 6a301787 — Moved experiment off /tmp to $HOME so the supervised 
 _[Checkpoint: 6a301793 — wrote scripts/experiment_safe_sandbox_worktree_results.md; wrote agent-profile-grants-shared-tmp.md; edited MEMORY.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3017c5 — wrote scripts/experiment_safe_sandbox_worktree_results.md; wrote agent-profile-grants-shared-tmp.md; edited MEMORY.md]_
+---
+
