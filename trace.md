@@ -897,3 +897,9 @@ _[Checkpoint: 6a2fca78 — edited scripts/experiment_safe_sandbox_worktree.sh; e
 _[Checkpoint: 6a2fcb16 — Committed safe sandbox-style worktree experiment script and observed results comparing plain git worktree escape with h5i env denial.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2fcb1a — edited scripts/experiment_safe_sandbox_worktree.sh; edited scripts/experiment_safe_sandbox_worktree.sh; added scripts/ex…]_
+---
+
