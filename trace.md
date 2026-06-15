@@ -150,3 +150,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:24:29] OBSERVE: read tutorials/01-never-let-your-ai-forget.md
 [01:24:30] OBSERVE: read tutorials/02-did-claude-know-what-it-was-doing.md
 [01:24:30] OBSERVE: read tutorials/03-version-control-for-ai-reasoning.md
+[01:24:31] OBSERVE: read tutorials/04-advanced-context-design-decisions.md
