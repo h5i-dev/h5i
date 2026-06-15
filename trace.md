@@ -282,3 +282,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:26:21] ACT: edited docs/environments-design.md
 [01:26:21] ACT: edited docs/blog/persistent-memory-for-claude-code/index.html
 [01:26:22] ACT: edited docs/environments-design.md
+[01:26:22] ACT: edited MANUAL.md
