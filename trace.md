@@ -1096,3 +1096,9 @@ _[Checkpoint: 6a304003 — wrote scripts/experiment_safe_sandbox_worktree_result
 [19:06:26] OBSERVE: read post_commit.rs
 [19:06:28] OBSERVE: read install_hooks.rs
 [19:08:18] THINK: Let me ground a few specifics (daemon, agent presets, stats, redaction, notes backend) before writing the comparison.
+
+
+---
+_[Checkpoint: 6a304da2 — session ended (auto-checkpoint)]_
+---
+
