@@ -374,3 +374,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:27:27] ACT: edited docs/blog/auditing-ai-generated-code/index.html
 [01:27:28] OBSERVE: read man/man1/h5i.1
 [01:27:28] ACT: edited docs/guides/ai-code-provenance/index.html
+[01:27:29] ACT: edited MANUAL.md
