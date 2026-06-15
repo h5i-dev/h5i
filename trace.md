@@ -192,3 +192,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:25:11] ACT: edited docs/token-reduction.md
 [01:25:11] ACT: edited tutorials/01-never-let-your-ai-forget.md
 [01:25:13] OBSERVE: read man/man1/h5i.1
+[01:25:14] ACT: edited MANUAL.md
