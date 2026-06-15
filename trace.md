@@ -868,3 +868,4 @@ _[Checkpoint: 6a2fc7e3 — edited src/sandbox.rs; edited src/sandbox.rs]_
 [09:48:34] OBSERVE: listed files under .
 [09:48:34] OBSERVE: listed files under scripts
 [09:48:34] OBSERVE: read docs/environments-design.md
+[09:48:34] OBSERVE: read tests/env_integration.rs
