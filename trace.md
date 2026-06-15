@@ -529,3 +529,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:39:54] OBSERVE: read docs/blog/agent-sandbox-env/index.html
 [01:39:59] ACT: edited docs/blog/agent-sandbox-env/index.html
 [01:45:45] OBSERVE: read MANUAL.md
+[01:49:45] OBSERVE: read h5i-migration-spec.md
