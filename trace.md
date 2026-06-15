@@ -363,3 +363,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:27:20] ACT: edited docs/blog/prompt-injection-in-agent-traces/index.html
 [01:27:21] ACT: edited .claude/h5i.md
 [01:27:21] ACT: edited docs/blog/auditing-ai-generated-code/index.html
+[01:27:22] ACT: edited MANUAL.md
