@@ -885,3 +885,9 @@ _[Checkpoint: 6a2fc7e3 — edited src/sandbox.rs; edited src/sandbox.rs]_
 [09:48:34] OBSERVE: read 1600
 [09:48:34] OBSERVE: read /tmp/h5i-safe-worktree-run.out
 [09:48:34] ACT: added scripts/experiment_safe_sandbox_worktree_results.md
+
+
+---
+_[Checkpoint: 6a2fca78 — edited scripts/experiment_safe_sandbox_worktree.sh; edited scripts/experiment_safe_sandbox_worktree.sh; added scripts/ex…]_
+---
+
