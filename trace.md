@@ -12,3 +12,4 @@
 [21:56:03] OBSERVE: read src/main.rs
 [21:56:03] OBSERVE: read src/pr.rs
 [21:56:04] OBSERVE: read src/mcp.rs
+[21:56:05] OBSERVE: read src/ctx.rs
