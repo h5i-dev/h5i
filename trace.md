@@ -178,3 +178,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:25:00] OBSERVE: read h5i-migration-spec.md
 [01:25:00] OBSERVE: read docs/token-reduction.md
 [01:25:01] OBSERVE: read docs/blog/from-git-blame-to-ai-blame/index.html
+[01:25:01] OBSERVE: read docs/blog/persistent-memory-for-claude-code/index.html
