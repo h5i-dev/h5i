@@ -203,3 +203,4 @@
 {"ts":"2026-06-15T20:04:04.146087Z","env_id":"env/claude/suptest","agent":"claude","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-15T21:53:23.553422Z","env_id":"env/human/update-comments","agent":"human","event":"created","detail":"base=eaf11abcdb96 profile=agent-claude isolation=supervised backend=worktree"}
 {"ts":"2026-06-15T21:53:32.736512Z","env_id":"env/human/update-comments","agent":"human","event":"status","detail":"running (shell)"}
+{"ts":"2026-06-15T22:19:05.650611Z","env_id":"env/human/update-comments","agent":"human","event":"exec","detail":"inbox capture: cmd=`bash -c grep -rn \"objects push\\|objects pull\\|share push\\|share pull\" src/main.rs | head -30` exit=0 source=inbox-capture","capture":"dd14edc6864a96b8"}
