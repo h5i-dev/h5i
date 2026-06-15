@@ -1,0 +1,1 @@
+{"git_oid":"3698a4ab0178b0aeae52377de0e1c8b5fe778462","parent_oid":"1954e493f37658b35774866a82b4098825394d66","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"Use a different dir instead of /tmp to make the supervised tier work in this example.","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-15T15:18:22.242994863Z"}
