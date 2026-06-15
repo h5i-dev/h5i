@@ -196,3 +196,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:25:14] ACT: edited docs/token-reduction.md
 [01:25:14] ACT: edited docs/token-reduction.md
 [01:25:15] ACT: edited tutorials/01-never-let-your-ai-forget.md
+[01:25:17] ACT: edited CLAUDE.md
