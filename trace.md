@@ -591,3 +591,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:54:42] ACT: edited MANUAL.md
 [01:54:49] ACT: edited MANUAL.md
 [01:57:25] THINK: I'll start by understanding the actual current CLI structure (to know the correct new API names) and finding all the doc files that need updating.
+[01:57:25] THINK: Now I'll verify correctness: (1) the Rust constants still compile, (2) constant↔file sync still holds, (3) scan for any missed legacy forms.
