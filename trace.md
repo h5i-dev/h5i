@@ -839,3 +839,9 @@ _[Checkpoint: 6a2fc644 — edited src/env.rs; edited tests/env_integration.rs; e
 _[Checkpoint: 6a2fc754 — Fixed CI clippy warning by deriving Default for AuditCapture and amended audit-all env capture commit.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2fc75a — edited MANUAL.md; edited src/sandbox.rs]_
+---
+
