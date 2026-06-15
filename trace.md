@@ -396,3 +396,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:27:40] ACT: edited MANUAL.md
 [01:27:40] ACT: edited src/main.rs
 [01:27:42] OBSERVE: read tutorials/03-version-control-for-ai-reasoning.md
+[01:27:43] OBSERVE: read docs/blog/prompt-injection-in-agent-traces/index.html
