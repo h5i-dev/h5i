@@ -423,3 +423,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:28:11] ACT: edited docs/blog/reduce-claude-token-costs/index.html
 [01:28:12] ACT: edited src/main.rs
 [01:28:12] ACT: edited tutorials/04-advanced-context-design-decisions.md
+[01:28:13] ACT: edited MANUAL.md
