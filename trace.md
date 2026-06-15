@@ -881,3 +881,4 @@ _[Checkpoint: 6a2fc7e3 — edited src/sandbox.rs; edited src/sandbox.rs]_
 [09:48:34] ACT: added scripts/experiment_safe_sandbox_worktree.sh
 [09:48:34] OBSERVE: searched MANUAL.md for "scripts/experiment\|experiment_""
 [09:48:34] ACT: edited scripts/experiment_safe_sandbox_worktree.sh
+[09:48:34] ACT: edited scripts/experiment_safe_sandbox_worktree.sh
