@@ -849,11 +849,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] wrote scripts/experiment_safe_sandbox_worktree_workflow.md; wrote scripts/experiment_safe_sandbox_worktree.sh; wrote scr…
 - [x] wrote scripts/experiment_safe_sandbox_worktree_workflow.md; wrote scripts/experiment_safe_sandbox_worktree.sh; wrote scr…
 - [x] wrote scripts/experiment_safe_sandbox_worktree.sh; wrote scripts/experiment_safe_sandbox_worktree_results.md
+- [x] Moved experiment off /tmp to $HOME so the supervised tier also denies the write
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-15 15:17 UTC] `improve-shell`: Moved experiment off /tmp to $HOME so the supervised tier also denies the write
 - [2026-06-15 15:08 UTC] `improve-shell`: wrote scripts/experiment_safe_sandbox_worktree.sh; wrote scripts/experiment_safe_sandbox_worktree_results.md
 - [2026-06-15 15:06 UTC] `improve-shell`: wrote scripts/experiment_safe_sandbox_worktree_workflow.md; wrote scripts/experiment_safe_sandbox_worktree.sh; wrote scr…
 - [2026-06-15 14:46 UTC] `improve-shell`: wrote scripts/experiment_safe_sandbox_worktree_workflow.md; wrote scripts/experiment_safe_sandbox_worktree.sh; wrote scr…
