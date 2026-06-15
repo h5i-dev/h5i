@@ -142,3 +142,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:16:16] OBSERVE: read src/main.rs
 [01:20:28] ACT: wrote h5i-migration-spec.md
 [01:24:16] OBSERVE: read h5i-migration-spec.md
+[01:24:20] OBSERVE: read MANUAL.md
