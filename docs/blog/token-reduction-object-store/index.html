@@ -109,7 +109,7 @@
 
     <div class="tbl-wrap">
       <table class="data">
-        <thead><tr><th>Artifact</th><th>Where it lives</th><th>Size</th><th>Travels with <code>h5i push</code>?</th></tr></thead>
+        <thead><tr><th>Artifact</th><th>Where it lives</th><th>Size</th><th>Travels with <code>h5i share push</code>?</th></tr></thead>
         <tbody>
           <tr><td>Raw blob (full bytes)</td><td><code>.git/.h5i/objects/ab/cd/&lt;sha256&gt;</code> (local)</td><td>huge</td><td>No by default — only via <code>h5i objects push</code> (Git LFS / git ref)</td></tr>
           <tr><td>Manifest (pointer + structured summary)</td><td><code>refs/h5i/objects</code> (git ref, JSONL)</td><td>tiny</td><td>Yes</td></tr>
@@ -208,7 +208,7 @@ $ h5i recall object 0bb827e4               # the full raw bytes, exactly</pre></
     <h2>Sharing the raw bytes — Git LFS by default</h2>
 
     <p>
-      The split has a nice consequence for teams: <code>h5i push</code> carries only the tiny
+      The split has a nice consequence for teams: <code>h5i share push</code> carries only the tiny
       <em>manifests</em> (pointers + summaries) — the huge raw bytes <strong>never travel by
       default</strong>. When you do want to share them, <code>h5i objects push</code> uploads them,
       and the backend is chosen automatically:
@@ -257,7 +257,7 @@ h5i recall objects --status failed
 h5i recall object &lt;id&gt;        # full raw output, byte-for-byte
 
 # share the raw blobs with the team (Git LFS by default on HTTP(S) remotes)
-h5i objects push               # h5i push already carried the summaries
+h5i objects push               # h5i share push already carried the summaries
 h5i objects pull               # fetch shared blobs you don't have locally
 
 # wire it into a project so agents do it automatically

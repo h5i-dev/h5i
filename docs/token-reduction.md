@@ -125,7 +125,7 @@ Handles accept the short id, a full `sha256:<hex>`, or any unambiguous prefix.
 
 ### Sharing raw output (optional)
 
-By default the manifest + summary travel with `h5i push`, but the **raw bytes
+By default the manifest + summary travel with `h5i share push`, but the **raw bytes
 stay local** (they can be large). To share them:
 
 ```bash
@@ -149,7 +149,7 @@ Two backends, selected with `--backend auto|lfs|git-ref` (default `auto`):
   `objects pull` union-merges and caches locally; `recall` then falls back to
   the *local* git-ref store.
 
-Both are deliberately separate from the metadata `h5i push` (raw output is
+Both are deliberately separate from the metadata `h5i share push` (raw output is
 heavy), both verify the content address on every read (tampered bytes are
 rejected, never cached), and both are reachable through one `Backend` trait
 (`has`/`put`/`get`/`remove` by sha256) — so an S3/HTTP backend could slot in the
@@ -360,7 +360,7 @@ A manifest record:
   remote store can be added later; only `LocalStore` exists today.
 - **Pointers carry the full digest.** Truncated digests would make cross-clone
   retrieval and sync brittle; every manifest records `sha256:<64 hex>`.
-- **Manifest text is hard-capped.** Since manifests travel via `h5i push`, the
+- **Manifest text is hard-capped.** Since manifests travel via `h5i share push`, the
   git-tracked `summary` and `highlights` fields are bounded as a backstop on top
   of the filter's line/token budget: `summary` ≤ 16 KiB (UTF-8-safe, with a
   `… [summary truncated] …` marker), at most 20 `highlights`, each ≤ 500 bytes

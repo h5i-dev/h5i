@@ -165,7 +165,7 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i claims add "retry logic lives in HttpClient::send, not middleware" \
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i capture claim "retry logic lives in HttpClient::send, not middleware" \
     --path src/http.rs --path src/middleware.rs</span>
 <span class="t-pass">✔</span>  <span class="t-out">Recorded claim </span><span class="t-ai">478be84c61e7</span>
 <span class="t-out">   evidence: sha256(("src/http.rs", &lt;blob_oid&gt;), ("src/middleware.rs", &lt;blob_oid&gt;))</span></pre></div>
@@ -187,7 +187,7 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i claims list</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall claims</span>
 
 <span class="t-bold">STATUS    ID            TEXT</span>
 <span class="t-pass">● live</span>    <span class="t-ai">478be84c61e7</span>  <span class="t-out">retry logic lives in HttpClient::send, not middleware</span>
@@ -262,10 +262,10 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i claims add "all DB writes go through Repository, never raw sqlx" \
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i capture claim "all DB writes go through Repository, never raw sqlx" \
     --path src/db/mod.rs</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i claims list --group-by-path</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall claims --group-by-path</span>
 
 <span class="t-bold">src/db/mod.rs</span>
   <span class="t-pass">● live</span>  <span class="t-out">all DB writes go through Repository, never raw sqlx</span>
@@ -276,7 +276,7 @@
     </div>
 
     <p>
-      Useful when an agent is about to edit a file: <code>h5i context relevant src/db/mod.rs</code> surfaces
+      Useful when an agent is about to edit a file: <code>h5i recall context relevant src/db/mod.rs</code> surfaces
       the per-file claims plus any reasoning trace mentioning the file, so the agent loads exactly
       the constraints it needs and nothing else.
     </p>

@@ -26,7 +26,7 @@ Inside those thinking blocks, you'll find sentences like:
 
 The AI is hedging. It's expressing doubt. It's waving a tiny red flag that says *a human should look here* — and then burying that flag in a log file you've never opened.
 
-**`h5i notes uncertainty` unearths every one of those flags.**
+**`h5i recall notes uncertainty` unearths every one of those flags.**
 
 ---
 
@@ -35,8 +35,8 @@ The AI is hedging. It's expressing doubt. It's waving a tiny red flag that says 
 Say Claude just refactored your database layer. You run two commands:
 
 ```bash
-h5i notes analyze    # parses the session log, links to HEAD
-h5i notes uncertainty
+h5i recall notes analyze    # parses the session log, links to HEAD
+h5i recall notes uncertainty
 ```
 
 You get this:
@@ -88,7 +88,7 @@ The standard review process is symmetric: every line costs the same amount of re
 
 Treating those two categories identically is a waste of your most limited resource: focused human attention.
 
-`h5i notes uncertainty` makes the review process *asymmetric in the right direction*. High-confidence AI code gets a lighter pass. Low-confidence AI code — the stuff the model itself flagged — gets your full attention.
+`h5i recall notes uncertainty` makes the review process *asymmetric in the right direction*. High-confidence AI code gets a lighter pass. Low-confidence AI code — the stuff the model itself flagged — gets your full attention.
 
 The result: you catch more real bugs in less time.
 
@@ -119,7 +119,7 @@ This isn't sentiment analysis. It's the AI's own internal calibration — surfac
 Already know which module worries you? You can filter signals to a specific path:
 
 ```bash
-h5i notes uncertainty --file src/db/migrations.rs
+h5i recall notes uncertainty --file src/db/migrations.rs
 ```
 
 Useful when you're reviewing a PR and want to jump straight to the model's doubts about the file you're responsible for — without wading through signals from unrelated parts of the diff.
@@ -132,13 +132,13 @@ Here's how it fits into a natural AI-assisted development cycle:
 
 ```bash
 # 1. Claude finishes a task and you're ready to review
-h5i notes analyze              # parse the session, link to HEAD
+h5i recall notes analyze              # parse the session, link to HEAD
 
 # 2. Get the 10,000-foot view of what the AI touched
-h5i notes show                 # footprint: consulted vs. edited files
+h5i recall notes show                 # footprint: consulted vs. edited files
 
 # 3. Find the risky spots
-h5i notes uncertainty          # heatmap + timeline + verbatim snippets
+h5i recall notes uncertainty          # heatmap + timeline + verbatim snippets
 
 # 4. Now open your diff viewer — but start with migrations.rs, turn 18
 ```
@@ -154,10 +154,10 @@ h5i reads Claude Code's session logs — `.jsonl` files that record every messag
 After analysis, the results are persisted in `.git/.h5i/` and linked to the commit OID, so you can revisit the uncertainty map for any past commit:
 
 ```bash
-h5i notes uncertainty --commit a3f8c12
+h5i recall notes uncertainty --commit a3f8c12
 ```
 
-Team members who pull your h5i data (`h5i pull`) can run the same query on sessions they weren't present for.
+Team members who pull your h5i data (`h5i share pull`) can run the same query on sessions they weren't present for.
 
 ---
 
@@ -171,8 +171,8 @@ cargo install --path .
 h5i init
 
 # After your next Claude Code session:
-h5i notes analyze
-h5i notes uncertainty
+h5i recall notes analyze
+h5i recall notes uncertainty
 ```
 
 That's it. The heatmap is waiting.

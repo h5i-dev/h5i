@@ -939,7 +939,7 @@
 <section id="commit">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">h5i commit</span>
+      <span class="section-tag">h5i capture commit</span>
       <h2 class="section-title">Every AI commit ships with its provenance</h2>
       <p class="section-sub">One command turns an agent's edit into a reviewable record — written to <code>refs/h5i/notes</code>, never touching your source tree.</p>
       <div class="divider"></div>
@@ -951,7 +951,7 @@
           <span class="terminal-path">~/my-project</span>
         </div>
         <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">git add src/auth/token.rs</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i commit -m "fix token refresh" \
+<span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "fix token refresh" \
     --agent claude --tests --audit</span>
 
 <span class="t-pass">✔</span> <span class="t-out">commit 1a2b3c4 · notes → refs/h5i/notes</span>

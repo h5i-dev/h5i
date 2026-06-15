@@ -121,7 +121,7 @@
     </p>
 
     <p>
-      <strong><code>h5i notes uncertainty</code> surfaces those flags for review.</strong>
+      <strong><code>h5i recall notes uncertainty</code> surfaces those flags for review.</strong>
     </p>
 
     <h2>What it looks like in practice</h2>
@@ -132,8 +132,8 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i notes analyze</span>    <span class="t-cmt"># parses the session log, links to HEAD</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i notes uncertainty</span></pre></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes analyze</span>    <span class="t-cmt"># parses the session log, links to HEAD</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes uncertainty</span></pre></div>
     </div>
 
     <p>You get this:</p>
@@ -200,7 +200,7 @@
     </p>
 
     <p>
-      <code>h5i notes uncertainty</code> makes the review process <em>asymmetric in the right direction</em>.
+      <code>h5i recall notes uncertainty</code> makes the review process <em>asymmetric in the right direction</em>.
       High-confidence AI code gets a lighter pass. Low-confidence AI code — the stuff the model
       itself flagged — gets your full attention.
     </p>
@@ -251,7 +251,7 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i notes uncertainty --file src/db/migrations.rs</span></pre></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes uncertainty --file src/db/migrations.rs</span></pre></div>
     </div>
 
     <p>
@@ -268,13 +268,13 @@
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">review workflow</span></div>
       <div class="terminal-body"><pre><span class="t-cmt"># 1. Claude finishes a task and you're ready to review</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i notes analyze</span>              <span class="t-cmt"># parse the session, link to HEAD</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes analyze</span>              <span class="t-cmt"># parse the session, link to HEAD</span>
 
 <span class="t-cmt"># 2. Get the 10,000-foot view of what the AI touched</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i notes show</span>                 <span class="t-cmt"># footprint: consulted vs. edited files</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes show</span>                 <span class="t-cmt"># footprint: consulted vs. edited files</span>
 
 <span class="t-cmt"># 3. Find the risky spots</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i notes uncertainty</span>          <span class="t-cmt"># heatmap + timeline + verbatim snippets</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes uncertainty</span>          <span class="t-cmt"># heatmap + timeline + verbatim snippets</span>
 
 <span class="t-cmt"># 4. Now open your diff viewer — but start with migrations.rs, turn 18</span></pre></div>
     </div>
@@ -299,11 +299,11 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i notes uncertainty --commit a3f8c12</span></pre></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes uncertainty --commit a3f8c12</span></pre></div>
     </div>
 
     <p>
-      Team members who pull your h5i data (<code>h5i pull</code>) can run the same query on sessions they
+      Team members who pull your h5i data (<code>h5i share pull</code>) can run the same query on sessions they
       weren't present for.
     </p>
 
@@ -318,8 +318,8 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i init</span>
 
 <span class="t-cmt"># After your next Claude Code session:</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i notes analyze</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i notes uncertainty</span></pre></div>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes analyze</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes uncertainty</span></pre></div>
     </div>
 
     <p>

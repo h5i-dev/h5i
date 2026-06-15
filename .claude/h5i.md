@@ -4,7 +4,7 @@ This repository uses **h5i** (a Git sidecar for AI-era version control).
 
 **Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, `h5i_claims_add`, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
 
-h5i metadata lives in `refs/h5i/*` and is NOT pushed by plain `git push`. Use `h5i push` to share it.
+h5i metadata lives in `refs/h5i/*` and is NOT pushed by plain `git push`. Use `h5i share push` to share it.
 
 ---
 
@@ -16,12 +16,12 @@ Apply these automatically, without being asked.
 
 **At the start of every non-trivial task:**
 ```bash
-h5i context status
+h5i recall context status
 # If no workspace exists yet, initialize one:
-h5i context init --goal "<one-line summary of what you are about to do>"
+h5i recall context init --goal "<one-line summary of what you are about to do>"
 ```
 
-**You do not need to call `h5i context trace` yourself.** h5i's hooks derive
+**You do not need to call `h5i recall context trace` yourself.** h5i's hooks derive
 the trace automatically:
 
 - `PostToolUse` → OBSERVE for every `Read`, ACT for every `Edit` / `Write`.
@@ -33,25 +33,25 @@ The only trace entry worth emitting by hand is an explicit flag you want a
 future reviewer to see *immediately* (not at next Stop). For that, use:
 
 ```bash
-h5i context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
+h5i recall context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 ```
 
 **After completing a logical milestone** (analysis done, feature implemented, bug fixed):
 ```bash
-h5i context commit "<milestone summary>" --detail "<what was done and what is left>"
+h5i recall context commit "<milestone summary>" --detail "<what was done and what is left>"
 ```
 
 **Branch your reasoning** when you want to explore an alternative without losing the current thread:
 ```bash
-h5i context branch experiment/sync-retry --purpose "try sync retry as a simpler fallback"
+h5i recall context branch experiment/sync-retry --purpose "try sync retry as a simpler fallback"
 # ... explore ...
-h5i context checkout main                   # return to main reasoning branch
-h5i context merge experiment/sync-retry     # merge findings back if useful
+h5i recall context checkout main                   # return to main reasoning branch
+h5i recall context merge experiment/sync-retry     # merge findings back if useful
 ```
 
 **Before editing a non-trivial file**, surface prior reasoning that mentions it:
 ```bash
-h5i context relevant src/repository.rs
+h5i recall context relevant src/repository.rs
 ```
 
 ---
@@ -81,7 +81,7 @@ h5i recall object <id> --format yaml|compact|json   # re-view the structured fin
 
 ### Committing code
 
-**Always stage files before committing.** `h5i commit` only commits what is staged and errors if nothing is staged.
+**Always stage files before committing.** `h5i capture commit` only commits what is staged and errors if nothing is staged.
 
 ```bash
 git add <file1> <file2> …   # never `git add .`
@@ -89,7 +89,7 @@ git add <file1> <file2> …   # never `git add .`
 
 Then commit via Bash:
 ```bash
-h5i commit -m "…" --model claude-sonnet-4-6 --agent claude-code --prompt "…"
+h5i capture commit -m "…" --model claude-sonnet-4-6 --agent claude-code --prompt "…"
 ```
 
 (Or the `h5i_commit` MCP tool if the MCP server is configured.)
@@ -98,13 +98,13 @@ Add flags when relevant:
 - `--tests`  — tests were added or modified (captures test metrics)
 - `--audit`  — security-sensitive, authentication, or high-risk changes
 
-Every `h5i commit` automatically snapshots the context workspace and links it to the git commit SHA, so the workspace state is recoverable per code commit (`h5i context restore <sha>`, `h5i context diff <sha1> <sha2>`).
+Every `h5i capture commit` automatically snapshots the context workspace and links it to the git commit SHA, so the workspace state is recoverable per code commit (`h5i recall context restore <sha>`, `h5i recall context diff <sha1> <sha2>`).
 
 ---
 
 ### Claims — pin reusable facts
 
-`h5i claims` records content-addressed facts so future sessions don't re-derive them. Each claim pins a Merkle hash over its evidence files at HEAD; it stays **live** until any evidence blob changes, then auto-invalidates. Live claims are injected into the SessionStart prelude / `h5i context prompt` as pre-verified facts.
+`h5i recall claims` records content-addressed facts so future sessions don't re-derive them. Each claim pins a Merkle hash over its evidence files at HEAD; it stays **live** until any evidence blob changes, then auto-invalidates. Live claims are injected into the SessionStart prelude / `h5i recall context prompt` as pre-verified facts.
 
 **Two flavors, both stored as plain claims (only the length and path-count differ):**
 - **Cross-cutting fact** (~30 tokens, multiple paths). Example: *"HTTP only src/api/{client,auth,billing}.py."*
@@ -114,10 +114,10 @@ Every `h5i commit` automatically snapshots the context workspace and links it to
 
 Via Bash:
 ```bash
-h5i claims add "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
+h5i capture claim "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
   --path src/api/client.py
-h5i claims list                  # all claims, flat
-h5i claims list --group-by-path  # claims grouped by file ("what's known about each file")
+h5i recall claims                  # all claims, flat
+h5i recall claims --group-by-path  # claims grouped by file ("what's known about each file")
 h5i claims prune                 # drop claims whose evidence changed
 ```
 
@@ -164,10 +164,10 @@ The SessionStart prelude prints the active policy when it is `off` or `high`. Fo
 After a significant Claude Code session, snapshot Claude's memory so it can be shared or restored:
 
 ```bash
-h5i memory snapshot        # snapshot current ~/.claude/projects/<repo>/memory/ → HEAD
-h5i memory log             # list all snapshots
-h5i memory diff            # show what changed since the previous snapshot
-h5i memory restore <oid>   # restore memory to the state at a given commit
+h5i capture memory        # snapshot current ~/.claude/projects/<repo>/memory/ → HEAD
+h5i recall memory log             # list all snapshots
+h5i recall memory diff            # show what changed since the previous snapshot
+h5i recall memory restore <oid>   # restore memory to the state at a given commit
 ```
 
 ---
@@ -175,7 +175,7 @@ h5i memory restore <oid>   # restore memory to the state at a given commit
 ### Messaging other agents (i5h)
 
 `h5i msg` is a cross-agent message channel stored in `refs/h5i/msg` (shareable
-via `h5i push`/`pull`). Several agents can share one clone: **your identity is
+via `h5i share push`/`share pull`). Several agents can share one clone: **your identity is
 `$H5I_AGENT`, injected per host — in Claude Code it is `claude`**, so sends and
 the inbox already use the right name with no flags. When the user asks to
 message, ping, ask, hand off to, or get a review from another agent (Codex, a
@@ -224,6 +224,6 @@ Monitor tool is experimental/host-dependent — don't rely on it.
 ### Sharing h5i Data
 
 ```bash
-h5i push   # push all h5i refs (notes, context, memory, ast, msg) to origin
-h5i pull   # pull h5i refs from origin
+h5i share push   # push all h5i refs (notes, context, memory, ast, msg) to origin
+h5i share pull   # pull h5i refs from origin
 ```

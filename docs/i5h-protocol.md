@@ -574,7 +574,7 @@ What an implementation must do to be i5h-conformant:
   `fail`; `reply` persists `reply_to` (and cached `thread_id`).
 - Union-merge by `id` (`cat_sort_uniq` semantics); CAS-retry on send.
 - Track seen IDs per agent, not a timestamp watermark.
-- Include `refs/h5i/msg` in `h5i push`/`pull`.
+- Include `refs/h5i/msg` in `h5i share push`/`pull`.
 - `--plain` and `--json` output modes.
 - Tests: cross-clone delivery, divergence union-merge, reply-chain threading,
   re-pulled-message dedup, legacy v0 reading, hook output, unknown-field/kind

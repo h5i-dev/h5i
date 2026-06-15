@@ -891,7 +891,7 @@
       </div>
       <figure style="margin:1.5rem 0 0; border:1px solid var(--border); border-radius:var(--radius-lg); overflow:hidden; background:#090909;">
         <img src="/_static/h5i-msg-demo.gif" width="1200" height="824" alt="The h5i msg watch view: a live agent channel with typed messages arriving in real time over refs/h5i/msg" loading="lazy" style="width:100%; height:auto;">
-        <figcaption style="padding:0.85rem 1rem; font-size:0.82rem; color:var(--text-dim); border-top:1px solid var(--border);">Every message is a durable Git object in <code style="font-family:var(--mono);color:var(--red-text)">refs/h5i/msg</code> — shared with <code style="font-family:var(--mono);color:var(--red-text)">h5i push</code>, replayable a year later. <a href="/blog/i5h-agent-to-agent-messaging/" style="color:var(--red-text)">Read how it works →</a></figcaption>
+        <figcaption style="padding:0.85rem 1rem; font-size:0.82rem; color:var(--text-dim); border-top:1px solid var(--border);">Every message is a durable Git object in <code style="font-family:var(--mono);color:var(--red-text)">refs/h5i/msg</code> — shared with <code style="font-family:var(--mono);color:var(--red-text)">h5i share push</code>, replayable a year later. <a href="/blog/i5h-agent-to-agent-messaging/" style="color:var(--red-text)">Read how it works →</a></figcaption>
       </figure>
     </div>
 
@@ -1018,7 +1018,7 @@
         <div class="terminal-body"><pre><span class="t-cmt"># After a session that read external files or fetched URLs</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i audit scan</span>
 
-<span class="t-bold">── h5i context scan ────────────────────────────── main</span>
+<span class="t-bold">── h5i audit scan ────────────────────────────── main</span>
   <span class="t-out">risk score  </span><span class="t-red">1.00  ██████████</span>  <span class="t-out">(48 lines scanned, 2 hit(s))</span>
 
   <span class="t-red">HIGH</span>  <span class="t-out">line   31  [</span><span class="t-warn">override_instructions</span><span class="t-out">]</span>  <span class="t-red">ignore all previous instructions</span>
@@ -1029,7 +1029,7 @@
 <span class="t-cmt"># Compliance also scans session thinking blocks automatically</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i audit compliance --since 2026-01-01</span>
 
-<span class="t-bold">── h5i compliance report  (since 2026-01-01) ──────────</span>
+<span class="t-bold">── h5i audit compliance report  (since 2026-01-01) ──────────</span>
   <span class="t-pass">✔</span> <span class="t-out">142 commits scanned  ·  89 AI (63%)  ·  53 human</span>
   <span class="t-red">2 prompt-injection signal(s) detected across sessions</span>
 

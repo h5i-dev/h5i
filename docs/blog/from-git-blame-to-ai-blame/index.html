@@ -123,12 +123,12 @@
     </div>
 
     <p>
-      Same lines under <code>h5i blame</code>:
+      Same lines under <code>h5i recall blame</code>:
     </p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i blame src/http_client.rs --show-prompt</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/http_client.rs --show-prompt</span>
 
 <span class="t-bold">STAT COMMIT   AUTHOR/AGENT     | CONTENT</span>
 <span class="t-pass">✅</span> <span class="t-ai">✨</span> <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code     </span> | <span class="t-out">async fn send_with_retry(req: Request) -&gt; Result&lt;Response&gt; {</span>
@@ -177,11 +177,11 @@
 
     <p>
       The notes ref isn't pulled by a plain <code>git fetch</code> — it would clutter remotes that don't care.
-      <code>h5i push</code> and <code>h5i pull</code> sync the h5i refs alongside your code, so teammates who opt in
+      <code>h5i share push</code> and <code>h5i share pull</code> sync the h5i refs alongside your code, so teammates who opt in
       see the full provenance and others see normal git behavior.
     </p>
 
-    <h2>How <code>h5i commit</code> populates the record</h2>
+    <h2>How <code>h5i capture commit</code> populates the record</h2>
 
     <p>
       You can capture provenance manually:
@@ -189,7 +189,7 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i commit -m "add retry logic to HTTP client" \
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "add retry logic to HTTP client" \
     --model claude-sonnet-4-6 \
     --agent claude-code \
     --prompt "add exponential backoff to the HTTP client" \
@@ -203,7 +203,7 @@
     <p>
       Or you can install the <code>UserPromptSubmit</code> hook from <code>h5i hook setup</code> and stop typing
       <code>--prompt</code> entirely. The hook captures every prompt you type to Claude Code, attaches the
-      most recent one to the next <code>h5i commit</code>, and you keep using normal git ergonomics.
+      most recent one to the next <code>h5i capture commit</code>, and you keep using normal git ergonomics.
     </p>
 
     <h2>The new question: <em>per-line prompt history</em></h2>
@@ -215,7 +215,7 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i log --ancestry src/http_client.rs:88</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --ancestry src/http_client.rs:88</span>
 
 <span class="t-bold">Line 88 of src/http_client.rs — 3 commits in ancestry</span>
 
@@ -244,7 +244,7 @@
     </p>
 
     <p>
-      <code>h5i blame --mode ast</code> blames at the AST node level instead of the line level. A function
+      <code>h5i recall blame --mode ast</code> blames at the AST node level instead of the line level. A function
       whose body wasn't semantically changed keeps its original blame even if its formatting was
       rewritten. You get this for free wherever h5i has parsed the file's AST (Rust, Python, and
       a growing list).
@@ -252,7 +252,7 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i blame src/http_client.rs --mode ast</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/http_client.rs --mode ast</span>
 
 <span class="t-bold">NODE                              COMMIT   AUTHOR/AGENT</span>
 <span class="t-out">fn send_with_retry           ⤷ </span><span class="t-ai">a3f9c2b</span><span class="t-out">  claude-code (semantic body)</span>
@@ -270,7 +270,7 @@
     <h3>1. Triaging an incident</h3>
 
     <p>
-      An error is firing in <code>parse_response</code>. <code>h5i blame</code> on the function shows it was authored
+      An error is firing in <code>parse_response</code>. <code>h5i recall blame</code> on the function shows it was authored
       by <code>claude-sonnet-4-6</code> with the prompt <em>"handle the new v2 envelope format"</em> two weeks ago.
       The original v1 parser was untouched. Fastest path to root cause: check whether the error
       payload is v1 (the parser doesn't handle it) or v2 (the parser is buggy). Without provenance,
@@ -280,7 +280,7 @@
     <h3>2. Reviewing your own past decisions</h3>
 
     <p>
-      Six months later you don't remember why <code>retry_max</code> is <code>5</code>. <code>h5i blame</code> shows the prompt
+      Six months later you don't remember why <code>retry_max</code> is <code>5</code>. <code>h5i recall blame</code> shows the prompt
       was <em>"…cap retries at 5 to avoid infinite loops"</em>. Decision recovered without re-reading the
       PR thread, the design doc, or your Slack history. Particularly valuable for solo developers
       whose "team handoff" is to themselves three months later.
@@ -289,14 +289,14 @@
     <h3>3. Vetting an inherited codebase</h3>
 
     <p>
-      You're given a service to take over. <code>h5i log --limit 200</code> tells you the AI ratio (60% AI?
+      You're given a service to take over. <code>h5i recall log --limit 200</code> tells you the AI ratio (60% AI?
       20%?), which agents wrote which subsystems, and what kinds of prompts were used. Combined with
-      <code>h5i notes review</code>, you get a triaged list of "files most likely to harbor unreviewed AI
+      <code>h5i audit review</code>, you get a triaged list of "files most likely to harbor unreviewed AI
       assumptions." A 30-minute orientation that previously took days.
     </p>
 
     <div class="callout">
-      <strong>Bonus.</strong> <code>h5i vibe</code> is the explicit command for the inherited-repo case. It scans a
+      <strong>Bonus.</strong> <code>h5i recall vibe</code> is the explicit command for the inherited-repo case. It scans a
       repo in seconds and prints AI footprint, fully-AI-written directories, leaked tokens, and
       prompt-injection hits. Useful even on repos you didn't author.
     </div>
@@ -319,7 +319,7 @@
     <h2>Adopt incrementally</h2>
 
     <p>
-      h5i blame works the moment you start using <code>h5i commit</code>. Pre-existing commits keep their
+      h5i blame works the moment you start using <code>h5i capture commit</code>. Pre-existing commits keep their
       standard git blame; new commits gain the AI fields. There's no migration, no backfill, no
       one-time event. The provenance accrues on the commits you make from here forward, and the
       ancestry view interleaves it gracefully with the historical commits you've never tagged.
@@ -332,8 +332,8 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup</span>  <span class="t-cmt"># auto-captures prompts via UserPromptSubmit</span>
 
 <span class="t-cmt"># From your next commit forward:</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i commit -m "..."  </span><span class="t-cmt"># prompt + model + agent recorded automatically</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i blame src/foo.rs --show-prompt</span></pre></div>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "..."  </span><span class="t-cmt"># prompt + model + agent recorded automatically</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/foo.rs --show-prompt</span></pre></div>
     </div>
 
     <p>
