@@ -161,3 +161,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:24:46] ACT: edited man/man1/h5i.1
 [01:24:47] OBSERVE: read src/main.rs
 [01:24:47] OBSERVE: read .claude/h5i.md
+[01:24:48] ACT: edited tutorials/01-never-let-your-ai-forget.md
