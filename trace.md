@@ -63,3 +63,4 @@
 [21:56:40] OBSERVE: read src/resume.rs
 [21:56:40] OBSERVE: read src/recap.rs
 [21:56:40] OBSERVE: read src/vibe.rs
+[21:56:41] OBSERVE: read src/storage.rs
