@@ -1041,3 +1041,9 @@ _[Checkpoint: 6a301551 — wrote scripts/experiment_safe_sandbox_worktree.sh; wr
 [15:17:11] ACT: wrote agent-profile-grants-shared-tmp.md
 [15:17:14] OBSERVE: read MEMORY.md
 [15:17:20] ACT: edited MEMORY.md
+
+
+---
+_[Checkpoint: 6a301787 — Moved experiment off /tmp to $HOME so the supervised tier also denies the write]_
+---
+
