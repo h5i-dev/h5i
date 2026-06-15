@@ -582,3 +582,16 @@ Rewrote experiment_safe_sandbox_worktree.sh: project's own build.sh publishes to
 
 ---
 
+## Commit 6a300f27 — 2026-06-15 14:41 UTC
+
+### Branch Purpose
+h5i environment env/human/claude-1 (profile agent-claude, isolation supervised)
+
+### Previous Progress Summary
+Rewrote experiment_safe_sandbox_worktree.sh: project's own build.sh publishes to sibling ../published; plain-worktree arm runs build.sh and asserts the outside homepage is overwritten + git status clean; h5i arm runs identical build.sh via 'h5i env run safe' and asserts denial (exit 1, Permission denied on ../published) + homepage intact. Dropped invalid '--audit all'. Ran the script end-to-end: all PASS. results.md now carries the real script output + the one-time headless-agent realism check (claude -p).
+
+### This Commit's Contribution
+
+
+---
+
