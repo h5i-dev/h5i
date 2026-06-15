@@ -763,3 +763,4 @@ _[Checkpoint: 6a2fc0cb — edited src/pr.rs; edited src/pr.rs; edited src/reposi
 [09:14:47] OBSERVE: read src/mcp.rs
 [09:14:47] ACT: edited src/mcp.rs
 [09:14:47] ACT: edited src/mcp.rs
+[09:14:47] OBSERVE: read tests/env_integration.rs
