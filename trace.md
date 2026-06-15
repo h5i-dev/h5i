@@ -976,3 +976,9 @@ _[Checkpoint: 6a300b8c — edited scripts/experiment_safe_sandbox_worktree_workf
 ---
 
 [14:37:02] ACT: wrote scripts/experiment_safe_sandbox_worktree_workflow.md
+
+
+---
+_[Checkpoint: 6a300e20 — Rewrote workflow around verified filesystem-escape example]_
+---
+
