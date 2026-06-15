@@ -232,3 +232,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:25:41] ACT: edited tutorials/02-did-claude-know-what-it-was-doing.md
 [01:25:41] ACT: edited man/man1/h5i.1
 [01:25:41] ACT: edited src/main.rs
+[01:25:42] OBSERVE: read docs/blog-uncertainty.md
