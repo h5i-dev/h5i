@@ -673,3 +673,4 @@ _[Checkpoint: 6a2fc0cb — edited src/pr.rs; edited src/pr.rs; edited src/reposi
 [09:14:45] OBSERVE: read src/env.rs
 [09:14:45] OBSERVE: read src/main.rs
 [09:14:46] OBSERVE: read src/objects.rs
+[09:14:46] OBSERVE: read src/hooks.rs
