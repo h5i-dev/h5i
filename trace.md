@@ -332,3 +332,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:27:01] ACT: edited MANUAL.md
 [01:27:02] ACT: edited docs/blog/uncertainty-heatmap/index.html
 [01:27:02] ACT: edited .claude/h5i.md
+[01:27:02] ACT: edited docs/blog/prompt-injection-in-agent-traces/index.html
