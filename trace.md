@@ -993,3 +993,9 @@ _[Checkpoint: 6a300e30 — edited scripts/experiment_safe_sandbox_worktree_workf
 [14:40:21] ACT: wrote scripts/experiment_safe_sandbox_worktree.sh
 [14:41:03] OBSERVE: read scripts/experiment_safe_sandbox_worktree_results.md
 [14:41:24] ACT: wrote scripts/experiment_safe_sandbox_worktree_results.md
+
+
+---
+_[Checkpoint: 6a300f1c — Updated results.md + experiment .sh to verified filesystem-escape scenario]_
+---
+
