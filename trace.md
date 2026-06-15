@@ -1082,3 +1082,4 @@ _[Checkpoint: 6a304003 — wrote scripts/experiment_safe_sandbox_worktree_result
 [19:05:51] OBSERVE: read mod.rs
 [19:05:55] OBSERVE: read utils.rs
 [19:05:55] OBSERVE: read hook_installer.rs
+[19:05:59] OBSERVE: read stats_unit.rs
