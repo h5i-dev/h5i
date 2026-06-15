@@ -36,3 +36,4 @@
 [21:56:17] OBSERVE: read src/pr.rs
 [21:56:17] OBSERVE: read src/env.rs
 [21:56:17] OBSERVE: read src/objects.rs
+[21:56:17] OBSERVE: read src/main.rs
