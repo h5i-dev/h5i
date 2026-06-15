@@ -1124,3 +1124,9 @@ _[Checkpoint: 6a305954 — wrote docs/git-ai-borrowable-ideas.md]_
 ---
 
 [20:01:41] THINK: Let me confirm the exact flags for the key commands so the tutorial is copy-pasteable.
+
+
+---
+_[Checkpoint: 6a305a25 — wrote docs/git-ai-borrowable-ideas.md]_
+---
+
