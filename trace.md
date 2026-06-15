@@ -18,3 +18,4 @@
 [21:56:09] OBSERVE: read src/container.rs
 [21:56:09] OBSERVE: read src/mcp.rs
 [21:56:09] OBSERVE: read src/ctx.rs
+[21:56:10] OBSERVE: read src/seccomp_notify.rs
