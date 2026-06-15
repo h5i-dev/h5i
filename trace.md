@@ -464,3 +464,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:28:55] ACT: edited tutorials/04-advanced-context-design-decisions.md
 [01:28:56] ACT: edited docs/pitch/index.html
 [01:28:58] ACT: edited AGENTS.md
+[01:28:59] ACT: edited MANUAL.md
