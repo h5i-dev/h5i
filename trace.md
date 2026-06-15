@@ -788,3 +788,9 @@ _[Checkpoint: 6a2fc0cb — edited src/pr.rs; edited src/pr.rs; edited src/reposi
 [09:16:55] ACT: edited src/main.rs
 [09:16:55] ACT: edited src/mcp.rs
 [09:16:55] ACT: edited tests/env_integration.rs
+
+
+---
+_[Checkpoint: 6a2fc30d — Implemented env audit capture policy: h5i env create --audit all pins audit_capture=all, injects audit mode into env capture context, and lets env-spooled hook wrapping bypass local object-store writability.]_
+---
+
