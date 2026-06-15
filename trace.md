@@ -848,3 +848,4 @@ _[Checkpoint: 6a2fc75a — edited MANUAL.md; edited src/sandbox.rs]_
 [09:37:31] OBSERVE: searched src/sandbox.rs
 [09:37:31] OBSERVE: searched src/sandbox.rs
 [09:37:31] OBSERVE: searched src/sandbox.rs
+[09:37:31] OBSERVE: searched ResolvedPolicy" for "struct"
