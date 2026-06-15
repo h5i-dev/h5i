@@ -631,3 +631,9 @@ _[Checkpoint: 6a2f5e74 — edited MANUAL.md; edited MANUAL.md; edited src/main.r
 _[Checkpoint: 6a2f605f — edited MANUAL.md; edited MANUAL.md; edited src/main.rs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2f6080 — edited MANUAL.md; edited src/main.rs]_
+---
+
