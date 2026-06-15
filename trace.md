@@ -669,3 +669,4 @@ _[Checkpoint: 6a2fc0cb — edited src/pr.rs; edited src/pr.rs; edited src/reposi
 [09:14:45] OBSERVE: searched run|small|output|H5I" for "shell|capture"
 [09:14:45] OBSERVE: searched run|CaptureRun|H5I_CAPTURE|H5I_ENV|small for "shell|capture"
 [09:14:45] OBSERVE: listed files under src
+[09:14:45] OBSERVE: read src/hooks.rs
