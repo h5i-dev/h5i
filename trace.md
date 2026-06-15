@@ -830,3 +830,4 @@ _[Checkpoint: 6a2fc5fb — edited src/env.rs; edited tests/env_integration.rs; e
 _[Checkpoint: 6a2fc644 — edited src/env.rs; edited tests/env_integration.rs; edited MANUAL.md]_
 ---
 
+[09:35:16] OBSERVE: searched \"all\"" for "="
