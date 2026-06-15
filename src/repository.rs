@@ -402,6 +402,40 @@ impl H5iRepository {
         Ok(logs)
     }
 
+    /// Like [`h5i_log`](Self::h5i_log), but restricted to commits reachable from
+    /// `HEAD` and **not** from `base` — i.e. the `base..HEAD` range, the commits
+    /// unique to the current branch. When `base` is `None` this is identical to
+    /// [`h5i_log`](Self::h5i_log).
+    ///
+    /// The PR renderer uses this so the body reflects only what the branch adds
+    /// over its base branch, instead of the last `limit` commits that happen to
+    /// be reachable from `HEAD` (which spills into commits already merged into
+    /// the base).
+    pub fn h5i_log_since(
+        &self,
+        base: Option<git2::Oid>,
+        limit: usize,
+    ) -> Result<Vec<H5iCommitRecord>, H5iError> {
+        let mut revwalk = self.git_repo.revwalk()?;
+        revwalk.push_head()?;
+        if let Some(b) = base {
+            // `hide` excludes `b` and its ancestors. Best-effort: if `b` is not a
+            // valid/known object we fall back to the full HEAD walk rather than
+            // erroring, so a stale base never breaks `pr post`.
+            let _ = revwalk.hide(b);
+        }
+
+        let mut logs = Vec::new();
+        for oid in revwalk.take(limit) {
+            let oid = oid?;
+            let record = self
+                .load_h5i_record(oid)
+                .unwrap_or_else(|_| H5iCommitRecord::minimal_from_git(&self.git_repo, oid));
+            logs.push(record);
+        }
+        Ok(logs)
+    }
+
     /// Prints a human-readable commit log enriched with `h5i` metadata.
     ///
     /// This function traverses the Git history starting from `HEAD` and
@@ -3086,6 +3120,36 @@ mod tests {
         let logs = h5i_repo.h5i_log(1).unwrap();
         assert_eq!(logs[0].git_oid, oid.to_string());
         assert!(logs[0].ai_metadata.is_none());
+    }
+
+    #[test]
+    fn h5i_log_since_scopes_to_base_exclusive() {
+        let dir = tempdir().unwrap();
+        let h5i_repo = setup_test_repo(dir.path());
+        let git = h5i_repo.git();
+
+        // c1 stands in for the base branch tip; c2, c3 are this branch's commits.
+        let c1 = create_commit(git, "base commit", "a.txt", "1", &[]);
+        let p1 = git.find_commit(c1).unwrap();
+        let c2 = create_commit(git, "branch commit 1", "b.txt", "2", &[&p1]);
+        let p2 = git.find_commit(c2).unwrap();
+        let c3 = create_commit(git, "branch commit 2", "c.txt", "3", &[&p2]);
+
+        // Unscoped walk sees all three commits.
+        assert_eq!(h5i_repo.h5i_log(10).unwrap().len(), 3);
+
+        // Scoped to base c1 (exclusive): only c3, c2 (newest-first); c1 hidden —
+        // this is the fix that keeps base-branch commits out of the PR body.
+        let scoped = h5i_repo.h5i_log_since(Some(c1), 10).unwrap();
+        let oids: Vec<String> = scoped.iter().map(|r| r.git_oid.clone()).collect();
+        assert_eq!(oids, vec![c3.to_string(), c2.to_string()]);
+        assert!(
+            !oids.contains(&c1.to_string()),
+            "base commit must be excluded from base..HEAD"
+        );
+
+        // A `None` base degrades to the full HEAD walk.
+        assert_eq!(h5i_repo.h5i_log_since(None, 10).unwrap().len(), 3);
     }
 
     // --- 3. Blame & AST tracking ---

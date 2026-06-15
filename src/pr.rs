@@ -519,6 +519,86 @@ pub fn render_body_with_style(workdir: &Path, limit: usize, style: PrStyle) -> R
     render_body_with_options(workdir, limit, style, &MsgOptions::default())
 }
 
+/// The base branch name of the current branch's open PR, via `gh` (e.g.
+/// `"main"`). Best-effort: `None` when `gh` is missing/unauthed or there is no
+/// open PR for this branch. This is the most accurate base because it honours
+/// PRs that target a non-default branch.
+fn gh_base_ref(workdir: &Path) -> Option<String> {
+    let out = Command::new("gh")
+        .args(["pr", "view", "--json", "baseRefName", "-q", ".baseRefName"])
+        .current_dir(workdir)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+/// The repository's default branch name (e.g. `"main"`), read from the
+/// `refs/remotes/origin/HEAD` symbolic ref. `None` when that ref is absent.
+fn default_branch_name(repo: &git2::Repository) -> Option<String> {
+    let r = repo.find_reference("refs/remotes/origin/HEAD").ok()?;
+    let target = r.symbolic_target()?; // e.g. "refs/remotes/origin/main"
+    target.rsplit('/').next().map(str::to_string)
+}
+
+/// Resolve a branch *name* to a commit OID, preferring the remote-tracking ref
+/// (`origin/<name>`) over the local branch (`<name>`).
+fn resolve_branch_commit(repo: &git2::Repository, name: &str) -> Option<git2::Oid> {
+    for cand in [
+        format!("refs/remotes/origin/{name}"),
+        format!("refs/heads/{name}"),
+    ] {
+        if let Ok(r) = repo.find_reference(&cand) {
+            if let Ok(c) = r.peel_to_commit() {
+                return Some(c.id());
+            }
+        }
+    }
+    None
+}
+
+/// Best-effort merge-base between `HEAD` and the PR's base branch, used to scope
+/// the PR body to this branch's own commits (`base..HEAD`). Candidate bases, in
+/// order of accuracy: the PR's base ref (`gh`), the repo default branch
+/// (`origin/HEAD`), then `main` / `master`. Returns `None` (→ unscoped, full
+/// `HEAD` walk) when nothing resolves or `HEAD` already *is* the base (e.g. the
+/// branch has not diverged), so the renderer degrades gracefully.
+fn detect_base_oid(repo: &git2::Repository, workdir: &Path) -> Option<git2::Oid> {
+    let head = repo.head().ok()?.peel_to_commit().ok()?.id();
+
+    let mut names: Vec<String> = Vec::new();
+    if let Some(b) = gh_base_ref(workdir) {
+        names.push(b);
+    }
+    if let Some(d) = default_branch_name(repo) {
+        names.push(d);
+    }
+    names.push("main".to_string());
+    names.push("master".to_string());
+
+    for name in names {
+        let Some(base_commit) = resolve_branch_commit(repo, &name) else {
+            continue;
+        };
+        if base_commit == head {
+            continue; // base == HEAD: nothing to scope to.
+        }
+        if let Ok(mb) = repo.merge_base(head, base_commit) {
+            if mb != head {
+                return Some(mb);
+            }
+        }
+    }
+    None
+}
+
 /// Options-aware variant of [`render_body_with_style`]. See that function for
 /// the section layout; `msg_opts` controls the 💬 Agent coordination section.
 pub fn render_body_with_options(
@@ -529,8 +609,13 @@ pub fn render_body_with_options(
 ) -> Result<String> {
     let _span = tracing::info_span!("pr_render_body", limit, ?style).entered();
     let repo = H5iRepository::open(workdir)?;
+    // Scope the body to this branch's own commits (`base..HEAD`) rather than the
+    // last `limit` commits reachable from HEAD — otherwise the Cautions, "What
+    // shipped", cost, and per-commit sections spill into commits already on the
+    // base branch that this PR did not introduce.
+    let base_oid = detect_base_oid(repo.git(), workdir);
     let records = repo
-        .h5i_log(limit)
+        .h5i_log_since(base_oid, limit)
         .context("failed to read h5i log for PR body")?;
 
     let review_points = repo
@@ -546,7 +631,7 @@ pub fn render_body_with_options(
     let dup_rows = collect_duplicate_rows(&records, &by_oid);
     let dag = ctx::dag_for_branch(workdir, None).unwrap_or_default();
     let aggregates = compute_aggregates(&records, &by_oid);
-    let hero = collect_hero_inputs(workdir, &records, &dag);
+    let hero = collect_hero_inputs(workdir, repo.git(), &records, &dag);
     tracing::debug!(
         records = records.len(),
         review_points = review_points.len(),
@@ -730,17 +815,38 @@ fn format_cost(usd: f64) -> String {
 /// no decisions recorded = empty list, etc.
 fn collect_hero_inputs(
     workdir: &Path,
+    git: &git2::Repository,
     records: &[H5iCommitRecord],
     dag: &TraceDag,
 ) -> HeroInputs {
     let branch = ctx::current_git_branch(workdir);
     let branch_goal = ctx::git_branch_goal(workdir, &branch).unwrap_or_default();
 
-    // Milestones from the cross-branch project context. Most recent last; the
-    // hero renderers reverse-slice so the freshest line shows on top.
-    let milestones = ctx::gcc_context(workdir, &ctx::ContextOpts::default())
-        .map(|c| c.milestones)
-        .unwrap_or_default();
+    // "What shipped" must describe *this branch*, so we derive milestones from
+    // the branch's own commit subjects (`records` is already scoped to
+    // `base..HEAD`) instead of the cross-branch project roadmap in `main.md`,
+    // which is identical on every branch and reads as irrelevant on a PR. Order
+    // is oldest-first (most-recent-last) to match what `clean_milestones`
+    // expects. If the branch somehow has no commit subjects we fall back to the
+    // project milestones so the section can still populate.
+    let milestones = {
+        let subjects: Vec<String> = records
+            .iter()
+            .rev()
+            .filter_map(|r| {
+                let oid = git2::Oid::from_str(&r.git_oid).ok()?;
+                let summary = git.find_commit(oid).ok()?.summary()?.trim().to_string();
+                (!summary.is_empty()).then_some(summary)
+            })
+            .collect();
+        if subjects.is_empty() {
+            ctx::gcc_context(workdir, &ctx::ContextOpts::default())
+                .map(|c| c.milestones)
+                .unwrap_or_default()
+        } else {
+            subjects
+        }
+    };
 
     // Walk the DAG from newest to oldest for the THINK / OBSERVE picks. We use
     // the *latest* meaningful entry rather than scoring by length because

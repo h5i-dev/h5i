@@ -5162,6 +5162,14 @@ fn main() -> anyhow::Result<()> {
                             style("·").dim(),
                             interval,
                         ));
+                        // Nudge interactive users toward the richer dashboard.
+                        if !tui && std::io::stdout().is_terminal() {
+                            radio_row(&format!(
+                                "{} try {} for a better, full-screen format!",
+                                style("hint:").cyan().bold(),
+                                style("--tui").yellow().bold(),
+                            ));
+                        }
                         radio_bottom();
                     }
 
