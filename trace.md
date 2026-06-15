@@ -52,3 +52,4 @@
 [21:56:25] OBSERVE: read src/memory.rs
 [21:56:25] OBSERVE: read src/sandbox.rs
 [21:56:25] OBSERVE: read src/metadata.rs
+[21:56:26] OBSERVE: read src/secrets.rs
