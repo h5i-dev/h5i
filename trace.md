@@ -982,3 +982,4 @@ _[Checkpoint: 6a300b8c — edited scripts/experiment_safe_sandbox_worktree_workf
 _[Checkpoint: 6a300e20 — Rewrote workflow around verified filesystem-escape example]_
 ---
 
+[14:37:36] THINK: 131.0) are here. Note: Codex ships its *own* sandbox by default, so for the "raw agent in a plain worktree" arm I'll use `claude -p --dangerously-skip-permissions` (Claude Code has no built-in filesystem sandbox), which is the honest test o…
