@@ -24,7 +24,8 @@
 //!     shape, key types, array lengths) plus any error/status fields.
 //!   - `Diff` — keep file headers, hunk headers, and a bounded window of changed
 //!     lines per hunk.
-//!   - `Generic` — head + tail with a byte/line budget.
+//!   - `Generic` — routed through the same scored summarizer as `Test`/`Log`
+//!     (head, tail, and every high-signal line), then capped to a line budget.
 
 use serde::{Deserialize, Serialize};
 

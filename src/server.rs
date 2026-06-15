@@ -5105,7 +5105,7 @@ mod frontend_tests {
     fn test_fetch_paths_are_registered_routes() {
         let js = extract_js(FRONTEND_HTML);
         let paths = collect_fetch_paths(js);
-        // Keep in sync with the .route() calls in serve() above.
+        // Keep in sync with the .route() calls in build_router() above.
         let routes: HashSet<&str> = [
             "/api/repo",
             "/api/commits",

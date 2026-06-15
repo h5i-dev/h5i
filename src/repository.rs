@@ -50,8 +50,12 @@ impl H5iRepository {
     /// If the `.h5i` directory does not exist, it will be created along with
     /// several subdirectories used by the system:
     ///
-    /// - `ast/` – stores hashed AST representations for tracked files
     /// - `metadata/` – stores commit-related metadata (e.g., AI provenance)
+    /// - `claims/`, `memory/`, `session_log/` – sidecar state stores
+    /// - `objects/` – content-addressed raw-output store (token-reduction captures)
+    ///
+    /// (AST snapshots live in the Git object store under `refs/h5i/ast`, not on
+    /// the filesystem.)
     ///
     /// # Parameters
     ///
@@ -1242,9 +1246,6 @@ impl H5iRepository {
         &self.h5i_root
     }
 
-    /// Reads the pending AI context written by a Claude Code hook.
-    ///
-    /// Returns `None` if no pending context file exists.
     /// Returns a closure that parses a source file into an s-expression string.
     ///
     /// Language detection is based on file extension. The appropriate parser
@@ -2039,9 +2040,8 @@ impl H5iRepository {
     ///
     /// # Storage Layout
     ///
-    /// ```text
-    /// .h5i/ast/<hash>.sexp
-    /// ```
+    /// Stored in the Git object store under `refs/h5i/ast`, one blob per AST
+    /// keyed by `<hash>.sexp` in the ref's tree (content-addressed, deduped).
     ///
     /// # Parameters
     ///

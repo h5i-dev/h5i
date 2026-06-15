@@ -1966,7 +1966,7 @@ enum ObjectsCommands {
         /// Best-effort cap on summary tokens (uses tiktoken when available).
         #[arg(long)]
         token_budget: Option<usize>,
-        /// Also echo the summary's pointer line even on success (default: yes).
+        /// Suppress the durable pointer / status line (print the summary body only).
         #[arg(long)]
         quiet: bool,
         /// Size gate for storing *successful* output: only store + summarize when
