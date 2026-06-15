@@ -654,3 +654,9 @@ _[Checkpoint: 6a2f6080 — edited MANUAL.md; edited src/main.rs]_
 [02:30:23] OBSERVE: read src/repository.rs
 [02:30:45] ACT: edited src/repository.rs
 [02:32:47] THINK: Let me confirm the two remaining things: that "Cautions" (secret/dup rows) and "What shipped" (milestones) both derive from `records` (so scoping `records` fixes both), by reading those collectors.
+
+
+---
+_[Checkpoint: 6a2f644f — edited src/pr.rs; edited src/pr.rs; edited src/repository.rs]_
+---
+
