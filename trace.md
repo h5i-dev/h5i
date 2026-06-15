@@ -1088,3 +1088,4 @@ _[Checkpoint: 6a304003 — wrote scripts/experiment_safe_sandbox_worktree_result
 [19:06:02] OBSERVE: read notes-backend-spec.md
 [19:06:06] OBSERVE: read working_log.rs
 [19:06:07] OBSERVE: read 2026-04-20-sessions-and-trace-ids-design.md
+[19:06:07] OBSERVE: read stats.rs
