@@ -830,11 +830,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited MANUAL.md; edited src/sandbox.rs
 - [x] Resolved git pull conflict in src/sandbox.rs by keeping clippy-clean AuditCapture default derive, verified clippy/test, and completed merge commit.
 - [x] edited src/sandbox.rs; edited src/sandbox.rs
+- [x] edited scripts/experiment_safe_sandbox_worktree.sh; edited scripts/experiment_safe_sandbox_worktree.sh; added scripts/ex…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-15 09:48 UTC] `improve-shell`: edited scripts/experiment_safe_sandbox_worktree.sh; edited scripts/experiment_safe_sandbox_worktree.sh; added scripts/ex…
 - [2026-06-15 09:37 UTC] `improve-shell`: edited src/sandbox.rs; edited src/sandbox.rs
 - [2026-06-15 09:37 UTC] `improve-shell`: Resolved git pull conflict in src/sandbox.rs by keeping clippy-clean AuditCapture default derive, verified clippy/test, and completed merge commit.
 - [2026-06-15 09:35 UTC] `improve-shell`: edited MANUAL.md; edited src/sandbox.rs
