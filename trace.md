@@ -595,3 +595,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:57:25] THINK: But I need to confirm cargo check actually passed (the exit code came from the final diff).
 [01:57:25] THINK: Now let me scan for any *missed* legacy invocations — focusing on forms that have no legitimate reason to survive as bare commands (e.
 [01:57:25] THINK: I need to know whether that reference design (per-command pages under legacy names) is pre-existing/committed intent or something to fully migrate.
+[01:57:25] THINK: To fully honor "use new APIs" and match the man page, I should migrate the remaining legacy-named reference pages too (headings + TOC anchors + synopsis blocks must move together so internal links don't break).
