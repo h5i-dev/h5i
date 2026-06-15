@@ -951,6 +951,52 @@ pub struct BoxGitPath {
     pub rw: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AuditCapture {
+    Signal,
+    All,
+}
+
+impl Default for AuditCapture {
+    fn default() -> Self {
+        AuditCapture::Signal
+    }
+}
+
+impl AuditCapture {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AuditCapture::Signal => "signal",
+            AuditCapture::All => "all",
+        }
+    }
+
+    pub fn parse(s: &str) -> Result<Self, H5iError> {
+        match s {
+            "signal" => Ok(AuditCapture::Signal),
+            "all" => Ok(AuditCapture::All),
+            other => Err(H5iError::Metadata(format!(
+                "audit capture mode '{other}' is not available (use signal or all)"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AuditPolicy {
+    #[serde(default)]
+    pub capture: AuditCapture,
+}
+
+impl Default for AuditPolicy {
+    fn default() -> Self {
+        AuditPolicy {
+            capture: AuditCapture::Signal,
+        }
+    }
+}
+
 /// The policy as actually enforced: profile + resolved claim. Serialized as
 /// `policy.resolved.toml`; its digest is pinned in the env manifest and in
 /// every capture taken inside the env.
@@ -958,6 +1004,8 @@ pub struct BoxGitPath {
 pub struct ResolvedPolicy {
     pub claim: IsolationClaim,
     pub profile: Profile,
+    #[serde(default)]
+    pub audit: AuditPolicy,
     /// Runtime-only in-box git mounts for the container backend — never
     /// serialized (`policy.resolved.toml` and its pinned digest are unchanged;
     /// these are structural like the implicit `$WORK` mount, not policy).
@@ -974,6 +1022,7 @@ impl ResolvedPolicy {
         ResolvedPolicy {
             claim,
             profile,
+            audit: AuditPolicy::default(),
             box_git: Vec::new(),
             env_capture_spool: None,
         }

@@ -60,6 +60,7 @@ const WORK_DIR: &str = "work";
 pub const H5I_ENV_ID_VAR: &str = "H5I_ENV_ID";
 pub const H5I_ENV_POLICY_DIGEST_VAR: &str = "H5I_ENV_POLICY_DIGEST";
 pub const H5I_ENV_CAPTURE_SPOOL_VAR: &str = "H5I_ENV_CAPTURE_SPOOL";
+pub const H5I_ENV_AUDIT_CAPTURE_VAR: &str = "H5I_ENV_AUDIT_CAPTURE";
 const CONTAINER_CAPTURE_SPOOL: &str = "/.h5i/spool";
 #[cfg(unix)] // only the unix-gated RunLock references this
 const RUN_LOCK_FILE: &str = "run.lock";
@@ -833,6 +834,8 @@ pub struct CreateOpts {
     pub isolation: Option<sandbox::IsolationRequest>,
     /// Workspace backend. `auto` and `worktree` are accepted today.
     pub backend: String,
+    /// Command evidence policy for wrapped in-env commands.
+    pub audit_capture: sandbox::AuditCapture,
 }
 
 impl Default for CreateOpts {
@@ -842,6 +845,7 @@ impl Default for CreateOpts {
             profile: None,
             isolation: None,
             backend: "auto".into(),
+            audit_capture: sandbox::AuditCapture::Signal,
         }
     }
 }
@@ -929,7 +933,8 @@ pub fn create(
     // Policy first (fail closed BEFORE any state is created on disk).
     let profile = sandbox::load_profile(workdir, profile_name, Some(claim))?;
     let caps = sandbox::probe_host();
-    let policy = sandbox::resolve(&profile, &caps)?;
+    let mut policy = sandbox::resolve(&profile, &caps)?;
+    policy.audit.capture = opts.audit_capture;
     // Functionally verify the confinement can actually run a command — capability
     // bits can be present while a hardened kernel still denies exec under the
     // full stack. Refuse here with a clear message rather than letting every
@@ -1289,6 +1294,10 @@ fn prepare_env_capture_spool(
             m.policy_digest.clone(),
         ),
         (H5I_ENV_CAPTURE_SPOOL_VAR.to_string(), spool_inside),
+        (
+            H5I_ENV_AUDIT_CAPTURE_VAR.to_string(),
+            policy.audit.capture.as_str().to_string(),
+        ),
     ])
 }
 
