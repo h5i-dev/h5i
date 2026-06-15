@@ -198,3 +198,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:25:15] ACT: edited tutorials/01-never-let-your-ai-forget.md
 [01:25:17] ACT: edited CLAUDE.md
 [01:25:17] ACT: edited man/man1/h5i.1
+[01:25:19] ACT: edited MANUAL.md
