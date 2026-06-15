@@ -1005,3 +1005,9 @@ _[Checkpoint: 6a300f1c — Updated results.md + experiment .sh to verified files
 _[Checkpoint: 6a300f27 — wrote scripts/experiment_safe_sandbox_worktree_workflow.md; wrote scripts/experiment_safe_sandbox_worktree.sh; wrote scr…]_
 ---
 
+
+
+---
+_[Checkpoint: 6a30105a — wrote scripts/experiment_safe_sandbox_worktree_workflow.md; wrote scripts/experiment_safe_sandbox_worktree.sh; wrote scr…]_
+---
+
