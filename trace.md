@@ -411,3 +411,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:27:58] OBSERVE: read tutorials/03-version-control-for-ai-reasoning.md
 [01:27:58] ACT: edited MANUAL.md
 [01:27:59] OBSERVE: read docs/features/index.html
+[01:28:04] ACT: edited tutorials/04-advanced-context-design-decisions.md
