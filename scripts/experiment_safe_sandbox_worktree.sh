@@ -26,7 +26,14 @@
 set -uo pipefail
 
 H5I="${H5I_BIN:-h5i}"
-WORKDIR="${WORKDIR:-/tmp/h5i-safe-worktree-$$}"
+# NOT under /tmp on purpose. The agent-in-box profile (auto-selected at the
+# supervised/container tiers) grants host-shared /tmp as scratch, so a precious
+# file in /tmp would be writable from the box and the demo would fail on those
+# tiers. A dedicated dir under $HOME is granted by NEITHER the `default` nor the
+# `agent` profile (only specific ~/.cache, ~/.npm, ~/.claude subpaths are), so
+# the out-of-$WORK write is denied across process AND supervised.
+WORKDIR="${WORKDIR:-$HOME/h5i-worktree-experiment}"
+ISOLATION="${ISOLATION:-process}"       # process | supervised | container | auto
 REPO="$WORKDIR/repo"
 PLAIN="$WORKDIR/plain-agent"
 PUBLISHED="$WORKDIR/published"          # the shared publish dir, OUTSIDE the repo
@@ -41,6 +48,13 @@ pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 note() { printf 'NOTE: %s\n' "$*"; }
 run()  { printf '+ %s\n' "$*"; "$@"; }
+
+# Safety: WORKDIR is rm -rf'd. Refuse anything that isn't a dedicated subdir.
+case "$WORKDIR" in
+  ""|"/"|"$HOME"|"$HOME/") fail "refusing to use WORKDIR='$WORKDIR' (would wipe \$HOME or /)";;
+  */h5i-*) : ;;
+  *) fail "refusing WORKDIR='$WORKDIR': pick a dedicated dir whose name contains 'h5i-'";;
+esac
 
 rm -rf "$WORKDIR"
 mkdir -p "$REPO/src"
@@ -106,11 +120,12 @@ fi
 
 printf '+ cd %s && %s init\n' "$REPO" "$H5I"
 (cd "$REPO" && "$H5I" init >/dev/null)
+printf '+ %s env create safe --isolation %s\n' "$H5I" "$ISOLATION"
 if ! (cd "$REPO" && H5I_AGENT=experiment "$H5I" env create safe \
-  --isolation process >/tmp/h5i-safe-worktree-create.out 2>&1
+  --isolation "$ISOLATION" >/tmp/h5i-safe-worktree-create.out 2>&1
 )
 then
-  note "process isolation is not available on this host; h5i env arm skipped"
+  note "isolation tier '$ISOLATION' is not available on this host; h5i env arm skipped"
   note "create output:"
   sed 's/^/  /' /tmp/h5i-safe-worktree-create.out
   exit 0

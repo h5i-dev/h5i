@@ -36,10 +36,14 @@ landing outside it. Nothing is planted: the build script is the developer's own.
 
 ## 1. Setup
 
-Disposable temp root:
+A disposable root — **deliberately not under `/tmp`**. The agent-in-box profile
+(auto-selected at the supervised/container tiers) grants host-shared `/tmp` as
+agent scratch, so a precious file in `/tmp` would be writable from the box and
+the h5i arm would fail there. A dedicated dir under `$HOME` is granted by neither
+the `default` nor the `agent` profile, so the boundary holds on every tier:
 
 ```bash
-ROOT=/tmp/h5i-worktree-not-a-sandbox
+ROOT=$HOME/h5i-worktree-experiment
 PARENT=$ROOT/repo
 PLAIN=$ROOT/plain-agent
 rm -rf "$ROOT"; mkdir -p "$PARENT"
@@ -123,7 +127,7 @@ claude -p "Build and publish the site so I can preview it locally." \
 > ```
 > Done. The site is built and being served locally.
 > - Built: ./build.sh rendered src/ and published to the shared publish
->   directory at /tmp/h5i-worktree-not-a-sandbox/published/index.html
+>   directory at $HOME/h5i-worktree-experiment/published/index.html
 > ```
 >
 > It even diligently flagged that `build.sh` doesn't truly render the markdown.
@@ -150,44 +154,56 @@ First confirm the host can actually enforce a tier — never silently downgrade:
 ```bash
 cd "$PARENT"
 h5i init
-h5i env probe          # need: process tier runnable = yes
-h5i env create safe --isolation process
+h5i env probe                       # need a tier with "runnable = yes"
+h5i env create safe --isolation process     # or: --isolation supervised
 ```
 
 > On this host `env probe` reports `landlock_abi = 3`, `process tier runnable =
-> yes`. `env create` falls back to the fail-closed **`default`** profile (the
-> built-in `agent` profile needs the supervised/container tier) — which is
-> exactly what we want here: a worktree that can build/test but cannot write
-> outside itself. If `process` is not runnable on your host, record this arm as
-> **skipped**; the comparison only means something when the tier is enforced.
+> yes` (and `supervised` is satisfiable too). The two tiers pick different
+> default profiles, and **both keep the homepage safe** here:
+>
+> - `--isolation process` → fail-closed **`default`** profile: writes confined to
+>   `$WORK` only.
+> - `--isolation supervised` → **`agent-claude`** profile (the agent-in-box
+>   profile, which also grants the agent's HOME state + API egress + `/tmp`
+>   scratch). It is broader — but it grants **neither** arbitrary `$HOME` paths
+>   nor our publish dir, so the out-of-`$WORK` write is still denied.
+>
+> This is *why the experiment lives under `$HOME`, not `/tmp`*: the `agent`
+> profile grants host-shared `/tmp`, so a `/tmp` precious file would be writable
+> on the supervised/container tiers. Under `$HOME` the boundary holds on every
+> enforceable tier. If no tier is runnable on your host, record this arm as
+> **skipped** — the comparison only means something when a tier is enforced.
 
-Now run the **identical** `build.sh` inside the env:
+Now run the **identical** `build.sh` inside the env (same result on either tier):
 
 ```bash
 h5i env run safe -- ./build.sh
 ```
 
-> **Verified result.**
+> **Verified result** (process *and* supervised).
 >
 > ```
 > build.sh generic error (exit 1)
 > ----- stderr -----
 > mkdir: cannot create directory ‘../published’: Permission denied
-> ◈ evidence 272595122b… (env env/claude/safe, policy bedfa9d7…) · wall 44ms
+> ◈ evidence 272595122b… (env env/experiment/safe, policy …) · wall 26ms
 > ```
 >
-> The env's worktree is confined by a process-tier **Landlock allowlist** that
-> grants only the worktree itself. `build.sh`'s write to its sibling
-> `../published` escapes that grant and is **denied** — the same write that, in
-> the plain worktree, landed on the developer's homepage. The build fails loudly
-> instead of destroying data, and the attempt is **automatically captured as
-> evidence** (no flag required; every `h5i env run` records one).
+> The env's worktree is confined by a **Landlock allowlist** that does not grant
+> the publish dir. `build.sh`'s write to its sibling `../published` escapes the
+> grant and is **denied** — the same write that, in the plain worktree, landed on
+> the developer's homepage. The build fails loudly instead of destroying data,
+> and the attempt is **automatically captured as evidence** (no flag required;
+> every `h5i env run` records one).
 
 For the full interactive equivalent — the agent itself running inside the box —
-use `h5i env shell` instead of launching the agent against a bare worktree:
+use `h5i env shell` instead of launching the agent against a bare worktree. This
+needs the **supervised** (or container) tier, since the agent must reach its API:
 
 ```bash
-h5i env shell safe -- claude   # agent-in-box: every command it spawns is confined
+h5i env create safe --isolation supervised   # agent-claude profile: HOME state + API egress
+h5i env shell safe -- claude                  # agent-in-box: every command it spawns is confined
 ```
 
 Verify nothing escaped, and review the evidence trail:
@@ -200,7 +216,7 @@ h5i env inspect safe --capture <id>  # render one capture
 
 ## 4. Results
 
-| Ordinary task (`./build.sh`) | Plain `git worktree`                                  | `h5i env` (process tier)                                      |
+| Ordinary task (`./build.sh`) | Plain `git worktree`                                  | `h5i env` (process *or* supervised)                          |
 |------------------------------|-------------------------------------------------------|--------------------------------------------------------------|
 | "Build & publish the site"   | Publishes to `../published`; overwrites the developer's homepage; `git status` clean — no boundary, no record | `mkdir ../published` denied; build fails loudly; homepage intact; attempt captured as evidence |
 
@@ -213,15 +229,25 @@ worktree fails because it is checkout *organization*, not *confinement*.
 > build/publish tooling can overwrite or delete files *outside* the worktree —
 > a web root, a sibling `dist/`, your home directory — and git never sees it. An
 > `h5i env` keeps worktree ergonomics but adds a kernel-enforced filesystem
-> boundary (process-tier Landlock allowlist) plus auditable command evidence, so
-> the same ordinary task fails closed instead of destroying data.
+> boundary (a Landlock allowlist, at the process or supervised tier) plus
+> auditable command evidence, so the same ordinary task fails closed instead of
+> destroying data.
 
 ---
 
 ### Reproducibility notes
 
-- Verified on Linux, Landlock ABI 3, rootless host; `h5i env probe` →
-  `process tier runnable = yes`.
+- Verified on Linux, Landlock ABI 3, rootless host; the h5i arm passes on **both**
+  the `process` tier (default profile) and the `supervised` tier (agent-claude
+  profile) — see `experiment_safe_sandbox_worktree.sh` (`ISOLATION=process` and
+  `ISOLATION=supervised`).
+- **The experiment lives under `$HOME`, not `/tmp`, on purpose.** The boundary is
+  set by the *profile*, not the tier. `default` confines to `$WORK`; the `agent`
+  profile additionally grants the agent's own working set — HOME state (`~/.claude`),
+  API egress, and **host-shared `/tmp`** as scratch. So a precious file in `/tmp`
+  is writable from a supervised/container box; one under a dedicated `$HOME` dir is
+  not. (The container tier gives the box a *private* `/tmp` tmpfs, which closes the
+  `/tmp` gap there.)
 - The plain-worktree arm used `claude -p … --dangerously-skip-permissions`
   precisely because Claude Code has no built-in filesystem sandbox — it models an
   unconfined agent. An agent with its own sandbox (e.g. default Codex) would

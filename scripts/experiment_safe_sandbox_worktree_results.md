@@ -14,7 +14,9 @@ including the headless-agent realism check.
 ## Deterministic mechanism test
 
 ```bash
-WORKDIR=/tmp/h5i-safe-worktree-smoke ./scripts/experiment_safe_sandbox_worktree.sh
+# default WORKDIR is $HOME/h5i-worktree-experiment; ISOLATION defaults to process
+./scripts/experiment_safe_sandbox_worktree.sh
+ISOLATION=supervised ./scripts/experiment_safe_sandbox_worktree.sh
 ```
 
 What it tests, in the project's own `build.sh` (which publishes to a sibling
@@ -22,30 +24,59 @@ What it tests, in the project's own `build.sh` (which publishes to a sibling
 
 - **Plain `git worktree`** placed as a sibling of `published/`: `./build.sh`'s
   `../published` resolves onto the developer's real homepage and overwrites it.
-- **`h5i env` (process tier)**: the *identical* `./build.sh`, run via
-  `h5i env run`, is denied — its write escapes `$WORK` and is blocked.
+- **`h5i env`**: the *identical* `./build.sh`, run via `h5i env run`, is denied —
+  its write escapes `$WORK` and is blocked.
 
-Observed on this host (Linux, Landlock ABI 3, `process tier runnable = yes`):
+### Why not `/tmp` — the boundary is the profile, not the tier
+
+The precious file lives under `$HOME`, **not `/tmp`**, on purpose:
+
+- `--isolation process` auto-selects the fail-closed **`default`** profile:
+  writes confined to `$WORK`. Denies both `/tmp` and `$HOME`.
+- `--isolation supervised` auto-selects the **`agent-claude`** profile (so a real
+  coding agent can run in the box): it additionally grants the agent's HOME state
+  (`~/.claude`), API egress, and **host-shared `/tmp`** as scratch.
+
+So a precious file in `/tmp` is writable from a supervised/container box and the
+demo would *fail* there; one under a dedicated `$HOME` dir is granted by neither
+profile, so the boundary holds on every enforceable tier. (The container tier
+gives the box a *private* `/tmp` tmpfs, which closes the `/tmp` gap there.)
+
+## Observed on this host (Linux, Landlock ABI 3)
+
+`ISOLATION=process` → env profile `default`:
 
 ```text
 == Plain git worktree: the build escapes onto an outside file ==
 published -> ../published/index.html
-PASS: plain worktree build overwrote the outside homepage: /tmp/h5i-safe-worktree-smoke/published/index.html
+PASS: plain worktree build overwrote the outside homepage: /home/.../h5i-worktree-experiment/published/index.html
 PASS: git is blind to the damage: worktree status is clean
 
 == h5i env: the same build is denied outside $WORK ==
-PASS: h5i env preserved the outside homepage: /tmp/h5i-safe-worktree-smoke/published/index.html
++ h5i env create safe --isolation process
+PASS: h5i env preserved the outside homepage: /home/.../h5i-worktree-experiment/published/index.html
 PASS: h5i env denied the outside write (build exited 1)
 PASS: denial was a kernel permission error (not a soft failure)
 ```
 
-The denied `h5i env` build reported:
+`ISOLATION=supervised` → env profile `agent-claude` (the broader agent-in-box
+profile) — **still denied**:
+
+```text
+✔  Created environment env/experiment/safe (isolation: supervised, profile: agent-claude)
+...
+PASS: h5i env preserved the outside homepage: /home/.../h5i-worktree-experiment/published/index.html
+PASS: h5i env denied the outside write (build exited 1)
+PASS: denial was a kernel permission error (not a soft failure)
+```
+
+The denied `h5i env` build reported (both tiers):
 
 ```text
 build.sh generic error (exit 1)
 ----- stderr -----
 mkdir: cannot create directory ‘../published’: Permission denied
-◈  evidence 272595122b089c69 (env env/experiment/safe, policy bedfa9d763b3) · wall 26ms
+◈  evidence 272595122b089c69 (env env/experiment/safe, policy …) · wall ~26ms
 ```
 
 Note: in the plain arm the homepage is overwritten while `git status` stays
@@ -82,13 +113,16 @@ agent doing ordinary work, which still overwrote the outside file.
 worktree is just a directory, and the project's own build/publish tooling writes
 outside it with the user's full ambient authority. `h5i env` keeps the worktree
 ergonomics but adds a pinned policy, a kernel-enforced filesystem boundary
-(process-tier Landlock allowlist), and command evidence — a safe sandbox-style
-worktree, when the requested isolation tier is available.
+(Landlock allowlist, at the process or supervised tier), and command evidence —
+a safe sandbox-style worktree, when the requested isolation tier is available.
 
 Caveats:
 
+- The boundary is set by the **profile**, not the tier (see the `/tmp` note
+  above). Keep the precious file off host-shared `/tmp` when testing the
+  supervised/container tiers, or use the container tier's private `/tmp`.
 - `--audit` is **not** an `env create` flag; evidence capture is automatic on
   every `h5i env run` (list with `h5i recall objects --env <name>`).
-- The h5i arm only means something when the process tier is actually enforced;
-  the script records it as skipped (exit 0) where the host cannot run it, rather
-  than silently downgrading.
+- The h5i arm only means something when the tier is actually enforced; the script
+  records it as skipped (exit 0) where the host cannot run it, rather than
+  silently downgrading.
