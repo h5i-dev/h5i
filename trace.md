@@ -1094,3 +1094,4 @@ _[Checkpoint: 6a304003 — wrote scripts/experiment_safe_sandbox_worktree_result
 [19:06:18] OBSERVE: read stream_worker.rs
 [19:06:24] OBSERVE: read sync_authorship.rs
 [19:06:26] OBSERVE: read post_commit.rs
+[19:06:28] OBSERVE: read install_hooks.rs
