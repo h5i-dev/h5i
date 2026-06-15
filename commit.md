@@ -647,3 +647,16 @@ Root cause: agent/agent-claude profile (auto-selected at supervised/container) g
 
 ---
 
+## Commit 6a301793 — 2026-06-15 15:17 UTC
+
+### Branch Purpose
+h5i environment env/human/claude-1 (profile agent-claude, isolation supervised)
+
+### Previous Progress Summary
+Root cause: agent/agent-claude profile (auto-selected at supervised/container) grants host-shared /tmp scratch, so a /tmp precious file was writable from the box. Moved WORKDIR default to $HOME/h5i-worktree-experiment (granted by neither default nor agent profile) + added rm -rf safety guard + ISOLATION env var (process|supervised|...). Verified 5/5 PASS on both process and supervised. Updated workflow.md + results.md with the profile-not-tier nuance and the /tmp-vs-HOME rationale. Saved memory agent-profile-grants-shared-tmp.
+
+### This Commit's Contribution
+
+
+---
+
