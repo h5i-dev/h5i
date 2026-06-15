@@ -26,3 +26,4 @@
 [21:56:11] OBSERVE: read src/objects.rs
 [21:56:11] OBSERVE: read src/session_log.rs
 [21:56:12] OBSERVE: read src/main.rs
+[21:56:12] OBSERVE: read src/main.rs
