@@ -28,3 +28,4 @@
 [21:56:12] OBSERVE: read src/main.rs
 [21:56:12] OBSERVE: read src/main.rs
 [21:56:15] OBSERVE: read src/token_filter.rs
+[21:56:17] OBSERVE: read src/rules.rs
