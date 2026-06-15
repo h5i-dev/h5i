@@ -829,11 +829,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Fixed CI clippy warning by deriving Default for AuditCapture and amended audit-all env capture commit.
 - [x] edited MANUAL.md; edited src/sandbox.rs
 - [x] Resolved git pull conflict in src/sandbox.rs by keeping clippy-clean AuditCapture default derive, verified clippy/test, and completed merge commit.
+- [x] edited src/sandbox.rs; edited src/sandbox.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-15 09:37 UTC] `improve-shell`: edited src/sandbox.rs; edited src/sandbox.rs
 - [2026-06-15 09:37 UTC] `improve-shell`: Resolved git pull conflict in src/sandbox.rs by keeping clippy-clean AuditCapture default derive, verified clippy/test, and completed merge commit.
 - [2026-06-15 09:35 UTC] `improve-shell`: edited MANUAL.md; edited src/sandbox.rs
 - [2026-06-15 09:35 UTC] `improve-shell`: Fixed CI clippy warning by deriving Default for AuditCapture and amended audit-all env capture commit.
