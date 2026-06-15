@@ -1592,6 +1592,12 @@ fn tool_env_create(params: &Value, workdir: &Path) -> Result<Value> {
         profile: params.get("profile").and_then(Value::as_str).map(str::to_owned),
         isolation,
         backend: "auto".into(),
+        audit_capture: params
+            .get("audit")
+            .and_then(Value::as_str)
+            .map(crate::sandbox::AuditCapture::parse)
+            .transpose()?
+            .unwrap_or_default(),
     };
     let m = crate::env::create(repo.git(), &repo.h5i_root, workdir, &agent, &name, opts)?;
     Ok(json_content(serde_json::to_value(&m)?))

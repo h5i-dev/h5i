@@ -1737,6 +1737,10 @@ enum EnvCommands {
         /// Workspace backend (auto|worktree)
         #[arg(long, default_value = "auto")]
         backend: String,
+        /// Audit capture mode for wrapped in-env commands: signal (default) | all.
+        /// `all` records every wrapped command, including small successful output.
+        #[arg(long, default_value = "signal")]
+        audit: String,
     },
 
     /// Run a command inside an environment, policy-enforced and
@@ -6882,7 +6886,10 @@ jq -c '{
             let Ok(repo) = git2::Repository::discover(&cwd) else {
                 return Ok(());
             };
-            if !h5i_capture_store_writable(&repo) {
+            let in_env_capture = std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR).is_some()
+                && std::env::var_os(h5i_core::env::H5I_ENV_ID_VAR).is_some()
+                && std::env::var_os(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_some();
+            if !in_env_capture && !h5i_capture_store_writable(&repo) {
                 return Ok(());
             }
             let Some(wrapped) = h5i_core::hooks::wrap_bash_command(command) else {
@@ -7896,16 +7903,25 @@ jq -c '{
                         .map(PathBuf::from);
                     let env_id = std::env::var(h5i_core::env::H5I_ENV_ID_VAR).ok();
                     let env_policy = std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).ok();
+                    let env_audit_capture =
+                        std::env::var(h5i_core::env::H5I_ENV_AUDIT_CAPTURE_VAR).ok();
                     let in_env_capture =
                         env_spool.is_some() && env_id.is_some() && env_policy.is_some();
+                    let audit_all = in_env_capture
+                        && env_audit_capture
+                            .as_deref()
+                            .map(|s| s == "all")
+                            .unwrap_or(true);
 
                     // Signal-aware gate. Store when there's either token-reduction
                     // value (raw ≥ min_bytes) OR provenance/search value (the
-                    // command failed). Inside an h5i env, stage every wrapped
-                    // command so env status reflects hook/capture activity even for
-                    // small successful commands; the host ingests the spool later.
+                    // command failed). Inside an audit-all h5i env, stage every
+                    // wrapped command so env status reflects hook/capture activity
+                    // even for small successful commands; the host ingests the spool
+                    // later. Legacy envs without the audit var keep the old all-capture
+                    // behavior.
                     let worth_storing =
-                        in_env_capture || (raw.len() as u64) >= min_bytes || exit_code != Some(0);
+                        audit_all || (raw.len() as u64) >= min_bytes || exit_code != Some(0);
                     if !worth_storing {
                         use std::io::Write;
                         std::io::stdout().write_all(&raw)?;
@@ -9024,6 +9040,7 @@ jq -c '{
                     profile,
                     isolation,
                     backend,
+                    audit,
                 } => {
                     let agent = msg::resolve_identity(&h5i_root, None)
                         .unwrap_or_else(|_| "human".to_string());
@@ -9042,6 +9059,7 @@ jq -c '{
                         profile,
                         isolation,
                         backend,
+                        audit_capture: h5i_core::sandbox::AuditCapture::parse(&audit)?,
                     };
                     let m = h5i_core::env::create(git, &h5i_root, &workdir, &agent, &name, opts)?;
                     println!(

@@ -2612,7 +2612,7 @@ another reviews and applies). See `docs/environments-design.md` and the live
 
 | Command | Description |
 |---------|-------------|
-| `h5i env create <name> [--from REV] [--profile P] [--isolation TIER]` | Create an env: code branch + worktree + reasoning branch + pinned policy. Base frozen at creation. With no `--isolation` (or `--isolation auto`) it **auto-picks the strongest tier the host can run**; an explicit tier fails closed if the host can't satisfy it. |
+| `h5i env create <name> [--from REV] [--profile P] [--isolation TIER] [--audit signal\|all]` | Create an env: code branch + worktree + reasoning branch + pinned policy. Base frozen at creation. With no `--isolation` (or `--isolation auto`) it **auto-picks the strongest tier the host can run**; an explicit tier fails closed if the host can't satisfy it. `--audit all` pins `[audit] capture = "all"` in the resolved policy so wrapped in-env commands are recorded even when they succeed with small output. |
 | `h5i env run <name> -- <cmd> [args…]` | Run a command inside the env, policy-enforced + capture-wrapped. Exit code passes through; evidence is captured. |
 | `h5i env shell <name> [-- <cmd>]` | Open an **interactive** confined session *inside* the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. Defaults to a login shell. Exit code passes through. The session is **observed**: a `shell` event is logged, and per-command evidence is staged + ingested where the tier supports it (see [In-box git, capture & commit](#env-in-box)). |
 | `h5i env probe` | Show what isolation this host can actually provide (Landlock ABI, user namespaces, seccomp, seccomp-notif, cgroup v2 delegation, rootless Podman) and which claims are satisfiable. |
@@ -2709,6 +2709,7 @@ would need to rewrite the ruleset or routes.
 ```bash
 h5i env probe                                   # what can this host enforce?
 h5i env create fix-auth                          # auto-picks the strongest runnable tier
+h5i env create audit-box --audit all              # record every wrapped in-env command
 h5i env create jail --isolation supervised       # refuses unless the full stack is green
 h5i env create build --isolation container       # needs rootless podman + an image
 h5i env shell  fix-auth                           # interactive confined session
