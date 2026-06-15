@@ -812,3 +812,4 @@ _[Checkpoint: 6a2fc357 — edited src/sandbox.rs; edited src/env.rs; edited test
 [09:25:22] OBSERVE: searched shell\|audit\|capture" for "create\|env"
 [09:25:22] OBSERVE: searched MANUAL.md for "env""
 [09:25:22] OBSERVE: searched MANUAL.md
+[09:25:22] OBSERVE: searched MANUAL.md for "env""
