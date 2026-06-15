@@ -818,3 +818,9 @@ _[Checkpoint: 6a2fc357 — edited src/sandbox.rs; edited src/env.rs; edited test
 [09:25:22] OBSERVE: read MANUAL.md
 [09:25:22] ACT: edited MANUAL.md
 [09:25:22] OBSERVE: searched \"all\"" for "="
+
+
+---
+_[Checkpoint: 6a2fc5fb — edited src/env.rs; edited tests/env_integration.rs; edited MANUAL.md]_
+---
+
