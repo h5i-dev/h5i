@@ -556,3 +556,16 @@ Switched hero example to: agent runs project's own build.sh which publishes to s
 
 ---
 
+## Commit 6a300e30 — 2026-06-15 14:37 UTC
+
+### Branch Purpose
+h5i environment env/human/claude-1 (profile agent-claude, isolation supervised)
+
+### Previous Progress Summary
+Switched hero example to: agent runs project's own build.sh which publishes to sibling ../published, clobbering an untracked file outside the worktree. VERIFIED both arms on this host: (1) headless 'claude -p --dangerously-skip-permissions' ran build.sh unprompted and overwrote the real homepage, git status clean; (2) identical build.sh via 'h5i env run safe' denied (mkdir ../published Permission denied, exit 1), homepage intact, evidence auto-captured. Found inherited-doc bug: '--audit all' is not an env create flag (capture is automatic). Codex self-sandboxes so used Claude for unconfined arm.
+
+### This Commit's Contribution
+
+
+---
+
