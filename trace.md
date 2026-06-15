@@ -390,3 +390,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:27:37] ACT: edited docs/blog/prompt-injection-in-agent-traces/index.html
 [01:27:37] ACT: edited tutorials/03-version-control-for-ai-reasoning.md
 [01:27:38] ACT: edited MANUAL.md
+[01:27:37] ACT: edited docs/blog/auditing-ai-generated-code/index.html
