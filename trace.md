@@ -32,3 +32,4 @@
 [21:56:17] OBSERVE: read src/msg.rs
 [21:56:17] OBSERVE: read src/filter_rules.rs
 [21:56:17] OBSERVE: read src/container.rs
+[21:56:17] OBSERVE: read src/main.rs
