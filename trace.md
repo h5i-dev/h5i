@@ -22,3 +22,4 @@
 [21:56:10] OBSERVE: read src/cgroup.rs
 [21:56:10] OBSERVE: read src/msg.rs
 [21:56:10] OBSERVE: read src/repository.rs
+[21:56:10] OBSERVE: read src/secrets_broker.rs
