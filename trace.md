@@ -320,3 +320,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:26:52] OBSERVE: read man/man1/h5i.1
 [01:26:53] ACT: edited docs/blog/uncertainty-heatmap/index.html
 [01:26:54] ACT: edited .claude/h5i.md
+[01:26:56] ACT: edited docs/blog/uncertainty-heatmap/index.html
