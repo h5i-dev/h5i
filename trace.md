@@ -59,3 +59,4 @@
 [21:56:35] OBSERVE: read src/repository.rs
 [21:56:35] OBSERVE: read src/injection.rs
 [21:56:36] OBSERVE: read src/policy.rs
+[21:56:38] OBSERVE: read src/supervisor.rs
