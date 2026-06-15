@@ -138,7 +138,7 @@ $ h5i recall object 0bb827e4             # the full raw bytes, exactly</pre></di
 
     <h2>4. Share raw blobs with the team (optional)</h2>
     <p>
-      <code>h5i push</code> carries the manifests (summaries + pointers) but <strong>not</strong> the
+      <code>h5i share push</code> carries the manifests (summaries + pointers) but <strong>not</strong> the
       huge raw bytes — so nothing large is shared implicitly. To share the bytes, run
       <code>h5i objects push</code>; the backend is chosen by <code>--backend auto|lfs|git-ref</code>
       (default <code>auto</code>):
@@ -159,7 +159,7 @@ $ h5i objects push --backend git-ref   # force the refs/h5i/objects-data git ref
 
     <h2>5. Reclaim space (raw is local until shared)</h2>
     <p>
-      Manifests are kept forever (they're tiny and travel with <code>h5i push</code>); only the
+      Manifests are kept forever (they're tiny and travel with <code>h5i share push</code>); only the
       local raw blobs expire, and only when you ask:
     </p>
     <div class="terminal">

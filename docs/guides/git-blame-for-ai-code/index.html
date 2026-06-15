@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>git blame for AI-generated code — h5i</title>
-  <meta name="description" content="git blame gives you a name and a date. For AI-written lines you need the prompt, the model, the agent, and the test result. h5i blame adds all four — same command shape.">
+  <meta name="description" content="git blame gives you a name and a date. For AI-written lines you need the prompt, the model, the agent, and the test result. h5i recall blame adds all four — same command shape.">
   <meta name="keywords" content="git blame ai code, ai blame, git blame for ai generated code, who wrote this line ai, ai authorship blame, claude code blame, per line prompt history, h5i blame">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
@@ -25,7 +25,7 @@
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="git blame for AI-generated code">
-  <meta name="twitter:description" content="git blame gives a name and a date. h5i blame adds the prompt, model, agent, and test result per line.">
+  <meta name="twitter:description" content="git blame gives a name and a date. h5i recall blame adds the prompt, model, agent, and test result per line.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
@@ -54,7 +54,7 @@
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}, {"@type": "ListItem", "position": 3, "name": "git blame for AI-generated code", "item": "https://h5i.dev/guides/git-blame-for-ai-code/"}]}
   </script>
   <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How is h5i blame different from git blame?", "acceptedAnswer": {"@type": "Answer", "text": "It keeps the same command shape but adds AI provenance at each commit boundary: the agent, the model, the exact prompt, and the captured test result — fields git blame has no place to store. Use --show-prompt to annotate each boundary with its prompt."}}, {"@type": "Question", "name": "Where does the prompt and test data come from?", "acceptedAnswer": {"@type": "Answer", "text": "From the provenance recorded at commit time (h5i capture commit) and stored in refs/h5i/notes, keyed by commit OID. If a line's commit had no AI metadata, blame falls back to ordinary author/date for that line."}}, {"@type": "Question", "name": "What is AST-mode blame?", "acceptedAnswer": {"@type": "Answer", "text": "Instead of attributing each line by line number, AST mode attributes authorship to the structural node (function, block) in the parsed syntax tree. It survives reformatting and reflows that would scramble line-number blame. Pass --mode ast."}}, {"@type": "Question", "name": "Can I see every prompt that ever touched one line?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i recall log --ancestry <file>:<line> walks the history of that specific line and prints the prompt behind each change, so you get the full intent trail rather than just the most recent commit."}}, {"@type": "Question", "name": "Does it work for code written by humans too?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Human-authored commits show normal author and date with no AI badge; AI-assisted commits add the agent, model, prompt, and tests. The two coexist line-by-line in the same blame output."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How is h5i recall blame different from git blame?", "acceptedAnswer": {"@type": "Answer", "text": "It keeps the same command shape but adds AI provenance at each commit boundary: the agent, the model, the exact prompt, and the captured test result — fields git blame has no place to store. Use --show-prompt to annotate each boundary with its prompt."}}, {"@type": "Question", "name": "Where does the prompt and test data come from?", "acceptedAnswer": {"@type": "Answer", "text": "From the provenance recorded at commit time (h5i capture commit) and stored in refs/h5i/notes, keyed by commit OID. If a line's commit had no AI metadata, blame falls back to ordinary author/date for that line."}}, {"@type": "Question", "name": "What is AST-mode blame?", "acceptedAnswer": {"@type": "Answer", "text": "Instead of attributing each line by line number, AST mode attributes authorship to the structural node (function, block) in the parsed syntax tree. It survives reformatting and reflows that would scramble line-number blame. Pass --mode ast."}}, {"@type": "Question", "name": "Can I see every prompt that ever touched one line?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i recall log --ancestry <file>:<line> walks the history of that specific line and prints the prompt behind each change, so you get the full intent trail rather than just the most recent commit."}}, {"@type": "Question", "name": "Does it work for code written by humans too?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Human-authored commits show normal author and date with no AI badge; AI-assisted commits add the agent, model, prompt, and tests. The two coexist line-by-line in the same blame output."}}]}
 </script>
 </head>
 <body>
@@ -77,7 +77,7 @@
     <header>
       <div class="post-eyebrow">Guide · Blame</div>
       <h1>git blame for AI-generated code</h1>
-      <p class="post-deck"><code>git blame</code> answers “who and when.” For a line a model wrote, you need “from what prompt, which model, and did the tests pass?” h5i blame adds those — same ergonomics.</p>
+      <p class="post-deck"><code>git blame</code> answers “who and when.” For a line a model wrote, you need “from what prompt, which model, and did the tests pass?” h5i recall blame adds those — same ergonomics.</p>
       <div class="post-meta">
         <span><strong>Guide</strong> h5i</span>
         <span><strong>Reading time</strong> 6 min</span>
@@ -145,7 +145,7 @@
 
 
 <h2 id="faq">Frequently asked questions</h2>
-    <h3>How is h5i blame different from git blame?</h3>
+    <h3>How is h5i recall blame different from git blame?</h3>
     <p>It keeps the same command shape but adds AI provenance at each commit boundary: the agent, the model, the exact prompt, and the captured test result — fields git blame has no place to store. Use --show-prompt to annotate each boundary with its prompt.</p>
     <h3>Where does the prompt and test data come from?</h3>
     <p>From the provenance recorded at commit time (h5i capture commit) and stored in refs/h5i/notes, keyed by commit OID. If a line's commit had no AI metadata, blame falls back to ordinary author/date for that line.</p>

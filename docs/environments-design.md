@@ -177,7 +177,7 @@ at `.git/h5i/HEAD` / `.git/h5i/PINNED`.
 Worktrees live at `.git/.h5i/env/<id>/work`. Putting them *under* `.git` keeps
 their files invisible to the main working tree (no stray untracked files, never
 caught by `git add .`). The env's branch is an ordinary ref, pushable via
-`h5i push` / `git push`. (Verified: native `git worktree add .git/.h5i/env/<id>/work`
+`h5i share push` / `git push`. (Verified: native `git worktree add .git/.h5i/env/<id>/work`
 is accepted and `list`/`status` work. Still flagged in §13 as an implementation
 choice to stress-test against `prune` / `gc` / hooks before locking in — a
 sibling directory remains the fallback.)
@@ -208,7 +208,7 @@ reach other worktrees' refs and the repo's hooks. Two mitigations, by tier:
   `refs/h5i/env` meta and the env's manifest/policy dir (a box that could
   rewrite its own policy could widen its sandbox on the next run). Net effect:
   a boxed agent can `git status`/`commit` on **its own env branch** and use
-  `h5i context`, but cannot move `main`, plant hooks, or touch another agent's
+  `h5i recall context`, but cannot move `main`, plant hooks, or touch another agent's
   branches. The only road into the *parent* branch is still the host-side
   mediated commit of `propose`.
 - **`container` tier — same surface as bind mounts:** the worktree's pointer
@@ -570,7 +570,7 @@ h5i env rm NAME [--force]        # permanent removal: worktree + code/reasoning 
 ```
 
 Wiring follows the existing noun-verb table in `main.rs` (the same pattern as
-`h5i msg` / `h5i context`). MCP tools initially mirror only
+`h5i msg` / `h5i recall context`). MCP tools initially mirror only
 `create / run / status / diff / propose / apply`.
 
 ### Semantics
@@ -580,7 +580,7 @@ Wiring follows the existing noun-verb table in `main.rs` (the same pattern as
   active envs; if it does, h5i detects and offers rebase.
 - **No automatic write into the user's branch.** `propose` is the default
   surfacing; `apply` is an explicit, reviewable step.
-- **No `env commit`** — it would collide with `h5i commit`. Env work commits via
+- **No `env commit`** — it would collide with `h5i capture commit`. Env work commits via
   ordinary git on the env branch (or the mediated commit at `process`+ tiers).
 - **Parallel N envs from one frozen base ("the arena").** Default resolution is
   **reviewer comparison** (`h5i env diff` across envs → pick a winner), because
@@ -628,7 +628,7 @@ created ──run──▶ running ──idle──▶ idle
    on unsupported claim.
 4. **Container / microvm adapters.** Opt-in shell-outs (podman → gVisor/Kata →
    Firecracker). OpenSandbox's "admin picks runtime class, user API unchanged."
-5. **Remote/share.** Env manifests via `h5i push`/`pull`; env branch via normal
+5. **Remote/share.** Env manifests via `h5i share push`/`pull`; env branch via normal
    git remote. Optional BranchFS COW backend for speculative branches.
 6. **Supervisor + orchestration.** seccomp-notify supervisor — **shipped**: the
    `supervised` tier with the socket gate and the airtight rootless L3/L4

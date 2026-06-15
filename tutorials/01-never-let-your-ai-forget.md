@@ -14,13 +14,13 @@ You have no idea. The session log is a wall of JSON. The commit message says "re
 
 This is the dirty secret of AI-assisted development: **the code survives, but the reasoning doesn't.** Every Claude session is amnesiac by design. The next one starts from zero.
 
-`h5i notes` is the fix.
+`h5i recall notes` is the fix.
 
 ---
 
 ## What h5i Notes actually does
 
-`h5i notes` is a thin layer that reads Claude Code's session log — the JSONL file Claude writes to `~/.claude/projects/<your-repo>/` — and turns it into structured, queryable metadata attached to your git commits.
+`h5i recall notes` is a thin layer that reads Claude Code's session log — the JSONL file Claude writes to `~/.claude/projects/<your-repo>/` — and turns it into structured, queryable metadata attached to your git commits.
 
 After one command you get:
 
@@ -30,7 +30,7 @@ After one command you get:
 - **Omission report** — deferrals, placeholders, and broken promises Claude left in its thinking
 - **Blind-edit coverage** — files Claude modified without having read first (a proxy for "edited from memory")
 
-All of this is stored in `.git/.h5i/session_log/<commit-oid>/analysis.json` and linked to HEAD. It follows your code through `git push`, `h5i push`, and survives forever.
+All of this is stored in `.git/.h5i/session_log/<commit-oid>/analysis.json` and linked to HEAD. It follows your code through `git push`, `h5i share push`, and survives forever.
 
 ---
 
@@ -76,20 +76,20 @@ That's it. From this point every Claude session is automatically traced, and the
 Do some work with Claude Code — any task is fine. When the session ends, run:
 
 ```bash
-h5i notes analyze
+h5i recall notes analyze
 ```
 
 ```
 ➜  Auto-detected session: ~/.claude/projects/-home-you-myrepo/abc123.jsonl
 ➜  Analyzing session log → commit a3f8c12
 ✔  89 messages · 34 tool calls · 4 edited · 6 consulted
-  ℹ Run h5i notes show a3f8c12 to inspect results.
+  ℹ Run h5i recall notes show a3f8c12 to inspect results.
 ```
 
 Then look at what was captured:
 
 ```bash
-h5i notes show
+h5i recall notes show
 ```
 
 ```
@@ -136,7 +136,7 @@ Notice the **Implicit Dependencies** section in the footprint output. These are 
 
 Standard git diff and blame never capture this. A future developer reading the commit has no idea that the auth refactor was informed by how the middleware module worked, or that a Cargo.toml dependency was checked before making an API choice.
 
-`h5i notes` makes these invisible influences visible and permanently attached to the commit.
+`h5i recall notes` makes these invisible influences visible and permanently attached to the commit.
 
 ---
 
@@ -145,8 +145,8 @@ Standard git diff and blame never capture this. A future developer reading the c
 The recommended end-of-session checklist is two commands:
 
 ```bash
-h5i notes analyze          # index the session
-h5i memory snapshot        # version Claude's memory files too
+h5i recall notes analyze   # index the session
+h5i capture memory         # version Claude's memory files too
 ```
 
 Run these before closing the terminal. The analysis takes about two seconds.
@@ -154,17 +154,17 @@ Run these before closing the terminal. The analysis takes about two seconds.
 At the start of the *next* session:
 
 ```bash
-h5i resume                 # get a full handoff briefing from local data
+h5i recall resume          # get a full handoff briefing from local data
 ```
 
-`h5i resume` assembles branch state, goal, milestone progress, last session statistics, high-risk files, and a suggested opening prompt — entirely from local data, no API call needed.
+`h5i recall resume` assembles branch state, goal, milestone progress, last session statistics, high-risk files, and a suggested opening prompt — entirely from local data, no API call needed.
 
 ---
 
 ## What the commit history looks like now
 
 ```bash
-h5i log --limit 3
+h5i recall log --limit 3
 ```
 
 ```
@@ -184,7 +184,7 @@ h5i log --limit 3
   prompt: "implement an in-memory session store with TTL eviction"
 ```
 
-Every AI-assisted commit now carries its full provenance. The prompt is searchable, the model is recorded, token usage is tracked. And behind each commit, the full session analysis — footprint, decisions, uncertainty — is one `h5i notes show` away.
+Every AI-assisted commit now carries its full provenance. The prompt is searchable, the model is recorded, token usage is tracked. And behind each commit, the full session analysis — footprint, decisions, uncertainty — is one `h5i recall notes show` away.
 
 ---
 

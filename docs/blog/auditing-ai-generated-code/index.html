@@ -148,7 +148,7 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i notes coverage --max-ratio 0.5</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes coverage --max-ratio 0.5</span>
 
 <span class="t-bold">── Attention Coverage ─────────────────────────────────────</span>
   <span class="t-out">files edited:           7</span>
@@ -183,7 +183,7 @@
     <p>
       We covered this detector in detail in
       <a href="/blog/uncertainty-heatmap/">Claude Code Uncertainty Heatmap for AI Code Review</a>.
-      The short version is: <code>h5i notes uncertainty</code> turns a session's hidden hedges into a heatmap
+      The short version is: <code>h5i recall notes uncertainty</code> turns a session's hidden hedges into a heatmap
       that tells you where to start reading.
     </p>
 
@@ -198,11 +198,11 @@
     <p>
       h5i records the user prompt that opened each session, then compares it (lexically and via
       file co-mention) against the diff. When a commit touches files the prompt doesn't mention and
-      that aren't in the same module, it lands in <code>h5i notes review</code> as a scope-creep flag.
+      that aren't in the same module, it lands in <code>h5i audit review</code> as a scope-creep flag.
     </p>
 
     <p>
-      You can also enforce scope at policy level — <code>h5i policy</code> rules can require that AI commits
+      You can also enforce scope at policy level — <code>h5i audit policy</code> rules can require that AI commits
       restrict edits to files mentioned in the prompt or its session's reading set.
     </p>
 
@@ -215,7 +215,7 @@
     </p>
 
     <p>
-      <code>h5i context scan</code> runs eight deterministic regex rules over the OBSERVE/THINK/ACT trace and
+      <code>h5i audit scan</code> runs eight deterministic regex rules over the OBSERVE/THINK/ACT trace and
       reports a 0.0–1.0 risk score with line-level hits. We go deep on the detector design in
       <a href="/blog/prompt-injection-in-agent-traces/">Detecting Prompt Injection in Agent Reasoning Traces</a>.
       For the framework here, all that matters is: it's another deterministic input to the composite
@@ -225,13 +225,13 @@
     <h2>The composite score</h2>
 
     <p>
-      Take all four vectors per commit, weight them, sum, normalize. <code>h5i notes review</code> spits out a
+      Take all four vectors per commit, weight them, sum, normalize. <code>h5i audit review</code> spits out a
       ranked list:
     </p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i notes review --limit 10</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit review --limit 10</span>
 
 <span class="t-bold">Suggested Review Points — 4 commits flagged (scanned 50, min_score=0.40)</span>
 <span class="t-out">──────────────────────────────────────────────────────────────────</span>
@@ -264,7 +264,7 @@
     <h2>Wiring it into your CI</h2>
 
     <p>
-      The simplest integration is a GitHub Actions step that runs <code>h5i notes review --base origin/main</code>
+      The simplest integration is a GitHub Actions step that runs <code>h5i audit review --base origin/main</code>
       on every PR and posts the top-flagged commits as a comment:
     </p>
 
@@ -273,8 +273,8 @@
       <div class="terminal-body"><pre><span class="t-cmt"># Runs on every PR; comments the ranked review queue.</span>
 <span class="t-cmd">- name: h5i audit
   run: |
-    h5i pull
-    h5i notes review --base origin/main --limit 5 --format md \
+    h5i share pull
+    h5i audit review --base origin/main --limit 5 --format md \
       &gt; review.md
 - uses: actions/github-script@v7
   with:
@@ -289,7 +289,7 @@
     </div>
 
     <p>
-      A stricter integration uses <code>h5i policy check</code> as a required status check. Define a TOML
+      A stricter integration uses <code>h5i audit policy check</code> as a required status check. Define a TOML
       policy that rejects commits with <code>required_audit=false</code> on protected branches, blind edits
       above a threshold, or any prompt-injection signals at HIGH severity. The check fails the PR; CI
       blocks merge.
@@ -317,10 +317,10 @@
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/your-project</span></div>
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i init</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i notes analyze --since 7.days.ago</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes analyze --since 7.days.ago</span>
 <span class="t-out">  scanned 38 commits · 24 had session logs · linked 24/24</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i notes review --since 7.days.ago</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i audit review --since 7.days.ago</span>
 
 <span class="t-cmt"># See the top-flagged commits from the last week.</span>
 <span class="t-cmt"># Open them. See if the framework agrees with the bugs you</span>

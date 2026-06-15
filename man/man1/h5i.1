@@ -154,7 +154,7 @@ and
 .BR session_log/ .
 .
 .\" ─── commit ─────────────────────────────────────────────────────────────────
-.SS h5i commit \-m \fIMESSAGE\fR [\fIOPTIONS\fR]
+.SS h5i capture commit \-m \fIMESSAGE\fR [\fIOPTIONS\fR]
 Commit staged changes with optional AI provenance, test metrics,
 AST snapshot, and integrity audit.
 .PP
@@ -245,7 +245,7 @@ step when calling from scripts or MCP tools.
 CLI flag \(rA environment variable \(rA pending context file.
 .
 .\" ─── log ────────────────────────────────────────────────────────────────────
-.SS h5i log [\fIOPTIONS\fR]
+.SS h5i recall log [\fIOPTIONS\fR]
 Display the enriched 5D commit history annotated with AI metadata,
 test results, and causal links.
 .PP
@@ -258,7 +258,7 @@ Number of recent commits to display (default:
 .RE
 .
 .\" ─── blame ──────────────────────────────────────────────────────────────────
-.SS h5i blame \fIFILE\fR [\fIOPTIONS\fR]
+.SS h5i recall blame \fIFILE\fR [\fIOPTIONS\fR]
 Show per-line (or per-node) authorship annotated with AI metadata
 and test status.
 Each line shows two status columns:
@@ -277,7 +277,7 @@ AST mode associates authorship with AST nodes rather than source lines.
 .RE
 .
 .\" ─── diff ───────────────────────────────────────────────────────────────────
-.SS h5i diff \fIFILE\fR [\fIOPTIONS\fR]
+.SS h5i recall diff \fIFILE\fR [\fIOPTIONS\fR]
 Show the AST-level structural diff for a file.
 Supported languages include Python.
 .PP
@@ -456,7 +456,7 @@ tagged with the env id + enforced policy digest). Lifecycle:
 is never automatic \(em a reviewer applies a proposal. Env state lives in
 .I refs/h5i/env
 and travels with
-.BR "h5i push" / pull
+.BR "h5i share push" / pull
 for a cross-clone review loop.
 .PP
 .B Subcommands
@@ -579,10 +579,10 @@ MCP tools mirror these subcommands.
 .RS 4
 .PP
 At the confined tiers the env worktree is a functional git checkout from inside
-the box: \fBgit\fR plumbing and \fBh5i context\fR work against the env's own
+the box: \fBgit\fR plumbing and \fBh5i recall context\fR work against the env's own
 branch (the box cannot move \fBmain\fR, plant hooks, or touch other branches).
 Interactive sessions lock the agent config read-only and observe per command:
-in-box \fBh5i capture run\fR / \fBh5i commit\fR work even though the evidence
+in-box \fBh5i capture run\fR / \fBh5i capture commit\fR work even though the evidence
 store is sealed \(em the git commit lands on the env branch and the evidence (and
 commit note) are staged to a spool the host ingests at session end, labeled
 \fBinbox-capture\fR (box-claimed) vs host-verified \fBhost-env-run\fR. On
@@ -863,7 +863,7 @@ Aliases/peers of
 .TP
 .B push [\-\-remote \fIR\fR] [\-\-backend \fIB\fR], pull [\-\-remote \fIR\fR] [\-\-backend \fIB\fR]
 Share raw blobs (separate from the metadata
-.BR "h5i push" ,
+.BR "h5i share push" ,
 because raw output is heavy).
 .B \-\-backend
 is
@@ -943,7 +943,7 @@ snippet needed to register the PostToolUse hook and MCP server.
 .B run
 PostToolUse handler.
 Reads the tool-event JSON from stdin, emits an
-.B h5i context trace
+.B h5i recall context trace
 entry for the appropriate kind (OBSERVE on Read, ACT on Edit/Write),
 and \(em on
 .B Read
@@ -1040,7 +1040,7 @@ to any read command for greppable output.
 Incoming messages are treated as untrusted collaborator input.
 .
 .\" ─── resume ─────────────────────────────────────────────────────────────────
-.SS h5i resume [\fIBRANCH\fR]
+.SS h5i recall resume [\fIBRANCH\fR]
 Generate a structured session-handoff briefing assembled entirely from
 local h5i data (no AI API call required).
 Shows: branch / HEAD commit, project goal and milestone progress
@@ -1059,7 +1059,7 @@ Files are ranked descending and the top five are shown.
 .RE
 .
 .\" ─── memory ─────────────────────────────────────────────────────────────────
-.SS h5i memory \fIACTION\fR
+.SS h5i recall memory \fIACTION\fR
 Version-control Claude Code's persistent memory files alongside your code.
 Claude Code stores per-project memory in
 .IR "~/.claude/projects/<repo\-path>/memory/" .
@@ -1110,7 +1110,7 @@ Pull snapshots from a remote.
 .RE
 .
 .\" ─── notes ──────────────────────────────────────────────────────────────────
-.SS h5i notes \fIACTION\fR
+.SS h5i recall notes \fIACTION\fR
 Parse Claude Code session logs and attach enriched metadata
 (exploration footprint, uncertainty heatmap, omission report, file churn,
 intent graph) to commits.
@@ -1180,7 +1180,7 @@ emits raw JSON instead of the styled table.
 .RE
 .
 .\" ─── context ────────────────────────────────────────────────────────────────
-.SS h5i context \fIACTION\fR
+.SS h5i recall context \fIACTION\fR
 Git-style branching and committing applied to agent
 .I reasoning
 rather than code.
@@ -1249,7 +1249,7 @@ so it appears separately under
 in
 .BR status .
 Merge back with
-.BI "h5i context merge scope/" NAME
+.BI "h5i recall context merge scope/" NAME
 when the subagent finishes.
 .TP
 .B trace [\-\-ephemeral] \-\-kind \fIKIND\fR \fICONTENT\fR
@@ -1277,7 +1277,7 @@ the entry goes to
 .I ephemeral.md
 only \(em excluded from the DAG, excluded from snapshots, and cleared on
 the next
-.BR "h5i context commit" .
+.BR "h5i recall context commit" .
 Use this for scratch observations you only need for the current step.
 .RE
 .TP
@@ -1326,7 +1326,7 @@ Restore the context workspace to the state captured when git commit
 .I SHA
 was made.
 Every
-.B h5i commit
+.B h5i capture commit
 writes a snapshot automatically; this command replays it by appending a
 new commit to
 .IR refs/h5i/context ,
@@ -1343,7 +1343,7 @@ Both
 and
 .I TO
 must have context snapshots (created automatically by
-.BR "h5i commit" ).
+.BR "h5i capture commit" ).
 .TP
 .B relevant \fIFILE\fR
 Retrieve all context entries that mention
@@ -1391,9 +1391,9 @@ which returns structured JSON.
 Display the current ephemeral scratch traces for a branch (default: current
 branch).
 Ephemeral entries are written with
-.B h5i context trace \-\-ephemeral
+.B h5i recall context trace \-\-ephemeral
 and are automatically cleared on the next
-.BR "h5i context commit" .
+.BR "h5i recall context commit" .
 .TP
 .B cached\-prefix [\-\-tail \fIN\fR]
 Show the stable-prefix / dynamic-suffix boundary in the current trace
@@ -1416,7 +1416,7 @@ is split on the
 .I Next:
 boundary into a one-line summary and a detail block, then written as a
 milestone via
-.BR "h5i context commit" .
+.BR "h5i recall context commit" .
 Imported UUIDs are tracked in
 .I recaps.json
 at the root of
@@ -1440,7 +1440,7 @@ Report what would be imported without modifying the workspace.
 .RE
 .
 .\" ─── vibe ───────────────────────────────────────────────────────────────────
-.SS h5i vibe [\fIOPTIONS\fR]
+.SS h5i recall vibe [\fIOPTIONS\fR]
 Show an instant AI footprint audit of the repository: what fraction of
 recent commits are AI-generated, which directories are fully AI-written,
 and which files carry the highest risk.
@@ -1471,7 +1471,7 @@ A file is flagged when its AI commit ratio is \(>= 70% and at least one of:
 no passing test metrics, one or more blind edits, or one or more
 uncertainty annotations.
 Blind-edit and uncertainty data come from session analyses stored by
-.BR "h5i notes analyze" .
+.BR "h5i recall notes analyze" .
 .PP
 .B Options
 .RS 4
@@ -1554,14 +1554,14 @@ to stop.
 Subscribable URIs:
 .B h5i://log/recent
 (fires when a new
-.B h5i commit
+.B h5i capture commit
 lands) and
 .B h5i://context/current
 (fires when the context workspace is updated).
 .RE
 .
 .\" ─── policy ──────────────────────────────────────────────────────────────────
-.SS h5i policy \fISUBCOMMAND\fR
+.SS h5i audit policy \fISUBCOMMAND\fR
 Manage governance rules for AI-assisted commits.
 Rules live in
 .I .h5i/policy.toml
@@ -1569,7 +1569,7 @@ Rules live in
 .IR .git/ ;
 commit it alongside your code).
 Policy is evaluated automatically on every
-.B h5i commit\c
+.B h5i capture commit\c
 ; violations block the commit unless
 .B \-\-force
 is passed.
@@ -1613,7 +1613,7 @@ and
 .BR ? .
 .
 .\" ─── compliance ──────────────────────────────────────────────────────────────
-.SS h5i compliance [\fIOPTIONS\fR]
+.SS h5i audit compliance [\fIOPTIONS\fR]
 Generate a compliance audit report over a date range.
 Walks the commit history, re-evaluates policy rules, and aggregates session
 data (blind edits, uncertainty signals) into a text, JSON, or HTML report.
@@ -1661,7 +1661,7 @@ individual commits.
 .B Example
 .RS 4
 .nf
-h5i compliance \-\-since 2025-01-01 \-\-format html \-\-output report.html
+h5i audit compliance \-\-since 2025-01-01 \-\-format html \-\-output report.html
 .fi
 .RE
 .
@@ -1756,15 +1756,15 @@ accumulates counts across lib, integration, and doc-test sections.
 .TP
 .B H5I_PROMPT
 Default prompt for
-.BR "h5i commit" .
+.BR "h5i capture commit" .
 .TP
 .B H5I_MODEL
 Default model name for
-.BR "h5i commit" .
+.BR "h5i capture commit" .
 .TP
 .B H5I_AGENT_ID
 Default agent ID for
-.BR "h5i commit" .
+.BR "h5i capture commit" .
 .TP
 .B H5I_AGENT
 Per-agent messaging identity for
@@ -1805,7 +1805,7 @@ without the content-hash trust gate (for CI). See
 When set, enables semantic search in
 .B h5i rollback
 and Claude-assisted intent extraction in
-.BR "h5i notes graph \-\-mode analyze" .
+.BR "h5i recall notes graph \-\-mode analyze" .
 .
 .SH FILES
 .TP
@@ -1823,7 +1823,7 @@ Each directory contains memory files plus
 .TP
 .I .git/.h5i/session_log/<commit-oid>/analysis.json
 Structured session log analysis produced by
-.BR "h5i notes analyze" .
+.BR "h5i recall notes analyze" .
 .TP
 .I .git/.h5i/objects/ab/cd/<sha256>
 Token-reduction raw-output store: the full captured output, content-addressed
@@ -1839,7 +1839,7 @@ Content hash of a trusted project-local
 .I .git/.h5i/pending_context.json
 Transient file written by the Claude Code hook; consumed and deleted
 at the next
-.BR "h5i commit" .
+.BR "h5i capture commit" .
 .TP
 .I .git/.h5i/msg/
 Local messaging state:
@@ -1853,7 +1853,7 @@ never collide.
 .TP
 .I .h5i-ctx/
 Context workspace (created by
-.BR "h5i context init" ).
+.BR "h5i recall context init" ).
 .TP
 .I refs/h5i/notes
 Git ref storing AI provenance, test metrics, causal links, and integrity
@@ -1915,7 +1915,7 @@ Share them with:
 .PP
 .RS 4
 .nf
-h5i push                             # push all h5i refs to origin
+h5i share push                       # push all h5i refs to origin
 git push origin refs/h5i/notes
 git push origin refs/h5i/memory
 git push origin refs/h5i/msg
@@ -1942,7 +1942,7 @@ picks them up automatically:
 .nf
 h5i init
 git add src/auth.rs
-h5i commit \-m "add rate limiting" \\
+h5i capture commit \-m "add rate limiting" \\
     \-\-prompt "add per-IP rate limiting to the auth endpoint" \\
     \-\-model claude\-sonnet\-4\-6 \\
     \-\-agent claude\-code \\
@@ -1950,7 +1950,7 @@ h5i commit \-m "add rate limiting" \\
 .fi
 .SS Causal chain
 .nf
-h5i commit \-m "fix off-by-one in validate_token" \\
+h5i capture commit \-m "fix off-by-one in validate_token" \\
     \-\-caused\-by a3f9c2b \\
     \-\-prompt "fix the bug introduced by the rate limiter"
 .fi
@@ -1968,7 +1968,7 @@ h5i rewind HEAD~3 \-\-dry\-run
 h5i rewind abc1234
 git diff HEAD                                # review the result
 git add \-A
-h5i commit \-m "rewind: restore pre-regression state" \-\-agent claude\-code
+h5i capture commit \-m "rewind: restore pre-regression state" \-\-agent claude\-code
 
 # Undo the rewind if you change your mind
 git checkout refs/h5i/shadow/20260420\-143012 \-\- .
@@ -1976,60 +1976,60 @@ git checkout refs/h5i/shadow/20260420\-143012 \-\- .
 .SS Session analysis workflow
 .nf
 # End of session
-h5i notes analyze
-h5i memory snapshot
-h5i push
+h5i recall notes analyze
+h5i capture memory
+h5i share push
 
 # Start of next session
-h5i resume
-h5i notes show
-h5i notes uncertainty \-\-file src/auth.rs
-h5i notes omissions
+h5i recall resume
+h5i recall notes show
+h5i recall notes uncertainty \-\-file src/auth.rs
+h5i recall notes omissions
 .fi
 .SS Context workspace
 .nf
-h5i context init \-\-goal "build OAuth2 login system"
-h5i context branch oauth\-provider \-\-purpose "implement provider login path"
-h5i context trace \-\-kind OBSERVE "HttpClient::send has no retry logic"
-h5i context trace \-\-kind THINK   "exponential backoff with jitter is safest"
-h5i context trace \-\-kind ACT     "added retry loop in send() with 5-attempt cap"
-h5i context commit "implemented retry loop" \\
+h5i recall context init \-\-goal "build OAuth2 login system"
+h5i recall context branch oauth\-provider \-\-purpose "implement provider login path"
+h5i recall context trace \-\-kind OBSERVE "HttpClient::send has no retry logic"
+h5i recall context trace \-\-kind THINK   "exponential backoff with jitter is safest"
+h5i recall context trace \-\-kind ACT     "added retry loop in send() with 5-attempt cap"
+h5i recall context commit "implemented retry loop" \\
     \-\-detail "capped at 5 attempts; uses tokio::time::sleep"
-h5i context branch experiment/sync\-retry \-\-purpose "try sync fallback"
+h5i recall context branch experiment/sync\-retry \-\-purpose "try sync fallback"
 # ...explore...
-h5i context checkout oauth\-provider
-h5i context status
+h5i recall context checkout oauth\-provider
+h5i recall context status
 .fi
 .SS Context versioning
 .nf
-# Snapshot is created automatically on every h5i commit \(em nothing extra needed.
+# Snapshot is created automatically on every h5i capture commit \(em nothing extra needed.
 
 # Before editing a file, load all context entries that mention it:
-h5i context relevant src/http_client.rs
+h5i recall context relevant src/http_client.rs
 
 # See how reasoning evolved between two code commits:
-h5i context diff a3f8c12 9e21b04
+h5i recall context diff a3f8c12 9e21b04
 
 # Continue from where a previous session left off:
-h5i context restore a3f8c12
+h5i recall context restore a3f8c12
 
 # Compact old context history and reclaim space:
-h5i context pack
+h5i recall context pack
 git gc
 .fi
 .SS Team workflow
 .nf
 # Alice
-h5i commit \-m "add rate limiting" \-\-prompt "..." \-\-agent claude\-code
-h5i memory snapshot
-h5i push
+h5i capture commit \-m "add rate limiting" \-\-prompt "..." \-\-agent claude\-code
+h5i capture memory
+h5i share push
 git push origin main
 
 # Bob
 git pull
-h5i log
-h5i memory pull
-h5i memory restore <alice\-commit>
+h5i recall log
+h5i share memory pull
+h5i recall memory restore <alice\-commit>
 .fi
 .
 .SH SEE ALSO

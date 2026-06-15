@@ -153,7 +153,7 @@
 
     <ul>
       <li><strong>Reasoning workspace</strong> — <code>refs/h5i/context</code>. A versioned DAG of OBSERVE / THINK / ACT entries plus milestones. Branches like git, merges like git.</li>
-      <li><strong>Memory snapshots</strong> — <code>refs/h5i/memory</code>. Every <code>h5i commit</code> snapshots <code>~/.claude/projects/&lt;repo&gt;/memory/</code> and pins it to the git SHA.</li>
+      <li><strong>Memory snapshots</strong> — <code>refs/h5i/memory</code>. Every <code>h5i capture commit</code> snapshots <code>~/.claude/projects/&lt;repo&gt;/memory/</code> and pins it to the git SHA.</li>
       <li><strong>Session notes</strong> — <code>refs/h5i/notes</code>. The exploration footprint of each session — files read vs. edited, uncertainty signals, blind edits.</li>
     </ul>
 
@@ -170,7 +170,7 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i context init --goal "Migrate the auth service from Sessions to JWT"</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall context init --goal "Migrate the auth service from Sessions to JWT"</span>
 <span class="t-pass">✔</span>  <span class="t-out">.h5i-ctx/ workspace initialized</span>
 <span class="t-out">   branch: main · goal recorded</span></pre></div>
     </div>
@@ -181,13 +181,13 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i context trace --kind OBSERVE \</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall context trace --kind OBSERVE \</span>
 <span class="t-cmd">    "session.rs uses tower_sessions; refresh_token belongs in JwtClient"</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i context trace --kind THINK \</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context trace --kind THINK \</span>
 <span class="t-cmd">    "Issue refresh tokens server-side; access tokens stay client-side. 15-min TTL."</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i context trace --kind ACT \</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context trace --kind ACT \</span>
 <span class="t-cmd">    "Replaced session middleware with JwtMiddleware in src/api/mod.rs"</span></pre></div>
     </div>
 
@@ -197,7 +197,7 @@
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i context commit "JWT middleware in place" \</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall context commit "JWT middleware in place" \</span>
 <span class="t-cmd">    --detail "Sessions middleware removed; tests pass; refresh-token path TODO"</span>
 <span class="t-pass">◆</span>  <span class="t-out">milestone m1 recorded · DAG node 4f7a2bc</span></pre></div>
     </div>
@@ -205,7 +205,7 @@
     <p>
       The trace and milestones live in <code>refs/h5i/context</code>. Every entry is a DAG node with a parent
       pointer, so reasoning has a topology — not just a timeline. When you fork an alternative, you
-      <code>h5i context branch experiment/refresh-rotation</code>, work the side path, and either merge it
+      <code>h5i recall context branch experiment/refresh-rotation</code>, work the side path, and either merge it
       back or abandon it. Either way, the abandoned branch is still there in history; you can always
       recover the rejected design.
     </p>
@@ -213,27 +213,27 @@
     <h2>Memory snapshots, pinned to git commits</h2>
 
     <p>
-      Every <code>h5i commit</code> auto-snapshots <code>~/.claude/projects/&lt;repo&gt;/memory/</code> alongside
+      Every <code>h5i capture commit</code> auto-snapshots <code>~/.claude/projects/&lt;repo&gt;/memory/</code> alongside
       the code commit. The snapshot is keyed by the git SHA, so memory is a first-class versioned
       artifact:
     </p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i memory log</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall memory log</span>
 <span class="t-out">9e21b04  2026-05-06 11:45  3 files snapshotted  +12 -3</span>
 <span class="t-out">a3f8c12  2026-05-05 14:02  3 files snapshotted  +5  -1</span>
 <span class="t-out">7216039  2026-05-04 09:18  2 files snapshotted  initial</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i memory diff a3f8c12 9e21b04</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall memory diff a3f8c12 9e21b04</span>
 <span class="t-bold">+++ ~/.claude/projects/my-project/memory/decisions.md</span>
 <span class="t-pass">+ - 2026-05-06: Switched to RS256 keys (HS256 felt fragile for multi-service)</span>
 <span class="t-red">- - 2026-05-04: Considering HS256 with shared secret per service</span></pre></div>
     </div>
 
     <p>
-      You can <code>h5i memory restore &lt;sha&gt;</code> to recover the memory file as it stood at any past
-      commit, push it to teammates with <code>h5i push</code>, or simply <code>diff</code> it against last week's
+      You can <code>h5i recall memory restore &lt;sha&gt;</code> to recover the memory file as it stood at any past
+      commit, push it to teammates with <code>h5i share push</code>, or simply <code>diff</code> it against last week's
       version to see how your understanding has shifted.
     </p>
 
@@ -283,14 +283,14 @@
   <span class="t-red">ACT:</span>   <span class="t-out">Replaced session middleware with JwtMiddleware in src/api/mod.rs</span>
   <span class="t-warn">NOTE:</span>  <span class="t-out">TODO: integration test for refresh during deploy</span>
 
-<span class="t-out">[h5i] Use `h5i context show` for full details.</span></pre></div>
+<span class="t-out">[h5i] Use `h5i recall context show` for full details.</span></pre></div>
     </div>
 
     <p>
       The cost is calibrated by the <code>--depth</code> flag. Default is depth 2 — about 2,000-5,000 tokens, the
       timeline view above. Depth 1 is a compact 800-token index for token-conscious workflows;
       depth 3 dumps the full OBSERVE/THINK/ACT log. Claude can step up the depth itself when it
-      needs more, by running <code>h5i context show --depth 3</code>.
+      needs more, by running <code>h5i recall context show --depth 3</code>.
     </p>
 
     <div class="callout">
@@ -302,20 +302,20 @@
     <h2>Branching reasoning</h2>
 
     <p>
-      The most underused feature is <code>h5i context branch</code>. Suppose you're halfway through the JWT
+      The most underused feature is <code>h5i recall context branch</code>. Suppose you're halfway through the JWT
       migration and want to explore using <code>biscuit</code> tokens instead. You don't want to lose your
       current thread, but you also don't want the side-quest polluting your main reasoning history.
     </p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i context branch experiment/biscuit \</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall context branch experiment/biscuit \</span>
 <span class="t-cmd">    --purpose "evaluate biscuit tokens as JWT alternative"</span>
 
 <span class="t-cmt"># ... Claude explores; you trace the experiment ...</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i context checkout main</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i context merge experiment/biscuit</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context checkout main</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context merge experiment/biscuit</span>
 <span class="t-pass">✔</span>  <span class="t-out">Merged 6 trace entries · 1 milestone (rejected → reason recorded)</span></pre></div>
     </div>
 

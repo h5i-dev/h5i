@@ -19,7 +19,7 @@ This is Part 4 — the advanced patterns that make h5i's context workspace feel 
 The context workspace has branches, just like git. The default branch is `main`. You can create a branch to explore an alternative approach, then either merge the findings back or discard them.
 
 ```bash
-h5i context branch experiment/sync-approach \
+h5i recall context branch experiment/sync-approach \
   --purpose "try synchronous retry as simpler fallback before committing to async"
 ```
 
@@ -32,16 +32,16 @@ h5i context branch experiment/sync-approach \
 Work on the experimental approach. Add traces, make edits, accumulate findings.
 
 ```bash
-h5i context trace --kind OBSERVE "std::thread::sleep works but blocks the async executor"
-h5i context trace --kind THINK   "sync retry is incompatible with the tokio runtime — this approach won't work"
-h5i context commit "sync retry exploration — rejected" \
+h5i recall context trace --kind OBSERVE "std::thread::sleep works but blocks the async executor"
+h5i recall context trace --kind THINK   "sync retry is incompatible with the tokio runtime — this approach won't work"
+h5i recall context commit "sync retry exploration — rejected" \
   --detail "blocking sleep incompatible with tokio; sticking with tokio::time::sleep"
 ```
 
 Then return to your main reasoning thread:
 
 ```bash
-h5i context checkout main
+h5i recall context checkout main
 ```
 
 ```
@@ -54,7 +54,7 @@ The exploration happened. The findings are recorded on `experiment/sync-approach
 If the exploration yielded something worth keeping, merge it back:
 
 ```bash
-h5i context merge experiment/sync-approach
+h5i recall context merge experiment/sync-approach
 ```
 
 The `merge` command pulls the trace entries and milestone notes from the branch into `main`, without the git code changes (those were discarded when you checked back out to main). You get the reasoning without the failed implementation.
@@ -66,7 +66,7 @@ The `merge` command pulls the trace entries and milestone notes from the branch 
 After several sessions, your context workspace accumulates hundreds of trace entries across multiple branches. Most of it is mechanical — file reads, routine edits. The signal you want is the THINK entries: the decisions, the tradeoffs, the things Claude figured out.
 
 ```bash
-h5i context knowledge
+h5i recall context knowledge
 ```
 
 ```
@@ -91,7 +91,7 @@ h5i context knowledge
     "In-memory session cache reduces DB hits by ~40% in benchmarks
      but adds state synchronization complexity across replicas"
 
-── 24 insights · run 'h5i context knowledge' again after more sessions
+── 24 insights · run 'h5i recall context knowledge' again after more sessions
 ```
 
 These are the distilled learnings from the AI's reasoning across all of your sessions. Not the implementation — the *understanding*. This is the output you'd want to paste into a design doc, a PR description, or the opening context of a new session on a related feature.
@@ -105,7 +105,7 @@ The deduplication is intentional: if Claude reached the same conclusion three ti
 Before touching a complex file you haven't looked at in a while:
 
 ```bash
-h5i context relevant src/auth/middleware.rs
+h5i recall context relevant src/auth/middleware.rs
 ```
 
 ```
@@ -179,7 +179,7 @@ h5i rewind a3f8c12
 
   Working tree is now at a3f8c12 state.
   HEAD is unchanged — run 'git diff HEAD' to see what changed.
-  To commit this state: h5i commit -m "rewind to a3f8c12"
+  To commit this state: h5i capture commit -m "rewind to a3f8c12"
 ```
 
 Two things to notice:
@@ -216,43 +216,43 @@ Here's what a full session looks like with all four advanced patterns:
 
 ```bash
 # Morning: pick up where you left off
-h5i resume
+h5i recall resume
 
 # Before touching the complex file:
-h5i context relevant src/auth/middleware.rs
+h5i recall context relevant src/auth/middleware.rs
 
 # Claude explores a new approach — branch the reasoning
-h5i context branch experiment/jwt-migration \
+h5i recall context branch experiment/jwt-migration \
   --purpose "evaluate JWT as replacement for session cookies"
 
 # ... Claude works, traces accumulate automatically via hook ...
 
 # The JWT approach won't work (too many client changes required)
-h5i context trace --kind THINK "JWT migration requires client-side changes we can't coordinate — rejecting"
-h5i context commit "JWT migration — rejected" \
+h5i recall context trace --kind THINK "JWT migration requires client-side changes we can't coordinate — rejecting"
+h5i recall context commit "JWT migration — rejected" \
   --detail "client coordination cost too high; sticking with session cookies"
 
 # Back to main thread
-h5i context checkout main
+h5i recall context checkout main
 
 # Distill what we learned across all branches
-h5i context knowledge
+h5i recall context knowledge
 
 # If the experimental code changes need undoing:
 h5i rewind HEAD~3 --dry-run    # preview
 h5i rewind HEAD~3              # apply with automatic WIP backup
 
 # Commit the clean state
-h5i commit -m "revert jwt experiment, restore session cookie approach" \
+h5i capture commit -m "revert jwt experiment, restore session cookie approach" \
   --model claude-sonnet-4-6 \
   --agent claude-code \
   --prompt "roll back jwt migration experiment"
 
-h5i notes analyze              # link session log to this commit
+h5i recall notes analyze       # link session log to this commit
 
 # End of day
-h5i memory snapshot
-h5i push                       # push h5i refs to share with the team
+h5i capture memory
+h5i share push                 # push h5i refs to share with the team
 ```
 
 Every step is auditable. Every decision is traced. Every rollback is non-destructive. The next person who opens this repo — or the next session of Claude — gets full context without any manual reconstruction.
@@ -261,17 +261,17 @@ Every step is auditable. Every decision is traced. Every rollback is non-destruc
 
 ## What you've built
 
-Across all four parts of this series, here's what `h5i notes` and `h5i context` give you together:
+Across all four parts of this series, here's what `h5i recall notes` and `h5i recall context` give you together:
 
 | Problem | h5i solution |
 |---------|-------------|
-| AI sessions are amnesiac | `h5i context` persists reasoning across sessions |
-| "Why did Claude touch that file?" | `h5i notes show` — footprint, causal chain, edit sequence |
-| "Was Claude confident about that?" | `h5i notes uncertainty` — heatmap by file |
-| "Did Claude read the file before editing?" | `h5i notes coverage` — blind edit detection |
-| "Which commits need human review?" | `h5i notes review` — composite risk score |
-| "What did Claude figure out across all sessions?" | `h5i context knowledge` — distilled THINK entries |
-| "What did Claude know about this file?" | `h5i context relevant <file>` — targeted retrieval |
+| AI sessions are amnesiac | `h5i recall context` persists reasoning across sessions |
+| "Why did Claude touch that file?" | `h5i recall notes show` — footprint, causal chain, edit sequence |
+| "Was Claude confident about that?" | `h5i recall notes uncertainty` — heatmap by file |
+| "Did Claude read the file before editing?" | `h5i recall notes coverage` — blind edit detection |
+| "Which commits need human review?" | `h5i audit review` — composite risk score |
+| "What did Claude figure out across all sessions?" | `h5i recall context knowledge` — distilled THINK entries |
+| "What did Claude know about this file?" | `h5i recall context relevant <file>` — targeted retrieval |
 | "Claude went off the rails, need to recover" | `h5i rewind` — non-destructive working-tree restore |
 
 The code survives. The reasoning survives too.

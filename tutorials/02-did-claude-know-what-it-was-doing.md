@@ -14,7 +14,7 @@ It didn't. Claude wrote 47 lines into a file it had never read in that session.
 
 This is a **blind edit**: the AI modified code from memory rather than from direct inspection of the current state. It happens more often than you'd expect, and standard code review doesn't catch it because the diff looks fine — you see what changed, not what the AI *didn't* check before changing it.
 
-`h5i notes` surfaces three signals that answer the question "should a human double-check this?" before the merge happens.
+`h5i recall notes` surfaces three signals that answer the question "should a human double-check this?" before the merge happens.
 
 ---
 
@@ -56,7 +56,7 @@ Add the PostToolUse hook to `.claude/settings.json`:
 After any Claude Code session, run:
 
 ```bash
-h5i notes analyze
+h5i recall notes analyze
 ```
 
 That's everything needed to populate all three signals.
@@ -68,7 +68,7 @@ That's everything needed to populate all three signals.
 After a session, run:
 
 ```bash
-h5i notes uncertainty
+h5i recall notes uncertainty
 ```
 
 ```
@@ -103,7 +103,7 @@ The file-level bucketing is the most useful part. When you see `src/billing/toke
 If you want to focus on a specific file:
 
 ```bash
-h5i notes uncertainty --file src/billing/token.rs
+h5i recall notes uncertainty --file src/billing/token.rs
 ```
 
 ```
@@ -124,7 +124,7 @@ You can paste this directly into a PR review comment. It tells reviewers exactly
 ## Signal 2: Blind-edit detection
 
 ```bash
-h5i notes coverage
+h5i recall notes coverage
 ```
 
 ```
@@ -149,7 +149,7 @@ This doesn't always mean a bug. If the file is simple and Claude has strong prio
 ### Filtering to the riskiest files
 
 ```bash
-h5i notes coverage --max-ratio 0.5
+h5i recall notes coverage --max-ratio 0.5
 ```
 
 This shows only files below 50% read-to-edit coverage — your highest-risk edits from the session.
@@ -161,7 +161,7 @@ This shows only files below 50% read-to-edit coverage — your highest-risk edit
 Individual signals are useful. The composite score is better for prioritization across multiple sessions.
 
 ```bash
-h5i notes review --limit 10
+h5i audit review --limit 10
 ```
 
 ```
@@ -188,17 +188,17 @@ Scores above 0.7 are high-priority review candidates. The `score 0.81` commit �
 The `--limit` flag scans the last N analyzed commits. Useful in CI or in a pre-merge checklist:
 
 ```bash
-h5i notes review --limit 50
+h5i audit review --limit 50
 ```
 
 ---
 
 ## The proactive review surface in context status
 
-If you use h5i's context workspace (Part 3 covers this in detail), `h5i context status` includes review signals automatically:
+If you use h5i's context workspace (Part 3 covers this in detail), `h5i recall context status` includes review signals automatically:
 
 ```bash
-h5i context status
+h5i recall context status
 ```
 
 ```
@@ -213,7 +213,7 @@ h5i context status
   ⚠ b7e29a1  score 0.53  fix session expiry edge case
 ```
 
-This surfaces at the *start* of your next session. Before you continue working, you already know which commits from the previous session need review. You don't have to remember to run `h5i notes review` — it's part of your morning standup.
+This surfaces at the *start* of your next session. Before you continue working, you already know which commits from the previous session need review. You don't have to remember to run `h5i audit review` — it's part of your morning standup.
 
 ---
 
@@ -223,13 +223,13 @@ Here's the two-minute checklist before merging any AI-assisted PR:
 
 ```bash
 # 1. Check for blind edits
-h5i notes coverage
+h5i recall notes coverage
 
 # 2. Check for uncertainty in touched files
-h5i notes uncertainty
+h5i recall notes uncertainty
 
 # 3. Get the composite score
-h5i notes review --limit 20
+h5i audit review --limit 20
 ```
 
 If the composite score is above 0.7, the PR gets a mandatory human review of the flagged files before merge. Below 0.4, it passes through.
@@ -237,7 +237,7 @@ If the composite score is above 0.7, the PR gets a mandatory human review of the
 You can encode this in your PR template or CI pipeline. The score is machine-readable:
 
 ```bash
-h5i notes review --limit 20 --json | jq '.[] | select(.score > 0.7)'
+h5i audit review --limit 20 --json | jq '.[] | select(.score > 0.7)'
 ```
 
 ---
@@ -268,7 +268,7 @@ That's a specific, actionable review request — not "Claude wrote it, please re
 
 ## The underlying insight
 
-A clean diff doesn't mean a careful edit. Git shows you what changed; `h5i notes` shows you *how the AI was thinking* when it made that change. Uncertainty and blind edits are the two leading indicators of latent bugs in AI-generated code — not because Claude is bad at coding, but because AI agents have variable confidence and variable context coverage, and both should be visible before code ships.
+A clean diff doesn't mean a careful edit. Git shows you what changed; `h5i recall notes` shows you *how the AI was thinking* when it made that change. Uncertainty and blind edits are the two leading indicators of latent bugs in AI-generated code — not because Claude is bad at coding, but because AI agents have variable confidence and variable context coverage, and both should be visible before code ships.
 
 ---
 
@@ -276,7 +276,7 @@ A clean diff doesn't mean a careful edit. Git shows you what changed; `h5i notes
 
 In Part 3 we'll cover the other half of h5i's answer to AI amnesia: the **context workspace** — a versioned reasoning trail that survives session resets.
 
-You'll see how `h5i context init`, `h5i context trace`, and the PostToolUse hook turn every Claude session into a structured reasoning log that carries forward into the next session automatically. The result: a Claude that always knows what it was thinking last time, even after you close the terminal.
+You'll see how `h5i recall context init`, `h5i recall context trace`, and the PostToolUse hook turn every Claude session into a structured reasoning log that carries forward into the next session automatically. The result: a Claude that always knows what it was thinking last time, even after you close the terminal.
 
 ---
 

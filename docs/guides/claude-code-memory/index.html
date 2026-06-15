@@ -54,7 +54,7 @@
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}, {"@type": "ListItem", "position": 3, "name": "Persistent memory & session handoff for Claude Code", "item": "https://h5i.dev/guides/claude-code-memory/"}]}
   </script>
   <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Does this give Claude Code memory across sessions automatically?", "acceptedAnswer": {"@type": "Answer", "text": "h5i stores memory snapshots and a reasoning workspace in Git refs. With the Claude Code hooks installed (h5i hook setup), prompts and reasoning traces are captured automatically; you snapshot the memory directory with h5i capture memory at the end of a notable session, and restore or resume it later."}}, {"@type": "Question", "name": "Where is the memory stored — does it get pushed to GitHub?", "acceptedAnswer": {"@type": "Answer", "text": "Memory lives in refs/h5i/memory, not in your working tree. A plain git push ignores it, so it never clutters a normal remote. Run h5i push (or h5i share memory push) to share it, and h5i pull to receive it."}}, {"@type": "Question", "name": "How is this different from Claude Code's built-in memory files?", "acceptedAnswer": {"@type": "Answer", "text": "Claude's memory/ directory lives on one machine and isn't versioned with your code. h5i snapshots it into Git so you can diff what Claude learned over time, restore an earlier state, and hand it to a teammate or another machine."}}, {"@type": "Question", "name": "What does a session handoff actually contain?", "acceptedAnswer": {"@type": "Answer", "text": "h5i recall resume renders the branch goal, what was completed (with commit SHAs), what's still open, the approaches that were considered and rejected, and the latest memory snapshot — a structured briefing rather than a chat transcript."}}, {"@type": "Question", "name": "Can I roll back memory if Claude learned something wrong?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i recall memory log lists every snapshot and h5i recall memory restore <oid> rolls the memory directory back to that state, the same way you'd reset code to a past commit."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Does this give Claude Code memory across sessions automatically?", "acceptedAnswer": {"@type": "Answer", "text": "h5i stores memory snapshots and a reasoning workspace in Git refs. With the Claude Code hooks installed (h5i hook setup), prompts and reasoning traces are captured automatically; you snapshot the memory directory with h5i capture memory at the end of a notable session, and restore or resume it later."}}, {"@type": "Question", "name": "Where is the memory stored — does it get pushed to GitHub?", "acceptedAnswer": {"@type": "Answer", "text": "Memory lives in refs/h5i/memory, not in your working tree. A plain git push ignores it, so it never clutters a normal remote. Run h5i share push (or h5i share memory push) to share it, and h5i share pull to receive it."}}, {"@type": "Question", "name": "How is this different from Claude Code's built-in memory files?", "acceptedAnswer": {"@type": "Answer", "text": "Claude's memory/ directory lives on one machine and isn't versioned with your code. h5i snapshots it into Git so you can diff what Claude learned over time, restore an earlier state, and hand it to a teammate or another machine."}}, {"@type": "Question", "name": "What does a session handoff actually contain?", "acceptedAnswer": {"@type": "Answer", "text": "h5i recall resume renders the branch goal, what was completed (with commit SHAs), what's still open, the approaches that were considered and rejected, and the latest memory snapshot — a structured briefing rather than a chat transcript."}}, {"@type": "Question", "name": "Can I roll back memory if Claude learned something wrong?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i recall memory log lists every snapshot and h5i recall memory restore <oid> rolls the memory directory back to that state, the same way you'd reset code to a past commit."}}]}
 </script>
 </head>
 <body>
@@ -106,11 +106,11 @@
     <p>
       h5i treats agent memory and reasoning as first-class, versioned artifacts stored in Git refs alongside
       your code — <code>refs/h5i/memory</code> for memory snapshots and a per-branch context workspace for
-      reasoning. Nothing pollutes a normal <code>git push</code>; teammates opt in with <code>h5i pull</code>.
+      reasoning. Nothing pollutes a normal <code>git push</code>; teammates opt in with <code>h5i share pull</code>.
     </p>
     <ul>
       <li><strong>Memory snapshots</strong> capture Claude's <code>memory/</code> state at a commit, so you can diff and restore it.</li>
-      <li><strong>The context workspace</strong> records OBSERVE / THINK / ACT steps and milestones, and is snapshotted automatically on every <code>h5i commit</code>.</li>
+      <li><strong>The context workspace</strong> records OBSERVE / THINK / ACT steps and milestones, and is snapshotted automatically on every <code>h5i capture commit</code>.</li>
       <li><strong>Resume briefings</strong> render a structured handoff from that history — the goal, what's done, what's open.</li>
     </ul>
 
@@ -150,7 +150,7 @@
     </p>
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">teammate ~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i pull</span>                 <span class="t-cmt"># brings notes, memory, context, msg</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i share pull</span>                 <span class="t-cmt"># brings notes, memory, context, msg</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i recall resume auth-refactor</span>
 <span class="t-out">  …goal, done, open, and the rejected approaches — ready to continue.</span></pre></div>
     </div>
@@ -165,7 +165,7 @@
     <h3>Does this give Claude Code memory across sessions automatically?</h3>
     <p>h5i stores memory snapshots and a reasoning workspace in Git refs. With the Claude Code hooks installed (h5i hook setup), prompts and reasoning traces are captured automatically; you snapshot the memory directory with h5i capture memory at the end of a notable session, and restore or resume it later.</p>
     <h3>Where is the memory stored — does it get pushed to GitHub?</h3>
-    <p>Memory lives in refs/h5i/memory, not in your working tree. A plain git push ignores it, so it never clutters a normal remote. Run h5i push (or h5i share memory push) to share it, and h5i pull to receive it.</p>
+    <p>Memory lives in refs/h5i/memory, not in your working tree. A plain git push ignores it, so it never clutters a normal remote. Run h5i share push (or h5i share memory push) to share it, and h5i share pull to receive it.</p>
     <h3>How is this different from Claude Code's built-in memory files?</h3>
     <p>Claude's memory/ directory lives on one machine and isn't versioned with your code. h5i snapshots it into Git so you can diff what Claude learned over time, restore an earlier state, and hand it to a teammate or another machine.</p>
     <h3>What does a session handoff actually contain?</h3>

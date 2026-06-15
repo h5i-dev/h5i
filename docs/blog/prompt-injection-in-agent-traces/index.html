@@ -118,7 +118,7 @@
     <ul>
       <li><strong>The output channel</strong> — what arrives in the user's chat window.</li>
       <li><strong>Captured reasoning entries</strong> — session-log content available to the audit path.</li>
-      <li><strong>The reasoning trace</strong> — h5i's structured OBSERVE / THINK / ACT entries, written via the <code>PostToolUse</code> hook and explicit <code>h5i context trace</code> calls.</li>
+      <li><strong>The reasoning trace</strong> — h5i's structured OBSERVE / THINK / ACT entries, written via the <code>PostToolUse</code> hook and explicit <code>h5i recall context trace</code> calls.</li>
     </ul>
 
     <p>
@@ -193,15 +193,15 @@
     <h2>What a scan report looks like</h2>
 
     <p>
-      Run <code>h5i context scan</code> after a session that read external content. The report aggregates
+      Run <code>h5i audit scan</code> after a session that read external content. The report aggregates
       hits, computes a 0.0–1.0 risk score, and shows the offending lines:
     </p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i context scan</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit scan</span>
 
-<span class="t-bold">── h5i context scan ────────────────────────────── main</span>
+<span class="t-bold">── h5i audit scan ────────────────────────────── main</span>
   <span class="t-out">risk score  </span><span class="t-red">1.00  ██████████</span>  <span class="t-out">(48 lines scanned, 2 hit(s))</span>
 
   <span class="t-red">HIGH</span>  <span class="t-out">line   31  [</span><span class="t-warn">override_instructions</span><span class="t-out">]</span>  <span class="t-red">ignore all previous instructions</span>
@@ -248,14 +248,14 @@
 
     <p>
       Per-session scans answer "is this PR safe?" — fine for engineers. Security teams want
-      "what's the trend across the last quarter?" That's <code>h5i compliance</code>:
+      "what's the trend across the last quarter?" That's <code>h5i audit compliance</code>:
     </p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i compliance --since 2026-02-01</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit compliance --since 2026-02-01</span>
 
-<span class="t-bold">── h5i compliance report  (since 2026-02-01) ──────────</span>
+<span class="t-bold">── h5i audit compliance report  (since 2026-02-01) ──────────</span>
   <span class="t-pass">✔</span> <span class="t-out">142 commits scanned  ·  89 AI (63%)  ·  53 human</span>
   <span class="t-red">2 prompt-injection signal(s) detected across sessions</span>
 
@@ -282,8 +282,8 @@
       <div class="terminal-body"><pre><span class="t-cmt"># Run on every PR; block on HIGH-severity hits.</span>
 <span class="t-cmd">- name: prompt-injection scan
   run: |
-    h5i pull
-    h5i context scan --base origin/main --severity high \
+    h5i share pull
+    h5i audit scan --base origin/main --severity high \
       --format json &gt; scan.json
     if [ "$(jq '.hits | length' scan.json)" -gt 0 ]; then
       echo "::error::Prompt-injection signals detected in trace"
@@ -325,7 +325,7 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup</span>  <span class="t-cmt"># wires PostToolUse → context trace</span>
 
 <span class="t-cmt"># After your next session, especially one that read external content:</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i context scan</span></pre></div>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i audit scan</span></pre></div>
     </div>
 
     <p>
