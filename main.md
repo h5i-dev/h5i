@@ -852,11 +852,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Moved experiment off /tmp to $HOME so the supervised tier also denies the write
 - [x] wrote scripts/experiment_safe_sandbox_worktree_results.md; wrote agent-profile-grants-shared-tmp.md; edited MEMORY.md
 - [x] wrote scripts/experiment_safe_sandbox_worktree_results.md; wrote agent-profile-grants-shared-tmp.md; edited MEMORY.md
+- [x] wrote scripts/experiment_safe_sandbox_worktree_results.md; wrote agent-profile-grants-shared-tmp.md; edited MEMORY.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-15 18:04 UTC] `improve-shell`: wrote scripts/experiment_safe_sandbox_worktree_results.md; wrote agent-profile-grants-shared-tmp.md; edited MEMORY.md
 - [2026-06-15 15:18 UTC] `improve-shell`: wrote scripts/experiment_safe_sandbox_worktree_results.md; wrote agent-profile-grants-shared-tmp.md; edited MEMORY.md
 - [2026-06-15 15:17 UTC] `improve-shell`: wrote scripts/experiment_safe_sandbox_worktree_results.md; wrote agent-profile-grants-shared-tmp.md; edited MEMORY.md
 - [2026-06-15 15:17 UTC] `improve-shell`: Moved experiment off /tmp to $HOME so the supervised tier also denies the write
