@@ -16,3 +16,4 @@
 [21:56:08] OBSERVE: read src/sandbox.rs
 [21:56:08] OBSERVE: read src/pr.rs
 [21:56:09] OBSERVE: read src/container.rs
+[21:56:09] OBSERVE: read src/mcp.rs
