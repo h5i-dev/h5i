@@ -1072,3 +1072,4 @@ _[Checkpoint: 6a303ec1 — wrote scripts/experiment_safe_sandbox_worktree_result
 _[Checkpoint: 6a304003 — wrote scripts/experiment_safe_sandbox_worktree_results.md; wrote agent-profile-grants-shared-tmp.md; edited MEMORY.md]_
 ---
 
+[19:04:45] OBSERVE: read README.md
