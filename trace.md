@@ -4,3 +4,4 @@
 [21:55:53] OBSERVE: read src/env.rs
 [21:55:53] OBSERVE: read src/main.rs
 [21:55:54] OBSERVE: read src/main.rs
+[21:55:55] OBSERVE: read src/repository.rs
