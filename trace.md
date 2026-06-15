@@ -989,3 +989,4 @@ _[Checkpoint: 6a300e20 — Rewrote workflow around verified filesystem-escape ex
 _[Checkpoint: 6a300e30 — edited scripts/experiment_safe_sandbox_worktree_workflow.md; edited scripts/experiment_safe_sandbox_worktree_workflow.md…]_
 ---
 
+[14:39:56] OBSERVE: read scripts/experiment_safe_sandbox_worktree.sh
