@@ -234,3 +234,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:25:41] ACT: edited src/main.rs
 [01:25:42] OBSERVE: read docs/blog-uncertainty.md
 [01:25:42] ACT: edited docs/guides/token-reduction-capture-run/index.html
+[01:25:44] ACT: edited MANUAL.md
