@@ -54,3 +54,4 @@
 [21:56:25] OBSERVE: read src/metadata.rs
 [21:56:26] OBSERVE: read src/secrets.rs
 [21:56:28] OBSERVE: read src/main.rs
+[21:56:34] OBSERVE: read src/lfs.rs
