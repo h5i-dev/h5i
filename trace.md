@@ -1018,3 +1018,9 @@ _[Checkpoint: 6a3014f4 — wrote scripts/experiment_safe_sandbox_worktree_workfl
 ---
 
 [15:07:32] OBSERVE: read src/sandbox.rs
+
+
+---
+_[Checkpoint: 6a301551 — wrote scripts/experiment_safe_sandbox_worktree.sh; wrote scripts/experiment_safe_sandbox_worktree_results.md]_
+---
+
