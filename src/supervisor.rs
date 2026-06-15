@@ -7,10 +7,13 @@
 //! component probes green, and is otherwise **refused**, never downgraded to a
 //! weaker tier. A half-present stack is a refusal, not a "best-effort pass".
 //!
-//! Phase A (this module): the honest [`probe`], the pure syscall-decision model,
-//! and a fail-closed [`run`] (enforcement wiring is phase B). Because the full
-//! stack does not probe green on current hosts (WSL2/CI lack cgroup delegation
-//! and rootless nftables), the tier correctly refuses everywhere today.
+//! This module: the honest [`probe`], the pure syscall-decision model, and a
+//! fully-enforcing [`run`] — the shared process-tier confinement plus an
+//! always-on network namespace and the live seccomp-notify socket gate
+//! ([`serve_with_pidfd`]), with an optional netns+nftables+slirp4netns egress
+//! allowlist. Because the full stack does not probe green on every host
+//! (WSL2/CI lack cgroup delegation and rootless nftables), the tier fail-closed
+//! refuses there rather than downgrading.
 
 use crate::error::H5iError;
 
@@ -369,9 +372,9 @@ pub fn build_nft_ruleset(allow: &[EgressDest], resolver: Option<IpAddr>) -> Stri
 /// live seccomp-notify socket gate ([`serve_with_pidfd`]), which denies
 /// raw/packet/netlink/ungranted-unix sockets and records every verdict.
 ///
-/// v1 scope: `net.mode = deny` (an empty netns — airtight, no egress). A
-/// non-empty `net.egress` allowlist (netns + nftables + slirp4netns) is the next
-/// increment and is **refused** here rather than silently ignored.
+/// Scope: `net.mode = deny` (an empty netns — airtight, no egress), or a
+/// non-empty `net.egress` allowlist enforced via netns + nftables + slirp4netns
+/// (which requires `slirp4netns` on PATH, else the run is refused — fail-closed).
 pub fn run(
     policy: &crate::sandbox::ResolvedPolicy,
     work: &std::path::Path,

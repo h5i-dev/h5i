@@ -615,7 +615,7 @@ fn node_id(kind: &str, timestamp: &str, content: &str) -> String {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Initialize the context workspace in `refs/h5i/context`.
+/// Initialize the context workspace (per-branch refs under `refs/h5i/context/<name>`).
 pub fn init(workdir: &Path, goal: &str) -> Result<(), H5iError> {
     let _ = migrate_legacy_if_needed(workdir);
     let repo = ctx_git_repo(workdir)?;
@@ -1657,7 +1657,7 @@ pub fn snapshot_for_commit(workdir: &Path, git_sha: &str) -> Result<(), H5iError
 
 /// Restore the context workspace to the state captured at a given git commit.
 ///
-/// Restoration is non-destructive: a new commit is appended to `refs/h5i/context`
+/// Restoration is non-destructive: a new commit is appended to `refs/h5i/context/main`
 /// whose tree mirrors the snapshot, preserving the full history.
 /// Returns a short summary of what was restored.
 pub fn restore(workdir: &Path, git_sha: &str) -> Result<String, H5iError> {
@@ -3028,7 +3028,7 @@ pub fn print_knowledge(workdir: &Path) -> Result<(), H5iError> {
 
     let repo = ctx_git_repo(workdir)?;
 
-    // Collect all branch names from refs/h5i/context/branches/
+    // Collect all branch names from the per-branch refs under refs/h5i/context/
     let mut all_thoughts: Vec<(String, String)> = Vec::new(); // (branch, line)
 
     let branches = ctx_list_branches_git(&repo);

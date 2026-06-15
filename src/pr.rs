@@ -38,8 +38,8 @@ const DAG_LABEL_BUDGET: usize = 72;
 const SWIMLANE_MAX_FILES: usize = 4;
 
 /// Minimum run length before consecutive same-kind nodes within a single lane
-/// get compressed into `READ × N` / `EDIT × N`. More aggressive than the
-/// chain-DAG threshold because per-lane density matters more than per-graph.
+/// get compressed into `READ × N` / `EDIT × N`, keeping each lane legible when
+/// it is dense with repeated operations.
 const SWIMLANE_COMPRESS_RUN: usize = 2;
 
 /// Default cap on coordination threads rendered in the PR body. Enough to show
@@ -1903,7 +1903,7 @@ fn shorten_paths_in_trace_content(content: &str) -> String {
 }
 
 /// Replace characters that break mermaid double-quoted labels with safe
-/// look-alikes. Centralised so the chain renderer and swim-lane renderer
+/// look-alikes. Centralised so the collapsible and expanded swim-lane renderers
 /// can't drift apart on what they consider dangerous.
 fn sanitize_mermaid_char(c: char) -> char {
     match c {
@@ -1915,8 +1915,8 @@ fn sanitize_mermaid_char(c: char) -> char {
     }
 }
 
-/// Render the swim-lane DAG as a collapsible Mermaid block. Public surface
-/// matches [`render_dag_section`] so callers can swap one for the other.
+/// Render the swim-lane DAG as a collapsible Mermaid block. The expanded
+/// variant ([`render_swimlane_section_expanded`]) shares the same Mermaid emitter.
 fn render_swimlane_section(dag: &TraceDag) -> String {
     if dag.nodes.is_empty() {
         return String::new();

@@ -22,15 +22,14 @@
 //!
 //! "Which messages have I already seen" is a per-machine concern, and storing
 //! it in the shared ref would both bloat the log and create write contention
-//! on every `inbox`. Instead each agent keeps a **watermark cursor** in the
-//! local sidecar (`.git/.h5i/msg/cursor.json`): the `(ts, id)` of the last
-//! message it read. `inbox` returns everything addressed to the agent after
-//! that watermark and advances it. Because the watermark is a single point in
-//! the total `(ts, id)` order, a message that arrives via `pull` with an
-//! *earlier* key than the current watermark (clock skew / late delivery) is
-//! treated as already-read by `inbox` — it still shows up in `history`. This
-//! is a deliberate v1 tradeoff: it keeps the cursor O(1) and the shared log
-//! append-only.
+//! on every `inbox`. Instead each agent keeps a **set of seen message ids** in
+//! a per-agent local file (`.git/.h5i/msg/cursors/<agent>.json`). `inbox`
+//! returns every message addressed to the agent whose id is not yet in that set
+//! and (when advancing) adds the delivered ids to it. Because membership is by
+//! id rather than a timestamp watermark, a message that arrives via `pull` with
+//! an *earlier* timestamp than something already read (clock skew / late
+//! delivery) is still delivered exactly once. The legacy single-file
+//! `cursor.json` watermark is read once and migrated into the seen-id model.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};

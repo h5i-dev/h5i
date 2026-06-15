@@ -245,9 +245,10 @@ impl Manifest {
     }
 }
 
-/// A storage backend for raw blobs. Trait-shaped per the git-annex design so a
-/// remote (S3 / HTTP / LFS-like) backend can be added later; only [`LocalStore`]
-/// exists today.
+/// A storage backend for raw blobs. Trait-shaped per the git-annex design so
+/// additional (S3 / HTTP / LFS-like) backends can be added later. Two impls
+/// exist today: [`LocalStore`] (the local content-addressed store) and
+/// [`GitRefStore`] (the shareable git-ref store).
 pub trait Backend {
     fn name(&self) -> &str;
     fn has(&self, hex: &str) -> bool;
