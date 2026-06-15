@@ -71,3 +71,4 @@
 [21:56:47] OBSERVE: read src/lib.rs
 [21:56:53] OBSERVE: read src/token_filter.rs
 [21:58:04] OBSERVE: read src/main.rs
+[21:58:05] OBSERVE: read src/main.rs
