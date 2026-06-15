@@ -975,3 +975,4 @@ _[Checkpoint: 6a300b18 — edited scripts/experiment_safe_sandbox_worktree_workf
 _[Checkpoint: 6a300b8c — edited scripts/experiment_safe_sandbox_worktree_workflow.md; edited scripts/experiment_safe_sandbox_worktree_workflow.md…]_
 ---
 
+[14:37:02] ACT: wrote scripts/experiment_safe_sandbox_worktree_workflow.md
