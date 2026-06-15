@@ -174,3 +174,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:24:55] OBSERVE: read h5i-migration-spec.md
 [01:24:56] ACT: edited man/man1/h5i.1
 [01:24:57] ACT: edited MANUAL.md
+[01:24:58] ACT: edited tutorials/01-never-let-your-ai-forget.md
