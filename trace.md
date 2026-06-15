@@ -210,3 +210,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:25:27] ACT: edited docs/blog/from-git-blame-to-ai-blame/index.html
 [01:25:27] ACT: edited man/man1/h5i.1
 [01:25:27] ACT: edited MANUAL.md
+[01:25:27] OBSERVE: read docs/guides/token-reduction-capture-run/index.html
