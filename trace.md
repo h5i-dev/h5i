@@ -45,3 +45,4 @@
 [21:56:20] OBSERVE: read src/claims.rs
 [21:56:20] OBSERVE: read src/server.rs
 [21:56:20] OBSERVE: read src/codex.rs
+[21:56:20] OBSERVE: read src/claude.rs
