@@ -944,3 +944,4 @@ _[Checkpoint: 6a300850 — Rewrote worktree-vs-h5i workflow around intrinsic fai
 _[Checkpoint: 6a300860 — edited scripts/experiment_safe_sandbox_worktree_workflow.md; edited scripts/experiment_safe_sandbox_worktree_workflow.md…]_
 ---
 
+[14:18:57] OBSERVE: read scripts/experiment_safe_sandbox_worktree_workflow.md
