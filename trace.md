@@ -400,3 +400,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:27:44] ACT: edited src/main.rs
 [01:27:44] ACT: edited MANUAL.md
 [01:27:44] ACT: edited docs/guides/codex-claude-code-collaboration/index.html
+[01:27:47] ACT: edited docs/blog/prompt-injection-in-agent-traces/index.html
