@@ -430,3 +430,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:28:17] ACT: edited tutorials/04-advanced-context-design-decisions.md
 [01:28:17] ACT: edited man/man1/h5i.1
 [01:28:18] ACT: edited docs/blog/reduce-claude-token-costs/index.html
+[01:28:20] ACT: edited docs/features/index.html
