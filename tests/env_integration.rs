@@ -279,6 +279,19 @@ fn create_builds_worktree_branch_context_policy_and_event() {
 }
 
 #[test]
+fn create_audit_all_pins_capture_policy() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "audit-all", "--audit", "all"]);
+
+    let policy = std::fs::read_to_string(r.env_dir("audit-all").join("policy.resolved.toml"))
+        .expect("read policy");
+    assert!(
+        policy.contains("[audit]") && policy.contains("capture = \"all\""),
+        "policy should pin audit-all capture mode:\n{policy}"
+    );
+}
+
+#[test]
 fn create_refuses_duplicates_and_bad_names() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "dup"]);
