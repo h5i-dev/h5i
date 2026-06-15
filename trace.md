@@ -184,3 +184,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:25:03] OBSERVE: read man/man1/h5i.1
 [01:25:04] ACT: edited MANUAL.md
 [01:25:04] OBSERVE: read docs/blog/uncertainty-heatmap/index.html
+[01:25:05] OBSERVE: read h5i-migration-spec.md
