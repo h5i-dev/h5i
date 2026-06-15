@@ -1047,3 +1047,4 @@ _[Checkpoint: 6a301551 — wrote scripts/experiment_safe_sandbox_worktree.sh; wr
 _[Checkpoint: 6a301787 — Moved experiment off /tmp to $HOME so the supervised tier also denies the write]_
 ---
 
+[15:17:39] THINK: Let me save this non-obvious finding to memory (it'll save re-deriving it later), then summarize:
