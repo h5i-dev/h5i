@@ -1074,3 +1074,4 @@ _[Checkpoint: 6a304003 — wrote scripts/experiment_safe_sandbox_worktree_result
 
 [19:04:45] OBSERVE: read README.md
 [19:04:53] OBSERVE: read AGENTS.md
+[19:04:54] OBSERVE: read git_ai_standard_v3.0.0.md
