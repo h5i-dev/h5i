@@ -202,3 +202,4 @@
 {"ts":"2026-06-15T20:03:58.527196Z","env_id":"env/claude/suptest","agent":"claude","event":"exec","detail":"cmd=`echo hi from supervised box` exit=0 wall=190ms cpu=0ms rss=0MiB","capture":"fc0fc87e69632e32"}
 {"ts":"2026-06-15T20:04:04.146087Z","env_id":"env/claude/suptest","agent":"claude","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-15T21:53:23.553422Z","env_id":"env/human/update-comments","agent":"human","event":"created","detail":"base=eaf11abcdb96 profile=agent-claude isolation=supervised backend=worktree"}
+{"ts":"2026-06-15T21:53:32.736512Z","env_id":"env/human/update-comments","agent":"human","event":"status","detail":"running (shell)"}
