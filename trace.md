@@ -891,3 +891,9 @@ _[Checkpoint: 6a2fc7e3 — edited src/sandbox.rs; edited src/sandbox.rs]_
 _[Checkpoint: 6a2fca78 — edited scripts/experiment_safe_sandbox_worktree.sh; edited scripts/experiment_safe_sandbox_worktree.sh; added scripts/ex…]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2fcb16 — Committed safe sandbox-style worktree experiment script and observed results comparing plain git worktree escape with h5i env denial.]_
+---
+
