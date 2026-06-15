@@ -739,3 +739,4 @@ _[Checkpoint: 6a2fc0cb — edited src/pr.rs; edited src/pr.rs; edited src/reposi
 [09:14:47] OBSERVE: read src/main.rs
 [09:14:47] OBSERVE: searched src/env.rs for "CreateOpts""
 [09:14:47] OBSERVE: searched src/sandbox.rs for "src/env.rs"
+[09:14:47] OBSERVE: searched create" for "fn"
