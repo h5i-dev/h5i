@@ -465,3 +465,16 @@ h5i environment env/human/claude-1 (profile agent-claude, isolation supervised)
 
 ---
 
+## Commit 6a300850 — 2026-06-15 14:12 UTC
+
+### Branch Purpose
+h5i environment env/human/claude-1 (profile agent-claude, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Dropped contrived A/B/C/symlink-D. New doc centers on two ordinary-task failures: (1) branch cleanup deletes parent's unpushed branch via shared refs; (2) diagnostic prompt reads ~/.aws/credentials via shared filesystem. h5i prevents both: box_git_plumbing ro refs/packed-refs/config + process-tier Landlock allowlist. Used temp HOME for safety.
+
+---
+

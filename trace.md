@@ -932,3 +932,9 @@ _[Checkpoint: 6a2fd125 — added scripts/experiment_safe_sandbox_worktree_result
 [14:12:16] ACT: edited scripts/experiment_safe_sandbox_worktree_workflow.md
 [14:12:21] ACT: edited scripts/experiment_safe_sandbox_worktree_workflow.md
 [14:12:24] ACT: edited scripts/experiment_safe_sandbox_worktree_workflow.md
+
+
+---
+_[Checkpoint: 6a300850 — Rewrote worktree-vs-h5i workflow around intrinsic failures]_
+---
+
