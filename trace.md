@@ -796,3 +796,4 @@ _[Checkpoint: 6a2fc30d — Implemented env audit capture policy: h5i env create 
 
 [09:18:05] ACT: edited src/sandbox.rs
 [09:18:05] ACT: edited src/env.rs
+[09:18:05] ACT: edited tests/env_integration.rs
