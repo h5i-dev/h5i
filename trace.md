@@ -957,3 +957,9 @@ _[Checkpoint: 6a300860 — edited scripts/experiment_safe_sandbox_worktree_workf
 _[Checkpoint: 6a300a0f — edited scripts/experiment_safe_sandbox_worktree_workflow.md; edited scripts/experiment_safe_sandbox_worktree_workflow.md…]_
 ---
 
+
+
+---
+_[Checkpoint: 6a300a6f — edited scripts/experiment_safe_sandbox_worktree_workflow.md; edited scripts/experiment_safe_sandbox_worktree_workflow.md…]_
+---
+
