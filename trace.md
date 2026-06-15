@@ -910,3 +910,4 @@ _[Checkpoint: 6a2fcfce — edited scripts/experiment_safe_sandbox_worktree.sh; e
 ---
 
 [10:13:02] OBSERVE: listed files under scripts
+[10:13:02] ACT: added scripts/experiment_safe_sandbox_worktree_workflow.md
