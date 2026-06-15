@@ -803,3 +803,9 @@ _[Checkpoint: 6a2fc30d — Implemented env audit capture policy: h5i env create 
 _[Checkpoint: 6a2fc34d — Implemented env audit.capture policy: h5i env create --audit all serializes [audit] capture=all, injects audit mode into env capture context, and allows env-spooled hook wrapping without local object-store writability.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2fc357 — edited src/sandbox.rs; edited src/env.rs; edited tests/env_integration.rs]_
+---
+
