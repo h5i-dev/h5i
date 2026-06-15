@@ -66,3 +66,4 @@
 [21:56:41] OBSERVE: read src/storage.rs
 [21:56:45] OBSERVE: read src/blame.rs
 [21:56:46] OBSERVE: read src/error.rs
+[21:56:46] OBSERVE: read src/supervisor.rs
