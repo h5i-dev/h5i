@@ -207,3 +207,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:25:24] ACT: edited CLAUDE.md
 [01:25:25] ACT: edited docs/blog/from-git-blame-to-ai-blame/index.html
 [01:25:26] ACT: edited docs/blog-uncertainty.md
+[01:25:27] ACT: edited docs/blog/from-git-blame-to-ai-blame/index.html
