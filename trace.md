@@ -39,3 +39,4 @@
 [21:56:17] OBSERVE: read src/main.rs
 [21:56:17] OBSERVE: read src/risk.rs
 [21:56:18] OBSERVE: read src/radio.rs
+[21:56:18] OBSERVE: read src/session_log.rs
