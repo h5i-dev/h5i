@@ -318,3 +318,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:26:50] OBSERVE: read docs/blog/prompt-injection-in-agent-traces/index.html
 [01:26:51] ACT: edited docs/guides/git-blame-for-ai-code/index.html
 [01:26:52] OBSERVE: read man/man1/h5i.1
+[01:26:53] ACT: edited docs/blog/uncertainty-heatmap/index.html
