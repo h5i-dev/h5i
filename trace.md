@@ -57,3 +57,4 @@
 [21:56:34] OBSERVE: read src/lfs.rs
 [21:56:35] OBSERVE: read src/hooks.rs
 [21:56:35] OBSERVE: read src/repository.rs
+[21:56:35] OBSERVE: read src/injection.rs
