@@ -209,3 +209,4 @@
 {"ts":"2026-06-15T22:19:06.403437Z","env_id":"env/human/update-comments","agent":"human","event":"exec","detail":"inbox capture: cmd=`bash -c grep -rn \"claims add\\|capture claim\\|memory snapshot\\|capture memory\\|notes analyze\\|recall blame\\|context init\" src/main.rs 2>/dev/null | head -50` exit=0 source=inbox-capture","capture":"7518a81e195354fd"}
 {"ts":"2026-06-15T22:19:06.407779Z","env_id":"env/human/update-comments","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=0 observed=4"}
 {"ts":"2026-06-15T22:19:45.653466Z","env_id":"env/human/update-comments","agent":"human","event":"proposed","detail":"snapshot=fcf0504656d008f461859c3d850846d290a3e5eb"}
+{"ts":"2026-06-15T22:19:54.025528Z","env_id":"env/human/update-comments","agent":"human","event":"applied","detail":"merge h5i/env/human/update-comments → improve-comments (fcf0504656d008f461859c3d850846d290a3e5eb) evidence=4 [inbox-capture=4]"}
