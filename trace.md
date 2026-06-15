@@ -170,3 +170,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:24:52] OBSERVE: read CLAUDE.md
 [01:24:52] ACT: edited MANUAL.md
 [01:24:52] OBSERVE: read README.md
+[01:24:53] OBSERVE: read AGENTS.md
