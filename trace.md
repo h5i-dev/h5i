@@ -597,3 +597,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:57:25] THINK: I need to know whether that reference design (per-command pages under legacy names) is pre-existing/committed intent or something to fully migrate.
 [01:57:25] THINK: To fully honor "use new APIs" and match the man page, I should migrate the remaining legacy-named reference pages too (headings + TOC anchors + synopsis blocks must move together so internal links don't break).
 [01:57:25] THINK: This is the one remaining decision I can't infer — and it's a large, link-sensitive restructuring either way — so let me confirm rather than guess.
+[01:57:25] THINK: Let me confirm the single `h5i-hooks` anchor orphan is pre-existing (not something I introduced), then I'm done verifying.
