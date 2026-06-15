@@ -1027,3 +1027,4 @@ _[Checkpoint: 6a301551 — wrote scripts/experiment_safe_sandbox_worktree.sh; wr
 [15:11:00] OBSERVE: read scripts/experiment_safe_sandbox_worktree.sh
 [15:11:14] ACT: edited scripts/experiment_safe_sandbox_worktree.sh
 [15:11:31] ACT: edited scripts/experiment_safe_sandbox_worktree.sh
+[15:13:58] OBSERVE: read scripts/experiment_safe_sandbox_worktree_workflow.md
