@@ -169,3 +169,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:24:50] OBSERVE: read docs/environments-design.md
 [01:24:52] OBSERVE: read CLAUDE.md
 [01:24:52] ACT: edited MANUAL.md
+[01:24:52] OBSERVE: read README.md
