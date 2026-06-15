@@ -845,11 +845,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Rewrote workflow around verified filesystem-escape example
 - [x] edited scripts/experiment_safe_sandbox_worktree_workflow.md; edited scripts/experiment_safe_sandbox_worktree_workflow.md…
 - [x] Updated results.md + experiment .sh to verified filesystem-escape scenario
+- [x] wrote scripts/experiment_safe_sandbox_worktree_workflow.md; wrote scripts/experiment_safe_sandbox_worktree.sh; wrote scr…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-15 14:41 UTC] `improve-shell`: wrote scripts/experiment_safe_sandbox_worktree_workflow.md; wrote scripts/experiment_safe_sandbox_worktree.sh; wrote scr…
 - [2026-06-15 14:41 UTC] `improve-shell`: Updated results.md + experiment .sh to verified filesystem-escape scenario
 - [2026-06-15 14:37 UTC] `improve-shell`: edited scripts/experiment_safe_sandbox_worktree_workflow.md; edited scripts/experiment_safe_sandbox_worktree_workflow.md…
 - [2026-06-15 14:37 UTC] `improve-shell`: Rewrote workflow around verified filesystem-escape example
