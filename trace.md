@@ -180,3 +180,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:25:01] OBSERVE: read docs/blog/from-git-blame-to-ai-blame/index.html
 [01:25:01] OBSERVE: read docs/blog/persistent-memory-for-claude-code/index.html
 [01:25:03] ACT: edited tutorials/01-never-let-your-ai-forget.md
+[01:25:03] OBSERVE: read docs/token-reduction.md
