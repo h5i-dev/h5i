@@ -824,3 +824,9 @@ _[Checkpoint: 6a2fc357 — edited src/sandbox.rs; edited src/env.rs; edited test
 _[Checkpoint: 6a2fc5fb — edited src/env.rs; edited tests/env_integration.rs; edited MANUAL.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a2fc644 — edited src/env.rs; edited tests/env_integration.rs; edited MANUAL.md]_
+---
+
