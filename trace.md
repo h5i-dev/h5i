@@ -47,3 +47,4 @@
 [21:56:20] OBSERVE: read src/codex.rs
 [21:56:20] OBSERVE: read src/claude.rs
 [21:56:21] OBSERVE: read src/sandbox.rs
+[21:56:24] OBSERVE: read src/structured.rs
