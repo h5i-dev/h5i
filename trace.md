@@ -357,3 +357,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:27:15] ACT: edited MANUAL.md
 [01:27:15] ACT: edited .claude/h5i.md
 [01:27:18] OBSERVE: read docs/guides/ai-code-provenance/index.html
+[01:27:19] ACT: edited MANUAL.md
