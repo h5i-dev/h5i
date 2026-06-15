@@ -617,3 +617,4 @@ _[Checkpoint: 6a2f5c3c — edited MANUAL.md; edited MANUAL.md; edited MANUAL.md]
 [02:06:39] OBSERVE: read src/main.rs
 [02:06:48] ACT: edited src/main.rs
 [02:07:48] THINK: The h5i context snapshot is linked to the commit, but h5i refs aren't pushed by plain git — let me know if you'd like me to `h5i share push` (and/or push the branch) to share it.
+[02:07:48] THINK: I'll add the hint as a row inside the banner box (so it stays aligned), shown only when `--tui` wasn't passed and stdout is a real terminal (so the suggestion is actionable).
