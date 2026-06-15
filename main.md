@@ -825,11 +825,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Implemented env audit.capture policy: h5i env create --audit all serializes [audit] capture=all, injects audit mode into env capture context, and allows env-spooled hook wrapping without local object-store writability.
 - [x] edited src/sandbox.rs; edited src/env.rs; edited tests/env_integration.rs
 - [x] edited src/env.rs; edited tests/env_integration.rs; edited MANUAL.md
+- [x] edited src/env.rs; edited tests/env_integration.rs; edited MANUAL.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-15 09:30 UTC] `improve-shell`: edited src/env.rs; edited tests/env_integration.rs; edited MANUAL.md
 - [2026-06-15 09:29 UTC] `improve-shell`: edited src/env.rs; edited tests/env_integration.rs; edited MANUAL.md
 - [2026-06-15 09:18 UTC] `improve-shell`: edited src/sandbox.rs; edited src/env.rs; edited tests/env_integration.rs
 - [2026-06-15 09:18 UTC] `improve-shell`: Implemented env audit.capture policy: h5i env create --audit all serializes [audit] capture=all, injects audit mode into env capture context, and allows env-spooled hook wrapping without local object-store writability.
