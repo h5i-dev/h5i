@@ -186,3 +186,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:25:04] OBSERVE: read docs/blog/uncertainty-heatmap/index.html
 [01:25:05] OBSERVE: read h5i-migration-spec.md
 [01:25:06] ACT: edited CLAUDE.md
+[01:25:06] ACT: edited tutorials/01-never-let-your-ai-forget.md
