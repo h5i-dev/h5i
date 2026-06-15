@@ -925,3 +925,4 @@ _[Checkpoint: 6a2fd034 — added scripts/experiment_safe_sandbox_worktree_result
 _[Checkpoint: 6a2fd125 — added scripts/experiment_safe_sandbox_worktree_results.md; added scripts/experiment_safe_sandbox_worktree_workflow.md; e…]_
 ---
 
+[14:08:22] OBSERVE: read scripts/experiment_safe_sandbox_worktree_workflow.md
