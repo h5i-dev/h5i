@@ -21,3 +21,4 @@
 [21:56:10] OBSERVE: read src/seccomp_notify.rs
 [21:56:10] OBSERVE: read src/cgroup.rs
 [21:56:10] OBSERVE: read src/msg.rs
+[21:56:10] OBSERVE: read src/repository.rs
