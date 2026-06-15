@@ -338,3 +338,4 @@ _[Checkpoint: 6a2e8ec5 — edited src/env.rs]_
 [01:27:04] ACT: edited docs/blog/uncertainty-heatmap/index.html
 [01:27:06] ACT: edited docs/blog/uncertainty-heatmap/index.html
 [01:27:06] ACT: edited .claude/h5i.md
+[01:27:06] ACT: edited docs/blog/uncertainty-heatmap/index.html
