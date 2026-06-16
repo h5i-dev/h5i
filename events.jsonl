@@ -220,3 +220,4 @@
 {"ts":"2026-06-16T02:03:38.175471Z","env_id":"env/human/test-rebase","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=0 observed=1"}
 {"ts":"2026-06-16T02:04:52.899114Z","env_id":"env/human/test-rebase","agent":"human","event":"proposed","detail":"no new changes (worktree == branch tip)"}
 {"ts":"2026-06-16T02:05:04.414295Z","env_id":"env/human/test-rebase","agent":"human","event":"applied","detail":"merge h5i/env/human/test-rebase → test-env-features (49b7c8fc5614fecfa5c5e6c475a82043f796259e)"}
+{"ts":"2026-06-16T02:06:21.742260Z","env_id":"env/human/test-inspect","agent":"human","event":"exec","detail":"inbox capture: cmd=`bash -c grep -n \"inspect\\|fn env_inspect\\|capture\" tests/env_integration.rs | head -40; echo \"---count tests---\"; grep -c \"fn \" tests/env_integration.rs` exit=0 source=inbox-capture","capture":"7bf64c5229787c48"}
