@@ -3458,6 +3458,201 @@ fn rebase_refuses_on_conflict_and_keeps_the_base() {
     );
     // The base is untouched after a refused rebase.
     assert_eq!(r.manifest("clash")["base_commit"].as_str().unwrap(), base0);
+    // The env is still rebase-able (status unchanged) — refusal is not a dead end.
+    assert_eq!(r.manifest("clash")["status"].as_str().unwrap(), "created");
+}
+
+#[test]
+fn rebase_is_a_noop_when_up_to_date() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "still"]);
+    let base0 = r.manifest("still")["base_commit"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Parent never advanced — nothing to fold.
+    let out = out_str(&r.h5i_ok(&["env", "rebase", "still"]));
+    assert!(
+        out.contains("nothing to rebase"),
+        "no-op rebase reports it: {out}"
+    );
+    // Base + status untouched by the no-op.
+    assert_eq!(r.manifest("still")["base_commit"].as_str().unwrap(), base0);
+    assert_eq!(r.manifest("still")["status"].as_str().unwrap(), "created");
+}
+
+#[test]
+fn rebase_is_refused_after_propose() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "locked"]);
+    std::fs::write(r.work("locked").join("env.txt"), "from env\n").unwrap();
+
+    // Advance the parent so a rebase would otherwise have work to do …
+    std::fs::write(r.dir.join("lib.py"), "def hello():\n    return 99\n").unwrap();
+    git(&r.dir, &["add", "lib.py"]);
+    git(&r.dir, &["commit", "-m", "parent moves"]);
+    let base_pinned = r.manifest("locked")["base_commit"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // … but proposing crosses the line into review: rebase is no longer valid.
+    r.h5i_ok(&["env", "propose", "locked"]);
+    assert_eq!(r.manifest("locked")["status"].as_str().unwrap(), "proposed");
+
+    let out = r.h5i(&["env", "rebase", "locked"]);
+    assert!(!out.status.success(), "rebase after propose must refuse");
+    assert!(
+        out_str(&out).contains("only valid before propose/apply"),
+        "{}",
+        out_str(&out)
+    );
+    // The proposed state's base is left exactly as pinned.
+    assert_eq!(
+        r.manifest("locked")["base_commit"].as_str().unwrap(),
+        base_pinned
+    );
+}
+
+#[test]
+fn rebase_refuses_when_parent_branch_is_gone() {
+    let r = Repo::new();
+    // Create the env off a side branch so we can later delete its parent.
+    git(&r.dir, &["checkout", "-b", "feature"]);
+    r.h5i_ok(&["env", "create", "orphan"]);
+    assert_eq!(
+        r.manifest("orphan")["parent_branch"].as_str().unwrap(),
+        "feature"
+    );
+    let base0 = r.manifest("orphan")["base_commit"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Delete the parent branch out from under the env.
+    git(&r.dir, &["checkout", "main"]);
+    git(&r.dir, &["branch", "-D", "feature"]);
+
+    let out = r.h5i(&["env", "rebase", "orphan"]);
+    assert!(!out.status.success(), "rebase onto a gone parent must refuse");
+    assert!(
+        out_str(&out).contains("parent branch 'feature' is gone"),
+        "{}",
+        out_str(&out)
+    );
+    // Nothing was re-pinned.
+    assert_eq!(r.manifest("orphan")["base_commit"].as_str().unwrap(), base0);
+}
+
+#[test]
+fn rebase_three_way_merges_a_diverged_parent() {
+    let r = Repo::new();
+    // A commit the env will pin its base onto.
+    std::fs::write(r.dir.join("a.txt"), "a\n").unwrap();
+    git(&r.dir, &["add", "a.txt"]);
+    git(&r.dir, &["commit", "-m", "add a"]);
+    r.h5i_ok(&["env", "create", "div"]);
+
+    // The env adds its own file …
+    std::fs::write(r.work("div").join("env.txt"), "from env\n").unwrap();
+
+    // … while the parent is REWOUND past the base and re-grown on a new file:
+    // the pinned base (the "add a" commit) is no longer an ancestor → Diverged.
+    git(&r.dir, &["reset", "--hard", "HEAD~1"]);
+    std::fs::write(r.dir.join("b.txt"), "b\n").unwrap();
+    git(&r.dir, &["add", "b.txt"]);
+    git(&r.dir, &["commit", "-m", "add b instead"]);
+    let new_tip = out_str(&git(&r.dir, &["rev-parse", "HEAD"]))
+        .trim()
+        .to_string();
+
+    let st = out_str(&r.h5i_ok(&["env", "status", "div"]));
+    assert!(st.contains("parent diverged"), "divergence surfaced: {st}");
+
+    // Rebase 3-way merges the divergence cleanly and re-pins onto the new tip.
+    let out = out_str(&r.h5i_ok(&["env", "rebase", "div"]));
+    assert!(out.contains("rebased onto main"), "{out}");
+    assert_eq!(
+        r.manifest("div")["base_commit"].as_str().unwrap(),
+        new_tip,
+        "base re-pinned onto the diverged tip"
+    );
+
+    // Worktree reflects the merge: the env file survives, the parent's new file
+    // appears, and the rewound file is gone.
+    assert!(
+        r.work("div").join("env.txt").is_file(),
+        "env's change preserved"
+    );
+    assert!(
+        r.work("div").join("b.txt").is_file(),
+        "parent's new file folded in"
+    );
+    assert!(
+        !r.work("div").join("a.txt").exists(),
+        "rewound file dropped by the merge"
+    );
+    let st = out_str(&r.h5i_ok(&["env", "status", "div"]));
+    assert!(st.contains("up to date with parent"), "drift cleared: {st}");
+}
+
+#[test]
+fn rebase_records_a_two_parent_provenance_commit() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "prov"]);
+    std::fs::write(r.work("prov").join("env.txt"), "from env\n").unwrap();
+
+    // Advance the parent so the rebase produces a real merge commit.
+    std::fs::write(r.dir.join("lib.py"), "def hello():\n    return 99\n").unwrap();
+    git(&r.dir, &["add", "lib.py"]);
+    git(&r.dir, &["commit", "-m", "parent moves"]);
+
+    r.h5i_ok(&["env", "rebase", "prov"]);
+
+    // The env branch tip is a 2-parent merge whose subject records the fold.
+    let branch = "refs/heads/h5i/env/tester/prov";
+    let parents = out_str(&git(&r.dir, &["rev-list", "--parents", "-n", "1", branch]));
+    // commit + 2 parents = 3 space-separated oids.
+    assert_eq!(
+        parents.split_whitespace().count(),
+        3,
+        "rebase tip has two parents: {parents}"
+    );
+    let subject = out_str(&git(&r.dir, &["log", "-1", "--format=%s", branch]));
+    assert!(
+        subject.contains("h5i env rebase: env/tester/prov onto main"),
+        "provenance subject: {subject}"
+    );
+}
+
+#[test]
+fn rebase_folds_a_parent_advance_with_no_env_changes() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "clean"]);
+
+    // The env touched nothing; only the parent advanced.
+    std::fs::write(r.dir.join("lib.py"), "def hello():\n    return 99\n").unwrap();
+    git(&r.dir, &["add", "lib.py"]);
+    git(&r.dir, &["commit", "-m", "parent moves"]);
+    let new_tip = out_str(&git(&r.dir, &["rev-parse", "HEAD"]))
+        .trim()
+        .to_string();
+
+    let out = out_str(&r.h5i_ok(&["env", "rebase", "clean"]));
+    assert!(out.contains("rebased onto main"), "{out}");
+    assert_eq!(
+        r.manifest("clean")["base_commit"].as_str().unwrap(),
+        new_tip,
+        "base re-pinned even with no env-side work"
+    );
+    // The parent's advance is now visible in the worktree.
+    let lib = std::fs::read_to_string(r.work("clean").join("lib.py")).unwrap();
+    assert!(lib.contains("return 99"), "parent change folded in: {lib}");
+
+    // A second rebase with no further drift is a clean no-op.
+    let out = out_str(&r.h5i_ok(&["env", "rebase", "clean"]));
+    assert!(out.contains("nothing to rebase"), "{out}");
 }
 
 #[test]
