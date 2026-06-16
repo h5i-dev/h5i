@@ -225,3 +225,4 @@
 {"ts":"2026-06-16T02:06:22.024141Z","env_id":"env/human/test-inspect","agent":"human","event":"exec","detail":"inbox capture: cmd=`bash -c grep -n \"fn render_compact\" src/structured.rs; sed -n '/pub fn render_compact/,/^}/p' src/structured.rs | head -50` exit=0 source=inbox-capture","capture":"a84258b522104390"}
 {"ts":"2026-06-16T02:06:22.171880Z","env_id":"env/human/test-inspect","agent":"human","event":"exec","detail":"inbox capture: cmd=`bash -c grep -n \"─── \\|fn compare\\|fn inspect\\|fn diff_\\|compare\\|inspect\" tests/env_integration.rs | grep -i \"fn \\|───\" | head -40` exit=0 source=inbox-capture","capture":"628aae9961212f40"}
 {"ts":"2026-06-16T02:06:22.174766Z","env_id":"env/human/test-inspect","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=0 observed=4"}
+{"ts":"2026-06-16T02:06:24.037780Z","env_id":"env/human/test-inspect","agent":"human","event":"rebased","detail":"onto test-env-features (49b7c8fc5614)"}
