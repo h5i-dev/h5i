@@ -12,3 +12,4 @@
 [02:04:09] THINK: Let me examine the test harness and how existing tests (e.
 [02:04:09] THINK: Let me view the env.rs unit test module to optionally add focused unit tests there.
 [02:04:09] THINK: Let me confirm `env run` propagates the child's non-zero exit code (so my exit-rendering test is accurate).
+[02:04:09] THINK: No prebuilt binary. Let me build it (single-job, debuginfo off per the known WSL2 OOM constraint) and probe `inspect` output empirically.
