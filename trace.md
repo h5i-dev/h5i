@@ -123,3 +123,9 @@ _[Checkpoint: 6a30770a — edited src/msg.rs; edited src/objects.rs; edited src/
 [00:48:28] OBSERVE: read src/sandbox.rs
 [00:50:46] OBSERVE: read src/sandbox.rs
 [00:51:22] THINK: Let me confirm the agent profile triggers the egress (uid-0) path and check how environment variables get into the box, while I also verify the Claude Code side.
+
+
+---
+_[Checkpoint: 6a309e0a — edited src/msg.rs; edited src/objects.rs; edited src/token_filter.rs]_
+---
+

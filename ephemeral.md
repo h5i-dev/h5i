@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: env/human/update-comments
+# Ephemeral traces — Branch: improve-shell
 
