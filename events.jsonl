@@ -213,3 +213,4 @@
 {"ts":"2026-06-16T01:15:54.873658Z","env_id":"env/human/update-comments","agent":"human","event":"gc","detail":"workspace reclaimed, manifest retained"}
 {"ts":"2026-06-16T01:16:10.574241Z","env_id":"env/human/update-comments","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
 {"ts":"2026-06-16T01:53:38.210466Z","env_id":"env/human/test-rebase","agent":"human","event":"created","detail":"base=d76c002e945b profile=agent-claude isolation=supervised backend=worktree"}
+{"ts":"2026-06-16T01:54:10.479541Z","env_id":"env/human/test-inspect","agent":"human","event":"created","detail":"base=d76c002e945b profile=agent-claude isolation=supervised backend=worktree"}
