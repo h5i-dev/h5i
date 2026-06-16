@@ -2995,14 +2995,140 @@ fn inspect_renders_a_capture_and_refuses_foreign_ones() {
     assert!(out.contains("exit"), "{out}");
 
     // Inspecting the SAME capture id from a different env is refused — evidence
-    // is scoped to its environment.
+    // is scoped to its environment. The error names both envs so a reviewer can
+    // see whose capture it actually is.
     let out = r.h5i(&["env", "inspect", "two", "--capture", &cap]);
     assert!(!out.status.success(), "cross-env inspect must be refused");
+    let err = out_str(&out);
+    assert!(err.contains("not evidence for"), "{err}");
+    assert!(err.contains("env/tester/one"), "names the owning env: {err}");
+}
+
+/// `inspect` renders every header field the design promises — the capture id +
+/// env id, the command, a non-zero exit code (verbatim, not masked), the policy
+/// digest, the evidence source, the raw object accounting — followed by the
+/// structured findings (here the generic-command body carrying the output).
+#[test]
+fn inspect_renders_all_capture_fields() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "fields"]);
+    // A non-zero exit so we prove the code is rendered verbatim, plus a known
+    // stdout line we expect to surface in the rendered body.
+    r.h5i(&[
+        "env",
+        "run",
+        "fields",
+        "--",
+        "sh",
+        "-c",
+        "echo body-marker; exit 3",
+    ]);
+
+    let env_m = r.manifest("fields");
+    let cap = env_m["captures"][0].as_str().unwrap().to_string();
+    let digest = env_m["policy_digest"].as_str().unwrap();
+
+    let out = out_str(&r.h5i_ok(&["env", "inspect", "fields", "--capture", &cap]));
+    // Header pairs the capture with its owning env.
+    assert!(out.contains(&cap), "header has the capture id: {out}");
+    assert!(out.contains("env/tester/fields"), "header has the env id: {out}");
+    // The command line, exactly as run.
+    assert!(out.contains("cmd"), "{out}");
+    assert!(out.contains("echo body-marker"), "renders the command: {out}");
+    // A non-zero exit is shown verbatim, never masked.
+    assert!(out.contains("exit") && out.contains("3"), "renders exit 3: {out}");
+    // Policy digest is shown (truncated to its 12-char prefix).
+    assert!(out.contains(&digest[..12]), "renders policy digest prefix: {out}");
+    // Provenance: a host-driven env run.
+    assert!(out.contains("host-env-run"), "renders evidence source: {out}");
+    // Raw object accounting.
     assert!(
-        out_str(&out).contains("not evidence for"),
-        "{}",
-        out_str(&out)
+        out.contains("bytes") && out.contains("lines"),
+        "renders raw size accounting: {out}"
     );
+    // The structured findings render the captured stdout.
+    assert!(out.contains("body-marker"), "renders the captured output: {out}");
+}
+
+/// A capture handle that resolves to nothing, and one too short to be a prefix,
+/// both fail loudly with an actionable message rather than rendering an empty or
+/// wrong capture.
+#[test]
+fn inspect_refuses_unknown_and_too_short_handles() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "handles"]);
+    r.h5i_ok(&["env", "run", "handles", "--", "sh", "-c", "echo hi"]);
+
+    // Nonexistent capture id.
+    let out = r.h5i(&["env", "inspect", "handles", "--capture", "cap-nope-zzzz"]);
+    assert!(!out.status.success(), "unknown capture must be refused");
+    assert!(out_str(&out).contains("no object matches"), "{}", out_str(&out));
+
+    // A handle shorter than the 4-char prefix floor.
+    let out = r.h5i(&["env", "inspect", "handles", "--capture", "ab"]);
+    assert!(!out.status.success(), "too-short handle must be refused");
+    assert!(out_str(&out).contains("too short"), "{}", out_str(&out));
+}
+
+/// `inspect` re-renders a capture whose evidence contained a secret. The
+/// redacted rule is surfaced (so a reviewer knows redaction fired), the secret
+/// value appears nowhere in the rendered view, and the placeholder shows in its
+/// place — `inspect` must never become a side channel back to the raw secret.
+#[test]
+fn inspect_surfaces_redactions_without_leaking_the_secret() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "redact"]);
+    r.h5i_ok(&[
+        "env",
+        "run",
+        "redact",
+        "--",
+        "sh",
+        "-c",
+        &format!("echo token={PLANTED_SECRET}"),
+    ]);
+    let cap = r.manifest("redact")["captures"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let out = out_str(&r.h5i_ok(&["env", "inspect", "redact", "--capture", &cap]));
+    // The detected rule is named (by id, never the value).
+    assert!(out.contains("GITHUB_PAT"), "names the redacted rule: {out}");
+    // The secret value must not survive anywhere in the rendered view.
+    assert!(
+        !out.contains(PLANTED_SECRET),
+        "secret leaked through inspect: {out}"
+    );
+    // The redaction placeholder shows where the value was.
+    assert!(out.contains("redacted"), "shows the redaction marker: {out}");
+}
+
+/// `inspect` resolves the env by its fully-qualified id (not just the bare slug)
+/// and resolves the capture from a hex prefix — the same ergonomics the object
+/// store offers elsewhere, so a reviewer can paste a short handle.
+#[test]
+fn inspect_resolves_env_by_full_id_and_capture_by_prefix() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "resolve"]);
+    r.h5i_ok(&["env", "run", "resolve", "--", "sh", "-c", "echo resolved"]);
+    let cap = r.manifest("resolve")["captures"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let prefix = &cap[..8.min(cap.len())];
+
+    // Env addressed by its full id, capture by an 8-char prefix.
+    let out = out_str(&r.h5i_ok(&[
+        "env",
+        "inspect",
+        "env/tester/resolve",
+        "--capture",
+        prefix,
+    ]));
+    assert!(out.contains(&cap), "prefix resolved to the full capture: {out}");
+    assert!(out.contains("env/tester/resolve"), "{out}");
+    assert!(out.contains("resolved"), "renders the captured output: {out}");
 }
 
 // ─── 9. concurrency: the run-lock serializes runs of one env ────────────────
@@ -3332,6 +3458,201 @@ fn rebase_refuses_on_conflict_and_keeps_the_base() {
     );
     // The base is untouched after a refused rebase.
     assert_eq!(r.manifest("clash")["base_commit"].as_str().unwrap(), base0);
+    // The env is still rebase-able (status unchanged) — refusal is not a dead end.
+    assert_eq!(r.manifest("clash")["status"].as_str().unwrap(), "created");
+}
+
+#[test]
+fn rebase_is_a_noop_when_up_to_date() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "still"]);
+    let base0 = r.manifest("still")["base_commit"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Parent never advanced — nothing to fold.
+    let out = out_str(&r.h5i_ok(&["env", "rebase", "still"]));
+    assert!(
+        out.contains("nothing to rebase"),
+        "no-op rebase reports it: {out}"
+    );
+    // Base + status untouched by the no-op.
+    assert_eq!(r.manifest("still")["base_commit"].as_str().unwrap(), base0);
+    assert_eq!(r.manifest("still")["status"].as_str().unwrap(), "created");
+}
+
+#[test]
+fn rebase_is_refused_after_propose() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "locked"]);
+    std::fs::write(r.work("locked").join("env.txt"), "from env\n").unwrap();
+
+    // Advance the parent so a rebase would otherwise have work to do …
+    std::fs::write(r.dir.join("lib.py"), "def hello():\n    return 99\n").unwrap();
+    git(&r.dir, &["add", "lib.py"]);
+    git(&r.dir, &["commit", "-m", "parent moves"]);
+    let base_pinned = r.manifest("locked")["base_commit"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // … but proposing crosses the line into review: rebase is no longer valid.
+    r.h5i_ok(&["env", "propose", "locked"]);
+    assert_eq!(r.manifest("locked")["status"].as_str().unwrap(), "proposed");
+
+    let out = r.h5i(&["env", "rebase", "locked"]);
+    assert!(!out.status.success(), "rebase after propose must refuse");
+    assert!(
+        out_str(&out).contains("only valid before propose/apply"),
+        "{}",
+        out_str(&out)
+    );
+    // The proposed state's base is left exactly as pinned.
+    assert_eq!(
+        r.manifest("locked")["base_commit"].as_str().unwrap(),
+        base_pinned
+    );
+}
+
+#[test]
+fn rebase_refuses_when_parent_branch_is_gone() {
+    let r = Repo::new();
+    // Create the env off a side branch so we can later delete its parent.
+    git(&r.dir, &["checkout", "-b", "feature"]);
+    r.h5i_ok(&["env", "create", "orphan"]);
+    assert_eq!(
+        r.manifest("orphan")["parent_branch"].as_str().unwrap(),
+        "feature"
+    );
+    let base0 = r.manifest("orphan")["base_commit"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Delete the parent branch out from under the env.
+    git(&r.dir, &["checkout", "main"]);
+    git(&r.dir, &["branch", "-D", "feature"]);
+
+    let out = r.h5i(&["env", "rebase", "orphan"]);
+    assert!(!out.status.success(), "rebase onto a gone parent must refuse");
+    assert!(
+        out_str(&out).contains("parent branch 'feature' is gone"),
+        "{}",
+        out_str(&out)
+    );
+    // Nothing was re-pinned.
+    assert_eq!(r.manifest("orphan")["base_commit"].as_str().unwrap(), base0);
+}
+
+#[test]
+fn rebase_three_way_merges_a_diverged_parent() {
+    let r = Repo::new();
+    // A commit the env will pin its base onto.
+    std::fs::write(r.dir.join("a.txt"), "a\n").unwrap();
+    git(&r.dir, &["add", "a.txt"]);
+    git(&r.dir, &["commit", "-m", "add a"]);
+    r.h5i_ok(&["env", "create", "div"]);
+
+    // The env adds its own file …
+    std::fs::write(r.work("div").join("env.txt"), "from env\n").unwrap();
+
+    // … while the parent is REWOUND past the base and re-grown on a new file:
+    // the pinned base (the "add a" commit) is no longer an ancestor → Diverged.
+    git(&r.dir, &["reset", "--hard", "HEAD~1"]);
+    std::fs::write(r.dir.join("b.txt"), "b\n").unwrap();
+    git(&r.dir, &["add", "b.txt"]);
+    git(&r.dir, &["commit", "-m", "add b instead"]);
+    let new_tip = out_str(&git(&r.dir, &["rev-parse", "HEAD"]))
+        .trim()
+        .to_string();
+
+    let st = out_str(&r.h5i_ok(&["env", "status", "div"]));
+    assert!(st.contains("parent diverged"), "divergence surfaced: {st}");
+
+    // Rebase 3-way merges the divergence cleanly and re-pins onto the new tip.
+    let out = out_str(&r.h5i_ok(&["env", "rebase", "div"]));
+    assert!(out.contains("rebased onto main"), "{out}");
+    assert_eq!(
+        r.manifest("div")["base_commit"].as_str().unwrap(),
+        new_tip,
+        "base re-pinned onto the diverged tip"
+    );
+
+    // Worktree reflects the merge: the env file survives, the parent's new file
+    // appears, and the rewound file is gone.
+    assert!(
+        r.work("div").join("env.txt").is_file(),
+        "env's change preserved"
+    );
+    assert!(
+        r.work("div").join("b.txt").is_file(),
+        "parent's new file folded in"
+    );
+    assert!(
+        !r.work("div").join("a.txt").exists(),
+        "rewound file dropped by the merge"
+    );
+    let st = out_str(&r.h5i_ok(&["env", "status", "div"]));
+    assert!(st.contains("up to date with parent"), "drift cleared: {st}");
+}
+
+#[test]
+fn rebase_records_a_two_parent_provenance_commit() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "prov"]);
+    std::fs::write(r.work("prov").join("env.txt"), "from env\n").unwrap();
+
+    // Advance the parent so the rebase produces a real merge commit.
+    std::fs::write(r.dir.join("lib.py"), "def hello():\n    return 99\n").unwrap();
+    git(&r.dir, &["add", "lib.py"]);
+    git(&r.dir, &["commit", "-m", "parent moves"]);
+
+    r.h5i_ok(&["env", "rebase", "prov"]);
+
+    // The env branch tip is a 2-parent merge whose subject records the fold.
+    let branch = "refs/heads/h5i/env/tester/prov";
+    let parents = out_str(&git(&r.dir, &["rev-list", "--parents", "-n", "1", branch]));
+    // commit + 2 parents = 3 space-separated oids.
+    assert_eq!(
+        parents.split_whitespace().count(),
+        3,
+        "rebase tip has two parents: {parents}"
+    );
+    let subject = out_str(&git(&r.dir, &["log", "-1", "--format=%s", branch]));
+    assert!(
+        subject.contains("h5i env rebase: env/tester/prov onto main"),
+        "provenance subject: {subject}"
+    );
+}
+
+#[test]
+fn rebase_folds_a_parent_advance_with_no_env_changes() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "clean"]);
+
+    // The env touched nothing; only the parent advanced.
+    std::fs::write(r.dir.join("lib.py"), "def hello():\n    return 99\n").unwrap();
+    git(&r.dir, &["add", "lib.py"]);
+    git(&r.dir, &["commit", "-m", "parent moves"]);
+    let new_tip = out_str(&git(&r.dir, &["rev-parse", "HEAD"]))
+        .trim()
+        .to_string();
+
+    let out = out_str(&r.h5i_ok(&["env", "rebase", "clean"]));
+    assert!(out.contains("rebased onto main"), "{out}");
+    assert_eq!(
+        r.manifest("clean")["base_commit"].as_str().unwrap(),
+        new_tip,
+        "base re-pinned even with no env-side work"
+    );
+    // The parent's advance is now visible in the worktree.
+    let lib = std::fs::read_to_string(r.work("clean").join("lib.py")).unwrap();
+    assert!(lib.contains("return 99"), "parent change folded in: {lib}");
+
+    // A second rebase with no further drift is a clean no-op.
+    let out = out_str(&r.h5i_ok(&["env", "rebase", "clean"]));
+    assert!(out.contains("nothing to rebase"), "{out}");
 }
 
 #[test]
