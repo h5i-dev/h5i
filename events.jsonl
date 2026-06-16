@@ -215,3 +215,4 @@
 {"ts":"2026-06-16T01:53:38.210466Z","env_id":"env/human/test-rebase","agent":"human","event":"created","detail":"base=d76c002e945b profile=agent-claude isolation=supervised backend=worktree"}
 {"ts":"2026-06-16T01:54:10.479541Z","env_id":"env/human/test-inspect","agent":"human","event":"created","detail":"base=d76c002e945b profile=agent-claude isolation=supervised backend=worktree"}
 {"ts":"2026-06-16T01:54:24.422630Z","env_id":"env/human/test-rebase","agent":"human","event":"status","detail":"running (shell)"}
+{"ts":"2026-06-16T01:55:18.976785Z","env_id":"env/human/test-inspect","agent":"human","event":"status","detail":"running (shell)"}
