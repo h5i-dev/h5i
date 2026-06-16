@@ -1,0 +1,1 @@
+{"git_oid":"6ad473dc44710d2d19d7c7b6cabdec139038b8d3","parent_oid":"cee804613201ca65eff13d9cf9ab500b81b9bb39","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"implement the IS_SANDBOX=1 injection for agent profiles and add a test","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-16T01:04:01.883575622Z"}
