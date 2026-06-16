@@ -142,3 +142,4 @@ _[Checkpoint: 6a309e0a — edited src/msg.rs; edited src/objects.rs; edited src/
 [01:02:09] OBSERVE: read btycboekk.output
 [01:03:39] THINK: Let me follow the project rules and check context, then explore the relevant structures.
 [01:03:40] THINK: I'll add a helper and apply it centrally in both dispatch functions.
+[01:03:40] NOTE: DEFERRAL: y. 2. **The `powerline-shell: Permission denied` line is a separate issue** — that's the Landlock FS allowlist denying *execute* on `~/.local/bin/po…
