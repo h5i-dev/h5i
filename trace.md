@@ -160,3 +160,4 @@ _[Checkpoint: 6a30a109 — edited src/sandbox.rs; edited src/sandbox.rs; edited 
 [01:20:21] OBSERVE: read src/ctx.rs
 [01:20:26] OBSERVE: read src/env.rs
 [01:20:26] OBSERVE: read src/env.rs
+[01:20:26] OBSERVE: read CLAUDE.md
