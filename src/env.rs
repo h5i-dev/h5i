@@ -3156,6 +3156,22 @@ pub fn propose(
     Ok(brief)
 }
 
+/// A copy-pasteable runbook for resolving a source-code conflict from *inside*
+/// the env's sandbox. `rebase`/`apply` refuse cleanly (no markers, full
+/// rollback), so there is no `git merge --continue` state to resume; the user
+/// re-does the merge by hand in the box, where the worktree has a functional
+/// git checkout (rw on its own branch + objects, ro on the parent ref). Merging
+/// the parent into the env branch in-box makes a later `apply` fast-forward.
+fn conflict_runbook(m: &EnvManifest) -> String {
+    format!(
+        "to resolve: `h5i env shell {slug}`, then inside the box \
+         `git merge {parent}` — fix the conflicts, `git add` the files, \
+         `git commit` — exit, then `h5i env apply {slug}`",
+        slug = m.slug,
+        parent = m.parent_branch,
+    )
+}
+
 /// Apply a proposed env onto its parent branch. Explicit, reviewer-driven:
 /// requires the parent branch checked out and a clean tracked working tree.
 /// `--patch` squashes the env's diff into one commit; the default `--merge`
@@ -3239,8 +3255,10 @@ pub fn apply(
                 })
                 .collect();
             return Err(H5iError::Metadata(format!(
-                "apply refused — merge conflicts in: {} (rebase the env or resolve on the env branch)",
-                paths.join(", ")
+                "apply refused — merge conflicts in: {}. Rebase the env (`h5i env rebase {}`), or {}.",
+                paths.join(", "),
+                m.slug,
+                conflict_runbook(m)
             )));
         }
         let tree = repo.find_tree(idx.write_tree_to(repo)?)?;
@@ -3407,9 +3425,11 @@ pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result
             })
             .collect();
         return Err(H5iError::Metadata(format!(
-            "rebase refused — conflicts against the new base in: {} (resolve on the env branch, \
-             or apply against the old base)",
-            paths.join(", ")
+            "rebase refused — conflicts against the new base in: {}. Either apply against the \
+             old base (`h5i env apply {}`), or {}.",
+            paths.join(", "),
+            m.slug,
+            conflict_runbook(m)
         )));
     }
     let merged_tree = wt_repo.find_tree(idx.write_tree_to(&wt_repo)?)?;
@@ -3704,6 +3724,18 @@ mod tests {
             status: ST_IDLE.into(),
             captures: vec![],
         }
+    }
+
+    #[test]
+    fn conflict_runbook_points_at_in_box_resolution() {
+        // The refuse-and-rollback design leaves no `git merge --continue` state,
+        // so the error text must hand the user the full in-box runbook: which
+        // env to shell into, the parent to merge, and the apply to finish with.
+        let m = canonical_manifest("claude", "auth-fix");
+        let rb = conflict_runbook(&m);
+        assert!(rb.contains("h5i env shell auth-fix"), "names the env shell: {rb}");
+        assert!(rb.contains("git merge main"), "names the parent merge: {rb}");
+        assert!(rb.contains("h5i env apply auth-fix"), "names the finishing apply: {rb}");
     }
 
     #[test]

@@ -390,6 +390,39 @@ fn apply_changes_to_tree(
 /// merge produces a conflict on these, we union-merge instead of failing.
 const APPEND_ONLY_FILES: &[&str] = &["trace.md", "commit.md", "ephemeral.md"];
 
+/// The serialized trace DAG. It is a union-by-id structure (a node with two
+/// parents is a legitimate merge point — A→B→C and A→D→C coexist), so it can
+/// *never* truly conflict semantically. But it is stored as a single-line
+/// compact JSON blob, so libgit2's line-based merge reports a textual conflict
+/// the moment both sides append a node — which is the normal case whenever an
+/// env's reasoning branch and its parent both advance. We therefore resolve it
+/// by union-merging node sets, not by line merge. See [`union_dag_json`].
+const DAG_FILE: &str = "dag.json";
+
+/// Union-merge two serialized [`TraceDag`]s by node id: keep every node from the
+/// ancestor, then ours, then theirs, de-duplicating by id and preserving first-
+/// seen order. This is the conflict-free merge the DAG's semantics already imply
+/// (it mirrors the union-by-id the post-merge step in [`gcc_merge_into`] does);
+/// running it during conflict resolution stops a textual `dag.json` clash from
+/// aborting an otherwise-clean context merge.
+fn union_dag_json(ancestor: &str, ours: &str, theirs: &str) -> Result<String, H5iError> {
+    let parse = |s: &str| -> TraceDag { serde_json::from_str(s).unwrap_or_default() };
+    let mut merged = TraceDag::default();
+    let mut seen = std::collections::HashSet::new();
+    for node in parse(ancestor)
+        .nodes
+        .into_iter()
+        .chain(parse(ours).nodes)
+        .chain(parse(theirs).nodes)
+    {
+        if seen.insert(node.id.clone()) {
+            merged.nodes.push(node);
+        }
+    }
+    serde_json::to_string(&merged)
+        .map_err(|e| H5iError::InvalidPath(format!("DAG union failed: {e}")))
+}
+
 /// Union-merge an append-only file: keep the common ancestor, then concatenate
 /// each side's tail. If one side already contains the other's tail (e.g. due
 /// to a previous merge), avoid duplicating it.
@@ -408,8 +441,10 @@ fn union_append_only(ancestor: &str, ours: &str, theirs: &str) -> String {
     out
 }
 
-/// Walk index conflicts; for each conflicted entry whose path is in
-/// [`APPEND_ONLY_FILES`], replace the conflict with a union-merged blob.
+/// Walk index conflicts; for each conflicted entry that is union-mergeable —
+/// an [`APPEND_ONLY_FILES`] text file (tail-concat) or the [`DAG_FILE`] trace
+/// DAG (union-by-id) — replace the conflict with a merged blob. Conflicts on
+/// any other path are left in place so the caller still aborts on them.
 fn resolve_append_only_conflicts(
     repo: &Repository,
     index: &mut git2::Index,
@@ -433,7 +468,8 @@ fn resolve_append_only_conflicts(
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("");
-        if !APPEND_ONLY_FILES.contains(&filename) {
+        let is_dag = filename == DAG_FILE;
+        if !is_dag && !APPEND_ONLY_FILES.contains(&filename) {
             continue;
         }
         let read_blob = |entry: Option<&git2::IndexEntry>| -> String {
@@ -445,7 +481,11 @@ fn resolve_append_only_conflicts(
         let ancestor_text = read_blob(ancestor.as_ref());
         let our_text = read_blob(our.as_ref());
         let their_text = read_blob(their.as_ref());
-        let merged = union_append_only(&ancestor_text, &our_text, &their_text);
+        let merged = if is_dag {
+            union_dag_json(&ancestor_text, &our_text, &their_text)?
+        } else {
+            union_append_only(&ancestor_text, &our_text, &their_text)
+        };
         let merged_oid = repo.blob(merged.as_bytes()).map_err(H5iError::Git)?;
         let resolved = git2::IndexEntry {
             ctime: git2::IndexTime::new(0, 0),
@@ -4298,6 +4338,80 @@ mod tests {
             msg.contains("conflict") || msg.contains("Conflict"),
             "expected conflict error, got: {msg}"
         );
+    }
+
+    // ── DAG union-merge (conflict-free trace DAG) ─────────────────────────────
+
+    #[test]
+    fn union_dag_json_unions_by_id_and_dedups() {
+        let node = |id: &str| {
+            format!(
+                r#"{{"id":"{id}","parent_ids":[],"kind":"THINK","content":"{id}","timestamp":"t"}}"#
+            )
+        };
+        let dag = |ids: &[&str]| {
+            let nodes: Vec<String> = ids.iter().map(|i| node(i)).collect();
+            format!(r#"{{"nodes":[{}]}}"#, nodes.join(","))
+        };
+        // ancestor = {a}; ours = {a,b}; theirs = {a,c}. shared `a` not doubled.
+        let merged = union_dag_json(&dag(&["a"]), &dag(&["a", "b"]), &dag(&["a", "c"])).unwrap();
+        let parsed: TraceDag = serde_json::from_str(&merged).unwrap();
+        let ids: Vec<&str> = parsed.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b", "c"], "union by id, ancestor first, no dup");
+    }
+
+    #[test]
+    fn union_dag_json_tolerates_empty_or_garbage_sides() {
+        // A missing/garbled side must not poison the merge — it contributes
+        // nothing rather than erroring (libgit2 hands us whatever blobs exist).
+        let one = r#"{"nodes":[{"id":"a","parent_ids":[],"kind":"THINK","content":"a","timestamp":"t"}]}"#;
+        let merged = union_dag_json("", one, "not json").unwrap();
+        let parsed: TraceDag = serde_json::from_str(&merged).unwrap();
+        assert_eq!(parsed.nodes.len(), 1);
+        assert_eq!(parsed.nodes[0].id, "a");
+    }
+
+    // The user's scenario: an env's reasoning branch and its parent both append
+    // trace nodes after a common ancestor. The DAG is union-by-id (conflict-free
+    // by construction), but it is stored as a single-line JSON blob, so a naive
+    // line merge would textually conflict and abort the whole context merge.
+    // With dag.json union-resolved, the merge must SUCCEED and contain both
+    // sides' nodes.
+    #[test]
+    fn gcc_merge_unions_divergent_dag_nodes_without_conflict() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+
+        // Common ancestor: a node on main.
+        append_log(dir.path(), "THINK", "base reasoning", false).unwrap();
+
+        // Fork a feature branch and append a distinct node there.
+        gcc_branch(dir.path(), "feature", "explore").unwrap();
+        append_log(dir.path(), "THINK", "feature-only insight", false).unwrap();
+
+        // Advance main with its own distinct node — both dag.json blobs now
+        // diverge past the ancestor (the exact base-drift-during-env case).
+        gcc_checkout(dir.path(), MAIN_BRANCH).unwrap();
+        append_log(dir.path(), "THINK", "main-only insight", false).unwrap();
+
+        // Must NOT abort on a dag.json conflict.
+        gcc_merge(dir.path(), "feature").expect("DAG merge must not conflict");
+
+        // The merged DAG on main must contain both sides' nodes.
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        let dag = read_dag(&repo, MAIN_BRANCH);
+        let contents: Vec<&str> = dag.nodes.iter().map(|n| n.content.as_str()).collect();
+        assert!(contents.contains(&"base reasoning"), "ancestor node kept: {contents:?}");
+        assert!(contents.contains(&"main-only insight"), "ours kept: {contents:?}");
+        assert!(contents.contains(&"feature-only insight"), "theirs unioned in: {contents:?}");
+
+        // And the union must not duplicate the shared ancestor node by id.
+        let mut ids: Vec<String> = dag.nodes.iter().map(|n| n.id.clone()).collect();
+        let before = ids.len();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), before, "no duplicate node ids after union merge");
     }
 
     // ── internal helpers ──────────────────────────────────────────────────────
