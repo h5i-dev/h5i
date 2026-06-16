@@ -217,3 +217,4 @@
 {"ts":"2026-06-16T01:54:24.422630Z","env_id":"env/human/test-rebase","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-16T01:55:18.976785Z","env_id":"env/human/test-inspect","agent":"human","event":"status","detail":"running (shell)"}
 {"ts":"2026-06-16T02:03:38.170984Z","env_id":"env/human/test-rebase","agent":"human","event":"note","detail":"in-box commit note applied to 49b7c8fc5614"}
+{"ts":"2026-06-16T02:03:38.175471Z","env_id":"env/human/test-rebase","agent":"human","event":"shell","detail":"interactive cmd=`/bin/bash -i` exit=0 observed=1"}
