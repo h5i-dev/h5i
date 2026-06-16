@@ -231,3 +231,4 @@
 {"ts":"2026-06-16T02:07:03.291385Z","env_id":"env/human/test-inspect","agent":"human","event":"applied","detail":"merge h5i/env/human/test-inspect → test-env-features (8513a69d533a01c4e48847a8fd3010e92b228976) evidence=4 [inbox-capture=4]"}
 {"ts":"2026-06-16T02:07:15.155851Z","env_id":"env/human/test-rebase","agent":"human","event":"gc","detail":"workspace reclaimed, manifest retained"}
 {"ts":"2026-06-16T02:07:16.151300Z","env_id":"env/human/test-inspect","agent":"human","event":"gc","detail":"workspace reclaimed, manifest retained"}
+{"ts":"2026-06-16T02:07:36.355670Z","env_id":"env/human/test-rebase","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
