@@ -7,3 +7,4 @@
 [01:56:04] OBSERVE: read src/env.rs
 [01:57:14] ACT: edited tests/env_integration.rs
 [02:01:48] ACT: edited tests/env_integration.rs
+[02:02:16] NOTE: DEFERRAL (~/Dev/h5i/.git/.h5i/env/human/test-rebase/work/tests/env_integration.rs): with_no_env_changes` | Empty env-side work still re-pins; a follow-up rebase is a clean no-op (idempotence) | I also tightened the existing conflict t…
