@@ -1,3 +1,4 @@
 # OTA Log — Branch: env/human/test-inspect
 
 [01:55:54] OBSERVE: read src/env.rs
+[01:56:00] OBSERVE: read tests/env_integration.rs
