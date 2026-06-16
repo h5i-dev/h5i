@@ -212,3 +212,4 @@
 {"ts":"2026-06-15T22:19:54.025528Z","env_id":"env/human/update-comments","agent":"human","event":"applied","detail":"merge h5i/env/human/update-comments → improve-comments (fcf0504656d008f461859c3d850846d290a3e5eb) evidence=4 [inbox-capture=4]"}
 {"ts":"2026-06-16T01:15:54.873658Z","env_id":"env/human/update-comments","agent":"human","event":"gc","detail":"workspace reclaimed, manifest retained"}
 {"ts":"2026-06-16T01:16:10.574241Z","env_id":"env/human/update-comments","agent":"human","event":"removed","detail":"workspace + branches + manifest erased locally"}
+{"ts":"2026-06-16T01:53:38.210466Z","env_id":"env/human/test-rebase","agent":"human","event":"created","detail":"base=d76c002e945b profile=agent-claude isolation=supervised backend=worktree"}
