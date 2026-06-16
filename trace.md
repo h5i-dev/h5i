@@ -200,3 +200,9 @@ _[Checkpoint: 6a30a719 — edited src/sandbox.rs]_
 [01:36:22] ACT: edited src/env.rs
 [01:36:49] ACT: edited src/ctx.rs
 [01:38:07] THINK: Let me find the public function that appends DAG trace nodes (to drive the realistic merge test).
+
+
+---
+_[Checkpoint: 6a30a8ff — edited src/env.rs; edited src/env.rs; edited src/ctx.rs]_
+---
+
