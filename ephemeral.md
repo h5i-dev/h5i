@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: improve-shell
+# Ephemeral traces — Branch: env/human/test-inspect
 
