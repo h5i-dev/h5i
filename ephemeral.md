@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: env/human/test-rebase
+# Ephemeral traces — Branch: improve-shell
 
