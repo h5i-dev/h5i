@@ -1201,6 +1201,8 @@ pub fn run_with_env(
         return Err(H5iError::Metadata("empty command".into()));
     }
     check_tool_allowlist(policy, argv)?;
+    let injected = augment_injected_env(policy, injected_env);
+    let injected_env = injected.as_slice();
     match policy.claim {
         IsolationClaim::Workspace => run_unconfined(policy, work, argv, injected_env),
         IsolationClaim::Process => run_confined(policy, work, argv, injected_env),
@@ -1229,6 +1231,8 @@ pub fn run_interactive(
         return Err(H5iError::Metadata("empty command".into()));
     }
     check_tool_allowlist(policy, argv)?;
+    let injected = augment_injected_env(policy, injected_env);
+    let injected_env = injected.as_slice();
     match policy.claim {
         IsolationClaim::Workspace => interactive_unconfined(work, argv, injected_env),
         IsolationClaim::Process => interactive_confined(policy, work, argv, injected_env),
@@ -1310,6 +1314,31 @@ fn apply_injected_env(cmd: &mut std::process::Command, injected_env: &[(String, 
     for (k, v) in injected_env {
         cmd.env(k, v);
     }
+}
+
+/// For an **agent-in-box** profile, signal Claude Code that uid 0 inside the box
+/// is a sandbox artifact, not real root, so `--dangerously-skip-permissions`
+/// works. The egress tiers map the agent to root-*in-userns* (it needs
+/// `CAP_NET_ADMIN` to survive `execve` for `nft`; see the uid_map in
+/// `run_confined`/the supervisor), and Claude's guard refuses
+/// `--dangerously-skip-permissions` on a bare `getuid()==0`. `IS_SANDBOX=1`
+/// skips only that root check — it grants the agent **no** new capability (the
+/// box already pins it to our real unprivileged host uid, with zero host
+/// privilege). Scoped to agent profiles so ordinary confined runs don't inherit
+/// a sandbox signal they don't need. A caller-supplied / broker `IS_SANDBOX`
+/// (or any host one passed via `env.pass`) wins — we only set the default.
+fn augment_injected_env(
+    policy: &ResolvedPolicy,
+    injected_env: &[(String, String)],
+) -> Vec<(String, String)> {
+    let mut env = injected_env.to_vec();
+    if is_agent_profile(&policy.profile.name)
+        && !env.iter().any(|(k, _)| k == "IS_SANDBOX")
+        && !policy.profile.env_pass.iter().any(|k| k == "IS_SANDBOX")
+    {
+        env.push(("IS_SANDBOX".to_string(), "1".to_string()));
+    }
+    env
 }
 
 /// Monotonic counter so concurrent functional probes get distinct temp dirs.
@@ -2364,6 +2393,49 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         // The default deny set survives and no grant contains a denied child
         // (validate_profile ran inside load_profile).
         assert!(p.fs_deny.iter().any(|s| s == "~/.ssh"));
+    }
+
+    #[test]
+    fn agent_profile_injects_is_sandbox() {
+        // Agent-in-box profiles map the agent to root-in-userns on the egress
+        // tiers, so Claude's `getuid()==0` guard would refuse
+        // `--dangerously-skip-permissions`. `IS_SANDBOX=1` is injected to skip
+        // only that check (no new capability) — for every agent profile/runtime.
+        for name in ["agent", "agent-claude", "agent-codex"] {
+            let p = Profile::builtin(name, IsolationClaim::Supervised);
+            let policy = ResolvedPolicy::new(p.isolation, p);
+            let env = augment_injected_env(&policy, &[]);
+            assert!(
+                env.iter().any(|(k, v)| k == "IS_SANDBOX" && v == "1"),
+                "{name}: IS_SANDBOX=1 must be injected"
+            );
+        }
+    }
+
+    #[test]
+    fn non_agent_profile_does_not_inject_is_sandbox() {
+        // Ordinary confined runs (build/test) stay non-root and must not get a
+        // sandbox signal they don't need.
+        let p = Profile::builtin("default", IsolationClaim::Process);
+        let policy = ResolvedPolicy::new(p.isolation, p);
+        let env = augment_injected_env(&policy, &[]);
+        assert!(
+            !env.iter().any(|(k, _)| k == "IS_SANDBOX"),
+            "default profile must not inject IS_SANDBOX"
+        );
+    }
+
+    #[test]
+    fn injected_is_sandbox_is_not_overridden() {
+        // A caller-supplied / broker IS_SANDBOX wins — we only set the default,
+        // and never duplicate the key.
+        let p = Profile::builtin("agent-claude", IsolationClaim::Supervised);
+        let policy = ResolvedPolicy::new(p.isolation, p);
+        let preset = [("IS_SANDBOX".to_string(), "0".to_string())];
+        let env = augment_injected_env(&policy, &preset);
+        let hits: Vec<_> = env.iter().filter(|(k, _)| k == "IS_SANDBOX").collect();
+        assert_eq!(hits.len(), 1, "no duplicate IS_SANDBOX");
+        assert_eq!(hits[0].1, "0", "caller value preserved");
     }
 
     #[test]
