@@ -2995,14 +2995,140 @@ fn inspect_renders_a_capture_and_refuses_foreign_ones() {
     assert!(out.contains("exit"), "{out}");
 
     // Inspecting the SAME capture id from a different env is refused — evidence
-    // is scoped to its environment.
+    // is scoped to its environment. The error names both envs so a reviewer can
+    // see whose capture it actually is.
     let out = r.h5i(&["env", "inspect", "two", "--capture", &cap]);
     assert!(!out.status.success(), "cross-env inspect must be refused");
+    let err = out_str(&out);
+    assert!(err.contains("not evidence for"), "{err}");
+    assert!(err.contains("env/tester/one"), "names the owning env: {err}");
+}
+
+/// `inspect` renders every header field the design promises — the capture id +
+/// env id, the command, a non-zero exit code (verbatim, not masked), the policy
+/// digest, the evidence source, the raw object accounting — followed by the
+/// structured findings (here the generic-command body carrying the output).
+#[test]
+fn inspect_renders_all_capture_fields() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "fields"]);
+    // A non-zero exit so we prove the code is rendered verbatim, plus a known
+    // stdout line we expect to surface in the rendered body.
+    r.h5i(&[
+        "env",
+        "run",
+        "fields",
+        "--",
+        "sh",
+        "-c",
+        "echo body-marker; exit 3",
+    ]);
+
+    let env_m = r.manifest("fields");
+    let cap = env_m["captures"][0].as_str().unwrap().to_string();
+    let digest = env_m["policy_digest"].as_str().unwrap();
+
+    let out = out_str(&r.h5i_ok(&["env", "inspect", "fields", "--capture", &cap]));
+    // Header pairs the capture with its owning env.
+    assert!(out.contains(&cap), "header has the capture id: {out}");
+    assert!(out.contains("env/tester/fields"), "header has the env id: {out}");
+    // The command line, exactly as run.
+    assert!(out.contains("cmd"), "{out}");
+    assert!(out.contains("echo body-marker"), "renders the command: {out}");
+    // A non-zero exit is shown verbatim, never masked.
+    assert!(out.contains("exit") && out.contains("3"), "renders exit 3: {out}");
+    // Policy digest is shown (truncated to its 12-char prefix).
+    assert!(out.contains(&digest[..12]), "renders policy digest prefix: {out}");
+    // Provenance: a host-driven env run.
+    assert!(out.contains("host-env-run"), "renders evidence source: {out}");
+    // Raw object accounting.
     assert!(
-        out_str(&out).contains("not evidence for"),
-        "{}",
-        out_str(&out)
+        out.contains("bytes") && out.contains("lines"),
+        "renders raw size accounting: {out}"
     );
+    // The structured findings render the captured stdout.
+    assert!(out.contains("body-marker"), "renders the captured output: {out}");
+}
+
+/// A capture handle that resolves to nothing, and one too short to be a prefix,
+/// both fail loudly with an actionable message rather than rendering an empty or
+/// wrong capture.
+#[test]
+fn inspect_refuses_unknown_and_too_short_handles() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "handles"]);
+    r.h5i_ok(&["env", "run", "handles", "--", "sh", "-c", "echo hi"]);
+
+    // Nonexistent capture id.
+    let out = r.h5i(&["env", "inspect", "handles", "--capture", "cap-nope-zzzz"]);
+    assert!(!out.status.success(), "unknown capture must be refused");
+    assert!(out_str(&out).contains("no object matches"), "{}", out_str(&out));
+
+    // A handle shorter than the 4-char prefix floor.
+    let out = r.h5i(&["env", "inspect", "handles", "--capture", "ab"]);
+    assert!(!out.status.success(), "too-short handle must be refused");
+    assert!(out_str(&out).contains("too short"), "{}", out_str(&out));
+}
+
+/// `inspect` re-renders a capture whose evidence contained a secret. The
+/// redacted rule is surfaced (so a reviewer knows redaction fired), the secret
+/// value appears nowhere in the rendered view, and the placeholder shows in its
+/// place — `inspect` must never become a side channel back to the raw secret.
+#[test]
+fn inspect_surfaces_redactions_without_leaking_the_secret() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "redact"]);
+    r.h5i_ok(&[
+        "env",
+        "run",
+        "redact",
+        "--",
+        "sh",
+        "-c",
+        &format!("echo token={PLANTED_SECRET}"),
+    ]);
+    let cap = r.manifest("redact")["captures"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let out = out_str(&r.h5i_ok(&["env", "inspect", "redact", "--capture", &cap]));
+    // The detected rule is named (by id, never the value).
+    assert!(out.contains("GITHUB_PAT"), "names the redacted rule: {out}");
+    // The secret value must not survive anywhere in the rendered view.
+    assert!(
+        !out.contains(PLANTED_SECRET),
+        "secret leaked through inspect: {out}"
+    );
+    // The redaction placeholder shows where the value was.
+    assert!(out.contains("redacted"), "shows the redaction marker: {out}");
+}
+
+/// `inspect` resolves the env by its fully-qualified id (not just the bare slug)
+/// and resolves the capture from a hex prefix — the same ergonomics the object
+/// store offers elsewhere, so a reviewer can paste a short handle.
+#[test]
+fn inspect_resolves_env_by_full_id_and_capture_by_prefix() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "resolve"]);
+    r.h5i_ok(&["env", "run", "resolve", "--", "sh", "-c", "echo resolved"]);
+    let cap = r.manifest("resolve")["captures"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let prefix = &cap[..8.min(cap.len())];
+
+    // Env addressed by its full id, capture by an 8-char prefix.
+    let out = out_str(&r.h5i_ok(&[
+        "env",
+        "inspect",
+        "env/tester/resolve",
+        "--capture",
+        prefix,
+    ]));
+    assert!(out.contains(&cap), "prefix resolved to the full capture: {out}");
+    assert!(out.contains("env/tester/resolve"), "{out}");
+    assert!(out.contains("resolved"), "renders the captured output: {out}");
 }
 
 // ─── 9. concurrency: the run-lock serializes runs of one env ────────────────
