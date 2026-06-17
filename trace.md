@@ -419,3 +419,4 @@ _[Checkpoint: 6a33303a — edited tests/cli_integration.rs; edited tests/cli_int
 _[Checkpoint: 6a33310c — edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited .claude/settings.json]_
 ---
 
+[23:52:06] OBSERVE: searched src for "log|cmd_recall|Prompt:|Agent:|Tests?:|Message""
