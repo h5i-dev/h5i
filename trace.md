@@ -342,3 +342,9 @@ _[Checkpoint: 6a3326ab — edited .claude/h5i.md; edited src/ctx.rs; edited .cla
 _[Checkpoint: 6a3329ab — edited .claude/h5i.md; edited src/ctx.rs; edited .claude/skills/h5i-workflow/SKILL.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a332abc — edited .claude/skills/h5i-workflow/SKILL.md]_
+---
+
