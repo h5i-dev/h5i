@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::ctx;
 use crate::error::H5iError;
+use crate::repository::H5iRepository;
 
 #[derive(Debug, Clone)]
 pub struct CodexSyncResult {
@@ -72,11 +73,15 @@ pub fn sync_context(workdir: &Path) -> Result<Option<CodexSyncResult>, H5iError>
 
     let mut observed = 0usize;
     let mut acted = 0usize;
+    let h5i_repo = H5iRepository::open(workdir)?;
 
     for line in raw.lines().skip(start_line) {
         let Ok(value) = serde_json::from_str::<Value>(line) else {
             continue;
         };
+        if let Some(prompt) = extract_human_prompt(&value) {
+            h5i_repo.record_human_prompt(prompt, Some(&session_id))?;
+        }
         for event in extract_events(&value, workdir) {
             ctx::append_log(workdir, event.kind, &event.message, false)?;
             match event.kind {
@@ -155,6 +160,19 @@ fn session_cwd_matches(session_path: &Path, workdir: &Path) -> bool {
             None => false,
         }
     })
+}
+
+fn extract_human_prompt(value: &Value) -> Option<&str> {
+    if value.get("type").and_then(Value::as_str) != Some("event_msg") {
+        return None;
+    }
+    if value.pointer("/payload/type").and_then(Value::as_str) != Some("user_message") {
+        return None;
+    }
+    value
+        .pointer("/payload/message")
+        .and_then(Value::as_str)
+        .filter(|prompt| !prompt.trim().is_empty())
 }
 
 fn extract_events(value: &Value, workdir: &Path) -> Vec<TraceEvent> {
@@ -422,7 +440,10 @@ fn normalize_display_path(workdir: &Path, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_events, extract_patch_events, extract_shell_cmd_events, TraceEvent};
+    use super::{
+        extract_events, extract_human_prompt, extract_patch_events, extract_shell_cmd_events,
+        TraceEvent,
+    };
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -475,6 +496,36 @@ mod tests {
         assert_eq!(events[0].message, "read src/main.rs");
         assert_eq!(events[1].message, "searched . for \"Codex\"");
         assert_eq!(events[2].message, "listed files under .");
+    }
+
+    #[test]
+    fn extract_human_prompt_reads_codex_user_message() {
+        let event = json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "Please fix the retry loop exactly as described."
+            }
+        });
+
+        assert_eq!(
+            extract_human_prompt(&event),
+            Some("Please fix the retry loop exactly as described.")
+        );
+    }
+
+    #[test]
+    fn extract_human_prompt_ignores_synthetic_context_messages() {
+        let event = json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": "# AGENTS.md instructions" }]
+            }
+        });
+
+        assert_eq!(extract_human_prompt(&event), None);
     }
 
     // ── custom_tool_call / apply_patch (current Codex format) ────────────────

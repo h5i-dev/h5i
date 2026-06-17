@@ -273,7 +273,8 @@ fn msg_session_note(workdir: &Path) -> Option<String> {
 
 /// Codex turn-delivery: surface unread messages for the Codex identity and
 /// mark them read. Best-effort — never fails the host command. Folded into
-/// `h5i codex prelude` / `sync` / `finish` since Codex has no Stop hook.
+/// `h5i codex prelude` / `sync` / `finish`; `h5i hook setup --target codex`
+/// installs `h5i codex finish` as the Stop hook.
 fn deliver_codex_inbox(workdir: &Path) {
     let Ok(repo) = H5iRepository::open(workdir) else {
         return;
@@ -889,11 +890,16 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Manage Claude Code hooks for automatic prompt capture and context tracing.
+    /// Manage agent hook setup for automatic prompt capture and context tracing.
     /// Run `h5i hook setup` to print install instructions.
-    /// Run `h5i hook run` (or just `h5i hook`) as the PostToolUse handler in .claude/settings.json.
     #[command(subcommand)]
     Hook(HookCommands),
+
+    /// Claude Code integration hook handlers
+    Claude {
+        #[command(subcommand)]
+        action: ClaudeCommands,
+    },
 
     /// Codex integration helpers for context restore, trace sync, and closeout
     Codex {
@@ -2203,20 +2209,9 @@ enum HookCommands {
         wrap_bash: bool,
     },
 
-    /// Run as the PostToolUse handler: reads JSON from stdin, emits h5i context traces.
-    /// Register in .claude/settings.json as: { "command": "h5i hook run" }
-    Run,
-
-    /// Run as the SessionStart handler: injects prior context into Claude's context window.
-    /// Prints the current context summary + relevant prior reasoning to stdout,
-    /// which Claude Code surfaces to the model at the start of each session.
-    /// Register in .claude/settings.json under "SessionStart" hooks.
+    /// Run as the shared SessionStart handler: injects prior context into the agent context window.
+    /// Register under "SessionStart" hooks as `h5i hook session-start`.
     SessionStart,
-
-    /// Run as the Stop handler: auto-checkpoints the context workspace before the session ends.
-    /// Summarises recent OBSERVE/THINK/ACT entries and calls `h5i context commit`.
-    /// Register in .claude/settings.json under "Stop" hooks.
-    Stop,
 
     /// OPTIONAL PreToolUse handler for the Bash tool: rewrites the command into
     /// a `h5i capture run` wrapper (via updatedInput, Claude Code ≥ 2.0.10), so
@@ -2236,6 +2231,15 @@ enum HookCommands {
     /// on any error, so it never blocks the turn.
     /// Register in .claude/settings.json under "UserPromptSubmit" hooks.
     Prompt,
+}
+
+#[derive(Subcommand)]
+enum ClaudeCommands {
+    /// Run as Claude Code's PostToolUse handler: reads JSON from stdin and emits traces.
+    Sync,
+
+    /// Run as Claude Code's Stop handler: mines reasoning and checkpoints context.
+    Finish,
 }
 
 #[derive(Subcommand)]
@@ -2573,11 +2577,13 @@ h5i claims prune                   # drop stale claims
 
 ```bash
 git add <exact paths>
-h5i capture commit -m "…" --agent codex --intent "<the human's ask>"
+h5i capture commit -m "…" --agent codex
 ```
 
-Codex has no `UserPromptSubmit` hook, so pass `--intent` with the human's
-request — it is the fallback that fills the provenance prompt field.
+When `h5i hook setup --write --target codex` has installed the Stop hook,
+`h5i codex finish` records the raw human prompt from the Codex session JSONL.
+`--intent` remains a fallback for CI/scripts/manual commits where no Codex
+session sync runs.
 
 Add flags when relevant:
 - `--tests`  — tests were added or modified
@@ -5305,7 +5311,7 @@ fn main() -> anyhow::Result<()> {
             println!("  {}", style("Quick-start:").bold());
             println!(
                 "    {}  capture AI provenance on every commit",
-                style("h5i commit -m \"…\" --agent <claude-code|codex>  (--intent for Codex/CI)").cyan()
+                style("h5i commit -m \"…\" --agent <claude-code|codex>  (--intent fallback for CI/scripts)").cyan()
             );
             println!(
                 "    {}  snapshot agent memory after a session",
@@ -6518,14 +6524,19 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
                 println!(
-                    "   {} {}   ·   {} {} ({})   ·   {} {}",
+                    "   {} {}   ·   {} {} ({})",
                     style("SessionStart:").dim(),
                     style("h5i hook session-start").bold(),
-                    style("PostToolUse:").dim(),
-                    style("h5i hook run").bold(),
+                    style("Claude PostToolUse:").dim(),
+                    style("h5i claude sync").bold(),
                     style("Edit|Write|Read").dim(),
-                    style("Stop:").dim(),
-                    style("h5i hook stop").bold(),
+                );
+                println!(
+                    "   {} {}   ·   {} {}",
+                    style("Claude Stop:").dim(),
+                    style("h5i claude finish").bold(),
+                    style("Codex Stop:").dim(),
+                    style("h5i codex finish").bold(),
                 );
                 if wrap_bash {
                     println!(
@@ -6638,7 +6649,7 @@ fn main() -> anyhow::Result<()> {
         "hooks": [
           {
             "type": "command",
-            "command": "h5i hook run"
+            "command": "h5i claude sync"
           }
         ]
       }
@@ -6648,7 +6659,7 @@ fn main() -> anyhow::Result<()> {
         "hooks": [
           {
             "type": "command",
-            "command": "h5i hook stop"
+            "command": "h5i claude finish"
           }
         ]
       }
@@ -6789,7 +6800,9 @@ fn main() -> anyhow::Result<()> {
             );
         }
 
-        Commands::Hook(HookCommands::Run) => {
+        Commands::Claude {
+            action: ClaudeCommands::Sync,
+        } => {
             use std::io::Read as _;
             // Read JSON from stdin (Claude Code sends PostToolUse payload here).
             let mut raw = String::new();
@@ -6990,7 +7003,9 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Hook(HookCommands::Stop) => {
+        Commands::Claude {
+            action: ClaudeCommands::Finish,
+        } => {
             let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             // 1. Mine the Claude session JSONL for key decisions + omissions and
             //    emit them as THINK/NOTE trace entries. The agent never has to

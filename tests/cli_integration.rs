@@ -855,9 +855,9 @@ fn hook_setup_write_default_writes_claude_and_codex_configs() {
         claude.contains("\"command\": \"h5i hook session-start\""),
         "{claude}"
     );
-    assert!(claude.contains("\"command\": \"h5i hook run\""), "{claude}");
+    assert!(claude.contains("\"command\": \"h5i claude sync\""), "{claude}");
     assert!(
-        claude.contains("\"command\": \"h5i hook stop\""),
+        claude.contains("\"command\": \"h5i claude finish\""),
         "{claude}"
     );
     assert!(
@@ -870,8 +870,9 @@ fn hook_setup_write_default_writes_claude_and_codex_configs() {
         config.contains("command = \"h5i hook session-start\""),
         "{config}"
     );
-    assert!(config.contains("command = \"h5i hook run\""), "{config}");
-    assert!(config.contains("command = \"h5i hook stop\""), "{config}");
+    assert!(!config.contains("command = \"h5i hook run\""), "{config}");
+    assert!(config.contains("command = \"h5i codex finish\""), "{config}");
+    assert!(!config.contains("command = \"h5i hook stop\""), "{config}");
     assert!(
         config.contains("command = \"h5i hook wrap-bash\""),
         "{config}"

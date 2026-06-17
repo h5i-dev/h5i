@@ -1,10 +1,3 @@
-[[hooks.PostToolUse]]
-matcher = "Edit|Write|Read"
-
-[[hooks.PostToolUse.hooks]]
-command = "h5i hook run"
-type = "command"
-
 [[hooks.PreToolUse]]
 matcher = "Bash"
 
@@ -21,5 +14,5 @@ type = "command"
 [[hooks.Stop]]
 
 [[hooks.Stop.hooks]]
-command = "h5i hook stop"
+command = "h5i codex finish"
 type = "command"
