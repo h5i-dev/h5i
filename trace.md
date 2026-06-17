@@ -206,3 +206,9 @@ _[Checkpoint: 6a330c1e — edited src/prompt_score.rs; edited src/prompt_score.r
 [21:07:34] OBSERVE: read src/prompt_score.rs
 [21:07:34] OBSERVE: read src/prompt_score.rs
 [21:07:38] NOTE: DEFERRAL (~/Dev/h5i/src/prompt_score.rs): weights PR. **No commit-metadata schema change** — that's deferred to its own design. **Deferred to v2 (documented):** empirical weight calibration,…
+
+
+---
+_[Checkpoint: 6a330c9a — edited src/prompt_score.rs; edited src/prompt_score.rs; edited src/prompt_score.rs]_
+---
+
