@@ -872,11 +872,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited tests/env_integration.rs
 - [x] edited src/env.rs; edited src/env.rs; edited src/ctx.rs
 - [x] session ended (auto-checkpoint)
+- [x] Coordinated Prompt maturity score design with Claude via h5i; locked offline weighted per-prompt design and removed aborted local draft before implementation.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-17 20:38 UTC] `prompt-score`: Coordinated Prompt maturity score design with Claude via h5i; locked offline weighted per-prompt design and removed aborted local draft before implementation.
 - [2026-06-17 20:37 UTC] `prompt-score`: session ended (auto-checkpoint)
 - [2026-06-16 02:20 UTC] `improve-shell`: edited src/env.rs; edited src/env.rs; edited src/ctx.rs
 - [2026-06-16 02:07 UTC] `improve-shell`: Merged branch 'env/human/test-inspect'
