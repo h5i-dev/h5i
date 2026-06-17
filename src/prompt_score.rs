@@ -1235,15 +1235,24 @@ mod tests {
     }
 
     #[test]
-    fn balance_gate_blocks_context_free_specific_prompt() {
-        // Concrete + constrained but zero context/why — should cap at 69.
+    fn tactical_context_free_prompt_is_exempt_from_context_gate() {
+        // v1.1 end-to-end: this prompt is concrete AND bounded (tactical) but
+        // states no "why". The context gate must NOT cap it — verify the real
+        // feature profile is *exempt* (a high base score survives the gate),
+        // which is the opposite of the pre-v1.1 behavior.
         let s = score_prompt(
             "Edit `foo()` in src/a.rs and `bar()` in src/b.rs. Must return JSON. \
              Add tests. Do not change signatures. Only touch those two files.",
         );
-        if s.breakdown.context < 0.35 {
-            assert!(s.score <= 69.0, "expected cap, got {}", s.score);
-        }
+        assert!(s.breakdown.context < 0.35, "prompt should read as context-free");
+        assert!(
+            s.breakdown.specificity >= 0.6 && s.breakdown.control >= 0.5,
+            "prompt should qualify as tactical (spec {:.2}, control {:.2})",
+            s.breakdown.specificity,
+            s.breakdown.control,
+        );
+        // A high base score is NOT clamped to 69 for this tactical profile.
+        assert_eq!(apply_balance_gates(85.0, &s.breakdown), 85.0);
     }
 
     #[test]
