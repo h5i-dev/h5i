@@ -304,3 +304,4 @@ _[Checkpoint: 6a331783 — edited src/main.rs; edited src/repository.rs; edited 
 [22:00:20] OBSERVE: read .claude/skills/h5i-workflow/SKILL.md
 [22:00:24] ACT: edited .claude/skills/h5i-workflow/SKILL.md
 [22:01:07] THINK: On it. Renaming `--prompt` → `--intent` is a CLI change, so I'll keep `--prompt` as a backward-compat alias (Codex scripts and existing automation use it).
+[22:01:07] THINK: Let me confirm the build still compiles (ctx.
