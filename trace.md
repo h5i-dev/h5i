@@ -413,3 +413,9 @@ _[Checkpoint: 6a332f03 — edited tests/cli_integration.rs; edited tests/cli_int
 _[Checkpoint: 6a33303a — edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited .claude/settings.json]_
 ---
 
+
+
+---
+_[Checkpoint: 6a33310c — edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited .claude/settings.json]_
+---
+
