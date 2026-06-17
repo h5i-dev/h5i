@@ -318,3 +318,9 @@ _[Checkpoint: 6a33196d — edited .claude/h5i.md; edited src/ctx.rs; edited .cla
 ---
 
 [22:51:01] THINK: The h5i metadata (provenance, context snapshot) lives in `refs/h5i/*` and isn't pushed by plain `git push` — let me know if you want me to `h5i share push` it or open a PR.
+
+
+---
+_[Checkpoint: 6a3324d5 — edited .claude/h5i.md; edited src/ctx.rs; edited .claude/skills/h5i-workflow/SKILL.md]_
+---
+
