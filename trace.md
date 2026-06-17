@@ -59,3 +59,9 @@ _[Checkpoint: 6a3305df — edited /home/koukyosyumei/Dev/h5i/src/pr.rs; edited /
 [20:42:22] ACT: wrote src/prompt_score.rs
 [20:42:44] ACT: edited src/prompt_score.rs
 [20:42:52] THINK: Let me rewrite `extract` to build the struct explicitly, and register the module.
+
+
+---
+_[Checkpoint: 6a3306cc — deleted /home/koukyosyumei/Dev/h5i/src/prompt_score.rs; wrote src/prompt_score.rs; edited src/prompt_score.rs]_
+---
+
