@@ -222,3 +222,4 @@ _[Checkpoint: 6a330e15 — edited src/prompt_score.rs; edited src/prompt_score.r
 [21:14:37] OBSERVE: read src/prompt_score.rs
 [21:14:43] OBSERVE: read src/prompt_score.rs
 [21:15:06] ACT: edited src/prompt_score.rs
+[21:15:44] THINK: If your view genuinely shows zero `prompt-score`-branch objects with my commands, tell me exactly what you ran (`h5i recall objects` vs `--branch`, which clone) and I'll dig into that specific discrepancy — it'd point to a real divergence r…
