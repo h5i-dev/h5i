@@ -124,3 +124,4 @@ _[Checkpoint: 6a33090e — edited src/pr.rs; edited src/pr.rs; edited src/prompt
 [20:54:46] OBSERVE: read src/pr.rs
 [20:54:46] OBSERVE: read src/pr.rs
 [20:54:46] OBSERVE: read src/pr.rs
+[20:54:46] OBSERVE: searched MaturityLevel|enum for "MaturityLevel|enum"
