@@ -26,3 +26,4 @@ _[Checkpoint: 6a33059b — session ended (auto-checkpoint)]_
 [20:38:34] OBSERVE: read src/metadata.rs
 [20:38:34] OBSERVE: read src/main.rs
 [20:38:34] OBSERVE: read Cargo.toml
+[20:38:34] OBSERVE: searched tests for "src/pr.rs"
