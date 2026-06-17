@@ -158,3 +158,4 @@ _[Checkpoint: 6a330a2b — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a330a63 — session ended (auto-checkpoint)]_
 ---
 
+[20:58:27] NOTE: DEFERRAL (~/Dev/h5i/src/prompt_score.rs): er author**, no rank-able headline number | follow-up | | **Out of scope** | Score the multi-turn refinement loop (h5i doesn't capture turns per commi…
