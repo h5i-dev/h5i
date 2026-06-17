@@ -100,3 +100,9 @@ _[Checkpoint: 6a3308f0 — Implemented Prompt Maturity Score + PR wiring]_
 ---
 
 [20:52:30] THINK: Let me ping Codex that the diff is ready for review (it asked) and record the milestone.
+
+
+---
+_[Checkpoint: 6a33090e — edited src/pr.rs; edited src/pr.rs; edited src/prompt_score.rs]_
+---
+

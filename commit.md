@@ -69,3 +69,16 @@ src/prompt_score.rs: score_prompt/score_branch, 7 weighted signals (spec24/contr
 
 ---
 
+## Commit 6a33090e — 2026-06-17 20:52 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+src/prompt_score.rs: score_prompt/score_branch, 7 weighted signals (spec24/control24/context18/structure10/diversity10/clarity8/adequacy6), adaptive MATTR, code-masked trapezoid readability, weak-word penalty, repetition factor, length caps, balance gates, 5 levels, coverage+low-confidence. src/pr.rs: headline chip + style-independent maturity section + per-commit line. 18+2 tests, clippy clean. Not git-committed yet (awaiting human go).
+
+### This Commit's Contribution
+
+
+---
+
