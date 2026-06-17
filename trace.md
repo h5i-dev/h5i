@@ -439,3 +439,9 @@ _[Checkpoint: 6a33310c — edited tests/cli_integration.rs; edited tests/cli_int
 [23:52:07] OBSERVE: searched tests/cli_integration.rs for ".*human|captured|intent""
 [23:52:07] ACT: edited /home/koukyosyumei/Dev/h5i/src/repository.rs
 [23:52:07] ACT: edited /home/koukyosyumei/Dev/h5i/tests/cli_integration.rs
+
+
+---
+_[Checkpoint: 6a333355 — Added Message label to h5i recall log output and pinned it in CLI integration coverage.]_
+---
+
