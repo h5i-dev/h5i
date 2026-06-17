@@ -114,3 +114,4 @@ _[Checkpoint: 6a33090e — edited src/pr.rs; edited src/pr.rs; edited src/prompt
 [20:54:45] OBSERVE: searched score_prompt|pub for "fn"
 [20:54:45] OBSERVE: read src/prompt_score.rs
 [20:54:45] OBSERVE: read src/prompt_score.rs
+[20:54:45] OBSERVE: read src/pr.rs
