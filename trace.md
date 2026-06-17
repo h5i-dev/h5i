@@ -106,3 +106,4 @@ _[Checkpoint: 6a3308f0 — Implemented Prompt Maturity Score + PR wiring]_
 _[Checkpoint: 6a33090e — edited src/pr.rs; edited src/pr.rs; edited src/prompt_score.rs]_
 ---
 
+[20:54:45] OBSERVE: searched src/prompt_score.rs for "maturity|PromptScore|score_prompt|score_branch|mattr|readability|cap69|coverage|nalabs|Femmer""
