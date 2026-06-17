@@ -192,3 +192,4 @@ _[Checkpoint: 6a330a9c — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a330c14 — Prompt-score v1.1: softened context gate + honesty wording]_
 ---
 
+[21:05:34] THINK: Let me find a cleaner (less repetitive, higher-clarity) tactical prompt that pushes above 69.
