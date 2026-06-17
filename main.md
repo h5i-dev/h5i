@@ -905,11 +905,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited tests/cli_integration.rs
 - [x] edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited .claude/settings.json
 - [x] edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited .claude/settings.json
+- [x] Added Message label to h5i recall log output and pinned it in CLI integration coverage.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-17 23:52 UTC] `prompt-score`: Added Message label to h5i recall log output and pinned it in CLI integration coverage.
 - [2026-06-17 23:43 UTC] `prompt-score`: edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited .claude/settings.json
 - [2026-06-17 23:39 UTC] `prompt-score`: edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited .claude/settings.json
 - [2026-06-17 23:34 UTC] `prompt-score`: edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited tests/cli_integration.rs
