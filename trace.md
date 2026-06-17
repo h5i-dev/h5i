@@ -301,3 +301,4 @@ _[Checkpoint: 6a331783 — edited src/main.rs; edited src/repository.rs; edited 
 [21:58:03] ACT: edited .claude/h5i.md
 [22:00:04] OBSERVE: read src/ctx.rs
 [22:00:10] ACT: edited src/ctx.rs
+[22:00:20] OBSERVE: read .claude/skills/h5i-workflow/SKILL.md
