@@ -26,6 +26,7 @@ pub mod metadata;
 pub mod msg;
 pub mod objects;
 pub mod pr;
+pub mod prompt_score;
 pub mod radio;
 pub mod recap;
 pub mod sandbox;

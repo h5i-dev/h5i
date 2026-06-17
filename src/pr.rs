@@ -458,6 +458,10 @@ struct Aggregates {
     tests_passing: usize,
     tests_failing: usize,
     flagged_count: usize,
+    /// Prompt-maturity roll-up over every AI-commit prompt on the branch.
+    /// `None` when no AI commit carried a non-empty prompt — the section
+    /// self-omits rather than showing a meaningless zero.
+    prompt_score: Option<crate::prompt_score::BranchPromptScore>,
 }
 
 /// Strings extracted from the context workspace + commit decisions to feed
@@ -665,6 +669,12 @@ pub fn render_body_with_options(
         PrStyle::Review => body.push_str(&render_hero_review(&aggregates, &hero, &dag, &secret_rows, &dup_rows)),
     }
 
+    // 🧠 Prompt maturity — how well the engineer prompted the agent. Rendered
+    // for every style right under the hero; self-omits when nothing scorable.
+    if let Some(ps) = aggregates.prompt_score.as_ref() {
+        body.push_str(&render_prompt_maturity_section(ps));
+    }
+
     // Pass callouts. Security gets its own prominent `[!TIP]` callout
     // whenever the scan was clean — this is the marquee positive signal in
     // the comment and must be loud enough to be screenshot-able. Duplicate-
@@ -720,6 +730,7 @@ fn compute_aggregates(
         tests_passing: 0,
         tests_failing: 0,
         flagged_count: 0,
+        prompt_score: None,
     };
     // We accumulate cost into a separate variable rather than directly into
     // `a.estimated_cost_usd` so we can distinguish "we never priced anything"
@@ -759,6 +770,21 @@ fn compute_aggregates(
     }
     if cost_seen {
         a.estimated_cost_usd = Some(cost_total);
+    }
+
+    // Prompt maturity — score every AI-commit prompt and roll up. `ai_count` is
+    // the coverage denominator so a branch where most AI commits carried no
+    // prompt reads as low-confidence rather than over-confident.
+    if a.ai_count > 0 {
+        let prompts: Vec<&str> = records
+            .iter()
+            .filter_map(|r| r.ai_metadata.as_ref())
+            .map(|m| m.prompt.as_str())
+            .collect();
+        let branch = crate::prompt_score::score_branch(prompts, a.ai_count);
+        if !branch.is_empty() {
+            a.prompt_score = Some(branch);
+        }
     }
     a
 }
@@ -902,6 +928,82 @@ fn collect_hero_inputs(
     }
 }
 
+// ── Prompt maturity ──────────────────────────────────────────────────────────
+//
+// A style-independent block rendered for every PR style (right under the hero):
+// how well the engineer prompted the agent across this branch. Computed offline
+// by `crate::prompt_score` — no LLM. Self-omits when there's nothing to score.
+
+/// A 10-cell unicode meter for a `0.0..=1.0` value.
+fn score_bar(v: f64) -> String {
+    let filled = (v.clamp(0.0, 1.0) * 10.0).round() as usize;
+    let mut bar = String::with_capacity(10);
+    for i in 0..10 {
+        bar.push(if i < filled { '█' } else { '░' });
+    }
+    bar
+}
+
+/// Render the "Prompt maturity" section from the branch roll-up. Leads with a
+/// `[!NOTE]` headline (score · level · coverage), then a collapsible per-signal
+/// breakdown so the headline stays screenshot-clean while the detail is one
+/// click away.
+fn render_prompt_maturity_section(ps: &crate::prompt_score::BranchPromptScore) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::new();
+
+    let pct = ps.score.round() as i64;
+    let coverage_pct = (ps.coverage * 100.0).round() as i64;
+    let _ = writeln!(
+        s,
+        "> [!NOTE]\n> {} **Prompt maturity: {}/100** · _{}_ · {} prompt{} scored ({}% of AI commits)",
+        ps.level.emoji(),
+        pct,
+        ps.level.label(),
+        ps.scored_prompts,
+        plural_s(ps.scored_prompts),
+        coverage_pct,
+    );
+    if ps.low_confidence {
+        let _ = writeln!(
+            s,
+            "> ⚠️ _Low confidence — only {}% of AI commits carried a prompt to score._",
+            coverage_pct,
+        );
+    }
+    if !ps.flags.is_empty() {
+        let flags: Vec<&str> = ps.flags.iter().map(|f| f.label()).collect();
+        let _ = writeln!(s, "> 🔧 _Recurring weak spots: {}._", flags.join(", "));
+    }
+    s.push('\n');
+
+    // Collapsible per-signal breakdown. The order matches the weight ranking so
+    // the signals that move the score most are read first.
+    let b = &ps.breakdown;
+    let rows: [(&str, f64); 7] = [
+        ("Specificity", b.specificity),
+        ("Control / acceptance", b.control),
+        ("Context grounding", b.context),
+        ("Structure", b.structure),
+        ("Lexical diversity", b.diversity),
+        ("Clarity (readability band)", b.clarity),
+        ("Length adequacy", b.adequacy),
+    ];
+    s.push_str("<details><summary>📊 maturity breakdown</summary>\n\n");
+    s.push_str("| Dimension | Signal |\n|---|---|\n");
+    for (name, v) in rows {
+        let _ = writeln!(s, "| {} | `{}` {:.2} |", name, score_bar(v), v);
+    }
+    let _ = writeln!(
+        s,
+        "\n_Readability (display-only): Flesch {:.0} · FK grade {:.1} · Gunning Fog {:.1}_",
+        b.flesch_reading_ease, b.fk_grade, b.gunning_fog,
+    );
+    s.push_str("\n_Offline classical-NLP score — no LLM. Higher = more specific, bounded, and grounded prompting._\n");
+    s.push_str("</details>\n\n");
+    s
+}
+
 // ── Style: Receipt ───────────────────────────────────────────────────────────
 //
 // The default layout. Optimised for the *screenshot* — the part of the
@@ -950,6 +1052,9 @@ fn render_hero_receipt(
             hero.dag_stats.files_touched,
             plural_s(hero.dag_stats.files_touched)
         ));
+    }
+    if let Some(ps) = agg.prompt_score.as_ref() {
+        headline_parts.push(format!("prompt {}/100", ps.score.round() as i64));
     }
     if headline_parts.is_empty() {
         // No AI commits at all — fall back to a neutral title so we never emit
@@ -2364,6 +2469,20 @@ fn render_per_commit_section(
             escape_md(&first_line(&r.git_oid, repo))
         );
         let _ = writeln!(s, "- **prompt** — _{}_", escape_md(&truncate(&ai.prompt, 280)));
+        if !ai.prompt.trim().is_empty() {
+            let pscore = crate::prompt_score::score_prompt(&ai.prompt);
+            let mut line = format!(
+                "  - {} **prompt maturity** {}/100 _{}_",
+                pscore.level.emoji(),
+                pscore.score.round() as i64,
+                pscore.level.label(),
+            );
+            if !pscore.flags.is_empty() {
+                let flags: Vec<&str> = pscore.flags.iter().map(|f| f.label()).collect();
+                let _ = write!(line, " — {}", flags.join(", "));
+            }
+            let _ = writeln!(s, "{}", line);
+        }
         let mut line = format!("- **model** `{}` · **agent** `{}`", ai.model_name, ai.agent_id);
         if let Some(u) = ai.usage.as_ref() {
             let _ = write!(line, " · **{}** tokens", u.total_tokens);
@@ -3087,6 +3206,7 @@ mod tests {
             tests_passing: 2,
             tests_failing: 0,
             flagged_count: 0,
+            prompt_score: None,
         }
     }
 
@@ -3162,6 +3282,7 @@ mod tests {
             tests_passing: 0,
             tests_failing: 0,
             flagged_count: 0,
+            prompt_score: None,
         };
         let body = render_hero_receipt(&agg, &empty, &[], &[]);
         // Empty data → neutral H1 fallback so we never emit a bare emoji header.
@@ -3169,6 +3290,38 @@ mod tests {
         assert!(!body.contains("Goal:"));
         assert!(!body.contains("Milestones"));
         assert!(!body.contains("Triggering prompt"));
+    }
+
+    #[test]
+    fn prompt_maturity_section_renders_headline_and_breakdown() {
+        let ps = crate::prompt_score::score_branch(
+            vec![
+                "Refactor `parse_range()` in src/util.rs to fix the off-by-one when the \
+                 upper bound is inclusive. Add a unit test for the empty-range case and \
+                 ensure existing tests pass. Do not change the public signature.",
+                "fix it",
+            ],
+            2,
+        );
+        let out = render_prompt_maturity_section(&ps);
+        assert!(out.contains("Prompt maturity:"), "{out}");
+        assert!(out.contains("/100"));
+        assert!(out.contains("prompts scored"));
+        assert!(out.contains("maturity breakdown"));
+        assert!(out.contains("Specificity"));
+        assert!(out.contains("Flesch"));
+    }
+
+    #[test]
+    fn prompt_maturity_low_coverage_warns() {
+        // 1 prompt scored out of 5 AI commits → low confidence caveat.
+        let ps = crate::prompt_score::score_branch(
+            vec!["Add a test for `foo()` in src/foo.rs covering the empty input case."],
+            5,
+        );
+        let out = render_prompt_maturity_section(&ps);
+        assert!(ps.low_confidence);
+        assert!(out.contains("Low confidence"), "{out}");
     }
 
     #[test]
