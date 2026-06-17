@@ -212,3 +212,4 @@ _[Checkpoint: 6a330c1e — edited src/prompt_score.rs; edited src/prompt_score.r
 _[Checkpoint: 6a330c9a — edited src/prompt_score.rs; edited src/prompt_score.rs; edited src/prompt_score.rs]_
 ---
 
+[21:13:57] THINK: Good catch — let me investigate the hook configuration rather than guess.
