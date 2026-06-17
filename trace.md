@@ -201,3 +201,4 @@ _[Checkpoint: 6a330c14 — Prompt-score v1.1: softened context gate + honesty wo
 _[Checkpoint: 6a330c1e — edited src/prompt_score.rs; edited src/prompt_score.rs; edited src/prompt_score.rs]_
 ---
 
+[21:07:34] OBSERVE: searched breakdown|test for "signal|heuristic"
