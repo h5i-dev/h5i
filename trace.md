@@ -372,3 +372,4 @@ _[Checkpoint: 6a332c26 — session ended (auto-checkpoint)]_
 [23:30:02] OBSERVE: read src/repository.rs
 [23:30:38] OBSERVE: read tests/cli_integration.rs
 [23:30:57] OBSERVE: read src/hooks.rs
+[23:31:11] OBSERVE: read src/metadata.rs
