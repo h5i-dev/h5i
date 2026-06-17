@@ -367,6 +367,10 @@ fn prompt_hook_capture_wins_over_agent_intent() {
         "commit should record the captured human prompt: {s}"
     );
     assert!(
+        s.contains("Message:"),
+        "log output should mark where the commit message begins: {s}"
+    );
+    assert!(
         !s.contains("agent paraphrase that should not win"),
         "agent intent must not override the captured human prompt: {s}"
     );

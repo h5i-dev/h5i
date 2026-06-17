@@ -641,7 +641,8 @@ impl H5iRepository {
                     );
                 }
             }
-            println!("\n    {}\n", style(commit.message().unwrap_or("")).bold());
+            println!("{:<10}", style("Message:").dim());
+            println!("    {}\n", style(commit.message().unwrap_or("")).bold());
             println!("{}", style("─".repeat(60)).dim());
         }
         Ok(())
