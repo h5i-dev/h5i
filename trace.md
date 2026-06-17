@@ -195,3 +195,9 @@ _[Checkpoint: 6a330c14 — Prompt-score v1.1: softened context gate + honesty wo
 [21:05:34] THINK: Let me find a cleaner (less repetitive, higher-clarity) tactical prompt that pushes above 69.
 [21:05:34] THINK: Now let me remove the throwaway probe file (only that file — not the tracked `examples/` dir), then build, clippy, and test.
 [21:05:34] THINK: The design changed, so let me refresh the pinned claim (the old one's gate description is now stale).
+
+
+---
+_[Checkpoint: 6a330c1e — edited src/prompt_score.rs; edited src/prompt_score.rs; edited src/prompt_score.rs]_
+---
+

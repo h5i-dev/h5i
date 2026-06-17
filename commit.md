@@ -199,3 +199,16 @@ Critique loop with codex over i5h concluded index is heuristic-v1 not optimal. A
 
 ---
 
+## Commit 6a330c1e — 2026-06-17 21:05 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+Critique loop with codex over i5h concluded index is heuristic-v1 not optimal. Applied agreed DO-NOW: apply_balance_gates() exempts specific+bounded tactical prompts from context cap (+5 tests); PR disclaimer 'not a developer rating' + 'heuristic breakdown'; calibration TODO naming outcome signals (no schema change). Deferred v2: empirical weights, geometric form, trend dashboard, multi-turn unit. Commit 90733435.
+
+### This Commit's Contribution
+
+
+---
+
