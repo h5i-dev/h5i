@@ -14,6 +14,9 @@ const CORE_HOOKS: &[(&str, Option<&str>, &str)] = &[
     ("SessionStart", None, "h5i hook session-start"),
     ("PostToolUse", Some("Edit|Write|Read"), "h5i hook run"),
     ("Stop", None, "h5i hook stop"),
+    // Capture the verbatim human prompt so `h5i capture commit` records what
+    // the human actually typed, not the agent's paraphrase.
+    ("UserPromptSubmit", None, "h5i hook prompt"),
 ];
 
 /// The opt-in Bash capture-wrap entry (PreToolUse: rewrites the command
@@ -117,6 +120,11 @@ pub fn merge_codex_config_toml(existing: &str, wrap_bash: bool) -> Result<String
         .ok_or_else(|| H5iError::Metadata("config 'hooks' is not a table".into()))?;
 
     for &(event, matcher, command) in CORE_HOOKS {
+        // UserPromptSubmit is a Claude-Code-only event; Codex has no equivalent,
+        // so skip it rather than write dead config into config.toml.
+        if event == "UserPromptSubmit" {
+            continue;
+        }
         ensure_toml_hook_entry(hooks_table, event, matcher, command)?;
     }
     if let Some(arr) = hooks_table
@@ -339,6 +347,10 @@ mod tests {
         );
         assert_eq!(commands_under(&v, "PostToolUse"), vec!["h5i hook run"]);
         assert_eq!(commands_under(&v, "Stop"), vec!["h5i hook stop"]);
+        assert_eq!(
+            commands_under(&v, "UserPromptSubmit"),
+            vec!["h5i hook prompt"]
+        );
         assert!(!out.contains("wrap-bash"));
         // The Edit|Write|Read matcher rides along with `h5i hook run`.
         assert_eq!(
@@ -375,7 +387,7 @@ mod tests {
         // (managed scope pins observation, it does not commandeer the agent's
         // own SessionStart/PostToolUse/Stop wiring).
         assert_eq!(commands_under(&v, "PreToolUse"), vec!["h5i hook wrap-bash"]);
-        for event in ["SessionStart", "PostToolUse", "Stop"] {
+        for event in ["SessionStart", "PostToolUse", "Stop", "UserPromptSubmit"] {
             assert!(
                 v.pointer(&format!("/hooks/{event}")).is_none(),
                 "managed settings must not carry the {event} core hook"
@@ -409,6 +421,9 @@ command = "h5i msg hook"
         assert!(out.contains("command = \"h5i hook stop\""));
         assert!(out.contains("command = \"h5i msg hook\""));
         assert!(!out.contains("wrap-bash"));
+        // UserPromptSubmit is Claude-only; Codex config must not carry it.
+        assert!(!out.contains("UserPromptSubmit"));
+        assert!(!out.contains("h5i hook prompt"));
     }
 
     #[test]

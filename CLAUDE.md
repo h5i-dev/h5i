@@ -44,7 +44,10 @@ CI runs clippy (`-D warnings`), `cargo build --verbose` then `cargo test --verbo
 ```
 h5i init
 h5i session --file <path>
-h5i capture commit --message <msg> [--prompt <text>] [--model <name>] [--agent <id>] [--tests] [--ast] [--audit] [--force]
+h5i capture commit --message <msg> [--intent <text>] [--model <name>] [--agent <id>] [--tests] [--ast] [--audit] [--force]
+                                   # --intent is a fallback (Codex/CI/manual); in Claude Code the
+                                   # human prompt is auto-captured by the UserPromptSubmit hook.
+                                   # (--prompt is a back-compat alias for --intent.)
 h5i recall log [--limit N]
 h5i recall blame <file> [--mode line|ast]
 h5i resolve <ours> <theirs> <file>

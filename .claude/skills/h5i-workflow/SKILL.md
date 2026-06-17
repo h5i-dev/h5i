@@ -126,8 +126,9 @@ Always use `h5i capture commit` instead of `git commit`, and record AI provenanc
 ```bash
 h5i capture commit -m "<message>" \
   --model claude-opus-4-8 \
-  --agent claude-code \
-  --prompt "<the user's original request>"
+  --agent claude-code
+# Do not pass --intent in Claude Code: the human prompt is auto-captured by the
+# UserPromptSubmit hook and takes precedence. --intent is a fallback for Codex/CI.
 ```
 
 Add `--tests` when tests were added or modified, `--ast` to snapshot structure,

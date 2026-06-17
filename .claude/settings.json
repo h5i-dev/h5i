@@ -36,6 +36,16 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "h5i hook prompt",
+            "type": "command"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

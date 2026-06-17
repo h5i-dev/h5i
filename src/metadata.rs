@@ -375,6 +375,14 @@ pub struct PendingContext {
     pub model: Option<String>,
     pub agent_id: Option<String>,
     pub session_id: Option<String>,
+    /// Verbatim human prompt(s) captured by the `UserPromptSubmit` hook,
+    /// accumulated across turns since the last commit. This is the *raw* text
+    /// the human typed — not an agent paraphrase — and it wins over the
+    /// agent-authored `--prompt`/`$H5I_PROMPT` at commit time, so provenance
+    /// records what the human actually asked. `#[serde(default)]` keeps older
+    /// pending files (written before this field existed) parseable.
+    #[serde(default)]
+    pub human_prompt: Option<String>,
 }
 
 pub fn count_tokens(text: &str, model: &str) -> Result<usize, String> {

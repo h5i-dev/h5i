@@ -89,8 +89,14 @@ git add <file1> <file2> …   # never `git add .`
 
 Then commit via Bash:
 ```bash
-h5i capture commit -m "…" --model claude-sonnet-4-6 --agent claude-code --prompt "…"
+h5i capture commit -m "…" --model claude-sonnet-4-6 --agent claude-code
 ```
+
+**Do not pass `--intent` (or the old `--prompt`).** In Claude Code the verbatim
+human prompt is captured automatically by the `UserPromptSubmit` hook and wins
+over any agent-supplied intent — write a clear commit message and let the hook
+record what the human actually asked. `--intent` stays as a fallback only for
+Codex, CI, scripts, or manual commits where no prompt-capture hook runs.
 
 (Or the `h5i_commit` MCP tool if the MCP server is configured.)
 

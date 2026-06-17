@@ -3721,8 +3721,10 @@ h5i context commit "Fixed token validation" \
 
 # ── Session end (mandatory) ─────────────────────────────────────────
 h5i commit -m "fix token validation regex" \
-  --model <model> --agent claude-code \
-  --prompt "<the user's original request>"    # records AI provenance in git
+  --model <model> --agent claude-code         # records AI provenance in git;
+                                              # the human prompt is auto-captured
+                                              # by the UserPromptSubmit hook, so no
+                                              # --intent is needed in Claude Code
 h5i notes analyze                             # links this session to HEAD commit
 ```
 
