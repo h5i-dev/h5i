@@ -8,7 +8,7 @@
       {
         "hooks": [
           {
-            "command": "h5i hook run",
+            "command": "h5i claude sync",
             "type": "command"
           }
         ],
@@ -36,16 +36,6 @@
         ]
       }
     ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "command": "h5i hook prompt",
-            "type": "command"
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
@@ -58,7 +48,17 @@
       {
         "hooks": [
           {
-            "command": "h5i hook stop",
+            "command": "h5i claude finish",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "h5i hook prompt",
             "type": "command"
           }
         ]
