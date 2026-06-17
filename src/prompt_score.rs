@@ -61,6 +61,17 @@ use std::collections::{HashMap, HashSet};
 
 // ── Weights ──────────────────────────────────────────────────────────────────
 
+// TODO(empirical-calibration, v2): these weights — and the gate thresholds in
+// `score_prompt` — are *normative* (hand-tuned, locked with codex). They are an
+// explainable proxy, not a validated model. The `PromptScoreBreakdown` features
+// are already exposed per prompt, so a future PR can join them against h5i's
+// existing per-commit outcome signals — test pass/fail (`metadata::TestMetrics`),
+// review-flag score (`ReviewPoint`), diff churn, and later reverts — over a real
+// commit corpus and *learn* / validate these weights while keeping the features
+// explainable. Do NOT regress from a tiny biased sample: that needs a corpus and
+// confound controls (a senior writes good prompts AND good code). No durable
+// schema change belongs here — feature persistence is its own design.
+
 /// Relative weights of the seven sub-signals. Sums to 1.0 (asserted in tests).
 /// Specificity and control dominate (they are what a manager actually wants to
 /// see — "the engineer was concrete and bounded the agent"); the
@@ -302,12 +313,7 @@ pub fn score_prompt(prompt: &str) -> PromptScore {
     score *= f.repetition_factor;
 
     // (2) Balance gates — you cannot look mature on one axis alone.
-    if breakdown.context < 0.35 || breakdown.control < 0.35 {
-        score = score.min(69.0);
-    }
-    if breakdown.specificity < 0.45 {
-        score = score.min(79.0);
-    }
+    score = apply_balance_gates(score, &breakdown);
 
     // (3) Hard length caps — short prompts can't score high no matter how many
     //     keywords they pack.
@@ -1064,6 +1070,34 @@ fn clarity_band(fk_grade: f64, flesch: f64, words: usize) -> f64 {
     ((grade_fit + flesch_fit) / 2.0).clamp(0.0, 1.0)
 }
 
+/// Balance gates (v1.1, locked with the codex agent over i5h). You cannot look
+/// mature on one axis alone, but the policy distinguishes the two specification
+/// axes:
+///
+/// * `control` — *did the engineer bound the agent?* — is a **hard gate**: a
+///   prompt that sets no constraints / acceptance criteria is capped below
+///   "advanced" regardless of how concrete it is.
+/// * `context` — *did they explain why?* — is **soft**: a prompt that is already
+///   both specific (`>=0.6`) and bounded (`control>=0.5`) is a legitimate
+///   *tactical* ask ("run `cargo test`, fix the clippy warning in `src/foo.rs`")
+///   and must not be dragged into mediocrity merely for omitting background —
+///   the agent often already holds the repo / h5i context. Weak context still
+///   surfaces as a flag; it just no longer hard-caps a crisp tactical prompt.
+///
+/// A low specificity additionally caps at 79 (you can't be "exemplary" while
+/// vague).
+fn apply_balance_gates(score: f64, b: &PromptScoreBreakdown) -> f64 {
+    let tactical = b.specificity >= 0.6 && b.control >= 0.5;
+    let mut s = score;
+    if b.control < 0.35 || (b.context < 0.35 && !tactical) {
+        s = s.min(69.0);
+    }
+    if b.specificity < 0.45 {
+        s = s.min(79.0);
+    }
+    s
+}
+
 /// Trapezoid membership: 0 outside `[min,max]`, 1 on the `[ideal_min,ideal_max]`
 /// plateau, linear on the shoulders.
 fn trapezoid(v: f64, min: f64, ideal_min: f64, ideal_max: f64, max: f64) -> f64 {
@@ -1134,6 +1168,60 @@ mod tests {
         assert!(rich.breakdown.specificity > 0.4);
         assert!(rich.breakdown.control > 0.3);
         assert!(rich.level >= MaturityLevel::Proficient);
+    }
+
+    /// Build a breakdown with the three gate-relevant axes set and everything
+    /// else neutral — lets the gate policy be tested in isolation.
+    fn bd(specificity: f64, control: f64, context: f64) -> PromptScoreBreakdown {
+        PromptScoreBreakdown {
+            specificity,
+            control,
+            context,
+            ..PromptScoreBreakdown::zero()
+        }
+    }
+
+    #[test]
+    fn gate_control_is_a_hard_cap() {
+        // No constraints/acceptance → capped at 69 no matter how concrete.
+        assert_eq!(apply_balance_gates(90.0, &bd(0.9, 0.2, 0.9)), 69.0);
+    }
+
+    #[test]
+    fn gate_weak_context_caps_a_non_tactical_prompt() {
+        // Thin on both context and specificity → capped.
+        assert_eq!(apply_balance_gates(85.0, &bd(0.5, 0.6, 0.1)), 69.0);
+    }
+
+    #[test]
+    fn gate_exempts_specific_and_bounded_tactical_prompt() {
+        // v1.1: specific (>=.6) AND bounded (control>=.5) with weak context is a
+        // legitimate tactical ask — NOT capped for missing "why".
+        assert_eq!(apply_balance_gates(85.0, &bd(0.7, 0.6, 0.1)), 85.0);
+        // …but if control slips below .5 it's no longer tactical → capped again.
+        assert_eq!(apply_balance_gates(85.0, &bd(0.7, 0.45, 0.1)), 69.0);
+    }
+
+    #[test]
+    fn gate_low_specificity_caps_at_79() {
+        assert_eq!(apply_balance_gates(95.0, &bd(0.4, 0.9, 0.9)), 79.0);
+    }
+
+    #[test]
+    fn tactical_prompt_keeps_weak_context_flag() {
+        // The exemption must not hide the diagnostic — a concrete, bounded,
+        // context-free prompt should still *flag* weak context even though it's
+        // no longer hard-capped.
+        let s = score_prompt(
+            "Harden `Invoice::finalize()` in src/billing.rs in three steps:\n\
+             - Reject a zero-quantity item by returning `Err(BillingError::EmptyLine)`.\n\
+             - Round each subtotal to two decimals, then sanitize the note to drop \
+               control characters.\n\
+             - Add focused checks: an empty item, a rounding boundary, and a \
+               happy-path total; assert the exact cents. Keep the signature stable \
+               and edit only billing.rs.",
+        );
+        assert!(s.breakdown.specificity >= 0.6 && s.breakdown.control >= 0.5);
     }
 
     #[test]

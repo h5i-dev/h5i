@@ -975,6 +975,10 @@ fn render_prompt_maturity_section(ps: &crate::prompt_score::BranchPromptScore) -
         let flags: Vec<&str> = ps.flags.iter().map(|f| f.label()).collect();
         let _ = writeln!(s, "> 🔧 _Recurring weak spots: {}._", flags.join(", "));
     }
+    // Honesty disclaimer — this is an offline heuristic over prompt *text*, not
+    // an objective rating of the engineer. Stated inline so the number is never
+    // mistaken for a performance metric or a leaderboard rank.
+    s.push_str("> _Heuristic signal of prompt craft — not a developer rating._\n");
     s.push('\n');
 
     // Collapsible per-signal breakdown. The order matches the weight ranking so
@@ -989,7 +993,7 @@ fn render_prompt_maturity_section(ps: &crate::prompt_score::BranchPromptScore) -
         ("Clarity (readability band)", b.clarity),
         ("Length adequacy", b.adequacy),
     ];
-    s.push_str("<details><summary>📊 maturity breakdown</summary>\n\n");
+    s.push_str("<details><summary>📊 heuristic breakdown</summary>\n\n");
     s.push_str("| Dimension | Signal |\n|---|---|\n");
     for (name, v) in rows {
         let _ = writeln!(s, "| {} | `{}` {:.2} |", name, score_bar(v), v);
@@ -3307,9 +3311,11 @@ mod tests {
         assert!(out.contains("Prompt maturity:"), "{out}");
         assert!(out.contains("/100"));
         assert!(out.contains("prompts scored"));
-        assert!(out.contains("maturity breakdown"));
+        assert!(out.contains("heuristic breakdown"));
         assert!(out.contains("Specificity"));
         assert!(out.contains("Flesch"));
+        // Honesty disclaimer must be present so the number isn't read as a rating.
+        assert!(out.contains("not a developer rating"), "{out}");
     }
 
     #[test]
