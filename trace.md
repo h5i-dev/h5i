@@ -49,3 +49,4 @@ _[Checkpoint: 6a33059b — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a3305db — Coordinated Prompt maturity score design with Claude via h5i; locked offline weighted per-prompt design and removed aborted local draft before implementation.]_
 ---
 
+[20:38:55] THINK: The waiter wakes me when a reply lands (600s timeout); if Codex is offline I'll let you know rather than proceeding unilaterally.
