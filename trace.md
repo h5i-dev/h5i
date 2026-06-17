@@ -186,3 +186,9 @@ _[Checkpoint: 6a330a9c — session ended (auto-checkpoint)]_
 [21:02:57] ACT: edited src/prompt_score.rs
 [21:03:07] ACT: edited src/prompt_score.rs
 [21:04:21] ACT: edited src/prompt_score.rs
+
+
+---
+_[Checkpoint: 6a330c14 — Prompt-score v1.1: softened context gate + honesty wording]_
+---
+
