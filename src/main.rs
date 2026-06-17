@@ -663,7 +663,7 @@ enum Commands {
 
         /// The agent's stated intent for this change (the ask being fulfilled).
         /// Optional fallback: in Claude Code the verbatim human prompt is
-        /// captured automatically by the `h5i hook prompt` (UserPromptSubmit)
+        /// captured automatically by the `h5i claude prompt` (UserPromptSubmit)
         /// hook and takes precedence, so you normally don't pass this. Provide it
         /// for Codex, CI, scripts, or manual commits where no prompt-capture hook
         /// runs. `--prompt` is kept as a backward-compatible alias.
@@ -2222,15 +2222,6 @@ enum HookCommands {
     /// Register in .claude/settings.json under "PreToolUse" with matcher "Bash".
     WrapBash,
 
-    /// Run as the UserPromptSubmit handler: reads the hook JSON from stdin and
-    /// records the *verbatim* human prompt into `.git/.h5i/pending_context.json`,
-    /// accumulating across turns. `h5i capture commit` then uses this raw human
-    /// prompt as the recorded prompt — it wins over an agent-authored `--intent`
-    /// — so AI provenance reflects what the human actually asked rather than the
-    /// agent's paraphrase. No-ops outside an h5i-initialized repo and fails open
-    /// on any error, so it never blocks the turn.
-    /// Register in .claude/settings.json under "UserPromptSubmit" hooks.
-    Prompt,
 }
 
 #[derive(Subcommand)]
@@ -2240,6 +2231,16 @@ enum ClaudeCommands {
 
     /// Run as Claude Code's Stop handler: mines reasoning and checkpoints context.
     Finish,
+
+    /// Run as the UserPromptSubmit handler: reads the hook JSON from stdin and
+    /// records the *verbatim* human prompt into `.git/.h5i/pending_context.json`,
+    /// accumulating across turns. `h5i capture commit` then uses this raw human
+    /// prompt as the recorded prompt — it wins over an agent-authored `--intent`
+    /// — so AI provenance reflects what the human actually asked rather than the
+    /// agent's paraphrase. No-ops outside an h5i-initialized repo and fails open
+    /// on any error, so it never blocks the turn.
+    /// Register in .claude/settings.json under "UserPromptSubmit" hooks.
+    Prompt,
 }
 
 #[derive(Subcommand)]
@@ -6577,7 +6578,7 @@ fn main() -> anyhow::Result<()> {
                         "   {} prompt capture (UserPromptSubmit → {}) is now wired; the MCP\n\
                          \x20    server stays manual — run {} for those instructions.",
                         style("→").dim(),
-                        style("h5i hook prompt").bold(),
+                        style("h5i claude prompt").bold(),
                         style("h5i hook setup").bold(),
                     );
                 }
@@ -6629,7 +6630,7 @@ fn main() -> anyhow::Result<()> {
         "hooks": [
           {
             "type": "command",
-            "command": "h5i hook prompt"
+            "command": "h5i claude prompt"
           }
         ]
       }
@@ -6951,7 +6952,9 @@ fn main() -> anyhow::Result<()> {
             );
         }
 
-        Commands::Hook(HookCommands::Prompt) => {
+        Commands::Claude {
+            action: ClaudeCommands::Prompt,
+        } => {
             use std::io::Read as _;
             // Read the UserPromptSubmit payload from stdin. Fail open on any
             // problem so we never block the human's turn (and emit no stdout,

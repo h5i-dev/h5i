@@ -299,6 +299,111 @@ fn commit_with_ai_provenance() {
     );
 }
 
+/// Feed a JSON payload to `h5i claude prompt` on stdin (the UserPromptSubmit
+/// handler), returning its output. Mirrors how Claude Code invokes the hook.
+fn run_prompt_hook(repo: &Repo, payload: &serde_json::Value) -> Output {
+    Command::new(H5I)
+        .args(["claude", "prompt"])
+        .current_dir(repo.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(stdin) = child.stdin.as_mut() {
+                let _ = stdin.write_all(payload.to_string().as_bytes());
+            }
+            child.wait_with_output()
+        })
+        .expect("claude prompt failed to spawn")
+}
+
+#[test]
+fn prompt_hook_capture_wins_over_agent_intent() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+
+    // The UserPromptSubmit hook fires with the verbatim human prompt.
+    let out = run_prompt_hook(
+        &repo,
+        &serde_json::json!({
+            "session_id": "sess-xyz",
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "fix the flaky retry loop in the client",
+        }),
+    );
+    assert!(
+        out.status.success() && !stderr(&out).contains("panic"),
+        "claude prompt failed: {}",
+        stderr(&out)
+    );
+
+    // Commit, passing an agent-authored intent that must LOSE to the captured
+    // human prompt.
+    fs::write(repo.path().join("client.rs"), "fn retry() {}").unwrap();
+    run_ok(
+        Command::new("git")
+            .args(["add", "client.rs"])
+            .current_dir(repo.path()),
+    );
+    repo.h5i_ok(&[
+        "commit",
+        "-m",
+        "harden retry",
+        "--model",
+        "claude-opus-4-8",
+        "--agent",
+        "claude-code",
+        "--intent",
+        "agent paraphrase that should not win",
+    ]);
+
+    // The recorded provenance prompt (surfaced by `h5i log`) must be the
+    // captured human prompt, not the agent's intent.
+    let s = stdout(&repo.h5i_ok(&["log", "--limit", "1"]));
+    assert!(
+        s.contains("fix the flaky retry loop in the client"),
+        "commit should record the captured human prompt: {s}"
+    );
+    assert!(
+        !s.contains("agent paraphrase that should not win"),
+        "agent intent must not override the captured human prompt: {s}"
+    );
+}
+
+#[test]
+fn agent_intent_used_when_no_human_prompt_captured() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+
+    // No UserPromptSubmit hook fired — the agent-supplied --intent is the
+    // fallback and should be recorded as the provenance prompt.
+    fs::write(repo.path().join("a.rs"), "fn main() {}").unwrap();
+    run_ok(
+        Command::new("git")
+            .args(["add", "a.rs"])
+            .current_dir(repo.path()),
+    );
+    repo.h5i_ok(&[
+        "commit",
+        "-m",
+        "add main",
+        "--model",
+        "claude-opus-4-8",
+        "--agent",
+        "claude-code",
+        "--intent",
+        "implement the entrypoint",
+    ]);
+
+    let s = stdout(&repo.h5i_ok(&["log", "--limit", "1"]));
+    assert!(
+        s.contains("implement the entrypoint"),
+        "agent intent should be recorded when no human prompt was captured: {s}"
+    );
+}
+
 // ─── log ────────────────────────────────────────────────────────────────────
 
 #[test]

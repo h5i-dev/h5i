@@ -58,7 +58,7 @@
       {
         "hooks": [
           {
-            "command": "h5i hook prompt",
+            "command": "h5i claude prompt",
             "type": "command"
           }
         ]
