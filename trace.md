@@ -266,3 +266,4 @@ _[Checkpoint: 6a331105 — edited src/prompt_score.rs; edited src/prompt_score.r
 [21:49:11] OBSERVE: read .claude/settings.json
 [21:49:18] ACT: edited .claude/settings.json
 [21:50:31] THINK: Let me set up task tracking and confirm the repo constructor.
+[21:50:31] THINK: Let me run the full lib test suite (constrained jobs per the WSL2 OOM note) to confirm nothing regressed:
