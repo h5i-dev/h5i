@@ -645,3 +645,4 @@ _[Checkpoint: 6a3344c2 — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 ---
 
 [01:15:38] OBSERVE: read src/msg.rs
+[01:16:02] OBSERVE: read docs/blog/claude-code-hooks-vs-git-hooks/index.html
