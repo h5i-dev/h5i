@@ -1160,3 +1160,4 @@ _[Checkpoint: 6a34821b — Rewrote README + docs site + pitch around Prompt Matu
 _[Checkpoint: 6a348231 — edited assets/pr-demo.svg; edited docs/features/index.html; edited docs/features/index.html]_
 ---
 
+[23:42:13] OBSERVE: read docs/index.html
