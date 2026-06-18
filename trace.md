@@ -722,3 +722,4 @@ _[Checkpoint: 6a3401d5 — Optimized prompt scoring + benchmark + tests]_
 ---
 
 [14:34:10] THINK: I'll add a **zero-dependency** benchmark as an example binary (runnable with `cargo run --release --example`), avoiding heavy dev-deps.
+[14:34:10] THINK: I'll add equivalence tests (optimized vs naive reference implementations) — these directly prove the refactor is behavior-identical — plus boundary and behavioral cases.
