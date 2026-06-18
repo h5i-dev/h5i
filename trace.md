@@ -673,3 +673,4 @@ _[Checkpoint: 6a334ba2 — edited docs/blog/persistent-memory-for-claude-code/in
 _[Checkpoint: 6a334e40 — edited docs/blog/persistent-memory-for-claude-code/index.html; edited src/hooks.rs; edited src/msg.rs]_
 ---
 
+[13:24:27] OBSERVE: read src/prompt_score.rs
