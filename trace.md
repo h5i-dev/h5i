@@ -928,3 +928,4 @@ _[Checkpoint: 6a342aa1 — Done #4: extracted pure policy vocabulary into sandbo
 [17:30:54] ACT: edited src/main.rs
 [17:31:09] OBSERVE: read src/main.rs
 [19:59:03] THINK: I'll sequence by risk: additive/surgical first (keep the build green the whole way), the big mechanical refactors last.
+[19:59:03] THINK: Clean check. Let me confirm exit code explicitly, then mark #1 done and move to the high-value item #2 (adversarial sandbox tests).
