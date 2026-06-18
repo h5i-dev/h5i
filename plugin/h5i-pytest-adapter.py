@@ -3,14 +3,14 @@
 h5i pytest adapter — runs pytest and writes h5i-compatible test results JSON.
 
 Usage (standalone):
-    python script/h5i-pytest-adapter.py [pytest-args...]
+    python plugin/h5i-pytest-adapter.py [pytest-args...]
 
 Usage (pipe into h5i commit):
-    python script/h5i-pytest-adapter.py -q > /tmp/h5i-results.json
+    python plugin/h5i-pytest-adapter.py -q > /tmp/h5i-results.json
     h5i commit -m "..." --test-results /tmp/h5i-results.json
 
 Usage (one-liner with --test-cmd):
-    h5i commit -m "..." --test-cmd "python script/h5i-pytest-adapter.py -q"
+    h5i commit -m "..." --test-cmd "python plugin/h5i-pytest-adapter.py -q"
 
 Environment variables:
     H5I_TEST_OUTPUT   Path where the JSON is written (default: stdout).

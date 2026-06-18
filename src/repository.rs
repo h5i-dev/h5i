@@ -1252,8 +1252,8 @@ impl H5iRepository {
     /// Language detection is based on file extension. The appropriate parser
     /// script is discovered by searching, in order:
     ///   1. `$H5I_PARSER_DIR`
-    ///   2. `<repo_workdir>/script/`
-    ///   3. Directory containing the current executable (`../script/`)
+    ///   2. `<repo_workdir>/plugin/`
+    ///   3. Directory containing the current executable (`../plugin/`)
     ///
     /// Currently supported extensions: `.py` (via `h5i-py-parser.py`).
     #[allow(clippy::type_complexity)]
@@ -2985,8 +2985,8 @@ fn pick_parser_path(candidate: std::path::PathBuf) -> Option<std::path::PathBuf>
 ///
 /// Search order:
 ///   1. `parser_dir_override` (if set and is a real directory)
-///   2. `<workdir>/script/<script_name>`
-///   3. `<exe_dir>/script/<script_name>` then `<exe_dir>/../script/<script_name>`
+///   2. `<workdir>/plugin/<script_name>`
+///   3. `<exe_dir>/plugin/<script_name>` then `<exe_dir>/../plugin/<script_name>`
 fn find_parser_script_inner(
     script_name: &str,
     workdir: Option<&std::path::Path>,
@@ -3016,15 +3016,15 @@ fn find_parser_script_inner(
     }
 
     if let Some(wd) = workdir {
-        if let Some(p) = pick_parser_path(wd.join("script").join(script_name)) {
+        if let Some(p) = pick_parser_path(wd.join("plugin").join(script_name)) {
             return Some(p);
         }
     }
 
     if let Some(bin_dir) = exe_dir {
         for candidate in [
-            bin_dir.join("script").join(script_name),
-            bin_dir.join("..").join("script").join(script_name),
+            bin_dir.join("plugin").join(script_name),
+            bin_dir.join("..").join("plugin").join(script_name),
         ] {
             if let Some(p) = pick_parser_path(candidate) {
                 return Some(p);
@@ -3512,11 +3512,11 @@ mod tests {
     }
 
     #[test]
-    fn find_parser_falls_back_to_workdir_script_dir() {
+    fn find_parser_falls_back_to_workdir_plugin_dir() {
         let tmp = tempdir().unwrap();
-        let script_dir = tmp.path().join("script");
-        fs::create_dir(&script_dir).unwrap();
-        let script = script_dir.join("h5i-py-parser.py");
+        let plugin_dir = tmp.path().join("plugin");
+        fs::create_dir(&plugin_dir).unwrap();
+        let script = plugin_dir.join("h5i-py-parser.py");
         fs::write(&script, "# stub").unwrap();
 
         let found = find_parser_script_inner(
@@ -3525,26 +3525,26 @@ mod tests {
             None, // no override
             None, // no exe_dir
         );
-        let found = found.expect("workdir/script/ should be discovered");
+        let found = found.expect("workdir/plugin/ should be discovered");
         assert_eq!(found.file_name().unwrap(), "h5i-py-parser.py");
     }
 
     #[test]
-    fn find_parser_falls_back_to_exe_dir_script() {
+    fn find_parser_falls_back_to_exe_dir_plugin() {
         let tmp = tempdir().unwrap();
-        let script_dir = tmp.path().join("script");
-        fs::create_dir(&script_dir).unwrap();
-        let script = script_dir.join("h5i-py-parser.py");
+        let plugin_dir = tmp.path().join("plugin");
+        fs::create_dir(&plugin_dir).unwrap();
+        let script = plugin_dir.join("h5i-py-parser.py");
         fs::write(&script, "# stub").unwrap();
 
-        // Simulate "h5i binary lives in tmp/, script is at tmp/script/foo.py"
+        // Simulate "h5i binary lives in tmp/, script is at tmp/plugin/foo.py"
         let found = find_parser_script_inner(
             "h5i-py-parser.py",
             None,
             None,
             Some(tmp.path()),
         );
-        let found = found.expect("exe_dir/script/ should be discovered");
+        let found = found.expect("exe_dir/plugin/ should be discovered");
         assert_eq!(found.file_name().unwrap(), "h5i-py-parser.py");
     }
 
@@ -3553,8 +3553,8 @@ mod tests {
         let tmp = tempdir().unwrap();
 
         let workdir = tmp.path().join("repo");
-        fs::create_dir_all(workdir.join("script")).unwrap();
-        fs::write(workdir.join("script/h5i-py-parser.py"), "# workdir version").unwrap();
+        fs::create_dir_all(workdir.join("plugin")).unwrap();
+        fs::write(workdir.join("plugin/h5i-py-parser.py"), "# workdir version").unwrap();
 
         let override_dir = tmp.path().join("override");
         fs::create_dir(&override_dir).unwrap();

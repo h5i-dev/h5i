@@ -1,7 +1,7 @@
 /// Structural AST diffing for h5i.
 ///
 /// The flow is:
-///   1. An external parser (e.g. `script/h5i-py-parser.py`) converts a source
+///   1. An external parser (e.g. `plugin/h5i-py-parser.py`) converts a source
 ///      file into a compact s-expression string.
 ///   2. `parse_named_blocks` tokenises and parses that string into a tree, then
 ///      extracts top-level named declarations (functions, classes, …).

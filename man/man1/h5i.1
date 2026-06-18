@@ -1865,12 +1865,12 @@ takes precedence over counts when determining pass/fail.
 is computed from counts if omitted.
 Two bundled adapters are provided:
 .TP
-.I script/h5i\-pytest\-adapter.py
+.I plugin/h5i\-pytest\-adapter.py
 Runs pytest, uses
 .B pytest\-json\-report
 when available, falls back to output parsing.
 .TP
-.I script/h5i\-cargo\-test\-adapter.sh
+.I plugin/h5i\-cargo\-test\-adapter.sh
 Runs
 .BR "cargo test" ,
 accumulates counts across lib, integration, and doc-test sections.
