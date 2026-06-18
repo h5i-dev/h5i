@@ -579,3 +579,4 @@ _[Checkpoint: 6a333dc8 — edited index.html; edited index.html; edited sitemap.
 ---
 
 [00:42:13] THINK: Posts are HTML. Let me examine one post's structure and the blog index to match the format exactly.
+[00:42:13] THINK: Now let me wire it into the blog index (post card) and the JSON-LD blogPost list.
