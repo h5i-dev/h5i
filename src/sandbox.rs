@@ -1971,21 +1971,17 @@ fn landlock_abi_for(probed: i32) -> landlock::ABI {
     }
 }
 
-/// The seccomp **deny-list** (v1, §5): dangerous administrative / introspection
-/// syscalls return EPERM; everything else is allowed. A default-deny allowlist
-/// is a later hardened profile. Known gap (documented, not hidden): `clone`
-/// with CLONE_NEWUSER is not arg-filtered in v1 — `unshare` is denied, and
-/// no_new_privs + Landlock still bound what a fresh namespace could reach.
+/// The curated set of syscall numbers the deny-list blocks (returns EPERM).
+///
+/// This is the security contract — kept as its own function so a unit test can
+/// assert the security-critical members are present without a kernel. Every
+/// entry is an administrative / introspection / namespace / fs-handle syscall
+/// that a build or test workload never legitimately issues, so a blanket EPERM
+/// is safe. We deliberately do NOT deny clone/clone3/fork (needed for normal
+/// subprocesses); the documented clone-with-CLONE_NEWUSER gap is closed by the
+/// hardened allowlist profile (a later phase), not here.
 #[cfg(target_os = "linux")]
-fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
-    use seccompiler::{SeccompAction, SeccompFilter, SeccompRule, TargetArch};
-
-    // Architecture-portable set (present on x86_64 and aarch64). Every entry is
-    // an administrative / introspection / namespace / fs-handle syscall that a
-    // build or test workload never legitimately issues, so a blanket EPERM is
-    // safe. We deliberately do NOT deny clone/clone3/fork (needed for normal
-    // subprocesses); the documented clone-with-CLONE_NEWUSER gap is closed by
-    // the hardened allowlist profile (a later phase), not here.
+fn denied_syscalls() -> Vec<libc::c_long> {
     // libc's musl/aarch64 module omits SYS_kexec_file_load (it is present on
     // glibc and on musl/x86_64). Supply the arch syscall number ourselves so the
     // deny-list still blocks it there; everywhere else use libc's constant.
@@ -2055,7 +2051,19 @@ fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
     // x86_64-only port-I/O and LDT syscalls (absent on aarch64).
     #[cfg(target_arch = "x86_64")]
     denied.extend_from_slice(&[libc::SYS_iopl, libc::SYS_ioperm, libc::SYS_modify_ldt]);
+    denied
+}
 
+/// The seccomp **deny-list** (v1, §5): dangerous administrative / introspection
+/// syscalls return EPERM; everything else is allowed. A default-deny allowlist
+/// is a later hardened profile. Known gap (documented, not hidden): `clone`
+/// with CLONE_NEWUSER is not arg-filtered in v1 — `unshare` is denied, and
+/// no_new_privs + Landlock still bound what a fresh namespace could reach.
+#[cfg(target_os = "linux")]
+fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
+    use seccompiler::{SeccompAction, SeccompFilter, SeccompRule, TargetArch};
+
+    let denied = denied_syscalls();
     // The cast is a no-op on 64-bit but required where c_long is i32.
     #[allow(clippy::unnecessary_cast)]
     let rules: std::collections::BTreeMap<i64, Vec<SeccompRule>> =
@@ -2315,12 +2323,52 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn seccomp_deny_program_builds_and_blocks_io_uring() {
-        // The program compiles on this arch …
+    fn seccomp_deny_program_builds() {
+        // The program compiles on this arch.
         assert!(seccomp_deny_program().is_ok());
-        // … and io_uring is in the denied set (the curated list is the contract).
-        // Reference the syscalls so this test fails to compile if libc drops them.
-        let _ = (libc::SYS_io_uring_setup, libc::SYS_io_uring_enter, libc::SYS_io_uring_register);
+    }
+
+    /// The deny-list is a security *contract*: removing any of these syscalls
+    /// silently widens the sandbox. This asserts membership directly (no kernel
+    /// needed), so dropping e.g. `SYS_mount` or `SYS_ptrace` fails the build —
+    /// the weak old test only checked the program compiled and that libc still
+    /// exported the constants, which would NOT catch a deletion from the list.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn seccomp_deny_list_covers_security_critical_syscalls() {
+        let denied = denied_syscalls();
+        let must_block: &[(&str, libc::c_long)] = &[
+            // config-lockdown tamper-resistance depends on these two being denied
+            ("mount", libc::SYS_mount),
+            ("umount2", libc::SYS_umount2),
+            // container/chroot escape
+            ("pivot_root", libc::SYS_pivot_root),
+            ("chroot", libc::SYS_chroot),
+            // process-tracing escape vectors
+            ("ptrace", libc::SYS_ptrace),
+            ("process_vm_readv", libc::SYS_process_vm_readv),
+            ("process_vm_writev", libc::SYS_process_vm_writev),
+            // namespace entry/creation (the /proc-environ + userns-escape surface)
+            ("setns", libc::SYS_setns),
+            ("unshare", libc::SYS_unshare),
+            // privileged kernel interfaces
+            ("bpf", libc::SYS_bpf),
+            ("init_module", libc::SYS_init_module),
+            ("finit_module", libc::SYS_finit_module),
+            // path-confinement bypass via fs handles
+            ("open_by_handle_at", libc::SYS_open_by_handle_at),
+            ("name_to_handle_at", libc::SYS_name_to_handle_at),
+            // io_uring — large, repeatedly-exploited surface that also bypasses seccomp
+            ("io_uring_setup", libc::SYS_io_uring_setup),
+            ("io_uring_enter", libc::SYS_io_uring_enter),
+            ("io_uring_register", libc::SYS_io_uring_register),
+        ];
+        for (name, nr) in must_block {
+            assert!(
+                denied.contains(nr),
+                "seccomp deny-list no longer blocks {name} (SYS={nr}) — the sandbox was widened"
+            );
+        }
     }
 
     #[test]

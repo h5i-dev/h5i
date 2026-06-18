@@ -1394,7 +1394,12 @@ fn supervised_enforces_runtime_confinement() {
         c=socket.socket(); c.settimeout(3)\n\
         try:\n\
         \x20c.connect(('1.1.1.1',80)); print('CONNECTED')\n\
-        except OSError: print('NOCONNECT')\n";
+        except OSError: print('NOCONNECT')\n\
+        import ctypes\n\
+        _l=ctypes.CDLL(None,use_errno=True); ctypes.set_errno(0)\n\
+        _l.ptrace(0,0,0,0)\n\
+        _pe=ctypes.get_errno()\n\
+        print('PTRACE',('DENIED '+errno.errorcode.get(_pe,str(_pe))) if _pe else 'ALLOWED')\n";
     let net = supervised_run_raw(&r, "confine", &["python3", "-c", net_script]).expect("run 1");
     // Default-deny socket gate: only boring inet is allowed.
     assert!(
@@ -1417,6 +1422,13 @@ fn supervised_enforces_runtime_confinement() {
     assert!(
         net.contains("NOCONNECT") && !net.contains("CONNECTED"),
         "netns must have no egress:\n{net}"
+    );
+    // seccomp deny-list blocks ptrace(PTRACE_TRACEME) — a classic sandbox-escape
+    // vector that would otherwise succeed (return 0) for an unprivileged process.
+    // A bare EPERM here is unambiguous: only the deny-list produces it.
+    assert!(
+        net.contains("PTRACE DENIED EPERM"),
+        "ptrace must be seccomp-denied (escape vector):\n{net}"
     );
 
     // The socket-gate verdicts are recorded in the run's capture EgressSummary.
@@ -2261,6 +2273,32 @@ fn wall_clock_kill_reaps_descendant_processes() {
     assert!(
         !r.work("reap").join("survivor.txt").exists(),
         "a backgrounded descendant survived the wall-clock kill (no process-group kill)"
+    );
+}
+
+/// A wall-clock kill must surface as the conventional `timeout(1)` exit code
+/// **124** (main.rs maps `outcome.timed_out` → `exit(124)`), so callers/CI can
+/// distinguish "killed by the deadline" from an ordinary non-zero exit. The
+/// reap test above only asserts `!success`; this pins the documented code.
+/// Workspace tier — no kernel capabilities needed.
+#[test]
+fn wall_clock_kill_exits_with_code_124() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.default]\nisolation = \"workspace\"\nresources = { wall = \"1s\" }\n",
+    )
+    .unwrap();
+    r.h5i_ok(&["env", "create", "deadline"]);
+
+    let out = r.h5i(&["env", "run", "deadline", "--", "sh", "-c", "sleep 30"]);
+    assert_eq!(
+        out.status.code(),
+        Some(124),
+        "timed-out run must exit 124 (timeout convention):\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
     );
 }
 
