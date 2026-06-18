@@ -921,3 +921,4 @@ _[Checkpoint: 6a3426ec — Done: sandbox->msg leak fixed (idents module); advers
 _[Checkpoint: 6a342aa1 — Done #4: extracted pure policy vocabulary into sandbox_policy leaf module; container.rs no longer imports crate::sandbox (sandbox->container cycle broken). sandbox<->supervisor edge kept (genuine machinery reuse). clippy -D warnings clean, 43 sandbox tests green.]_
 ---
 
+[17:28:49] OBSERVE: read src/main.rs
