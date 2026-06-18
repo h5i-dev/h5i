@@ -1147,3 +1147,4 @@ _[Checkpoint: 6a348005 — edited MANUAL.md; edited MANUAL.md; edited README.md]
 _[Checkpoint: 6a34821b — Rewrote README + docs site + pitch around Prompt Maturity + PR receipt spine]_
 ---
 
+[23:41:36] THINK: Let me explore the prompt maturity scoring feature and the website/pitch deck structure.
