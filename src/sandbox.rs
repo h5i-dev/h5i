@@ -22,7 +22,12 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+// PathBuf is only referenced from the `#[cfg(target_os = "linux")]` confinement
+// paths (Landlock grants, config-lock); gate the import so non-Linux targets
+// don't see it as unused under `-D warnings`.
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::error::H5iError;

@@ -1,6 +1,13 @@
 //! `isolation=supervised` — the seccomp-notify supervisor tier
 //! (`docs/supervisor-design.md`).
 //!
+// Platform-conditional machinery: `probe()` is cross-platform (the dashboard
+// reports supervisor readiness on any host), but the socket-gate verdicts and
+// nftables egress builder (`Decision`, `decide_socket`, `build_nft_ruleset`, …)
+// are reached only from the `#[cfg(target_os = "linux")]` run path, so they read
+// as dead code on non-Linux targets. Allow it module-wide.
+#![allow(dead_code)]
+//!
 //! This is the security keystone: the first tier that may claim untrusted-code
 //! containment. Its defining property — implemented and tested here in phase A —
 //! is **fail-closed admission**: the claim is satisfiable only when *every*
@@ -325,7 +332,6 @@ pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
 }
 
 /// Just the pinned `IP:port` destinations (the nftables allowlist input).
-#[allow(dead_code)] // deferred-tier egress-pin helper; retained, not yet wired
 pub fn pin_egress(egress: &[String]) -> Vec<EgressDest> {
     resolve_egress(egress).dests
 }
