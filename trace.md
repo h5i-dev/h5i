@@ -484,3 +484,4 @@ _[Checkpoint: 6a3333da — edited /home/koukyosyumei/Dev/h5i/tests/cli_integrati
 [00:15:22] OBSERVE: listed files under .codex
 [00:15:22] OBSERVE: searched hook" for "codex|h5i"
 [00:15:22] OBSERVE: read .codex/config.toml
+[00:15:22] OBSERVE: read src/hooks.rs
