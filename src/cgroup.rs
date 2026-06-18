@@ -1,5 +1,12 @@
 //! cgroup v2 resource control for the `process` tier (rootless, best-effort).
 //!
+// Platform-conditional machinery: `probe()` is cross-platform (the dashboard
+// reports cgroup availability on any host), but the limit/accounting helpers
+// (`parse_count`, `CgroupUsage`, `format_limit`, …) are reached only from the
+// `#[cfg(target_os = "linux")]` run path, so they read as dead code on non-Linux
+// targets. Allow it module-wide rather than cfg-gating every helper + its tests.
+#![allow(dead_code)]
+//!
 //! The rlimit the process tier falls back to for `mem` (`RLIMIT_DATA`) caps the
 //! writable data segment, not resident memory, and is per-process, not per-tree.
 //! (It is deliberately *not* `RLIMIT_AS`: capping virtual address space breaks

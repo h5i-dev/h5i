@@ -35,7 +35,7 @@ use std::time::Duration;
 
 use crate::error::H5iError;
 use crate::objects::{EgressHost, EgressSummary, MAX_EGRESS_HOSTS};
-use crate::sandbox::{ExecOutcome, NetMode, Profile, ResolvedPolicy};
+use crate::sandbox_policy::{ExecOutcome, NetMode, Profile, ResolvedPolicy};
 
 /// Per `host:port` allow/deny tally accumulated by the egress proxy across a
 /// run. Shared between the proxy's worker threads and the run, behind a mutex;
@@ -607,7 +607,7 @@ pub fn build_run_argv(
     // In-box git plumbing (env::box_git_plumbing): each host path bind-mounted
     // at its IDENTICAL path inside the container so the worktree's
     // gitdir/commondir pointer files resolve. Empty → no extra mounts.
-    box_git: &[crate::sandbox::BoxGitPath],
+    box_git: &[crate::sandbox_policy::BoxGitPath],
     // Managed-settings.json (the unkillable wrap-bash hook) to bind-mount
     // read-only at the Claude managed-settings path. `None` → no injection
     // (non-Claude box, captured run, or prep failed).
@@ -950,8 +950,8 @@ pub fn run_interactive(
     // unkillably in-box. Skip for a known-Codex profile — the file is Claude's
     // managed scope and inert for Codex (whose own hook hardening is separate);
     // for `default`/custom profiles we inject, since they may run Claude.
-    let is_codex = crate::sandbox::AgentRuntime::from_profile_name(&p.name)
-        == Some(crate::sandbox::AgentRuntime::Codex);
+    let is_codex = crate::sandbox_policy::AgentRuntime::from_profile_name(&p.name)
+        == Some(crate::sandbox_policy::AgentRuntime::Codex);
     let managed_settings = if is_codex { None } else { prepare_managed_settings(work) };
     let full = build_run_argv(
         &rt,
@@ -1157,7 +1157,7 @@ mod tests {
 
     #[test]
     fn run_argv_is_hardened() {
-        let mut p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let mut p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
         p.mem_bytes = Some(2 * 1024 * 1024 * 1024);
         p.max_procs = Some(128);
         let argv = build_run_argv(
@@ -1205,7 +1205,7 @@ mod tests {
         std::fs::write(work.join(".claude/settings.json"), "{}").unwrap();
         std::fs::write(work.join(".codex/config.toml"), "").unwrap();
 
-        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
         let argv = build_run_argv(
             &rt(),
             &p,
@@ -1238,8 +1238,8 @@ mod tests {
     // cannot carry it; a partially mounted .git would be worse than none).
     #[test]
     fn run_argv_mounts_box_git_plumbing_at_identical_paths() {
-        use crate::sandbox::BoxGitPath;
-        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        use crate::sandbox_policy::BoxGitPath;
+        let p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
         let box_git = vec![
             BoxGitPath {
                 host: "/repo/.git/refs".into(),
@@ -1320,7 +1320,7 @@ mod tests {
     // the Claude managed-settings path; when absent, no such mount appears.
     #[test]
     fn run_argv_mounts_managed_settings_read_only() {
-        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
         let ms = Path::new("/env/managed/managed-settings.json");
         let with = build_run_argv(
             &rt(),
@@ -1372,7 +1372,7 @@ mod tests {
     // managed-settings injection is skipped for it); default/custom are not.
     #[test]
     fn codex_profile_is_detected_for_managed_settings_gating() {
-        use crate::sandbox::AgentRuntime;
+        use crate::sandbox_policy::AgentRuntime;
         assert_eq!(AgentRuntime::from_profile_name("agent-codex"), Some(AgentRuntime::Codex));
         assert_eq!(AgentRuntime::from_profile_name("agent-claude"), Some(AgentRuntime::Claude));
         assert_eq!(AgentRuntime::from_profile_name("default"), None);
@@ -1380,7 +1380,7 @@ mod tests {
 
     #[test]
     fn run_argv_proxy_mode_sets_proxy_env() {
-        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
         let argv = build_run_argv(
             &rt(),
             &p,
@@ -1405,7 +1405,7 @@ mod tests {
 
     #[test]
     fn run_argv_interactive_adds_i_and_optional_t() {
-        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
         let mk = |tty| {
             build_run_argv(
                 &rt(),
@@ -1439,7 +1439,7 @@ mod tests {
 
     #[test]
     fn run_argv_shim_mounts_image_shells_and_spool() {
-        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
         let plan = ShimPlan {
             shim: "/envdir/shim/sh".into(),
             spool: "/envdir/spool".into(),
@@ -1488,7 +1488,7 @@ mod tests {
 
     #[test]
     fn run_argv_mounts_env_capture_spool_without_shim() {
-        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
         let argv = build_run_argv(
             &rt(),
             &p,
@@ -1734,7 +1734,7 @@ mod tests {
 
     #[test]
     fn run_argv_injects_brokered_secret_env() {
-        let p = Profile::builtin("default", crate::sandbox::IsolationClaim::Container);
+        let p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
         let injected = vec![("GITHUB_TOKEN".to_string(), "ghp_secret".to_string())];
         let argv = build_run_argv(
             &rt(),

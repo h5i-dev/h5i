@@ -47,8 +47,10 @@ pub const MSG_REF: &str = "refs/h5i/msg";
 pub const BROADCAST: &str = "all";
 
 /// Environment variable consulted (after an explicit flag, before the stored
-/// identity) when resolving "who am I" for `send` / `inbox`.
-pub const AGENT_ENV: &str = "H5I_AGENT";
+/// identity) when resolving "who am I" for `send` / `inbox`. The canonical
+/// definition lives in [`crate::idents`] (dependency-free); re-exported here so
+/// existing `msg::AGENT_ENV` callers keep working.
+pub use crate::idents::AGENT_ENV;
 
 const MESSAGES_FILE: &str = "messages.jsonl";
 const AGENTS_FILE: &str = "agents.json";
@@ -1751,6 +1753,70 @@ mod tests {
         assert_eq!(msgs[0].body, "from-b");
         assert_eq!(msgs[1].body, "shared");
         assert_eq!(msgs[2].body, "from-a");
+    }
+
+    /// Build a message with a distinct (ts, id) so `key()` is a total order.
+    /// Same id ⇒ same content, mirroring the append-only-log invariant the
+    /// union-merge relies on for convergence.
+    fn pm(id: &str, secs: u32, body: &str) -> Message {
+        Message {
+            id: id.into(),
+            ts: format!("2026-05-28T10:00:{secs:02}.000000Z"),
+            from: "alice".into(),
+            to: "bob".into(),
+            body: body.into(),
+            tag: None,
+            ..Default::default()
+        }
+    }
+
+    /// `merge_message_sets` is a CRDT join: the merged jsonl is a canonical
+    /// (deduped, totally-ordered) function of the *set* of message ids, so
+    /// `h5i pull` must converge no matter which side a peer saw first.
+    ///
+    /// Commutative — order of the two sides cannot change the byte output.
+    #[test]
+    fn union_merge_is_commutative() {
+        let s = pm("shared00", 0, "shared");
+        let a = pm("aaaa0001", 1, "from-a");
+        let b = pm("bbbb0001", 2, "from-b");
+        let ab = merge_message_sets(
+            vec![s.clone(), a.clone()],
+            vec![s.clone(), b.clone()],
+        );
+        let ba = merge_message_sets(vec![s.clone(), b], vec![s, a]);
+        assert_eq!(ab, ba, "merge(a,b) must equal merge(b,a) byte-for-byte");
+    }
+
+    /// Idempotent — re-merging an already-merged set (or a set with itself)
+    /// adds nothing. A pull that re-delivers seen messages is a no-op.
+    #[test]
+    fn union_merge_is_idempotent() {
+        let a = pm("aaaa0001", 1, "from-a");
+        let b = pm("bbbb0001", 2, "from-b");
+        let once = merge_message_sets(vec![a.clone(), b.clone()], vec![]);
+        let twice = merge_message_sets(parse_messages(&once), parse_messages(&once));
+        assert_eq!(once, twice, "merging a canonical set with itself is a no-op");
+        // …and merging with a subset of itself changes nothing either.
+        let with_subset = merge_message_sets(parse_messages(&once), vec![a]);
+        assert_eq!(once, with_subset);
+    }
+
+    /// Associative — pairwise merge order is irrelevant, so three peers
+    /// reconciling in any pairing reach the same state. Canonical output means
+    /// we can assert the strings are equal, not just the sets.
+    #[test]
+    fn union_merge_is_associative() {
+        let a = pm("aaaa0001", 1, "from-a");
+        let b = pm("bbbb0001", 2, "from-b");
+        let c = pm("cccc0001", 3, "from-c");
+        // (a ∪ b) ∪ c
+        let ab = merge_message_sets(vec![a.clone()], vec![b.clone()]);
+        let left = merge_message_sets(parse_messages(&ab), vec![c.clone()]);
+        // a ∪ (b ∪ c)
+        let bc = merge_message_sets(vec![b], vec![c]);
+        let right = merge_message_sets(vec![a], parse_messages(&bc));
+        assert_eq!(left, right, "(a∪b)∪c must equal a∪(b∪c)");
     }
 
     #[test]

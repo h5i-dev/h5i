@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::error::H5iError;
-use crate::sandbox::SecretGrant;
+use crate::sandbox_policy::SecretGrant;
 
 /// The materialized result of brokering a set of grants: env vars to inject into
 /// the child, the values to scrub from captured output, the audit records, and a
