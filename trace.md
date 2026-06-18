@@ -1141,3 +1141,9 @@ _[Checkpoint: 6a348005 — edited MANUAL.md; edited MANUAL.md; edited README.md]
 [23:40:25] OBSERVE: read docs/features/index.html
 [23:40:35] ACT: edited docs/features/index.html
 [23:40:38] ACT: edited docs/features/index.html
+
+
+---
+_[Checkpoint: 6a34821b — Rewrote README + docs site + pitch around Prompt Maturity + PR receipt spine]_
+---
+
