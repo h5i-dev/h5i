@@ -1099,3 +1099,4 @@ _[Checkpoint: 6a347fb3 — edited MANUAL.md; edited MANUAL.md; edited MANUAL.md]
 _[Checkpoint: 6a348005 — edited MANUAL.md; edited MANUAL.md; edited README.md]_
 ---
 
+[23:32:29] ACT: edited README.md
