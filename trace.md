@@ -985,3 +985,4 @@ _[Checkpoint: 6a345256 — Done #6 parts 1+2: web feature gate (axum/mime_guess 
 [20:17:40] THINK: Both compile. Let me confirm `axum` is genuinely absent from the `--no-default-features` dependency graph (the `tower`/`hyper` crates I see are pulled by `reqwest`, not axum).
 [20:17:40] THINK: Let me lint both configs and confirm `serve` still works by default, then commit Part 1.
 [20:17:40] THINK: I'll convert the candidates and let the compiler flag any private-in-public (E0446), reverting those specifically.
+[20:17:40] NOTE: DEFERRAL (~/Dev/h5i/src/lib.rs): tably the `seccomp_notify`/`supervisor` scaffolding for the deferred supervised tier — per project context, that's intentionally-retained WIP, not v…
