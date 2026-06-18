@@ -1011,3 +1011,4 @@ _[Checkpoint: 6a345264 — edited src/supervisor.rs; wrote web-feature-gate.md; 
 _[Checkpoint: 6a3454a9 — edited src/supervisor.rs; edited src/supervisor.rs; edited src/sandbox.rs]_
 ---
 
+[21:04:04] OBSERVE: read .github/workflows/release.yaml
