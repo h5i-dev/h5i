@@ -615,3 +615,4 @@ _[Checkpoint: 6a33401a — edited docs/blog/index.html; edited docs/blog/index.h
 [00:49:01] ACT: edited docs/blog/prompt-maturity-score/index.html
 [00:49:09] ACT: edited docs/blog/index.html
 [00:49:13] ACT: edited docs/blog/index.html
+[00:49:34] THINK: I'll update the title, description, H1/deck, social tags, JSON-LD, and keywords across the post — plus the index card and JSON-LD entry to stay consistent.
