@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use h5i_core::blame::BlameMode;
 use h5i_core::claims;
-use h5i_core::claude::{keyword_search, AnthropicClient};
+use h5i_core::claude::{keyword_search, sanitize_human_prompt, AnthropicClient};
 use h5i_core::codex;
 use h5i_core::ctx;
 use h5i_core::memory;
@@ -6971,10 +6971,15 @@ fn main() -> anyhow::Result<()> {
             let Ok(data) = serde_json::from_str::<serde_json::Value>(&raw) else {
                 return Ok(());
             };
-            let prompt = data.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
-            if prompt.trim().is_empty() {
+            let raw_prompt = data.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+            // Claude Code delivers background-task completions and other
+            // automated events through this same hook as synthetic "user" turns.
+            // Only record genuine human input — otherwise a `<task-notification>`
+            // block (etc.) gets recorded as the prompt behind a commit.
+            let Some(prompt) = sanitize_human_prompt(raw_prompt) else {
                 return Ok(());
-            }
+            };
+            let prompt = prompt.as_str();
             let session_id = data.get("session_id").and_then(|v| v.as_str());
 
             let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
