@@ -725,3 +725,4 @@ _[Checkpoint: 6a3401d5 — Optimized prompt scoring + benchmark + tests]_
 [14:34:10] THINK: I'll add equivalence tests (optimized vs naive reference implementations) — these directly prove the refactor is behavior-identical — plus boundary and behavioral cases.
 [14:34:10] THINK: Let me get a true **before/after** by stashing the source change (the example uses only public API, so it builds against the old code) and re-running.
 [14:34:10] THINK: Let me run AFTER now against the current (optimized) tree to pair cleanly.
+[14:34:10] THINK: Now let me run clippy (`-D warnings`) and the full lib test suite to confirm nothing regressed.
