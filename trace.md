@@ -881,3 +881,4 @@ _[Checkpoint: 6a3423d4 — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a3426ec — Done: sandbox->msg leak fixed (idents module); adversarial sandbox tests added (deny-list membership unit test + behavioral ptrace EPERM + timeout exit-124). Correction: env_integration.rs already had behavioral confinement tests (write-outside-WORK, sockets, /proc/environ, reap) — my review under-credited them.]_
 ---
 
+[17:12:34] OBSERVE: read src/msg.rs
