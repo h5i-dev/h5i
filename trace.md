@@ -1150,3 +1150,4 @@ _[Checkpoint: 6a34821b — Rewrote README + docs site + pitch around Prompt Matu
 [23:41:36] THINK: Let me explore the prompt maturity scoring feature and the website/pitch deck structure.
 [23:41:36] THINK: Let me set up context tracking and map the website structure efficiently (the HTML files are large).
 [23:41:37] THINK: Now let me map the structure of the three large HTML files so I understand what I'm reshaping.
+[23:41:37] THINK: Let me update the homepage hero (badge, subtitle, stats):
