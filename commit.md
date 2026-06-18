@@ -1161,3 +1161,16 @@ Per Codex: removed 4 competing hero stat-tiles, added a compact horizontal PR re
 
 ---
 
+## Commit 6a3482f6 — 2026-06-18 23:44 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+Per Codex: removed 4 competing hero stat-tiles, added a compact horizontal PR receipt card to the hero (prompt maturity 81/100 + mini signal bars + evidence grid) as the one first-viewport artifact, with 'everything below proves this receipt' framing. Added hrcpt-* CSS, responsive. index.html parses, 14/14 sections.
+
+### This Commit's Contribution
+
+
+---
+
