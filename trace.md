@@ -1173,3 +1173,4 @@ _[Checkpoint: 6a3482ec — Hero refinement: single first-viewport receipt artifa
 
 [23:44:54] THINK: Let me act on it. First, let me check the hero CSS so I can add a compact receipt card cleanly (the full `pr-demo.
 [23:44:54] THINK: Per his "one artifact, don't compete" guidance, I'll remove the stat tiles so the receipt is the single hero artifact (the numbers now live *in* the receipt and the badge):
+[23:44:54] NOTE: DEFERRAL (~/Dev/h5i/docs/features/index.html): say the word and I'll stage and commit these. Two optional follow-ups worth flagging: the homepage's "51% cost reduction" claim still cites the N=5 me…
