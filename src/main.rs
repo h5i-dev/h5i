@@ -273,7 +273,8 @@ fn msg_session_note(workdir: &Path) -> Option<String> {
 
 /// Codex turn-delivery: surface unread messages for the Codex identity and
 /// mark them read. Best-effort — never fails the host command. Folded into
-/// `h5i codex prelude` / `sync` / `finish` since Codex has no Stop hook.
+/// `h5i codex prelude` / `sync` / `finish`; `h5i hook setup --target codex`
+/// installs `h5i codex finish` as the Stop hook.
 fn deliver_codex_inbox(workdir: &Path) {
     let Ok(repo) = H5iRepository::open(workdir) else {
         return;
@@ -660,9 +661,14 @@ enum Commands {
         #[arg(short, long)]
         message: String,
 
-        // Prompt
-        #[arg(long)]
-        prompt: Option<String>,
+        /// The agent's stated intent for this change (the ask being fulfilled).
+        /// Optional fallback: in Claude Code the verbatim human prompt is
+        /// captured automatically by the `h5i claude prompt` (UserPromptSubmit)
+        /// hook and takes precedence, so you normally don't pass this. Provide it
+        /// for Codex, CI, scripts, or manual commits where no prompt-capture hook
+        /// runs. `--prompt` is kept as a backward-compatible alias.
+        #[arg(long, alias = "prompt")]
+        intent: Option<String>,
 
         /// The name of the AI model that assisted in these changes
         #[arg(long)]
@@ -884,11 +890,16 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Manage Claude Code hooks for automatic prompt capture and context tracing.
+    /// Manage agent hook setup for automatic prompt capture and context tracing.
     /// Run `h5i hook setup` to print install instructions.
-    /// Run `h5i hook run` (or just `h5i hook`) as the PostToolUse handler in .claude/settings.json.
     #[command(subcommand)]
     Hook(HookCommands),
+
+    /// Claude Code integration hook handlers
+    Claude {
+        #[command(subcommand)]
+        action: ClaudeCommands,
+    },
 
     /// Codex integration helpers for context restore, trace sync, and closeout
     Codex {
@@ -2198,20 +2209,9 @@ enum HookCommands {
         wrap_bash: bool,
     },
 
-    /// Run as the PostToolUse handler: reads JSON from stdin, emits h5i context traces.
-    /// Register in .claude/settings.json as: { "command": "h5i hook run" }
-    Run,
-
-    /// Run as the SessionStart handler: injects prior context into Claude's context window.
-    /// Prints the current context summary + relevant prior reasoning to stdout,
-    /// which Claude Code surfaces to the model at the start of each session.
-    /// Register in .claude/settings.json under "SessionStart" hooks.
+    /// Run as the shared SessionStart handler: injects prior context into the agent context window.
+    /// Register under "SessionStart" hooks as `h5i hook session-start`.
     SessionStart,
-
-    /// Run as the Stop handler: auto-checkpoints the context workspace before the session ends.
-    /// Summarises recent OBSERVE/THINK/ACT entries and calls `h5i context commit`.
-    /// Register in .claude/settings.json under "Stop" hooks.
-    Stop,
 
     /// OPTIONAL PreToolUse handler for the Bash tool: rewrites the command into
     /// a `h5i capture run` wrapper (via updatedInput, Claude Code ≥ 2.0.10), so
@@ -2221,6 +2221,26 @@ enum HookCommands {
     /// every failure path emits nothing, so the original command runs untouched.
     /// Register in .claude/settings.json under "PreToolUse" with matcher "Bash".
     WrapBash,
+
+}
+
+#[derive(Subcommand)]
+enum ClaudeCommands {
+    /// Run as Claude Code's PostToolUse handler: reads JSON from stdin and emits traces.
+    Sync,
+
+    /// Run as Claude Code's Stop handler: mines reasoning and checkpoints context.
+    Finish,
+
+    /// Run as the UserPromptSubmit handler: reads the hook JSON from stdin and
+    /// records the *verbatim* human prompt into `.git/.h5i/pending_context.json`,
+    /// accumulating across turns. `h5i capture commit` then uses this raw human
+    /// prompt as the recorded prompt — it wins over an agent-authored `--intent`
+    /// — so AI provenance reflects what the human actually asked rather than the
+    /// agent's paraphrase. No-ops outside an h5i-initialized repo and fails open
+    /// on any error, so it never blocks the turn.
+    /// Register in .claude/settings.json under "UserPromptSubmit" hooks.
+    Prompt,
 }
 
 #[derive(Subcommand)]
@@ -2236,6 +2256,10 @@ enum CodexCommands {
         /// Optional summary for the context checkpoint
         #[arg(long)]
         summary: Option<String>,
+
+        /// Suppress stdout for hook use
+        #[arg(long)]
+        quiet: bool,
     },
 }
 
@@ -2342,8 +2366,14 @@ git add <file1> <file2> …   # never `git add .`
 
 Then commit via Bash:
 ```bash
-h5i capture commit -m "…" --model claude-sonnet-4-6 --agent claude-code --prompt "…"
+h5i capture commit -m "…" --model claude-sonnet-4-6 --agent claude-code
 ```
+
+**Do not pass `--intent` (or the old `--prompt`).** In Claude Code the verbatim
+human prompt is captured automatically by the `UserPromptSubmit` hook and wins
+over any agent-supplied intent — so just write a clear commit message and let the
+hook record what the human actually asked. (`--intent` stays as a fallback for
+Codex, CI, scripts, or manual commits where no prompt-capture hook runs.)
 
 (Or the `h5i_commit` MCP tool if the MCP server is configured.)
 
@@ -2552,8 +2582,13 @@ h5i claims prune                   # drop stale claims
 
 ```bash
 git add <exact paths>
-h5i capture commit -m "…" --agent codex --prompt "…"
+h5i capture commit -m "…" --agent codex
 ```
+
+When `h5i hook setup --write --target codex` has installed the Stop hook,
+`h5i codex finish` records the raw human prompt from the Codex session JSONL.
+`--intent` remains a fallback for CI/scripts/manual commits where no Codex
+session sync runs.
 
 Add flags when relevant:
 - `--tests`  — tests were added or modified
@@ -4124,7 +4159,7 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     verb: "commit",
                     summary: "Git commit + AI provenance (prompt, model, tokens, tests, decisions).",
                     legacy: "h5i commit",
-                    example: "h5i capture commit -m \"fix retry loop\" \\\n        --model claude-sonnet-4-6 --agent claude-code \\\n        --prompt \"add exponential backoff\" --tests",
+                    example: "h5i capture commit -m \"fix retry loop\" \\\n        --model claude-sonnet-4-6 --agent claude-code --tests",
                 },
                 NounVerb {
                     verb: "claim",
@@ -5281,7 +5316,7 @@ fn main() -> anyhow::Result<()> {
             println!("  {}", style("Quick-start:").bold());
             println!(
                 "    {}  capture AI provenance on every commit",
-                style("h5i commit -m \"…\" --prompt \"…\" --agent <claude-code|codex>").cyan()
+                style("h5i commit -m \"…\" --agent <claude-code|codex>  (--intent fallback for CI/scripts)").cyan()
             );
             println!(
                 "    {}  snapshot agent memory after a session",
@@ -5317,7 +5352,7 @@ fn main() -> anyhow::Result<()> {
 
         Commands::Commit {
             message,
-            prompt,
+            intent,
             model,
             agent,
             tests,
@@ -5368,10 +5403,20 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            // Resolution order: CLI flag > environment variable > pending_context.json
+            // Resolution order: captured raw human prompt (UserPromptSubmit
+            // hook) > --intent flag > $H5I_INTENT/$H5I_PROMPT > pending.prompt.
+            // The verbatim human prompt wins so provenance records what the
+            // human actually asked, not the agent's paraphrase.
             let pending = repo.read_pending_context()?;
-            let prompt = prompt
-                .or_else(|| std::env::var("H5I_PROMPT").ok())
+            let prompt = pending
+                .as_ref()
+                .and_then(|c| c.human_prompt.clone())
+                .or(intent)
+                .or_else(|| {
+                    std::env::var("H5I_INTENT")
+                        .or_else(|_| std::env::var("H5I_PROMPT"))
+                        .ok()
+                })
                 .or_else(|| pending.as_ref().and_then(|c| c.prompt.clone()));
             let model = model
                 .or_else(|| std::env::var("H5I_MODEL").ok())
@@ -6484,14 +6529,19 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
                 println!(
-                    "   {} {}   ·   {} {} ({})   ·   {} {}",
+                    "   {} {}   ·   {} {} ({})",
                     style("SessionStart:").dim(),
                     style("h5i hook session-start").bold(),
-                    style("PostToolUse:").dim(),
-                    style("h5i hook run").bold(),
+                    style("Claude PostToolUse:").dim(),
+                    style("h5i claude sync").bold(),
                     style("Edit|Write|Read").dim(),
-                    style("Stop:").dim(),
-                    style("h5i hook stop").bold(),
+                );
+                println!(
+                    "   {} {}   ·   {} {}",
+                    style("Claude Stop:").dim(),
+                    style("h5i claude finish").bold(),
+                    style("Codex Stop:").dim(),
+                    style("h5i codex finish").bold(),
                 );
                 if wrap_bash {
                     println!(
@@ -6529,9 +6579,10 @@ fn main() -> anyhow::Result<()> {
                     .any(|(target, _, _)| *target == HookTarget::Claude)
                 {
                     println!(
-                        "   {} prompt capture (UserPromptSubmit) and the MCP server stay manual —\n\
-                         \x20    run {} for those instructions.",
+                        "   {} prompt capture (UserPromptSubmit → {}) is now wired; the MCP\n\
+                         \x20    server stays manual — run {} for those instructions.",
                         style("→").dim(),
+                        style("h5i claude prompt").bold(),
                         style("h5i hook setup").bold(),
                     );
                 }
@@ -6553,48 +6604,20 @@ fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            let hook_script = r#"#!/usr/bin/env bash
-# h5i Claude Code hook — writes the user prompt to .git/.h5i/pending_context.json
-# so that `h5i commit` can pick it up automatically without --prompt.
-set -euo pipefail
-GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-H5I_DIR="$GIT_ROOT/.git/.h5i"
-[ -d "$H5I_DIR" ] || exit 0
-jq -c '{
-  prompt: .prompt,
-  model: (env.H5I_MODEL // "claude-sonnet-4-6"),
-  agent_id: (env.H5I_AGENT_ID // "claude-code"),
-  session_id: .session_id
-}' > "$H5I_DIR/pending_context.json"
-"#;
-
             println!(
-                "{} {} writes the SessionStart/PostToolUse/Stop wiring below into\n\
-                 .claude/settings.json for you ({} for ~/.claude, {} to capture-wrap\n\
-                 Bash). The steps below cover the rest (prompt capture, MCP).\n",
+                "{} {} writes the SessionStart/PostToolUse/Stop/UserPromptSubmit\n\
+                 wiring below into .claude/settings.json for you ({} for ~/.claude,\n\
+                 {} to capture-wrap Bash). Prompt capture is native now — no jq\n\
+                 script needed. The step below only matters if you wire it by hand.\n",
                 style("Tip:").bold(),
                 style("h5i hook setup --write").cyan().bold(),
                 style("--scope user").bold(),
                 style("--wrap-bash").bold(),
             );
 
-            println!("{}", style("── Step 0: Installl `jq` ──").bold());
-            println!(
-                "If you don't have {} installed, run the following command:\n\n{}\n",
-                style("jq").yellow(),
-                style("apt install jq").dim()
-            );
-
-            println!("{}", style("── Step 1: Save hook script ──").bold());
-            println!(
-                "Save the following script to {} and make it executable:\n",
-                style("~/.claude/hooks/h5i-capture-prompt.sh").yellow()
-            );
-            println!("{}", style(hook_script).dim());
-
             println!(
                 "{}",
-                style("── Step 2: Add to ~/.claude/settings.json ──").bold()
+                style("── Add to ~/.claude/settings.json ──").bold()
             );
             println!(
                 "Add (or merge) the {} block into your {}:\n",
@@ -6611,7 +6634,7 @@ jq -c '{
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/h5i-capture-prompt.sh"
+            "command": "h5i claude prompt"
           }
         ]
       }
@@ -6631,7 +6654,7 @@ jq -c '{
         "hooks": [
           {
             "type": "command",
-            "command": "h5i hook run"
+            "command": "h5i claude sync"
           }
         ]
       }
@@ -6641,7 +6664,7 @@ jq -c '{
         "hooks": [
           {
             "type": "command",
-            "command": "h5i hook stop"
+            "command": "h5i claude finish"
           }
         ]
       }
@@ -6666,6 +6689,12 @@ jq -c '{
             );
             println!("         auto-checkpoints the context workspace milestone.",);
             println!("         You never have to call `h5i context trace` by hand.");
+            println!(
+                "  {} — captures the verbatim human prompt so {} records",
+                style("UserPromptSubmit").yellow(),
+                style("h5i capture commit").yellow()
+            );
+            println!("         what you actually typed, not the agent's paraphrase.");
 
             println!();
             println!(
@@ -6772,11 +6801,13 @@ jq -c '{
             println!(
                 "\n{} also work without hooks — {} / H5I_MODEL / H5I_AGENT_ID are read automatically at commit time.",
                 style("Env vars").bold(),
-                style("H5I_PROMPT").yellow()
+                style("H5I_INTENT").yellow()
             );
         }
 
-        Commands::Hook(HookCommands::Run) => {
+        Commands::Claude {
+            action: ClaudeCommands::Sync,
+        } => {
             use std::io::Read as _;
             // Read JSON from stdin (Claude Code sends PostToolUse payload here).
             let mut raw = String::new();
@@ -6925,6 +6956,45 @@ jq -c '{
             );
         }
 
+        Commands::Claude {
+            action: ClaudeCommands::Prompt,
+        } => {
+            use std::io::Read as _;
+            // Read the UserPromptSubmit payload from stdin. Fail open on any
+            // problem so we never block the human's turn (and emit no stdout,
+            // which Claude Code would otherwise inject as added context).
+            let mut raw = String::new();
+            std::io::stdin().read_to_string(&mut raw).unwrap_or(0);
+            if raw.trim().is_empty() {
+                return Ok(());
+            }
+            let Ok(data) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                return Ok(());
+            };
+            let prompt = data.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+            if prompt.trim().is_empty() {
+                return Ok(());
+            }
+            let session_id = data.get("session_id").and_then(|v| v.as_str());
+
+            let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            // Only record inside a git repo that already has h5i initialized —
+            // never create `.git/.h5i` just because the global hook fired in
+            // some unrelated repo.
+            let Ok(git_repo) = git2::Repository::discover(&workdir) else {
+                return Ok(());
+            };
+            let Ok(h5i_root) = storage::h5i_root_for_repo(&git_repo) else {
+                return Ok(());
+            };
+            if !h5i_root.exists() {
+                return Ok(());
+            }
+            if let Ok(repo) = H5iRepository::open(&workdir) {
+                let _ = repo.record_human_prompt(prompt, session_id);
+            }
+        }
+
         Commands::Hook(HookCommands::SessionStart) => {
             let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             if let Some(additional_context) = session_start_context(&workdir) {
@@ -6940,7 +7010,9 @@ jq -c '{
             }
         }
 
-        Commands::Hook(HookCommands::Stop) => {
+        Commands::Claude {
+            action: ClaudeCommands::Finish,
+        } => {
             let workdir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             // 1. Mine the Claude session JSONL for key decisions + omissions and
             //    emit them as THINK/NOTE trace entries. The agent never has to
@@ -6987,22 +7059,29 @@ jq -c '{
                     // Turn-delivery analog: check the inbox after a work burst.
                     deliver_codex_inbox(&workdir);
                 }
-                CodexCommands::Finish { summary } => {
+                CodexCommands::Finish { summary, quiet } => {
                     match codex::sync_context(&workdir)? {
-                        Some(result) => println!(
-                            "{} Synced Codex session {} ({} OBSERVE, {} ACT)",
-                            SUCCESS,
-                            style(&result.session_id).magenta(),
-                            result.observed,
-                            result.acted,
-                        ),
-                        None => println!(
-                            "{} No Codex session found in ~/.codex/sessions for this repo.",
-                            WARN
-                        ),
+                        Some(result) if !quiet => {
+                            println!(
+                                "{} Synced Codex session {} ({} OBSERVE, {} ACT)",
+                                SUCCESS,
+                                style(&result.session_id).magenta(),
+                                result.observed,
+                                result.acted,
+                            );
+                        }
+                        None if !quiet => {
+                            println!(
+                                "{} No Codex session found in ~/.codex/sessions for this repo.",
+                                WARN
+                            );
+                        }
+                        _ => {}
                     }
-                    auto_checkpoint_context(&workdir, summary.as_deref(), false)?;
-                    deliver_codex_inbox(&workdir);
+                    auto_checkpoint_context(&workdir, summary.as_deref(), quiet)?;
+                    if !quiet {
+                        deliver_codex_inbox(&workdir);
+                    }
                 }
             }
         }

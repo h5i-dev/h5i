@@ -12,14 +12,19 @@ use toml::value::Table;
 /// output).
 const CORE_HOOKS: &[(&str, Option<&str>, &str)] = &[
     ("SessionStart", None, "h5i hook session-start"),
-    ("PostToolUse", Some("Edit|Write|Read"), "h5i hook run"),
-    ("Stop", None, "h5i hook stop"),
+    ("PostToolUse", Some("Edit|Write|Read"), "h5i claude sync"),
+    ("Stop", None, "h5i claude finish"),
+    // Capture the verbatim human prompt so `h5i capture commit` records what
+    // the human actually typed, not the agent's paraphrase.
+    ("UserPromptSubmit", None, "h5i claude prompt"),
 ];
 
 /// The opt-in Bash capture-wrap entry (PreToolUse: rewrites the command
 /// into `h5i capture run` via updatedInput).
 const WRAP_BASH_HOOK: (&str, Option<&str>, &str) =
     ("PreToolUse", Some("Bash"), "h5i hook wrap-bash");
+
+const CODEX_STOP_HOOK: &str = "h5i codex finish --quiet";
 
 /// The retired PostToolUse Bash observation hook: superseded by wrap-bash
 /// (which captures AND token-reduces). The subcommand no longer exists, so
@@ -117,6 +122,16 @@ pub fn merge_codex_config_toml(existing: &str, wrap_bash: bool) -> Result<String
         .ok_or_else(|| H5iError::Metadata("config 'hooks' is not a table".into()))?;
 
     for &(event, matcher, command) in CORE_HOOKS {
+        // UserPromptSubmit and PostToolUse are Claude-Code-specific here:
+        // Codex prompt/tool provenance is mined from session JSONL by
+        // `h5i codex finish`, installed below as the Stop hook.
+        if matches!(event, "UserPromptSubmit" | "PostToolUse") {
+            continue;
+        }
+        let command = match event {
+            "Stop" => CODEX_STOP_HOOK,
+            _ => command,
+        };
         ensure_toml_hook_entry(hooks_table, event, matcher, command)?;
     }
     if let Some(arr) = hooks_table
@@ -337,10 +352,14 @@ mod tests {
             commands_under(&v, "SessionStart"),
             vec!["h5i hook session-start"]
         );
-        assert_eq!(commands_under(&v, "PostToolUse"), vec!["h5i hook run"]);
-        assert_eq!(commands_under(&v, "Stop"), vec!["h5i hook stop"]);
+        assert_eq!(commands_under(&v, "PostToolUse"), vec!["h5i claude sync"]);
+        assert_eq!(commands_under(&v, "Stop"), vec!["h5i claude finish"]);
+        assert_eq!(
+            commands_under(&v, "UserPromptSubmit"),
+            vec!["h5i claude prompt"]
+        );
         assert!(!out.contains("wrap-bash"));
-        // The Edit|Write|Read matcher rides along with `h5i hook run`.
+        // The Edit|Write|Read matcher rides along with `h5i claude sync`.
         assert_eq!(
             v.pointer("/hooks/PostToolUse/0/matcher")
                 .and_then(|m| m.as_str()),
@@ -375,7 +394,7 @@ mod tests {
         // (managed scope pins observation, it does not commandeer the agent's
         // own SessionStart/PostToolUse/Stop wiring).
         assert_eq!(commands_under(&v, "PreToolUse"), vec!["h5i hook wrap-bash"]);
-        for event in ["SessionStart", "PostToolUse", "Stop"] {
+        for event in ["SessionStart", "PostToolUse", "Stop", "UserPromptSubmit"] {
             assert!(
                 v.pointer(&format!("/hooks/{event}")).is_none(),
                 "managed settings must not carry the {event} core hook"
@@ -405,10 +424,14 @@ command = "h5i msg hook"
         let v: toml::Value = toml::from_str(&out).unwrap();
         assert_eq!(v["model"].as_str(), Some("gpt-5.4"));
         assert!(out.contains("command = \"h5i hook session-start\""));
-        assert!(out.contains("command = \"h5i hook run\""));
-        assert!(out.contains("command = \"h5i hook stop\""));
+        assert!(!out.contains("command = \"h5i hook run\""));
+        assert!(out.contains("command = \"h5i codex finish --quiet\""));
+        assert!(!out.contains("command = \"h5i hook stop\""));
         assert!(out.contains("command = \"h5i msg hook\""));
         assert!(!out.contains("wrap-bash"));
+        // UserPromptSubmit is Claude-only; Codex config must not carry it.
+        assert!(!out.contains("UserPromptSubmit"));
+        assert!(!out.contains("h5i claude prompt"));
     }
 
     #[test]
@@ -456,7 +479,7 @@ command = "h5i msg hook"
         );
         let stop = commands_under(&v, "Stop");
         assert!(stop.contains(&"h5i msg hook --block".to_string()));
-        assert!(stop.contains(&"h5i hook stop".to_string()));
+        assert!(stop.contains(&"h5i claude finish".to_string()));
     }
 
     #[test]
@@ -482,9 +505,9 @@ command = "h5i msg hook"
         let out = merge_hook_settings_json(existing, false).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         let cmds = commands_under(&v, "PostToolUse");
-        // The unrelated `run-custom` survives next to the managed `h5i hook run`.
+        // The unrelated `run-custom` survives next to the managed `h5i claude sync`.
         assert!(cmds.contains(&"h5i hook run-custom".to_string()));
-        assert!(cmds.contains(&"h5i hook run".to_string()));
+        assert!(cmds.contains(&"h5i claude sync".to_string()));
     }
 
     #[test]

@@ -641,7 +641,8 @@ impl H5iRepository {
                     );
                 }
             }
-            println!("\n    {}\n", style(commit.message().unwrap_or("")).bold());
+            println!("{:<10}", style("Message:").dim());
+            println!("    {}\n", style(commit.message().unwrap_or("")).bold());
             println!("{}", style("─".repeat(60)).dim());
         }
         Ok(())
@@ -1394,6 +1395,44 @@ impl H5iRepository {
             fs::remove_file(&path)?;
         }
         Ok(())
+    }
+
+    /// Persists the pending context to `.git/.h5i/pending_context.json`.
+    pub fn write_pending_context(&self, ctx: &PendingContext) -> Result<(), H5iError> {
+        fs::create_dir_all(&self.h5i_root)?;
+        let path = self.h5i_root.join("pending_context.json");
+        let raw = serde_json::to_string_pretty(ctx).map_err(|e| {
+            H5iError::Metadata(format!("Failed to serialize pending_context.json: {e}"))
+        })?;
+        fs::write(&path, raw)?;
+        Ok(())
+    }
+
+    /// Records a verbatim human prompt (from the `UserPromptSubmit` hook) into
+    /// the pending context, **accumulating** across turns since the last
+    /// commit — a commit often follows several human messages, and we want the
+    /// whole ask, not just the latest line. Empty/blank prompts are ignored.
+    /// The accumulated `human_prompt` wins over an agent-authored `--prompt` at
+    /// commit time, so the recorded prompt is what the human actually typed
+    /// rather than the agent's paraphrase.
+    pub fn record_human_prompt(
+        &self,
+        prompt: &str,
+        session_id: Option<&str>,
+    ) -> Result<(), H5iError> {
+        let prompt = prompt.trim();
+        if prompt.is_empty() {
+            return Ok(());
+        }
+        let mut ctx = self.read_pending_context()?.unwrap_or_default();
+        ctx.human_prompt = Some(match ctx.human_prompt.take() {
+            Some(prev) if !prev.trim().is_empty() => format!("{prev}\n\n{prompt}"),
+            _ => prompt.to_string(),
+        });
+        if let Some(sid) = session_id.filter(|s| !s.is_empty()) {
+            ctx.session_id = Some(sid.to_string());
+        }
+        self.write_pending_context(&ctx)
     }
 
     /// Returns a list of commits enriched with h5i AI metadata, suitable for
@@ -3280,6 +3319,40 @@ mod tests {
         assert!(shadow.is_none(), "dry-run must not create a shadow ref");
         let paths: Vec<&str> = changed.iter().map(|(p, _)| p.as_str()).collect();
         assert!(paths.contains(&"bar.txt"), "bar.txt should appear as deleted");
+    }
+
+    #[test]
+    fn record_human_prompt_accumulates_across_turns() {
+        let dir = tempdir().unwrap();
+        Repository::init(dir.path()).unwrap();
+        let h5i = H5iRepository::open(dir.path()).unwrap();
+
+        // No pending file yet → nothing to read.
+        assert!(h5i.read_pending_context().unwrap().is_none());
+
+        // Blank prompts are ignored (no file written).
+        h5i.record_human_prompt("   ", Some("sess-1")).unwrap();
+        assert!(h5i.read_pending_context().unwrap().is_none());
+
+        // First real prompt is stored verbatim, with the session id.
+        h5i.record_human_prompt("fix the retry loop", Some("sess-1"))
+            .unwrap();
+        let ctx = h5i.read_pending_context().unwrap().unwrap();
+        assert_eq!(ctx.human_prompt.as_deref(), Some("fix the retry loop"));
+        assert_eq!(ctx.session_id.as_deref(), Some("sess-1"));
+
+        // A second turn appends (the whole ask, not just the latest line).
+        h5i.record_human_prompt("also add a test", Some("sess-1"))
+            .unwrap();
+        let ctx = h5i.read_pending_context().unwrap().unwrap();
+        assert_eq!(
+            ctx.human_prompt.as_deref(),
+            Some("fix the retry loop\n\nalso add a test")
+        );
+
+        // Clearing (as a commit does) drops the accumulated prompt.
+        h5i.clear_pending_context().unwrap();
+        assert!(h5i.read_pending_context().unwrap().is_none());
     }
 
     #[test]

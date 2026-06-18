@@ -51,7 +51,7 @@ h5i recall context trace --kind ACT "<what you changed and where>"
 h5i recall context trace --kind NOTE "TODO: <what to revisit>"
 ```
 
-> If the **PostToolUse** hook (`h5i hook run`) is installed, ACT/OBSERVE traces
+> If the **PostToolUse** hook (`h5i claude sync`) is installed, ACT/OBSERVE traces
 > are emitted automatically on every Edit/Write/Read. You should still add
 > **THINK** and **NOTE** entries by hand — those capture intent the hook can't infer.
 > Use `--ephemeral` for scratch notes that should be cleared on the next commit.
@@ -126,8 +126,11 @@ Always use `h5i capture commit` instead of `git commit`, and record AI provenanc
 ```bash
 h5i capture commit -m "<message>" \
   --model claude-opus-4-8 \
-  --agent claude-code \
-  --prompt "<the user's original request>"
+  --agent claude-code
+# Do not pass --intent in Claude Code: the human prompt is auto-captured by the
+# UserPromptSubmit hook and takes precedence. In Codex, `h5i codex finish`
+# records the raw prompt from session JSONL when installed as the Stop hook.
+# --intent is a fallback for CI/scripts/manual commits.
 ```
 
 Add `--tests` when tests were added or modified, `--ast` to snapshot structure,

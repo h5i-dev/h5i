@@ -375,6 +375,14 @@ pub struct PendingContext {
     pub model: Option<String>,
     pub agent_id: Option<String>,
     pub session_id: Option<String>,
+    /// Verbatim human prompt(s) captured by the `UserPromptSubmit` hook,
+    /// accumulated across turns since the last commit. This is the *raw* text
+    /// the human typed — not an agent paraphrase — and it wins over the
+    /// agent-authored `--prompt`/`$H5I_PROMPT` at commit time, so provenance
+    /// records what the human actually asked. `#[serde(default)]` keeps older
+    /// pending files (written before this field existed) parseable.
+    #[serde(default)]
+    pub human_prompt: Option<String>,
 }
 
 pub fn count_tokens(text: &str, model: &str) -> Result<usize, String> {
@@ -421,6 +429,36 @@ mod tests {
 
         repo.commit(Some("HEAD"), &sig, &sig, message, &tree, parents)
             .expect("Failed to create commit")
+    }
+
+    #[test]
+    fn pending_context_without_human_prompt_field_parses() {
+        // A `pending_context.json` written before the `human_prompt` field
+        // existed must still deserialize (the `#[serde(default)]` contract),
+        // leaving `human_prompt` as None rather than failing the parse.
+        let legacy = r#"{
+            "prompt": "agent paraphrase",
+            "model": "claude-opus-4-8",
+            "agent_id": "claude-code",
+            "session_id": "sess-legacy"
+        }"#;
+        let ctx: PendingContext = serde_json::from_str(legacy).expect("legacy pending parses");
+        assert_eq!(ctx.prompt.as_deref(), Some("agent paraphrase"));
+        assert_eq!(ctx.model.as_deref(), Some("claude-opus-4-8"));
+        assert_eq!(ctx.session_id.as_deref(), Some("sess-legacy"));
+        assert!(
+            ctx.human_prompt.is_none(),
+            "missing human_prompt field should default to None"
+        );
+
+        // And a current file with the field round-trips.
+        let ctx = PendingContext {
+            human_prompt: Some("what the human typed".into()),
+            ..Default::default()
+        };
+        let raw = serde_json::to_string(&ctx).unwrap();
+        let back: PendingContext = serde_json::from_str(&raw).unwrap();
+        assert_eq!(back.human_prompt.as_deref(), Some("what the human typed"));
     }
 
     #[test]
