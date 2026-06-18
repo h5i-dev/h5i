@@ -1,5 +1,9 @@
 //! Integration tests for the read-only Sandbox dashboard API (`h5i serve`).
 //!
+//! Gated on the `web` feature — the dashboard (and `h5i_core::server`) only
+//! exist when it is enabled, so `--no-default-features` test builds skip this.
+#![cfg(feature = "web")]
+//!
 //! These boot the real axum router (`server::build_router`) against a temp repo
 //! created via the `h5i` CLI, then hit the endpoints over loopback with a
 //! blocking HTTP client — exercising the full handler path (repo open, env

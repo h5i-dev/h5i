@@ -823,6 +823,7 @@ enum Commands {
     },
 
     /// Launch the h5i web dashboard in your browser
+    #[cfg(feature = "web")]
     Serve {
         /// Port to listen on
         #[arg(short, long, default_value_t = 7150)]
@@ -6937,6 +6938,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
+        #[cfg(feature = "web")]
         Commands::Serve { port } => {
             let repo = H5iRepository::open(".")?;
             let repo_path = repo

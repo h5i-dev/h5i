@@ -46,6 +46,7 @@ pub mod resume;
 pub mod review;
 pub mod risk;
 pub mod rules;
+#[cfg(feature = "web")]
 pub mod server;
 pub mod ui;
 pub mod vibe;
