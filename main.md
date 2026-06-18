@@ -956,11 +956,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited MANUAL.md; edited MANUAL.md; edited MANUAL.md
 - [x] edited MANUAL.md; edited MANUAL.md; edited MANUAL.md
 - [x] edited MANUAL.md; edited MANUAL.md; edited MANUAL.md
+- [x] edited MANUAL.md; edited MANUAL.md; edited README.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-18 23:32 UTC] `prompt-score`: edited MANUAL.md; edited MANUAL.md; edited README.md
 - [2026-06-18 23:30 UTC] `prompt-score`: edited MANUAL.md; edited MANUAL.md; edited MANUAL.md
 - [2026-06-18 22:23 UTC] `prompt-score`: edited MANUAL.md; edited MANUAL.md; edited MANUAL.md
 - [2026-06-18 22:22 UTC] `prompt-score`: edited MANUAL.md; edited MANUAL.md; edited MANUAL.md
