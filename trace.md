@@ -982,3 +982,4 @@ _[Checkpoint: 6a345256 — Done #6 parts 1+2: web feature gate (axum/mime_guess 
 
 [20:17:40] THINK: On it — parts 1+2. Let me gather the facts I need: which dependencies are web-only (for the feature gate), and which `lib.
 [20:17:40] THINK: rs`/`sandbox_policy.rs` dispatch and ships no unique heavy dep (it shells out to podman) — gating it is entangled with the security dispatch path for ~zero dependency payoff, so I'll gate `web` (the real win) and leave container ungated, no…
+[20:17:40] THINK: Both compile. Let me confirm `axum` is genuinely absent from the `--no-default-features` dependency graph (the `tower`/`hyper` crates I see are pulled by `reqwest`, not axum).
