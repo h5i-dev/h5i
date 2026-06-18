@@ -556,3 +556,9 @@ _[Checkpoint: 6a3339ee — edited /home/koukyosyumei/Dev/h5i/tests/cli_integrati
 _[Checkpoint: 6a333b64 — edited src/hooks.rs; edited src/hooks.rs; edited src/hooks.rs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a333b79 — edited src/hooks.rs; edited src/hooks.rs; edited src/hooks.rs]_
+---
+
