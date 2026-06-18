@@ -838,3 +838,4 @@ _[Checkpoint: 6a3422ef — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a34238a — session ended (auto-checkpoint)]_
 ---
 
+[16:58:37] OBSERVE: searched tests for "src"
