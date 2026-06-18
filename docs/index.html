@@ -919,7 +919,7 @@
       <p class="section-sub">h5i is a Git sidecar. Your commits, branches, and remotes stay exactly as they are — h5i writes the AI context to its own <code>refs/h5i/*</code> refs that travel with the repo.</p>
       <div class="divider"></div>
     </div>
-    <div class="refstack reveal">
+    <!-- <div class="refstack reveal">
       <div class="ref-layer"><span class="ref-name">refs/h5i/env</span><span class="ref-desc">sandbox environments — confined agent runs, Git-based auditable logs</span></div>
       <div class="ref-layer"><span class="ref-name">refs/h5i/notes</span><span class="ref-desc">provenance per commit — prompt, model, agent, tests, decisions, risk</span></div>
       <div class="ref-layer"><span class="ref-name">refs/h5i/context</span><span class="ref-desc">versioned reasoning trace — OBSERVE / THINK / ACT, branched like Git</span></div>
@@ -927,7 +927,7 @@
       <div class="ref-layer"><span class="ref-name">refs/h5i/objects</span><span class="ref-desc">token-saving object store — raw tool output, kept out of context</span></div>
       <div class="ref-join">▲&nbsp;&nbsp;h5i sidecar&nbsp;&nbsp;·&nbsp;&nbsp;carried by <code>h5i share push / pull</code>&nbsp;&nbsp;▲</div>
       <div class="ref-git"><span class="ref-name">your Git repo</span><span class="ref-desc">commits, branches, any remote — unchanged. No SaaS, no new VCS, no lock-in.</span></div>
-    </div>
+      </div> --!>
     <div class="hero-shot">
       <img src="/_static/h5i-concept.svg" width="1240" height="380" alt="h5i concept diagram showing Codex and Claude sharing versioned context through refs/h5i">
       <div class="hero-shot-caption">Agents capture and recall the same versioned context through <code>refs/h5i/*</code>; audits, dashboards, and PR comments are views over that shared record.</div>
