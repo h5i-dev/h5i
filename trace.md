@@ -1053,3 +1053,4 @@ _[Checkpoint: 6a346dd1 — edited src/supervisor.rs; edited src/supervisor.rs; e
 [22:19:09] OBSERVE: read src/ast.rs
 [22:19:13] ACT: edited src/ast.rs
 [22:19:31] ACT: edited CLAUDE.md
+[22:19:35] OBSERVE: read MANUAL.md
