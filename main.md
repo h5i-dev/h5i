@@ -923,11 +923,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited docs/blog/prompt-maturity-score/index.html; edited docs/blog/index.html; edited docs/blog/index.html
 - [x] edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1
 - [x] edited docs/blog/claude-code-hooks-vs-git-hooks/index.html; edited docs/blog/track-claude-code-prompts-diffs-git/index.h…
+- [x] edited docs/blog/persistent-memory-for-claude-code/index.html; edited src/hooks.rs; edited src/msg.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-18 01:36 UTC] `prompt-score`: edited docs/blog/persistent-memory-for-claude-code/index.html; edited src/hooks.rs; edited src/msg.rs
 - [2026-06-18 01:17 UTC] `prompt-score`: edited docs/blog/claude-code-hooks-vs-git-hooks/index.html; edited docs/blog/track-claude-code-prompts-diffs-git/index.h…
 - [2026-06-18 01:07 UTC] `prompt-score`: edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1
 - [2026-06-18 00:49 UTC] `prompt-score`: edited docs/blog/prompt-maturity-score/index.html; edited docs/blog/index.html; edited docs/blog/index.html
