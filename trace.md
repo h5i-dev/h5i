@@ -875,3 +875,9 @@ _[Checkpoint: 6a3423d4 — session ended (auto-checkpoint)]_
 [17:09:46] ACT: edited tests/env_integration.rs
 [17:10:08] ACT: edited tests/env_integration.rs
 [17:10:17] ACT: edited tests/env_integration.rs
+
+
+---
+_[Checkpoint: 6a3426ec — Done: sandbox->msg leak fixed (idents module); adversarial sandbox tests added (deny-list membership unit test + behavioral ptrace EPERM + timeout exit-124). Correction: env_integration.rs already had behavioral confinement tests (write-outside-WORK, sockets, /proc/environ, reap) — my review under-credited them.]_
+---
+
