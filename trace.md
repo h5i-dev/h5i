@@ -974,3 +974,9 @@ _[Checkpoint: 6a344e5e — wrote src/cli_routing.rs; edited src/lib.rs; edited s
 [20:17:02] ACT: wrote web-feature-gate.md
 [20:17:05] OBSERVE: read MEMORY.md
 [20:17:12] ACT: edited MEMORY.md
+
+
+---
+_[Checkpoint: 6a345256 — Done #6 parts 1+2: web feature gate (axum/mime_guess optional, default-on; --no-default-features = lean CLI, verified via cargo tree) + pub(crate) curation of 8 internal machinery modules + gated risk. Part 3 (workspace crate split) deferred per user. All 6 review items addressed.]_
+---
+
