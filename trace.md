@@ -1093,3 +1093,9 @@ _[Checkpoint: 6a347fb3 — edited MANUAL.md; edited MANUAL.md; edited MANUAL.md]
 
 [23:31:02] OBSERVE: read docs/index.html
 [23:32:16] ACT: edited README.md
+
+
+---
+_[Checkpoint: 6a348005 — edited MANUAL.md; edited MANUAL.md; edited README.md]_
+---
+
