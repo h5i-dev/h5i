@@ -963,11 +963,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited docs/index.html; edited docs/index.html; edited docs/index.html
 - [x] edited docs/index.html; edited docs/index.html; edited docs/index.html
 - [x] Final polish pass: caveat coverage + anchor/parse verification
+- [x] edited docs/index.html; edited docs/index.html; edited docs/pitch/index.html
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-18 23:48 UTC] `prompt-score`: edited docs/index.html; edited docs/index.html; edited docs/pitch/index.html
 - [2026-06-18 23:48 UTC] `prompt-score`: Final polish pass: caveat coverage + anchor/parse verification
 - [2026-06-18 23:45 UTC] `prompt-score`: edited docs/index.html; edited docs/index.html; edited docs/index.html
 - [2026-06-18 23:44 UTC] `prompt-score`: edited docs/index.html; edited docs/index.html; edited docs/index.html
