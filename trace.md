@@ -1148,3 +1148,4 @@ _[Checkpoint: 6a34821b — Rewrote README + docs site + pitch around Prompt Matu
 ---
 
 [23:41:36] THINK: Let me explore the prompt maturity scoring feature and the website/pitch deck structure.
+[23:41:36] THINK: Let me set up context tracking and map the website structure efficiently (the HTML files are large).
