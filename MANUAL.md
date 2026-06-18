@@ -945,7 +945,7 @@ h5i capture commit -m "add rate limiting"
 
 ```bash
 h5i capture commit -m "add login tests" \
-  --test-cmd "python script/h5i-pytest-adapter.py" \
+  --test-cmd "python plugin/h5i-pytest-adapter.py" \
   --audit
 ```
 
@@ -3233,12 +3233,12 @@ Pass a JSON file via `--test-results`, or produce it on stdout for `--test-cmd`.
 
 `exit_code` takes precedence over counts when determining pass/fail. `total` is computed from counts if omitted.
 
-Bundled adapters in `script/`:
+Bundled adapters in `plugin/`:
 
 | Adapter | Usage |
 |---------|-------|
-| `h5i-pytest-adapter.py` | `python script/h5i-pytest-adapter.py` — uses `pytest-json-report` when available, falls back to output parsing |
-| `h5i-cargo-test-adapter.sh` | `bash script/h5i-cargo-test-adapter.sh` — accumulates counts across lib/integration/doc-test sections |
+| `h5i-pytest-adapter.py` | `python plugin/h5i-pytest-adapter.py` — uses `pytest-json-report` when available, falls back to output parsing |
+| `h5i-cargo-test-adapter.sh` | `bash plugin/h5i-cargo-test-adapter.sh` — accumulates counts across lib/integration/doc-test sections |
 
 ---
 
@@ -3284,7 +3284,7 @@ Auto-captured when the Claude Code hook is installed; you usually do not set the
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `H5I_PARSER_DIR` | unset | Directory to search **first** for `h5i-py-parser.py`. Must be an existing directory; if it exists but is not a directory (or does not exist), h5i logs a warning at `warn` level and falls through to `<repo>/script/` then `<bindir>/[..]/script/`. |
+| `H5I_PARSER_DIR` | unset | Directory to search **first** for `h5i-py-parser.py`. Must be an existing directory; if it exists but is not a directory (or does not exist), h5i logs a warning at `warn` level and falls through to `<repo>/plugin/` then `<bindir>/[..]/plugin/`. |
 | `H5I_PARSER_TIMEOUT_SECS` | `30` | Hard timeout (whole seconds) for the parser subprocess. The child is killed if it exceeds this. Non-positive or non-numeric values fall back to the default. |
 
 ### Claims

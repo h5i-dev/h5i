@@ -1,3 +1,0 @@
-[submodule "examples/dnn-from-scratch"]
-	path = examples/dnn-from-scratch
-	url = https://github.com/Koukyosyumei/dnn-from-scratch

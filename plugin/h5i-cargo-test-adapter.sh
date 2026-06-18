@@ -2,15 +2,15 @@
 # h5i cargo-test adapter — runs `cargo test` and prints h5i-compatible JSON to stdout.
 #
 # Usage (standalone):
-#   ./script/h5i-cargo-test-adapter.sh [cargo-test-args...]
+#   ./plugin/h5i-cargo-test-adapter.sh [cargo-test-args...]
 #
 # Usage (pipe into h5i commit):
-#   ./script/h5i-cargo-test-adapter.sh > /tmp/h5i-results.json
+#   ./plugin/h5i-cargo-test-adapter.sh > /tmp/h5i-results.json
 #   h5i commit -m "..." --test-results /tmp/h5i-results.json
 #
 # Usage (one-liner with --test-cmd):
 #   h5i commit -m "..." \
-#     --test-cmd "./script/h5i-cargo-test-adapter.sh"
+#     --test-cmd "./plugin/h5i-cargo-test-adapter.sh"
 #
 # The script exits with cargo test's own exit code so CI can gate on it.
 set -euo pipefail
