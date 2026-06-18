@@ -1135,3 +1135,16 @@ README: new receipt-led hero, prompt-score stat/badge, restructured §3 (3.1 Pro
 
 ---
 
+## Commit 6a348231 — 2026-06-18 23:41 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+README: new receipt-led hero, prompt-score stat/badge, restructured §3 (3.1 Prompt Maturity wedge → 3.2 PR receipt → radio/sandbox/token/DAG). Homepage: receipt hero, new #prompt-maturity section, 2 FAQ entries, dual-audience copy. Pitch: reframed problem to 'execution trail', added Why-now + Prompt Maturity wedge slides, Market&moat slide, prompt-maturity row in PR card. Added prompt-maturity pill to pr-demo.svg, prompt-maturity card to features page.
+
+### This Commit's Contribution
+
+
+---
+

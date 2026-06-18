@@ -1154,3 +1154,9 @@ _[Checkpoint: 6a34821b — Rewrote README + docs site + pitch around Prompt Matu
 [23:41:37] THINK: I have everything. Let me add the prompt-maturity row to the PR receipt card (slide 7), then insert the two new slides:
 [23:41:37] THINK: I'll add a prompt-maturity score pill to the top of the receipt SVG — a clean, additive edit (no coordinate shifts) that makes the canonical artifact show the wedge:
 [23:41:37] THINK: Let me validate the SVG and check the features page structure (it's part of the website too):
+
+
+---
+_[Checkpoint: 6a348231 — edited assets/pr-demo.svg; edited docs/features/index.html; edited docs/features/index.html]_
+---
+
