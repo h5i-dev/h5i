@@ -745,3 +745,16 @@ lexicon_hits now uses a once-built word-count map (was re-splitting full text pe
 
 ---
 
+## Commit 6a3401e2 — 2026-06-18 14:34 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+lexicon_hits now uses a once-built word-count map (was re-splitting full text per entry); MATTR is O(n) sliding-window (was O(n*window) HashSet rebuild); folded syllable double-pass into one; precomputed branch length-weights. Added examples/bench_prompt_score.rs (zero-dep). Added equivalence tests (optimized vs naive) + boundary/determinism tests. Measured 1.8-3.3x on realistic prompts, 2.5-2.7x on branch roll-up. 862 lib tests pass, clippy -D warnings clean. Behavior identical (equivalence-tested).
+
+### This Commit's Contribution
+
+
+---
+
