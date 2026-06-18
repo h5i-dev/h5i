@@ -364,15 +364,16 @@ where
     }
 
     // Length weight, clamped so neither a 3-word ask nor a giant prompt skews
-    // the mean.
-    let weight = |s: &PromptScore| (s.words.clamp(20, 250)) as f64;
-    let total_w: f64 = scored.iter().map(weight).sum();
+    // the mean. Computed once per prompt and reused across all nine weighted
+    // means below (was recomputed per mean, per prompt).
+    let weights: Vec<f64> = scored.iter().map(|s| s.words.clamp(20, 250) as f64).collect();
+    let total_w: f64 = weights.iter().sum();
 
     let wmean = |get: &dyn Fn(&PromptScore) -> f64| -> f64 {
-        scored.iter().map(|s| get(s) * weight(s)).sum::<f64>() / total_w
+        scored.iter().zip(&weights).map(|(s, w)| get(s) * w).sum::<f64>() / total_w
     };
     let wmean_b = |get: &dyn Fn(&PromptScoreBreakdown) -> f64| -> f64 {
-        scored.iter().map(|s| get(&s.breakdown) * weight(s)).sum::<f64>() / total_w
+        scored.iter().zip(&weights).map(|(s, w)| get(&s.breakdown) * w).sum::<f64>() / total_w
     };
 
     let breakdown = PromptScoreBreakdown {
@@ -459,13 +460,29 @@ impl Features {
         let masked = mask_code(text);
         let prose_tokens = tokenize_words(&masked);
         let words = prose_tokens.len();
-        let syllables: usize = prose_tokens.iter().map(|w| count_syllables(w)).sum();
-        let polysyllables = prose_tokens.iter().filter(|w| count_syllables(w) >= 3).count();
+        // Single pass over the prose tokens: total syllables and the polysyllable
+        // (>=3) count together, rather than walking the vec twice.
+        let mut syllables = 0usize;
+        let mut polysyllables = 0usize;
+        for w in &prose_tokens {
+            let s = count_syllables(w);
+            syllables += s;
+            if s >= 3 {
+                polysyllables += 1;
+            }
+        }
         let sentences = count_sentences(&masked).max(1);
         let (bullets, numbered, headings, code_fences) = count_structure(text);
 
         let lower = text.to_ascii_lowercase();
         let word_set: HashSet<&str> = prose_tokens.iter().map(|s| s.as_str()).collect();
+        // Word-occurrence map over the raw lowercased text, built once and shared
+        // by every single-word lexicon lookup below. Replaces re-splitting the
+        // whole text per lexicon entry (was O(entries × text_len)). Keyed on the
+        // same word-boundary split the old per-entry filter used, so counts are
+        // identical; `word_set` still gates so only words appearing as *prose*
+        // (not code-masked spans) score.
+        let lower_counts = word_counts(&lower);
 
         Features {
             code_refs: count_code_refs(text),
@@ -474,16 +491,16 @@ impl Features {
                 .iter()
                 .filter(|w| w.chars().any(|c| c.is_ascii_digit()))
                 .count(),
-            action_verbs: lexicon_hits(&lower, &word_set, ACTION_VERBS),
-            weak_words: lexicon_hits(&lower, &word_set, WEAK_WORDS),
-            context_markers: lexicon_hits(&lower, &word_set, CONTEXT_MARKERS),
-            grounding_refs: lexicon_hits(&lower, &word_set, GROUNDING_REFS),
-            constraints: lexicon_hits(&lower, &word_set, CONSTRAINTS),
-            output_shape: lexicon_hits(&lower, &word_set, OUTPUT_SHAPE),
-            verification: lexicon_hits(&lower, &word_set, VERIFICATION),
-            edge_cases: lexicon_hits(&lower, &word_set, EDGE_CASES),
-            safety: lexicon_hits(&lower, &word_set, SAFETY),
-            scope: lexicon_hits(&lower, &word_set, SCOPE),
+            action_verbs: lexicon_hits(&lower, &lower_counts, &word_set, ACTION_VERBS),
+            weak_words: lexicon_hits(&lower, &lower_counts, &word_set, WEAK_WORDS),
+            context_markers: lexicon_hits(&lower, &lower_counts, &word_set, CONTEXT_MARKERS),
+            grounding_refs: lexicon_hits(&lower, &lower_counts, &word_set, GROUNDING_REFS),
+            constraints: lexicon_hits(&lower, &lower_counts, &word_set, CONSTRAINTS),
+            output_shape: lexicon_hits(&lower, &lower_counts, &word_set, OUTPUT_SHAPE),
+            verification: lexicon_hits(&lower, &lower_counts, &word_set, VERIFICATION),
+            edge_cases: lexicon_hits(&lower, &lower_counts, &word_set, EDGE_CASES),
+            safety: lexicon_hits(&lower, &lower_counts, &word_set, SAFETY),
+            scope: lexicon_hits(&lower, &lower_counts, &word_set, SCOPE),
             repetition_factor: repetition_factor(&prose_tokens),
             bullets,
             numbered,
@@ -895,18 +912,42 @@ fn count_structure(text: &str) -> (usize, usize, usize, usize) {
     (bullets, numbered, headings, code_fences / 2)
 }
 
-/// Count lexicon hits. Single-word entries count every matching prose token;
-/// multi-word entries count substring occurrences in the lowercased raw text.
-fn lexicon_hits(lower: &str, word_set: &HashSet<&str>, lex: &[&str]) -> usize {
+/// True for a character that is part of a word token (alphanumeric, `_`, `'`).
+/// The single source of truth for the word-boundary split used by both
+/// [`word_counts`] and historically by `lexicon_hits`.
+#[inline]
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '\''
+}
+
+/// Occurrence count of every word token in `text`, split on word boundaries.
+/// Built once per prompt and reused by all single-word lexicon lookups.
+fn word_counts(text: &str) -> HashMap<&str, usize> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for tok in text.split(|c: char| !is_word_char(c)) {
+        if !tok.is_empty() {
+            *counts.entry(tok).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+/// Count lexicon hits. Single-word entries count every matching prose token (via
+/// the precomputed `counts` map, gated by `word_set` so code-masked spans don't
+/// score); multi-word entries count substring occurrences in the lowercased raw
+/// text. `counts` must be [`word_counts`] over the same `lower` string.
+fn lexicon_hits(
+    lower: &str,
+    counts: &HashMap<&str, usize>,
+    word_set: &HashSet<&str>,
+    lex: &[&str],
+) -> usize {
     let mut hits = 0;
     for &entry in lex {
         if entry.contains(' ') {
             hits += lower.matches(entry).count();
         } else if word_set.contains(entry) {
-            hits += lower
-                .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '\''))
-                .filter(|t| *t == entry)
-                .count();
+            hits += counts.get(entry).copied().unwrap_or(0);
         }
     }
     hits
@@ -943,20 +984,37 @@ fn type_token_ratio(words: &[String]) -> f64 {
 
 /// Moving-Average Type-Token Ratio. Slides a fixed `window` one token at a time;
 /// each window's TTR divides by the fixed window size. Average over all windows.
+///
+/// Single-pass O(n): a running multiset of the window's tokens is updated by one
+/// removal + one insertion per step (the distinct-type count is the map size),
+/// instead of rebuilding a `HashSet` over the whole slice at every position.
 fn mattr(words: &[String], window: usize) -> f64 {
     let n = words.len();
     if window == 0 || n <= window {
         return type_token_ratio(words);
     }
-    let mut sum = 0.0;
-    let mut count = 0usize;
-    for start in 0..=(n - window) {
-        let slice = &words[start..start + window];
-        let types: HashSet<&str> = slice.iter().map(|w| w.as_str()).collect();
-        sum += types.len() as f64 / window as f64;
-        count += 1;
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for w in &words[..window] {
+        *counts.entry(w.as_str()).or_insert(0) += 1;
     }
-    sum / count as f64
+    let win = window as f64;
+    let mut sum = counts.len() as f64 / win;
+    let mut steps = 1usize;
+    for start in 1..=(n - window) {
+        // token leaving the window on the left
+        let out = words[start - 1].as_str();
+        if let Some(c) = counts.get_mut(out) {
+            *c -= 1;
+            if *c == 0 {
+                counts.remove(out);
+            }
+        }
+        // token entering on the right
+        *counts.entry(words[start + window - 1].as_str()).or_insert(0) += 1;
+        sum += counts.len() as f64 / win;
+        steps += 1;
+    }
+    sum / steps as f64
 }
 
 /// Measure of Textual Lexical Diversity (forward+backward, 0.72 threshold).
@@ -1367,5 +1425,198 @@ mod tests {
         assert!(s.breakdown.flesch_reading_ease != 0.0);
         assert!(s.breakdown.fk_grade != 0.0);
         assert!(s.breakdown.gunning_fog > 0.0);
+    }
+
+    // ── Optimization equivalence guards ──────────────────────────────────────
+    //
+    // The fast paths (sliding-window MATTR, precomputed word-count map for
+    // lexicon hits) must be bit-for-bit equivalent to the original naive
+    // definitions they replaced. These tests reimplement the naive versions and
+    // assert agreement across a spread of inputs, so a future "optimization"
+    // that changes the *answer* can't pass.
+
+    fn toks(s: &str) -> Vec<String> {
+        s.split_whitespace().map(String::from).collect()
+    }
+
+    /// The pre-optimization MATTR: rebuild a `HashSet` over each window slice.
+    fn naive_mattr(words: &[String], window: usize) -> f64 {
+        let n = words.len();
+        if window == 0 || n <= window {
+            return type_token_ratio(words);
+        }
+        let mut sum = 0.0;
+        let mut count = 0usize;
+        for start in 0..=(n - window) {
+            let slice = &words[start..start + window];
+            let types: HashSet<&str> = slice.iter().map(|w| w.as_str()).collect();
+            sum += types.len() as f64 / window as f64;
+            count += 1;
+        }
+        sum / count as f64
+    }
+
+    /// Deterministic pseudo-random token vector (LCG) over a small alphabet so we
+    /// exercise repeats, runs, and turnover without a PRNG dependency.
+    fn gen_tokens(seed: u64, len: usize, distinct: u64) -> Vec<String> {
+        let mut state = seed.wrapping_add(0x9e3779b97f4a7c15);
+        (0..len)
+            .map(|_| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                format!("w{}", (state >> 33) % distinct)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn mattr_fast_matches_naive() {
+        // Hand-picked edge shapes.
+        let cases: Vec<(Vec<String>, usize)> = vec![
+            (toks("a a a a a a a a a a a a"), 4),
+            (toks("a b c d e f g h i j k l"), 4),
+            (toks("a b a b a b a b a b a b"), 5),
+            (toks("the cat sat on the mat then the cat ran far"), 3),
+            (toks("x y z"), 10),               // n <= window → TTR fallback
+            (toks("one two three four five"), 5), // n == window
+        ];
+        for (words, window) in &cases {
+            let fast = mattr(words, *window);
+            let naive = naive_mattr(words, *window);
+            assert!(
+                (fast - naive).abs() < 1e-12,
+                "mattr mismatch (window {window}): fast {fast} vs naive {naive} on {words:?}"
+            );
+        }
+        // Fuzz a spread of lengths, windows, and distinct-token counts.
+        for seed in 0..40u64 {
+            let len = 1 + (seed as usize * 7) % 200;
+            let distinct = 1 + (seed % 30);
+            let window = 1 + (seed as usize * 3) % 45;
+            let words = gen_tokens(seed, len, distinct);
+            let fast = mattr(&words, window);
+            let naive = naive_mattr(&words, window);
+            assert!(
+                (fast - naive).abs() < 1e-9,
+                "fuzz mattr mismatch seed={seed} len={len} window={window}: {fast} vs {naive}"
+            );
+        }
+    }
+
+    /// The pre-optimization single-word count: re-split the whole text per probe.
+    fn naive_word_count(text: &str, entry: &str) -> usize {
+        text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '\''))
+            .filter(|t| *t == entry)
+            .count()
+    }
+
+    #[test]
+    fn word_counts_matches_naive_split() {
+        let texts = [
+            "must test must test, must verify only.",
+            "src/test.rs holds test cases; the test runner runs tests.",
+            "don't can't won't don't",
+            "alpha_beta alpha beta ALPHA Alpha",
+            "",
+            "   ",
+        ];
+        for t in texts {
+            let lower = t.to_ascii_lowercase();
+            let counts = word_counts(&lower);
+            // Every probe word — present or absent — must agree with the old scan.
+            for probe in ["test", "must", "tests", "don't", "alpha", "alpha_beta", "zzz", "the"] {
+                let fast = counts.get(probe).copied().unwrap_or(0);
+                let naive = naive_word_count(&lower, probe);
+                assert_eq!(fast, naive, "word_counts[{probe}] on {t:?}: {fast} != {naive}");
+            }
+        }
+    }
+
+    #[test]
+    fn lexicon_hits_counts_repeats_and_multiword() {
+        let lower = "we must test and must verify; do it as needed and as needed again.";
+        let counts = word_counts(lower);
+        let word_set: HashSet<&str> =
+            lower.split(|c: char| !is_word_char(c)).filter(|t| !t.is_empty()).collect();
+        // single-word entry counted per occurrence
+        assert_eq!(lexicon_hits(lower, &counts, &word_set, &["must"]), 2);
+        // multi-word entry counted by substring occurrence (independent of word_set)
+        assert_eq!(lexicon_hits(lower, &counts, &word_set, &["as needed"]), 2);
+        // mixed list sums both
+        assert_eq!(lexicon_hits(lower, &counts, &word_set, &["must", "verify", "as needed"]), 5);
+        // absent entry contributes nothing
+        assert_eq!(lexicon_hits(lower, &counts, &word_set, &["refactor"]), 0);
+    }
+
+    #[test]
+    fn lexicon_hits_gate_excludes_code_only_words() {
+        // "test" appears only inside a code-ish path → masked out of prose, so it
+        // is NOT in word_set and must not score, even though it is in the raw text.
+        let f = Features::extract("Update src/test_helpers.rs to import the helper module.");
+        // verification lexicon contains "test"; the only occurrence is in a path.
+        assert_eq!(f.verification, 0, "code-path 'test' must not count as verification");
+        // …whereas a prose 'test' does count.
+        let g = Features::extract("Add a test and then verify the output module.");
+        assert!(g.verification >= 2, "prose test+verify should score, got {}", g.verification);
+    }
+
+    #[test]
+    fn syllable_and_polysyllable_single_pass_is_correct() {
+        // The folded single pass must total syllables and count >=3 the same as
+        // two independent walks would.
+        let f = Features::extract("readability complexity matters for documentation clarity");
+        let toks = tokenize_words("readability complexity matters for documentation clarity");
+        let expect_syll: usize = toks.iter().map(|w| count_syllables(w)).sum();
+        let expect_poly = toks.iter().filter(|w| count_syllables(w) >= 3).count();
+        assert_eq!(f.syllables, expect_syll);
+        assert_eq!(f.polysyllables, expect_poly);
+        assert!(f.polysyllables >= 3, "several long words expected, got {}", f.polysyllables);
+    }
+
+    #[test]
+    fn branch_weighted_mean_unaffected_by_precompute() {
+        // Reorders/precomputes weights; the rolled-up score must equal the
+        // hand-rolled length-weighted mean of the per-prompt scores.
+        let prompts = vec![
+            "fix it",
+            "Add a unit test for `foo()` in src/foo.rs and ensure it passes \
+             without changing the public signature, covering the empty input case.",
+            "Refactor `parse()` in src/p.rs; must keep the signature; add a test.",
+        ];
+        let branch = score_branch(prompts.clone(), prompts.len());
+        let scored: Vec<PromptScore> = prompts.iter().map(|p| score_prompt(p)).collect();
+        let wsum: f64 = scored.iter().map(|s| s.words.clamp(20, 250) as f64).sum();
+        let expect: f64 = scored
+            .iter()
+            .map(|s| s.score * s.words.clamp(20, 250) as f64)
+            .sum::<f64>()
+            / wsum;
+        assert!((branch.score - expect).abs() < 1e-9, "branch {} vs expect {}", branch.score, expect);
+    }
+
+    #[test]
+    fn scoring_is_deterministic_and_order_independent() {
+        let p = "Implement retry with backoff in `src/net.rs`:\n\
+                 - cap at 3 attempts, only on 5xx\n\
+                 - add a test for the give-up path\n\
+                 Do not change the public signature.";
+        // Same input → same score, every time (no map-iteration-order leakage).
+        let a = score_prompt(p);
+        let b = score_prompt(p);
+        assert_eq!(a, b);
+        // Branch roll-up independent of prompt order.
+        let x = "Add a test for `foo()` in src/foo.rs; must pass.";
+        let s1 = score_branch(vec![p, x], 2);
+        let s2 = score_branch(vec![x, p], 2);
+        assert!((s1.score - s2.score).abs() < 1e-9);
+        assert_eq!(s1.level, s2.level);
+    }
+
+    #[test]
+    fn long_prompt_does_not_panic_and_scores_in_range() {
+        // Exercises the sliding-window MATTR well past the window size.
+        let big = "Refactor the module carefully and add tests. ".repeat(120);
+        let s = score_prompt(&big);
+        assert!((0.0..=100.0).contains(&s.score));
+        assert!(s.words > 500);
     }
 }
