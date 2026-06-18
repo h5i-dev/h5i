@@ -934,3 +934,4 @@ _[Checkpoint: 6a342aa1 — Done #4: extracted pure policy vocabulary into sandbo
 [19:59:03] THINK: That replacement left the `impl Profile` body dangling as a stray function — I need to delete the whole method body and the `default_fs_*` helpers that follow, not stub them.
 [19:59:03] THINK: I'll remove the dangling stub block (lines 55–198: the bad `_moved` opener, the `Profile` methods, and the duplicate `default_fs_*` helpers) via a range replace.
 [19:59:03] NOTE: PLACEHOLDER (~/Dev/h5i/src/sandbox.rs): method body and the `default_fs_*` helpers that follow, not stub them. Let me read the current state to remove them cleanly
+[19:59:04] NOTE: PLACEHOLDER (~/Dev/h5i/src/sandbox.rs): I'll remove the dangling stub block (lines 55–198: the bad `_moved` opener, the `Profile` methods, and the duplicate
