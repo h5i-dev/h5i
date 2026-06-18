@@ -15,7 +15,11 @@
   <a href="#pull-request-briefs"><img alt="AI PR Brief" src="https://img.shields.io/badge/AI%20PR%20Brief-reviewer%20ready-0969da"></a>
 </p>
 
-Git records what changed. **`h5i`** records the rest: **who**, **why**, **what the agent knew**, **whether it was safe**, and **how the next agent picks up where the last left off**.
+Git tracks the diff. h5i tracks the run.
+
+AI coding agents do more than edit files. They follow prompts, talk to other agents, run tests, inspect logs, retry commands, skip failures, touch the filesystem, and make decisions that never appear in the commit.
+
+h5i captures that missing execution layer as Git-backed evidence: prompts and model metadata, token-reduced command output, recoverable raw logs, sandboxed worktree environment, real-time multi-agent discussion, and review-ready context for PRs.
 
 <table align="center">
   <tr>
