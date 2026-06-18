@@ -1206,3 +1206,4 @@ _[Checkpoint: 6a3483d6 — Final polish pass: caveat coverage + anchor/parse ver
 _[Checkpoint: 6a3483e2 — edited docs/index.html; edited docs/index.html; edited docs/pitch/index.html]_
 ---
 
+[23:54:53] OBSERVE: read docs/index.html
