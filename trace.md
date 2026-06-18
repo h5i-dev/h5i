@@ -1077,3 +1077,4 @@ _[Checkpoint: 6a346ffc — edited MANUAL.md; edited MANUAL.md; edited MANUAL.md]
 [23:30:55] OBSERVE: listed files under .
 [23:30:55] OBSERVE: read README.md
 [23:30:55] OBSERVE: read docs/index.html
+[23:30:55] OBSERVE: read docs/pitch/index.html
