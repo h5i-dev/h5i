@@ -223,7 +223,7 @@ impl AgentRuntime {
     /// `$H5I_AGENT` set to the creating agent, so the box is scoped to whoever
     /// built it. Explicit `agent-claude`/`agent-codex` profiles bypass this.
     fn detect() -> AgentRuntime {
-        std::env::var(crate::msg::AGENT_ENV)
+        std::env::var(crate::idents::AGENT_ENV)
             .ok()
             .map(|s| AgentRuntime::from_identity(&s))
             .unwrap_or(AgentRuntime::Claude)

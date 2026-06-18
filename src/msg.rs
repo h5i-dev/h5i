@@ -47,8 +47,10 @@ pub const MSG_REF: &str = "refs/h5i/msg";
 pub const BROADCAST: &str = "all";
 
 /// Environment variable consulted (after an explicit flag, before the stored
-/// identity) when resolving "who am I" for `send` / `inbox`.
-pub const AGENT_ENV: &str = "H5I_AGENT";
+/// identity) when resolving "who am I" for `send` / `inbox`. The canonical
+/// definition lives in [`crate::idents`] (dependency-free); re-exported here so
+/// existing `msg::AGENT_ENV` callers keep working.
+pub use crate::idents::AGENT_ENV;
 
 const MESSAGES_FILE: &str = "messages.jsonl";
 const AGENTS_FILE: &str = "agents.json";

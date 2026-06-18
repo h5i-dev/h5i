@@ -19,6 +19,7 @@ pub mod container;
 pub mod env;
 pub mod error;
 pub mod filter_rules;
+pub mod idents;
 pub mod hooks;
 pub mod lfs;
 pub mod memory;
