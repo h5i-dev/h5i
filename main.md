@@ -930,11 +930,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Optimized prompt scoring + benchmark + tests
 - [x] edited src/prompt_score.rs; wrote examples/bench_prompt_score.rs; edited wsl2-cargo-test-oom.md
 - [x] edited src/prompt_score.rs; wrote examples/bench_prompt_score.rs; edited wsl2-cargo-test-oom.md
+- [x] edited src/claude.rs; edited src/main.rs; edited src/main.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-18 14:48 UTC] `prompt-score`: edited src/claude.rs; edited src/main.rs; edited src/main.rs
 - [2026-06-18 14:36 UTC] `prompt-score`: edited src/prompt_score.rs; wrote examples/bench_prompt_score.rs; edited wsl2-cargo-test-oom.md
 - [2026-06-18 14:34 UTC] `prompt-score`: edited src/prompt_score.rs; wrote examples/bench_prompt_score.rs; edited wsl2-cargo-test-oom.md
 - [2026-06-18 14:33 UTC] `prompt-score`: Optimized prompt scoring + benchmark + tests
