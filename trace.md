@@ -493,3 +493,4 @@ _[Checkpoint: 6a3333da — edited /home/koukyosyumei/Dev/h5i/tests/cli_integrati
 [00:15:22] OBSERVE: read tests/cli_integration.rs
 [00:15:23] OBSERVE: read src/main.rs
 [00:15:23] OBSERVE: read src/hooks.rs
+[00:15:23] OBSERVE: read src/hooks.rs
