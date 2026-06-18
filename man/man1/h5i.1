@@ -934,37 +934,160 @@ so agents wrap large-output commands. Idempotent.
 .
 .\" ─── hook ───────────────────────────────────────────────────────────────────
 .SS h5i hook \fISUBCOMMAND\fR
-.TP
-.B setup
-Print the
-.I .claude/settings.json
-snippet needed to register the PostToolUse hook and MCP server.
-.TP
-.B run
-PostToolUse handler.
-Reads the tool-event JSON from stdin, emits an
-.B h5i recall context trace
-entry for the appropriate kind (OBSERVE on Read, ACT on Edit/Write),
-and \(em on
-.B Read
-events \(em injects prior reasoning about the file into Claude's context
-window so Claude sees accumulated THINK entries before modifying it.
+Manage the agent hook wiring that drives automatic prompt capture and context
+tracing. The per-event handlers are agent-specific and live under
+.B h5i claude
+(Claude Code) and
+.B h5i codex
+(Codex);
+.B h5i hook
+owns the cross-agent
+.BR setup ", " session\-start ", and " wrap\-bash " subcommands."
 .PP
-Register by adding to
-.I .claude/settings.json
-in your project root:
-.PP
+.B Subcommands
 .RS 4
-.nf
-{
-  "hooks": {
-    "PostToolUse": [{
-      "matcher": "Edit|Write|Read",
-      "hooks": [{ "type": "command", "command": "h5i hook run" }]
-    }]
-  }
-}
-.fi
+.TP
+.B setup [\-\-write] [\-\-target claude|codex] [\-\-scope project|user] [\-\-wrap\-bash]
+Without
+.B \-\-write
+print the install instructions. With
+.B \-\-write
+idempotently merge the hook wiring into
+.I .claude/settings.json
+(Claude) and
+.I .codex/config.toml
+(Codex):
+.B UserPromptSubmit
+\(->
+.BR "h5i claude prompt" ,
+.B SessionStart
+\(->
+.BR "h5i hook session\-start" ,
+.B PostToolUse
+(Edit|Write|Read) \(->
+.BR "h5i claude sync" ,
+.B Stop
+\(->
+.B h5i claude finish
+(Claude) or
+.B h5i codex finish \-\-quiet
+(Codex; Codex only takes the SessionStart/Stop events).
+.B \-\-target
+limits to one agent,
+.B \-\-scope user
+writes the user-level config, and
+.B \-\-wrap\-bash
+also registers the Bash capture-wrap hook. The MCP server is no longer wired by
+setup \(em register it by hand (see
+.BR "h5i mcp" ).
+.TP
+.B session\-start
+The shared
+.B SessionStart
+handler for Claude Code and Codex: injects prior context into the new session
+and notes any unread cross-agent messages on resume.
+.TP
+.B wrap\-bash
+Optional
+.B PreToolUse
+handler for the Bash tool (Claude Code \(>= 2.0.10). Reads the tool-event JSON
+from stdin and rewrites the command (via
+.BR updatedInput )
+into a
+.B h5i capture run
+wrapper, so the agent gets a token-reduced summary for large/failing output
+while the full raw bytes are stored for
+.BR "h5i recall" .
+Skips h5i's own commands, top-level
+.BR cd ,
+and anything outside a git repo; every failure path emits nothing, so the
+original command runs untouched. With it enabled, permission allowlists match
+the rewritten
+.B h5i capture run
+command, not the original.
+.RE
+.
+.\" ─── claude ─────────────────────────────────────────────────────────────────
+.SS h5i claude \fISUBCOMMAND\fR
+Claude Code integration hook handlers, wired into
+.I .claude/settings.json
+by
+.BR "h5i hook setup \-\-write" .
+They run automatically per event \(em you normally never invoke them by hand
+\(em and all fail open (no-op outside an h5i repo, never block the turn).
+.PP
+.B Subcommands
+.RS 4
+.TP
+.B sync
+The
+.B PostToolUse
+handler. Reads the tool-event JSON from stdin and emits an
+.B h5i recall context trace
+entry for the appropriate kind (OBSERVE on Read, ACT on Edit/Write); on
+.B Read
+events it injects prior reasoning about the file into Claude's context window
+so accumulated THINK entries surface before the file is modified.
+.TP
+.B finish
+The
+.B Stop
+handler. Mines THINK / NOTE entries from the session transcript (including
+deferrals and unfulfilled promises) and auto-checkpoints the context workspace
+milestone.
+.TP
+.B prompt
+The
+.B UserPromptSubmit
+handler. Reads the hook JSON from stdin and records the verbatim human prompt
+into
+.IR .git/.h5i/pending_context.json ,
+accumulating across turns.
+.B h5i capture commit
+then uses this raw prompt as the recorded prompt \(em it wins over an
+agent-authored
+.B \-\-intent
+\(em so AI provenance reflects what the human actually asked.
+.RE
+.
+.\" ─── codex ──────────────────────────────────────────────────────────────────
+.SS h5i codex \fISUBCOMMAND\fR
+Codex integration hook handlers.
+.B h5i hook setup \-\-write \-\-target codex
+wires
+.B h5i hook session\-start
+(SessionStart) and
+.B h5i codex finish \-\-quiet
+(Stop) into
+.IR .codex/config.toml .
+Unlike the Claude handlers, these read the active Codex JSONL session under
+.I ~/.codex/sessions/
+directly, so they also work as plain commands run by hand.
+.PP
+.B Subcommands
+.RS 4
+.TP
+.B prelude
+Print the current shared context in a compact session-start format: goal,
+branch, milestones, recent THINK/ACT entries, and open TODOs. Also delivers
+Codex's unread messages (Codex has no Stop hook for turn delivery).
+.TP
+.B sync
+Scan the active Codex session log for this repository and backfill
+OBSERVE / ACT trace entries into
+.BR "h5i recall context" .
+Sync state is recorded in
+.I .git/.h5i/codex_sync_state.json
+so repeated runs only process new events.
+.TP
+.B finish [\-\-summary \fITEXT\fR] [\-\-quiet]
+Run
+.B h5i codex sync
+then auto-checkpoint the context workspace. If
+.B \-\-summary
+is omitted, a short summary is derived from the most recent ACT entries.
+.B \-\-quiet
+suppresses stdout for hook use.
 .RE
 .
 .\" ─── msg ────────────────────────────────────────────────────────────────────

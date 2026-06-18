@@ -282,7 +282,7 @@ fn ensure_toml_hook_entry(
 
 /// True if a hooks-array entry contains an inner command that is `command`
 /// (exactly, or followed by arguments). Exact-or-space matching so
-/// `h5i hook run` never claims `h5i hook run-something-else`.
+/// `h5i claude sync` never claims `h5i claude sync-something-else`.
 fn entry_has_command(entry: &Value, command: &str) -> bool {
     entry
         .get("hooks")
