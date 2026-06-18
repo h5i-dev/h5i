@@ -31,6 +31,7 @@ pub mod prompt_score;
 pub mod radio;
 pub mod recap;
 pub mod sandbox;
+pub mod sandbox_policy;
 pub mod seccomp_notify;
 pub mod secrets;
 pub mod secrets_broker;
