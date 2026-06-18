@@ -1153,3 +1153,4 @@ _[Checkpoint: 6a34821b — Rewrote README + docs site + pitch around Prompt Matu
 [23:41:37] THINK: Let me update the homepage hero (badge, subtitle, stats):
 [23:41:37] THINK: I have everything. Let me add the prompt-maturity row to the PR receipt card (slide 7), then insert the two new slides:
 [23:41:37] THINK: I'll add a prompt-maturity score pill to the top of the receipt SVG — a clean, additive edit (no coordinate shifts) that makes the canonical artifact show the wedge:
+[23:41:37] THINK: Let me validate the SVG and check the features page structure (it's part of the website too):
