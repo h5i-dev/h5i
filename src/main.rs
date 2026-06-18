@@ -3725,129 +3725,38 @@ fn print_doctor_report(report: &storage::DoctorReport) {
 /// multiple tokens). When the verb is missing or `--help`/`-h`, a help block
 /// for that noun is printed and the process exits.
 fn rewrite_noun_argv(argv: Vec<String>) -> Vec<String> {
-    if argv.len() < 2 {
-        return argv;
-    }
-    // `h5i help <noun>` is a synonym for `h5i <noun> --help`.
-    if argv[1] == "help"
-        && argv
-            .get(2)
-            .map(|t| {
-                matches!(
-                    t.as_str(),
-                    "capture" | "recall" | "audit" | "share" | "objects"
-                )
-            })
-            .unwrap_or(false)
-    {
-        print_noun_help(&argv[2]);
-        std::process::exit(0);
-    }
-    let noun = match argv[1].as_str() {
-        "capture" | "recall" | "audit" | "share" | "objects" => argv[1].clone(),
-        _ => return argv,
-    };
-
-    // No verb (or asking for help): print the noun's verb listing and exit.
-    if argv.len() < 3 || matches!(argv[2].as_str(), "--help" | "-h" | "help") {
-        print_noun_help(&noun);
-        std::process::exit(0);
-    }
-
-    let verb = argv[2].as_str();
-
-    // Allow `h5i <noun> help` as a synonym for `h5i <noun> --help`.
-    if matches!(verb, "help") {
-        print_noun_help(&noun);
-        std::process::exit(0);
-    }
-
-    let Some(mapped) = noun_alias(&noun, verb) else {
-        // Suggest the closest known verb under this noun.
-        let suggestion = nearest_verb(&noun, verb);
-        eprintln!(
-            "{} `h5i {} {}` is not a known subcommand.",
-            style("error:").red().bold(),
+    use h5i_core::cli_routing::{plan_noun_route, NounRoute};
+    match plan_noun_route(&argv) {
+        NounRoute::Passthrough => argv,
+        NounRoute::Rewritten(out) => out,
+        NounRoute::Help { noun } => {
+            print_noun_help(&noun);
+            std::process::exit(0);
+        }
+        NounRoute::UnknownVerb {
             noun,
             verb,
-        );
-        if let Some(sugg) = suggestion {
+            suggestion,
+        } => {
             eprintln!(
-                "       Did you mean `{}`?",
-                style(format!("h5i {} {}", noun, sugg)).cyan().bold(),
+                "{} `h5i {} {}` is not a known subcommand.",
+                style("error:").red().bold(),
+                noun,
+                verb,
             );
-        }
-        eprintln!(
-            "       Run `{}` for the full list.",
-            style(format!("h5i {} --help", noun)).cyan(),
-        );
-        std::process::exit(2);
-    };
-
-    // Rebuild argv: [bin, ...mapped, ...rest]
-    let mut out = Vec::with_capacity(argv.len() + mapped.len());
-    out.push(argv[0].clone());
-    for tok in mapped {
-        out.push(tok.to_string());
-    }
-    out.extend(argv.into_iter().skip(3));
-    out
-}
-
-/// Return the verb under `noun` whose name is closest (Levenshtein ≤ 2) to `typo`.
-fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
-    let candidates: &[&'static str] = match noun {
-        "capture" => &["commit", "claim", "memory", "run"],
-        "recall" => &[
-            "log", "blame", "diff", "context", "claims", "notes", "memory", "recap", "resume",
-            "vibe", "object", "objects", "search",
-        ],
-        "audit" => &["review", "scan", "compliance", "policy", "vibe"],
-        "share" => &[
-            "push",
-            "pull",
-            "pr",
-            "memory",
-            "setup-remote",
-            "migrate-remote",
-        ],
-        "objects" => &[
-            "run", "put", "get", "list", "ls", "search", "gc", "pin", "unpin", "fsck", "push",
-            "pull", "filters", "trust", "setup",
-        ],
-        _ => return None,
-    };
-    let typo_l = typo.to_lowercase();
-    let mut best: Option<(usize, &'static str)> = None;
-    for &c in candidates {
-        let d = levenshtein(&typo_l, c);
-        if d <= 2 && best.map(|(bd, _)| d < bd).unwrap_or(true) {
-            best = Some((d, c));
+            if let Some(sugg) = suggestion {
+                eprintln!(
+                    "       Did you mean `{}`?",
+                    style(format!("h5i {} {}", noun, sugg)).cyan().bold(),
+                );
+            }
+            eprintln!(
+                "       Run `{}` for the full list.",
+                style(format!("h5i {} --help", noun)).cyan(),
+            );
+            std::process::exit(2);
         }
     }
-    best.map(|(_, v)| v)
-}
-
-fn levenshtein(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    if a.is_empty() {
-        return b.len();
-    }
-    if b.is_empty() {
-        return a.len();
-    }
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut cur: Vec<usize> = vec![0; b.len() + 1];
-    for (i, ca) in a.iter().enumerate() {
-        cur[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let cost = if ca == cb { 0 } else { 1 };
-            cur[j + 1] = (cur[j] + 1).min(prev[j + 1] + 1).min(prev[j] + cost);
-        }
-        std::mem::swap(&mut prev, &mut cur);
-    }
-    prev[b.len()]
 }
 
 /// Default `capture run --min-bytes` (shared with the MCP tool): below this,
@@ -3871,70 +3780,7 @@ fn humanize_bytes(n: u64) -> String {
     }
 }
 
-/// Map `(noun, verb)` to the legacy argv tokens that implement it.
-fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
-    Some(match (noun, verb) {
-        // ── capture ─────────────────────────────────────────────────────
-        ("capture", "commit") => &["commit"],
-        ("capture", "claim") => &["claims", "add"],
-        ("capture", "claims") => &["claims", "add"],
-        ("capture", "memory") => &["memory", "snapshot"],
-        ("capture", "run") => &["objects", "run"],
-        ("capture", "output") => &["objects", "run"],
-
-        // ── recall ──────────────────────────────────────────────────────
-        ("recall", "log") => &["log"],
-        ("recall", "blame") => &["blame"],
-        ("recall", "diff") => &["diff"],
-        ("recall", "context") => &["context"],
-        ("recall", "claims") => &["claims", "list"],
-        ("recall", "claim") => &["claims", "list"],
-        ("recall", "notes") => &["notes"],
-        ("recall", "memory") => &["memory"],
-        ("recall", "recap") => &["context", "recap"],
-        ("recall", "resume") => &["resume"],
-        ("recall", "vibe") => &["vibe"],
-        ("recall", "object") => &["objects", "get"],
-        ("recall", "objects") => &["objects", "list"],
-        ("recall", "search") => &["objects", "search"],
-
-        // ── audit ───────────────────────────────────────────────────────
-        ("audit", "review") => &["notes", "review"],
-        ("audit", "scan") => &["context", "scan"],
-        ("audit", "compliance") => &["compliance"],
-        ("audit", "policy") => &["policy"],
-        ("audit", "vibe") => &["vibe"],
-        ("audit", "notes") => &["notes", "review"],
-
-        // ── share ───────────────────────────────────────────────────────
-        ("share", "push") => &["push"],
-        ("share", "pull") => &["pull"],
-        ("share", "pr") => &["pr"],
-        ("share", "memory") => &["memory"],
-        ("share", "setup-remote") => &["setup-remote"],
-        ("share", "migrate-remote") => &["migrate-remote"],
-
-        // ── objects (token-reduction store maintenance) ──────────────────
-        ("objects", "run") => &["objects", "run"],
-        ("objects", "put") => &["objects", "put"],
-        ("objects", "get") => &["objects", "get"],
-        ("objects", "list") => &["objects", "list"],
-        ("objects", "ls") => &["objects", "list"],
-        ("objects", "search") => &["objects", "search"],
-        ("objects", "gc") => &["objects", "gc"],
-        ("objects", "pin") => &["objects", "pin"],
-        ("objects", "unpin") => &["objects", "unpin"],
-        ("objects", "fsck") => &["objects", "fsck"],
-        ("objects", "push") => &["objects", "push"],
-        ("objects", "pull") => &["objects", "pull"],
-        ("objects", "filters") => &["objects", "filters"],
-        ("objects", "rules") => &["objects", "filters"],
-        ("objects", "trust") => &["objects", "trust"],
-        ("objects", "setup") => &["objects", "setup"],
-
-        _ => return None,
-    })
-}
+// `noun_alias` moved to h5i_core::cli_routing (used by plan_noun_route there).
 
 /// True if `remote` advertises the [`objects::OBJECTS_DATA_REF`] ref.
 fn remote_has_objects_data(workdir: &std::path::Path, remote: &str) -> bool {

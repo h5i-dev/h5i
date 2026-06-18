@@ -9,6 +9,7 @@ pub mod compliance;
 pub mod policy;
 pub mod blame;
 pub mod claims;
+pub mod cli_routing;
 pub mod mcp;
 pub mod ctx;
 /// Deprecated alias — use `ctx` instead.
