@@ -578,3 +578,4 @@ _[Checkpoint: 6a333b79 — edited src/hooks.rs; edited src/hooks.rs; edited src/
 _[Checkpoint: 6a333dc8 — edited index.html; edited index.html; edited sitemap.xml]_
 ---
 
+[00:42:13] THINK: Posts are HTML. Let me examine one post's structure and the blog index to match the format exactly.
