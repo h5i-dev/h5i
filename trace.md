@@ -1172,3 +1172,4 @@ _[Checkpoint: 6a3482ec — Hero refinement: single first-viewport receipt artifa
 ---
 
 [23:44:54] THINK: Let me act on it. First, let me check the hero CSS so I can add a compact receipt card cleanly (the full `pr-demo.
+[23:44:54] THINK: Per his "one artifact, don't compete" guidance, I'll remove the stat tiles so the receipt is the single hero artifact (the numbers now live *in* the receipt and the badge):
