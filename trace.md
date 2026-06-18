@@ -701,3 +701,4 @@ _[Checkpoint: 6a33f1dd — edited docs/blog/persistent-memory-for-claude-code/in
 _[Checkpoint: 6a33f1ea — edited src/hooks.rs; edited src/msg.rs]_
 ---
 
+[13:27:17] OBSERVE: read src/prompt_score.rs
