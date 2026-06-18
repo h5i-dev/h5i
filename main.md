@@ -942,11 +942,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] session ended (auto-checkpoint)
 - [x] session ended (auto-checkpoint)
 - [x] Done: sandbox->msg leak fixed (idents module); adversarial sandbox tests added (deny-list membership unit test + behavioral ptrace EPERM + timeout exit-124). Correction: env_integration.rs already had behavioral confinement tests (write-outside-WORK, sockets, /proc/environ, reap) — my review under-credited them.
+- [x] Done #4: extracted pure policy vocabulary into sandbox_policy leaf module; container.rs no longer imports crate::sandbox (sandbox->container cycle broken). sandbox<->supervisor edge kept (genuine machinery reuse). clippy -D warnings clean, 43 sandbox tests green.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-18 17:28 UTC] `prompt-score`: Done #4: extracted pure policy vocabulary into sandbox_policy leaf module; container.rs no longer imports crate::sandbox (sandbox->container cycle broken). sandbox<->supervisor edge kept (genuine machinery reuse). clippy -D warnings clean, 43 sandbox tests green.
 - [2026-06-18 17:12 UTC] `prompt-score`: Done: sandbox->msg leak fixed (idents module); adversarial sandbox tests added (deny-list membership unit test + behavioral ptrace EPERM + timeout exit-124). Correction: env_integration.rs already had behavioral confinement tests (write-outside-WORK, sockets, /proc/environ, reap) — my review under-credited them.
 - [2026-06-18 16:59 UTC] `prompt-score`: session ended (auto-checkpoint)
 - [2026-06-18 16:58 UTC] `prompt-score`: session ended (auto-checkpoint)
