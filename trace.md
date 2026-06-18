@@ -571,3 +571,4 @@ _[Checkpoint: 6a333b79 — edited src/hooks.rs; edited src/hooks.rs; edited src/
 [00:37:05] OBSERVE: read sitemap.xml
 [00:37:11] ACT: edited sitemap.xml
 [00:37:28] THINK: I'll look at the docs site structure to understand what's there and what SEO/meta tags exist.
+[00:37:28] THINK: Let me confirm one detail — whether the blog `TechArticle` schema includes `datePublished`/`author`/`headline` (needed for article rich results).
