@@ -829,3 +829,4 @@ _[Checkpoint: 6a3422d9 — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a3422ef — session ended (auto-checkpoint)]_
 ---
 
+[16:55:13] OBSERVE: read src/storage.rs
