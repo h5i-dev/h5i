@@ -945,11 +945,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Done #4: extracted pure policy vocabulary into sandbox_policy leaf module; container.rs no longer imports crate::sandbox (sandbox->container cycle broken). sandbox<->supervisor edge kept (genuine machinery reuse). clippy -D warnings clean, 43 sandbox tests green.
 - [x] wrote src/cli_routing.rs; edited src/lib.rs; edited src/main.rs
 - [x] wrote src/cli_routing.rs; edited src/lib.rs; edited src/main.rs
+- [x] Done #6 parts 1+2: web feature gate (axum/mime_guess optional, default-on; --no-default-features = lean CLI, verified via cargo tree) + pub(crate) curation of 8 internal machinery modules + gated risk. Part 3 (workspace crate split) deferred per user. All 6 review items addressed.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-18 20:17 UTC] `prompt-score`: Done #6 parts 1+2: web feature gate (axum/mime_guess optional, default-on; --no-default-features = lean CLI, verified via cargo tree) + pub(crate) curation of 8 internal machinery modules + gated risk. Part 3 (workspace crate split) deferred per user. All 6 review items addressed.
 - [2026-06-18 20:00 UTC] `prompt-score`: wrote src/cli_routing.rs; edited src/lib.rs; edited src/main.rs
 - [2026-06-18 19:59 UTC] `prompt-score`: wrote src/cli_routing.rs; edited src/lib.rs; edited src/main.rs
 - [2026-06-18 17:28 UTC] `prompt-score`: Done #4: extracted pure policy vocabulary into sandbox_policy leaf module; container.rs no longer imports crate::sandbox (sandbox->container cycle broken). sandbox<->supervisor edge kept (genuine machinery reuse). clippy -D warnings clean, 43 sandbox tests green.
