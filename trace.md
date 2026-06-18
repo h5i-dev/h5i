@@ -753,3 +753,4 @@ _[Checkpoint: 6a340255 — edited src/prompt_score.rs; wrote examples/bench_prom
 _[Checkpoint: 6a340542 — edited src/claude.rs; edited src/main.rs; edited src/main.rs]_
 ---
 
+[15:44:13] OBSERVE: searched MANUAL.md for "src"
