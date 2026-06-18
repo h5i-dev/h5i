@@ -1003,3 +1003,4 @@ _[Checkpoint: 6a345264 — edited src/supervisor.rs; wrote web-feature-gate.md; 
 [20:23:38] ACT: edited src/supervisor.rs
 [20:23:45] ACT: edited src/supervisor.rs
 [20:23:51] ACT: edited src/sandbox.rs
+[20:27:21] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/MEMORY.md): n established — routing extracted + tested; arm-by-arm is follow-up | | 6 | Workspace + features + `pub(crate)` | ✅ parts 1+2; **part 3 (crate spl…
