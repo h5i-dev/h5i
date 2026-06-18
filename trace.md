@@ -1152,3 +1152,4 @@ _[Checkpoint: 6a34821b — Rewrote README + docs site + pitch around Prompt Matu
 [23:41:37] THINK: Now let me map the structure of the three large HTML files so I understand what I'm reshaping.
 [23:41:37] THINK: Let me update the homepage hero (badge, subtitle, stats):
 [23:41:37] THINK: I have everything. Let me add the prompt-maturity row to the PR receipt card (slide 7), then insert the two new slides:
+[23:41:37] THINK: I'll add a prompt-maturity score pill to the top of the receipt SVG — a clean, additive edit (no coordinate shifts) that makes the canonical artifact show the wedge:
