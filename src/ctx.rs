@@ -4362,6 +4362,41 @@ mod tests {
         assert_eq!(ids, vec!["a", "b", "c"], "union by id, ancestor first, no dup");
     }
 
+    /// The DAG join must *converge*: two peers reconciling the same divergence
+    /// reach the same node set regardless of which side git labels "ours" vs
+    /// "theirs". Node *order* is presentation-only (the DAG is keyed by id), so
+    /// the guarantee is set-level — assert the sorted id sets are equal.
+    #[test]
+    fn union_dag_json_is_set_commutative_and_idempotent() {
+        let node = |id: &str| {
+            format!(
+                r#"{{"id":"{id}","parent_ids":[],"kind":"THINK","content":"{id}","timestamp":"t"}}"#
+            )
+        };
+        let dag = |ids: &[&str]| {
+            let nodes: Vec<String> = ids.iter().map(|i| node(i)).collect();
+            format!(r#"{{"nodes":[{}]}}"#, nodes.join(","))
+        };
+        let id_set = |json: &str| {
+            let d: TraceDag = serde_json::from_str(json).unwrap();
+            let mut v: Vec<String> = d.nodes.into_iter().map(|n| n.id).collect();
+            v.sort();
+            v
+        };
+        let (anc, ours, theirs) = (dag(&["a"]), dag(&["a", "b"]), dag(&["a", "c"]));
+        // Swapping ours/theirs yields the same id set (set-commutative).
+        let fwd = union_dag_json(&anc, &ours, &theirs).unwrap();
+        let rev = union_dag_json(&anc, &theirs, &ours).unwrap();
+        assert_eq!(id_set(&fwd), id_set(&rev), "swap of sides must not change the node set");
+        assert_eq!(id_set(&fwd), vec!["a", "b", "c"]);
+        // Idempotent: merging a side with itself introduces no duplicate ids,
+        // and re-unioning the merged result is a fixpoint.
+        let self_merge = union_dag_json(&anc, &ours, &ours).unwrap();
+        assert_eq!(id_set(&self_merge), vec!["a", "b"]);
+        let refixed = union_dag_json(&fwd, &fwd, &fwd).unwrap();
+        assert_eq!(id_set(&refixed), id_set(&fwd), "re-union of a merged DAG is a fixpoint");
+    }
+
     #[test]
     fn union_dag_json_tolerates_empty_or_garbage_sides() {
         // A missing/garbled side must not poison the merge — it contributes
