@@ -1465,12 +1465,13 @@ mod tests {
 
     #[test]
     fn merge_settings_preserves_existing_and_is_idempotent() {
-        // Existing settings with an unrelated env key and a PostToolUse hook.
+        // Existing settings with an unrelated env key and pre-existing,
+        // non-h5i user hooks that the merge must preserve untouched.
         let existing = r#"{
             "env": { "EDITOR": "vim" },
             "hooks": {
-                "PostToolUse": [ { "hooks": [ { "type": "command", "command": "h5i hook run" } ] } ],
-                "Stop": [ { "hooks": [ { "type": "command", "command": "h5i hook stop" } ] } ]
+                "PostToolUse": [ { "hooks": [ { "type": "command", "command": "my-linter --fix" } ] } ],
+                "Stop": [ { "hooks": [ { "type": "command", "command": "notify-send done" } ] } ]
             }
         }"#;
         let once = merge_settings_json(existing, "claude", false).unwrap();
@@ -1481,15 +1482,15 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&twice).unwrap();
         // Preserved unrelated state.
         assert_eq!(v["env"]["EDITOR"], "vim");
-        assert_eq!(v["hooks"]["PostToolUse"][0]["hooks"][0]["command"], "h5i hook run");
-        // Stop keeps the context hook AND has exactly one msg hook.
+        assert_eq!(v["hooks"]["PostToolUse"][0]["hooks"][0]["command"], "my-linter --fix");
+        // Stop keeps the user's hook AND has exactly one msg hook.
         let stop = v["hooks"]["Stop"].as_array().unwrap();
         let msg_hooks = stop
             .iter()
             .filter(|e| is_msg_hook_entry(e))
             .count();
         assert_eq!(msg_hooks, 1, "exactly one msg hook entry");
-        assert!(stop.iter().any(|e| e["hooks"][0]["command"] == "h5i hook stop"));
+        assert!(stop.iter().any(|e| e["hooks"][0]["command"] == "notify-send done"));
         assert_eq!(v["env"]["H5I_AGENT"], "claude");
     }
 
