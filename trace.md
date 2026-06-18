@@ -931,3 +931,4 @@ _[Checkpoint: 6a342aa1 — Done #4: extracted pure policy vocabulary into sandbo
 [19:59:03] THINK: Clean check. Let me confirm exit code explicitly, then mark #1 done and move to the high-value item #2 (adversarial sandbox tests).
 [19:59:03] THINK: Now I'll refactor: extract the denied-syscall list into its own function so it's unit-testable.
 [19:59:03] THINK: Now I'll write the leaf module with the pure types (helpers widened to `pub(crate)`).
+[19:59:03] THINK: That replacement left the `impl Profile` body dangling as a stray function — I need to delete the whole method body and the `default_fs_*` helpers that follow, not stub them.
