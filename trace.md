@@ -660,3 +660,4 @@ _[Checkpoint: 6a334711 — edited docs/blog/claude-code-hooks-vs-git-hooks/index
 [01:33:07] OBSERVE: read src/hooks.rs
 [01:33:13] ACT: edited src/hooks.rs
 [01:33:25] ACT: edited src/msg.rs
+[01:36:34] NOTE: DEFERRAL (~/Dev/h5i/docs/blog/persistent-memory-for-claude-code/index.html): st-tool-use` — a name my first grep missed — so I ran a follow-up sweep confirming no other dead handler names (`hook run/stop/post-tool-use/obser…
