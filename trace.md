@@ -469,3 +469,4 @@ _[Checkpoint: 6a3333da — edited /home/koukyosyumei/Dev/h5i/tests/cli_integrati
 [00:15:21] OBSERVE: read src/main.rs
 [00:15:21] OBSERVE: read src/main.rs
 [00:15:21] OBSERVE: read src/main.rs
+[00:15:21] OBSERVE: read tests/msg_integration.rs
