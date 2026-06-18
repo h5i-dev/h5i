@@ -1200,3 +1200,9 @@ _[Checkpoint: 6a3483d6 — Final polish pass: caveat coverage + anchor/parse ver
 ---
 
 [23:48:50] THINK: Let me run them down: (1) the heuristic/non-rating caveat must appear wherever the score sits near investor copy, (2) anchor check after README renumbering, (3) mobile density.
+
+
+---
+_[Checkpoint: 6a3483e2 — edited docs/index.html; edited docs/index.html; edited docs/pitch/index.html]_
+---
+

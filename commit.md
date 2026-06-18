@@ -1200,3 +1200,16 @@ Per Codex's final notes: added 'heuristic signal of prompt craft — not a devel
 
 ---
 
+## Commit 6a3483e2 — 2026-06-18 23:48 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+Per Codex's final notes: added 'heuristic signal of prompt craft — not a developer rating' caveat to the hero receipt note, the homepage #prompt-maturity closing prose, and the pitch wedge slide (was missing in pitch). Verified: all 3 docs HTML parse, homepage internal #links 0 broken, README anchors 0 broken after renumbering, hero receipt within one-score+4-cells budget with mobile media query (bars→1col, cov hidden <560px). Could not capture a literal mobile screenshot (no browser tool) — reasoned responsive rules instead.
+
+### This Commit's Contribution
+
+
+---
+
