@@ -629,3 +629,4 @@ _[Checkpoint: 6a33409e — edited docs/blog/prompt-maturity-score/index.html; ed
 [01:04:24] OBSERVE: read src/main.rs
 [01:04:39] OBSERVE: read src/hooks.rs
 [01:04:51] OBSERVE: read man/man1/h5i.1
+[01:05:05] OBSERVE: read MANUAL.md
