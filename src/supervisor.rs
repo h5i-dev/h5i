@@ -325,6 +325,7 @@ pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
 }
 
 /// Just the pinned `IP:port` destinations (the nftables allowlist input).
+#[allow(dead_code)] // deferred-tier egress-pin helper; retained, not yet wired
 pub fn pin_egress(egress: &[String]) -> Vec<EgressDest> {
     resolve_egress(egress).dests
 }

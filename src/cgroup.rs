@@ -49,12 +49,14 @@ pub struct CgroupCaps {
 }
 
 impl CgroupCaps {
+    #[allow(dead_code)] // retained controller-presence accessor; no internal caller yet
     pub fn has(&self, controller: &str) -> bool {
         self.controllers.iter().any(|c| c == controller)
     }
 }
 
 /// Render a `memory.max`/`pids.max` value: a number, or `"max"` for unbounded.
+#[allow(dead_code)] // retained limit-formatting helper; no internal caller yet
 pub fn format_limit(v: Option<u64>) -> String {
     v.map(|n| n.to_string()).unwrap_or_else(|| "max".to_string())
 }
@@ -86,6 +88,7 @@ pub struct CgroupUsage {
     /// Total CPU time in microseconds (`cpu.stat usage_usec`).
     pub cpu_usec: Option<u64>,
     /// Peak concurrent pids (`pids.peak`), when available.
+    #[allow(dead_code)] // collected for completeness; not yet surfaced in any report
     pub pids_peak: Option<u64>,
 }
 

@@ -1,6 +1,13 @@
 //! seccomp user-notification primitives for the supervisor tier
 //! (`docs/supervisor-design.md`, phase B).
 //!
+// Some primitives here (the GET_NOTIF_SIZES ABI check, the notify-serve loop)
+// are deferred-tier scaffolding not yet wired into a live dispatch path — the
+// supervised execve-notify integration is a documented follow-up. They are
+// intentionally retained, so allow dead_code at the module scope rather than
+// deleting fail-closed plumbing we will need.
+#![allow(dead_code)]
+//!
 //! A filter installed with `SECCOMP_FILTER_FLAG_NEW_LISTENER` returns a
 //! **listener fd**; the supervisor (h5i) reads `socket()` notifications on it and
 //! replies allow (`CONTINUE`) or deny (`errno`) per [`crate::supervisor`]'s
