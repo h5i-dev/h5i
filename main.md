@@ -948,11 +948,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Done #6 parts 1+2: web feature gate (axum/mime_guess optional, default-on; --no-default-features = lean CLI, verified via cargo tree) + pub(crate) curation of 8 internal machinery modules + gated risk. Part 3 (workspace crate split) deferred per user. All 6 review items addressed.
 - [x] edited src/supervisor.rs; wrote web-feature-gate.md; edited MEMORY.md
 - [x] edited src/supervisor.rs; edited src/supervisor.rs; edited src/sandbox.rs
+- [x] edited src/supervisor.rs; edited src/supervisor.rs; edited src/sandbox.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-18 21:04 UTC] `prompt-score`: edited src/supervisor.rs; edited src/supervisor.rs; edited src/sandbox.rs
 - [2026-06-18 20:27 UTC] `prompt-score`: edited src/supervisor.rs; edited src/supervisor.rs; edited src/sandbox.rs
 - [2026-06-18 20:17 UTC] `prompt-score`: edited src/supervisor.rs; wrote web-feature-gate.md; edited MEMORY.md
 - [2026-06-18 20:17 UTC] `prompt-score`: Done #6 parts 1+2: web feature gate (axum/mime_guess optional, default-on; --no-default-features = lean CLI, verified via cargo tree) + pub(crate) curation of 8 internal machinery modules + gated risk. Part 3 (workspace crate split) deferred per user. All 6 review items addressed.
