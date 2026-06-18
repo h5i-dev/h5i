@@ -657,3 +657,4 @@ _[Checkpoint: 6a3344c2 — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 _[Checkpoint: 6a334711 — edited docs/blog/claude-code-hooks-vs-git-hooks/index.html; edited docs/blog/track-claude-code-prompts-diffs-git/index.h…]_
 ---
 
+[01:33:07] OBSERVE: read src/hooks.rs
