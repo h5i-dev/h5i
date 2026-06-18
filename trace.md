@@ -936,3 +936,9 @@ _[Checkpoint: 6a342aa1 — Done #4: extracted pure policy vocabulary into sandbo
 [19:59:03] NOTE: PLACEHOLDER (~/Dev/h5i/src/sandbox.rs): method body and the `default_fs_*` helpers that follow, not stub them. Let me read the current state to remove them cleanly
 [19:59:04] NOTE: PLACEHOLDER (~/Dev/h5i/src/sandbox.rs): I'll remove the dangling stub block (lines 55–198: the bad `_moved` opener, the `Profile` methods, and the duplicate
 [19:59:04] NOTE: DEFERRAL (~/Dev/h5i/src/main.rs): 4 lines, routing now tested). Full arm-by-arm extraction is follow-up. Let me mark progress and assess #6, which has a real scope fork
+
+
+---
+_[Checkpoint: 6a344e08 — wrote src/cli_routing.rs; edited src/lib.rs; edited src/main.rs]_
+---
+
