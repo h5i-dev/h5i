@@ -25,13 +25,6 @@ const WRAP_BASH_HOOK: (&str, Option<&str>, &str) =
     ("PreToolUse", Some("Bash"), "h5i hook wrap-bash");
 
 const CODEX_STOP_HOOK: &str = "h5i codex finish --quiet";
-const LEGACY_CODEX_STOP_HOOK: &str = "h5i codex finish";
-const LEGACY_CLAUDE_RUN_HOOK: &str = "h5i hook run";
-const LEGACY_CLAUDE_STOP_HOOK: &str = "h5i hook stop";
-/// The UserPromptSubmit handler moved from the shared `hook` group to the
-/// Claude-specific `claude` group (`h5i claude prompt`) — it is Claude-only
-/// logic. The merge strips the old command so re-running setup migrates it.
-const LEGACY_CLAUDE_PROMPT_HOOK: &str = "h5i hook prompt";
 
 /// The retired PostToolUse Bash observation hook: superseded by wrap-bash
 /// (which captures AND token-reduces). The subcommand no longer exists, so
@@ -68,21 +61,6 @@ pub fn merge_hook_settings_json(existing: &str, wrap_bash: bool) -> Result<Strin
 
     for &(event, matcher, command) in CORE_HOOKS {
         ensure_hook_entry(hooks_obj, event, matcher, command)?;
-    }
-    if let Some(arr) = hooks_obj
-        .get_mut("PostToolUse")
-        .and_then(|v| v.as_array_mut())
-    {
-        arr.retain(|entry| !entry_has_command(entry, LEGACY_CLAUDE_RUN_HOOK));
-    }
-    if let Some(arr) = hooks_obj.get_mut("Stop").and_then(|v| v.as_array_mut()) {
-        arr.retain(|entry| !entry_has_command(entry, LEGACY_CLAUDE_STOP_HOOK));
-    }
-    if let Some(arr) = hooks_obj
-        .get_mut("UserPromptSubmit")
-        .and_then(|v| v.as_array_mut())
-    {
-        arr.retain(|entry| !entry_has_command(entry, LEGACY_CLAUDE_PROMPT_HOOK));
     }
     if let Some(arr) = hooks_obj
         .get_mut("PostToolUse")
@@ -142,17 +120,6 @@ pub fn merge_codex_config_toml(existing: &str, wrap_bash: bool) -> Result<String
     let hooks_table = hooks
         .as_table_mut()
         .ok_or_else(|| H5iError::Metadata("config 'hooks' is not a table".into()))?;
-
-    if let Some(arr) = hooks_table.get_mut("Stop").and_then(|v| v.as_array_mut()) {
-        arr.retain(|entry| !toml_entry_has_command(entry, LEGACY_CLAUDE_STOP_HOOK));
-        arr.retain(|entry| !toml_entry_has_command(entry, LEGACY_CODEX_STOP_HOOK));
-    }
-    if let Some(arr) = hooks_table
-        .get_mut("PostToolUse")
-        .and_then(|v| v.as_array_mut())
-    {
-        arr.retain(|entry| !toml_entry_has_command(entry, LEGACY_CLAUDE_RUN_HOOK));
-    }
 
     for &(event, matcher, command) in CORE_HOOKS {
         // UserPromptSubmit and PostToolUse are Claude-Code-specific here:
@@ -541,107 +508,6 @@ command = "h5i msg hook"
         // The unrelated `run-custom` survives next to the managed `h5i claude sync`.
         assert!(cmds.contains(&"h5i hook run-custom".to_string()));
         assert!(cmds.contains(&"h5i claude sync".to_string()));
-    }
-
-    #[test]
-    fn legacy_claude_hooks_migrated_to_new_commands() {
-        // A settings.json wired by an older h5i (the `h5i hook run` /
-        // `h5i hook stop` era) must be migrated in place: the legacy commands
-        // are stripped and the renamed `h5i claude sync` / `h5i claude finish`
-        // installed — with no duplicates left behind.
-        let existing = r#"{
-            "hooks": {
-                "PostToolUse": [ { "matcher": "Edit|Write|Read", "hooks": [ { "type": "command", "command": "h5i hook run" } ] } ],
-                "Stop": [ { "hooks": [ { "type": "command", "command": "h5i hook stop" } ] } ],
-                "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "h5i hook prompt" } ] } ]
-            }
-        }"#;
-        let out = merge_hook_settings_json(existing, false).unwrap();
-        let v: Value = serde_json::from_str(&out).unwrap();
-
-        let prompt = commands_under(&v, "UserPromptSubmit");
-        assert!(
-            !prompt.contains(&"h5i hook prompt".to_string()),
-            "legacy UserPromptSubmit command should be removed: {prompt:?}"
-        );
-        assert_eq!(
-            prompt.iter().filter(|c| *c == "h5i claude prompt").count(),
-            1,
-            "exactly one migrated prompt hook expected: {prompt:?}"
-        );
-
-        let post = commands_under(&v, "PostToolUse");
-        assert!(
-            !post.contains(&"h5i hook run".to_string()),
-            "legacy PostToolUse command should be removed: {post:?}"
-        );
-        assert_eq!(
-            post.iter().filter(|c| *c == "h5i claude sync").count(),
-            1,
-            "exactly one migrated sync hook expected: {post:?}"
-        );
-
-        let stop = commands_under(&v, "Stop");
-        assert!(
-            !stop.contains(&"h5i hook stop".to_string()),
-            "legacy Stop command should be removed: {stop:?}"
-        );
-        assert_eq!(
-            stop.iter().filter(|c| *c == "h5i claude finish").count(),
-            1,
-            "exactly one migrated finish hook expected: {stop:?}"
-        );
-    }
-
-    #[test]
-    fn legacy_codex_stop_hook_migrated_to_quiet_codex_finish() {
-        // Codex's Stop hook was also `h5i hook stop`; migration must replace it
-        // with the Codex-specific quiet finish and not leave the legacy command
-        // behind (and never introduce a Claude-only UserPromptSubmit).
-        let existing = r#"
-[hooks]
-Stop = [ { hooks = [ { type = "command", command = "h5i hook stop" } ] } ]
-"#;
-        let out = merge_codex_config_toml(existing, false).unwrap();
-        assert!(
-            !out.contains("h5i hook stop"),
-            "legacy codex Stop command should be removed: {out}"
-        );
-        assert!(
-            out.contains("h5i codex finish --quiet"),
-            "codex Stop should migrate to `h5i codex finish --quiet`: {out}"
-        );
-        assert_eq!(
-            out.matches("h5i codex finish --quiet").count(),
-            1,
-            "exactly one migrated codex finish hook expected: {out}"
-        );
-        assert!(
-            !out.contains("UserPromptSubmit"),
-            "UserPromptSubmit is Claude-only and must not appear in codex config: {out}"
-        );
-    }
-
-    #[test]
-    fn unquiet_codex_stop_hook_migrated_to_quiet_finish() {
-        let existing = r#"
-[hooks]
-Stop = [ { hooks = [ { type = "command", command = "h5i codex finish" } ] } ]
-"#;
-        let out = merge_codex_config_toml(existing, false).unwrap();
-        assert!(
-            !out.contains("command = \"h5i codex finish\""),
-            "unquiet codex Stop command should be removed: {out}"
-        );
-        assert!(
-            out.contains("h5i codex finish --quiet"),
-            "quiet codex Stop command should be installed: {out}"
-        );
-        assert_eq!(
-            out.matches("h5i codex finish --quiet").count(),
-            1,
-            "exactly one quiet codex finish hook expected: {out}"
-        );
     }
 
     #[test]
