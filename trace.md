@@ -969,3 +969,4 @@ _[Checkpoint: 6a344e5e — wrote src/cli_routing.rs; edited src/lib.rs; edited s
 [20:13:45] OBSERVE: read src/cgroup.rs
 [20:13:51] ACT: edited src/cgroup.rs
 [20:13:56] ACT: edited src/cgroup.rs
+[20:13:58] OBSERVE: read src/supervisor.rs
