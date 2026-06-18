@@ -754,3 +754,4 @@ _[Checkpoint: 6a340542 — edited src/claude.rs; edited src/main.rs; edited src/
 ---
 
 [15:44:13] OBSERVE: searched MANUAL.md for "src"
+[15:44:13] OBSERVE: searched docs for "README.md"
