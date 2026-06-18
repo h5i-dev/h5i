@@ -994,3 +994,4 @@ _[Checkpoint: 6a345256 — Done #6 parts 1+2: web feature gate (axum/mime_guess 
 _[Checkpoint: 6a345264 — edited src/supervisor.rs; wrote web-feature-gate.md; edited MEMORY.md]_
 ---
 
+[20:23:05] OBSERVE: read src/cgroup.rs
