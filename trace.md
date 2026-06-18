@@ -871,3 +871,4 @@ _[Checkpoint: 6a3423d4 — session ended (auto-checkpoint)]_
 [17:09:04] ACT: edited src/sandbox.rs
 [17:09:07] OBSERVE: read src/sandbox.rs
 [17:09:24] ACT: edited src/sandbox.rs
+[17:09:35] OBSERVE: read tests/env_integration.rs
