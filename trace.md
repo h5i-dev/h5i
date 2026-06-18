@@ -902,3 +902,4 @@ _[Checkpoint: 6a3426ec — Done: sandbox->msg leak fixed (idents module); advers
 [17:21:37] OBSERVE: read src/sandbox.rs
 [17:21:59] OBSERVE: read src/sandbox.rs
 [17:22:27] OBSERVE: read src/sandbox.rs
+[17:22:42] ACT: edited src/sandbox_policy.rs
