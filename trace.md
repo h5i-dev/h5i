@@ -549,3 +549,4 @@ _[Checkpoint: 6a3339ee — edited /home/koukyosyumei/Dev/h5i/tests/cli_integrati
 [00:26:24] OBSERVE: read src/hooks.rs
 [00:27:07] OBSERVE: read src/hooks.rs
 [00:27:16] THINK: (`LEGACY_OBSERVE_BASH` and `CTX_LEGACY_REF` predate the branch — on `main` — so I'll leave those.
+[00:27:16] NOTE: DEFERRAL: r without the migration code, so it's not a migration test. I'll leave it. The actual migration logic and its unit tests are what I'll remove. Let me …
