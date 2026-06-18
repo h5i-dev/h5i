@@ -1005,3 +1005,9 @@ _[Checkpoint: 6a345264 — edited src/supervisor.rs; wrote web-feature-gate.md; 
 [20:23:51] ACT: edited src/sandbox.rs
 [20:27:21] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/MEMORY.md): n established — routing extracted + tested; arm-by-arm is follow-up | | 6 | Workspace + features + `pub(crate)` | ✅ parts 1+2; **part 3 (crate spl…
 [20:27:21] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/MEMORY.md): idden from the lint — a real finding. The machinery hits (deferred supervised-tier scaffolding) are intentionally retained and annotated with ration…
+
+
+---
+_[Checkpoint: 6a3454a9 — edited src/supervisor.rs; edited src/supervisor.rs; edited src/sandbox.rs]_
+---
+
