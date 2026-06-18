@@ -14,5 +14,5 @@ type = "command"
 [[hooks.Stop]]
 
 [[hooks.Stop.hooks]]
-command = "h5i codex finish"
+command = "h5i codex finish --quiet"
 type = "command"

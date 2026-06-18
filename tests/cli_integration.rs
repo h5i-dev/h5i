@@ -980,7 +980,10 @@ fn hook_setup_write_default_writes_claude_and_codex_configs() {
         "{config}"
     );
     assert!(!config.contains("command = \"h5i hook run\""), "{config}");
-    assert!(config.contains("command = \"h5i codex finish\""), "{config}");
+    assert!(
+        config.contains("command = \"h5i codex finish --quiet\""),
+        "{config}"
+    );
     assert!(!config.contains("command = \"h5i hook stop\""), "{config}");
     assert!(
         config.contains("command = \"h5i hook wrap-bash\""),
@@ -1174,6 +1177,26 @@ fn codex_sync_replays_session_activity_into_context() {
     assert!(
         s.contains("edited src/main.rs"),
         "context trace missing edit: {s}"
+    );
+}
+
+#[test]
+fn codex_finish_quiet_emits_no_stdout_for_stop_hook() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+    repo.h5i_ok(&["context", "init", "--goal", "codex stop hook test"]);
+
+    let home = TempDir::new().unwrap();
+    let out = repo.h5i_with_home(home.path(), &["codex", "finish", "--quiet"]);
+    assert!(
+        out.status.success(),
+        "codex finish --quiet failed: {}",
+        stderr(&out)
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "codex Stop hook command must not emit non-JSON stdout: {}",
+        stdout(&out)
     );
 }
 

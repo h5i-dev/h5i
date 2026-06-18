@@ -2256,6 +2256,10 @@ enum CodexCommands {
         /// Optional summary for the context checkpoint
         #[arg(long)]
         summary: Option<String>,
+
+        /// Suppress stdout for hook use
+        #[arg(long)]
+        quiet: bool,
     },
 }
 
@@ -7055,22 +7059,29 @@ fn main() -> anyhow::Result<()> {
                     // Turn-delivery analog: check the inbox after a work burst.
                     deliver_codex_inbox(&workdir);
                 }
-                CodexCommands::Finish { summary } => {
+                CodexCommands::Finish { summary, quiet } => {
                     match codex::sync_context(&workdir)? {
-                        Some(result) => println!(
-                            "{} Synced Codex session {} ({} OBSERVE, {} ACT)",
-                            SUCCESS,
-                            style(&result.session_id).magenta(),
-                            result.observed,
-                            result.acted,
-                        ),
-                        None => println!(
-                            "{} No Codex session found in ~/.codex/sessions for this repo.",
-                            WARN
-                        ),
+                        Some(result) if !quiet => {
+                            println!(
+                                "{} Synced Codex session {} ({} OBSERVE, {} ACT)",
+                                SUCCESS,
+                                style(&result.session_id).magenta(),
+                                result.observed,
+                                result.acted,
+                            );
+                        }
+                        None if !quiet => {
+                            println!(
+                                "{} No Codex session found in ~/.codex/sessions for this repo.",
+                                WARN
+                            );
+                        }
+                        _ => {}
                     }
-                    auto_checkpoint_context(&workdir, summary.as_deref(), false)?;
-                    deliver_codex_inbox(&workdir);
+                    auto_checkpoint_context(&workdir, summary.as_deref(), quiet)?;
+                    if !quiet {
+                        deliver_codex_inbox(&workdir);
+                    }
                 }
             }
         }
