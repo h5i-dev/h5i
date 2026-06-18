@@ -988,3 +988,9 @@ _[Checkpoint: 6a345256 — Done #6 parts 1+2: web feature gate (axum/mime_guess 
 [20:17:40] NOTE: DEFERRAL (~/Dev/h5i/src/lib.rs): tably the `seccomp_notify`/`supervisor` scaffolding for the deferred supervised tier — per project context, that's intentionally-retained WIP, not v…
 [20:17:40] NOTE: DEFERRAL (~/Dev/h5i/src/lib.rs): rets_broker`) and annotate their unused items — these are deferred supervised-tier scaffolding, legitimately retained. The three non-machinery modul…
 [20:17:40] NOTE: DEFERRAL (~/Dev/h5i/src/lib.rs): tained-but-unused items. `seccomp_notify` is cohesively the deferred notify-mediation scaffolding, so a module-level allow with rationale fits; `cgrou…
+
+
+---
+_[Checkpoint: 6a345264 — edited src/supervisor.rs; wrote web-feature-gate.md; edited MEMORY.md]_
+---
+
