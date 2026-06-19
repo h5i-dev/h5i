@@ -1939,3 +1939,4 @@ _[Checkpoint: 6a355530 — edited docs/borrowing-from-coasts.md; edited docs/bor
 [17:04:55] ACT: edited src/mcp.rs
 [17:05:09] ACT: edited src/secrets_broker.rs
 [17:07:12] ACT: edited src/sandbox.rs
+[17:11:57] OBSERVE: read src/sandbox.rs
