@@ -2060,3 +2060,4 @@ _[Checkpoint: 6a3583a8 — edited tests/env_integration.rs; edited src/mcp.rs; e
 
 [18:02:17] OBSERVE: searched src/env.rs
 [18:02:17] OBSERVE: searched tests/env_integration.rs for "PORT""
+[18:02:17] OBSERVE: searched src/env.rs for "name|ServiceDef|service_record_path|format!\(\"\{name\}""
