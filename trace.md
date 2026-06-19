@@ -1797,3 +1797,4 @@ _[Checkpoint: 6a355478 — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a35551a — edited docs/borrowing-from-coasts.md; edited docs/borrowing-from-coasts.md; edited docs/borrowing-from-coasts.md]_
 ---
 
+[14:41:52] NOTE: DEFERRAL (~/Dev/h5i/docs/borrowing-from-coasts.md): Done. I consumed Codex's two follow-up messages, evaluated them as collaborator input, and folded the sound refinements into `do
