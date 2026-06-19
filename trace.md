@@ -1722,3 +1722,4 @@ _[Checkpoint: 6a3547ef — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.ht
 [14:38:23] OBSERVE: read tests/env_integration.rs
 [14:38:23] OBSERVE: listed files under ../coasts
 [14:38:23] OBSERVE: read ../coasts/README.md
+[14:38:23] OBSERVE: read ../coasts/docs/GETTING_STARTED.md
