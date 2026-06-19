@@ -545,6 +545,13 @@
   .pr-sec .pr-h { font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--red-text); min-width: 132px; }
   .pr-sec .pr-c { font-size: 1.0rem; color: var(--text); line-height: 1.5; }
 
+  /* ── Prompt-score bars ───────────────────────────────────── */
+  .ps-row { display: flex; align-items: center; gap: 12px; margin: 7px 0; font-size: 0.9rem; }
+  .ps-lbl { width: 152px; color: var(--text-dim); flex: none; }
+  .ps-bar { flex: 1; height: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; }
+  .ps-bar > span { display: block; height: 100%; border-radius: 4px; }
+  .ps-val { width: 36px; text-align: right; font-family: var(--mono); color: var(--text); flex: none; }
+
   /* ── Metrics (why now) ───────────────────────────────────── */
   .metric { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 26px 18px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); }
   .metric .mv { font-family: var(--mono); font-size: 3rem; font-weight: 700; color: var(--red-text); line-height: 1; }
@@ -633,15 +640,33 @@
 <div class="slide" style="gap:28px;">
   <div style="width:100%;max-width:900px;">
     <div class="section-tag">The problem</div>
-    <h2>Git records the diff.<br>AI review needs the <span class="red">missing context.</span></h2>
-    <p class="lede">An agent opens a PR. Before a human can approve it, five questions need answers Git was never built to store.</p>
+    <h2>Code review lost the <span class="red">execution trail</span><br>when agents arrived.</h2>
+    <p class="lede">The work behind it lives everywhere but the repo: prompts in chat, logs scrolled past, runs screenshotted, reviewers trusting a green check. Before a human can approve it, six questions need answers Git was never built to store.</p>
 
     <div class="qlist" style="margin-top:26px;">
-      <div class="qrow"><span class="q">What prompt produced this change?</span><span class="gx">git can't say</span></div>
-      <div class="qrow"><span class="q">Which files did the agent read before editing?</span><span class="gx">git can't say</span></div>
+      <div class="qrow"><span class="q">What prompt produced this change — and was it any good?</span><span class="gx">git can't say</span></div>
+      <div class="qrow"><span class="q">Which model wrote it, and which files did it read first?</span><span class="gx">git can't say</span></div>
       <div class="qrow"><span class="q">Did the tests pass — and which ones?</span><span class="gx">git can't say</span></div>
       <div class="qrow"><span class="q">Did another agent already review or hand this off?</span><span class="gx">git can't say</span></div>
       <div class="qrow"><span class="q">Any secret leak or prompt-injection risk in the reasoning?</span><span class="gx">git can't say</span></div>
+      <div class="qrow"><span class="q">Was the agent confined from secrets, network, and local state?</span><span class="gx">git can't say</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SLIDE — Why now
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:28px;">
+  <div style="width:100%;max-width:980px;">
+    <div class="section-tag">Why now</div>
+    <h2>AI writes a growing share of code.<br>Review capacity <span class="red">doesn't scale</span> with it.</h2>
+    <p class="lede">Agents already author production diffs at machine speed. The work behind them — prompts, commands, reasoning, test runs — evaporates the moment a session ends. Every team adopting agents is quietly accumulating change that is unreviewable, unauditable, and unreproducible.</p>
+
+    <div class="g3" style="margin-top:28px;">
+      <div class="feat-card"><h3 style="margin-top:4px;">More agent diffs</h3><p class="feat-desc">A rising fraction of every PR is machine-authored, and the share only grows.</p></div>
+      <div class="feat-card"><h3 style="margin-top:4px;">Flat review hours</h3><p class="feat-desc">Humans still approve every merge, with the same time and the same thin context Git gives them.</p></div>
+      <div class="feat-card"><h3 style="margin-top:4px;">Rising accountability</h3><p class="feat-desc">Security, compliance, and provenance demands climb as AI becomes production labor.</p></div>
     </div>
   </div>
 </div>
@@ -702,6 +727,53 @@
             <div class="rec-row"><span class="rec-k">tests</span><span class="rec-v"><span class="green">142 passed</span> · 0 failed</span></div>
             <div class="rec-row"><span class="rec-k">audit</span><span class="rec-v"><span class="green">clean</span> · 12 deterministic rules</span></div>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SLIDE — Feature · Prompt Maturity Score
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:24px;">
+  <div style="width:100%;max-width:1020px;">
+    <div class="section-tag">Feature · Prompt Maturity Score</div>
+    <h2>The recorded prompt becomes a<br><span class="red">measurable, reviewable signal</span></h2>
+
+    <div class="g2" style="margin-top:24px;align-items:start;gap:28px;">
+      <div class="pr">
+        <div class="pr-head">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="gh">branch · prompt maturity</span>
+          <span class="marker">h5i ✓ offline</span>
+        </div>
+        <div class="pr-body">
+          <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:16px;">
+            <span style="font-size:2.6rem;font-weight:800;color:var(--ink);line-height:1;">81<span style="font-size:1.1rem;color:var(--text-faint);">/100</span></span>
+            <span class="cyan" style="font-size:1.15rem;font-weight:700;">advanced</span>
+            <span class="feat-desc" style="margin-left:auto;">7 prompts · 100% coverage</span>
+          </div>
+          <div class="ps-row"><span class="ps-lbl">Specificity</span><span class="ps-bar"><span style="width:82%;background:var(--green);"></span></span><span class="ps-val">0.82</span></div>
+          <div class="ps-row"><span class="ps-lbl">Control / acceptance</span><span class="ps-bar"><span style="width:79%;background:var(--green);"></span></span><span class="ps-val">0.79</span></div>
+          <div class="ps-row"><span class="ps-lbl">Context grounding</span><span class="ps-bar"><span style="width:41%;background:var(--yellow);"></span></span><span class="ps-val">0.41</span></div>
+          <div class="ps-row"><span class="ps-lbl">Structure</span><span class="ps-bar"><span style="width:68%;background:var(--green);"></span></span><span class="ps-val">0.68</span></div>
+          <div class="ps-row"><span class="ps-lbl">Lexical diversity</span><span class="ps-bar"><span style="width:71%;background:var(--green);"></span></span><span class="ps-val">0.71</span></div>
+          <div class="ps-row"><span class="ps-lbl">Clarity (read. band)</span><span class="ps-bar"><span style="width:80%;background:var(--green);"></span></span><span class="ps-val">0.80</span></div>
+          <div class="ps-row"><span class="ps-lbl">Length adequacy</span><span class="ps-bar"><span style="width:100%;background:var(--green);"></span></span><span class="ps-val">1.00</span></div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <p style="font-size:1.1rem;">A deterministic <span class="green">0–100</span> score for the prompt behind every commit: how well the engineer <em>delegated the work</em>. It rewards naming the goal, setting constraints, referencing real files, and asking for verification. A heuristic signal of prompt craft, <span class="cyan">not a developer rating</span>.</p>
+        <div class="feat-card">
+          <span class="feat-cmd">no LLM · no network · no API key</span>
+          <h3 style="margin-top:4px;">Free, deterministic, explainable</h3>
+          <p class="feat-desc">Text features only, no model call. Runs on every commit at zero marginal cost, reproducible in CI, every point traceable to a named feature.</p>
+        </div>
+        <div class="feat-card">
+          <span class="feat-cmd">inspectable · trendable · reviewable</span>
+          <h3 style="margin-top:4px;">The reason to track prompts</h3>
+          <p class="feat-desc">Teams can finally see and improve how they hand work to agents — without sending a single prompt to another model.</p>
         </div>
       </div>
     </div>
@@ -803,6 +875,7 @@
           <span class="marker">h5i ✓ sticky</span>
         </div>
         <div class="pr-body">
+          <div class="pr-sec"><span class="pr-h">Prompt maturity</span><span class="pr-c"><span class="green">81/100</span> · advanced · 7 prompts scored</span></div>
           <div class="pr-sec"><span class="pr-h">Intent</span><span class="pr-c">Ship OAuth token refresh safely</span></div>
           <div class="pr-sec"><span class="pr-h">Review focus</span><span class="pr-c"><code>token.rs</code> refresh window · cache scope in <code>session.rs</code></span></div>
           <div class="pr-sec"><span class="pr-h">Provenance</span><span class="pr-c">3 AI commits · claude-code, codex · all tested</span></div>
@@ -905,21 +978,23 @@
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:28px;">
   <div style="width:100%;max-width:940px;">
-    <div class="section-tag">Why now</div>
-    <h2>Every AI-heavy team already has<br>Git, PRs, and agents</h2>
-    <p class="lede">The workflow won't change — agents are writing more of the diff every quarter, and the missing layer is the evidence that makes that diff reviewable. h5i drops in on top of what teams already run.</p>
+    <div class="section-tag">Market &amp; moat</div>
+    <h2>Drops into the stack every<br>AI team <span class="red">already runs</span></h2>
+    <p class="lede">No migration. h5i sits on top of Git, PRs, and the agents teams already use, and every session it observes compounds into a private, content-addressed record that is hard to leave behind. First adopters: <span class="cyan">platform, security, and DevEx leads</span> keeping PR review defensible as agents ship more code.</p>
 
     <div class="g3" style="margin-top:28px;">
       <div class="metric"><span style="font-family:var(--mono);font-size:0.86rem;color:var(--text-faint);letter-spacing:0.08em;">UP TO</span><span class="mv">95%</span><span class="ml">less token waste with the object store</span></div>
-      <div class="metric"><span class="mv">3.5×</span><span class="ml">richer PR briefs for reviewers</span></div>
-      <div class="metric"><span class="mv">1.8×</span><span class="ml">multi-agent productivity</span></div>
+      <div class="metric"><span class="mv">0–100</span><span class="ml">offline prompt score on every commit</span></div>
+      <div class="metric"><span class="mv">5</span><span class="ml">evidence refs that travel with the repo</span></div>
     </div>
 
     <div class="g3" style="margin-top:18px;">
-      <div class="card-sm"><span class="pill">no migration</span><p style="margin-top:8px;font-size:0.98rem;">Works with existing Git remotes — nothing to replace.</p></div>
-      <div class="card-sm"><span class="pill cyan">agent-native</span><p style="margin-top:8px;font-size:0.98rem;">Built for teams merging AI-authored diffs from many agents.</p></div>
-      <div class="card-sm"><span class="pill green">open source</span><p style="margin-top:8px;font-size:0.98rem;">Apache-2.0 Rust core — your data stays in your repo.</p></div>
+      <div class="card-sm"><span class="pill">structured traces</span><p style="margin-top:8px;font-size:0.98rem;">Every session compounds a private corpus of how the team delegates to agents.</p></div>
+      <div class="card-sm"><span class="pill cyan">Git-native distribution</span><p style="margin-top:8px;font-size:0.98rem;">Ships through the remotes teams already have, with no SaaS to adopt, no data to hand over.</p></div>
+      <div class="card-sm"><span class="pill green">deterministic &amp; offline</span><p style="margin-top:8px;font-size:0.98rem;">Prompt + risk scoring nothing can replicate without your repo. Apache-2.0 Rust core.</p></div>
     </div>
+
+    <p style="margin-top:22px;font-size:1rem;color:var(--text-dim);"><span class="green">Built with h5i:</span> this repo develops itself through h5i. <strong>256</strong> cross-agent messages, <strong>~96</strong> reasoning milestones, and this pitch + docs rewritten by Claude and Codex coordinating over <code>h5i msg</code>.</p>
   </div>
 </div>
 
@@ -932,7 +1007,7 @@
     <div class="hero-badge">AI-aware version control</div>
     <h1>Version control that<br>remembers <span class="shine-text">why</span></h1>
     <p class="mono" style="margin:14px auto 0;font-size:1rem;color:var(--text-dim);letter-spacing:0.01em;">Git shows the diff. <span class="red">h5i shows the agent work behind it.</span></p>
-    <p class="lede" style="margin:16px auto 0;text-align:center;">A Git sidecar — provenance on every commit, agents that coordinate, tool output that doesn't bloat context, PRs a human can actually review. Without replacing Git.</p>
+    <p class="lede" style="margin:16px auto 0;text-align:center;">A Git sidecar — a scored prompt and provenance on every commit, agents that coordinate, tool output that doesn't bloat context, PRs a human can actually review. Without replacing Git.</p>
 
     <div class="cta-install" style="margin-top:30px;">
       <span class="pmt">$</span> curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh

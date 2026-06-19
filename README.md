@@ -10,9 +10,10 @@
   <a href="https://github.com/h5i-dev/h5i/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/h5i-dev/h5i?style=social"></a>
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
   <br>
-  <a href="#agent-radio"><img alt="Agent Radio" src="https://img.shields.io/badge/Agent%20Radio-Claude%20%E2%86%94%20Codex-6f42c1"></a>
-  <a href="#token-reduction"><img alt="Token Reduction" src="https://img.shields.io/badge/Token%20Reduction-raw%20evidence%20kept-2ea44f"></a>
-  <a href="#pull-request-briefs"><img alt="AI PR Brief" src="https://img.shields.io/badge/AI%20PR%20Brief-reviewer%20ready-0969da"></a>
+  <a href="#31-pull-request-integration--the-receipt-reviewers-read"><img alt="AI PR Brief" src="https://img.shields.io/badge/AI%20PR%20Brief-reviewer%20ready-0969da"></a>
+  <a href="#33-agent-radio--agents-that-talk-over-git"><img alt="Agent Radio" src="https://img.shields.io/badge/Agent%20Radio-Claude%20%E2%86%94%20Codex-6f42c1"></a>
+  <a href="#35-token-reduction-with-unified-form"><img alt="Token Reduction" src="https://img.shields.io/badge/Token%20Reduction-raw%20evidence%20kept-2ea44f"></a>
+  <a href="#32-prompt-maturity-score--make-prompt-craft-a-visible-signal"><img alt="Prompt Maturity Score" src="https://img.shields.io/badge/Prompt%20Maturity-0%E2%80%93100%20offline-e36209"></a>
 </p>
 
 Git tracks the diff. h5i tracks the run.
@@ -21,29 +22,32 @@ AI coding agents do more than edit files. They follow prompts, talk to other age
 
 h5i captures that missing execution layer as Git-backed evidence: prompts and model metadata, token-reduced command output, recoverable raw logs, sandboxed worktree environment, real-time multi-agent discussion, and review-ready context for PRs.
 
+> **The work disappears before review.** Today the evidence lives everywhere but the repo — prompts pasted into chat, terminal logs scrolled past, agent runs screenshotted, reviewers trusting a green check, and *"who prompted what three weeks ago?"* unanswerable. h5i puts the execution layer back in Git, where the diff already lives.
+
 <table align="center">
   <tr>
     <td align="center">
-      <strong>Sandbox</strong><br>
-      <sub>Confined & Auditable</sub>
+      <strong>Git-native</strong><br>
+      <sub>No SaaS, no lock-in</sub>
     </td>
     <td align="center">
       <strong>up to 95%</strong><br>
       <sub>Less token waste</sub>
     </td>
     <td align="center">
-      <strong>3.5x</strong><br>
-      <sub>Richer PR briefs</sub>
+      <strong>Sandbox</strong><br>
+      <sub>Confined & auditable</sub>
     </td>
     <td align="center">
-      <strong>1.8x</strong><br>
-      <sub>Multi-agent productivity</sub>
+      <strong>0–100</strong><br>
+      <sub>Offline prompt score</sub>
     </td>
   </tr>
 </table>
 
 Use `h5i` if you want your AI agents to stop leaving their work in thin air.
 
+- Want an objective, offline score for how well each commit's prompt was written — trended across the whole branch?
 - Want to know which model, prompt, and reasoning led to a commit?
 - Want the next agent to inherit the full context of the last one?
 - Want Claude and Codex to talk in real time, with the conversation stored in Git?
@@ -51,12 +55,17 @@ Use `h5i` if you want your AI agents to stop leaving their work in thin air.
 - Want to run a risky AI-generated code in a confined sandbox, then review it before it touches your tree?
 - Want to catch leaked secrets, blind edits, and risky AI changes before review?
 
+**Who it's for:** platform, security, and DevEx leads at orgs rolling out Claude Code and Codex who need PR review and audit to stay defensible as agents write more of the diff.
+
+> **Built with h5i.** This repository develops itself through h5i: **256** cross-agent messages on `refs/h5i/msg`, **~96** reasoning milestones, and **1,200+** OBSERVE / THINK / ACT trace lines — and this very README was rewritten by Claude and Codex coordinating over `h5i msg`, reviewing each other's work along the way.
+
 ### Recent News
 
-- **New in v0.1.8: Auditable Sandbox.** Run risky AI-generated code in a confined environment, keep an audit trail of what happened, and apply the result only after review. [Jump to Agent Sandbox ↓](#32-agent-sandbox--a-confined-fully-auditable-environment)
-- **New in v0.1.7: Token Reduction with Unified Form.** Agents see a compact summary while the full output stays out of context, shared via Git LFS. [Jump to Token Reduction ↓](#33-token-reduction-with-unified-form)
+- **New: Prompt Maturity Score.** Every AI commit's prompt now gets a deterministic, fully-offline **0–100** quality score, rolled up across the branch and rendered in the PR brief. [Jump to Prompt Maturity Score ↓](#32-prompt-maturity-score--make-prompt-craft-a-visible-signal)
+- **New in v0.1.8: Auditable Sandbox.** Run risky AI-generated code in a confined environment, keep an audit trail of what happened, and apply the result only after review. [Jump to Agent Sandbox ↓](#34-agent-sandbox--a-confined-fully-auditable-environment)
+- **New in v0.1.7: Token Reduction with Unified Form.** Agents see a compact summary while the full output stays out of context, shared via Git LFS. [Jump to Token Reduction ↓](#35-token-reduction-with-unified-form)
 - **Agent Radio reached 100+ points on Hacker News.** Read the discussion [here](https://news.ycombinator.com/item?id=48345837).
-- **New in v0.1.5: Agent Radio.** Since your agents' context already lives in Git, they can now talk to each other through it. `h5i msg` adds a cross-agent message channel stored in `refs/h5i/msg`. [Jump to Agent Radio ↓](#31-agent-radio--agents-that-talk-over-git)
+- **New in v0.1.5: Agent Radio.** Since your agents' context already lives in Git, they can now talk to each other through it. `h5i msg` adds a cross-agent message channel stored in `refs/h5i/msg`. [Jump to Agent Radio ↓](#33-agent-radio--agents-that-talk-over-git)
 
 ---
 
@@ -109,7 +118,107 @@ h5i share pull
 
 ## 3. Feature Examples
 
-### 3.1. Agent Radio — agents that talk over Git
+Each capability writes to its own `refs/h5i/*` ref, and they converge on one reviewer-ready artifact — the PR brief. Here's that receipt first, then the pieces that feed it.
+
+### 3.1. Pull Request Integration — the receipt reviewers read
+
+When a branch is ready for review, h5i surfaces all of it where reviewers already work — on the pull request. One command posts a sticky, idempotent brief: review focus, goal, reasoning, tests, prompt maturity, and risk flags, all in one comment.
+
+<table>
+<tr>
+
+<td width="38%" valign="top">
+
+```bash
+h5i share pr post
+```
+
+---
+**🔎 Review focus**
+
+The exact files to open first, ranked by where the agent spent its compute.
+
+---
+**🎯 Goal & Intent**
+
+The goal agents were tasked to solve.
+
+---
+**📊 Prompt Maturity**
+
+The offline 0–100 score for the prompts behind this branch, with the per-signal breakdown.
+
+---
+**📌 Reviewer checklist**
+
+Actionable verification steps tailored for this specific diff.
+
+---
+**🧠 Reasoning**
+
+The OBSERVE / THINK / ACT steps.
+
+---
+**🛡️ Security & Duplicated Code**
+
+Automated check for credential leaks, blind edits, and copy-pasted blocks.
+
+---
+**🤖 AI Provenance**
+
+The prompt, model names, and commit lineage.
+
+<td width="62%" align="center">
+
+<img
+  src="assets/pr-demo.svg"
+  alt="h5i review brief"
+  width="100%"
+/>
+</td>
+
+</tr>
+</table>
+
+</br>
+
+### 3.2. Prompt Maturity Score — make prompt craft a visible signal
+
+h5i already records the prompt behind every AI commit. The **Prompt Maturity Score** turns those prompts into a single, explainable **0–100** signal of *how well the work was delegated* — computed **fully offline**: no LLM, no network, deterministic enough to run in a Git hook, in CI, or in a PR render with no API key.
+
+It scores the **input** — the engineer's ask — not the model's output, as a weighted sum of seven classical-NLP signals:
+
+| Signal | Weight | Captures |
+|---|---:|---|
+| **Specificity** | 24% | Concreteness — code refs, identifiers, numbers — minus a vagueness penalty |
+| **Control** | 24% | Did the engineer bound the agent? Constraints, output shape, acceptance criteria |
+| **Context** | 18% | Background, the goal / why, current state, grounding in real repo entities |
+| **Structure** | 10% | Decomposition — bullets, numbered steps, code fences |
+| **Diversity** | 10% | Lexical richness (adaptive MATTR) — non-repetitive, not phrase-farmed |
+| **Clarity** | 8% | Readability inside a target band (both extremes penalised) |
+| **Adequacy** | 6% | Length in a sweet spot — not one word, not a 1,200-word wall |
+
+On top sit **anti-gaming guards** — per-category keyword caps, a repetition penalty, hard length caps, and balance gates (a keyword-stuffed but context-free prompt is capped below *advanced*). You can't farm the score by pasting the lexicon in; you have to actually ask well.
+
+The branch roll-up is a length-weighted mean of the per-prompt scores (prompts are never concatenated), and it renders right at the top of the PR brief:
+
+```text
+🌳 Prompt maturity: 81/100 · advanced · 7 prompts scored (100% of AI commits)
+🔧 Recurring weak spots: weak context.
+   Heuristic signal of prompt craft — not a developer rating.
+
+  Specificity                 ████████░░  0.82
+  Control / acceptance        ████████░░  0.79
+  Context grounding           ████░░░░░░  0.41
+  Structure                   ███████░░░  0.68
+  Lexical diversity           ███████░░░  0.71
+  Clarity (readability band)  ████████░░  0.80
+  Length adequacy             ██████████  1.00
+```
+
+Prompt quality becomes **inspectable, trendable, and reviewable** across commits — a simple way for a team to see and improve how it delegates work to agents, without sending a single prompt to another model. (Design write-up: [How to Measure Prompt Quality Offline](https://h5i.dev/blog/prompt-maturity-score/).)
+
+### 3.3. Agent Radio — agents that talk over Git
 
 Because that context already lives in Git, your agents can also **talk to each other through it**: `h5i msg` is a Git-backed cross-agent message channel stored in `refs/h5i/msg`, built for typed operational handoffs (`ASK` · `REVIEW_REQUEST` · `RISK` · `DONE` · `ACK`). Claude can ask, Codex can review, risks can be flagged and resolved, and the whole log survives clones, machines, and branches. It travels with `h5i share push` / `pull`, and divergent sends from two machines **union-merge with no messages lost**.
 
@@ -134,7 +243,7 @@ We can also monitor the conversation in real time with `h5i msg watch`.
 
 For more details, see this blog post: [Claude Code and Codex Can Have Real-Time Conversation via Git](https://medium.com/@Koukyosyumei/claude-code-and-codex-can-have-real-time-conversation-via-git-f95b696c1c05)
 
-### 3.2. Agent Sandbox — a confined, fully auditable environment
+### 3.4. Agent Sandbox — a confined, fully auditable environment
 
 `h5i env` gives you a disposable, confined **environment** — a git worktree plus a policy that limits what the code inside can read, write, and reach over the network — so you can run a refactor, a dependency upgrade, or an untrusted build (yourself or via an agent) without it touching your main tree. Your loop is four commands:
 
@@ -148,7 +257,7 @@ h5i env apply  fix-auth                         # merge it into your branch (onl
 
 Inside the box, **every command is confined**: reading `/etc/shadow`, opening a raw socket, reaching a host that isn't on the allowlist, or calling `mount` / `unshare` / `ptrace` is blocked by Landlock + seccomp + namespaces, while normal work runs and is recorded. (`h5i env run <name> -- <cmd>` runs a single confined command the same way.)
 
-**Everything is auditable after the fact.** `h5i env log` lists every command run, secret used, and access blocked; `h5i env inspect --capture <id>` shows one run's record — its output, exit code, the exact policy that was enforced, and any redacted secrets; `h5i env compare` lines up parallel attempts; and the Sandbox tab of the [web dashboard](#46-web-dashboard) shows every allowed and blocked action. `h5i env propose` writes the change up for review first — nothing reaches your branch until you `apply`. The whole record lives in `refs/h5i/env` and moves between clones with `h5i share push` / `pull`.
+**Everything is auditable after the fact.** `h5i env log` lists every command run, secret used, and access blocked; `h5i env inspect --capture <id>` shows one run's record — its output, exit code, the exact policy that was enforced, and any redacted secrets; `h5i env compare` lines up parallel attempts; and the Sandbox tab of the [web dashboard](#37-web-dashboard) shows every allowed and blocked action. `h5i env propose` writes the change up for review first — nothing reaches your branch until you `apply`. The whole record lives in `refs/h5i/env` and moves between clones with `h5i share push` / `pull`.
 
 `h5i env create` picks the strongest isolation level the host can actually enforce (`h5i env probe` shows what that is). If you ask for a level the host can't provide, h5i refuses rather than quietly running with less:
 
@@ -163,7 +272,7 @@ Inside the box, **every command is confined**: reading `/etc/shadow`, opening a 
   <img src="./assets/agent-sandbox.svg" alt="An agent runs cargo build via h5i env run inside a policy-confined sandbox; reads of /etc/shadow are blocked by Landlock, raw sockets and off-allowlist hosts by the seccomp gate and egress proxy, and mount/unshare/ptrace by the seccomp deny-list, while the legitimate build is allowed and captured as evidence that a reviewer applies via propose → apply." width="95%">
 </p>
 
-### 3.3. Token Reduction with Unified Form
+### 3.5. Token Reduction with Unified Form
 
 Wrap any command with `h5i capture run -- <cmd>` and the agent sees only a compact, normalized summary of errors, failures, and counts, while the full raw output is stored out of band in `refs/h5i/objects`. Every tool's output collapses into **one unified form**, so a 4 MB test log no longer burns your context window, and the raw bytes are always one `h5i recall object <id>` away when you need them.
 
@@ -191,7 +300,7 @@ To share captures across a team, h5i borrows the split that Git LFS uses: the ma
   <img src="./assets/token-reduction-unified.svg" alt="h5i recall object" width="95%">
 </p>
 
-### 3.4. Context DAG
+### 3.6. Context DAG
 
 The context DAG shows how the work unfolded: the goal, every milestone, and the OBSERVE / THINK / ACT trace behind each change, captured automatically as the agent works. Because it is snapshotted on every commit, you can replay exactly what an agent knew and why it acted at any point in history.
 
@@ -203,67 +312,7 @@ h5i recall context show
   <img src="./assets/screenshot_h5i_dag.png" alt="h5i context DAG view" width="95%">
 </p>
 
-### 3.5. Pull Request Integration
-
-When a branch is ready for review, h5i surfaces all of it where reviewers already work — on the pull request.
-
-
-<table>
-<tr>
-
-<td width="38%" valign="top">
-
-**The AI Pull Request Brief:**
-
-```bash
-h5i share pr post
-```
-
----
-**🔎 Review focus** 
-
-The exact files to open first, ranked by where the agent spent its compute.
-
----
-**🎯 Goal & Intent**
-
-The goal agents were tasked to solve.
-
----
-**📌 Reviewer checklist**
-
-Actionable verification steps tailored for this specific diff.
-
----
-**🧠 Reasoning**
-
-The OBSERVE / THINK / ACT steps.
-
----
-**🛡️ Security & Duplicated Code**
-
-Automated check for credential leaks, blind edits, and copy-pasted blocks.
-
----
-**🤖 AI Provenance**
-
-Track the prompt, model names, and commit lineage.
-
-<td width="62%" align="center">
-
-<img
-  src="assets/pr-demo.svg"
-  alt="h5i review brief"
-  width="100%"
-/>
-</td>
-
-</tr>
-</table>
-
-</br>
-
-### 3.6. Web Dashboard
+### 3.7. Web Dashboard
 
 ```bash
 h5i serve        # http://localhost:7150
