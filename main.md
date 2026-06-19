@@ -965,11 +965,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Final polish pass: caveat coverage + anchor/parse verification
 - [x] edited docs/index.html; edited docs/index.html; edited docs/pitch/index.html
 - [x] Rebalanced per owner feedback: de-emphasize prompt maturity, fix capture→score ordering
+- [x] edited README.md; edited README.md; edited README.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-19 00:02 UTC] `prompt-score`: edited README.md; edited README.md; edited README.md
 - [2026-06-19 00:02 UTC] `prompt-score`: Rebalanced per owner feedback: de-emphasize prompt maturity, fix capture→score ordering
 - [2026-06-18 23:48 UTC] `prompt-score`: edited docs/index.html; edited docs/index.html; edited docs/pitch/index.html
 - [2026-06-18 23:48 UTC] `prompt-score`: Final polish pass: caveat coverage + anchor/parse verification
