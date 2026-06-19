@@ -1278,3 +1278,16 @@ Owner kept the current narrative; declined the positioning pivot, business-model
 
 ---
 
+## Commit 6a3488c0 — 2026-06-19 00:09 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+Owner kept the current narrative; declined the positioning pivot, business-model, and founder-edge sections. Implemented: (1) 'Built with h5i' dogfood band on homepage (#built-with) + README blockquote + pitch market slide — VERIFIED numbers only (256 msgs, ~96 milestones, 1200+ traces, this rewrite via h5i msg); corrected Codex's bad figures (387→~28 objects, 960→~96 milestones). (2) Sharper 'work disappears before review' substitute-behavior pain on homepage problem section, README opening blockquote, pitch problem lede. (3) Platform/security/DevEx beachhead line in homepage FAQ, README 'who it's for', pitch market lede. All parse, all anchors resolve, 15/15 sections.
+
+### This Commit's Contribution
+
+
+---
+

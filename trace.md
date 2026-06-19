@@ -1276,3 +1276,9 @@ _[Checkpoint: 6a34882f — edited README.md; edited README.md; edited docs/index
 _[Checkpoint: 6a3488b0 — Added dogfood proof + sharper pain + beachhead (owner-approved subset of Codex investor review)]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3488c0 — edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html]_
+---
+
