@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Claude Code Hooks vs Git Hooks — h5i</title>
+  <title>Claude Code Hooks vs Git Hooks: h5i</title>
   <meta name="description" content="Claude Code hooks run during the agent lifecycle. Git hooks run during Git operations. AI coding workflows usually need both.">
   <meta name="keywords" content="claude code hooks vs git hooks, claude code hooks, git hooks ai coding, PostToolUse, SessionStart, h5i hook">
   <meta name="author" content="Koukyosyumei">
@@ -96,7 +96,7 @@
       </div>
     </header>
 
-<p>Claude Code hooks and Git hooks both run automation, but they fire at different layers. Git hooks run when Git performs repository operations such as commit, merge, applypatch, and push. Claude Code hooks run during the Claude Code session lifecycle and agent tool loop.</p>
+<p>Inside an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>, both hook systems play a role: Claude Code hooks capture the agent's session evidence, Git hooks enforce policy at repository boundaries. Together they form the provenance layer that makes a workspace reviewable after the fact. Claude Code hooks and Git hooks both run automation, but they fire at different layers. Git hooks run when Git performs repository operations such as commit, merge, applypatch, and push. Claude Code hooks run during the Claude Code session lifecycle and agent tool loop.</p>
 <h2>Git hooks: repository lifecycle</h2>
 <p>The official Git hooks documentation says hooks are programs placed in a hooks directory, usually <code>$GIT_DIR/hooks</code> or a path configured with <code>core.hooksPath</code>. Git invokes them at specific moments in Git operations. A <code>pre-commit</code> hook can block a commit. A <code>commit-msg</code> hook can validate the message. Server-side hooks can inspect pushes.</p>
 <p>Git hooks are excellent for repository policy: formatting, linting, secret checks, commit-message conventions, and push-time enforcement.</p>
@@ -133,13 +133,13 @@
       <span class="label">Next in the cluster</span>
       <a href="/blog/track-claude-code-prompts-diffs-git/">
         <h3>How to Track Claude Code Prompts and Diffs in Git</h3>
-        <p>Continue the AI-aware version control series with the next focused workflow.</p>
+        <p>Continue the auditable workspace series with the next focused workflow.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Bring AI provenance into Git</h3>
-      <p>h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
+      <h3>Try h5i on your next AI-assisted branch</h3>
+      <p>Create a sandboxed workspace, capture the run, and post a review-ready PR brief. h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/guides/" class="btn btn-ghost">Read the guides</a>
     </div>

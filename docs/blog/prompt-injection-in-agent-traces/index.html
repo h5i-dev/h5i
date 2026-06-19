@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Detecting Prompt Injection in Agent Reasoning Traces — h5i</title>
+  <title>Detecting Prompt Injection in Agent Reasoning Traces: h5i</title>
   <meta name="description" content="Detect prompt injection in AI agent traces with eight deterministic rules for override and exfiltration patterns in OBSERVE, THINK, and ACT entries.">
   <meta name="keywords" content="prompt injection detection, llm security, agent security, owasp llm top 10, claude code security, h5i context scan, prompt injection regex">
   <meta name="author" content="Koukyosyumei">
@@ -90,7 +90,10 @@
       Prompt injection is the LLM-era equivalent of SQL injection: untrusted input gets concatenated
       into a control channel, the control channel obeys it, and the system does the wrong thing.
       <a href="https://genai.owasp.org/llmrisk/llm01-prompt-injection/">OWASP lists prompt injection
-      as LLM01:2025</a>: crafted input can alter model behavior or output in unintended ways.
+      as LLM01:2025</a>: crafted input can alter model behavior or output in unintended ways. Detecting
+      it is a governance property of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>:
+      the reasoning trace is a first-class artifact, and scanning it deterministically is how you prove
+      the agent's reasoning was not hijacked.
     </p>
 
     <p>
@@ -98,7 +101,7 @@
       reasonable: if the model was successfully manipulated, surely the output will look weird.
       Sometimes that's true. Often it isn't. The injection planted a belief, the belief informed a
       tool call three turns later, and the output that arrives in your channel looks completely
-      normal — because to the model, by the time it speaks, it isn't repeating an injection. It's
+      normal, because to the model, by the time it speaks, it isn't repeating an injection. It's
       acting on what it now thinks is true.
     </p>
 
@@ -116,9 +119,9 @@
     </p>
 
     <ul>
-      <li><strong>The output channel</strong> — what arrives in the user's chat window.</li>
-      <li><strong>Captured reasoning entries</strong> — session-log content available to the audit path.</li>
-      <li><strong>The reasoning trace</strong> — h5i's structured OBSERVE / THINK / ACT entries, written via the <code>PostToolUse</code> hook and explicit <code>h5i recall context trace</code> calls.</li>
+      <li><strong>The output channel</strong>, what arrives in the user's chat window.</li>
+      <li><strong>Captured reasoning entries</strong>, session-log content available to the audit path.</li>
+      <li><strong>The reasoning trace</strong>, h5i's structured OBSERVE / THINK / ACT entries, written via the <code>PostToolUse</code> hook and explicit <code>h5i recall context trace</code> calls.</li>
     </ul>
 
     <p>
@@ -137,7 +140,7 @@
     <h2>Why deterministic, not model-based</h2>
 
     <p>
-      Plenty of vendors offer LLM-based prompt-injection scanners — a model classifies whether
+      Plenty of vendors offer LLM-based prompt-injection scanners, a model classifies whether
       another model's output is suspicious. They have higher recall on novel patterns. They also
       have all the failure modes you'd expect:
     </p>
@@ -186,7 +189,7 @@
       The first three are the load-bearing rules. <em>override_instructions</em> and <em>exfiltration_attempt</em>
       together catch most public-corpus prompt injections. <em>role_hijack</em> covers the persona-rewrite
       family. The remaining five are calibrated for lower precision but provide useful corroboration
-      — when three LOW-severity rules hit on the same trace entry, the composite score deserves
+     , when three LOW-severity rules hit on the same trace entry, the composite score deserves
       attention even if no single rule alone would have triggered.
     </p>
 
@@ -212,7 +215,7 @@
 
     <p>
       Two HIGH-severity hits on the same trace line is the unambiguous case. More interesting are
-      partial hits — a single MEDIUM, or a cluster of LOWs near a sensitive ACT entry — which
+      partial hits, a single MEDIUM, or a cluster of LOWs near a sensitive ACT entry, which
       surface for human review without auto-blocking.
     </p>
 
@@ -221,7 +224,7 @@
     <p>
       The scenarios that bite production agents aren't usually the textbook "ignore all previous
       instructions" copied verbatim into a chat. They're indirect: an agent reads a public README,
-      a Stack Overflow answer, a webpage, an issue comment — and the injection is buried in there.
+      a Stack Overflow answer, a webpage, an issue comment, and the injection is buried in there.
     </p>
 
     <p>
@@ -240,14 +243,14 @@
       typosquatted package and run install scripts; or simply break the build silently to waste
       developer time. Either way, the injection lands in the agent's OBSERVE trace as the README's
       contents, then surfaces in a THINK as "I'll add the setup import." A scan over the trace
-      catches the <em>distraction</em> + <em>tool_misuse</em> combination — score isn't HIGH, but it's enough to
+      catches the <em>distraction</em> + <em>tool_misuse</em> combination, score isn't HIGH, but it's enough to
       hold the commit for review.
     </p>
 
     <h2>Compliance reports across date ranges</h2>
 
     <p>
-      Per-session scans answer "is this PR safe?" — fine for engineers. Security teams want
+      Per-session scans answer "is this PR safe?", fine for engineers. Security teams want
       "what's the trend across the last quarter?" That's <code>h5i audit compliance</code>:
     </p>
 
@@ -306,7 +309,7 @@
     </p>
 
     <ul>
-      <li><strong>Semantic-only injections</strong> with no telltale phrases — e.g. a poisoned doc that just states a falsehood about API behavior. These need either model-based scanning or out-of-band fact-checking.</li>
+      <li><strong>Semantic-only injections</strong> with no telltale phrases, e.g. a poisoned doc that just states a falsehood about API behavior. These need either model-based scanning or out-of-band fact-checking.</li>
       <li><strong>Steganographic injections</strong> in code comments or whitespace. The rules look at the trace, not the source; a future addition could scan tool inputs as well.</li>
       <li><strong>Multi-turn injections</strong> where each individual turn looks benign but the sequence drifts behavior. Requires session-level analysis, which we plan to add.</li>
     </ul>
@@ -344,7 +347,7 @@
 
     <div class="post-cta">
       <h3>Catch the injections that never surface in your chat window</h3>
-      <p>Eight deterministic rules. No model in the audit path. Open source.</p>
+      <p>Try h5i on your next AI-assisted branch: create a <a href="../../features/">sandboxed workspace</a>, capture the run, and post a review-ready PR brief.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/" class="btn btn-ghost">Back to docs</a>
     </div>

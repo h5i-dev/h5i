@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cut Claude Agent Costs 51% with h5i Claims — h5i</title>
+  <title>Cut Claude Agent Costs 51% with h5i Claims: h5i</title>
   <meta name="description" content="A reproducible N=5 experiment: content-addressed claims cut estimated Claude coding-agent session cost 51% while preserving task fidelity.">
   <meta name="keywords" content="reduce claude api costs, claude token optimization, prompt caching, anthropic prompt caching, claude code costs, h5i claims, content-addressed facts, agent cost reduction">
   <meta name="author" content="Koukyosyumei">
@@ -75,7 +75,7 @@
       <h1>Cutting Claude Coding-Agent Costs 51% with Content-Addressed Claims</h1>
       <p class="post-deck">
         Prompt caching solves the cost of re-sending. It does not solve the cost of re-deriving.
-        Here's the missing layer — and the A/B benchmark that shows what happens when you stop
+        Here's the missing layer, and the A/B benchmark that shows what happens when you stop
         paying tokens for facts the agent already figured out.
       </p>
       <div class="post-meta">
@@ -86,11 +86,14 @@
     </header>
 
     <p>
-      Every Claude Code session that touches a non-trivial codebase begins with the same expensive
-      ceremony: the agent re-discovers the codebase. It greps for the entry point. It reads the
-      module that probably owns the logic. It opens three more files to verify. By the time it
-      starts answering your actual question, it may have spent a substantial part of the session
-      touring files whose structure did not change since yesterday.
+      Inside an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>,
+      every session's compressed tool logs and provenance records are kept out of context, but
+      facts the agent derived are a different story. Every Claude Code session that touches a
+      non-trivial codebase begins with the same expensive ceremony: the agent re-discovers the
+      codebase. It greps for the entry point. It reads the module that probably owns the logic. It
+      opens three more files to verify. By the time it starts answering your actual question, it
+      may have spent a substantial part of the session touring files whose structure did not change
+      since yesterday. h5i claims are the workspace's answer to that re-derivation cost.
     </p>
 
     <p>
@@ -104,7 +107,7 @@
 
     <p>
       h5i adds the missing layer. <strong>Claims</strong> are short, content-addressed facts the agent
-      records once — "the retry logic lives in <code>HttpClient::send</code>, not the middleware" — pinned
+      records once, "the retry logic lives in <code>HttpClient::send</code>, not the middleware", pinned
       to a Merkle hash of the files they depend on. As long as those files don't change, the claim
       stays live. The next session reads it as a pre-verified fact and skips the entire
       re-derivation.
@@ -152,7 +155,7 @@
 
     <div class="callout">
       <strong>Caveat.</strong> Claims help most for the second-and-later sessions on a stable codebase.
-      A first session on a new repo still needs exploration — the claims aren't there yet. The
+      A first session on a new repo still needs exploration, the claims aren't there yet. The
       effect compounds: the more sessions a project accumulates, the more claims pile up, the more
       sessions skip ahead. Greenfield projects see less benefit; long-running ones see more.
     </div>
@@ -174,7 +177,7 @@
     <p>
       The <strong>evidence hash</strong> is the SHA-256 of the (path, git-blob-OID) pairs at HEAD. It's stable
       under whitespace-only re-saves but changes the moment the file's content changes. There is no
-      TTL, no heuristic, no "we think this is probably still right" — git tells you whether the
+      TTL, no heuristic, no "we think this is probably still right", git tells you whether the
       evidence is intact, byte for byte.
     </p>
 
@@ -197,7 +200,7 @@
     </div>
 
     <p>
-      Stale claims are not deleted. They're held — the next agent session that reads the affected
+      Stale claims are not deleted. They're held, the next agent session that reads the affected
       file gets a chance to re-confirm or replace the claim, often via a one-line check rather than
       a full re-derivation. Pruning is explicit:
     </p>
@@ -230,7 +233,7 @@
     </div>
 
     <p>
-      The agent treats this block the way it treats <code>CLAUDE.md</code> instructions — high-trust context
+      The agent treats this block the way it treats <code>CLAUDE.md</code> instructions, high-trust context
       to use, not to re-derive. In practice, Claude reads it, accepts it, and skips the exploration
       phase selectively. The <code>4.0 ± 0</code> read-tool-call result above is the direct consequence:
       the model reads the relevant modules without exploring decoy files.
@@ -290,7 +293,7 @@
     <ul>
       <li><strong>After exploration that paid off.</strong> If you spent five reads to find a fact, record it.</li>
       <li><strong>After a non-obvious negative result.</strong> "X is <em>not</em> in module Y" saves another agent the same wild-goose chase.</li>
-      <li><strong>After a constraint discovery.</strong> Limits, contracts, invariants — the things that don't show up in the type signature.</li>
+      <li><strong>After a constraint discovery.</strong> Limits, contracts, invariants, the things that don't show up in the type signature.</li>
     </ul>
 
     <p>
@@ -329,8 +332,8 @@
     </div>
 
     <div class="post-cta">
-      <h3>Stop paying tokens to re-derive what the agent already knows</h3>
-      <p>h5i claims are open source, evidence is a git hash, and there's no service to subscribe to.</p>
+      <h3>Try h5i on your next AI-assisted branch</h3>
+      <p>Create a sandboxed workspace, capture the run, and post a review-ready PR brief. h5i claims are open source, evidence is a git hash, and there's no service to subscribe to.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/" class="btn btn-ghost">Back to docs</a>
     </div>

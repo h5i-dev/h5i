@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Intent-Based Rollback for AI-Generated Code — h5i</title>
+  <title>Intent-Based Rollback for AI-Generated Code: h5i</title>
   <meta name="description" content="Intent-based rollback lets teams undo AI-generated changes by the task they implemented, not just by manually hunting commits.">
   <meta name="keywords" content="intent based rollback, rollback ai generated code, revert ai commit by prompt, ai code provenance rollback, h5i rollback">
   <meta name="author" content="Koukyosyumei">
@@ -96,7 +96,7 @@
       </div>
     </header>
 
-<p>Rollback is easy when you know the exact commit. It is harder when an AI agent made several related commits, used vague messages, or touched files outside the obvious failure area. During an incident, teams think in intent: undo the caching change, revert the payment retry behavior, remove the migration helper.</p>
+<p>An <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> records prompts, decisions, commands, and context alongside every commit. Intent-based rollback is what you get when those records exist: the ability to find the right commit by describing what it did, not by hunting hashes. Rollback is easy when you know the exact commit. It is harder when an AI agent made several related commits, used vague messages, or touched files outside the obvious failure area. During an incident, teams think in intent: undo the caching change, revert the payment retry behavior, remove the migration helper.</p>
 <p>Intent-based rollback connects that human description to recorded AI provenance. Instead of searching only commit messages and diffs, it can search prompts, decisions, and context records attached to commits.</p>
 <h2>Why AI changes make rollback harder</h2>
 <p>AI-generated work often arrives as a coherent patch across multiple files. The commit message may be short. The important clue may live in the original prompt: "make login retries more aggressive" or "simplify billing plan sync". If that prompt is not stored, responders are left with hashes and guesses.</p>
@@ -140,13 +140,13 @@
       <span class="label">Next in the cluster</span>
       <a href="/blog/why-git-diffs-are-not-enough-for-ai-generated-code/">
         <h3>Why Git Diffs Are Not Enough for AI-Generated Code</h3>
-        <p>Continue the AI-aware version control series with the next focused workflow.</p>
+        <p>Continue with the next focused workflow in the auditable workspace series.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Bring AI provenance into Git</h3>
-      <p>h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
+      <h3>Capture rollback-ready provenance from the start</h3>
+      <p>Try h5i on your next AI-assisted branch: create a sandboxed workspace, capture the run, and post a review-ready PR brief.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/guides/" class="btn btn-ghost">Read the guides</a>
     </div>

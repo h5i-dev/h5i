@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Why AI Agents Need Auditable Workspaces</title>
+  <meta name="description" content="An auditable workspace is where an AI agent does its work, a Git-backed worktree where every prompt, command, log, policy, and handoff is recorded in your repo and provable after the fact. The definition, the three pillars, and the golden path.">
+  <meta name="keywords" content="auditable workspaces for ai agents, ai agent workspace, sandboxed worktree, agent provenance, agent confinement, agent governance, git-backed agent audit, h5i env, ai agent audit trail">
+  <meta name="author" content="Koukyosyumei">
+  <meta name="theme-color" content="#D21C1C">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="https://h5i.dev/blog/auditable-workspaces-for-ai-agents/">
+  <link rel="icon" type="image/png" href="/_static/logo.png">
+  <link rel="apple-touch-icon" href="/_static/logo.png">
+
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="h5i">
+  <meta property="og:title" content="Why AI Agents Need Auditable Workspaces">
+  <meta property="og:description" content="Git tracks the diff. h5i tracks the workspace behind it, a Git-backed worktree where every prompt, command, log, policy, and handoff is recorded in your repo and provable after the fact.">
+  <meta property="og:url" content="https://h5i.dev/blog/auditable-workspaces-for-ai-agents/">
+  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="article:published_time" content="2026-06-19">
+  <meta property="article:author" content="Koukyosyumei">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Why AI Agents Need Auditable Workspaces">
+  <meta name="twitter:description" content="An auditable workspace is where an agent does its work, Git-backed, in your repo, provable after the fact. The definition, the three pillars, and the golden path.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Why AI Agents Need Auditable Workspaces",
+    "description": "An auditable workspace is the place an AI agent does its work — a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. This is the definition, the three proof pillars (provenance, confinement, governance), the workspace stack, and the golden path.",
+    "author": {"@type": "Person", "name": "Koukyosyumei", "url": "https://github.com/Koukyosyumei"},
+    "datePublished": "2026-06-19",
+    "dateModified": "2026-06-19",
+    "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://h5i.dev/blog/auditable-workspaces-for-ai-agents/"},
+    "image": "https://h5i.dev/_static/screenshot_h5i_server.png",
+    "keywords": "auditable workspaces for ai agents, ai agent workspace, sandboxed worktree, agent provenance, agent confinement, agent governance"
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/_static/blog.css">
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://h5i.dev/blog/"}, {"@type": "ListItem", "position": 3, "name": "Why AI Agents Need Auditable Workspaces", "item": "https://h5i.dev/blog/auditable-workspaces-for-ai-agents/"}]}
+  </script>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i logo"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/guides/">Guides</a></li>
+    <li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+  </ul>
+</nav>
+
+<main class="article-wrap">
+  <article class="post">
+    <header>
+      <div class="post-eyebrow">Cornerstone · 2026-06-19</div>
+      <h1>Why AI agents need auditable workspaces</h1>
+      <p class="post-deck">
+        <strong>Git tracks the diff. h5i tracks the workspace behind it.</strong> An AI coding agent
+        does far more than write the lines you finally merge, it reads files, runs commands, follows
+        a prompt, weighs alternatives, hands work to other agents, and reaches out to the network. Git
+        records none of that. An <strong>auditable workspace</strong> does: it is the place the agent
+        works, and everything it does there is recorded in your repo and provable after the fact.
+      </p>
+      <div class="post-meta">
+        <span><strong>By</strong> Koukyosyumei</span>
+        <span><strong>Reading time</strong> 12 min</span>
+        <span><strong>Tags</strong> Auditable Workspaces · Provenance · Confinement · Governance</span>
+      </div>
+    </header>
+
+    <p>
+      You hand a task to Claude Code or Codex. Twenty minutes later there is a branch with a tidy
+      diff. The diff looks fine. But the diff is the <em>last</em> thing that happened, the visible
+      residue of a long operational session you never saw. What was the agent actually asked? Which
+      files did it read and which did it ignore? What commands did it run, and what did they print?
+      Could it have reached your secrets or the public internet? Which model produced this, steered by
+      whose prompt? When a second agent picked up the work, what did the handoff say?
+    </p>
+
+    <p>
+      Git answers none of those questions, because Git was designed to version <em>code</em>, not to
+      record the <em>work that produced the code</em>. For human authors that gap never mattered, the work lived in a person's head and their terminal, and we trusted the author. For autonomous
+      agents the gap is the whole problem. The fix is not a better diff viewer. It is to make the
+      <strong>workspace itself</strong> the unit of record.
+    </p>
+
+    <h2>The definition</h2>
+
+    <div class="callout">
+      An <strong>auditable workspace</strong> is the place an AI agent does its work, a Git-backed
+      worktree where every prompt, decision, command, log, policy, and handoff is recorded in your
+      repo and provable after the fact.
+    </div>
+
+    <p>
+      Concretely, the workspace is the sum of everything that went into a change, not just the change:
+    </p>
+
+    <div class="callout">
+      <strong>Workspace</strong> = worktree + prompt + model + commands + logs + policy + messages + PR evidence.
+    </div>
+
+    <p>
+      Two cautions are built into that wording. "Workspace" is a crowded word, the defense is the
+      adjective <strong>auditable</strong> and the location <strong>in your repo</strong>. And no single
+      feature is the identity: token reduction, a prompt score, a messaging channel are all
+      <em>properties</em> of the workspace, never the point. The point is that the place an agent worked
+      becomes a record you can replay, review, and trust.
+    </p>
+
+    <h2>The problem: agents do operational work Git never records</h2>
+
+    <p>
+      A commit is a snapshot of files plus an author, a timestamp, and a message. That model is a
+      perfect fit for "a person deliberately saved this state." It is a poor fit for "an autonomous
+      process spent an hour reading, deciding, executing, and negotiating, and this diff fell out the
+      end." All of the high-signal, high-risk material, the intent, the tool output, the reach, the
+      reasoning, happens <em>off-ledger</em>.
+    </p>
+
+    <p>
+      That off-ledger work is exactly what a reviewer needs and exactly what an incident responder
+      wishes they had. "The agent refactored billing" is reassuring until you learn it was prompted
+      with <em>"make it work"</em>, ran a destructive migration you can't see, and could reach the
+      production database the whole time. None of that is in the diff. It was in the workspace, and
+      the workspace evaporated.
+    </p>
+
+    <h2>Three proof pillars</h2>
+
+    <p>
+      "Auditable" is not a vibe; it decomposes into three concrete properties of the workspace. Each
+      one answers a question the diff can't, and each is backed by data that lives in your Git refs.
+    </p>
+
+    <div class="tbl-wrap">
+      <table class="data">
+        <thead>
+          <tr><th>Pillar</th><th>Answers</th><th>Backed by</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Provenance</strong></td><td>Who asked, why, and what the agent knew.</td><td><code>refs/h5i/notes</code>, <code>refs/h5i/context</code></td></tr>
+          <tr><td><strong>Confinement</strong></td><td>What it <em>couldn't</em> reach, provable.</td><td><code>refs/h5i/env</code></td></tr>
+          <tr><td><strong>Governance</strong></td><td>Deterministic audit &amp; compliance, no model in the loop.</td><td><code>h5i audit</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The middle pillar is the one teams underrate. <em>"The agent physically could not exfiltrate"</em>
+      beats <em>"we logged it"</em> every time, a log tells you what happened, a boundary tells you
+      what could never happen. h5i's sandboxed worktree (<code>h5i env</code>) enforces that boundary
+      with tiered isolation and a network egress allowlist, then records the policy alongside the
+      evidence so the confinement itself is auditable.
+    </p>
+
+    <h2>The workspace stack</h2>
+
+    <p>
+      Put the pillars together and a workspace has a stack, each layer a command you actually run,
+      each layer recording a different slice of the work:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">Agent Workspace</span></div>
+      <div class="terminal-body"><pre><span class="t-out">Agent Workspace</span>
+<span class="t-out">├─ Sandboxed worktree        <span class="t-bold">h5i env</span></span>
+<span class="t-out">├─ Prompt-aware commits      <span class="t-bold">h5i capture commit</span></span>
+<span class="t-out">├─ Compressed tool logs      <span class="t-bold">h5i capture run</span></span>
+<span class="t-out">├─ Agent handoffs            <span class="t-bold">h5i msg</span></span>
+<span class="t-out">├─ Risk/audit signals        <span class="t-bold">h5i audit</span></span>
+<span class="t-out">└─ PR evidence brief         <span class="t-bold">h5i share pr</span></span></pre></div>
+    </div>
+
+    <p>
+      The sandboxed worktree is the hero, not feature number seven. It is the canonical auditable
+      workspace and the command humans actually type. Everything above it accrues onto that worktree
+      as the agent works.
+    </p>
+
+    <h2>The golden path</h2>
+
+    <p>
+      The pieces compose into one user journey, the same ordering everywhere:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">golden path</span></div>
+      <div class="terminal-body"><pre><span class="t-out">env create  →  agent works (env shell / capture run)  →  capture commit (provenance)</span>
+<span class="t-out">            →  msg review  →  share pr  →  apply</span></pre></div>
+    </div>
+
+    <p>
+      In narrative form: open a workspace, hand it to an agent, let evidence accrue (commands, logs,
+      prompts, handoffs), have a reviewer read the provable record on the PR, and the human applies or
+      merges. The agent never touches your branch directly, it works inside a confined worktree, and
+      a person applies its work after reading the evidence.
+    </p>
+
+    <h2>The moat: it lives in your Git</h2>
+
+    <p>
+      Everything above lives under <code>refs/h5i/*</code>, so it travels with the repository like any
+      other Git data. <strong>No SaaS, no lock-in, works offline.</strong> Clone the repo and you have
+      the workspaces; there is no separate service holding your audit trail hostage and no account to
+      log into to find out what an agent did. The evidence is as durable and portable as the commits
+      it explains.
+    </p>
+
+    <p>
+      That is also why the token-reduction claim ladders up to "auditable" rather than standing on its
+      own: the workspace keeps raw logs <em>out</em> of the agent's context window, recoverable, not
+      discarded, which is how it gets to <strong>~95% lower token waste</strong> while still being
+      able to show you the full output later.
+    </p>
+
+    <h2>What it is not</h2>
+
+    <div class="callout">
+      h5i is not a Git replacement, not a hosted SaaS, not just a sandbox, it's a Git sidecar for
+      auditable agent workspaces.
+    </div>
+
+    <p>
+      It does not replace Git; it rides alongside it. It is not a cloud sandbox like a hosted dev
+      environment, the confinement runs on your machine and the record lives in your repo. And it is
+      not merely a sandbox: a sandbox confines, but an auditable workspace confines <em>and</em> records
+      <em>and</em> makes the whole thing reviewable on the PR. Confinement is one of the three pillars,
+      not the product.
+    </p>
+
+    <h2>Why this is the right unit</h2>
+
+    <p>
+      Code review evolved for a world where a trusted human authored every line and could answer for
+      it in a hallway conversation. Agents broke that assumption: the author is a process, it can't be
+      cross-examined later, and it operated with real capability over your machine and network. The
+      honest response is not to trust harder or log more, it is to make the agent's entire workspace a
+      first-class, Git-backed, provable artifact. Grade the work by the record it leaves, confine what
+      it can reach, and let a human apply it after reading the evidence.
+    </p>
+
+    <div class="next-up">
+      <span class="label">Read next</span>
+      <a href="/blog/agent-sandbox-env/">
+        <h3>An Auditable Sandbox for AI Agents</h3>
+        <p>The hero of the stack in depth: a confined, disposable worktree with tiered isolation and a rootless egress allowlist a raw socket can't bypass, then audit everything before it touches your branch.</p>
+      </a>
+    </div>
+
+    <div class="post-cta">
+      <h3>Try h5i on your next AI-assisted branch</h3>
+      <p>Create a sandboxed workspace, capture the run, and post a review-ready PR brief.</p>
+      <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
+      <a href="/" class="btn btn-ghost">Back to docs</a>
+    </div>
+  </article>
+</main>
+
+<footer class="blog-footer">
+  <div class="blog-footer-inner">
+    <div class="brand">h5i<span class="red"> / high-five</span></div>
+    <nav class="links">
+      <a href="/">Home</a>
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/h5i-dev/h5i">GitHub</a>
+      <a href="https://github.com/h5i-dev/h5i/blob/main/MANUAL.md">Manual</a>
+    </nav>
+    <div class="legal">Apache 2.0 · Built with Rust</div>
+  </div>
+</footer>
+
+<script src="/_static/blog.js" defer></script>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+</body>
+</html>

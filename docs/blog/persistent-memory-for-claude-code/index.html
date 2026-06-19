@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Giving Claude Code Persistent Memory Across Sessions — h5i</title>
+  <title>Giving Claude Code Persistent Memory Across Sessions: h5i</title>
   <meta name="description" content="Give Claude Code persistent memory across sessions with versioned reasoning, per-commit context snapshots, and automatic SessionStart restoration.">
   <meta name="keywords" content="claude code memory, claude code session, claude session continuity, agent memory, h5i context, sessionstart hook, claude code persistent memory">
   <meta name="author" content="Koukyosyumei">
@@ -17,7 +17,7 @@
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="Giving Claude Code Persistent Memory Across Sessions">
-  <meta property="og:description" content="Anthropic gives you a memory primitive. h5i gives you the layers above it — versioned reasoning, per-commit snapshots, and automatic injection at session start.">
+  <meta property="og:description" content="Anthropic gives you a memory primitive. h5i gives you the layers above it, versioned reasoning, per-commit snapshots, and automatic injection at session start.">
   <meta property="og:url" content="https://h5i.dev/blog/persistent-memory-for-claude-code/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="article:published_time" content="2026-05-06">
@@ -27,7 +27,7 @@
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Giving Claude Code Persistent Memory Across Sessions">
-  <meta name="twitter:description" content="Anthropic gives you a memory primitive. h5i gives you the layers above it — versioned reasoning, per-commit snapshots, and automatic injection at session start.">
+  <meta name="twitter:description" content="Anthropic gives you a memory primitive. h5i gives you the layers above it, versioned reasoning, per-commit snapshots, and automatic injection at session start.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
@@ -76,7 +76,7 @@
       <div class="post-eyebrow">Workflow · 2026-05-06</div>
       <h1>Giving Claude Code Persistent Memory Across Sessions</h1>
       <p class="post-deck">
-        Anthropic gives you a memory primitive. h5i gives you the layers above it — versioned reasoning,
+        Anthropic gives you a memory primitive. h5i gives you the layers above it, versioned reasoning,
         per-commit snapshots, and automatic injection at session start, so the next session always knows
         what the last one was thinking.
       </p>
@@ -88,9 +88,14 @@
     </header>
 
     <p>
+      An <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>
+      records every prompt, decision, and milestone in your repo, and this post covers how h5i
+      surfaces that record at the start of every new session so you never lose the thread.
+    </p>
+
+    <p>
       You ship a feature with Claude Code on Friday. Monday morning you start a new session,
-      and Claude has no idea what you were working on. Not because the codebase changed — it didn't —
-      but because everything Claude knew lived inside the prior session's context window, and that
+      and Claude has no idea what you were working on. Not because the codebase changed, it didn't, but because everything Claude knew lived inside the prior session's context window, and that
       window is gone.
     </p>
 
@@ -104,7 +109,7 @@
     </p>
 
     <p>
-      h5i sits in front of Claude Code's memory primitive and adds three layers — a structured
+      h5i sits in front of Claude Code's memory primitive and adds three layers, a structured
       reasoning workspace, automatic per-commit snapshots, and a <code>SessionStart</code> hook that
       injects the right slice of it into every new session. Once it's installed, you stop
       re-explaining yourself.
@@ -139,8 +144,7 @@
     </p>
 
     <p>
-      So engineers do what engineers do: they invent ad hoc structure inside the markdown file —
-      <code>## Done</code>, <code>## TODO</code>, <code>## Decisions</code> — and update it manually. The first
+      So engineers do what engineers do: they invent ad hoc structure inside the markdown file, <code>## Done</code>, <code>## TODO</code>, <code>## Decisions</code>, and update it manually. The first
       week is fine. By week three the file is stale, contradictory, and nobody trusts it.
     </p>
 
@@ -152,9 +156,9 @@
     </p>
 
     <ul>
-      <li><strong>Reasoning workspace</strong> — <code>refs/h5i/context</code>. A versioned DAG of OBSERVE / THINK / ACT entries plus milestones. Branches like git, merges like git.</li>
-      <li><strong>Memory snapshots</strong> — <code>refs/h5i/memory</code>. Every <code>h5i capture commit</code> snapshots <code>~/.claude/projects/&lt;repo&gt;/memory/</code> and pins it to the git SHA.</li>
-      <li><strong>Session notes</strong> — <code>refs/h5i/notes</code>. The exploration footprint of each session — files read vs. edited, uncertainty signals, blind edits.</li>
+      <li><strong>Reasoning workspace</strong>, <code>refs/h5i/context</code>. A versioned DAG of OBSERVE / THINK / ACT entries plus milestones. Branches like git, merges like git.</li>
+      <li><strong>Memory snapshots</strong>, <code>refs/h5i/memory</code>. Every <code>h5i capture commit</code> snapshots <code>~/.claude/projects/&lt;repo&gt;/memory/</code> and pins it to the git SHA.</li>
+      <li><strong>Session notes</strong>, <code>refs/h5i/notes</code>. The exploration footprint of each session, files read vs. edited, uncertainty signals, blind edits.</li>
     </ul>
 
     <p>
@@ -204,7 +208,7 @@
 
     <p>
       The trace and milestones live in <code>refs/h5i/context</code>. Every entry is a DAG node with a parent
-      pointer, so reasoning has a topology — not just a timeline. When you fork an alternative, you
+      pointer, so reasoning has a topology, not just a timeline. When you fork an alternative, you
       <code>h5i recall context branch experiment/refresh-rotation</code>, work the side path, and either merge it
       back or abandon it. Either way, the abandoned branch is still there in history; you can always
       recover the rejected design.
@@ -290,7 +294,7 @@
     </div>
 
     <p>
-      The cost is calibrated by the <code>--depth</code> flag. Default is depth 2 — about 2,000-5,000 tokens, the
+      The cost is calibrated by the <code>--depth</code> flag. Default is depth 2, about 2,000-5,000 tokens, the
       timeline view above. Depth 1 is a compact 800-token index for token-conscious workflows;
       depth 3 dumps the full OBSERVE/THINK/ACT log. Claude can step up the depth itself when it
       needs more, by running <code>h5i recall context show --depth 3</code>.
@@ -324,8 +328,7 @@
 
     <p>
       The rejected branch stays in history. Six months later, when someone says "why didn't we use
-      biscuit?", you have the whole evaluation, with the prompts, the readings, and the reasons —
-      not "I think we tried that once."
+      biscuit?", you have the whole evaluation, with the prompts, the readings, and the reasons, not "I think we tried that once."
     </p>
 
     <h2>Try it on your next task</h2>
@@ -355,8 +358,8 @@
     </div>
 
     <div class="post-cta">
-      <h3>Stop re-explaining your project to Claude</h3>
-      <p>h5i is open source, Apache 2.0, and works alongside any git remote.</p>
+      <h3>Try h5i on your next AI-assisted branch</h3>
+      <p>Create a sandboxed workspace, capture the run, and post a review-ready PR brief. h5i is open source, Apache 2.0, and works alongside any git remote.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/" class="btn btn-ghost">Back to docs</a>
     </div>

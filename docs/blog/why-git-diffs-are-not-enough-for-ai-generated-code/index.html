@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Why Git Diffs Are Not Enough for AI-Generated Code — h5i</title>
+  <title>Why Git Diffs Are Not Enough for AI-Generated Code: h5i</title>
   <meta name="description" content="Git diffs show changed lines, but AI-generated code review also needs prompts, context coverage, uncertainty, tests, and intent.">
   <meta name="keywords" content="why git diffs are not enough for ai generated code, ai generated code review, ai code audit, ai code provenance, h5i">
   <meta name="author" content="Koukyosyumei">
@@ -96,7 +96,7 @@
       </div>
     </header>
 
-<p>A Git diff is still the first thing to review. It is precise, compact, and universal. For AI-generated code, it is also incomplete. The diff shows the final text change after an agent has already compressed a long sequence of prompts, observations, tool calls, assumptions, and test attempts into a patch.</p>
+<p>An <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> is the record of everything behind the diff: the prompt, the files the agent observed, the commands it ran, and the evidence it used to make decisions. Git tracks the diff. h5i tracks the workspace behind it. A Git diff is still the first thing to review. It is precise, compact, and universal. For AI-generated code, it is also incomplete. The diff shows the final text change after an agent has already compressed a long sequence of prompts, observations, tool calls, assumptions, and test attempts into a patch.</p>
 <p>That compression hides the parts reviewers most need. A human-written diff carries social context: the author understands the system, attends standup, and can answer why the change exists. An agent-written diff may have been produced from a narrow prompt, stale context, or an incorrect assumption about code it never opened.</p>
 <h2>What a diff cannot tell you</h2>
 <p>A diff cannot tell whether the agent read the policy module before editing authorization code. It cannot tell whether the original prompt asked for a quick prototype or production hardening. It cannot tell whether the agent saw a warning from the test suite and worked around it. It cannot tell whether a second agent reviewed the plan and flagged a risk.</p>
@@ -146,13 +146,13 @@
       <span class="label">Next in the cluster</span>
       <a href="/blog/review-code-written-by-ai-agents/">
         <h3>How to Review Code Written by AI Agents</h3>
-        <p>Continue the AI-aware version control series with the next focused workflow.</p>
+        <p>Continue with the next focused workflow in the auditable workspace series.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Bring AI provenance into Git</h3>
-      <p>h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
+      <h3>Give reviewers the workspace, not just the diff</h3>
+      <p>Try h5i on your next AI-assisted branch: create a sandboxed workspace, capture the run, and post a review-ready PR brief.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/guides/" class="btn btn-ghost">Read the guides</a>
     </div>

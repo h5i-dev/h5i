@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sandboxing AI Agents, Part 2: Implementation — h5i</title>
+  <title>Sandboxing AI Agents, Part 2: Implementation: h5i</title>
   <meta name="description" content="Implement an AI agent sandbox with worktrees, Landlock, seccomp, namespaces, cgroups, egress allowlists, secrets, and audit logs.">
   <meta name="keywords" content="implement sandbox, Linux sandbox, Landlock, seccomp, namespaces, cgroups, network namespace, AI agent sandbox">
   <meta name="author" content="Koukyosyumei">
@@ -71,7 +71,7 @@
     </header>
 
     <p>
-      A sandbox implementation is not one mechanism. It is a launch protocol. You prepare a filesystem view, create namespaces, drop privileges, install syscall policy, install resource limits, configure networking, start the workload, observe the workload, and preserve enough evidence to review the result. The order matters because a process that runs before the boundary is complete is not confined by the boundary.
+      A sandbox implementation is not one mechanism. It is a launch protocol. You prepare a filesystem view, create namespaces, drop privileges, install syscall policy, install resource limits, configure networking, start the workload, observe the workload, and preserve enough evidence to review the result. The order matters because a process that runs before the boundary is complete is not confined by the boundary. Implementation is how the confinement pillar of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> becomes precise, or collapses.
     </p>
 
     <p>
@@ -321,7 +321,7 @@ store_evidence(manifest, resolved, capture, diff)</pre></div>
 
     <div class="post-cta">
       <h3>Implementation decides the claim</h3>
-      <p>h5i's sandbox work is designed around fail-closed resolution, layered confinement, and reviewable captures.</p>
+      <p>Try h5i on your next AI-assisted branch: create a <a href="../../features/">sandboxed workspace</a>, capture the run, and post a review-ready PR brief.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/blog/sandboxing-ai-agents-foundations/" class="btn btn-ghost">Read part 1</a>
     </div>

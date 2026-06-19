@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sandboxing AI Agents, Part 3: Landscape — h5i</title>
+  <title>Sandboxing AI Agents, Part 3: Landscape: h5i</title>
   <meta name="description" content="Compare AI agent sandboxes: container-use, sandbox-runtime, OpenSandbox, E2B, gVisor, Kata, Firecracker, and h5i env.">
   <meta name="keywords" content="AI sandbox comparison, container-use, Anthropic sandbox-runtime, OpenSandbox, E2B, gVisor, Kata Containers, Firecracker, h5i env">
   <meta name="author" content="Koukyosyumei">
@@ -71,7 +71,7 @@
     </header>
 
     <p>
-      This comparison is current as of June 12, 2026 and is intentionally architectural. Specific flags, SDK names, and product limits change. The important question is more stable: where is the enforcement boundary, and does the tool also solve the agent workflow around that boundary?
+      This comparison is current as of June 12, 2026 and is intentionally architectural. Specific flags, SDK names, and product limits change. The important question is more stable: where is the enforcement boundary, and does the tool also solve the agent workflow around that boundary? That workflow question is what separates a standalone sandbox from the sandboxed worktree at the center of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>, where confinement, provenance, and review are one unit.
     </p>
 
     <div class="callout">
@@ -217,7 +217,7 @@
 
     <div class="post-cta">
       <h3>The right sandbox depends on the claim</h3>
-      <p>h5i is strongest where isolated execution must become reviewable, shareable Git evidence.</p>
+      <p>Try h5i on your next AI-assisted branch: create a <a href="../../features/">sandboxed workspace</a>, capture the run, and post a review-ready PR brief.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/blog/sandboxing-ai-agents-implementation/" class="btn btn-ghost">Read part 2</a>
     </div>
