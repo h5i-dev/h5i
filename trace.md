@@ -1690,3 +1690,4 @@ _[Checkpoint: 6a353985 — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.ht
 [13:35:32] OBSERVE: read docs/features/index.html
 [13:39:21] OBSERVE: read docs/sitemap.xml
 [13:39:49] ACT: edited docs/sitemap.xml
+[13:40:57] THINK: Now let me make it discoverable: add it to the sitemap, point the existing footer "Manual" links (currently to GitHub) at `/manual/` site-wide, and add a "Manual" nav item to the main pages.
