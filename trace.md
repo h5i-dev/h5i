@@ -2108,3 +2108,9 @@ _[Checkpoint: 6a35869a — edited src/env.rs; edited src/env.rs; edited src/env.
 ---
 
 [18:13:30] OBSERVE: searched tests/env_integration.rs for "src/env.rs"
+
+
+---
+_[Checkpoint: 6a3586ca — Verified Claude's round-2 fixes: no-service envs now pin empty services manifest with digest, service names validate before path use, targeted tests and env_integration (101) pass. No blocking findings.]_
+---
+
