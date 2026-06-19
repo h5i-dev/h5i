@@ -186,22 +186,6 @@ The prompt, model names, and commit lineage.
 
 h5i already records the prompt behind every AI commit. The **Prompt Maturity Score** turns those prompts into a single, explainable **0–100** signal of *how well the work was delegated* — computed **fully offline**: no LLM, no network, deterministic enough to run in a Git hook, in CI, or in a PR render with no API key.
 
-It scores the **input** — the engineer's ask — not the model's output, as a weighted sum of seven classical-NLP signals:
-
-| Signal | Weight | Captures |
-|---|---:|---|
-| **Specificity** | 24% | Concreteness — code refs, identifiers, numbers — minus a vagueness penalty |
-| **Control** | 24% | Did the engineer bound the agent? Constraints, output shape, acceptance criteria |
-| **Context** | 18% | Background, the goal / why, current state, grounding in real repo entities |
-| **Structure** | 10% | Decomposition — bullets, numbered steps, code fences |
-| **Diversity** | 10% | Lexical richness (adaptive MATTR) — non-repetitive, not phrase-farmed |
-| **Clarity** | 8% | Readability inside a target band (both extremes penalised) |
-| **Adequacy** | 6% | Length in a sweet spot — not one word, not a 1,200-word wall |
-
-On top sit **anti-gaming guards** — per-category keyword caps, a repetition penalty, hard length caps, and balance gates (a keyword-stuffed but context-free prompt is capped below *advanced*). You can't farm the score by pasting the lexicon in; you have to actually ask well.
-
-The branch roll-up is a length-weighted mean of the per-prompt scores (prompts are never concatenated), and it renders right at the top of the PR brief:
-
 ```text
 🌳 Prompt maturity: 81/100 · advanced · 7 prompts scored (100% of AI commits)
 🔧 Recurring weak spots: weak context.
