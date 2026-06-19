@@ -1700,3 +1700,9 @@ _[Checkpoint: 6a3546e9 — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.ht
 
 [13:44:25] OBSERVE: read MANUAL.md
 [13:44:29] ACT: edited MANUAL.md
+
+
+---
+_[Checkpoint: 6a3547ef — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.html; edited docs/sitemap.xml; edited MANUAL.md]_
+---
+
