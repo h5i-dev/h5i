@@ -1585,3 +1585,9 @@ _[Checkpoint: 6a34c97b — edited docs/index.html; edited docs/blog/index.html; 
 [04:49:36] ACT: edited docs/index.html
 [04:49:40] OBSERVE: read docs/index.html
 [04:49:57] NOTE: DEFERRAL (~/Dev/h5i/docs/blog/index.html): me to **amend them into that commit** or make a **separate follow-up commit**
+
+
+---
+_[Checkpoint: 6a34ca75 — edited docs/index.html; edited docs/index.html; edited docs/index.html]_
+---
+
