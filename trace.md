@@ -2233,3 +2233,4 @@ _[Checkpoint: 6a35ce6a — edited tests/cli_integration.rs; edited MANUAL.md; ed
 [23:25:26] THINK: Let me wait for the agent to confirm the notes union-merge path and whether commit records link to AST hashes, since that determines how hard AST scoping is.
 [23:25:26] THINK: Let me wait for the agent's source-side confirmation (notes union-merge path, how `ast_hashes` is populated, and the force-push confirmation) before designing — the AST linkage detail in particular determines feasibility.
 [23:25:26] NOTE: DEFERRAL (~/Dev/h5i/man/man1/h5i.1): The context branch has no goal recorded, so I'll skip the milestone commit (not essential). The implementation is complete and tested. I haven'
+[23:25:26] NOTE: DEFERRAL (~/Dev/h5i/man/man1/h5i.1): migration tests still pass. One thing worth flagging for a follow-up: the SHA-keyed `notes`/`ast`/`objects` refs still push wholesale even under `--br…
