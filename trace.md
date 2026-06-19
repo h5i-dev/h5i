@@ -1233,3 +1233,4 @@ _[Checkpoint: 6a348718 — Rebalanced per owner feedback: de-emphasize prompt ma
 ---
 
 [00:02:46] THINK: Say the word and I'll stage everything (README.
+[00:02:46] THINK: Now let me rebalance the hero: restore the "missing execution layer" narrative, revert the badge, replace the receipt card with balanced stat tiles (prompt score demoted to last):
