@@ -3155,14 +3155,23 @@ h5i share push [--remote <name>] [--branch [<name>]]
 
 Push every `refs/h5i/*` family (notes, memory, context, ast, msg, object manifests, env state) to the remote (default: `origin`). None of these are included in a plain `git push`. Canonical form of the legacy `h5i push`.
 
-**Scoping the context DAG (`--branch`).** Context reasoning DAGs are stored one ref per branch at `refs/h5i/context/<branch>` (the name mirrors the code branch). By default `share push` ships *every* branch's DAG with a wildcard, so pushing one code branch also publishes the reasoning of unrelated branches. Pass `--branch <name>` to push only that branch's `refs/h5i/context/<name>`, or `--branch` bare to scope to the current git branch:
+**Branch-scoped push (`--branch`).** By default `share push` ships *every* branch's h5i material, so pushing one code branch also publishes the reasoning, provenance, and captures of unrelated branches. Pass `--branch <name>` (or `--branch` bare for the current git branch) to send only the material linked to that branch — analogous to how `git push` sends only the pushed branch's commits:
 
 ```
-h5i share push --branch feature-x   # only refs/h5i/context/feature-x
-h5i share push --branch             # only the current branch's context
+h5i share push --branch feature-x   # only feature-x's h5i material
+h5i share push --branch             # only the current branch's material
 ```
 
-Only the **context** refs are scoped. The SHA-keyed global refs (notes/ast/objects) and the shared refs (msg/env) are keyed by commit or genuinely cross-branch, so they always push in full. When scoped, the legacy whole-workspace refs (`refs/h5i/context`, `refs/h5i/context-legacy`) are skipped.
+What gets scoped:
+
+| Ref family | Scoped how |
+|---|---|
+| **context** (`refs/h5i/context/*`) | Only `refs/h5i/context/<branch>` is pushed (one ref per branch). Legacy whole-workspace refs are skipped. |
+| **notes** (`refs/h5i/notes`) | Only the provenance for commits reachable from `<branch>` travels. |
+| **objects** (`refs/h5i/objects`) | Only manifests whose `branch` field equals `<branch>` travel. |
+| **ast / msg / env / memory** | Pushed in full — AST is deduplicated content-addressed structure; msg/env/memory are genuinely cross-branch. |
+
+**Non-destructive.** `notes` and `objects` are single aggregate refs shared by every branch, so a scoped push does **not** force a filtered subset (which would delete other branches' data on the remote). Instead it fetches the remote's current ref and *unions* only this branch's entries onto it, then pushes the result as a fast-forward. Other branches' notes and captures already on the remote are always preserved.
 
 To automate in CI:
 

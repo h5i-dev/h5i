@@ -7066,7 +7066,8 @@ fn main() -> anyhow::Result<()> {
             );
             if let Some(b) = &ctx_scope {
                 println!(
-                    "  {} context scoped to branch {} (other branches' context not pushed)",
+                    "  {} scoped to branch {} — context + notes + objects for this branch only \
+                     (notes/objects union non-destructively onto the remote; ast/msg/env push in full)",
                     style("•").dim(),
                     style(b).cyan(),
                 );
@@ -7124,12 +7125,144 @@ fn main() -> anyhow::Result<()> {
                 }
             };
 
-            // Push h5i notes (AI provenance, test metrics, causal links)
-            let notes_pushed = try_push(
-                "refs/h5i/notes",
-                style("h5i commit").bold(),
-                "no AI-provenance commits yet",
-            )?;
+            // Branch-scoped push of an aggregate ref (notes / objects). Unlike
+            // the one-ref-per-branch context layout, these refs are single
+            // aggregate object graphs shared by every branch, so we cannot just
+            // force-push a filtered subset — that would delete the remote's data
+            // for all other branches. Instead we fetch the remote's current ref
+            // into a temp ref and union *only this branch's* entries onto it,
+            // then push the result (a fast-forward). Mirrors git-push semantics:
+            // additive, scoped to the branch, never destructive to others.
+            let git_run = |args: &[&str]| -> std::io::Result<std::process::Output> {
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(&workdir)
+                    .output()
+            };
+
+            // Notes: union the remote's notes with the local notes for every
+            // commit reachable from the branch.
+            let scoped_push_notes = |branch: &str| -> anyhow::Result<bool> {
+                let temp = "refs/h5i/_scoped_push/notes";
+                let _ = git_run(&["update-ref", "-d", temp]);
+                print!(
+                    "  {} {} … ",
+                    style("→").dim(),
+                    style("refs/h5i/notes").yellow()
+                );
+                std::io::stdout().flush()?;
+                // Seed temp with the remote's notes (absent on first push: ok).
+                let _ = git_run(&[
+                    "fetch",
+                    "--no-write-fetch-head",
+                    &remote,
+                    &format!("+refs/h5i/notes:{temp}"),
+                ]);
+                // Commit set reachable from the branch (empty if it has no git ref).
+                let reachable: std::collections::HashSet<String> =
+                    match git_run(&["rev-list", &format!("refs/heads/{branch}")]) {
+                        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                            .lines()
+                            .map(|l| l.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect(),
+                        _ => std::collections::HashSet::new(),
+                    };
+                let g2 = git2::Repository::open(&workdir)
+                    .map_err(|e| anyhow::anyhow!("open git repo: {e}"))?;
+                let copied =
+                    h5i_core::repository::copy_scoped_notes_onto(&g2, &reachable, temp)
+                        .map_err(|e| anyhow::anyhow!("scope notes: {e}"))?;
+                let temp_exists = git_run(&["rev-parse", "--verify", "--quiet", temp])
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
+                if !temp_exists {
+                    println!(
+                        "{} (no provenance for branch {})",
+                        style("skipped").yellow(),
+                        style(branch).cyan()
+                    );
+                    return Ok(false);
+                }
+                let status = git_run(&["push", &remote, &format!("{temp}:refs/h5i/notes")])?;
+                let _ = git_run(&["update-ref", "-d", temp]);
+                if status.status.success() {
+                    println!(
+                        "{} ({} note{} for {})",
+                        style("ok").green(),
+                        copied,
+                        if copied == 1 { "" } else { "s" },
+                        style(branch).cyan()
+                    );
+                    Ok(true)
+                } else {
+                    println!("{}", style("failed").red());
+                    eprint!("{}", String::from_utf8_lossy(&status.stderr));
+                    Ok(false)
+                }
+            };
+
+            // Objects: union the remote's manifest log with the local manifests
+            // captured on the branch (the `branch` field of each record).
+            let scoped_push_objects = |branch: &str| -> anyhow::Result<bool> {
+                let temp = "refs/h5i/_scoped_push/objects";
+                let _ = git_run(&["update-ref", "-d", temp]);
+                print!(
+                    "  {} {} … ",
+                    style("→").dim(),
+                    style("refs/h5i/objects").yellow()
+                );
+                std::io::stdout().flush()?;
+                let _ = git_run(&[
+                    "fetch",
+                    "--no-write-fetch-head",
+                    &remote,
+                    &format!("+refs/h5i/objects:{temp}"),
+                ]);
+                let base_oid = git_run(&["rev-parse", "--verify", "--quiet", temp])
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .and_then(|o| {
+                        git2::Oid::from_str(String::from_utf8_lossy(&o.stdout).trim()).ok()
+                    });
+                let g2 = git2::Repository::open(&workdir)
+                    .map_err(|e| anyhow::anyhow!("open git repo: {e}"))?;
+                let merged =
+                    h5i_core::objects::build_branch_scoped_merge(&g2, branch, base_oid)
+                        .map_err(|e| anyhow::anyhow!("scope objects: {e}"))?;
+                let Some(oid) = merged else {
+                    let _ = git_run(&["update-ref", "-d", temp]);
+                    println!(
+                        "{} (no captures for branch {})",
+                        style("skipped").yellow(),
+                        style(branch).cyan()
+                    );
+                    return Ok(false);
+                };
+                let _ = git_run(&["update-ref", temp, &oid.to_string()]);
+                let status = git_run(&["push", &remote, &format!("{temp}:refs/h5i/objects")])?;
+                let _ = git_run(&["update-ref", "-d", temp]);
+                if status.status.success() {
+                    println!("{} (scoped to {})", style("ok").green(), style(branch).cyan());
+                    Ok(true)
+                } else {
+                    println!("{}", style("failed").red());
+                    eprint!("{}", String::from_utf8_lossy(&status.stderr));
+                    Ok(false)
+                }
+            };
+
+            // Push h5i notes (AI provenance, test metrics, causal links).
+            // Scoped to the branch when --branch is given; else the whole ref.
+            let notes_pushed = if let Some(b) = &ctx_scope {
+                scoped_push_notes(b)?
+            } else {
+                try_push(
+                    "refs/h5i/notes",
+                    style("h5i commit").bold(),
+                    "no AI-provenance commits yet",
+                )?
+            };
 
             // Push memory ref (Claude memory snapshots)
             try_push(
@@ -7264,12 +7397,17 @@ fn main() -> anyhow::Result<()> {
 
             // Push the token-reduction manifest log (refs/h5i/objects).
             // Only the small pointer records travel; raw blobs stay local
-            // until a remote object backend exists (git-lfs style).
-            try_push(
-                h5i_core::objects::OBJECTS_REF,
-                style("h5i capture run").bold(),
-                "no captured objects yet",
-            )?;
+            // until a remote object backend exists (git-lfs style). Scoped to
+            // the branch's captures when --branch is given; else the whole ref.
+            if let Some(b) = &ctx_scope {
+                scoped_push_objects(b)?;
+            } else {
+                try_push(
+                    h5i_core::objects::OBJECTS_REF,
+                    style("h5i capture run").bold(),
+                    "no captured objects yet",
+                )?;
+            }
 
             // Push the shareable env state (manifests + policies + event log).
             try_push(

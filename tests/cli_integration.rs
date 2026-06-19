@@ -1928,6 +1928,180 @@ fn push_branch_rejects_invalid_name() {
     );
 }
 
+// ─── h5i share push --branch: notes + objects scoping ────────────────────────
+//
+// notes/objects are single aggregate refs shared by every branch, so a scoped
+// push must union *only this branch's* entries onto the remote (never force a
+// filtered subset, which would delete other branches' data). These tests assert
+// both halves: this branch's material travels, and other branches' material is
+// neither leaked (when absent) nor clobbered (when already on the remote).
+
+fn head_oid(repo: &Repo) -> String {
+    String::from_utf8_lossy(
+        &run_ok(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(repo.path()),
+        )
+        .stdout,
+    )
+    .trim()
+    .to_string()
+}
+
+/// True iff the bare remote has a `refs/h5i/notes` entry for `commit`. Reads the
+/// notes tree directly (`ls-tree`) rather than `git notes list`, which does not
+/// surface h5i's flat notes layout; stripping `/` collapses any git fan-out so
+/// the entry path reconstructs the full commit OID.
+fn remote_has_note(remote: &Path, commit: &str) -> bool {
+    let out = Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", "refs/h5i/notes"])
+        .current_dir(remote)
+        .output()
+        .unwrap();
+    out.status.success()
+        && String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .any(|l| l.replace('/', "") == commit)
+}
+
+/// The remote's `manifests.jsonl` (objects log), or empty if absent.
+fn remote_objects_raw(remote: &Path) -> String {
+    let out = Command::new("git")
+        .args(["cat-file", "-p", "refs/h5i/objects:manifests.jsonl"])
+        .current_dir(remote)
+        .output()
+        .unwrap();
+    if out.status.success() {
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    } else {
+        String::new()
+    }
+}
+
+struct ProvIds {
+    c0: String,    // shared seed (ancestor of both main and feature)
+    c_feat: String, // unique to feature
+    c_main: String, // unique to main
+}
+
+/// Wire a sender to a bare remote and lay down per-branch provenance:
+/// - `c0` on main (shared seed), then branch `feature` from it
+/// - `c_feat` + a stored capture on `feature`
+/// - `c_main` + a stored capture back on `main`
+///
+/// Leaves the sender checked out on `main`. Notes come from `h5i commit`; the
+/// captures (>2 KB so they're stored) carry the branch in their manifest.
+fn sender_with_branch_provenance() -> (TempDir, Repo, ProvIds) {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    let sender = repo_wired_to(&remote_url);
+    sender.make_commit("a.rs", "fn a() {}", "c0 seed");
+    let c0 = head_oid(&sender);
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+
+    // feature branch from c0.
+    run_ok(
+        Command::new("git")
+            .args(["checkout", "-b", "feature"])
+            .current_dir(sender.path()),
+    );
+    sender.make_commit("f.rs", "fn f() {}", "c_feat");
+    let c_feat = head_oid(&sender);
+    // Stored capture on feature (large output → exceeds the ~2 KB store floor).
+    sender.h5i_ok(&["capture", "run", "--", "sh", "-c", "yes feat | head -3000"]);
+
+    // Back to main, add a main-only commit + capture.
+    run_ok(
+        Command::new("git")
+            .args(["checkout", "main"])
+            .current_dir(sender.path()),
+    );
+    sender.make_commit("m.rs", "fn m() {}", "c_main");
+    let c_main = head_oid(&sender);
+    sender.h5i_ok(&["capture", "run", "--", "sh", "-c", "yes main | head -3000"]);
+
+    (remote, sender, ProvIds { c0, c_feat, c_main })
+}
+
+/// On a fresh remote, `--branch feature` sends feature's notes/objects (plus the
+/// shared ancestor) but NOT the material unique to other branches.
+#[test]
+fn scoped_push_sends_only_branch_notes_and_objects() {
+    let (remote, sender, ids) = sender_with_branch_provenance();
+
+    sender.h5i_ok(&["push", "--remote", "origin", "--branch", "feature"]);
+
+    // Notes: shared ancestor c0 + feature's c_feat travel; main-only c_main does not.
+    assert!(
+        remote_has_note(remote.path(), &ids.c0),
+        "shared ancestor's note should travel with feature"
+    );
+    assert!(
+        remote_has_note(remote.path(), &ids.c_feat),
+        "feature's own note should travel"
+    );
+    assert!(
+        !remote_has_note(remote.path(), &ids.c_main),
+        "a main-only note must NOT leak under a feature-scoped push"
+    );
+
+    // Objects: feature's capture travels; main's does not.
+    let raw = remote_objects_raw(remote.path());
+    assert!(
+        raw.contains("\"branch\":\"feature\""),
+        "feature capture should be on the remote:\n{raw}"
+    );
+    assert!(
+        !raw.contains("\"branch\":\"main\""),
+        "main capture must NOT leak under a feature-scoped push:\n{raw}"
+    );
+}
+
+/// A scoped push must not delete other branches' notes/objects already on the
+/// remote — it unions, it does not force a filtered subset.
+#[test]
+fn scoped_push_is_nondestructive_to_other_branches_on_remote() {
+    let (remote, sender, ids) = sender_with_branch_provenance();
+
+    // Seed the remote with main's provenance (scoped).
+    sender.h5i_ok(&["push", "--remote", "origin", "--branch", "main"]);
+    assert!(remote_has_note(remote.path(), &ids.c_main));
+    assert!(remote_objects_raw(remote.path()).contains("\"branch\":\"main\""));
+
+    // Now scoped-push feature.
+    sender.h5i_ok(&["push", "--remote", "origin", "--branch", "feature"]);
+
+    // main's provenance survives, feature's is added.
+    assert!(
+        remote_has_note(remote.path(), &ids.c_main),
+        "feature push must not delete main's note"
+    );
+    assert!(
+        remote_has_note(remote.path(), &ids.c_feat),
+        "feature's note should now be present"
+    );
+    let raw = remote_objects_raw(remote.path());
+    assert!(
+        raw.contains("\"branch\":\"main\""),
+        "main capture must survive a later feature-scoped push:\n{raw}"
+    );
+    assert!(
+        raw.contains("\"branch\":\"feature\""),
+        "feature capture should now be present:\n{raw}"
+    );
+}
+
 // ─── h5i share setup-remote / migrate-remote ─────────────────────────────────
 //
 // These exercise the two remote-management verbs added to fix the

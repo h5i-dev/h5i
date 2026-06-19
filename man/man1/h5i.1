@@ -656,13 +656,24 @@ Remote to push to (default:
 .BR origin ).
 .TP
 .BI \-b,\ \-\-branch\ [ BRANCH ]
-Scope the context\-DAG push to a single branch's
-.IR refs/h5i/context/<branch>
-instead of every branch (the default wildcard). Pass a name, or pass
+Push only the h5i material linked to a single branch instead of every branch.
+Pass a name, or pass
 .B \-\-branch
-bare to use the current git branch. Only the context refs are scoped \(em the
-SHA\-keyed global refs (notes/ast/objects) and shared refs (msg/env) still push
-in full.
+bare to use the current git branch. Scopes the context ref
+.RB ( refs/h5i/context/<branch> ),
+the
+.B notes
+for commits reachable from the branch, and the
+.B objects
+manifests whose
+.I branch
+field matches; AST, msg, env, and memory still push in full. The
+.B notes
+and
+.B objects
+refs are aggregates shared by all branches, so the scoped push unions this
+branch's entries onto the remote's current ref (a fast\-forward) rather than
+force\-pushing a subset \(em other branches' data on the remote is never deleted.
 .RE
 .
 .\" ─── share pr ───────────────────────────────────────────────────────────────

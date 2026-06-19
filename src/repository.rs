@@ -31,6 +31,47 @@ fn repo_signature_or_fallback(repo: &Repository) -> Result<Signature<'_>, H5iErr
     repo.signature().or_else(|_| fallback_signature())
 }
 
+/// Copy onto `dest_ref` every `refs/h5i/notes` entry whose annotated commit is in
+/// `reachable`, for a branch-scoped `h5i share push`.
+///
+/// `dest_ref` is expected to already hold the *remote's* notes (seeded by the
+/// caller via a fetch) — or to be absent, in which case it is created. We then
+/// overlay only the notes for commits reachable from the pushed branch, forcing
+/// over any pre-existing entry there (the pushing clone is authoritative for its
+/// own commits). The result is therefore `remote ∪ this-branch's-notes`: notes
+/// for every *other* commit already on the remote are left untouched, so a
+/// scoped push never deletes another branch's provenance.
+///
+/// git2 manages the notes tree fan-out, so this is robust to flat *or* fanned
+/// layouts. Returns the number of notes copied (0 when the branch has none, or
+/// when `refs/h5i/notes` does not exist locally).
+pub fn copy_scoped_notes_onto(
+    repo: &Repository,
+    reachable: &std::collections::HashSet<String>,
+    dest_ref: &str,
+) -> Result<usize, H5iError> {
+    // No local notes ref → nothing to copy (and find_note would just error).
+    if repo.refname_to_id(H5I_NOTES_REF).is_err() {
+        return Ok(0);
+    }
+    let sig = repo_signature_or_fallback(repo)?;
+    let mut copied = 0usize;
+    for oid_str in reachable {
+        let Ok(oid) = Oid::from_str(oid_str) else {
+            continue;
+        };
+        let Ok(note) = repo.find_note(Some(H5I_NOTES_REF), oid) else {
+            continue; // this reachable commit simply has no note
+        };
+        if let Some(msg) = note.message() {
+            // force=true: overwrite the remote-seeded entry for our own commit.
+            repo.note(&sig, &sig, Some(dest_ref), oid, msg, true)?;
+            copied += 1;
+        }
+    }
+    Ok(copied)
+}
+
 pub struct H5iRepository {
     git_repo: Repository,
     pub h5i_root: PathBuf,
@@ -3700,5 +3741,88 @@ mod tests {
             std::time::Duration::from_secs(5),
         );
         assert!(out.is_none());
+    }
+
+    // ── copy_scoped_notes_onto (branch-scoped `h5i share push`) ─────────────
+
+    #[test]
+    fn copy_scoped_notes_only_copies_reachable_commits() {
+        let dir = tempdir().unwrap();
+        let h5i = setup_test_repo(dir.path());
+        let repo = h5i.git();
+        let sig = Signature::now("test", "test@example.com").unwrap();
+
+        let c1 = create_commit(repo, "c1", "a.txt", "1", &[]);
+        let parent = repo.find_commit(c1).unwrap();
+        let c2 = create_commit(repo, "c2", "a.txt", "2", &[&parent]);
+        repo.note(&sig, &sig, Some(H5I_NOTES_REF), c1, "note-c1", true)
+            .unwrap();
+        repo.note(&sig, &sig, Some(H5I_NOTES_REF), c2, "note-c2", true)
+            .unwrap();
+
+        // Reachable set names only c1.
+        let mut reachable = std::collections::HashSet::new();
+        reachable.insert(c1.to_string());
+
+        let dest = "refs/h5i/_test_scoped_notes";
+        let copied = copy_scoped_notes_onto(repo, &reachable, dest).unwrap();
+        assert_eq!(copied, 1);
+        assert_eq!(
+            repo.find_note(Some(dest), c1).unwrap().message(),
+            Some("note-c1")
+        );
+        assert!(
+            repo.find_note(Some(dest), c2).is_err(),
+            "c2 is not reachable, its note must not be copied"
+        );
+    }
+
+    #[test]
+    fn copy_scoped_notes_is_nondestructive_over_seeded_dest() {
+        let dir = tempdir().unwrap();
+        let h5i = setup_test_repo(dir.path());
+        let repo = h5i.git();
+        let sig = Signature::now("test", "test@example.com").unwrap();
+
+        let c1 = create_commit(repo, "c1", "a.txt", "1", &[]);
+        let parent = repo.find_commit(c1).unwrap();
+        let c2 = create_commit(repo, "c2", "a.txt", "2", &[&parent]);
+        repo.note(&sig, &sig, Some(H5I_NOTES_REF), c1, "note-c1", true)
+            .unwrap();
+
+        // Pre-seed the dest with c2's note (simulating the remote's existing data).
+        let dest = "refs/h5i/_test_scoped_notes";
+        repo.note(&sig, &sig, Some(dest), c2, "remote-note-c2", true)
+            .unwrap();
+
+        let mut reachable = std::collections::HashSet::new();
+        reachable.insert(c1.to_string());
+        let copied = copy_scoped_notes_onto(repo, &reachable, dest).unwrap();
+        assert_eq!(copied, 1);
+
+        // Both survive: the pre-existing c2 note (other branch) AND the new c1 note.
+        assert_eq!(
+            repo.find_note(Some(dest), c2).unwrap().message(),
+            Some("remote-note-c2")
+        );
+        assert_eq!(
+            repo.find_note(Some(dest), c1).unwrap().message(),
+            Some("note-c1")
+        );
+    }
+
+    #[test]
+    fn copy_scoped_notes_zero_when_no_local_notes_ref() {
+        let dir = tempdir().unwrap();
+        let h5i = setup_test_repo(dir.path());
+        let repo = h5i.git();
+        let c1 = create_commit(repo, "c1", "a.txt", "1", &[]);
+        let mut reachable = std::collections::HashSet::new();
+        reachable.insert(c1.to_string());
+        // No refs/h5i/notes exists → nothing to copy, no error.
+        assert_eq!(
+            copy_scoped_notes_onto(repo, &reachable, "refs/h5i/_t").unwrap(),
+            0
+        );
     }
 }
