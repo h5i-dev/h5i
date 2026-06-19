@@ -2073,3 +2073,4 @@ _[Checkpoint: 6a358429 — Re-reviewed Claude's fixes. Prior issues mostly fixed
 _[Checkpoint: 6a358431 — edited tests/env_integration.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md]_
 ---
 
+[18:06:07] OBSERVE: read src/env.rs
