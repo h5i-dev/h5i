@@ -1773,6 +1773,161 @@ fn pull_force_still_union_merges_notes() {
     assert!(tree_s.contains(&receiver_code_oid));
 }
 
+// ─── h5i share push --branch (context-DAG scoping) ───────────────────────────
+//
+// `share push` ships one ref per context branch under `refs/h5i/context/<name>`.
+// By default it pushes every branch's DAG (wildcard); `--branch <b>` narrows the
+// push to a single branch so pushing one code branch doesn't leak the reasoning
+// of unrelated branches.
+
+/// True iff `refname` resolves in the (bare) remote at `remote_path`.
+fn remote_ref_exists(remote_path: &Path, refname: &str) -> bool {
+    Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", refname])
+        .current_dir(remote_path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Wire a sender to a fresh bare remote and give it two context DAGs:
+/// `refs/h5i/context/main` and `refs/h5i/context/feature`. Returns
+/// `(remote_tempdir, sender)`; the sender is left checked out on `feature`.
+fn sender_with_two_context_branches() -> (TempDir, Repo) {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    let sender = repo_wired_to(&remote_url);
+    sender.make_commit("a.rs", "fn a() {}", "seed");
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+
+    // Context DAG on main (init lives on the main ref), then on a feature
+    // branch — auto-follow forks a new `refs/h5i/context/feature` from main on
+    // the first *write* command (a trace), not on `context init`.
+    sender.h5i_ok(&["context", "init", "--goal", "main goal"]);
+    run_ok(
+        Command::new("git")
+            .args(["checkout", "-b", "feature"])
+            .current_dir(sender.path()),
+    );
+    // `context init` records the feature branch's goal; the first trace write
+    // then materializes `refs/h5i/context/feature` via auto-follow.
+    sender.h5i_ok(&["context", "init", "--goal", "feature goal"]);
+    sender.h5i_ok(&["context", "trace", "--kind", "NOTE", "feature work"]);
+
+    assert!(
+        resolve_ref_in(&sender, "refs/h5i/context/main").is_some(),
+        "main context ref should exist locally"
+    );
+    assert!(
+        resolve_ref_in(&sender, "refs/h5i/context/feature").is_some(),
+        "feature context ref should exist locally"
+    );
+    (remote, sender)
+}
+
+/// `--branch <b>` pushes only that branch's context ref; other branches' context
+/// DAGs stay off the remote.
+#[test]
+fn push_branch_scopes_context_to_named_branch() {
+    let (remote, sender) = sender_with_two_context_branches();
+
+    let out = stdout(&sender.h5i_ok(&["push", "--remote", "origin", "--branch", "feature"]));
+    assert!(
+        out.contains("scoped to branch") && out.contains("feature"),
+        "push should announce the scope:\n{out}"
+    );
+
+    assert!(
+        remote_ref_exists(remote.path(), "refs/h5i/context/feature"),
+        "feature context ref must land on the remote"
+    );
+    assert!(
+        !remote_ref_exists(remote.path(), "refs/h5i/context/main"),
+        "main context ref must NOT land on the remote under a feature-scoped push"
+    );
+}
+
+/// `--branch` passed bare scopes to the *current* git branch (here: feature).
+#[test]
+fn push_branch_bare_uses_current_git_branch() {
+    let (remote, sender) = sender_with_two_context_branches();
+
+    // Sender is left on `feature`; bare `--branch` should resolve to it.
+    sender.h5i_ok(&["push", "--remote", "origin", "--branch"]);
+
+    assert!(
+        remote_ref_exists(remote.path(), "refs/h5i/context/feature"),
+        "bare --branch should push the current branch's (feature) context ref"
+    );
+    assert!(
+        !remote_ref_exists(remote.path(), "refs/h5i/context/main"),
+        "bare --branch must not push other branches' context refs"
+    );
+}
+
+/// Without `--branch`, every branch's context ref is pushed (the default), so the
+/// refactor that added scoping must not regress the wildcard path.
+#[test]
+fn push_without_branch_pushes_all_context_refs() {
+    let (remote, sender) = sender_with_two_context_branches();
+
+    sender.h5i_ok(&["push", "--remote", "origin"]);
+
+    assert!(
+        remote_ref_exists(remote.path(), "refs/h5i/context/main"),
+        "unscoped push must include main's context ref"
+    );
+    assert!(
+        remote_ref_exists(remote.path(), "refs/h5i/context/feature"),
+        "unscoped push must include feature's context ref"
+    );
+}
+
+/// A scoped push to a branch with no context ref skips cleanly (no git error)
+/// rather than failing the whole push.
+#[test]
+fn push_branch_skips_when_branch_has_no_context() {
+    let (remote, sender) = sender_with_two_context_branches();
+
+    let out = stdout(&sender.h5i_ok(&["push", "--remote", "origin", "--branch", "nonexistent"]));
+    assert!(
+        out.contains("no context workspace for branch") && out.contains("nonexistent"),
+        "scoped push to a contextless branch should report a skip:\n{out}"
+    );
+    assert!(
+        !remote_ref_exists(remote.path(), "refs/h5i/context/nonexistent"),
+        "no ref should be created for a contextless branch"
+    );
+}
+
+/// A branch name carrying a refspec metacharacter is rejected up front (it could
+/// otherwise smuggle a second refspec component into the push).
+#[test]
+fn push_branch_rejects_invalid_name() {
+    let (_remote, sender) = sender_with_two_context_branches();
+
+    let out = sender.h5i(&["push", "--remote", "origin", "--branch", "evil:refs/heads/main"]);
+    assert!(
+        !out.status.success(),
+        "an invalid --branch must fail the command"
+    );
+    assert!(
+        stderr(&out).contains("invalid --branch"),
+        "error should name the bad --branch:\nstderr: {}",
+        stderr(&out)
+    );
+}
+
 // ─── h5i share setup-remote / migrate-remote ─────────────────────────────────
 //
 // These exercise the two remote-management verbs added to fix the

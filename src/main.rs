@@ -836,6 +836,14 @@ enum Commands {
         /// Remote to push to
         #[arg(short, long, default_value = "origin")]
         remote: String,
+
+        /// Scope the context-DAG push to a single branch's
+        /// `refs/h5i/context/<branch>` instead of every branch (the default
+        /// wildcard). Pass a name, or pass `--branch` bare to use the current
+        /// git branch. Only the context refs are scoped — the SHA-keyed global
+        /// refs (notes/ast/objects) and shared refs (msg/env) still push in full.
+        #[arg(short, long, value_name = "BRANCH", num_args = 0..=1, default_missing_value = "")]
+        branch: Option<String>,
     },
 
     /// Fetch all h5i refs (notes + memory + context + ast) from a remote in one shot.
@@ -7028,8 +7036,27 @@ fn main() -> anyhow::Result<()> {
             rt.block_on(h5i_core::server::serve(repo_path, port))?;
         }
 
-        Commands::Push { remote } => {
+        Commands::Push { remote, branch } => {
             let workdir = std::env::current_dir()?;
+
+            // Resolve the optional context-DAG scope.
+            //   None            → unscoped (wildcard, every branch's context).
+            //   Some("")        → `--branch` bare → current git branch.
+            //   Some(name)      → that explicit branch.
+            let ctx_scope: Option<String> = match branch {
+                None => None,
+                Some(name) => {
+                    let resolved = if name.is_empty() {
+                        h5i_core::ctx::current_git_branch(&workdir)
+                    } else {
+                        name
+                    };
+                    if let Err(e) = h5i_core::cli_routing::validate_ctx_branch_name(&resolved) {
+                        anyhow::bail!("invalid --branch: {e}");
+                    }
+                    Some(resolved)
+                }
+            };
 
             println!(
                 "{} {} to {}",
@@ -7037,6 +7064,13 @@ fn main() -> anyhow::Result<()> {
                 style("Pushing all h5i refs").cyan().bold(),
                 style(&remote).yellow()
             );
+            if let Some(b) = &ctx_scope {
+                println!(
+                    "  {} context scoped to branch {} (other branches' context not pushed)",
+                    style("•").dim(),
+                    style(b).cyan(),
+                );
+            }
 
             use std::io::Write as _;
 
@@ -7107,72 +7141,111 @@ fn main() -> anyhow::Result<()> {
             // Push context workspace.
             //
             // Post-redesign: one ref per context branch under
-            // `refs/h5i/context/<name>`. Use a wildcard refspec so every
-            // branch syncs in a single git invocation. For backward compat,
-            // also push the legacy single ref (`refs/h5i/context`) if it
-            // still exists locally — older clients on the receiving side may
-            // still expect it. Migration aside-name (`refs/h5i/context-legacy`)
-            // is pushed too as a safety net for diagnosing rollbacks.
-            let any_per_branch_ctx = std::process::Command::new("git")
-                .args([
-                    "for-each-ref",
-                    "--count=1",
-                    "--format=%(refname)",
-                    "refs/h5i/context/",
-                ])
-                .current_dir(&workdir)
-                .output()
-                .map(|o| !o.stdout.is_empty())
-                .unwrap_or(false);
-            if any_per_branch_ctx {
-                print!(
-                    "  {} {} … ",
-                    style("→").dim(),
-                    style("refs/h5i/context/*").yellow()
-                );
+            // `refs/h5i/context/<name>`. Unscoped (the default) ships every
+            // branch's DAG with a single wildcard refspec, and also pushes the
+            // legacy single ref (`refs/h5i/context`) + migration backup
+            // (`refs/h5i/context-legacy`) for older receivers / rollback
+            // diagnosis. `--branch <b>` instead narrows the push to that
+            // branch's `refs/h5i/context/<b>` so pushing one code branch does
+            // not leak the reasoning DAGs of unrelated branches; the legacy
+            // whole-workspace refs are intentionally skipped when scoped.
+            if let Some(b) = &ctx_scope {
+                let scoped_ref = h5i_core::ctx::branch_ref(b);
+                print!("  {} {} … ", style("→").dim(), style(&scoped_ref).yellow());
                 std::io::stdout().flush()?;
-                let status = std::process::Command::new("git")
-                    .args(["push", &remote, "+refs/h5i/context/*:refs/h5i/context/*"])
-                    .current_dir(&workdir)
-                    .status()
-                    .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
-                println!(
-                    "{}",
-                    if status.success() {
-                        style("ok").green()
-                    } else {
-                        style("failed").red()
+                if !ref_exists(&scoped_ref) {
+                    println!(
+                        "{} (no context workspace for branch {} — run {})",
+                        style("skipped").yellow(),
+                        style(b).cyan(),
+                        style("h5i context init").bold(),
+                    );
+                } else {
+                    let refspec = h5i_core::cli_routing::context_push_refspec(Some(b));
+                    let status = std::process::Command::new("git")
+                        .args(["push", &remote, &refspec])
+                        .current_dir(&workdir)
+                        .status()
+                        .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+                    println!(
+                        "{}",
+                        if status.success() {
+                            style("ok").green()
+                        } else {
+                            style("failed").red()
+                        }
+                    );
+                    if !status.success() && remote_has_legacy_context_ref(&remote, &workdir) {
+                        print_legacy_context_remediation(&remote);
                     }
-                );
-                // The single most common cause of this failure is a remote that
-                // still hosts the pre-redesign single `refs/h5i/context` ref,
-                // which collides with the per-branch directory. Detect it and
-                // point at the one-shot fix instead of leaving a raw git error.
-                if !status.success() && remote_has_legacy_context_ref(&remote, &workdir) {
-                    print_legacy_context_remediation(&remote);
                 }
             } else {
-                println!(
-                    "  {} {} … {} (no context workspace yet — run {})",
-                    style("→").dim(),
-                    style("refs/h5i/context/*").yellow(),
-                    style("skipped").yellow(),
-                    style("h5i context init").bold(),
-                );
-            }
-            if ref_exists("refs/h5i/context") {
-                try_push(
-                    "refs/h5i/context",
-                    style("(legacy)").dim(),
-                    "(no legacy ref)",
-                )?;
-            }
-            if ref_exists("refs/h5i/context-legacy") {
-                try_push(
-                    "refs/h5i/context-legacy",
-                    style("(migration backup)").dim(),
-                    "(no migration backup)",
-                )?;
+                let any_per_branch_ctx = std::process::Command::new("git")
+                    .args([
+                        "for-each-ref",
+                        "--count=1",
+                        "--format=%(refname)",
+                        "refs/h5i/context/",
+                    ])
+                    .current_dir(&workdir)
+                    .output()
+                    .map(|o| !o.stdout.is_empty())
+                    .unwrap_or(false);
+                if any_per_branch_ctx {
+                    print!(
+                        "  {} {} … ",
+                        style("→").dim(),
+                        style("refs/h5i/context/*").yellow()
+                    );
+                    std::io::stdout().flush()?;
+                    let status = std::process::Command::new("git")
+                        .args([
+                            "push",
+                            &remote,
+                            &h5i_core::cli_routing::context_push_refspec(None),
+                        ])
+                        .current_dir(&workdir)
+                        .status()
+                        .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+                    println!(
+                        "{}",
+                        if status.success() {
+                            style("ok").green()
+                        } else {
+                            style("failed").red()
+                        }
+                    );
+                    // The single most common cause of this failure is a remote
+                    // that still hosts the pre-redesign single
+                    // `refs/h5i/context` ref, which collides with the per-branch
+                    // directory. Detect it and point at the one-shot fix instead
+                    // of leaving a raw git error.
+                    if !status.success() && remote_has_legacy_context_ref(&remote, &workdir) {
+                        print_legacy_context_remediation(&remote);
+                    }
+                } else {
+                    println!(
+                        "  {} {} … {} (no context workspace yet — run {})",
+                        style("→").dim(),
+                        style("refs/h5i/context/*").yellow(),
+                        style("skipped").yellow(),
+                        style("h5i context init").bold(),
+                    );
+                }
+                if ref_exists("refs/h5i/context") {
+                    try_push(
+                        "refs/h5i/context",
+                        style("(legacy)").dim(),
+                        "(no legacy ref)",
+                    )?;
+                }
+                if ref_exists("refs/h5i/context-legacy") {
+                    try_push(
+                        "refs/h5i/context-legacy",
+                        style("(migration backup)").dim(),
+                        "(no migration backup)",
+                    )?;
+                }
             }
 
             // Push AST blobs (refs/h5i/ast)

@@ -654,6 +654,15 @@ to a remote in one shot.
 .BI \-r,\ \-\-remote\  REMOTE
 Remote to push to (default:
 .BR origin ).
+.TP
+.BI \-b,\ \-\-branch\ [ BRANCH ]
+Scope the context\-DAG push to a single branch's
+.IR refs/h5i/context/<branch>
+instead of every branch (the default wildcard). Pass a name, or pass
+.B \-\-branch
+bare to use the current git branch. Only the context refs are scoped \(em the
+SHA\-keyed global refs (notes/ast/objects) and shared refs (msg/env) still push
+in full.
 .RE
 .
 .\" ─── share pr ───────────────────────────────────────────────────────────────

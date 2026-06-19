@@ -3150,10 +3150,19 @@ When a subscription is registered, h5i spawns a background polling thread (2-sec
 ## h5i share push
 
 ```
-h5i share push [--remote <name>]
+h5i share push [--remote <name>] [--branch [<name>]]
 ```
 
-Push both `refs/h5i/notes` and `refs/h5i/memory` to the remote (default: `origin`). Neither ref is included in a plain `git push`. Canonical form of the legacy `h5i push`.
+Push every `refs/h5i/*` family (notes, memory, context, ast, msg, object manifests, env state) to the remote (default: `origin`). None of these are included in a plain `git push`. Canonical form of the legacy `h5i push`.
+
+**Scoping the context DAG (`--branch`).** Context reasoning DAGs are stored one ref per branch at `refs/h5i/context/<branch>` (the name mirrors the code branch). By default `share push` ships *every* branch's DAG with a wildcard, so pushing one code branch also publishes the reasoning of unrelated branches. Pass `--branch <name>` to push only that branch's `refs/h5i/context/<name>`, or `--branch` bare to scope to the current git branch:
+
+```
+h5i share push --branch feature-x   # only refs/h5i/context/feature-x
+h5i share push --branch             # only the current branch's context
+```
+
+Only the **context** refs are scoped. The SHA-keyed global refs (notes/ast/objects) and the shared refs (msg/env) are keyed by commit or genuinely cross-branch, so they always push in full. When scoped, the legacy whole-workspace refs (`refs/h5i/context`, `refs/h5i/context-legacy`) are skipped.
 
 To automate in CI:
 
