@@ -2270,3 +2270,4 @@ _[Checkpoint: 6a35d013 — session ended (auto-checkpoint)]_
 [23:37:06] ACT: edited src/repository.rs
 [23:41:45] ACT: edited tests/cli_integration.rs
 [23:43:56] ACT: edited tests/cli_integration.rs
+[23:45:50] ACT: edited MANUAL.md
