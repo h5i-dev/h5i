@@ -1971,3 +1971,9 @@ I'll wait for the three mappers to return their precise structural maps, then st
 _[Checkpoint: 6a357c63 — edited src/mcp.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a357d65 — edited src/mcp.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md]_
+---
+
