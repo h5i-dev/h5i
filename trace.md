@@ -2210,3 +2210,4 @@ _[Checkpoint: 6a35ce6a — edited tests/cli_integration.rs; edited MANUAL.md; ed
 ---
 
 [23:21:19] OBSERVE: read src/storage.rs
+[23:21:26] OBSERVE: read src/repository.rs
