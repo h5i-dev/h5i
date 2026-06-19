@@ -1232,3 +1232,4 @@ _[Checkpoint: 6a3483e2 — edited docs/index.html; edited docs/index.html; edite
 _[Checkpoint: 6a348718 — Rebalanced per owner feedback: de-emphasize prompt maturity, fix capture→score ordering]_
 ---
 
+[00:02:46] THINK: Say the word and I'll stage everything (README.
