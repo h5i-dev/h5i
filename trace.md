@@ -2067,3 +2067,9 @@ _[Checkpoint: 6a3583a8 — edited tests/env_integration.rs; edited src/mcp.rs; e
 _[Checkpoint: 6a358429 — Re-reviewed Claude's fixes. Prior issues mostly fixed; env_integration and command_extractor tests pass. Remaining concerns: service_digest None still enables post-create service addition fallback, and unvalidated service names can path-traverse service record/log paths.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a358431 — edited tests/env_integration.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md]_
+---
+
