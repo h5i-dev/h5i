@@ -1402,3 +1402,4 @@ _[Checkpoint: 6a348f2d — edited docs/index.html; edited docs/index.html; edite
 [04:23:16] ACT: edited index.html
 [04:23:17] OBSERVE: read pr-body-ai-code-review/index.html
 [04:23:17] OBSERVE: read cve-2025-59536-startup-trust-dialog/index.html
+[04:23:17] OBSERVE: read cve-2026-33068-bypass-permissions-settings/index.html
