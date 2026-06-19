@@ -1007,11 +1007,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Re-reviewed Claude's fixes. Prior issues mostly fixed; env_integration and command_extractor tests pass. Remaining concerns: service_digest None still enables post-create service addition fallback, and unvalidated service names can path-traverse service record/log paths.
 - [x] edited tests/env_integration.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md
 - [x] edited src/env.rs; edited src/env.rs; edited src/env.rs
+- [x] edited src/env.rs; edited src/env.rs; edited src/env.rs
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-19 18:10 UTC] `prompt-score`: edited src/env.rs; edited src/env.rs; edited src/env.rs
 - [2026-06-19 18:09 UTC] `prompt-score`: edited src/env.rs; edited src/env.rs; edited src/env.rs
 - [2026-06-19 18:02 UTC] `prompt-score`: edited tests/env_integration.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md
 - [2026-06-19 18:02 UTC] `prompt-score`: Re-reviewed Claude's fixes. Prior issues mostly fixed; env_integration and command_extractor tests pass. Remaining concerns: service_digest None still enables post-create service addition fallback, and unvalidated service names can path-traverse service record/log paths.
