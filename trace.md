@@ -2029,3 +2029,4 @@ _[Checkpoint: 6a357ede — edited src/mcp.rs; edited src/mcp.rs; edited docs/bor
 [17:48:09] ACT: edited src/env.rs
 [17:49:54] OBSERVE: read src/risk.rs
 [17:49:59] ACT: edited src/risk.rs
+[17:50:58] OBSERVE: read tests/env_integration.rs
