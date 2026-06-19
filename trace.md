@@ -1692,3 +1692,9 @@ _[Checkpoint: 6a353985 — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.ht
 [13:39:49] ACT: edited docs/sitemap.xml
 [13:40:57] THINK: Now let me make it discoverable: add it to the sitemap, point the existing footer "Manual" links (currently to GitHub) at `/manual/` site-wide, and add a "Manual" nav item to the main pages.
 [13:40:57] THINK: Now I'll wire it in: repoint all GitHub-MANUAL links (footers + "Read the Manual" CTAs) to `/manual/`, add a "Manual" nav item to the four top-level pages, and add the sitemap entry.
+
+
+---
+_[Checkpoint: 6a3546e9 — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.html; edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.html; edited…]_
+---
+
