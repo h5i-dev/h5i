@@ -1469,3 +1469,4 @@ _[Checkpoint: 6a348f2d — edited docs/index.html; edited docs/index.html; edite
 [04:24:40] ACT: edited from-git-blame-to-ai-blame/index.html
 [04:24:43] ACT: edited persistent-memory-for-claude-code/index.html
 [04:24:44] ACT: edited index.html
+[04:24:45] ACT: edited sandboxing-ai-agents-landscape/index.html
