@@ -1761,3 +1761,4 @@ _[Checkpoint: 6a35546b — Helped Claude shape ../coasts-to-h5i-env ideas via h5
 
 [14:38:43] THINK: Let me review h5i's own env design doc and sandbox roadmap to know exactly where the borrowable ideas would land, plus peek at coast-secrets' keystore implementation.
 [14:38:43] THINK: Now let me add the new ideas (fleet/doctor, services-without-daemon, expanded volumes, harness-prompt) and enrich the dashboard section.
+[14:38:43] THINK: Now let me enrich the dashboard section with the Coastguard tab vocabulary, add a harness-prompt idea, and update the closing (sequencing + Codex footer).
