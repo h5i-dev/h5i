@@ -1617,3 +1617,4 @@ _[Checkpoint: 6a34cbb5 — edited docs/blog/index.html; edited docs/blog/index.h
 [05:08:46] THINK: Em-dashes are essentially all the spaced `" — "` form, with only a few inside `<pre>` blocks (which I'll protect) and 3 unspaced ones in the pitch.
 [05:08:46] THINK: Let me clean up those line-wrapped ones (protecting code/script and the `dim` cells):
 [05:08:46] NOTE: PLACEHOLDER (~/Dev/h5i/docs/_static/blog.css): *binary**. That points to stray NUL bytes left by my dedash placeholders (`\x00`). Let me check immediately
+[05:08:46] NOTE: PLACEHOLDER (~/Dev/h5i/docs/_static/blog.css): ifies it: `index.html` has **4 stray NUL bytes** (my dedash placeholder leaked on this one file), which makes `grep` treat it as binary — so the "0 …
