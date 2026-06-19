@@ -1673,3 +1673,9 @@ _[Checkpoint: 6a3530a2 — edited docs/blog/index.html; edited docs/blog/index.h
 _[Checkpoint: 6a353706 — Polished docs pitch deck around Git-native evidence for AI agent work, stronger pain/wedge/review narrative, no finance content.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a35370d — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.html; edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.html; edited…]_
+---
+
