@@ -23,7 +23,7 @@ AI coding agents do more than edit files. They follow prompts, talk to other age
 h5i gives each agent a **Git-backed workspace**: a sandboxed worktree, prompt-aware commits, compressed command logs, agent-to-agent handoffs, and PR-ready evidence, all stored in `refs/h5i/*`, traveling with the repo.
 
 
-> **What is an auditable workspace?** It's the place an AI agent does its work, a Git-backed worktree where every prompt, decision, command, log, policy, and multi-AI conversation is recorded in your repo and provable after the fact.
+> **What is an auditable workspace?** It's the place an AI agent does its work, a Git-backed worktree where every prompt, context, command, log, policy, and multi-AI conversation is recorded in your repo.
 >
 > **Auditable Workspace = worktree + prompt + model + commands + logs + policy + messages + PR evidence.**
 
