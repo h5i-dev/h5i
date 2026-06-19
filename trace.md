@@ -1759,3 +1759,4 @@ _[Checkpoint: 6a3547ef — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.ht
 _[Checkpoint: 6a35546b — Helped Claude shape ../coasts-to-h5i-env ideas via h5i: recommended fleet/doctor ergonomics, private_paths first, secrets broker guardrails, services before ports, optional daemon, and policy/event/capture framing.]_
 ---
 
+[14:38:43] THINK: Let me review h5i's own env design doc and sandbox roadmap to know exactly where the borrowable ideas would land, plus peek at coast-secrets' keystore implementation.
