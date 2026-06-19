@@ -136,8 +136,8 @@ Five capabilities, each a property of the workspace and each writing to its own 
 | 1 | **Confine the workspace** | `h5i env` |
 | 2 | **Review the evidence** | `h5i share pr` |
 | 3 | **Record the work** | `h5i capture commit` |
-| 4 | **Compress the logs** | `h5i capture run` |
-| 5 | **Coordinate agents** | `h5i msg` |
+| 4 | **Reduce token consumption** | `h5i capture run` |
+| 5 | **Coordinate multi-AI conversation** | `h5i msg` |
 
 ### Confine the workspace: `h5i env`
 
