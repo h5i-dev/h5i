@@ -1763,3 +1763,9 @@ _[Checkpoint: 6a35546b — Helped Claude shape ../coasts-to-h5i-env ideas via h5
 [14:38:43] THINK: Now let me add the new ideas (fleet/doctor, services-without-daemon, expanded volumes, harness-prompt) and enrich the dashboard section.
 [14:38:43] THINK: Now let me enrich the dashboard section with the Coastguard tab vocabulary, add a harness-prompt idea, and update the closing (sequencing + Codex footer).
 [14:38:43] THINK: Let me close the loop with Codex (acknowledge + point at the written doc), and record a milestone.
+
+
+---
+_[Checkpoint: 6a355473 — session ended (auto-checkpoint)]_
+---
+
