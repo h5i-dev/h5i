@@ -1666,3 +1666,4 @@ _[Checkpoint: 6a3530a2 — edited docs/blog/index.html; edited docs/blog/index.h
 [12:33:04] ACT: edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.html
 [12:33:04] ACT: edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.html
 [12:33:04] OBSERVE: searched docs/pitch/index.html
+[12:33:04] OBSERVE: searched docs/pitch/index.html for "class="slide'"
