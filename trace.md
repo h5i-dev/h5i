@@ -1744,3 +1744,4 @@ _[Checkpoint: 6a3547ef — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.ht
 [14:38:24] OBSERVE: read src/env.rs
 [14:38:24] OBSERVE: read src/main.rs
 [14:38:24] OBSERVE: read ../coasts/docs/SKILLS_FOR_HOST_AGENTS.md
+[14:38:24] OBSERVE: read ../coasts/docs/harnesses/CODEX.md
