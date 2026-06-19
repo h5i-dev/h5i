@@ -1858,3 +1858,4 @@ _[Checkpoint: 6a355530 — edited docs/borrowing-from-coasts.md; edited docs/bor
 [16:31:55] OBSERVE: read src/secrets_broker.rs
 [16:32:40] OBSERVE: read src/main.rs
 [16:33:12] OBSERVE: read src/env.rs
+[16:33:33] OBSERVE: read src/env.rs
