@@ -229,6 +229,19 @@ pub fn validate_slug(slug: &str) -> Result<(), H5iError> {
     }
 }
 
+/// Validate a service name before it is used to build env-local paths
+/// (`services/<name>.json`, `services/<name>.log`). Same strict slug rules as
+/// [`validate_slug`], so a key like `../manifest` (path traversal) or one with a
+/// `/` can never escape the services dir or overwrite an env-local file.
+pub fn validate_service_name(name: &str) -> Result<(), H5iError> {
+    validate_slug(name).map_err(|_| {
+        H5iError::Metadata(format!(
+            "invalid service name '{name}' — use lowercase letters, digits, '-', '_', '.' \
+             (start alphanumeric, ≤64 chars, no '/' or '..')"
+        ))
+    })
+}
+
 /// Validate an agent identity before it is used to build a ref component
 /// (`refs/heads/h5i/env/<agent>/<slug>`), a directory name (`env_dir` joins it
 /// unchecked), and a worktree name. `msg::validate_name` already constrains the
@@ -1000,8 +1013,9 @@ pub fn create(
     crate::ctx::pin_worktree_context(&wt_repo, &env_ctx)?;
 
     // Pin service declarations from the base worktree into an env-local,
-    // box-immutable manifest, recording its digest (review #1).
-    let service_digest = pin_services_at_create(&work_path, &dir)?;
+    // box-immutable manifest, recording its digest (review #1). Always Some for
+    // new envs (even pinned-empty), so the legacy fallback below never applies.
+    let service_digest = Some(pin_services_at_create(&work_path, &dir)?);
 
     let manifest = EnvManifest {
         id: id.clone(),
@@ -2868,7 +2882,9 @@ fn env_key(name: &str) -> String {
 }
 
 /// Parse the `[service.*]` table from one `.h5i/env.toml`. Empty when the file
-/// is absent or declares no services.
+/// is absent or declares no services. Every service name is validated
+/// fail-closed (it becomes an env-local path component) so a traversing key like
+/// `../manifest` is rejected at parse/pin time, not turned into a path.
 fn parse_services_file(
     path: &Path,
 ) -> Result<std::collections::BTreeMap<String, ServiceDef>, H5iError> {
@@ -2877,6 +2893,9 @@ fn parse_services_file(
     }
     let text = std::fs::read_to_string(path).map_err(|e| H5iError::with_path(e, path))?;
     let parsed: ServiceFileToml = toml::from_str(&text)?;
+    for name in parsed.service.keys() {
+        validate_service_name(name)?;
+    }
     Ok(parsed.service)
 }
 
@@ -2899,20 +2918,19 @@ fn pinned_services_path(h5i_root: &Path, m: &EnvManifest) -> PathBuf {
 /// Snapshot the base worktree's `[service.*]` into the env-local pinned manifest
 /// at create, returning the digest to record in the manifest (review #1: service
 /// declarations must be policy-pinned, not read from mutable workspace content).
-/// `None` when no services are declared. Fail-closed on a malformed services
-/// section.
-fn pin_services_at_create(
-    work_path: &Path,
-    env_dir: &Path,
-) -> Result<Option<String>, H5iError> {
+///
+/// ALWAYS writes `services.json` and records a digest — even for the empty set —
+/// so a new env with no services is still *pinned-empty*, not mistaken for a
+/// legacy (pre-pinning) env. Without this, a no-service env would record a `None`
+/// digest and fall back to reading the mutable worktree config, letting an agent
+/// add `[service.*]` after create and start it unpinned. Fail-closed on a
+/// malformed services section.
+fn pin_services_at_create(work_path: &Path, env_dir: &Path) -> Result<String, H5iError> {
     let defs = parse_services_file(&work_path.join(".h5i/env.toml"))?;
-    if defs.is_empty() {
-        return Ok(None);
-    }
     let json = serde_json::to_string_pretty(&defs)?;
     let path = env_dir.join("services.json");
     std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
-    Ok(Some(service_defs_digest(&defs)))
+    Ok(service_defs_digest(&defs))
 }
 
 /// Load the env's service declarations from the **pinned** env-local manifest,
@@ -2979,6 +2997,7 @@ pub fn service_start(
     m: &EnvManifest,
     name: &str,
 ) -> Result<ServiceRecord, H5iError> {
+    validate_service_name(name)?;
     let defs = load_service_defs(h5i_root, m)?;
     let def = defs.get(name).ok_or_else(|| {
         H5iError::Metadata(format!(
@@ -3068,6 +3087,7 @@ pub fn service_stop(
     m: &EnvManifest,
     name: &str,
 ) -> Result<Option<String>, H5iError> {
+    validate_service_name(name)?;
     let svc_dir = services_dir(h5i_root, m);
     let rec = read_service_record(&svc_dir, name).ok_or_else(|| {
         H5iError::Metadata(format!("service '{name}' is not running (no record)"))
@@ -3180,6 +3200,7 @@ pub fn service_status(h5i_root: &Path, m: &EnvManifest) -> Vec<ServiceStatus> {
 
 /// Tail of a running service's log file.
 pub fn service_logs(h5i_root: &Path, m: &EnvManifest, name: &str, tail: usize) -> Result<String, H5iError> {
+    validate_service_name(name)?;
     let svc_dir = services_dir(h5i_root, m);
     let rec = read_service_record(&svc_dir, name)
         .ok_or_else(|| H5iError::Metadata(format!("service '{name}' is not running")))?;

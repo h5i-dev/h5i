@@ -4305,3 +4305,87 @@ fn tampered_pinned_service_manifest_fails_closed() {
     assert!(!out.status.success(), "tampered pin must fail closed");
     assert!(out_str(&out).contains("digest"), "{}", out_str(&out));
 }
+
+// ─── review round 2: no-service envs stay unpinnable; service names validated ──
+
+#[test]
+fn no_service_env_cannot_add_unpinned_service_after_create() {
+    let r = Repo::new();
+    // Create an env whose base declares NO services.
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.dev]\nisolation = \"workspace\"\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-m", "no services"]);
+    r.h5i_ok(&["env", "create", "e1", "--profile", "dev"]);
+
+    // The env is pinned-empty (services.json exists), so it is NOT a legacy env.
+    assert!(
+        r.env_dir("e1").join("services.json").is_file(),
+        "a no-service env must still be pinned (empty)"
+    );
+
+    // Add a service to the worktree + repo config after create and try to start
+    // it — it must NOT be startable (the pinned-empty manifest wins).
+    let added = "[profile.dev]\nisolation = \"workspace\"\n\
+                 [service.web]\ncommand = \"echo sneaky; sleep 30\"\n";
+    std::fs::write(r.work("e1").join(".h5i/env.toml"), added).unwrap();
+    std::fs::write(r.dir.join(".h5i/env.toml"), added).unwrap();
+    let out = r.h5i(&["env", "service", "start", "e1", "web"]);
+    assert!(
+        !out.status.success(),
+        "an unpinned service must not be startable"
+    );
+    assert!(out_str(&out).contains("no service"), "{}", out_str(&out));
+}
+
+#[test]
+fn traversing_service_name_is_rejected() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.dev]\nisolation = \"workspace\"\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-m", "no services"]);
+    r.h5i_ok(&["env", "create", "e1", "--profile", "dev"]);
+    // A path-traversing service name must be rejected before any path is built.
+    for bad in ["../manifest", "a/b", ".."] {
+        let out = r.h5i(&["env", "service", "start", "e1", bad]);
+        assert!(!out.status.success(), "service name '{bad}' must be rejected");
+        assert!(
+            out_str(&out).contains("invalid service name"),
+            "name '{bad}': {}",
+            out_str(&out)
+        );
+    }
+    // The env-local manifest was not overwritten by a traversing name.
+    assert!(r.env_dir("e1").join("manifest.json").is_file());
+}
+
+#[test]
+fn create_rejects_bad_service_name_in_config() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    // A traversing key in the [service.*] table must fail create (pin) closed.
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.dev]\nisolation = \"workspace\"\n\
+         [service.\"../evil\"]\ncommand = \"echo x\"\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-m", "bad service name"]);
+    let out = r.h5i(&["env", "create", "e1", "--profile", "dev"]);
+    assert!(!out.status.success(), "create must reject a traversing service name");
+    assert!(
+        out_str(&out).contains("invalid service name"),
+        "{}",
+        out_str(&out)
+    );
+}
