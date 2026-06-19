@@ -27,20 +27,20 @@ h5i captures that missing execution layer as Git-backed evidence: prompts and mo
 <table align="center">
   <tr>
     <td align="center">
-      <strong>Git-native</strong><br>
-      <sub>No SaaS, no lock-in</sub>
+      <strong>Token Reduction</strong><br>
+      <sub>Up to 95% less</sub>
     </td>
     <td align="center">
-      <strong>up to 95%</strong><br>
-      <sub>Less token waste</sub>
+      <strong>Claude ↔ Codex</strong><br>
+      <sub>Real-time, over Git</sub>
     </td>
     <td align="center">
       <strong>Sandbox</strong><br>
       <sub>Confined & auditable</sub>
     </td>
     <td align="center">
-      <strong>0–100</strong><br>
-      <sub>Offline prompt score</sub>
+      <strong>Vibe-Check</strong><br>
+      <sub>Maturity of any AI PR</sub>
     </td>
   </tr>
 </table>
