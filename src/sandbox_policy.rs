@@ -229,6 +229,36 @@ pub struct BoxGitPath {
     pub rw: bool,
 }
 
+/// One declared private path (Idea 3): a workspace-relative directory that gets
+/// its own per-env backing store, so concurrent envs of the same repo don't
+/// collide on inode-level `flock`/`fcntl` locks or single-writer build caches
+/// (Cargo `target/`, Next `.next/dev/lock`, Gradle, …). Mount-namespace
+/// isolation alone doesn't fix this — `flock` is on the inode, not the mount —
+/// so each env binds a distinct backing dir over the path.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrivatePath {
+    /// Workspace-relative path (validated: relative, no `..`, no overlap).
+    pub path: String,
+    /// `cache` | `scratch` | `private`. Advisory label for reviewers; all are
+    /// per-env isolated in v1 (distinct inode → no cross-env lock contention).
+    pub kind: String,
+    /// Keep the backing dir across runs (`true`, e.g. a warm build cache) or
+    /// wipe it before each run (`false`, e.g. a stale dev-server lock dir).
+    pub persist: bool,
+}
+
+/// A resolved private-path bind (runtime only — never serialized/digested): the
+/// host backing dir and the workspace-relative path it shadows. Mirrors how
+/// [`BoxGitPath`] carries container binds; computed at run time in
+/// `env::prepare_private_paths`.
+#[derive(Debug, Clone)]
+pub struct PrivateBind {
+    /// Host backing dir under the env's `private/` tree (distinct inode per env).
+    pub backing: PathBuf,
+    /// Workspace-relative path the backing dir shadows (e.g. `target`).
+    pub rel: String,
+}
+
 // ─── policy profile (§7) ────────────────────────────────────────────────────
 
 /// A fully-resolved policy profile — every field explicit, suitable for
@@ -279,6 +309,17 @@ pub struct Profile {
     /// Environment-variable allowlist — the child gets *only* these (plus
     /// nothing else; secrets are never inherited wholesale).
     pub env_pass: Vec<String>,
+    /// Per-env private paths (Idea 3). Empty for most policies, so their digest
+    /// is unchanged (serialized only when non-empty; appended last to keep the
+    /// canonical field order — and existing digests — stable).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub private_paths: Vec<PrivatePath>,
+    /// Opt-in for the secrets broker's `command:` extractor, which runs host-side
+    /// code *outside* the sandbox to mint a credential. Off by default; pinned in
+    /// the policy digest so it can't be enabled without a tamper-evident change.
+    /// Serialized only when `true`, so existing digests are unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_command_extractors: bool,
 }
 
 /// Read-only system paths granted by default at the `process` tier — enough to
@@ -332,6 +373,8 @@ impl Profile {
                 "TERM".into(),
                 "COLORTERM".into(),
             ],
+            private_paths: Vec::new(),
+            allow_command_extractors: false,
         }
     }
 
@@ -483,6 +526,12 @@ pub struct ResolvedPolicy {
     /// the host ingests records into the real object store after the run/shell.
     #[serde(skip)]
     pub env_capture_spool: Option<PathBuf>,
+    /// Runtime-only per-env private-path binds (Idea 3) — never serialized; the
+    /// declarative intent lives in `profile.private_paths` (which *is* digested).
+    /// Populated by `env::prepare_private_paths`; applied as bind mounts on the
+    /// kernel tiers (`build_confined_command`) and `--mount`s on container.
+    #[serde(skip)]
+    pub private_binds: Vec<PrivateBind>,
 }
 
 impl ResolvedPolicy {
@@ -493,6 +542,7 @@ impl ResolvedPolicy {
             audit: AuditPolicy::default(),
             box_git: Vec::new(),
             env_capture_spool: None,
+            private_binds: Vec::new(),
         }
     }
 

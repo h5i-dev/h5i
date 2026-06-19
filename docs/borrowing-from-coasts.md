@@ -5,6 +5,27 @@
 > for the current design and `sandbox-production-roadmap` (memory) for the
 > shipped/remaining roadmap.
 
+## Implementation status (v1)
+
+Ideas 0, 1, 2, 3, and 3.5 below have a **shipped v1** (CLI + MCP + tests):
+
+- **Idea 0** — `env list --json`, `env doctor` (per-env enforcement-readiness via
+  `verify_exec` + policy/branch/drift health).
+- **Idea 3** — `private_paths` policy field (`kind`/`persist`), per-env inode
+  isolation via `pre_exec` binds (kernel tiers) + `--mount` (container).
+- **Idea 1** — the broker already existed (env:/file: → env/file inject, redacted,
+  fail-closed); this pass added the **gated `command:` extractor**
+  (`allow_command_extractors`, pinned in the policy digest) and the `env secrets`
+  legibility CLI.
+- **Idea 3.5** — daemon-free `env service start|stop|status|logs` (pid registry,
+  logs-as-captures on stop, start/stop events on `refs/h5i/env`).
+- **Idea 2** — dynamic ports allocated + injected per service
+  (`H5I_ENV_PORT_<NAME>`/`PORT`), surfaced by `env ports`. **Deferred:** canonical
+  `checkout` forwarders, and supervised/container services.
+
+Still deferred: Idea 4 (PTY drive — trap), 5 (dashboard), 6 (shared services),
+7 (`env init` scaffold), 8 (harness prompts).
+
 ## TL;DR
 
 Coasts and `h5i env` solve **adjacent but different** problems, which is exactly
