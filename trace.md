@@ -1982,3 +1982,4 @@ _[Checkpoint: 6a357d65 — edited src/mcp.rs; edited src/mcp.rs; edited docs/bor
 [17:39:26] OBSERVE: searched src/sandbox.rs for "bind""
 [17:39:26] OBSERVE: searched src/sandbox.rs for "check_tool_allowlist|check_tool_allowlist|tools""
 [17:39:26] OBSERVE: searched port|env for "extractor|allow_command|service_lifecycle|doctor_flags|list_json|dynamic"
+[17:39:26] OBSERVE: searched \{|Ports for "EnvCommands|Service"
