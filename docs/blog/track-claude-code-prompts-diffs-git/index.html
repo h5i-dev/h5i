@@ -96,7 +96,7 @@
       </div>
     </header>
 
-<p>Claude Code already works inside a Git repository. That means every edit can end in a normal commit and pull request. The problem is that Git does not automatically store the Claude Code prompt, the model identity, the files Claude observed, or the test evidence behind the change.</p>
+<p>An <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> is where prompt provenance lives: who asked, what the agent knew, what it changed, and what evidence supports the result — all versioned in your repo. Claude Code already works inside a Git repository. That means every edit can end in a normal commit and pull request. The problem is that Git does not automatically store the Claude Code prompt, the model identity, the files Claude observed, or the test evidence behind the change.</p>
 <p>h5i fills that gap by capturing AI provenance as Git-sidecar data. The repository still behaves like a normal Git repo. The AI layer gives reviewers and future maintainers a way to answer, "what did Claude Code do, and why?"</p>
 <h2>What to capture</h2>
 <p>For Claude Code work, capture at least five fields: the task prompt, the agent name, the model if known, the changed commit, and the test result. For longer sessions, also capture context traces and decisions. Those records make the diff explainable without storing an entire chat transcript in the commit message.</p>
@@ -141,13 +141,13 @@
       <span class="label">Next in the cluster</span>
       <a href="/blog/claude-code-hooks-vs-git-hooks/">
         <h3>Claude Code Hooks vs Git Hooks</h3>
-        <p>Continue the AI-aware version control series with the next focused workflow.</p>
+        <p>Continue with the next focused workflow in the auditable workspace series.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Bring AI provenance into Git</h3>
-      <p>h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
+      <h3>Capture prompt provenance on every Claude Code commit</h3>
+      <p>Try h5i on your next AI-assisted branch: create a sandboxed workspace, capture the run, and post a review-ready PR brief.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/guides/" class="btn btn-ghost">Read the guides</a>
     </div>

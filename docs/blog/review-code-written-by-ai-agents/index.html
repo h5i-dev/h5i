@@ -96,7 +96,7 @@
       </div>
     </header>
 
-<p>AI coding agents can produce large, coherent patches quickly. That speed changes the review problem. The question is no longer only "is this line correct?" It is also "did the agent understand the task, inspect the right evidence, and test the behavior it changed?"</p>
+<p>An <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> is the place an AI agent does its work — recording every prompt, decision, command, and test result in your repo so the reviewer has a provable record. Reviewing agent-written code starts with that record, not just the diff. AI coding agents can produce large, coherent patches quickly. That speed changes the review problem. The question is no longer only "is this line correct?" It is also "did the agent understand the task, inspect the right evidence, and test the behavior it changed?"</p>
 <h2>1. Start from intent</h2>
 <p>Read the original prompt or task summary before the diff. A correct-looking patch can still be wrong if it solves a broader or narrower problem than requested. The review should ask whether the implementation matches the stated intent and whether any added behavior is justified.</p>
 <h2>2. Check context coverage</h2>
@@ -144,13 +144,13 @@
       <span class="label">Next in the cluster</span>
       <a href="/blog/intent-based-rollback-ai-generated-code/">
         <h3>Intent-Based Rollback for AI-Generated Code</h3>
-        <p>Continue the AI-aware version control series with the next focused workflow.</p>
+        <p>Continue with the next focused workflow in the auditable workspace series.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Bring AI provenance into Git</h3>
-      <p>h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
+      <h3>Build a review-ready auditable workspace</h3>
+      <p>Try h5i on your next AI-assisted branch: create a sandboxed workspace, capture the run, and post a review-ready PR brief.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/guides/" class="btn btn-ghost">Read the guides</a>
     </div>

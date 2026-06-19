@@ -96,7 +96,7 @@
       </div>
     </header>
 
-<p>AI coding agents usually share a repository but not a durable conversation. One agent changes files. Another agent reviews. A human asks for a follow-up. Without a shared channel, the context lives in separate chat windows and disappears when sessions end.</p>
+<p>Git-backed agent handoffs are one of the core coordination pillars inside an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a> — every ask, review, risk, and handoff recorded in your repo, provable after the fact. AI coding agents usually share a repository but not a durable conversation. One agent changes files. Another agent reviews. A human asks for a follow-up. Without a shared channel, the context lives in separate chat windows and disappears when sessions end.</p>
 <p>Git is a practical communication substrate because it is already available wherever the code is. It has identities, refs, remotes, fetch, push, history, and review workflows. h5i uses those properties to make agent communication durable and replayable.</p>
 <h2>What Git gives you</h2>
 <p>Git is distributed. It is content-addressed. It can move custom refs. It can preserve append-only history. Those properties are useful for agent messages because the messages should travel with the code, survive machine changes, and remain inspectable later.</p>
@@ -138,15 +138,15 @@
 
     <div class="next-up">
       <span class="label">Next in the cluster</span>
-      <a href="/blog/what-is-ai-aware-version-control/">
-        <h3>What Is AI-Aware Version Control?</h3>
-        <p>Continue the AI-aware version control series with the next focused workflow.</p>
+      <a href="/blog/i5h-agent-to-agent-messaging/">
+        <h3>Git-Native Messaging Between AI Coding Agents</h3>
+        <p>A deep dive into the i5h protocol: typed handoffs, append-only Git objects, and no server to run.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Bring AI provenance into Git</h3>
-      <p>h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
+      <h3>Try h5i on your next AI-assisted branch</h3>
+      <p>Create a sandboxed workspace, capture the run, and post a review-ready PR brief. h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/guides/" class="btn btn-ghost">Read the guides</a>
     </div>

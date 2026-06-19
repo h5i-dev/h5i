@@ -96,7 +96,7 @@
       </div>
     </header>
 
-<p>Git notes and h5i solve related but different problems. Git notes are a low-level Git feature for attaching extra information to objects without changing those objects. h5i is an AI-aware workflow layer that stores prompts, agent provenance, context traces, risk signals, memory, and messages in Git-sidecar refs.</p>
+<p>Git notes and h5i solve related but different problems. Git notes are a low-level Git feature for attaching extra information to objects without changing those objects. h5i is a Git sidecar for <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspaces</strong></a> — it stores prompts, agent provenance, context traces, risk signals, memory, and messages in Git-sidecar refs, making every session's work provable after the fact.</p>
 <h2>What Git notes do well</h2>
 <p>The official Git documentation describes notes as data attached to objects without touching the objects themselves. By default, notes are stored under <code>refs/notes/commits</code>, and <code>git log</code> can display them alongside commit messages. That makes notes a good fit for lightweight commit annotations.</p>
 <p>For AI coding, you could store a prompt or test summary in a note. That is simple, Git-native, and compatible with existing repositories.</p>
@@ -138,15 +138,15 @@
 
     <div class="next-up">
       <span class="label">Next in the cluster</span>
-      <a href="/blog/what-is-ai-aware-version-control/">
-        <h3>What Is AI-Aware Version Control?</h3>
-        <p>Continue the AI-aware version control series with the next focused workflow.</p>
+      <a href="/blog/git-communication-layer-ai-agents/">
+        <h3>Git as the Communication Layer for AI Agents</h3>
+        <p>From Git-backed provenance to Git-backed handoffs: how h5i uses refs for agent coordination.</p>
       </a>
     </div>
 
     <div class="post-cta">
-      <h3>Bring AI provenance into Git</h3>
-      <p>h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
+      <h3>Try h5i on your next AI-assisted branch</h3>
+      <p>Create a sandboxed workspace, capture the run, and post a review-ready PR brief. h5i records prompts, context, test evidence, review signals, and agent messages alongside normal Git history.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/guides/" class="btn btn-ghost">Read the guides</a>
     </div>

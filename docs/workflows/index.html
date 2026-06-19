@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i Workflows - Shared Context for Claude Code, Codex, and Review</title>
-  <meta name="description" content="A practical h5i workflow guide for Claude Code and Codex: initialize shared versioned context, capture AI provenance, record reusable claims, audit risk, and publish evidence when work reaches review.">
-  <meta name="keywords" content="h5i workflow, claude code hooks, codex workflow, ai provenance, ai code review, h5i capture recall audit share">
-  <meta name="author" content="Koukyosyumei">
+  <title>Auditable workspaces for AI agents - h5i workflows</title>
+  <meta name="description" content="Auditable workspaces for AI agents: the h5i golden-path workflow. Open a sandboxed Git-backed worktree, let Claude Code or Codex work, capture prompt-aware commits and compressed logs, hand off, and post review-ready PR evidence. Lives in your Git, no SaaS.">
+  <meta name="keywords" content="auditable workspaces for AI agents, sandboxed agent worktree, h5i env, prompt-aware commits, compressed tool logs, agent handoffs, review-ready PR evidence, Git sidecar">
+  <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
@@ -16,24 +16,24 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i Workflows - Shared Context for Claude Code, Codex, and Review">
-  <meta property="og:description" content="Runnable h5i workflows for shared agent context, provenance commits, claims, audits, and review evidence.">
+  <meta property="og:title" content="Auditable workspaces for AI agents - h5i workflows">
+  <meta property="og:description" content="The h5i golden path: open a sandboxed worktree, let an agent work, capture prompt-aware commits and compressed logs, hand off, and post review-ready PR evidence. Lives in your Git, no SaaS.">
   <meta property="og:url" content="https://h5i.dev/workflows/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i Workflows - Shared Context for Claude Code, Codex, and Review">
-  <meta name="twitter:description" content="Runnable h5i workflows for shared agent context, provenance commits, claims, audits, and review evidence.">
+  <meta name="twitter:title" content="Auditable workspaces for AI agents - h5i workflows">
+  <meta name="twitter:description" content="The h5i golden path: open a sandboxed worktree, let an agent work, capture prompt-aware commits and compressed logs, hand off, and post review-ready PR evidence. Lives in your Git, no SaaS.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "h5i Workflows",
-    "description": "Practical h5i workflows for shared agent context, Claude Code, Codex, PR review, and AI provenance.",
+    "headline": "The auditable agent workspace workflow",
+    "description": "Auditable workspaces for AI agents: the h5i golden-path workflow for Claude Code and Codex — sandboxed worktree, prompt-aware commits, compressed logs, agent handoffs, and review-ready PR evidence.",
     "url": "https://h5i.dev/workflows/",
-    "author": {"@type": "Person", "name": "Koukyosyumei"},
+    "author": {"@type": "Organization", "name": "h5i"},
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}}
   }
   </script>
@@ -66,58 +66,172 @@
 <main class="article-wrap">
   <article class="post">
     <header>
-      <div class="post-eyebrow">Workflow Guide</div>
-      <h1>Use h5i as shared versioned context for AI coding agents</h1>
-      <p class="post-deck">h5i gives Claude Code, Codex, and teammates the same persistent reasoning workspace. The current CLI is organized around four command groups: <code>capture</code>, <code>recall</code>, <code>audit</code>, and <code>share</code>.</p>
+      <div class="post-eyebrow">Auditable workspaces for AI agents</div>
+      <h1>The auditable agent workspace workflow</h1>
+      <p class="post-deck">h5i gives Claude Code, Codex, and other coding agents a Git-backed workspace: sandboxed worktrees, prompt-aware commits, compressed logs, agent handoffs, and review-ready PR evidence. <strong>Git tracks the diff. h5i tracks the workspace behind it.</strong></p>
       <div class="post-meta">
-        <span><strong>Updated</strong> 2026-05-24</span>
+        <span><strong>Updated</strong> 2026-06-19</span>
         <span><strong>Scope</strong> current source CLI</span>
-        <span><strong>Tool</strong> Rust CLI + Git refs</span>
+        <span><strong>Tool</strong> Git sidecar (Rust CLI + Git refs)</span>
       </div>
     </header>
 
+    <div class="callout">
+      <strong>An auditable workspace</strong> is the place an AI agent does its work — a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. <em>Workspace = worktree + prompt + model + commands + logs + policy + messages + PR evidence.</em>
+      <br><br>
+      The whole record <strong>lives in your Git</strong> (<code>refs/h5i/*</code>) and travels with the repo — no SaaS, no lock-in, works offline. h5i is not a Git replacement, not a hosted sandbox; it's a Git sidecar for auditable agent workspaces.
+    </div>
+
+    <h2>The golden path</h2>
+    <p>Every workflow below is the same journey: open a workspace, hand it to an agent, let evidence accrue (commands, logs, prompts, handoffs), let a reviewer read the provable record on the PR, then a human applies and merges. <code>h5i env</code> — the sandboxed worktree — is the canonical auditable workspace and the entry point.</p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">golden-path</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># 1. Open the auditable workspace (sandboxed worktree + policy)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env create fix-auth</span>
+
+<span class="t-cmt"># 2. Agent works inside the box (or you do) — commands/logs captured</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell fix-auth</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i capture run -- cargo test</span>
+
+<span class="t-cmt"># 3. Commit with provenance (prompt, model, agent, tests, audit)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">git add src/auth.rs tests/auth.rs</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "add token refresh flow" --audit</span>
+
+<span class="t-cmt"># 4. Hand off for review</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i msg review codex "token refresh ready" --focus src/auth.rs</span>
+
+<span class="t-cmt"># 5. Post review-ready PR evidence, then apply/merge</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post --style review</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env apply fix-auth</span></pre></div>
+    </div>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">flow</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># How evidence flows from agent to merge</span>
+
+  agent (Claude / Codex)
+        |
+        v
+  sandboxed worktree            h5i env
+        |
+        v
+  captured commands + logs      h5i capture run
+        |
+        v
+  provenance commit             h5i capture commit
+        |
+        v
+  handoff + PR evidence         h5i msg / h5i share pr
+        |
+        v
+  human reviews + applies       h5i env apply</pre></div>
+    </div>
+
+    <h2>The workspace stack</h2>
+    <p>Each layer is a property of the same auditable workspace — provenance (who/why/what the agent knew), confinement (what it <em>couldn't</em> reach, provable), and governance (deterministic audit, no model in the loop).</p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">stack</span></div>
+      <div class="terminal-body"><pre>Agent Workspace
+├─ Sandboxed worktree        h5i env
+├─ Prompt-aware commits      h5i capture commit
+├─ Compressed tool logs      h5i capture run
+├─ Agent handoffs            h5i msg
+├─ Risk/audit signals        h5i audit
+└─ PR evidence brief         h5i share pr</pre></div>
+    </div>
+
     <h2>Install and initialize</h2>
-    <p>h5i stores sidecar data under Git-owned state and pushable <code>refs/h5i/*</code> refs. Run <code>h5i init</code> once per repository.</p>
+    <p>h5i stores sidecar data under Git-owned state and pushable <code>refs/h5i/*</code> refs that travel with the repo. Run <code>h5i init</code> once per repository.</p>
 
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">install</span></div>
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh</span>
 <span class="t-cmt"># or build directly from source</span>
-<span class="t-prompt">$</span> <span class="t-cmd">cargo install --git https://github.com/h5i-dev/h5i h5i-core</span>
+<span class="t-prompt">$</span> <span class="t-cmd">cargo install --git https://github.com/h5i-dev/h5i h5i</span>
 
 <span class="t-prompt">$</span> <span class="t-cmd">cd your-project</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i init</span></pre></div>
     </div>
 
-    <h2>Claude Code workflow</h2>
-    <p>Claude Code gets the richest automation path. <code>h5i hook setup</code> prints the local hook and MCP configuration. Hooks trace file reads and edits, session start restores context, stop checkpoints progress, and MCP exposes h5i commands as native tools.</p>
+    <h2>Flow A — Solo developer with Claude Code</h2>
+    <p>A day in an auditable workspace: you open a confined worktree, Claude Code works inside it, evidence accrues automatically, and you review the provable record before merging. <code>h5i hook setup</code> wires Claude Code's hooks once; from then on file reads, edits, prompts, and stop-checkpoints flow into the context trace.</p>
 
     <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">claude-code</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context init --goal "ship OAuth login safely"</span>
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">solo-claude</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># once: wire Claude Code hooks + MCP tools</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup</span>
 
-<span class="t-cmt"># Before editing a non-trivial file:</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context relevant src/auth.rs</span>
+<span class="t-cmt"># open the workspace and hand the box to Claude Code</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env create ship-oauth</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell ship-oauth -- claude</span>
 
-<span class="t-cmt"># Record a reusable fact when the agent just established one:</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i capture claim "OAuth token refresh only src/auth.rs + src/session.rs" \
-  --path src/auth.rs --path src/session.rs</span></pre></div>
+<span class="t-cmt"># evidence accrues as the agent works (prompts, reads, edits, logs)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i capture run -- cargo test</span>
+<span class="t-prompt">$</span> <span class="t-cmd">git add src/auth.rs tests/auth.rs &amp;&amp; h5i capture commit -m "OAuth token refresh"</span>
+
+<span class="t-cmt"># review the provable record, then merge</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env diff ship-oauth</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env apply ship-oauth</span></pre></div>
     </div>
 
-    <h2>Codex workflow</h2>
-    <p>Codex does not need a hook API. h5i reads the active Codex JSONL session and backfills file reads, searches, listings, and patch edits into the context trace.</p>
+    <h2>Flow B — Claude + Codex review loop</h2>
+    <p>One agent proposes, another reviews — on the same Git-backed evidence. Claude works in its workspace and proposes; Codex pulls the shared <code>refs/h5i/*</code> evidence, reviews the provable record, and applies on its own clone. Handoffs are Git-backed (<code>h5i msg</code>, the "Agent Radio"), so nothing depends on a shared chat window.</p>
 
     <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">codex</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i codex prelude</span>
-<span class="t-cmt"># work normally</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i codex sync</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i codex finish --summary "implemented retry-aware API client"</span></pre></div>
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">claude-codex-loop</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># Claude: work in the box, commit with provenance, then propose</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env create refactor-client</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell refactor-client -- claude</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env propose refactor-client</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i msg review codex "client refactor ready" --focus src/api/client.rs</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i share push</span>
+
+<span class="t-cmt"># Codex (other clone): pull the evidence, review, apply</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i share pull</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env inspect refactor-client --capture latest</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i msg ack 1 "reviewed, applying"</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env apply refactor-client</span></pre></div>
+    </div>
+
+    <h2>Flow C — Security-sensitive refactor</h2>
+    <p>When the work touches auth, secrets, or anything you'd rather an agent didn't run loose in your tree, the workspace's <strong>confinement</strong> pillar carries the weight: "the agent physically could not exfiltrate" beats "we logged it." <code>h5i env create</code> picks the strongest isolation the host can enforce (Landlock + seccomp, and a network egress allowlist on the container tier). Every blocked access and every command is recorded; nothing reaches your branch until you <code>apply</code>.</p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">secure-refactor</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env probe</span>
+<span class="t-cmt"># show what isolation the host can enforce (incl. rootless Podman)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env create rotate-secrets --isolation container</span>
+<span class="t-cmt"># strongest isolation: confined fs + syscall deny-list + egress allowlist</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell rotate-secrets</span>
+<span class="t-cmt"># work inside the box — or hand it to an agent</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env log rotate-secrets</span>
+<span class="t-cmt"># audit: what changed, every command run, every blocked access</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i audit review --limit 50</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env propose rotate-secrets</span>
+<span class="t-cmt"># mediated commit + review brief — apply refuses without it</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env apply rotate-secrets</span></pre></div>
+    </div>
+
+    <h2>Flow D — Team PR review</h2>
+    <p>The reviewer never has to take the agent's word for it. Provenance, audit signals, and the captured command record travel with the repo as <code>refs/h5i/*</code> and surface as review-ready PR evidence — a sticky comment with review-focus files, goal, evidence, checklist, audit signals, and per-commit provenance. Teammates sync the sidecar with <code>h5i share</code>.</p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">team-review</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># author: publish the provable record onto the PR</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post --style review</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i share push</span>
+
+<span class="t-cmt"># reviewer: pull the evidence and read the record Git can't show</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i share pull</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/auth.rs --show-prompt</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i audit review --limit 50</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context show --depth 2</span></pre></div>
     </div>
 
     <h2>Commit with provenance</h2>
-    <p>Use <code>h5i capture commit</code> when staged changes are ready. It records the prompt, model, agent, decisions, tests, causal links, and audit output with the Git commit.</p>
+    <p>The provenance pillar of the workspace. Use <code>h5i capture commit</code> when staged changes are ready: it records the prompt, model, agent, decisions, tests, causal links, and audit output alongside the Git commit. In Claude Code the human prompt is captured automatically by the <code>UserPromptSubmit</code> hook; <code>--intent</code> is the fallback for Codex, CI, or manual commits.</p>
 
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">capture</span></div>
@@ -125,13 +239,13 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "add token refresh flow" \
   --agent codex \
   --model gpt-5 \
-  --prompt "finish OAuth token refresh with tests" \
-  --test-cmd "cargo test" \
+  --intent "finish OAuth token refresh with tests" \
+  --tests \
   --audit</span></pre></div>
     </div>
 
     <h2>Recall what happened</h2>
-    <p>Reviewers and follow-up agents use <code>recall</code> commands to recover the history Git cannot show by itself.</p>
+    <p>Reviewers and follow-up agents use <code>recall</code> commands to recover the provable record Git cannot show by itself.</p>
 
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">recall</span></div>
@@ -143,7 +257,7 @@
     </div>
 
     <h2>Audit risk before merge</h2>
-    <p><code>audit</code> commands split high-precision quality signals from informational shape signals. A large diff alone should not block review; a large diff with blind edits, secrets, test regression, or code execution deserves attention.</p>
+    <p>The governance pillar: deterministic audit and compliance, no model in the loop. <code>audit</code> commands split high-precision quality signals from informational shape signals. A large diff alone should not block review; a large diff with blind edits, secrets, test regression, or code execution deserves attention.</p>
 
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">audit</span></div>
@@ -153,8 +267,8 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i audit compliance --since 2026-01-01 --format html --output audit.html</span></pre></div>
     </div>
 
-    <h2>Publish context into the PR</h2>
-    <p>The shared context is useful before, during, and after review. <code>h5i share pr post</code> is one UI for it: a sticky comment containing review-focus files, goal, evidence, checklist, audit signals, THINK/NOTE highlights, and per-commit provenance.</p>
+    <h2>Publish review-ready PR evidence</h2>
+    <p>The workspace's record is useful before, during, and after review. <code>h5i share pr post</code> turns it into review-ready PR evidence: a sticky comment containing review-focus files, goal, evidence, checklist, audit signals, THINK/NOTE highlights, and per-commit provenance.</p>
 
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">share</span></div>
@@ -167,29 +281,15 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i share pull</span></pre></div>
     </div>
 
-    <h2>Run risky work in a sandbox</h2>
-    <p>When the work is a refactor, a dependency upgrade, or anything you'd rather an agent didn't run loose in your tree, give it a confined <code>env</code>: a git worktree plus a policy that limits what the code can read, write, and reach over the network. <code>h5i env create</code> picks the strongest isolation the host can enforce; <code>h5i env shell</code> drops you (or the agent) inside the box; and you audit and merge afterward — nothing reaches your branch until you <code>apply</code>.</p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">env</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create fix-auth</span>
-<span class="t-cmt"># picks the strongest isolation the host supports (Landlock + seccomp → egress allowlist)</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell fix-auth</span>
-<span class="t-cmt"># work inside it — or hand the box to an agent</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env diff fix-auth</span>
-<span class="t-cmt"># audit: what changed, every command run, every blocked access</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env log fix-auth</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env propose fix-auth</span>
-<span class="t-cmt"># mediated commit + review brief — apply refuses without it</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env apply fix-auth</span>
-<span class="t-cmt"># merge into your branch — only when you choose to</span></pre></div>
-    </div>
-
-    <h2>PR styles</h2>
-    <p>Use <code>--style review</code> when reviewers need a triage-oriented view of the context. Use <code>receipt</code> for a screenshot-friendly summary, <code>detective</code> for a narrative brief, <code>replay</code> when the reasoning DAG should be the hero, and <code>minimal</code> for quiet internal provenance.</p>
+    <h2>PR evidence styles</h2>
+    <p>Use <code>--style review</code> when reviewers need a triage-oriented view of the evidence. Use <code>receipt</code> for a screenshot-friendly summary, <code>detective</code> for a narrative brief, <code>replay</code> when the reasoning DAG should be the hero, and <code>minimal</code> for quiet internal provenance.</p>
 
     <div class="callout">
-      <strong>Rule of thumb:</strong> capture facts while agents work, recall history when you resume, audit before merge, and share the context through the surface that matches the moment.
+      <strong>Rule of thumb:</strong> open the auditable workspace first (<code>h5i env</code>), capture commands and commits while the agent works, audit before merge, and post review-ready PR evidence through the style that matches the moment. It all lives in your Git (<code>refs/h5i/*</code>) — no SaaS, no lock-in.
+    </div>
+
+    <div class="callout">
+      <strong>Try it on your next AI-assisted branch:</strong> create a sandboxed workspace, capture the run, and post a review-ready PR brief. <code>h5i env create my-branch &amp;&amp; h5i capture run -- cargo test &amp;&amp; h5i share pr post --style review</code>
     </div>
   </article>
 </main>

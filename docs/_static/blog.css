@@ -444,6 +444,41 @@ footer.blog-footer {
   display: grid; gap: 0;
   border-top: 1px solid var(--border);
 }
+/* pillar group heading inside the editorial list */
+.post-group {
+  grid-column: 1 / -1;
+  border-bottom: 1px solid var(--border);
+  padding: 2.6rem 0.4rem 1.1rem;
+}
+.post-group:first-child { padding-top: 1.4rem; }
+.post-group .post-group-eyebrow {
+  font-family: var(--mono); font-size: 0.7rem;
+  letter-spacing: 0.14em; color: var(--red-text);
+  text-transform: uppercase; margin-bottom: 0.5rem;
+}
+.post-group h2 {
+  font-size: 1.55rem; font-weight: 700; line-height: 1.2;
+  margin: 0 0 0.35rem; color: var(--ink); letter-spacing: -0.02em;
+}
+.post-group p {
+  color: var(--text-dim); font-size: 0.95rem; margin: 0; line-height: 1.55;
+  max-width: 640px;
+}
+/* featured cornerstone card */
+a.post-card.featured {
+  border: 1px solid var(--red);
+  border-radius: 10px;
+  padding: 1.9rem 1.6rem;
+  margin-bottom: 0.6rem;
+  background: rgba(210,28,28,0.04);
+}
+a.post-card.featured::before { display: none; }
+a.post-card.featured:hover { padding-left: 1.6rem; background: rgba(210,28,28,0.07); }
+a.post-card.featured h2 { font-size: 1.7rem; }
+.post-list > .featured-wrap {
+  grid-column: 1 / -1;
+  padding-bottom: 0.8rem;
+}
 a.post-card {
   display: block;
   background: transparent;
