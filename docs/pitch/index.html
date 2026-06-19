@@ -641,7 +641,7 @@
   <div style="width:100%;max-width:900px;">
     <div class="section-tag">The problem</div>
     <h2>Code review lost the <span class="red">execution trail</span><br>when agents arrived.</h2>
-    <p class="lede">The work behind it lives everywhere but the repo: prompts in chat, logs scrolled past, runs screenshotted, reviewers trusting a green check. Before a human can approve it, six questions need answers Git was never built to store.</p>
+    <p class="lede">The work behind it lives everywhere but the repo: prompts in chat, past logs, runs screenshotted, reviewers trusting a green check.</p>
 
     <div class="qlist" style="margin-top:26px;">
       <div class="qrow"><span class="q">What prompt produced this change — and was it any good?</span><span class="gx">git can't say</span></div>
@@ -983,15 +983,15 @@
     <p class="lede">No migration. h5i sits on top of Git, PRs, and the agents teams already use, and every session it observes compounds into a private, content-addressed record that is hard to leave behind. First adopters: <span class="cyan">platform, security, and DevEx leads</span> keeping PR review defensible as agents ship more code.</p>
 
     <div class="g3" style="margin-top:28px;">
-      <div class="metric"><span style="font-family:var(--mono);font-size:0.86rem;color:var(--text-faint);letter-spacing:0.08em;">UP TO</span><span class="mv">95%</span><span class="ml">less token waste with the object store</span></div>
+      <div class="metric"><span style="font-family:var(--mono);font-size:0.86rem;color:var(--text-faint);letter-spacing:0.08em;">UP TO</span><span class="mv">95%</span><span class="ml">less token waste</span></div>
       <div class="metric"><span class="mv">0–100</span><span class="ml">offline prompt score on every commit</span></div>
       <div class="metric"><span class="mv">5</span><span class="ml">evidence refs that travel with the repo</span></div>
     </div>
 
     <div class="g3" style="margin-top:18px;">
-      <div class="card-sm"><span class="pill">structured traces</span><p style="margin-top:8px;font-size:0.98rem;">Every session compounds a private corpus of how the team delegates to agents.</p></div>
-      <div class="card-sm"><span class="pill cyan">Git-native distribution</span><p style="margin-top:8px;font-size:0.98rem;">Ships through the remotes teams already have, with no SaaS to adopt, no data to hand over.</p></div>
-      <div class="card-sm"><span class="pill green">deterministic &amp; offline</span><p style="margin-top:8px;font-size:0.98rem;">Prompt + risk scoring nothing can replicate without your repo. Apache-2.0 Rust core.</p></div>
+      <div class="card-sm"><span class="pill">structured traces</span><p style="margin-top:8px;font-size:0.98rem;">Every session tracks how the team delegates to agents.</p></div>
+      <div class="card-sm"><span class="pill cyan">Git-native distribution</span><p style="margin-top:8px;font-size:0.98rem;">Ships through the remotes teams already have, with no SaaS.</p></div>
+      <div class="card-sm"><span class="pill green">deterministic &amp; offline</span><p style="margin-top:8px;font-size:0.98rem;">Prompt + risk scoring nothing can replicate without your repo.</p></div>
     </div>
 
     <p style="margin-top:22px;font-size:1rem;color:var(--text-dim);"><span class="green">Built with h5i:</span> this repo develops itself through h5i. <strong>256</strong> cross-agent messages, <strong>~96</strong> reasoning milestones, and this pitch + docs rewritten by Claude and Codex coordinating over <code>h5i msg</code>.</p>

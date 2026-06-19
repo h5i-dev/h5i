@@ -367,6 +367,8 @@
       color: var(--ink); font-family: var(--mono);
     }
     .hero-stat .lbl { font-size: 0.66rem; color: var(--text-faint); letter-spacing: 0.14em; margin-top: 0.6rem; text-transform: uppercase; }
+    /* feature-name variant: keyword as the bold word, smaller than the number tiles */
+    .hero-stats--feat .val { font-size: 1.05rem; line-height: 1.3; }
     .hero-shot {
       margin: 4rem auto 0;
       max-width: 960px;
@@ -885,11 +887,11 @@
       <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh</code>
       <button class="copy-btn" onclick="copyInstall()">copy</button>
     </div>
-    <div class="hero-stats">
-      <div class="hero-stat"><div class="val">Git-native</div><div class="lbl">NO SAAS, NO LOCK-IN</div></div>
-      <div class="hero-stat"><div class="val">up to 95%</div><div class="lbl">LESS TOKEN WASTE</div></div>
-      <div class="hero-stat"><div class="val">Sandbox</div><div class="lbl">CONFINED &amp; AUDITABLE</div></div>
-      <div class="hero-stat"><div class="val">0–100</div><div class="lbl">OFFLINE PROMPT SCORE</div></div>
+    <div class="hero-stats hero-stats--feat">
+      <div class="hero-stat"><div class="val">Token Reduction</div><div class="lbl">up to 95% less</div></div>
+      <div class="hero-stat"><div class="val">Claude &harr; Codex</div><div class="lbl">real-time, over Git</div></div>
+      <div class="hero-stat"><div class="val">Sandbox</div><div class="lbl">confined by default</div></div>
+      <div class="hero-stat"><div class="val">Vibe-Check</div><div class="lbl">maturity of any AI PR</div></div>
     </div>
   </div>
 </section>
@@ -1027,7 +1029,7 @@
         <div class="feat-card reveal"><span class="feat-cmd">seven weighted signals</span><div class="feat-name">Specificity &amp; control dominate</div><div class="feat-desc">Rewards prompts that name the goal, set constraints, reference real files, and ask for verification. Readability is the quietest voice (8%) because it misleads on terse technical text.</div></div>
       </div>
     </div>
-    <p class="section-sub reveal" style="margin-top:28px;">Prompt quality becomes <strong>inspectable, trendable, and reviewable</strong> across commits: a simple way for a team to see and improve how it delegates work to agents, without sending a single prompt to another model. It's a heuristic signal of prompt craft, <strong>not a developer rating</strong>. <a href="/blog/prompt-maturity-score/">Read how it works →</a></p>
+    <p class="section-sub reveal" style="margin-top:28px;">Prompt quality becomes <strong>inspectable, trendable, and reviewable</strong> across commits: a simple way for a team to see and improve how it delegates work to agents. It's a heuristic signal of prompt craft, <strong>not a developer rating</strong>. <a href="/blog/prompt-maturity-score/">Read how it works →</a></p>
   </div>
 </section>
 
