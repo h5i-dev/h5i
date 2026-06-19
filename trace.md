@@ -1963,3 +1963,4 @@ I'll wait for the three mappers to return their precise structural maps, then st
 [17:29:07] THINK: rs` (I'll be editing these) while the env.
 [17:29:07] THINK: Let me start with **Idea 0 (fleet/doctor)**.
 [17:29:07] THINK: Let me insert the `doctor` function and renderer into env.
+[17:29:07] THINK: Idea 0 wiring is in. Let me build (with reduced parallelism per the WSL2 OOM note) to catch errors early.
