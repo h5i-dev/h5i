@@ -2272,3 +2272,4 @@ _[Checkpoint: 6a35d013 — session ended (auto-checkpoint)]_
 [23:43:56] ACT: edited tests/cli_integration.rs
 [23:45:50] ACT: edited MANUAL.md
 [23:45:59] ACT: edited man/man1/h5i.1
+[23:46:35] THINK: To note: this commit only pushed h5i provenance into `refs/h5i/notes` locally; the code commit itself is on your `context-dag-score` branch and not pushed to any remote (you didn't ask me to, and I'll only push when you do).
