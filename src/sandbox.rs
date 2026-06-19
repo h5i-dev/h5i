@@ -528,6 +528,16 @@ fn validate_private_paths(p: &Profile) -> Result<(), H5iError> {
                 "private_paths '{rel}' must not contain '..' (fail-closed)"
             )));
         }
+        // A comma cannot be carried by Podman's `--mount` syntax, so a private
+        // bind with a comma in its path could not be applied at the container
+        // tier. Reject it at policy load rather than silently skipping the bind
+        // (an enforcement feature must fail closed, not fail open).
+        if rel.contains(',') {
+            return Err(H5iError::Metadata(format!(
+                "private_paths '{rel}' must not contain ',' (unsupported by the container \
+                 mount syntax) (fail-closed)"
+            )));
+        }
         if !KINDS.contains(&pp.kind.as_str()) {
             return Err(H5iError::Metadata(format!(
                 "private_paths '{rel}' has unknown kind '{}' — use cache|scratch|private \
@@ -2117,6 +2127,15 @@ isolation = "process"
 "a/b" = { kind = "cache" }
 "#;
         assert!(load_from_str(overlap, "dev", None).is_err());
+        // Comma (unsupported by the container mount syntax) — fail closed at
+        // load, not silently skipped later.
+        let comma = r#"
+[profile.dev]
+isolation = "process"
+[profile.dev.private_paths]
+"a,b" = { kind = "cache" }
+"#;
+        assert!(load_from_str(comma, "dev", None).is_err());
     }
 
     #[test]

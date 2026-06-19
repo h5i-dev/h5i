@@ -731,13 +731,12 @@ pub fn build_run_argv(
     }
     // Private-path binds (Idea 3): each per-env backing dir mounted rw over its
     // workspace path inside the box (`/work/<rel>`), giving distinct inodes per
-    // env. A comma in a path can't be carried by Podman's `--mount` syntax, so
-    // such an entry is skipped (the bind simply doesn't apply for that path).
+    // env. Comma-bearing paths (which Podman's `--mount` syntax can't carry) are
+    // rejected upstream — fail-closed in `validate_private_paths` (rel) and
+    // `env::prepare_private_paths` (backing) — so by here every bind is safe to
+    // emit; an enforcement feature must never silently drop a required bind.
     for b in private_binds {
         let rel = b.rel.trim_matches('/');
-        if b.backing.display().to_string().contains(',') || rel.contains(',') {
-            continue;
-        }
         a.push("--mount".into());
         a.push(format!(
             "type=bind,source={},target=/work/{rel},rw",
@@ -1374,29 +1373,9 @@ mod tests {
         // Each per-env backing dir is bound rw at its workspace-relative path.
         assert!(joined.contains("type=bind,source=/envdir/private/target,target=/work/target,rw"));
         assert!(joined.contains("type=bind,source=/envdir/private/.next,target=/work/.next,rw"));
-        // A comma in a backing path can't be carried by Podman --mount → skipped,
-        // not partially applied.
-        let weird = vec![crate::sandbox_policy::PrivateBind {
-            backing: "/env,dir/private/target".into(),
-            rel: "target".into(),
-        }];
-        let argv2 = build_run_argv(
-            &rt(),
-            &p,
-            Path::new("/work/dir"),
-            "img",
-            "n",
-            &NetPlan::None,
-            &["sh".into()],
-            &[],
-            None,
-            None,
-            &[],
-            None,
-            None,
-            &weird,
-        );
-        assert!(!argv2.join(" ").contains("target=/work/target,rw"));
+        // Comma-bearing paths are rejected upstream (validate_private_paths /
+        // prepare_private_paths fail closed), so build_run_argv only ever sees
+        // safe binds and emits every one — no silent fail-open skip here.
     }
 
     // Managed-settings injection: when present, a read-only bind mount lands at

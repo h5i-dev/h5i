@@ -88,6 +88,129 @@ pub fn fingerprint(value: &str) -> String {
     format!("sha256:{:x}", h.finalize())[..19].to_string() // "sha256:" + 12 hex
 }
 
+/// Wall-clock timeout for a `command:` secret extractor.
+const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Max stdout captured from a `command:` extractor (1 MiB) — a credential is
+/// small; anything larger is a bug or an attempt to exhaust memory.
+const COMMAND_OUTPUT_CAP: usize = 1024 * 1024;
+
+/// Run `cmd` via `sh -c` with the production timeout + cap.
+fn run_command_capped(cmd: &str, name: &str) -> Result<String, H5iError> {
+    run_command_bounded(cmd, name, COMMAND_TIMEOUT, COMMAND_OUTPUT_CAP)
+}
+
+/// Run `cmd` via `sh -c` with a wall timeout and a stdout cap, returning the
+/// trimmed stdout. Fail-closed: a non-zero exit, a timeout, or output past the
+/// cap is an error, never a silently truncated/partial credential. The child
+/// gets its own process group so a timeout reaps the whole tree.
+fn run_command_bounded(
+    cmd: &str,
+    name: &str,
+    timeout: std::time::Duration,
+    cap: usize,
+) -> Result<String, H5iError> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c")
+            .arg(cmd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        unsafe {
+            use std::os::unix::process::CommandExt;
+            c.pre_exec(|| {
+                // Own session so a timeout killpg reaps grandchildren too.
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        c.spawn().map_err(|e| {
+            H5iError::Metadata(format!(
+                "secret grant '{name}': command extractor failed to spawn: {e} (fail-closed)"
+            ))
+        })?
+    };
+
+    // Drain stdout on a thread so a child that fills the pipe can't deadlock
+    // while we poll for exit/timeout. Keep reading to EOF (so the child never
+    // blocks on a full pipe) but RETAIN only up to the cap, discarding the rest
+    // — bounded memory regardless of how much the child emits. Returns the
+    // retained bytes plus whether the cap was exceeded.
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let reader = std::thread::spawn(move || {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut over = false;
+        let mut chunk = [0u8; 8192];
+        loop {
+            match stdout.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if buf.len() <= cap {
+                        buf.extend_from_slice(&chunk[..n]);
+                        if buf.len() > cap {
+                            over = true;
+                        }
+                    }
+                    // else: keep draining into the void so the child can finish.
+                }
+                Err(_) => break,
+            }
+        }
+        (buf, over)
+    });
+
+    // Poll for exit until the deadline; on timeout, kill the whole group.
+    let started = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) => {
+                if started.elapsed() >= timeout {
+                    #[cfg(unix)]
+                    unsafe {
+                        libc::kill(-(child.id() as i32), libc::SIGKILL);
+                    }
+                    #[cfg(not(unix))]
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = reader.join();
+                    return Err(H5iError::Metadata(format!(
+                        "secret grant '{name}': command extractor exceeded {}s (fail-closed)",
+                        timeout.as_secs()
+                    )));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(e) => {
+                let _ = reader.join();
+                return Err(H5iError::Metadata(format!(
+                    "secret grant '{name}': command extractor wait failed: {e} (fail-closed)"
+                )));
+            }
+        }
+    };
+    let (buf, over) = reader.join().unwrap_or_default();
+    if over {
+        return Err(H5iError::Metadata(format!(
+            "secret grant '{name}': command extractor produced more than {cap} bytes (fail-closed)"
+        )));
+    }
+    if !status.success() {
+        return Err(H5iError::Metadata(format!(
+            "secret grant '{name}': command extractor exited {} (fail-closed)",
+            status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into())
+        )));
+    }
+    Ok(String::from_utf8_lossy(&buf)
+        .trim_end_matches(['\n', '\r'])
+        .to_string())
+}
+
 /// Resolve a grant's value from its host-side source. Pure w.r.t. the filesystem
 /// and process env (both injectable in tests). Fail-closed on missing/empty.
 ///
@@ -124,26 +247,11 @@ pub fn resolve_value(grant: &SecretGrant, allow_command: bool) -> Result<String,
                 grant.name
             )));
         }
-        let out = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .output()
-            .map_err(|e| {
-                H5iError::Metadata(format!(
-                    "secret grant '{}': command extractor failed to spawn: {e} (fail-closed)",
-                    grant.name
-                ))
-            })?;
-        if !out.status.success() {
-            return Err(H5iError::Metadata(format!(
-                "secret grant '{}': command extractor exited {} (fail-closed)",
-                grant.name,
-                out.status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into())
-            )));
-        }
-        String::from_utf8_lossy(&out.stdout)
-            .trim_end_matches(['\n', '\r'])
-            .to_string()
+        // Bounded even when opted-in: a trusted-but-buggy extractor (or a
+        // credential helper waiting on a TTY prompt) must not hang env
+        // create/run forever or balloon memory. Wall timeout + stdout cap,
+        // fail-closed on either.
+        run_command_capped(cmd, &grant.name)?
     } else {
         return Err(H5iError::Metadata(format!(
             "secret grant '{}': unsupported source '{source}' (use env:, file:, or command:)",
@@ -415,5 +523,44 @@ mod tests {
     fn command_extractor_nonzero_exit_fails_closed() {
         let g = grant("TOK", Some("command:exit 3"), Some("env"));
         assert!(resolve_value(&g, true).is_err());
+    }
+
+    #[test]
+    fn command_extractor_under_limits_ok() {
+        let v = run_command_bounded(
+            "printf hi",
+            "T",
+            std::time::Duration::from_secs(5),
+            1024,
+        )
+        .unwrap();
+        assert_eq!(v, "hi");
+    }
+
+    #[test]
+    fn command_extractor_times_out_fail_closed() {
+        // A hanging extractor must not block forever — killed at the deadline.
+        let err = run_command_bounded(
+            "sleep 30",
+            "T",
+            std::time::Duration::from_millis(300),
+            1024,
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("exceeded"), "{err}");
+    }
+
+    #[test]
+    fn command_extractor_caps_output_fail_closed() {
+        // Far more than the cap: the reader drains to EOF (no deadlock) but
+        // retains only the cap and reports it exceeded.
+        let err = run_command_bounded(
+            "yes aaaaaaaaaa | head -c 200000",
+            "T",
+            std::time::Duration::from_secs(10),
+            1024,
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("more than"), "{err}");
     }
 }

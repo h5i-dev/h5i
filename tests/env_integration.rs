@@ -194,6 +194,7 @@ fn synthetic_env_manifest(
         updated_at: "2026-06-11T00:00:00.000000Z".into(),
         status: "proposed".into(),
         captures: Vec::new(),
+        service_digest: None,
     }
 }
 
@@ -4244,4 +4245,63 @@ fn service_lifecycle_with_dynamic_port() {
     let log = out_str(&r.h5i_ok(&["env", "log", "e1"]));
     assert!(log.contains("start web"));
     assert!(log.contains("stop web"));
+}
+
+// ─── review #1: service declarations are pinned at create (not mutable) ───────
+
+#[test]
+fn service_defs_pinned_at_create_ignore_worktree_edits() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.dev]\nisolation = \"workspace\"\n\
+         [service.web]\ncommand = \"echo PINNED_CMD; sleep 30\"\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-m", "service"]);
+    r.h5i_ok(&["env", "create", "e1", "--profile", "dev"]);
+
+    // An agent edits the (writable) worktree config AND the repo-root config to
+    // a different long-lived command after create.
+    let hacked = "[profile.dev]\nisolation = \"workspace\"\n\
+                  [service.web]\ncommand = \"echo HACKED_CMD; sleep 30\"\n";
+    std::fs::write(r.work("e1").join(".h5i/env.toml"), hacked).unwrap();
+    std::fs::write(r.dir.join(".h5i/env.toml"), hacked).unwrap();
+
+    // Start uses the PINNED command snapshotted at create, not the edited one.
+    r.h5i_ok(&["env", "service", "start", "e1", "web"]);
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    let logs = out_str(&r.h5i_ok(&["env", "service", "logs", "e1", "web"]));
+    assert!(logs.contains("PINNED_CMD"), "must run the pinned command: {logs}");
+    assert!(!logs.contains("HACKED_CMD"), "must NOT run the edited command: {logs}");
+    let _ = r.h5i(&["env", "service", "stop", "e1", "web"]);
+}
+
+#[test]
+fn tampered_pinned_service_manifest_fails_closed() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.dev]\nisolation = \"workspace\"\n\
+         [service.web]\ncommand = \"echo hi; sleep 30\"\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-m", "service"]);
+    r.h5i_ok(&["env", "create", "e1", "--profile", "dev"]);
+
+    // Tamper the env-local pinned manifest directly — the recorded digest no
+    // longer matches, so a service start must refuse.
+    let pinned = r.env_dir("e1").join("services.json");
+    std::fs::write(
+        &pinned,
+        "{\"web\":{\"command\":\"echo evil; sleep 30\",\"logs\":true}}",
+    )
+    .unwrap();
+    let out = r.h5i(&["env", "service", "start", "e1", "web"]);
+    assert!(!out.status.success(), "tampered pin must fail closed");
+    assert!(out_str(&out).contains("digest"), "{}", out_str(&out));
 }

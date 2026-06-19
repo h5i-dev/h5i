@@ -146,6 +146,13 @@ pub struct EnvManifest {
     /// Object ids in `refs/h5i/objects` — the evidence, oldest first.
     #[serde(default)]
     pub captures: Vec<String>,
+    /// sha256 over the env-local pinned service manifest (`services.json`),
+    /// snapshotted at create from the base's `.h5i/env.toml`. `None` for envs
+    /// created before services existed (or with no `[service.*]`). Pins the
+    /// service declarations so an agent can't edit the worktree config to start
+    /// a different long-lived command than the reviewer approved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_digest: Option<String>,
 }
 
 impl EnvManifest {
@@ -992,6 +999,10 @@ pub fn create(
     let wt_repo = Repository::open(&work_path)?;
     crate::ctx::pin_worktree_context(&wt_repo, &env_ctx)?;
 
+    // Pin service declarations from the base worktree into an env-local,
+    // box-immutable manifest, recording its digest (review #1).
+    let service_digest = pin_services_at_create(&work_path, &dir)?;
+
     let manifest = EnvManifest {
         id: id.clone(),
         agent: agent.to_string(),
@@ -1010,6 +1021,7 @@ pub fn create(
         updated_at: now_ts(),
         status: ST_CREATED.to_string(),
         captures: Vec::new(),
+        service_digest,
     };
 
     let policy_toml = policy.to_toml()?;
@@ -1301,6 +1313,17 @@ fn prepare_private_paths(
         // The mountpoint must exist inside the worktree.
         let target = work.join(&rel);
         std::fs::create_dir_all(&target).map_err(|e| H5iError::with_path(e, &target))?;
+        // Container tier carries the backing dir as a Podman `--mount` whose
+        // syntax can't include a comma — fail closed if the env's host path has
+        // one, rather than silently dropping the (policy-required) isolation.
+        if policy.claim == IsolationClaim::Container && backing.display().to_string().contains(',') {
+            return Err(H5iError::Metadata(format!(
+                "private_paths '{rel}': the env's backing path '{}' contains a ',' which the \
+                 container mount syntax cannot carry — move the repo out of a comma'd path \
+                 (fail-closed)",
+                backing.display()
+            )));
+        }
         if kernel {
             policy.profile.fs_write.push(backing.display().to_string());
         }
@@ -2844,23 +2867,94 @@ fn env_key(name: &str) -> String {
         .collect()
 }
 
-/// Read the `[service.*]` table from the env's worktree `.h5i/env.toml` (falling
-/// back to the repo-root copy when the worktree is gone). Empty when neither
-/// declares services.
+/// Parse the `[service.*]` table from one `.h5i/env.toml`. Empty when the file
+/// is absent or declares no services.
+fn parse_services_file(
+    path: &Path,
+) -> Result<std::collections::BTreeMap<String, ServiceDef>, H5iError> {
+    if !path.is_file() {
+        return Ok(std::collections::BTreeMap::new());
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| H5iError::with_path(e, path))?;
+    let parsed: ServiceFileToml = toml::from_str(&text)?;
+    Ok(parsed.service)
+}
+
+/// sha256 over the canonical (sorted, re-serialized) service manifest — stable
+/// regardless of on-disk formatting, so the pin compares by content.
+fn service_defs_digest(defs: &std::collections::BTreeMap<String, ServiceDef>) -> String {
+    use sha2::{Digest, Sha256};
+    let json = serde_json::to_string(defs).unwrap_or_default();
+    let mut h = Sha256::new();
+    h.update(json.as_bytes());
+    format!("{:x}", h.finalize())
+}
+
+/// Env-local pinned service manifest (immutable from the box — under
+/// `.git/.h5i`, never in `$WORK` or the box_git grants).
+fn pinned_services_path(h5i_root: &Path, m: &EnvManifest) -> PathBuf {
+    m.dir(h5i_root).join("services.json")
+}
+
+/// Snapshot the base worktree's `[service.*]` into the env-local pinned manifest
+/// at create, returning the digest to record in the manifest (review #1: service
+/// declarations must be policy-pinned, not read from mutable workspace content).
+/// `None` when no services are declared. Fail-closed on a malformed services
+/// section.
+fn pin_services_at_create(
+    work_path: &Path,
+    env_dir: &Path,
+) -> Result<Option<String>, H5iError> {
+    let defs = parse_services_file(&work_path.join(".h5i/env.toml"))?;
+    if defs.is_empty() {
+        return Ok(None);
+    }
+    let json = serde_json::to_string_pretty(&defs)?;
+    let path = env_dir.join("services.json");
+    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(Some(service_defs_digest(&defs)))
+}
+
+/// Load the env's service declarations from the **pinned** env-local manifest,
+/// verifying its content digest against the one recorded at create — so an agent
+/// editing the (writable) worktree `.h5i/env.toml` after create can't change
+/// which long-lived command a service runs. Falls back to the worktree/repo
+/// config only for envs created before pinning existed (no recorded digest).
 fn load_service_defs(
     h5i_root: &Path,
     m: &EnvManifest,
 ) -> Result<std::collections::BTreeMap<String, ServiceDef>, H5iError> {
-    let mut candidates = vec![m.work_dir(h5i_root).join(".h5i/env.toml")];
-    if let Some(repo_workdir) = h5i_root.parent().and_then(|p| p.parent()) {
-        candidates.push(repo_workdir.join(".h5i/env.toml"));
+    let pinned = pinned_services_path(h5i_root, m);
+    if pinned.is_file() {
+        let text = std::fs::read_to_string(&pinned).map_err(|e| H5iError::with_path(e, &pinned))?;
+        let defs: std::collections::BTreeMap<String, ServiceDef> = serde_json::from_str(&text)?;
+        if let Some(expected) = &m.service_digest {
+            let got = service_defs_digest(&defs);
+            if &got != expected {
+                return Err(H5iError::Metadata(format!(
+                    "pinned service manifest for {} does not match its recorded digest \
+                     (expected {expected}, found {got}) — refusing to start a service under a \
+                     tampered manifest (fail-closed)",
+                    m.id
+                )));
+            }
+        }
+        return Ok(defs);
     }
-    for path in candidates {
-        if path.is_file() {
-            let text = std::fs::read_to_string(&path).map_err(|e| H5iError::with_path(e, &path))?;
-            let parsed: ServiceFileToml = toml::from_str(&text)?;
-            if !parsed.service.is_empty() {
-                return Ok(parsed.service);
+    // Back-compat: an env created before service pinning has no pinned file or
+    // recorded digest. Fall back to the worktree (then repo-root) config.
+    if m.service_digest.is_none() {
+        for path in [
+            m.work_dir(h5i_root).join(".h5i/env.toml"),
+            h5i_root
+                .parent()
+                .and_then(|p| p.parent())
+                .map(|w| w.join(".h5i/env.toml"))
+                .unwrap_or_default(),
+        ] {
+            let defs = parse_services_file(&path)?;
+            if !defs.is_empty() {
+                return Ok(defs);
             }
         }
     }
@@ -2948,6 +3042,9 @@ pub fn service_start(
     let port_note = dynamic_port
         .map(|p| format!(" port={p}"))
         .unwrap_or_default();
+    // Record the (redacted) pinned command so a reviewer sees exactly what ran,
+    // not just a pid — the command is from the digest-verified pinned manifest.
+    let safe_cmd = crate::secrets::redact_text(&def.command);
     append_event(
         repo,
         &EnvEvent {
@@ -2955,7 +3052,7 @@ pub fn service_start(
             env_id: m.id.clone(),
             agent: m.agent.clone(),
             event: "service".into(),
-            detail: Some(format!("start {name} pid={pid}{port_note}")),
+            detail: Some(format!("start {name} pid={pid}{port_note} cmd=`{safe_cmd}`")),
             capture: None,
         },
     )?;
@@ -3105,7 +3202,7 @@ pub fn render_services(env_id: &str, rows: &[ServiceStatus]) -> String {
         let port = s
             .record
             .dynamic_port
-            .map(|p| format!(" http://127.0.0.1:{p}"))
+            .map(|p| format!(" injected PORT={p}"))
             .unwrap_or_default();
         out.push_str(&format!(
             "  {:<16} {:<8} pid={}{}  `{}`\n",
@@ -3115,27 +3212,39 @@ pub fn render_services(env_id: &str, rows: &[ServiceStatus]) -> String {
     out
 }
 
-/// Render the per-env port map for `env ports` (Idea 2).
+/// Render the per-env port map for `env ports` (Idea 2). These are **injected**
+/// ports: h5i allocates a free host port per service and passes it in as
+/// `PORT` / `H5I_ENV_PORT_<NAME>`. There is **no host→box forwarder in v1** — a
+/// port is reachable only if the service binds the injected value (the
+/// host-port "checkout"/forwarding layer is deferred). The URL is therefore
+/// shown as conditional, never a guarantee.
 pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
     let mut out = String::new();
-    out.push_str(&format!("── ports for {env_id} ──\n"));
+    out.push_str(&format!("── injected ports for {env_id} ──\n"));
     let with_ports: Vec<&ServiceStatus> = rows
         .iter()
         .filter(|s| s.record.dynamic_port.is_some())
         .collect();
     if with_ports.is_empty() {
-        out.push_str("  (no service with a declared port is running)\n");
+        out.push_str("  (no running service has a declared port)\n");
         return out;
     }
-    out.push_str(&format!("  {:<16} {:<10} {:<10} URL\n", "SERVICE", "DECLARED", "DYNAMIC"));
+    out.push_str(
+        "  per-env port injected as PORT / H5I_ENV_PORT_<NAME>; reachable only if the\n  \
+         service binds it (no host→box forwarder in v1)\n",
+    );
+    out.push_str(&format!(
+        "  {:<16} {:<10} {:<10} {}\n",
+        "SERVICE", "DECLARED", "INJECTED", "URL (if the service binds the injected port)"
+    ));
     for s in with_ports {
-        let dynamic = s.record.dynamic_port.unwrap();
+        let injected = s.record.dynamic_port.unwrap();
         out.push_str(&format!(
             "  {:<16} {:<10} {:<10} http://127.0.0.1:{}\n",
             s.record.name,
             s.record.port.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
-            dynamic,
-            dynamic
+            injected,
+            injected
         ));
     }
     out
@@ -4438,6 +4547,7 @@ mod tests {
             updated_at: now_ts(),
             status: ST_IDLE.into(),
             captures: vec![],
+            service_digest: None,
         }
     }
 
@@ -4843,6 +4953,7 @@ mod tests {
             updated_at: now_ts(),
             status: ST_CREATED.into(),
             captures: vec!["cap1".into()],
+            service_digest: None,
         };
         let text = serde_json::to_string_pretty(&m).unwrap();
         let back: EnvManifest = serde_json::from_str(&text).unwrap();
@@ -4945,6 +5056,7 @@ mod tests {
                 updated_at: now_ts(),
                 status: ST_CREATED.into(),
                 captures: Vec::new(),
+                service_digest: None,
             };
             save_manifest(h5i_root, &m).unwrap();
         }

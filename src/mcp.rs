@@ -835,9 +835,11 @@ pub fn tool_definitions() -> Value {
         },
         {
             "name": "h5i_env_ports",
-            "description": "Per-env dynamic port map: each running service with a \
-                declared port and the host port allocated for it (so the arena's \
-                variants can be opened side by side).",
+            "description": "Per-env INJECTED port map: each running service with a \
+                declared port and the free host port h5i allocated and injected as \
+                PORT / H5I_ENV_PORT_<NAME>. NOTE: there is no host→box forwarder in \
+                v1 — a port is reachable only if the service binds the injected value \
+                (dynamic_port). Not a guaranteed URL.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "name": { "type": "string" } },
@@ -2589,6 +2591,12 @@ mod tests {
             "h5i_env_run",
             "h5i_env_list",
             "h5i_env_status",
+            "h5i_env_doctor",
+            "h5i_env_secrets",
+            "h5i_env_service_start",
+            "h5i_env_service_stop",
+            "h5i_env_service_status",
+            "h5i_env_ports",
             "h5i_env_diff",
             "h5i_env_inspect",
             "h5i_env_compare",

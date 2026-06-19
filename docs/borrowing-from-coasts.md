@@ -18,10 +18,15 @@ Ideas 0, 1, 2, 3, and 3.5 below have a **shipped v1** (CLI + MCP + tests):
   (`allow_command_extractors`, pinned in the policy digest) and the `env secrets`
   legibility CLI.
 - **Idea 3.5** — daemon-free `env service start|stop|status|logs` (pid registry,
-  logs-as-captures on stop, start/stop events on `refs/h5i/env`).
-- **Idea 2** — dynamic ports allocated + injected per service
-  (`H5I_ENV_PORT_<NAME>`/`PORT`), surfaced by `env ports`. **Deferred:** canonical
-  `checkout` forwarders, and supervised/container services.
+  logs-as-captures on stop, start/stop events on `refs/h5i/env`). Service
+  declarations are **pinned at create** into an env-local `services.json` whose
+  digest is recorded in the manifest — editing the worktree config can't change
+  what a service runs (verified at start, fail-closed).
+- **Idea 2** — per-service port **injection** (a free host port allocated + passed
+  in as `H5I_ENV_PORT_<NAME>`/`PORT`), surfaced by `env ports`. v1 is injection
+  only — **no host→box forwarder**, so a port is reachable only if the service
+  binds the injected value (rendered as a conditional URL, never a guarantee).
+  **Deferred:** canonical `checkout` forwarders, and supervised/container services.
 
 Still deferred: Idea 4 (PTY drive — trap), 5 (dashboard), 6 (shared services),
 7 (`env init` scaffold), 8 (harness prompts).

@@ -9314,7 +9314,11 @@ fn main() -> anyhow::Result<()> {
                         let rec = h5i_core::env::service_start(git, &h5i_root, &m, &service)?;
                         let port = rec
                             .dynamic_port
-                            .map(|p| format!(" → http://127.0.0.1:{p}"))
+                            .map(|p| {
+                                format!(
+                                    " (injected PORT={p}; reachable at http://127.0.0.1:{p} if it binds the port)"
+                                )
+                            })
                             .unwrap_or_default();
                         println!(
                             "{} service {} started (pid {}){}",
