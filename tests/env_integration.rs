@@ -194,6 +194,7 @@ fn synthetic_env_manifest(
         updated_at: "2026-06-11T00:00:00.000000Z".into(),
         status: "proposed".into(),
         captures: Vec::new(),
+        service_digest: None,
     }
 }
 
@@ -4017,5 +4018,374 @@ fn probe_reports_all_capability_lines() {
         says_yes,
         process_tier_runnable(),
         "probe 'runnable' must match create: {run_line}"
+    );
+}
+
+// ─── Idea 0: fleet view (`env list --json`) + `env doctor` ───────────────────
+
+#[test]
+fn list_json_carries_manifest_and_drift() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "fix-auth"]);
+    let out = r.h5i_ok(&["env", "list", "--json"]);
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("env list --json must be valid JSON");
+    let arr = v.as_array().expect("a JSON array");
+    assert_eq!(arr.len(), 1, "one env created");
+    assert_eq!(arr[0]["id"], "env/tester/fix-auth");
+    // The fleet view enriches each manifest with computed base drift.
+    assert_eq!(arr[0]["drift"], "UpToDate");
+    assert_eq!(arr[0]["status"], "created");
+}
+
+#[test]
+fn doctor_reports_healthy_on_fresh_env() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "fix-auth"]);
+    let out = r.h5i_ok(&["env", "doctor", "fix-auth", "--json"]);
+    let rep: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("env doctor --json must be valid JSON");
+    assert_eq!(rep["healthy"], true, "a fresh workspace env is healthy");
+    let checks = rep["checks"].as_array().expect("checks array");
+    // Policy integrity + enforcement readiness are the load-bearing checks.
+    assert!(checks
+        .iter()
+        .any(|c| c["name"] == "policy" && c["ok"] == true));
+    assert!(checks
+        .iter()
+        .any(|c| c["name"] == "enforcement" && c["ok"] == true));
+}
+
+#[test]
+fn doctor_flags_tampered_policy_and_exits_nonzero() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "fix-auth"]);
+    // Corrupt the on-disk resolved policy so it no longer loads/verifies — the
+    // integrity check must fail closed (a hard ✗, not a warning). (A mere
+    // comment would be normalized away, since the digest is over canonical TOML;
+    // invalid content is an unambiguous tamper.)
+    let pol = r.env_dir("fix-auth").join("policy.resolved.toml");
+    std::fs::write(&pol, "this is not = = valid policy toml\n").unwrap();
+
+    let out = r.h5i(&["env", "doctor", "fix-auth", "--json"]);
+    assert!(
+        !out.status.success(),
+        "doctor must exit non-zero for an unhealthy env"
+    );
+    let rep: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(rep["healthy"], false);
+    let policy_check = rep["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "policy")
+        .expect("a policy check");
+    assert_eq!(policy_check["ok"], false, "tampered policy must fail");
+}
+
+// ─── Idea 3: private_paths (per-env inode isolation) ─────────────────────────
+
+#[test]
+fn private_paths_isolate_writes_into_per_env_backing() {
+    if !process_tier_runnable() {
+        eprintln!("skipping: process-tier confinement not runnable on this host");
+        return;
+    }
+    let r = Repo::new();
+    // A profile that declares a private `cache` path and runs at the process
+    // tier (where a private mount namespace makes the per-env bind possible).
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.dev]\nisolation = \"process\"\n\
+         [profile.dev.private_paths]\n\"cache\" = { kind = \"cache\", persist = true }\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-m", "add private-path profile"]);
+
+    r.h5i_ok(&["env", "create", "work1", "--profile", "dev", "--isolation", "process"]);
+    // Write a file under the private path from inside the box.
+    r.h5i_ok(&[
+        "env", "run", "work1", "--", "sh", "-c", "echo hello-from-box > cache/marker.txt",
+    ]);
+
+    // The write landed in the per-env backing dir, NOT the shared worktree —
+    // this is the inode isolation that prevents cross-env lock/cache contention.
+    let backing = r
+        .env_dir("work1")
+        .join("private/cache/marker.txt");
+    assert!(
+        backing.is_file(),
+        "private-path write must land in the per-env backing dir"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&backing).unwrap().trim(),
+        "hello-from-box"
+    );
+    let worktree_marker = r.work("work1").join("cache/marker.txt");
+    assert!(
+        !worktree_marker.exists(),
+        "private-path write must NOT appear in the shared worktree"
+    );
+}
+
+// ─── Idea 1: secrets broker — `env secrets` legibility + gated command: ───────
+
+fn write_secret_profile(r: &Repo) {
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.dev]\nisolation = \"workspace\"\n\
+         [profile.dev.secret.API_KEY]\nsource = \"env:MY_TOKEN\"\ninject = \"env\"\nttl = \"1h\"\n\n\
+         [profile.cmd]\nisolation = \"workspace\"\nallow_command_extractors = true\n\
+         [profile.cmd.secret.FROM_CMD]\nsource = \"command:printf abc123\"\ninject = \"env\"\n\n\
+         [profile.cmdbad]\nisolation = \"workspace\"\n\
+         [profile.cmdbad.secret.FROM_CMD]\nsource = \"command:printf abc123\"\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-m", "secret profiles"]);
+}
+
+#[test]
+fn env_secrets_reports_status_without_values() {
+    let r = Repo::new();
+    write_secret_profile(&r);
+    r.h5i_ok(&["env", "create", "e1", "--profile", "dev"]);
+    // Resolve status with the host source present — value is fingerprinted,
+    // never surfaced.
+    let out = Command::new(H5I)
+        .args(["env", "secrets", "e1", "--json"])
+        .env("H5I_AGENT", "tester")
+        .env("H5I_DEFAULT_ISOLATION", "workspace")
+        .env("MY_TOKEN", "supersecret")
+        .current_dir(&r.dir)
+        .output()
+        .expect("run h5i");
+    assert!(out.status.success(), "{}", out_str(&out));
+    let body = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !body.contains("supersecret"),
+        "the secret value must never appear: {body}"
+    );
+    let rows: serde_json::Value = serde_json::from_str(&body).expect("json");
+    let row = &rows.as_array().unwrap()[0];
+    assert_eq!(row["name"], "API_KEY");
+    assert_eq!(row["status"], "ok");
+    assert!(row["fingerprint"]
+        .as_str()
+        .unwrap()
+        .starts_with("sha256:"));
+}
+
+#[test]
+fn command_extractor_gated_by_pinned_policy_flag() {
+    let r = Repo::new();
+    write_secret_profile(&r);
+    // No opt-in → the command: extractor is refused at create (the gate is
+    // pinned in the policy digest, not just enforced at run time).
+    let bad = r.h5i(&["env", "create", "ebad", "--profile", "cmdbad"]);
+    assert!(!bad.status.success(), "command extractor must fail closed at create");
+    assert!(out_str(&bad).contains("allow_command_extractors"));
+    // Opted in → create succeeds.
+    r.h5i_ok(&["env", "create", "ecmd", "--profile", "cmd"]);
+}
+
+// ─── Idea 3.5 + 2: services (daemon-free) + dynamic ports ────────────────────
+
+#[test]
+fn service_lifecycle_with_dynamic_port() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.dev]\nisolation = \"workspace\"\n\
+         [service.web]\ncommand = \"echo listening on $PORT; sleep 30\"\nport = 8000\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-m", "service profile"]);
+    r.h5i_ok(&["env", "create", "e1", "--profile", "dev"]);
+
+    // Start: a confined background process with a dynamic port allocated.
+    r.h5i_ok(&["env", "service", "start", "e1", "web"]);
+    // Give the shell a moment to emit its line.
+    std::thread::sleep(std::time::Duration::from_millis(800));
+
+    // ports: exactly one service with a dynamic port.
+    let out = r.h5i_ok(&["env", "ports", "e1", "--json"]);
+    let ports: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let arr = ports.as_array().unwrap();
+    assert_eq!(arr.len(), 1, "one service exposes a port");
+    assert_eq!(arr[0]["port"], 8000);
+    let dynamic = arr[0]["dynamic_port"].as_u64().expect("a dynamic port");
+    assert!(dynamic >= 1024, "dynamic port in the ephemeral range");
+
+    // status: the service is alive.
+    let out = r.h5i_ok(&["env", "service", "status", "e1", "--json"]);
+    let st: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(st.as_array().unwrap()[0]["alive"], true);
+
+    // logs: the injected PORT reached the service (proves port injection).
+    let logs = out_str(&r.h5i_ok(&["env", "service", "logs", "e1", "web"]));
+    assert!(
+        logs.contains(&format!("listening on {dynamic}")),
+        "service must see the injected dynamic port: {logs}"
+    );
+
+    // stop: the log is captured as evidence and the service goes away.
+    let stop = out_str(&r.h5i_ok(&["env", "service", "stop", "e1", "web"]));
+    assert!(stop.contains("log captured"), "{stop}");
+    let out = r.h5i_ok(&["env", "service", "status", "e1", "--json"]);
+    let st: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(st.as_array().unwrap().is_empty(), "no services after stop");
+
+    // The start/stop timeline is on refs/h5i/env for reviewers.
+    let log = out_str(&r.h5i_ok(&["env", "log", "e1"]));
+    assert!(log.contains("start web"));
+    assert!(log.contains("stop web"));
+}
+
+// ─── review #1: service declarations are pinned at create (not mutable) ───────
+
+#[test]
+fn service_defs_pinned_at_create_ignore_worktree_edits() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.dev]\nisolation = \"workspace\"\n\
+         [service.web]\ncommand = \"echo PINNED_CMD; sleep 30\"\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-m", "service"]);
+    r.h5i_ok(&["env", "create", "e1", "--profile", "dev"]);
+
+    // An agent edits the (writable) worktree config AND the repo-root config to
+    // a different long-lived command after create.
+    let hacked = "[profile.dev]\nisolation = \"workspace\"\n\
+                  [service.web]\ncommand = \"echo HACKED_CMD; sleep 30\"\n";
+    std::fs::write(r.work("e1").join(".h5i/env.toml"), hacked).unwrap();
+    std::fs::write(r.dir.join(".h5i/env.toml"), hacked).unwrap();
+
+    // Start uses the PINNED command snapshotted at create, not the edited one.
+    r.h5i_ok(&["env", "service", "start", "e1", "web"]);
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    let logs = out_str(&r.h5i_ok(&["env", "service", "logs", "e1", "web"]));
+    assert!(logs.contains("PINNED_CMD"), "must run the pinned command: {logs}");
+    assert!(!logs.contains("HACKED_CMD"), "must NOT run the edited command: {logs}");
+    let _ = r.h5i(&["env", "service", "stop", "e1", "web"]);
+}
+
+#[test]
+fn tampered_pinned_service_manifest_fails_closed() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.dev]\nisolation = \"workspace\"\n\
+         [service.web]\ncommand = \"echo hi; sleep 30\"\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-m", "service"]);
+    r.h5i_ok(&["env", "create", "e1", "--profile", "dev"]);
+
+    // Tamper the env-local pinned manifest directly — the recorded digest no
+    // longer matches, so a service start must refuse.
+    let pinned = r.env_dir("e1").join("services.json");
+    std::fs::write(
+        &pinned,
+        "{\"web\":{\"command\":\"echo evil; sleep 30\",\"logs\":true}}",
+    )
+    .unwrap();
+    let out = r.h5i(&["env", "service", "start", "e1", "web"]);
+    assert!(!out.status.success(), "tampered pin must fail closed");
+    assert!(out_str(&out).contains("digest"), "{}", out_str(&out));
+}
+
+// ─── review round 2: no-service envs stay unpinnable; service names validated ──
+
+#[test]
+fn no_service_env_cannot_add_unpinned_service_after_create() {
+    let r = Repo::new();
+    // Create an env whose base declares NO services.
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.dev]\nisolation = \"workspace\"\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-m", "no services"]);
+    r.h5i_ok(&["env", "create", "e1", "--profile", "dev"]);
+
+    // The env is pinned-empty (services.json exists), so it is NOT a legacy env.
+    assert!(
+        r.env_dir("e1").join("services.json").is_file(),
+        "a no-service env must still be pinned (empty)"
+    );
+
+    // Add a service to the worktree + repo config after create and try to start
+    // it — it must NOT be startable (the pinned-empty manifest wins).
+    let added = "[profile.dev]\nisolation = \"workspace\"\n\
+                 [service.web]\ncommand = \"echo sneaky; sleep 30\"\n";
+    std::fs::write(r.work("e1").join(".h5i/env.toml"), added).unwrap();
+    std::fs::write(r.dir.join(".h5i/env.toml"), added).unwrap();
+    let out = r.h5i(&["env", "service", "start", "e1", "web"]);
+    assert!(
+        !out.status.success(),
+        "an unpinned service must not be startable"
+    );
+    assert!(out_str(&out).contains("no service"), "{}", out_str(&out));
+}
+
+#[test]
+fn traversing_service_name_is_rejected() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.dev]\nisolation = \"workspace\"\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-m", "no services"]);
+    r.h5i_ok(&["env", "create", "e1", "--profile", "dev"]);
+    // A path-traversing service name must be rejected before any path is built.
+    for bad in ["../manifest", "a/b", ".."] {
+        let out = r.h5i(&["env", "service", "start", "e1", bad]);
+        assert!(!out.status.success(), "service name '{bad}' must be rejected");
+        assert!(
+            out_str(&out).contains("invalid service name"),
+            "name '{bad}': {}",
+            out_str(&out)
+        );
+    }
+    // The env-local manifest was not overwritten by a traversing name.
+    assert!(r.env_dir("e1").join("manifest.json").is_file());
+}
+
+#[test]
+fn create_rejects_bad_service_name_in_config() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.dir.join(".h5i")).unwrap();
+    // A traversing key in the [service.*] table must fail create (pin) closed.
+    std::fs::write(
+        r.dir.join(".h5i/env.toml"),
+        "[profile.dev]\nisolation = \"workspace\"\n\
+         [service.\"../evil\"]\ncommand = \"echo x\"\n",
+    )
+    .unwrap();
+    git(&r.dir, &["add", "-A"]);
+    git(&r.dir, &["commit", "-m", "bad service name"]);
+    let out = r.h5i(&["env", "create", "e1", "--profile", "dev"]);
+    assert!(!out.status.success(), "create must reject a traversing service name");
+    assert!(
+        out_str(&out).contains("invalid service name"),
+        "{}",
+        out_str(&out)
     );
 }

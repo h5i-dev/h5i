@@ -1782,14 +1782,51 @@ enum EnvCommands {
     /// namespaces, seccomp) and which claims are satisfiable.
     Probe,
 
-    /// List environments on this clone
-    List,
+    /// List environments on this clone (the fleet view)
+    List {
+        /// Emit a machine-readable JSON array (manifest + base drift per env)
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Show one environment's status: lifecycle, enforced policy, evidence,
     /// and base drift
     Status {
         name: String,
         /// Emit the raw manifest JSON instead of the human view
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Check one environment's enforcement readiness and structural health
+    /// (can it actually enforce its isolation claim here? are its refs intact?)
+    Doctor {
+        name: String,
+        /// Emit the structured report as JSON instead of the human view
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List the secret grants an environment's policy declares, with a dry-run
+    /// resolution status (never the value — only a fingerprint when resolvable)
+    Secrets {
+        name: String,
+        /// Emit the status as JSON instead of the human view
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Manage long-lived services declared in the env's `.h5i/env.toml`
+    /// (`[service.<name>]`), confined and pid-tracked — no daemon
+    Service {
+        #[command(subcommand)]
+        action: EnvServiceCommands,
+    },
+
+    /// Show the per-env dynamic port map (services with a declared port)
+    Ports {
+        name: String,
+        /// Emit the port map as JSON instead of the human view
         #[arg(long)]
         json: bool,
     },
@@ -1876,6 +1913,32 @@ enum EnvCommands {
     /// Reclaim workspaces of applied/aborted environments (worktree prune).
     /// Manifests, branches, and captures are retained.
     Gc,
+}
+
+#[derive(Subcommand)]
+enum EnvServiceCommands {
+    /// Start a declared service as a confined background process
+    Start {
+        /// Environment name (slug, `agent/slug`, or full `env/agent/slug`)
+        env: String,
+        /// Service name (a `[service.<name>]` in the env's `.h5i/env.toml`)
+        service: String,
+    },
+    /// Stop a running service (and capture its log as evidence)
+    Stop { env: String, service: String },
+    /// Show every recorded service for an env and its liveness
+    Status {
+        env: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Tail a running service's log
+    Logs {
+        env: String,
+        service: String,
+        #[arg(long, default_value_t = 200)]
+        tail: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -9177,20 +9240,38 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::List => {
+                EnvCommands::List { json } => {
                     let envs = h5i_core::env::list(&h5i_root);
-                    if envs.is_empty() {
-                        println!("No environments. Create one: h5i env create <name>");
-                    }
-                    for m in envs {
-                        println!(
-                            "{:<28} {:<9} isolation={:<10} base={} captures={}",
-                            style(&m.id).magenta(),
-                            m.status,
-                            m.isolation_claim,
-                            &m.base_commit[..12],
-                            m.captures.len()
-                        );
+                    if json {
+                        let rows: Vec<serde_json::Value> = envs
+                            .iter()
+                            .map(|m| {
+                                let mut v = serde_json::to_value(m).unwrap_or(serde_json::Value::Null);
+                                if let serde_json::Value::Object(ref mut map) = v {
+                                    let d = h5i_core::env::drift(git, m);
+                                    map.insert("drift".into(), serde_json::to_value(&d).unwrap_or(serde_json::Value::Null));
+                                }
+                                v
+                            })
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&rows)?);
+                    } else {
+                        if envs.is_empty() {
+                            println!("No environments. Create one: h5i env create <name>");
+                        }
+                        for m in envs {
+                            let d = h5i_core::env::drift(git, &m);
+                            let drift_mark = if d.is_current() { "" } else { " ⚠drift" };
+                            println!(
+                                "{:<28} {:<9} isolation={:<10} base={} captures={}{}",
+                                style(&m.id).magenta(),
+                                m.status,
+                                m.isolation_claim,
+                                &m.base_commit[..12],
+                                m.captures.len(),
+                                style(drift_mark).yellow()
+                            );
+                        }
                     }
                 }
 
@@ -9200,6 +9281,87 @@ fn main() -> anyhow::Result<()> {
                         println!("{}", serde_json::to_string_pretty(&m)?);
                     } else {
                         print!("{}", h5i_core::env::status_report(git, &h5i_root, &m));
+                    }
+                }
+
+                EnvCommands::Doctor { name, json } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    let report = h5i_core::env::doctor(git, &h5i_root, &m);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        print!("{}", h5i_core::env::render_doctor(&report));
+                    }
+                    if !report.healthy {
+                        std::process::exit(1);
+                    }
+                }
+
+                EnvCommands::Secrets { name, json } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    let policy = h5i_core::env::load_policy(&h5i_root, &m)?;
+                    let rows = h5i_core::env::secrets_status(&policy);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&rows)?);
+                    } else {
+                        print!("{}", h5i_core::env::render_secrets(&m.id, &rows));
+                    }
+                }
+
+                EnvCommands::Service { action } => match action {
+                    EnvServiceCommands::Start { env, service } => {
+                        let m = h5i_core::env::find(&h5i_root, &env)?;
+                        let rec = h5i_core::env::service_start(git, &h5i_root, &m, &service)?;
+                        let port = rec
+                            .dynamic_port
+                            .map(|p| {
+                                format!(
+                                    " (injected PORT={p}; reachable at http://127.0.0.1:{p} if it binds the port)"
+                                )
+                            })
+                            .unwrap_or_default();
+                        println!(
+                            "{} service {} started (pid {}){}",
+                            SUCCESS, rec.name, rec.pid, port
+                        );
+                    }
+                    EnvServiceCommands::Stop { env, service } => {
+                        let m = h5i_core::env::find(&h5i_root, &env)?;
+                        let cap = h5i_core::env::service_stop(git, &h5i_root, &m, &service)?;
+                        match cap {
+                            Some(id) => println!(
+                                "{} service {} stopped (log captured: {})",
+                                SUCCESS, service, id
+                            ),
+                            None => println!("{} service {} stopped", SUCCESS, service),
+                        }
+                    }
+                    EnvServiceCommands::Status { env, json } => {
+                        let m = h5i_core::env::find(&h5i_root, &env)?;
+                        let rows = h5i_core::env::service_status(&h5i_root, &m);
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&rows)?);
+                        } else {
+                            print!("{}", h5i_core::env::render_services(&m.id, &rows));
+                        }
+                    }
+                    EnvServiceCommands::Logs { env, service, tail } => {
+                        let m = h5i_core::env::find(&h5i_root, &env)?;
+                        println!("{}", h5i_core::env::service_logs(&h5i_root, &m, &service, tail)?);
+                    }
+                },
+
+                EnvCommands::Ports { name, json } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    let rows = h5i_core::env::service_status(&h5i_root, &m);
+                    if json {
+                        let ports: Vec<_> = rows
+                            .iter()
+                            .filter(|s| s.record.dynamic_port.is_some())
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&ports)?);
+                    } else {
+                        print!("{}", h5i_core::env::render_ports(&m.id, &rows));
                     }
                 }
 

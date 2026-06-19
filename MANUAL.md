@@ -96,6 +96,7 @@ Command reference for all h5i subcommands and flags.
   - [Isolation tiers](#env-isolation-tiers)
   - [Policy file (.h5i/env.toml)](#env-policy-file-h5ienvtoml)
   - [Secrets broker](#env-secrets-broker)
+  - [Services and dynamic ports](#env-services-ports)
   - [Resource limits](#env-resource-limits)
 - [h5i serve](#h5i-serve)
 - [h5i mcp](#h5i-mcp)
@@ -2679,9 +2680,13 @@ another reviews and applies). See `docs/environments-design.md` and the live
 | `h5i env run <name> -- <cmd> [args…]` | Run a command inside the env, policy-enforced + capture-wrapped. Exit code passes through; evidence is captured. |
 | `h5i env shell <name> [-- <cmd>]` | Open an **interactive** confined session *inside* the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. Defaults to a login shell. Exit code passes through. The session is **observed**: a `shell` event is logged, and per-command evidence is staged + ingested where the tier supports it (see [In-box git, capture & commit](#env-in-box)). |
 | `h5i env probe` | Show what isolation this host can actually provide (Landlock ABI, user namespaces, seccomp, seccomp-notif, cgroup v2 delegation, rootless Podman) and which claims are satisfiable. |
-| `h5i env list` | List environments on this clone. |
+| `h5i env list [--json]` | List environments on this clone (the fleet view). `--json` emits an array of manifests, each enriched with base `drift`. |
 | `h5i env status <name> [--json]` | Lifecycle state + enforced policy + evidence + base drift. `--json` emits the raw manifest. |
-| `h5i env log <name>` | The event log (`created`/`exec`/`proposed`/`applied`/`aborted`/`gc`/`violation`/`secret`). |
+| `h5i env doctor <name> [--json]` | Enforcement-readiness + structural-health check: can this host actually enforce the env's isolation claim (functional `verify_exec` self-test), plus policy-digest integrity, workspace/code-branch/context presence, and base drift. Exits non-zero when unhealthy. `--json` emits the structured report (per-check `ok`/`warn` + overall `healthy`). |
+| `h5i env secrets <name> [--json]` | List the secret grants the env's policy declares, each with its source/inject/ttl and a **dry-run** resolution status — never the value, only a sha256 fingerprint when resolvable. `command:` extractors are shown "not evaluated" (a status query never runs host-side code). |
+| `h5i env service start\|stop\|status\|logs <name> [<service>]` | Manage long-lived services declared in the env's `.h5i/env.toml` (`[service.<name>]`), confined and pid-tracked — **no daemon**. Definitions are pinned at create (immutable from the box, digest in the manifest). `start` runs the service in the box and allocates+injects a per-env port when one is declared; `stop` kills it and captures its log as an h5i object; `status`/`logs` (`--json`, `--tail N`) inspect it. Start/stop append `service` events to `refs/h5i/env`. |
+| `h5i env ports <name> [--json]` | The per-env **injected** port map: each running service with a declared port and the free host port h5i allocated and injected as `PORT` / `H5I_ENV_PORT_<NAME>`. v1 is injection only — there is **no host→box forwarder**, so a port is reachable only if the service binds the injected value (the URL is shown as conditional, not a guarantee). |
+| `h5i env log <name>` | The event log (`created`/`exec`/`service`/`proposed`/`applied`/`aborted`/`gc`/`violation`/`secret`). |
 | `h5i env diff <name> [--stat]` | Diff the env's work against its pinned base. |
 | `h5i env inspect <name> --capture <id>` | Render one evidence capture (structured findings, exit code, policy digest, redactions). |
 | `h5i env compare <names…> [--json]` | The "arena": rank N envs side by side (changes + latest run results). Best on envs sharing one base. |
@@ -2776,6 +2781,11 @@ h5i env create audit-box --audit all              # record every wrapped in-env 
 h5i env create jail --isolation supervised       # refuses unless the full stack is green
 h5i env create build --isolation container       # needs rootless podman + an image
 h5i env shell  fix-auth                           # interactive confined session
+h5i env list --json                               # fleet view (manifest + drift) for tooling
+h5i env doctor fix-auth                           # can this host enforce the env's claim? refs intact?
+h5i env secrets build                             # dry-run secret status (no values)
+h5i env service start fix-auth web                # run a declared service in the box
+h5i env ports fix-auth                            # injected per-env ports
 ```
 
 <a name="env-policy-file-h5ienvtoml"></a>
@@ -2813,11 +2823,38 @@ image = "docker.io/library/debian:stable-slim"   # required for isolation=contai
 [profile.default.env]
 pass = ["PATH", "HOME", "LANG"]   # env-var allowlist (nothing inherited wholesale)
 
+# Per-env private paths — each gets its own backing store so concurrent envs of
+# the same repo don't collide on inode-level locks / single-writer build caches
+# (Cargo target/, Next .next/dev/lock, …). kind = cache|scratch|private; persist
+# keeps the backing dir across runs. Validated fail-closed (relative, no '..',
+# no overlap, no comma). Enforced via bind mounts on process/supervised and
+# --mount on container; a no-op on the workspace tier (no mount namespace).
+[profile.default.private_paths]
+"target"              = { kind = "cache",   persist = true }
+"frontend/.next"      = { kind = "cache",   persist = false }
+
 # Optional rich secret config (see below)
 [profile.default.secret.GITHUB_TOKEN]
-source = "env:GH_PAT"             # env:VAR | file:/abs/path  (default: env:H5I_SECRET_<NAME>)
+source = "env:GH_PAT"             # env:VAR | file:/abs/path | command:<shell>  (default: env:H5I_SECRET_<NAME>)
 inject = "file"                   # file | env  (default: env)
 ttl    = "1h"
+
+# A command: extractor runs host-side code OUTSIDE the sandbox, so it is refused
+# unless the profile explicitly opts in. The flag is pinned in the policy digest
+# (tamper-evident), so it can't be enabled without a recorded change.
+# allow_command_extractors = true
+
+# Long-lived services (h5i env service …). Declarations are pinned at env create
+# into an env-local manifest (immutable from the box; digest in the env manifest)
+# — editing this file after create cannot change what a service runs.
+[service.web]
+command = "npm run dev"           # runs via `sh -c` inside the env's sandbox
+port    = 3000                    # declares a port → a free host port is injected as PORT / H5I_ENV_PORT_WEB
+restart = "on_failure"            # advisory in v1
+logs    = true                    # capture the service log as an h5i object on stop (default)
+
+[service.worker]
+command = "cargo watch -x test"
 ```
 
 The fully-resolved policy is serialized to `policy.resolved.toml` and its
@@ -2831,7 +2868,11 @@ Declared `secrets` are resolved from host-side sources **at run time** (never at
 policy load), injected into the run, **scrubbed from the captured evidence**, and
 audited — all **fail-closed** (a missing source aborts the run).
 
-- **Source:** `env:VAR`, `file:/abs/path`, or the default `env:H5I_SECRET_<NAME>`.
+- **Source:** `env:VAR`, `file:/abs/path`, `command:<shell>`, or the default
+  `env:H5I_SECRET_<NAME>`. A `command:` extractor runs host-side code **outside
+  the sandbox**, so it is refused unless the profile sets
+  `allow_command_extractors = true` (pinned in the policy digest); when allowed
+  it is bounded by a 10s wall timeout and a 1 MiB output cap, fail-closed.
 - **Injection:** `env` (sets `<NAME>` on the child — universal; the default) or
   `file` (writes `0600` outside `$WORK`, sets `<NAME>_FILE` to the path —
   workspace tier in v1).
@@ -2839,11 +2880,43 @@ audited — all **fail-closed** (a missing source aborts the run).
   method, ttl, and a sha256 **fingerprint** — never the value.
 - **Redaction:** the resolved value is removed from the capture (raw + summary)
   by exact match, on top of h5i's pattern-based secret scrub.
+- **Inspect (dry-run):** `h5i env secrets <name>` shows each grant's status and
+  fingerprint without injecting anything (and never runs `command:` extractors).
 
 ```bash
 # Profile declares: secrets = ["GITHUB_TOKEN"]
 H5I_SECRET_GITHUB_TOKEN=ghp_xxx h5i env run build -- ./deploy.sh
 # GITHUB_TOKEN is injected into the run, redacted from the capture, audited by fingerprint.
+```
+
+<a name="env-services-ports"></a>
+### Services and dynamic ports
+
+Long-lived processes (a dev server, a worker) are declared as `[service.<name>]`
+in `.h5i/env.toml` and managed **without a daemon** — a `flock`'d pid registry
+under the env dir, lifecycle events on `refs/h5i/env`.
+
+- **Pinned at create.** Service declarations are snapshotted into an env-local
+  `services.json` (immutable from inside the box; its sha256 is recorded in the
+  env manifest) and verified on every `start`. Editing the worktree
+  `.h5i/env.toml` after `create` cannot change what a service runs. A new env
+  with *no* services is pinned-empty, so it can't add one post-create either.
+- **Confined.** The service runs in the env's sandbox (workspace or process tier
+  in v1; supervised/container are a follow-up).
+- **Logs as evidence.** `stop` kills the service's process group and captures its
+  log as a redacted h5i object, linked from the `service` event.
+- **Injected ports.** A service that declares a `port` gets a free host port
+  allocated and **injected** as `PORT` and `H5I_ENV_PORT_<NAME>`. There is **no
+  host→box forwarder in v1** — the port is reachable only if the service binds
+  the injected value (`env ports` shows the URL as conditional, not guaranteed).
+
+```bash
+# [service.web] command = "npm run dev"  port = 3000
+h5i env service start fix-auth web     # → injected PORT=49xxx (bind it to be reachable)
+h5i env ports  fix-auth                # SERVICE / DECLARED / INJECTED / conditional URL
+h5i env service status fix-auth        # pid + liveness per service
+h5i env service logs   fix-auth web --tail 50
+h5i env service stop   fix-auth web    # log captured as an h5i object
 ```
 
 <a name="env-resource-limits"></a>

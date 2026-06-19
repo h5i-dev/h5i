@@ -146,6 +146,13 @@ pub struct EnvManifest {
     /// Object ids in `refs/h5i/objects` — the evidence, oldest first.
     #[serde(default)]
     pub captures: Vec<String>,
+    /// sha256 over the env-local pinned service manifest (`services.json`),
+    /// snapshotted at create from the base's `.h5i/env.toml`. `None` for envs
+    /// created before services existed (or with no `[service.*]`). Pins the
+    /// service declarations so an agent can't edit the worktree config to start
+    /// a different long-lived command than the reviewer approved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_digest: Option<String>,
 }
 
 impl EnvManifest {
@@ -220,6 +227,19 @@ pub fn validate_slug(slug: &str) -> Result<(), H5iError> {
              (start alphanumeric, ≤64 chars, no '/')"
         )))
     }
+}
+
+/// Validate a service name before it is used to build env-local paths
+/// (`services/<name>.json`, `services/<name>.log`). Same strict slug rules as
+/// [`validate_slug`], so a key like `../manifest` (path traversal) or one with a
+/// `/` can never escape the services dir or overwrite an env-local file.
+pub fn validate_service_name(name: &str) -> Result<(), H5iError> {
+    validate_slug(name).map_err(|_| {
+        H5iError::Metadata(format!(
+            "invalid service name '{name}' — use lowercase letters, digits, '-', '_', '.' \
+             (start alphanumeric, ≤64 chars, no '/' or '..')"
+        ))
+    })
 }
 
 /// Validate an agent identity before it is used to build a ref component
@@ -992,6 +1012,11 @@ pub fn create(
     let wt_repo = Repository::open(&work_path)?;
     crate::ctx::pin_worktree_context(&wt_repo, &env_ctx)?;
 
+    // Pin service declarations from the base worktree into an env-local,
+    // box-immutable manifest, recording its digest (review #1). Always Some for
+    // new envs (even pinned-empty), so the legacy fallback below never applies.
+    let service_digest = Some(pin_services_at_create(&work_path, &dir)?);
+
     let manifest = EnvManifest {
         id: id.clone(),
         agent: agent.to_string(),
@@ -1010,6 +1035,7 @@ pub fn create(
         updated_at: now_ts(),
         status: ST_CREATED.to_string(),
         captures: Vec::new(),
+        service_digest,
     };
 
     let policy_toml = policy.to_toml()?;
@@ -1264,6 +1290,62 @@ fn prepare_cargo_env(work: &Path, policy: &ResolvedPolicy) -> Result<Vec<(String
         "CARGO_TARGET_DIR".to_string(),
         target_dir.display().to_string(),
     )])
+}
+
+/// Materialize per-env private paths (Idea 3): give each declared path its own
+/// backing dir under the env's `private/` tree so concurrent envs of the same
+/// repo never collide on inode-level locks / single-writer build caches. Wipes
+/// non-persistent backings first, then records each `(backing → workspace-rel)`
+/// pair on `policy.private_binds` (applied as bind mounts on the kernel tiers
+/// and `--mount`s on container). At the kernel tiers it also Landlock-grants the
+/// backing dir so access through the bind is allowed regardless of mount
+/// topology. A no-op at the workspace tier (no mount namespace to bind in — the
+/// shared worktree is the documented trade-off). Fail-closed on I/O errors.
+fn prepare_private_paths(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    policy: &mut ResolvedPolicy,
+    work: &Path,
+) -> Result<(), H5iError> {
+    if policy.profile.private_paths.is_empty() || policy.claim < IsolationClaim::Process {
+        return Ok(());
+    }
+    let private_root = m.dir(h5i_root).join("private");
+    let kernel = matches!(
+        policy.claim,
+        IsolationClaim::Process | IsolationClaim::Supervised
+    );
+    for pp in policy.profile.private_paths.clone() {
+        let rel = pp.path.trim_matches('/').to_string();
+        // Backing dirs nest under private/ exactly as the rel path does — the
+        // overlap lint guarantees distinct, non-shadowing subtrees.
+        let backing = private_root.join(&rel);
+        if !pp.persist {
+            let _ = std::fs::remove_dir_all(&backing);
+        }
+        std::fs::create_dir_all(&backing).map_err(|e| H5iError::with_path(e, &backing))?;
+        // The mountpoint must exist inside the worktree.
+        let target = work.join(&rel);
+        std::fs::create_dir_all(&target).map_err(|e| H5iError::with_path(e, &target))?;
+        // Container tier carries the backing dir as a Podman `--mount` whose
+        // syntax can't include a comma — fail closed if the env's host path has
+        // one, rather than silently dropping the (policy-required) isolation.
+        if policy.claim == IsolationClaim::Container && backing.display().to_string().contains(',') {
+            return Err(H5iError::Metadata(format!(
+                "private_paths '{rel}': the env's backing path '{}' contains a ',' which the \
+                 container mount syntax cannot carry — move the repo out of a comma'd path \
+                 (fail-closed)",
+                backing.display()
+            )));
+        }
+        if kernel {
+            policy.profile.fs_write.push(backing.display().to_string());
+        }
+        policy
+            .private_binds
+            .push(sandbox::PrivateBind { backing, rel });
+    }
+    Ok(())
 }
 
 fn prepare_env_capture_spool(
@@ -1530,6 +1612,7 @@ pub fn run(
     // Structural grants (like the implicit `$WORK` rw): the worktree must be a
     // functional git checkout inside the box.
     grant_box_git(repo, m, &work, &mut policy)?;
+    prepare_private_paths(h5i_root, m, &mut policy, &work)?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
 
@@ -1540,7 +1623,12 @@ pub fn run(
     let secret_dir = m.dir(h5i_root).join("secrets");
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
     let brokered =
-        crate::secrets_broker::broker(&policy.profile.secret_grants, &secret_dir, is_workspace)?;
+        crate::secrets_broker::broker(
+            &policy.profile.secret_grants,
+            &secret_dir,
+            is_workspace,
+            policy.profile.allow_command_extractors,
+        )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
     let injected_env = merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env);
 
@@ -1749,12 +1837,18 @@ pub fn shell(
     // Same structural grants as `run`: an interactive boxed agent lives in
     // this worktree and must be able to use git / h5i context inside it.
     grant_box_git(repo, m, &work, &mut policy)?;
+    prepare_private_paths(h5i_root, m, &mut policy, &work)?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
     let secret_dir = m.dir(h5i_root).join("secrets");
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
     let brokered =
-        crate::secrets_broker::broker(&policy.profile.secret_grants, &secret_dir, is_workspace)?;
+        crate::secrets_broker::broker(
+            &policy.profile.secret_grants,
+            &secret_dir,
+            is_workspace,
+            policy.profile.allow_command_extractors,
+        )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
     let injected_env = merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env);
 
@@ -2447,6 +2541,757 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
     let d = drift(repo, m);
     let marker = if d.is_current() { "✓" } else { "⚠" };
     out.push_str(&format!("  drift    : {marker} {}\n", d.summary()));
+    out
+}
+
+// ─── doctor (enforcement-readiness, Idea 0) ──────────────────────────────────
+
+/// One readiness check in a [`DoctorReport`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorCheck {
+    /// Short check name (`policy`, `enforcement`, `workspace`, …).
+    pub name: String,
+    /// `true` — green; `false` — a problem the reviewer should see.
+    pub ok: bool,
+    /// `true` when a `!ok` result is advisory (e.g. a pulled env with no
+    /// workspace), not a hard fault — rendered `⚠` and kept out of `healthy`.
+    #[serde(default)]
+    pub warn: bool,
+    /// Human detail.
+    pub detail: String,
+}
+
+/// Per-env enforcement-readiness + structural-health report (`h5i env doctor`).
+/// Answers "can this env actually enforce its isolation claim *here*, and is it
+/// structurally intact?" — the per-env home for the functional `verify_exec`
+/// self-test (bits present ≠ confinement can exec).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorReport {
+    pub env_id: String,
+    pub isolation_claim: String,
+    pub checks: Vec<DoctorCheck>,
+    /// `true` when no non-advisory check failed.
+    pub healthy: bool,
+}
+
+/// Run all readiness checks for one env. Read-only: probes host capabilities and
+/// inspects refs/disk, never mutates the env.
+pub fn doctor(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> DoctorReport {
+    let mut checks: Vec<DoctorCheck> = Vec::new();
+    macro_rules! chk {
+        ($n:expr, $ok:expr, $w:expr, $d:expr) => {
+            checks.push(DoctorCheck {
+                name: $n.into(),
+                ok: $ok,
+                warn: $w,
+                detail: $d,
+            })
+        };
+    }
+
+    // 1. Policy integrity — on-disk policy still matches the pinned digest.
+    match load_policy(h5i_root, m) {
+        Ok(_) => chk!(
+            "policy",
+            true,
+            false,
+            format!(
+                "policy.resolved.toml verifies against pinned digest {}",
+                &m.policy_digest[..12.min(m.policy_digest.len())]
+            )
+        ),
+        Err(e) => chk!("policy", false, false, format!("{e}")),
+    }
+
+    // 2. Enforcement readiness — can the host actually run this claim?
+    match IsolationClaim::parse(&m.isolation_claim) {
+        Ok(claim) => {
+            let caps = sandbox::probe_host();
+            match claim {
+                IsolationClaim::Workspace => chk!(
+                    "enforcement",
+                    true,
+                    false,
+                    "workspace tier needs no kernel confinement".into()
+                ),
+                IsolationClaim::Container
+                | IsolationClaim::HardenedContainer
+                | IsolationClaim::Microvm => {
+                    if let Some(rt) = caps.container_runtime.as_deref() {
+                        chk!(
+                            "enforcement",
+                            true,
+                            false,
+                            format!("rootless container runtime present ({rt})")
+                        );
+                    } else {
+                        chk!(
+                            "enforcement",
+                            false,
+                            false,
+                            "no rootless container runtime (podman) on host".into()
+                        );
+                    }
+                }
+                // process / supervised: the bits can be present while a hardened
+                // kernel still denies exec — functional self-test is authoritative.
+                _ => {
+                    let probe = sandbox::Profile::builtin("doctor", claim);
+                    match sandbox::resolve(&probe, &caps)
+                        .and_then(|pol| sandbox::verify_exec(&pol))
+                    {
+                        Ok(()) => chk!(
+                            "enforcement",
+                            true,
+                            false,
+                            format!("{} tier functionally runnable here", claim.as_str())
+                        ),
+                        Err(e) => chk!(
+                            "enforcement",
+                            false,
+                            false,
+                            format!("{} tier NOT runnable here: {e}", claim.as_str())
+                        ),
+                    }
+                }
+            }
+        }
+        Err(e) => chk!("enforcement", false, false, format!("unknown isolation claim: {e}")),
+    }
+
+    // 3. Workspace — present for live envs, advisory-absent for pulled/gc'd ones.
+    if has_workspace(m, h5i_root) {
+        chk!("workspace", true, false, "git worktree present".into());
+    } else {
+        chk!(
+            "workspace",
+            false,
+            true,
+            "no work/ dir (pulled or gc'd env) — diff/apply fall back to the branch tip".into()
+        );
+    }
+
+    // 4. Code branch present.
+    match repo.find_reference(&m.branch) {
+        Ok(_) => chk!("code-branch", true, false, m.branch_short().to_string()),
+        Err(_) => chk!(
+            "code-branch",
+            false,
+            false,
+            format!("code branch {} is missing", m.branch_short())
+        ),
+    }
+
+    // 5. Context (reasoning) branch present.
+    let ctx_ref = format!("refs/h5i/context/{}", m.context_branch);
+    match repo.find_reference(&ctx_ref) {
+        Ok(_) => chk!("context-branch", true, false, m.context_branch.clone()),
+        Err(_) => chk!(
+            "context-branch",
+            false,
+            true,
+            format!("reasoning branch {} not found", m.context_branch)
+        ),
+    }
+
+    // 6. Base drift vs parent.
+    let d = drift(repo, m);
+    match &d {
+        Drift::UpToDate => chk!("base-drift", true, false, d.summary()),
+        Drift::ParentGone => chk!("base-drift", false, true, d.summary()),
+        _ => chk!("base-drift", true, true, d.summary()),
+    }
+
+    // 7. Evidence captures recorded (informational).
+    chk!(
+        "evidence",
+        true,
+        false,
+        format!(
+            "{} capture{} recorded",
+            m.captures.len(),
+            if m.captures.len() == 1 { "" } else { "s" }
+        )
+    );
+
+    let healthy = checks.iter().all(|c| c.ok || c.warn);
+    DoctorReport {
+        env_id: m.id.clone(),
+        isolation_claim: m.isolation_claim.clone(),
+        checks,
+        healthy,
+    }
+}
+
+// ─── secrets legibility (Idea 1) ─────────────────────────────────────────────
+
+/// Dry-run status of one declared secret grant — config + whether it currently
+/// resolves, **never the value** (only a fingerprint when resolvable).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretStatus {
+    pub name: String,
+    pub source: String,
+    pub inject: String,
+    pub ttl: Option<String>,
+    /// `ok` | `command (not evaluated)` | `error: …`.
+    pub status: String,
+    /// `sha256:<12>` when resolvable (env:/file:), else `None`.
+    pub fingerprint: Option<String>,
+}
+
+/// Resolve each declared grant's *status* without injecting it — the read-only
+/// surface behind `h5i env secrets`. `command:` extractors are never executed
+/// here (they have host-side side effects); they show as "not evaluated".
+pub fn secrets_status(policy: &ResolvedPolicy) -> Vec<SecretStatus> {
+    policy
+        .profile
+        .secret_grants
+        .iter()
+        .map(|g| {
+            let source = g.source_or_default();
+            let inject = g.inject_or_default().to_string();
+            let (status, fingerprint) = if source.starts_with("command:") {
+                ("command (not evaluated)".to_string(), None)
+            } else {
+                // Dry-run resolution: read-only, value used only for a
+                // fingerprint and immediately dropped, never surfaced.
+                match crate::secrets_broker::resolve_value(g, false) {
+                    Ok(v) => ("ok".to_string(), Some(crate::secrets_broker::fingerprint(&v))),
+                    Err(e) => (format!("error: {e}"), None),
+                }
+            };
+            SecretStatus {
+                name: g.name.clone(),
+                source,
+                inject,
+                ttl: g.ttl.clone(),
+                status,
+                fingerprint,
+            }
+        })
+        .collect()
+}
+
+/// Plain-text rendering of [`secrets_status`].
+pub fn render_secrets(env_id: &str, rows: &[SecretStatus]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("── secrets for {env_id} ──\n"));
+    if rows.is_empty() {
+        out.push_str("  (no secret grants declared in this env's profile)\n");
+        return out;
+    }
+    for s in rows {
+        let ttl = s.ttl.as_deref().map(|t| format!(" ttl={t}")).unwrap_or_default();
+        let fp = s
+            .fingerprint
+            .as_deref()
+            .map(|f| format!("  {f}"))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "  {:<20} source={} inject={}{}  [{}]{}\n",
+            s.name, s.source, s.inject, ttl, s.status, fp
+        ));
+    }
+    out
+}
+
+// ─── services (Idea 3.5) + dynamic ports (Idea 2) ────────────────────────────
+
+fn default_logs() -> bool {
+    true
+}
+
+/// A long-lived service declared in the env's `.h5i/env.toml`
+/// (`[service.web] command = "npm run dev" port = 3000`). The command runs
+/// inside the env's sandbox via `sh -c`; `port`, when set, gets a per-env dynamic
+/// host port allocated and injected at start (Idea 2).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceDef {
+    pub command: String,
+    /// Declared in-box port the service binds. Presence triggers dynamic-port
+    /// allocation + injection; the service is expected to honor `PORT` /
+    /// `H5I_ENV_PORT_<NAME>`.
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// Advisory in v1 (no auto-restart yet).
+    #[serde(default)]
+    pub restart: Option<String>,
+    /// Capture the service log as an h5i object on stop (default true).
+    #[serde(default = "default_logs")]
+    pub logs: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ServiceFileToml {
+    #[serde(default)]
+    service: std::collections::BTreeMap<String, ServiceDef>,
+}
+
+/// A running service's on-disk record — the daemon-free pid registry under
+/// `.git/.h5i/env/<agent>/<slug>/services/<name>.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceRecord {
+    pub name: String,
+    pub pid: u32,
+    pub command: String,
+    pub started_at: String,
+    pub port: Option<u16>,
+    /// Allocated per-env host port, injected as `H5I_ENV_PORT_<NAME>` (Idea 2).
+    pub dynamic_port: Option<u16>,
+    pub log: String,
+}
+
+/// A service's record plus liveness — for `env service status` / `env ports`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceStatus {
+    #[serde(flatten)]
+    pub record: ServiceRecord,
+    pub alive: bool,
+}
+
+fn services_dir(h5i_root: &Path, m: &EnvManifest) -> PathBuf {
+    m.dir(h5i_root).join("services")
+}
+
+/// Whether `pid` is still alive (signal 0 probe).
+fn pid_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+/// Allocate a free loopback TCP port by binding `:0` and reading it back.
+fn alloc_free_port() -> Option<u16> {
+    std::net::TcpListener::bind(("127.0.0.1", 0))
+        .ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|a| a.port())
+}
+
+/// `web-test` → `WEB_TEST` (an env-var-safe upper-case key).
+fn env_key(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+        .collect()
+}
+
+/// Parse the `[service.*]` table from one `.h5i/env.toml`. Empty when the file
+/// is absent or declares no services. Every service name is validated
+/// fail-closed (it becomes an env-local path component) so a traversing key like
+/// `../manifest` is rejected at parse/pin time, not turned into a path.
+fn parse_services_file(
+    path: &Path,
+) -> Result<std::collections::BTreeMap<String, ServiceDef>, H5iError> {
+    if !path.is_file() {
+        return Ok(std::collections::BTreeMap::new());
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| H5iError::with_path(e, path))?;
+    let parsed: ServiceFileToml = toml::from_str(&text)?;
+    for name in parsed.service.keys() {
+        validate_service_name(name)?;
+    }
+    Ok(parsed.service)
+}
+
+/// sha256 over the canonical (sorted, re-serialized) service manifest — stable
+/// regardless of on-disk formatting, so the pin compares by content.
+fn service_defs_digest(defs: &std::collections::BTreeMap<String, ServiceDef>) -> String {
+    use sha2::{Digest, Sha256};
+    let json = serde_json::to_string(defs).unwrap_or_default();
+    let mut h = Sha256::new();
+    h.update(json.as_bytes());
+    format!("{:x}", h.finalize())
+}
+
+/// Env-local pinned service manifest (immutable from the box — under
+/// `.git/.h5i`, never in `$WORK` or the box_git grants).
+fn pinned_services_path(h5i_root: &Path, m: &EnvManifest) -> PathBuf {
+    m.dir(h5i_root).join("services.json")
+}
+
+/// Snapshot the base worktree's `[service.*]` into the env-local pinned manifest
+/// at create, returning the digest to record in the manifest (review #1: service
+/// declarations must be policy-pinned, not read from mutable workspace content).
+///
+/// ALWAYS writes `services.json` and records a digest — even for the empty set —
+/// so a new env with no services is still *pinned-empty*, not mistaken for a
+/// legacy (pre-pinning) env. Without this, a no-service env would record a `None`
+/// digest and fall back to reading the mutable worktree config, letting an agent
+/// add `[service.*]` after create and start it unpinned. Fail-closed on a
+/// malformed services section.
+fn pin_services_at_create(work_path: &Path, env_dir: &Path) -> Result<String, H5iError> {
+    let defs = parse_services_file(&work_path.join(".h5i/env.toml"))?;
+    let json = serde_json::to_string_pretty(&defs)?;
+    let path = env_dir.join("services.json");
+    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(service_defs_digest(&defs))
+}
+
+/// Load the env's service declarations from the **pinned** env-local manifest,
+/// verifying its content digest against the one recorded at create — so an agent
+/// editing the (writable) worktree `.h5i/env.toml` after create can't change
+/// which long-lived command a service runs. Falls back to the worktree/repo
+/// config only for envs created before pinning existed (no recorded digest).
+fn load_service_defs(
+    h5i_root: &Path,
+    m: &EnvManifest,
+) -> Result<std::collections::BTreeMap<String, ServiceDef>, H5iError> {
+    let pinned = pinned_services_path(h5i_root, m);
+    if pinned.is_file() {
+        let text = std::fs::read_to_string(&pinned).map_err(|e| H5iError::with_path(e, &pinned))?;
+        let defs: std::collections::BTreeMap<String, ServiceDef> = serde_json::from_str(&text)?;
+        if let Some(expected) = &m.service_digest {
+            let got = service_defs_digest(&defs);
+            if &got != expected {
+                return Err(H5iError::Metadata(format!(
+                    "pinned service manifest for {} does not match its recorded digest \
+                     (expected {expected}, found {got}) — refusing to start a service under a \
+                     tampered manifest (fail-closed)",
+                    m.id
+                )));
+            }
+        }
+        return Ok(defs);
+    }
+    // Back-compat: an env created before service pinning has no pinned file or
+    // recorded digest. Fall back to the worktree (then repo-root) config.
+    if m.service_digest.is_none() {
+        for path in [
+            m.work_dir(h5i_root).join(".h5i/env.toml"),
+            h5i_root
+                .parent()
+                .and_then(|p| p.parent())
+                .map(|w| w.join(".h5i/env.toml"))
+                .unwrap_or_default(),
+        ] {
+            let defs = parse_services_file(&path)?;
+            if !defs.is_empty() {
+                return Ok(defs);
+            }
+        }
+    }
+    Ok(std::collections::BTreeMap::new())
+}
+
+fn service_record_path(svc_dir: &Path, name: &str) -> PathBuf {
+    svc_dir.join(format!("{name}.json"))
+}
+
+fn read_service_record(svc_dir: &Path, name: &str) -> Option<ServiceRecord> {
+    let text = std::fs::read_to_string(service_record_path(svc_dir, name)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Start service `name` as a confined background process. Allocates + injects a
+/// dynamic host port when the def declares one. Fail-closed: refuses if the
+/// service is already running or the env has no workspace.
+pub fn service_start(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+    name: &str,
+) -> Result<ServiceRecord, H5iError> {
+    validate_service_name(name)?;
+    let defs = load_service_defs(h5i_root, m)?;
+    let def = defs.get(name).ok_or_else(|| {
+        H5iError::Metadata(format!(
+            "no service '{name}' declared in .h5i/env.toml ([service.{name}])"
+        ))
+    })?;
+    let svc_dir = services_dir(h5i_root, m);
+    std::fs::create_dir_all(&svc_dir).map_err(|e| H5iError::with_path(e, &svc_dir))?;
+    if let Some(rec) = read_service_record(&svc_dir, name) {
+        if pid_alive(rec.pid) {
+            return Err(H5iError::Metadata(format!(
+                "service '{name}' is already running (pid {}) — stop it first",
+                rec.pid
+            )));
+        }
+    }
+    let work = m.work_dir(h5i_root);
+    if !work.is_dir() {
+        return Err(H5iError::Metadata(
+            "env has no workspace (pulled or gc'd) — cannot start a service".into(),
+        ));
+    }
+    let mut policy = load_policy(h5i_root, m)?;
+    grant_box_git(repo, m, &work, &mut policy)?;
+    prepare_private_paths(h5i_root, m, &mut policy, &work)?;
+
+    let mut injected: Vec<(String, String)> = Vec::new();
+    let dynamic_port = if def.port.is_some() {
+        let p = alloc_free_port().ok_or_else(|| {
+            H5iError::Metadata("could not allocate a free host port for the service".into())
+        })?;
+        let key = env_key(name);
+        injected.push((format!("H5I_ENV_PORT_{key}"), p.to_string()));
+        injected.push((format!("{key}_DYNAMIC_PORT"), p.to_string()));
+        // PORT is the de-facto convention many dev servers read.
+        injected.push(("PORT".into(), p.to_string()));
+        Some(p)
+    } else {
+        None
+    };
+
+    let log = svc_dir.join(format!("{name}.log"));
+    let argv = vec!["sh".to_string(), "-c".to_string(), def.command.clone()];
+    let pid = sandbox::spawn_background(&policy, &work, &argv, &injected, &log)?;
+
+    let rec = ServiceRecord {
+        name: name.to_string(),
+        pid,
+        command: def.command.clone(),
+        started_at: now_ts(),
+        port: def.port,
+        dynamic_port,
+        log: log.display().to_string(),
+    };
+    std::fs::write(
+        service_record_path(&svc_dir, name),
+        serde_json::to_string_pretty(&rec)?,
+    )
+    .map_err(|e| H5iError::with_path(e, service_record_path(&svc_dir, name)))?;
+
+    let port_note = dynamic_port
+        .map(|p| format!(" port={p}"))
+        .unwrap_or_default();
+    // Record the (redacted) pinned command so a reviewer sees exactly what ran,
+    // not just a pid — the command is from the digest-verified pinned manifest.
+    let safe_cmd = crate::secrets::redact_text(&def.command);
+    append_event(
+        repo,
+        &EnvEvent {
+            ts: now_ts(),
+            env_id: m.id.clone(),
+            agent: m.agent.clone(),
+            event: "service".into(),
+            detail: Some(format!("start {name} pid={pid}{port_note} cmd=`{safe_cmd}`")),
+            capture: None,
+        },
+    )?;
+    Ok(rec)
+}
+
+/// Stop service `name`: SIGTERM the process group, escalate to SIGKILL, then
+/// (if `logs`) ingest the service log as an h5i object capture and record a
+/// `service` event with the evidence pointer. Removes the pid record.
+pub fn service_stop(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+    name: &str,
+) -> Result<Option<String>, H5iError> {
+    validate_service_name(name)?;
+    let svc_dir = services_dir(h5i_root, m);
+    let rec = read_service_record(&svc_dir, name).ok_or_else(|| {
+        H5iError::Metadata(format!("service '{name}' is not running (no record)"))
+    })?;
+
+    #[cfg(unix)]
+    {
+        let pgid = rec.pid as i32;
+        if pid_alive(rec.pid) {
+            unsafe {
+                libc::kill(-pgid, libc::SIGTERM);
+            }
+            // Brief grace period, then escalate.
+            for _ in 0..30 {
+                if !pid_alive(rec.pid) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            if pid_alive(rec.pid) {
+                unsafe {
+                    libc::kill(-pgid, libc::SIGKILL);
+                }
+            }
+        }
+    }
+
+    // Logs-as-capture (Idea 3.5): the service log becomes searchable evidence,
+    // tagged to the env + policy digest, secrets redacted. Best-effort.
+    let defs = load_service_defs(h5i_root, m).unwrap_or_default();
+    let want_logs = defs.get(name).map(|d| d.logs).unwrap_or(true);
+    let mut capture_id = None;
+    let log_path = PathBuf::from(&rec.log);
+    if want_logs && log_path.is_file() {
+        if let Ok(raw) = std::fs::read(&log_path) {
+            if !raw.is_empty() {
+                let work = m.work_dir(h5i_root);
+                if let Ok(wt_repo) = Repository::open(&work) {
+                    let head_tree = wt_repo
+                        .head()
+                        .ok()
+                        .and_then(|h| h.peel_to_tree().ok())
+                        .map(|t| t.id().to_string());
+                    let argv = vec!["sh".to_string(), "-c".to_string(), rec.command.clone()];
+                    let filter = crate::token_filter::FilterConfig {
+                        cmd: Some(argv.clone()),
+                        ..Default::default()
+                    };
+                    let opts = objects::CaptureOptions {
+                        kind: crate::token_filter::OutputKind::Auto,
+                        cmd: Some(format!("service:{name} {}", rec.command)),
+                        cwd: Some(work.display().to_string()),
+                        exit_code: None,
+                        git_tree: head_tree,
+                        files: Vec::new(),
+                        cmd_argv: argv,
+                        filter,
+                        env_id: Some(m.id.clone()),
+                        policy_digest: Some(m.policy_digest.clone()),
+                        evidence_source: Some("service-log".into()),
+                        egress: None,
+                        redact: true,
+                    };
+                    if let Ok(c) = objects::capture(&wt_repo, h5i_root, &raw, opts) {
+                        capture_id = Some(c.manifest.id.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = std::fs::remove_file(service_record_path(&svc_dir, name));
+    let _ = std::fs::remove_file(&log_path);
+    append_event(
+        repo,
+        &EnvEvent {
+            ts: now_ts(),
+            env_id: m.id.clone(),
+            agent: m.agent.clone(),
+            event: "service".into(),
+            detail: Some(format!("stop {name} pid={}", rec.pid)),
+            capture: capture_id.clone(),
+        },
+    )?;
+    Ok(capture_id)
+}
+
+/// Status of every recorded service for this env (record + liveness).
+pub fn service_status(h5i_root: &Path, m: &EnvManifest) -> Vec<ServiceStatus> {
+    let svc_dir = services_dir(h5i_root, m);
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&svc_dir) else {
+        return out;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        if let Some(name) = p.file_stem().and_then(|s| s.to_str()) {
+            if let Some(record) = read_service_record(&svc_dir, name) {
+                let alive = pid_alive(record.pid);
+                out.push(ServiceStatus { record, alive });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.record.name.cmp(&b.record.name));
+    out
+}
+
+/// Tail of a running service's log file.
+pub fn service_logs(h5i_root: &Path, m: &EnvManifest, name: &str, tail: usize) -> Result<String, H5iError> {
+    validate_service_name(name)?;
+    let svc_dir = services_dir(h5i_root, m);
+    let rec = read_service_record(&svc_dir, name)
+        .ok_or_else(|| H5iError::Metadata(format!("service '{name}' is not running")))?;
+    let text = std::fs::read_to_string(&rec.log).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(tail);
+    Ok(lines[start..].join("\n"))
+}
+
+/// Render the fleet of services for `env service status`.
+pub fn render_services(env_id: &str, rows: &[ServiceStatus]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("── services for {env_id} ──\n"));
+    if rows.is_empty() {
+        out.push_str("  (no services running; declare [service.<name>] in .h5i/env.toml)\n");
+        return out;
+    }
+    for s in rows {
+        let live = if s.alive { "running" } else { "dead" };
+        let port = s
+            .record
+            .dynamic_port
+            .map(|p| format!(" injected PORT={p}"))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "  {:<16} {:<8} pid={}{}  `{}`\n",
+            s.record.name, live, s.record.pid, port, s.record.command
+        ));
+    }
+    out
+}
+
+/// Render the per-env port map for `env ports` (Idea 2). These are **injected**
+/// ports: h5i allocates a free host port per service and passes it in as
+/// `PORT` / `H5I_ENV_PORT_<NAME>`. There is **no host→box forwarder in v1** — a
+/// port is reachable only if the service binds the injected value (the
+/// host-port "checkout"/forwarding layer is deferred). The URL is therefore
+/// shown as conditional, never a guarantee.
+pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("── injected ports for {env_id} ──\n"));
+    let with_ports: Vec<&ServiceStatus> = rows
+        .iter()
+        .filter(|s| s.record.dynamic_port.is_some())
+        .collect();
+    if with_ports.is_empty() {
+        out.push_str("  (no running service has a declared port)\n");
+        return out;
+    }
+    out.push_str(
+        "  per-env port injected as PORT / H5I_ENV_PORT_<NAME>; reachable only if the\n  \
+         service binds it (no host→box forwarder in v1)\n",
+    );
+    out.push_str(&format!(
+        "  {:<16} {:<10} {:<10} {}\n",
+        "SERVICE", "DECLARED", "INJECTED", "URL (if the service binds the injected port)"
+    ));
+    for s in with_ports {
+        let injected = s.record.dynamic_port.unwrap();
+        out.push_str(&format!(
+            "  {:<16} {:<10} {:<10} http://127.0.0.1:{}\n",
+            s.record.name,
+            s.record.port.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
+            injected,
+            injected
+        ));
+    }
+    out
+}
+
+/// Plain-text rendering of a [`DoctorReport`] (the CLI adds color).
+pub fn render_doctor(r: &DoctorReport) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("── env doctor: {} ──\n", r.env_id));
+    out.push_str(&format!("  isolation claim : {}\n", r.isolation_claim));
+    for c in &r.checks {
+        let mark = if c.ok {
+            "✓"
+        } else if c.warn {
+            "⚠"
+        } else {
+            "✗"
+        };
+        out.push_str(&format!("  {mark} {:<15} {}\n", c.name, c.detail));
+    }
+    let verdict = if r.healthy {
+        "healthy"
+    } else {
+        "UNHEALTHY — resolve the ✗ checks above"
+    };
+    out.push_str(&format!("  ───\n  verdict: {verdict}\n"));
     out
 }
 
@@ -3723,6 +4568,7 @@ mod tests {
             updated_at: now_ts(),
             status: ST_IDLE.into(),
             captures: vec![],
+            service_digest: None,
         }
     }
 
@@ -4128,6 +4974,7 @@ mod tests {
             updated_at: now_ts(),
             status: ST_CREATED.into(),
             captures: vec!["cap1".into()],
+            service_digest: None,
         };
         let text = serde_json::to_string_pretty(&m).unwrap();
         let back: EnvManifest = serde_json::from_str(&text).unwrap();
@@ -4230,6 +5077,7 @@ mod tests {
                 updated_at: now_ts(),
                 status: ST_CREATED.into(),
                 captures: Vec::new(),
+                service_digest: None,
             };
             save_manifest(h5i_root, &m).unwrap();
         }

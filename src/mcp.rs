@@ -769,6 +769,84 @@ pub fn tool_definitions() -> Value {
             }
         },
         {
+            "name": "h5i_env_doctor",
+            "description": "Enforcement-readiness + structural-health report for one \
+                environment: whether the host can actually enforce its isolation claim \
+                (functional verify_exec self-test), plus policy-digest integrity, \
+                workspace/branch/context presence, and base drift. Returns a JSON \
+                report with per-check ok/warn and an overall `healthy` flag.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "h5i_env_secrets",
+            "description": "List the secret grants an environment's policy declares, \
+                each with its source/inject/ttl and a dry-run resolution status. Never \
+                returns the value — only a sha256 fingerprint when resolvable. \
+                command: extractors are reported as 'not evaluated' (they run host-side \
+                code and are not executed by a status query).",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "h5i_env_service_start",
+            "description": "Start a long-lived service declared in the env's \
+                .h5i/env.toml ([service.<name>]) as a confined background process. \
+                Allocates + injects a per-env dynamic host port when the service \
+                declares one. Returns the service record (pid, dynamic_port).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Environment name." },
+                    "service": { "type": "string", "description": "Service name." }
+                },
+                "required": ["name", "service"]
+            }
+        },
+        {
+            "name": "h5i_env_service_stop",
+            "description": "Stop a running service (SIGTERM→SIGKILL its process \
+                group), capture its log as an h5i object, and record a service event. \
+                Returns the capture id when a log was captured.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "service": { "type": "string" }
+                },
+                "required": ["name", "service"]
+            }
+        },
+        {
+            "name": "h5i_env_service_status",
+            "description": "List every recorded service for an env with its liveness \
+                (pid, alive, declared + dynamic port, command).",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "h5i_env_ports",
+            "description": "Per-env INJECTED port map: each running service with a \
+                declared port and the free host port h5i allocated and injected as \
+                PORT / H5I_ENV_PORT_<NAME>. NOTE: there is no host→box forwarder in \
+                v1 — a port is reachable only if the service binds the injected value \
+                (dynamic_port). Not a guaranteed URL.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"]
+            }
+        },
+        {
             "name": "h5i_env_diff",
             "description": "Unified diff of an environment's changes against its pinned \
                 base. Works on a local env (live worktree) or one pulled from another \
@@ -1650,6 +1728,60 @@ fn tool_env_status(params: &Value, workdir: &Path) -> Result<Value> {
     Ok(json_content(v))
 }
 
+fn tool_env_doctor(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let repo = env_open(workdir)?;
+    let m = crate::env::find(&repo.h5i_root, &name)?;
+    let report = crate::env::doctor(repo.git(), &repo.h5i_root, &m);
+    Ok(json_content(serde_json::to_value(&report)?))
+}
+
+fn tool_env_secrets(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let repo = env_open(workdir)?;
+    let m = crate::env::find(&repo.h5i_root, &name)?;
+    let policy = crate::env::load_policy(&repo.h5i_root, &m)?;
+    let rows = crate::env::secrets_status(&policy);
+    Ok(json_content(serde_json::to_value(&rows)?))
+}
+
+fn tool_env_service_start(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let service = req_str(params, "service")?;
+    let repo = env_open(workdir)?;
+    let m = crate::env::find(&repo.h5i_root, &name)?;
+    let rec = crate::env::service_start(repo.git(), &repo.h5i_root, &m, &service)?;
+    Ok(json_content(serde_json::to_value(&rec)?))
+}
+
+fn tool_env_service_stop(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let service = req_str(params, "service")?;
+    let repo = env_open(workdir)?;
+    let m = crate::env::find(&repo.h5i_root, &name)?;
+    let cap = crate::env::service_stop(repo.git(), &repo.h5i_root, &m, &service)?;
+    Ok(json_content(serde_json::json!({ "stopped": service, "capture": cap })))
+}
+
+fn tool_env_service_status(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let repo = env_open(workdir)?;
+    let m = crate::env::find(&repo.h5i_root, &name)?;
+    let rows = crate::env::service_status(&repo.h5i_root, &m);
+    Ok(json_content(serde_json::to_value(&rows)?))
+}
+
+fn tool_env_ports(params: &Value, workdir: &Path) -> Result<Value> {
+    let name = req_str(params, "name")?;
+    let repo = env_open(workdir)?;
+    let m = crate::env::find(&repo.h5i_root, &name)?;
+    let rows: Vec<_> = crate::env::service_status(&repo.h5i_root, &m)
+        .into_iter()
+        .filter(|s| s.record.dynamic_port.is_some())
+        .collect();
+    Ok(json_content(serde_json::to_value(&rows)?))
+}
+
 fn tool_env_diff(params: &Value, workdir: &Path) -> Result<Value> {
     let name = req_str(params, "name")?;
     let stat = params.get("stat").and_then(Value::as_bool).unwrap_or(false);
@@ -1755,6 +1887,12 @@ pub fn call_tool(name: &str, params: &Value, workdir: &Path) -> Result<Value> {
         "h5i_env_run" => tool_env_run(params, workdir),
         "h5i_env_list" => tool_env_list(params, workdir),
         "h5i_env_status" => tool_env_status(params, workdir),
+        "h5i_env_doctor" => tool_env_doctor(params, workdir),
+        "h5i_env_secrets" => tool_env_secrets(params, workdir),
+        "h5i_env_service_start" => tool_env_service_start(params, workdir),
+        "h5i_env_service_stop" => tool_env_service_stop(params, workdir),
+        "h5i_env_service_status" => tool_env_service_status(params, workdir),
+        "h5i_env_ports" => tool_env_ports(params, workdir),
         "h5i_env_diff" => tool_env_diff(params, workdir),
         "h5i_env_inspect" => tool_env_inspect(params, workdir),
         "h5i_env_compare" => tool_env_compare(params, workdir),
@@ -2453,6 +2591,12 @@ mod tests {
             "h5i_env_run",
             "h5i_env_list",
             "h5i_env_status",
+            "h5i_env_doctor",
+            "h5i_env_secrets",
+            "h5i_env_service_start",
+            "h5i_env_service_stop",
+            "h5i_env_service_status",
+            "h5i_env_ports",
             "h5i_env_diff",
             "h5i_env_inspect",
             "h5i_env_compare",

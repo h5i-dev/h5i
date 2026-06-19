@@ -79,15 +79,147 @@ impl Drop for TempFiles {
     }
 }
 
-fn fingerprint(value: &str) -> String {
+/// `sha256:<12 hex>` of a value — lets a reviewer confirm "same token across
+/// runs" without ever seeing it. Public so `env secrets` can fingerprint a
+/// dry-run resolution.
+pub fn fingerprint(value: &str) -> String {
     let mut h = Sha256::new();
     h.update(value.as_bytes());
     format!("sha256:{:x}", h.finalize())[..19].to_string() // "sha256:" + 12 hex
 }
 
+/// Wall-clock timeout for a `command:` secret extractor.
+const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Max stdout captured from a `command:` extractor (1 MiB) — a credential is
+/// small; anything larger is a bug or an attempt to exhaust memory.
+const COMMAND_OUTPUT_CAP: usize = 1024 * 1024;
+
+/// Run `cmd` via `sh -c` with the production timeout + cap.
+fn run_command_capped(cmd: &str, name: &str) -> Result<String, H5iError> {
+    run_command_bounded(cmd, name, COMMAND_TIMEOUT, COMMAND_OUTPUT_CAP)
+}
+
+/// Run `cmd` via `sh -c` with a wall timeout and a stdout cap, returning the
+/// trimmed stdout. Fail-closed: a non-zero exit, a timeout, or output past the
+/// cap is an error, never a silently truncated/partial credential. The child
+/// gets its own process group so a timeout reaps the whole tree.
+fn run_command_bounded(
+    cmd: &str,
+    name: &str,
+    timeout: std::time::Duration,
+    cap: usize,
+) -> Result<String, H5iError> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c")
+            .arg(cmd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        unsafe {
+            use std::os::unix::process::CommandExt;
+            c.pre_exec(|| {
+                // Own session so a timeout killpg reaps grandchildren too.
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        c.spawn().map_err(|e| {
+            H5iError::Metadata(format!(
+                "secret grant '{name}': command extractor failed to spawn: {e} (fail-closed)"
+            ))
+        })?
+    };
+
+    // Drain stdout on a thread so a child that fills the pipe can't deadlock
+    // while we poll for exit/timeout. Keep reading to EOF (so the child never
+    // blocks on a full pipe) but RETAIN only up to the cap, discarding the rest
+    // — bounded memory regardless of how much the child emits. Returns the
+    // retained bytes plus whether the cap was exceeded.
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let reader = std::thread::spawn(move || {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut over = false;
+        let mut chunk = [0u8; 8192];
+        loop {
+            match stdout.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if buf.len() <= cap {
+                        buf.extend_from_slice(&chunk[..n]);
+                        if buf.len() > cap {
+                            over = true;
+                        }
+                    }
+                    // else: keep draining into the void so the child can finish.
+                }
+                Err(_) => break,
+            }
+        }
+        (buf, over)
+    });
+
+    // Poll for exit until the deadline; on timeout, kill the whole group.
+    let started = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) => {
+                if started.elapsed() >= timeout {
+                    #[cfg(unix)]
+                    unsafe {
+                        libc::kill(-(child.id() as i32), libc::SIGKILL);
+                    }
+                    #[cfg(not(unix))]
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = reader.join();
+                    return Err(H5iError::Metadata(format!(
+                        "secret grant '{name}': command extractor exceeded {}s (fail-closed)",
+                        timeout.as_secs()
+                    )));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(e) => {
+                let _ = reader.join();
+                return Err(H5iError::Metadata(format!(
+                    "secret grant '{name}': command extractor wait failed: {e} (fail-closed)"
+                )));
+            }
+        }
+    };
+    let (buf, over) = reader.join().unwrap_or_default();
+    if over {
+        return Err(H5iError::Metadata(format!(
+            "secret grant '{name}': command extractor produced more than {cap} bytes (fail-closed)"
+        )));
+    }
+    if !status.success() {
+        return Err(H5iError::Metadata(format!(
+            "secret grant '{name}': command extractor exited {} (fail-closed)",
+            status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into())
+        )));
+    }
+    Ok(String::from_utf8_lossy(&buf)
+        .trim_end_matches(['\n', '\r'])
+        .to_string())
+}
+
 /// Resolve a grant's value from its host-side source. Pure w.r.t. the filesystem
 /// and process env (both injectable in tests). Fail-closed on missing/empty.
-pub fn resolve_value(grant: &SecretGrant) -> Result<String, H5iError> {
+///
+/// `allow_command` gates the `command:` extractor, which executes arbitrary code
+/// **on the host, outside the sandbox** (Codex). It is off unless the env's
+/// pinned, tamper-evident policy opts in (`allow_command_extractors = true`), so
+/// a credential source can never be turned into a host-code-exec channel without
+/// an explicit, digested grant.
+pub fn resolve_value(grant: &SecretGrant, allow_command: bool) -> Result<String, H5iError> {
     let source = grant.source_or_default();
     let value = if let Some(var) = source.strip_prefix("env:") {
         std::env::var(var).map_err(|_| {
@@ -106,9 +238,23 @@ pub fn resolve_value(grant: &SecretGrant) -> Result<String, H5iError> {
             })?
             .trim_end_matches(['\n', '\r'])
             .to_string()
+    } else if let Some(cmd) = source.strip_prefix("command:") {
+        if !allow_command {
+            return Err(H5iError::Metadata(format!(
+                "secret grant '{}': a command: extractor runs host-side code outside the \
+                 sandbox and is refused unless the profile sets \
+                 `allow_command_extractors = true` (fail-closed)",
+                grant.name
+            )));
+        }
+        // Bounded even when opted-in: a trusted-but-buggy extractor (or a
+        // credential helper waiting on a TTY prompt) must not hang env
+        // create/run forever or balloon memory. Wall timeout + stdout cap,
+        // fail-closed on either.
+        run_command_capped(cmd, &grant.name)?
     } else {
         return Err(H5iError::Metadata(format!(
-            "secret grant '{}': unsupported source '{source}' (use env: or file:)",
+            "secret grant '{}': unsupported source '{source}' (use env:, file:, or command:)",
             grant.name
         )));
     };
@@ -129,6 +275,7 @@ pub fn broker(
     grants: &[SecretGrant],
     secret_dir: &Path,
     is_workspace: bool,
+    allow_command: bool,
 ) -> Result<Brokered, H5iError> {
     let mut env = Vec::new();
     let mut redactions = Vec::new();
@@ -136,7 +283,7 @@ pub fn broker(
     let mut temp = Vec::new();
 
     for g in grants {
-        let value = resolve_value(g)?;
+        let value = resolve_value(g, allow_command)?;
         let inject = g.inject_or_default();
         match inject {
             "env" => {
@@ -222,7 +369,7 @@ mod tests {
         // SAFETY: single-threaded test; unique var name avoids cross-test races.
         std::env::set_var("H5I_TEST_TOKEN_A", "s3cr3t-A");
         let g = grant("TOK", Some("env:H5I_TEST_TOKEN_A"), Some("env"));
-        assert_eq!(resolve_value(&g).unwrap(), "s3cr3t-A");
+        assert_eq!(resolve_value(&g, false).unwrap(), "s3cr3t-A");
         std::env::remove_var("H5I_TEST_TOKEN_A");
     }
 
@@ -231,21 +378,21 @@ mod tests {
         std::env::set_var("H5I_SECRET_GITHUB_TOKEN", "ghp_xyz");
         let g = grant("GITHUB_TOKEN", None, None);
         assert_eq!(g.source_or_default(), "env:H5I_SECRET_GITHUB_TOKEN");
-        assert_eq!(resolve_value(&g).unwrap(), "ghp_xyz");
+        assert_eq!(resolve_value(&g, false).unwrap(), "ghp_xyz");
         std::env::remove_var("H5I_SECRET_GITHUB_TOKEN");
     }
 
     #[test]
     fn missing_source_fails_closed() {
         let g = grant("NOPE", Some("env:H5I_DEFINITELY_UNSET_VAR_XYZ"), Some("env"));
-        assert!(resolve_value(&g).is_err());
+        assert!(resolve_value(&g, false).is_err());
     }
 
     #[test]
     fn empty_value_fails_closed() {
         std::env::set_var("H5I_TEST_EMPTY", "");
         let g = grant("E", Some("env:H5I_TEST_EMPTY"), Some("env"));
-        assert!(resolve_value(&g).is_err());
+        assert!(resolve_value(&g, false).is_err());
         std::env::remove_var("H5I_TEST_EMPTY");
     }
 
@@ -255,7 +402,7 @@ mod tests {
         let p = dir.path().join("tok");
         std::fs::write(&p, "value-from-file\n").unwrap();
         let g = grant("T", Some(&format!("file:{}", p.display())), Some("env"));
-        assert_eq!(resolve_value(&g).unwrap(), "value-from-file");
+        assert_eq!(resolve_value(&g, false).unwrap(), "value-from-file");
     }
 
     #[test]
@@ -263,7 +410,7 @@ mod tests {
         std::env::set_var("H5I_TEST_TOKEN_B", "tok-B");
         let g = grant("API_KEY", Some("env:H5I_TEST_TOKEN_B"), Some("env"));
         let dir = tempfile::tempdir().unwrap();
-        let b = broker(&[g], &dir.path().join("secrets"), false).unwrap();
+        let b = broker(&[g], &dir.path().join("secrets"), false, false).unwrap();
         assert_eq!(b.env, vec![("API_KEY".to_string(), "tok-B".to_string())]);
         assert_eq!(b.redactions, vec!["tok-B".to_string()]);
         assert_eq!(b.records.len(), 1);
@@ -281,7 +428,7 @@ mod tests {
         let g = grant("CERT", Some("env:H5I_TEST_TOKEN_C"), Some("file"));
         let dir = tempfile::tempdir().unwrap();
         let sdir = dir.path().join("secrets");
-        let b = broker(&[g], &sdir, true).unwrap();
+        let b = broker(&[g], &sdir, true, false).unwrap();
         // Injected as NAME_FILE → path.
         assert_eq!(b.env.len(), 1);
         assert_eq!(b.env[0].0, "CERT_FILE");
@@ -306,7 +453,7 @@ mod tests {
         std::env::set_var("H5I_TEST_TOKEN_D", "x");
         let g = grant("T", Some("env:H5I_TEST_TOKEN_D"), Some("file"));
         let dir = tempfile::tempdir().unwrap();
-        let err = broker(&[g], &dir.path().join("secrets"), false).unwrap_err();
+        let err = broker(&[g], &dir.path().join("secrets"), false, false).unwrap_err();
         assert!(format!("{err}").contains("inject=env"));
         std::env::remove_var("H5I_TEST_TOKEN_D");
     }
@@ -320,7 +467,7 @@ mod tests {
             grant("TOK_B", Some("env:H5I_TEST_M2"), Some("env")),
         ];
         let dir = tempfile::tempdir().unwrap();
-        let b = broker(&grants, &dir.path().join("secrets"), false).unwrap();
+        let b = broker(&grants, &dir.path().join("secrets"), false, false).unwrap();
         assert_eq!(b.env.len(), 2);
         assert!(b.env.contains(&("TOK_A".into(), "val-one".into())));
         assert!(b.env.contains(&("TOK_B".into(), "val-two".into())));
@@ -344,7 +491,7 @@ mod tests {
             grant("MISSING", Some("env:H5I_TEST_ABSENT_ZZZ"), Some("env")),
         ];
         let dir = tempfile::tempdir().unwrap();
-        assert!(broker(&grants, &dir.path().join("secrets"), false).is_err());
+        assert!(broker(&grants, &dir.path().join("secrets"), false, false).is_err());
         std::env::remove_var("H5I_TEST_PRESENT");
     }
 
@@ -355,5 +502,65 @@ mod tests {
         assert_eq!(fp.len(), "sha256:".len() + 12);
         assert_eq!(fp, fingerprint("hello"));
         assert_ne!(fp, fingerprint("world"));
+    }
+
+    #[test]
+    fn command_extractor_refused_unless_allowed() {
+        let g = grant("TOK", Some("command:printf secret-from-cmd"), Some("env"));
+        // Gated off by default: a command: source must not run.
+        let err = resolve_value(&g, false).unwrap_err();
+        assert!(format!("{err}").contains("allow_command_extractors"));
+    }
+
+    #[test]
+    fn command_extractor_runs_when_allowed() {
+        let g = grant("TOK", Some("command:printf secret-from-cmd"), Some("env"));
+        // Opted in: the command runs host-side and its stdout is the value.
+        assert_eq!(resolve_value(&g, true).unwrap(), "secret-from-cmd");
+    }
+
+    #[test]
+    fn command_extractor_nonzero_exit_fails_closed() {
+        let g = grant("TOK", Some("command:exit 3"), Some("env"));
+        assert!(resolve_value(&g, true).is_err());
+    }
+
+    #[test]
+    fn command_extractor_under_limits_ok() {
+        let v = run_command_bounded(
+            "printf hi",
+            "T",
+            std::time::Duration::from_secs(5),
+            1024,
+        )
+        .unwrap();
+        assert_eq!(v, "hi");
+    }
+
+    #[test]
+    fn command_extractor_times_out_fail_closed() {
+        // A hanging extractor must not block forever — killed at the deadline.
+        let err = run_command_bounded(
+            "sleep 30",
+            "T",
+            std::time::Duration::from_millis(300),
+            1024,
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("exceeded"), "{err}");
+    }
+
+    #[test]
+    fn command_extractor_caps_output_fail_closed() {
+        // Far more than the cap: the reader drains to EOF (no deadlock) but
+        // retains only the cap and reports it exceeded.
+        let err = run_command_bounded(
+            "yes aaaaaaaaaa | head -c 200000",
+            "T",
+            std::time::Duration::from_secs(10),
+            1024,
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("more than"), "{err}");
     }
 }

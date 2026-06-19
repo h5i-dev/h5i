@@ -656,6 +656,7 @@ mod tests {
             updated_at: "t".into(),
             status: "idle".into(),
             captures: vec!["cap0".into()],
+            service_digest: None,
         }
     }
 

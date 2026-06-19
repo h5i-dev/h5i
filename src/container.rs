@@ -615,6 +615,10 @@ pub fn build_run_argv(
     // Env capture spool for in-box `h5i capture run`. Mounted at
     // `/.h5i/spool`, matching the tee-shim spool path.
     env_capture_spool: Option<&Path>,
+    // Per-env private paths (Idea 3): each backing dir bind-mounted rw at
+    // `/work/<rel>` so concurrent envs of the same repo don't share inode-level
+    // locks / build caches. Empty → no extra mounts.
+    private_binds: &[crate::sandbox_policy::PrivateBind],
 ) -> Vec<String> {
     let mut a: Vec<String> = vec![
         rt.bin.clone(),
@@ -724,6 +728,20 @@ pub fn build_run_argv(
                 spool.display()
             ));
         }
+    }
+    // Private-path binds (Idea 3): each per-env backing dir mounted rw over its
+    // workspace path inside the box (`/work/<rel>`), giving distinct inodes per
+    // env. Comma-bearing paths (which Podman's `--mount` syntax can't carry) are
+    // rejected upstream — fail-closed in `validate_private_paths` (rel) and
+    // `env::prepare_private_paths` (backing) — so by here every bind is safe to
+    // emit; an enforcement feature must never silently drop a required bind.
+    for b in private_binds {
+        let rel = b.rel.trim_matches('/');
+        a.push("--mount".into());
+        a.push(format!(
+            "type=bind,source={},target=/work/{rel},rw",
+            b.backing.display()
+        ));
     }
     // Rootless podman: keep the caller's uid so files in /work stay owned by us.
     if rt.rootless {
@@ -863,6 +881,7 @@ pub fn run(
         &policy.box_git,
         None,
         policy.env_capture_spool.as_deref(),
+        &policy.private_binds,
     );
 
     let started = std::time::Instant::now();
@@ -967,6 +986,7 @@ pub fn run_interactive(
         &policy.box_git,
         managed_settings.as_deref(),
         policy.env_capture_spool.as_deref(),
+        &policy.private_binds,
     );
 
     // Inherited stdio (the default) — this is the interactive session. Secret
@@ -1174,6 +1194,7 @@ mod tests {
             &[],
             None,
             None,
+            &[],
         );
         let joined = argv.join(" ");
         assert_eq!(argv[0], "podman");
@@ -1220,6 +1241,7 @@ mod tests {
             &[],
             None,
             None,
+            &[],
         );
         let joined = argv.join(" ");
         assert!(joined.contains(&format!(
@@ -1268,6 +1290,7 @@ mod tests {
             &box_git,
             None,
             None,
+            &[],
         );
         let joined = argv.join(" ");
         assert!(joined.contains("type=bind,source=/repo/.git/refs,target=/repo/.git/refs,ro"));
@@ -1308,12 +1331,51 @@ mod tests {
             &weird,
             None,
             None,
+            &[],
         );
         let joined = argv.join(" ");
         assert!(
             !joined.contains("target=/repo/.git/objects"),
             "comma path must disable the whole box-git mount set: {joined}"
         );
+    }
+
+    #[test]
+    fn run_argv_mounts_private_paths_rw_under_work() {
+        let p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
+        let binds = vec![
+            crate::sandbox_policy::PrivateBind {
+                backing: "/envdir/private/target".into(),
+                rel: "target".into(),
+            },
+            crate::sandbox_policy::PrivateBind {
+                backing: "/envdir/private/.next".into(),
+                rel: ".next".into(),
+            },
+        ];
+        let argv = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/work/dir"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["sh".into()],
+            &[],
+            None,
+            None,
+            &[],
+            None,
+            None,
+            &binds,
+        );
+        let joined = argv.join(" ");
+        // Each per-env backing dir is bound rw at its workspace-relative path.
+        assert!(joined.contains("type=bind,source=/envdir/private/target,target=/work/target,rw"));
+        assert!(joined.contains("type=bind,source=/envdir/private/.next,target=/work/.next,rw"));
+        // Comma-bearing paths are rejected upstream (validate_private_paths /
+        // prepare_private_paths fail closed), so build_run_argv only ever sees
+        // safe binds and emits every one — no silent fail-open skip here.
     }
 
     // Managed-settings injection: when present, a read-only bind mount lands at
@@ -1336,6 +1398,7 @@ mod tests {
             &[],
             Some(ms),
             None,
+            &[],
         );
         let joined = with.join(" ");
         assert!(
@@ -1361,6 +1424,7 @@ mod tests {
             &[],
             None,
             None,
+            &[],
         );
         assert!(
             !without.join(" ").contains(crate::hooks::CLAUDE_MANAGED_SETTINGS_PATH),
@@ -1395,6 +1459,7 @@ mod tests {
             &[],
             None,
             None,
+            &[],
         );
         let joined = argv.join(" ");
         assert!(joined.contains("--network=slirp4netns:allow_host_loopback=true"));
@@ -1421,6 +1486,7 @@ mod tests {
                 &[],
                 None,
                 None,
+                &[],
             )
         };
         // Capture run: no interactive flags at all.
@@ -1458,6 +1524,7 @@ mod tests {
             &[],
             None,
             None,
+            &[],
         );
         let joined = argv.join(" ");
         // The image self-mount keeps the real shell reachable for any image.
@@ -1482,6 +1549,7 @@ mod tests {
             &[],
             None,
             None,
+            &[],
         );
         assert!(!plain.join(" ").contains("/.h5i/"));
     }
@@ -1503,6 +1571,7 @@ mod tests {
             &[],
             None,
             Some(Path::new("/envdir/spool")),
+            &[],
         );
         let joined = argv.join(" ");
         assert!(joined.contains("type=bind,source=/envdir/spool,target=/.h5i/spool,rw"));
@@ -1750,6 +1819,7 @@ mod tests {
             &[],
             None,
             None,
+            &[],
         );
         // The broker's env grant is passed to the container by NAME only — the
         // value is forwarded from Podman's own env, never placed in argv (which

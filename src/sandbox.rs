@@ -44,7 +44,7 @@ use crate::error::H5iError;
 // container → sandbox` dispatch cycle.
 pub use crate::sandbox_policy::{
     AgentRuntime, AuditCapture, AuditPolicy, BoxGitPath, ExecOutcome, IsolationClaim, NetMode,
-    Profile, ResolvedPolicy, SecretGrant, DEFAULT_WALL,
+    PrivateBind, PrivatePath, Profile, ResolvedPolicy, SecretGrant, DEFAULT_WALL,
 };
 
 /// Repo-relative path of the checked-in policy file.
@@ -131,6 +131,13 @@ struct ProfileToml {
     container: ContainerToml,
     #[serde(default)]
     env: EnvVarsToml,
+    /// Per-env private paths (Idea 3):
+    /// `[profile.X.private_paths] "target" = { kind = "cache", persist = true }`.
+    #[serde(default)]
+    private_paths: BTreeMap<String, PrivatePathToml>,
+    /// Opt-in for the secrets broker's host-side `command:` extractor.
+    #[serde(default)]
+    allow_command_extractors: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -176,6 +183,32 @@ struct SecretGrantToml {
     source: Option<String>,
     inject: Option<String>,
     ttl: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PrivatePathToml {
+    /// `cache` (default) | `scratch` | `private`.
+    kind: Option<String>,
+    /// Keep across runs (default `true` for `cache`, `false` otherwise).
+    persist: Option<bool>,
+}
+
+/// Build the sorted `private_paths` list from the `[profile.X.private_paths]`
+/// table. Deterministic order (BTreeMap) for a stable policy digest.
+fn build_private_paths(raw: &BTreeMap<String, PrivatePathToml>) -> Vec<crate::sandbox_policy::PrivatePath> {
+    raw.iter()
+        .map(|(path, cfg)| {
+            let kind = cfg.kind.clone().unwrap_or_else(|| "cache".to_string());
+            // Sensible default: caches are worth keeping warm; scratch/private
+            // (lock dirs, stale build output) default to wipe-per-run.
+            let persist = cfg.persist.unwrap_or(kind == "cache");
+            crate::sandbox_policy::PrivatePath {
+                path: path.clone(),
+                kind,
+                persist,
+            }
+        })
+        .collect()
 }
 
 /// Merge the simple `secrets = [..]` name list with the rich `[secret.<name>]`
@@ -301,6 +334,13 @@ pub fn load_profile(
                 tools: t.tools,
                 image: t.container.image.or(base.image),
                 env_pass: if t.env.pass.is_empty() { base.env_pass } else { t.env.pass },
+                private_paths: if t.private_paths.is_empty() {
+                    base.private_paths
+                } else {
+                    build_private_paths(&t.private_paths)
+                },
+                allow_command_extractors: t.allow_command_extractors
+                    || base.allow_command_extractors,
             }
         }
     };
@@ -402,10 +442,21 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
             )));
         }
         let src = g.source_or_default();
-        if !(src.starts_with("env:") || src.starts_with("file:")) {
+        if !(src.starts_with("env:") || src.starts_with("file:") || src.starts_with("command:")) {
             return Err(H5iError::Metadata(format!(
-                "secret grant '{}' has unsupported source '{src}' — use 'env:VAR' or \
-                 'file:/abs/path' (fail-closed)",
+                "secret grant '{}' has unsupported source '{src}' — use 'env:VAR', \
+                 'file:/abs/path', or 'command:<shell>' (fail-closed)",
+                g.name
+            )));
+        }
+        // A command: source executes host-side code outside the sandbox — refuse
+        // it at policy-load unless the profile explicitly opts in, so the gate is
+        // pinned in the (tamper-evident) digest, not just enforced at run time.
+        if src.starts_with("command:") && !p.allow_command_extractors {
+            return Err(H5iError::Metadata(format!(
+                "secret grant '{}' uses a command: extractor (host-side code outside the \
+                 sandbox) but the profile does not set `allow_command_extractors = true` \
+                 (fail-closed)",
                 g.name
             )));
         }
@@ -441,6 +492,72 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
                     "policy refused: granted path '{grant}' contains denied child '{deny}' \
                      (Landlock is allowlist-only and cannot subtract a child from a granted \
                      parent — narrow the grant)"
+                )));
+            }
+        }
+    }
+    validate_private_paths(p)?;
+    Ok(())
+}
+
+/// Validate `private_paths` (Idea 3), fail-closed: each path is
+/// workspace-relative, free of `..` traversal, has a known `kind`, and no two
+/// paths overlap (a parent would shadow the nested child's bind). Mirrors the
+/// Coasts validation rules plus h5i's no-`..` requirement.
+fn validate_private_paths(p: &Profile) -> Result<(), H5iError> {
+    const KINDS: [&str; 3] = ["cache", "scratch", "private"];
+    let norm: Vec<String> = p
+        .private_paths
+        .iter()
+        .map(|pp| pp.path.trim_matches('/').to_string())
+        .collect();
+    for (i, pp) in p.private_paths.iter().enumerate() {
+        let rel = &pp.path;
+        if rel.is_empty() || norm[i].is_empty() {
+            return Err(H5iError::Metadata(
+                "private_paths entry is empty — give a workspace-relative directory".into(),
+            ));
+        }
+        if rel.starts_with('/') {
+            return Err(H5iError::Metadata(format!(
+                "private_paths '{rel}' must be workspace-relative (no leading '/') (fail-closed)"
+            )));
+        }
+        if rel.split('/').any(|c| c == "..") {
+            return Err(H5iError::Metadata(format!(
+                "private_paths '{rel}' must not contain '..' (fail-closed)"
+            )));
+        }
+        // A comma cannot be carried by Podman's `--mount` syntax, so a private
+        // bind with a comma in its path could not be applied at the container
+        // tier. Reject it at policy load rather than silently skipping the bind
+        // (an enforcement feature must fail closed, not fail open).
+        if rel.contains(',') {
+            return Err(H5iError::Metadata(format!(
+                "private_paths '{rel}' must not contain ',' (unsupported by the container \
+                 mount syntax) (fail-closed)"
+            )));
+        }
+        if !KINDS.contains(&pp.kind.as_str()) {
+            return Err(H5iError::Metadata(format!(
+                "private_paths '{rel}' has unknown kind '{}' — use cache|scratch|private \
+                 (shared cross-env state is not supported in v1; use an explicit fs grant) \
+                 (fail-closed)",
+                pp.kind
+            )));
+        }
+    }
+    // No overlap: listing both `a` and `a/b` is an error — the first bind would
+    // shadow the second's mountpoint.
+    for i in 0..norm.len() {
+        for j in 0..norm.len() {
+            if i == j {
+                continue;
+            }
+            if norm[i] == norm[j] || norm[j].starts_with(&format!("{}/", norm[i])) {
+                return Err(H5iError::Metadata(format!(
+                    "private_paths '{}' overlaps '{}' — paths must not nest (fail-closed)",
+                    p.private_paths[i].path, p.private_paths[j].path
                 )));
             }
         }
@@ -732,6 +849,108 @@ pub fn run_with_env(
             claim.as_str()
         ))),
     }
+}
+
+/// Spawn `argv` as a long-lived **background** process under the env's
+/// confinement, with stdout+stderr redirected to `log` and stdin `/dev/null`.
+/// Returns the child PID. Unlike [`run_with_env`] it does NOT wait or apply a
+/// wall-clock kill — a service is operator-bounded (stopped explicitly). The
+/// child gets its own session/process group so a later `killpg` reaps the whole
+/// tree. v1 supports the workspace and process tiers; supervised/container
+/// services are a documented follow-up (Idea 3.5).
+pub fn spawn_background(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+    log: &Path,
+) -> Result<u32, H5iError> {
+    if argv.is_empty() {
+        return Err(H5iError::Metadata("empty command".into()));
+    }
+    check_tool_allowlist(policy, argv)?;
+    let injected = augment_injected_env(policy, injected_env);
+    let injected_env = injected.as_slice();
+    let out = std::fs::File::create(log).map_err(|e| H5iError::with_path(e, log))?;
+    let err = out.try_clone().map_err(H5iError::Io)?;
+    match policy.claim {
+        IsolationClaim::Workspace => {
+            let mut cmd = std::process::Command::new(&argv[0]);
+            cmd.args(&argv[1..])
+                .current_dir(work)
+                .stdin(std::process::Stdio::null())
+                .stdout(out)
+                .stderr(err);
+            cmd.env_clear();
+            for key in &policy.profile.env_pass {
+                if let Ok(v) = std::env::var(key) {
+                    cmd.env(key, v);
+                }
+            }
+            apply_injected_env(&mut cmd, injected_env);
+            // Own session so a later killpg(pid) reaps the whole descendant tree.
+            #[cfg(unix)]
+            unsafe {
+                use std::os::unix::process::CommandExt;
+                cmd.pre_exec(|| {
+                    if libc::setsid() == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            let child = cmd
+                .spawn()
+                .map_err(|e| H5iError::Metadata(format!("service failed to start: {e}")))?;
+            Ok(child.id())
+        }
+        IsolationClaim::Process => spawn_background_confined(policy, work, argv, injected_env, out, err),
+        claim => Err(H5iError::Metadata(format!(
+            "services are not supported at isolation '{}' in v1 — use workspace or process",
+            claim.as_str()
+        ))),
+    }
+}
+
+/// Process-tier background spawn: the shared confinement (Landlock + seccomp +
+/// ns + rlimits) with no PID namespace (so the returned PID is the service
+/// itself, killpg-able) and no wall-clock kill. Linux only.
+#[cfg(target_os = "linux")]
+fn spawn_background_confined(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+    out: std::fs::File,
+    err: std::fs::File,
+) -> Result<u32, H5iError> {
+    let net_deny = policy.profile.net_mode == NetMode::Deny;
+    // interactive=false → setsid (own pgid); pidns=false → no supervisor fork,
+    // so child.id() is the service process; no cgroup/wall-clock kill.
+    let mut cmd = build_confined_command(
+        policy, work, argv, injected_env, net_deny, None, None, false, None, false,
+    )?;
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(out)
+        .stderr(err);
+    let child = cmd
+        .spawn()
+        .map_err(|e| H5iError::Metadata(format!("confined service failed to start: {e}")))?;
+    Ok(child.id())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn spawn_background_confined(
+    _policy: &ResolvedPolicy,
+    _work: &Path,
+    _argv: &[String],
+    _injected_env: &[(String, String)],
+    _out: std::fs::File,
+    _err: std::fs::File,
+) -> Result<u32, H5iError> {
+    Err(H5iError::Metadata(
+        "process-tier services require Linux".into(),
+    ))
 }
 
 /// The **agent-in-box** entry point: run `argv` (a shell or a coding agent)
@@ -1071,6 +1290,21 @@ pub(crate) fn build_confined_command(
         Vec::new()
     };
 
+    // Private-path binds (Idea 3): (backing, target) CString pairs, pre-resolved
+    // so the post-fork child does no allocation. `target` is the workspace path
+    // the per-env backing dir shadows. A non-empty list forces a mount namespace
+    // below, exactly like config lockdown.
+    let private_bind_c: Vec<(std::ffi::CString, std::ffi::CString)> = policy
+        .private_binds
+        .iter()
+        .filter_map(|b| {
+            let target = work.join(&b.rel);
+            let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
+            let tc = std::ffi::CString::new(target.as_os_str().as_encoded_bytes()).ok()?;
+            Some((bc, tc))
+        })
+        .collect();
+
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(&work);
 
@@ -1126,7 +1360,7 @@ pub(crate) fn build_confined_command(
             // (supervised is pidns=false, so it would otherwise have none). The
             // bind is contained: a mount ns under a fresh userns reduces shared
             // mounts to slave, so it never propagates to the host.
-            if !config_lock_c.is_empty() {
+            if !config_lock_c.is_empty() || !private_bind_c.is_empty() {
                 flags |= libc::CLONE_NEWNS;
             }
             if libc::unshare(flags) != 0 {
@@ -1311,6 +1545,30 @@ pub(crate) fn build_confined_command(
                 {
                     return Err(Error::other(format!(
                         "config lock remount-ro failed: {}",
+                        Error::last_os_error()
+                    )));
+                }
+            }
+
+            // 1e. Private-path binds (Idea 3). Bind each per-env backing dir
+            //     over its workspace-relative path so concurrent envs of the
+            //     same repo see distinct inodes — no cross-env `flock`/`fcntl`
+            //     or single-writer-cache contention (Cargo `target/`, Next
+            //     `.next/dev/lock`, …). Read-write (unlike the ro config
+            //     lockdown above); same private mount ns, before Landlock. The
+            //     backing dir is separately Landlock-granted host-side so access
+            //     through the bind is allowed. Fail-closed.
+            for (backing, target) in &private_bind_c {
+                if libc::mount(
+                    backing.as_ptr(),
+                    target.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_BIND,
+                    std::ptr::null(),
+                ) != 0
+                {
+                    return Err(Error::other(format!(
+                        "private-path bind failed: {}",
                         Error::last_os_error()
                     )));
                 }
@@ -1809,6 +2067,89 @@ env.pass  = ["PATH", "HOME", "LANG"]
         assert_eq!(p.wall_secs, 30 * 60);
         assert_eq!(p.env_pass, vec!["PATH", "HOME", "LANG"]);
         assert_eq!(p.tools.len(), 5);
+    }
+
+    #[test]
+    fn private_paths_parse_with_kind_and_persist_defaults() {
+        let toml_text = r#"
+[profile.dev]
+isolation = "process"
+[profile.dev.private_paths]
+"target" = { kind = "cache" }
+".next" = { kind = "scratch", persist = false }
+"build" = { }
+"#;
+        let p = load_from_str(toml_text, "dev", None).unwrap();
+        // Deterministic (sorted) order for a stable digest.
+        let by: std::collections::HashMap<_, _> =
+            p.private_paths.iter().map(|pp| (pp.path.as_str(), pp)).collect();
+        // cache defaults persist=true; scratch overrides to false; bare entry
+        // defaults to cache+persist.
+        assert_eq!(by["target"].kind, "cache");
+        assert!(by["target"].persist);
+        assert_eq!(by[".next"].kind, "scratch");
+        assert!(!by[".next"].persist);
+        assert!(by["build"].persist, "bare entry defaults to a persisted cache");
+    }
+
+    #[test]
+    fn private_paths_reject_unsafe_and_overlapping() {
+        // Absolute path.
+        let abs = r#"
+[profile.dev]
+isolation = "process"
+[profile.dev.private_paths]
+"/etc" = { kind = "cache" }
+"#;
+        assert!(load_from_str(abs, "dev", None).is_err());
+        // `..` traversal.
+        let dotdot = r#"
+[profile.dev]
+isolation = "process"
+[profile.dev.private_paths]
+"../escape" = { kind = "cache" }
+"#;
+        assert!(load_from_str(dotdot, "dev", None).is_err());
+        // Unknown kind (shared is explicitly unsupported in v1).
+        let shared = r#"
+[profile.dev]
+isolation = "process"
+[profile.dev.private_paths]
+"db" = { kind = "shared" }
+"#;
+        assert!(load_from_str(shared, "dev", None).is_err());
+        // Overlapping (parent would shadow nested child).
+        let overlap = r#"
+[profile.dev]
+isolation = "process"
+[profile.dev.private_paths]
+"a" = { kind = "cache" }
+"a/b" = { kind = "cache" }
+"#;
+        assert!(load_from_str(overlap, "dev", None).is_err());
+        // Comma (unsupported by the container mount syntax) — fail closed at
+        // load, not silently skipped later.
+        let comma = r#"
+[profile.dev]
+isolation = "process"
+[profile.dev.private_paths]
+"a,b" = { kind = "cache" }
+"#;
+        assert!(load_from_str(comma, "dev", None).is_err());
+    }
+
+    #[test]
+    fn empty_private_paths_keeps_policy_digest_stable() {
+        // A profile that declares no private paths must serialize/digest exactly
+        // as before the field existed (skip_serializing_if = empty).
+        use crate::sandbox_policy::ResolvedPolicy;
+        let p = load_from_str(doc_example_toml(), "default", None).unwrap();
+        assert!(p.private_paths.is_empty());
+        let toml = ResolvedPolicy::new(p.isolation, p).to_toml().unwrap();
+        assert!(
+            !toml.contains("private_paths"),
+            "empty private_paths must not appear in the serialized policy"
+        );
     }
 
     #[test]
