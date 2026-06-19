@@ -1698,3 +1698,4 @@ _[Checkpoint: 6a353985 — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.ht
 _[Checkpoint: 6a3546e9 — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.html; edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.html; edited…]_
 ---
 
+[13:44:25] OBSERVE: read MANUAL.md
