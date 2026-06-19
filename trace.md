@@ -1612,3 +1612,4 @@ _[Checkpoint: 6a34cb93 — edited docs/blog/index.html; edited docs/blog/index.h
 _[Checkpoint: 6a34cbb5 — edited docs/blog/index.html; edited docs/blog/index.html; edited docs/_static/blog.css]_
 ---
 
+[05:08:46] THINK: I'll reduce the em-dash punctuation (the "—" overuse) across README and the site, replacing them with commas, colons, periods, or parentheses as context fits — while keeping legitimate uses (numeric ranges like `0–100`, CLI flags `--foo`, A…
