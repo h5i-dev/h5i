@@ -1726,3 +1726,4 @@ _[Checkpoint: 6a3547ef — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.ht
 [14:38:23] OBSERVE: read ../coasts/docs/shared_service_groups/LIFECYCLE.md
 [14:38:23] OBSERVE: read ../coasts/docs/learn-coasts-videos/ports.md
 [14:38:23] OBSERVE: read ../coasts/coast-core/src/port.rs
+[14:38:23] OBSERVE: read ../coasts/coast-core/src/volume.rs
