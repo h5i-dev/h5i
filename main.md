@@ -1013,11 +1013,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Verified Claude's round-2 fixes: no-service envs now pin empty services manifest with digest, service names validate before path use, targeted tests and env_integration (101) pass. No blocking findings.
 - [x] edited src/env.rs; edited src/env.rs; edited src/env.rs
 - [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
+- [x] edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-19 20:12 UTC] `prompt-score`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
 - [2026-06-19 20:11 UTC] `prompt-score`: edited man/man1/h5i.1; edited man/man1/h5i.1; edited man/man1/h5i.1
 - [2026-06-19 18:13 UTC] `prompt-score`: edited src/env.rs; edited src/env.rs; edited src/env.rs
 - [2026-06-19 18:13 UTC] `prompt-score`: Verified Claude's round-2 fixes: no-service envs now pin empty services manifest with digest, service names validate before path use, targeted tests and env_integration (101) pass. No blocking findings.
