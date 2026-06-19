@@ -2231,3 +2231,4 @@ _[Checkpoint: 6a35ce6a — edited tests/cli_integration.rs; edited MANUAL.md; ed
 [23:25:26] THINK: While it runs, let me independently check the raw structures so I can corroborate.
 [23:25:26] THINK: Let me peek at the actual record fields (data, not source — complements the agent's source reading):
 [23:25:26] THINK: Let me wait for the agent to confirm the notes union-merge path and whether commit records link to AST hashes, since that determines how hard AST scoping is.
+[23:25:26] THINK: Let me wait for the agent's source-side confirmation (notes union-merge path, how `ast_hashes` is populated, and the force-push confirmation) before designing — the AST linkage detail in particular determines feasibility.
