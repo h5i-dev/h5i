@@ -32,7 +32,7 @@ h5i captures that missing execution layer as Git-backed evidence: prompts and mo
     </td>
     <td align="center">
       <strong>Claude ↔ Codex</strong><br>
-      <sub>Real-time, over Git</sub>
+      <sub>Real-time conversation</sub>
     </td>
     <td align="center">
       <strong>Sandbox</strong><br>
