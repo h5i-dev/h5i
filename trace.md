@@ -1252,3 +1252,4 @@ _[Checkpoint: 6a348726 — edited README.md; edited README.md; edited README.md]
 _[Checkpoint: 6a348751 — edited README.md; edited README.md; edited README.md]_
 ---
 
+[00:06:53] OBSERVE: read docs/index.html
