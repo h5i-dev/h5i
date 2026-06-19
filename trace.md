@@ -1995,3 +1995,4 @@ _[Checkpoint: 6a357ece — Reviewed Claude's h5i env Coasts-inspired implementat
 _[Checkpoint: 6a357ede — edited src/mcp.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md]_
 ---
 
+[17:41:24] OBSERVE: read src/secrets_broker.rs
