@@ -488,14 +488,28 @@ Report what isolation this host can enforce (Landlock, user namespaces, seccomp,
 seccomp-notif, cgroup v2 delegation, rootless Podman) and which claims are
 satisfiable.
 .TP
-.B list
-List environments on this clone.
+.BI "list " "[\-\-json]"
+List environments on this clone (the fleet view).
+.B \-\-json
+emits an array of manifests, each enriched with base drift.
 .TP
 .BI "status " "NAME " "[\-\-json]"
 Lifecycle + enforced policy + evidence + base drift.
 .TP
+.BI "doctor " "NAME " "[\-\-json]"
+Enforcement-readiness + structural-health check: whether this host can actually
+enforce the env's isolation claim (functional self-test), plus policy-digest
+integrity, workspace/branch/context presence, and base drift. Exits non-zero
+when unhealthy.
+.TP
+.BI "secrets " "NAME " "[\-\-json]"
+List the policy's secret grants with a dry-run resolution status \(em never the
+value, only a fingerprint when resolvable;
+.B command:
+extractors are not executed by a status query.
+.TP
 .BI "log " NAME
-Event log (created/exec/proposed/applied/aborted/gc/violation/secret).
+Event log (created/exec/service/proposed/applied/aborted/gc/violation/secret).
 .TP
 .BI "diff " "NAME " "[\-\-stat]"
 Diff the env's work against its pinned base.
@@ -505,6 +519,24 @@ Render one evidence capture (findings, exit code, policy digest, redactions).
 .TP
 .BI "compare " "NAMES... " "[\-\-json]"
 The "arena": rank environments side by side.
+.TP
+.BI "service " "start|stop|status|logs " "NAME [SERVICE]"
+Manage long-lived services declared as \fB[service.<name>]\fR in
+\fB.h5i/env.toml\fR, confined and pid-tracked \(em no daemon. Definitions are
+pinned at create (immutable from the box; digest in the manifest), so editing
+the worktree config later cannot change what a service runs.
+.B start
+runs the service in the box and injects a per-env port when one is declared;
+.B stop
+kills it and captures its log as an h5i object;
+.BR status / logs
+inspect it. Start/stop append \fBservice\fR events to \fIrefs/h5i/env\fR.
+.TP
+.BI "ports " "NAME " "[\-\-json]"
+The per-env injected port map. h5i allocates a free host port per declared
+service port and injects it as \fBPORT\fR / \fBH5I_ENV_PORT_<NAME>\fR; there is
+no host\(->box forwarder in v1, so a port is reachable only if the service binds
+the injected value (the URL is conditional, not a guarantee).
 .TP
 .BI "rebase " NAME
 Re-pin the base onto the parent branch's advanced tip (3-way; refuses conflicts).
@@ -564,14 +596,28 @@ tier's nftables egress is the airtight L3/L4 equivalent).
 .PP
 Policy is defined per profile in
 .IR .h5i/env.toml " (" "isolation, fs.read/write/deny, net.mode/egress, "
-resources.mem/procs/wall/fsize/cpu, tools, env.pass, container.image, secrets).
-Declared
+resources.mem/procs/wall/fsize/cpu, tools, env.pass, container.image, secrets,
+private_paths).
+.B private_paths
+give each env its own backing store for build-cache/lock dirs (kind
+.IR cache / scratch / private ),
+so concurrent envs of the same repo don't collide on inode-level locks \(em
+enforced by bind mounts (process/supervised) or
+.B \-\-mount
+(container), validated fail-closed. Declared
 .B secrets
 are brokered at run time (source
-.IR env: / file: ),
+.IR env: / file: / command: ),
 injected, scrubbed from captured evidence, and audited by fingerprint \(em all
-fail-closed. The fully-resolved policy's sha256 digest is pinned in the manifest
-and every capture (tamper-evident). The
+fail-closed; a
+.B command:
+extractor runs host-side code and is refused unless the profile sets
+.B allow_command_extractors
+(pinned in the digest), and is then bounded by a wall timeout + output cap.
+Long-lived
+.B [service.<name>]
+declarations are pinned at create. The fully-resolved policy's sha256 digest is
+pinned in the manifest and every capture (tamper-evident). The
 .B h5i_env_*
 MCP tools mirror these subcommands.
 .PP
