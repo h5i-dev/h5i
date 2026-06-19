@@ -1449,4 +1449,4 @@ _[Checkpoint: 6a348f2d — edited docs/index.html; edited docs/index.html; edite
 [04:24:10] ACT: edited README.md
 [04:24:10] ACT: edited index.html
 [04:24:13] ACT: edited sandboxing-ai-agents-foundations/index.html
-[04:24:13] ACT: edited token-reduction-object-store/index.html
+[04:24:13] ACT: edited why-git-diffs-are-not-enough-for-ai-generated-code/index.html
