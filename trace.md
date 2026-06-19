@@ -2228,3 +2228,4 @@ _[Checkpoint: 6a35ce6a — edited tests/cli_integration.rs; edited MANUAL.md; ed
 [23:22:58] OBSERVE: read src/repository.rs
 [23:25:26] THINK: The context branch has no goal recorded, so I'll skip the milestone commit (not essential).
 [23:25:26] THINK: Let me investigate exactly how each is keyed before proposing an approach.
+[23:25:26] THINK: While it runs, let me independently check the raw structures so I can corroborate.
