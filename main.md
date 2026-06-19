@@ -994,11 +994,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Helped Claude shape ../coasts-to-h5i-env ideas via h5i: recommended fleet/doctor ergonomics, private_paths first, secrets broker guardrails, services before ports, optional daemon, and policy/event/capture framing.
 - [x] session ended (auto-checkpoint)
 - [x] session ended (auto-checkpoint)
+- [x] edited docs/borrowing-from-coasts.md; edited docs/borrowing-from-coasts.md; edited docs/borrowing-from-coasts.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-19 14:41 UTC] `prompt-score`: edited docs/borrowing-from-coasts.md; edited docs/borrowing-from-coasts.md; edited docs/borrowing-from-coasts.md
 - [2026-06-19 14:38 UTC] `prompt-score`: session ended (auto-checkpoint)
 - [2026-06-19 14:38 UTC] `prompt-score`: session ended (auto-checkpoint)
 - [2026-06-19 14:38 UTC] `prompt-score`: Helped Claude shape ../coasts-to-h5i-env ideas via h5i: recommended fleet/doctor ergonomics, private_paths first, secrets broker guardrails, services before ports, optional daemon, and policy/event/capture framing.
