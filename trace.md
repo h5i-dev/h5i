@@ -1563,3 +1563,4 @@ _[Checkpoint: 6a348f2d — edited docs/index.html; edited docs/index.html; edite
 _[Checkpoint: 6a34c623 — edited docs/index.html; edited docs/blog/index.html; edited docs/blog/index.html]_
 ---
 
+[04:32:45] THINK: - The net-new *comparison* posts and demo GIFs (TODO P2) — say the word and I'll write them.
