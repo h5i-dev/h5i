@@ -1213,3 +1213,16 @@ Per Codex's final notes: added 'heuristic signal of prompt craft — not a devel
 
 ---
 
+## Commit 6a348718 — 2026-06-19 00:02 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Owner redirected the prompt-maturity-first spine. index.html: hero restored to 'missing execution layer' narrative + original badge (CONTEXT VERSIONING·AI PROVENANCE·AUDITABLE SANDBOX) + balanced stat tiles (prompt score last); moved receipt card out of hero into the share-pr section (replacing the weak pr-card); reordered so #commit precedes #prompt-maturity; removed 'Prompt Score' nav link. pitch: moved prompt-maturity slide after provenance, dropped 'wedge' framing→'Feature ·'. README: reverted opening para to original execution-layer text, removed top NOTE card; stat table prompt-score last; badges reordered; §3 swap so 3.1 PR receipt / 3.2 Prompt Maturity. All parse, all anchors resolve.
+
+---
+

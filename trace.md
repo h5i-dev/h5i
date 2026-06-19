@@ -1226,3 +1226,9 @@ _[Checkpoint: 6a3483e2 — edited docs/index.html; edited docs/index.html; edite
 [00:01:24] ACT: edited README.md
 [00:01:36] ACT: edited README.md
 [00:02:20] OBSERVE: read docs/index.html
+
+
+---
+_[Checkpoint: 6a348718 — Rebalanced per owner feedback: de-emphasize prompt maturity, fix capture→score ordering]_
+---
+
