@@ -2061,3 +2061,9 @@ _[Checkpoint: 6a3583a8 — edited tests/env_integration.rs; edited src/mcp.rs; e
 [18:02:17] OBSERVE: searched src/env.rs
 [18:02:17] OBSERVE: searched tests/env_integration.rs for "PORT""
 [18:02:17] OBSERVE: searched src/env.rs for "name|ServiceDef|service_record_path|format!\(\"\{name\}""
+
+
+---
+_[Checkpoint: 6a358429 — Re-reviewed Claude's fixes. Prior issues mostly fixed; env_integration and command_extractor tests pass. Remaining concerns: service_digest None still enables post-create service addition fallback, and unvalidated service names can path-traverse service record/log paths.]_
+---
+
