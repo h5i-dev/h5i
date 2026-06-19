@@ -1741,3 +1741,4 @@ _[Checkpoint: 6a3547ef — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.ht
 [14:38:24] OBSERVE: read ../coasts/coast-core/src/types/service.rs
 [14:38:24] OBSERVE: read ../coasts/coast-core/src/types/runtime.rs
 [14:38:24] OBSERVE: read ../coasts/coast-core/src/types/volume.rs
+[14:38:24] OBSERVE: read src/env.rs
