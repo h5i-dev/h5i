@@ -2200,3 +2200,4 @@ _[Checkpoint: 6a35cba8 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited 
 [23:18:19] ACT: edited MANUAL.md
 [23:18:25] OBSERVE: read man/man1/h5i.1
 [23:18:32] ACT: edited man/man1/h5i.1
+[23:19:06] THINK: Say the word and I'll implement `h5i share push --branch <b>` (defaulting to the current branch) for the context refs as a first cut.
