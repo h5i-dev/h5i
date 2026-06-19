@@ -1565,3 +1565,9 @@ _[Checkpoint: 6a34c623 — edited docs/index.html; edited docs/blog/index.html; 
 
 [04:32:45] THINK: - The net-new *comparison* posts and demo GIFs (TODO P2) — say the word and I'll write them.
 [04:32:45] NOTE: DEFERRAL (~/Dev/h5i/docs/blog/index.html): ne preserved URL slug, and no stray repo-org references. **Out of scope / your call:** - GitHub repo **About blurb + topics** and the **social-preview…
+
+
+---
+_[Checkpoint: 6a34c66d — edited docs/index.html; edited docs/blog/index.html; edited docs/blog/index.html]_
+---
+
