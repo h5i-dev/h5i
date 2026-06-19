@@ -2120,3 +2120,4 @@ _[Checkpoint: 6a3586ca — Verified Claude's round-2 fixes: no-service envs now 
 _[Checkpoint: 6a3586d3 — edited src/env.rs; edited src/env.rs; edited src/env.rs]_
 ---
 
+[18:20:26] OBSERVE: read MANUAL.md
