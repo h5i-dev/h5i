@@ -1752,3 +1752,4 @@ _[Checkpoint: 6a3547ef — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.ht
 [14:38:24] OBSERVE: read ../coasts/coast-secrets/src/keystore.rs
 [14:38:24] OBSERVE: read ../coasts/coast-secrets/src/inject.rs
 [14:38:24] OBSERVE: read ../coasts/coast-secrets/src/extractor.rs
+[14:38:24] OBSERVE: read docs/environments-design.md
