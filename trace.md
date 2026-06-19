@@ -1736,3 +1736,4 @@ _[Checkpoint: 6a3547ef — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.ht
 [14:38:24] OBSERVE: listed files under ../coasts/coast-core/src
 [14:38:24] OBSERVE: searched Coastfile|VolumeConfig|PortConfig|Service|shared_services|\[ports\]|Coastfile" for "struct"
 [14:38:24] OBSERVE: searched src/main.rs for "Env|EnvCommand|EnvArgs|Create|Run|Shell|ports|status|doctor""
+[14:38:24] OBSERVE: read docs/blog/agent-sandbox-env/index.html
