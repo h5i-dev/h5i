@@ -1001,11 +1001,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] Reviewed Claude's h5i env Coasts-inspired implementation. env_integration passed; found service definitions not pinned, dynamic ports lacking forwarding despite advertised URLs, and container private_paths comma skip fail-open.
 - [x] edited src/mcp.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md
 - [x] edited tests/env_integration.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md
+- [x] edited tests/env_integration.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-19 17:57 UTC] `prompt-score`: edited tests/env_integration.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md
 - [2026-06-19 17:57 UTC] `prompt-score`: edited tests/env_integration.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md
 - [2026-06-19 17:39 UTC] `prompt-score`: edited src/mcp.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md
 - [2026-06-19 17:39 UTC] `prompt-score`: Reviewed Claude's h5i env Coasts-inspired implementation. env_integration passed; found service definitions not pinned, dynamic ports lacking forwarding despite advertised URLs, and container private_paths comma skip fail-open.
