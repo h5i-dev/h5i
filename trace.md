@@ -2275,3 +2275,9 @@ _[Checkpoint: 6a35d013 — session ended (auto-checkpoint)]_
 [23:46:35] THINK: To note: this commit only pushed h5i provenance into `refs/h5i/notes` locally; the code commit itself is on your `context-dag-score` branch and not pushed to any remote (you didn't ask me to, and I'll only push when you do).
 [23:46:35] THINK: Now, whenever you're ready, tell me what you'd like to clarify about the notes/ast/objects branch-scoping design — the AST handling, the non-destructive merge approach, or anything else — and we'll pick that back up.
 [23:46:35] THINK: Now let me re-read the current handler layout (post-commit) to see where notes and objects are pushed:
+
+
+---
+_[Checkpoint: 6a35d4db — edited tests/cli_integration.rs; edited MANUAL.md; edited man/man1/h5i.1]_
+---
+
