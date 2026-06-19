@@ -1989,3 +1989,9 @@ _[Checkpoint: 6a357d65 — edited src/mcp.rs; edited src/mcp.rs; edited docs/bor
 _[Checkpoint: 6a357ece — Reviewed Claude's h5i env Coasts-inspired implementation. env_integration passed; found service definitions not pinned, dynamic ports lacking forwarding despite advertised URLs, and container private_paths comma skip fail-open.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a357ede — edited src/mcp.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md]_
+---
+
