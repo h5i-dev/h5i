@@ -2209,3 +2209,4 @@ _[Checkpoint: 6a35cba8 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited 
 _[Checkpoint: 6a35ce6a — edited tests/cli_integration.rs; edited MANUAL.md; edited man/man1/h5i.1]_
 ---
 
+[23:21:19] OBSERVE: read src/storage.rs
