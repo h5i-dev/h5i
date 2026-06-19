@@ -1557,3 +1557,9 @@ _[Checkpoint: 6a348f2d — edited docs/index.html; edited docs/index.html; edite
 [04:31:31] THINK: I'll start by reading the TODO files and exploring the docs structure to understand the scope.
 [04:31:31] THINK: Let me gather the current state of the key files before forming a plan.
 [04:31:31] THINK: Decisions locked. Let me write a canonical "message house" that every surface (and every delegated agent) will copy from, so the rebrand reads consistently.
+
+
+---
+_[Checkpoint: 6a34c623 — edited docs/index.html; edited docs/blog/index.html; edited docs/blog/index.html]_
+---
+
