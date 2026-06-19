@@ -367,6 +367,8 @@
       color: var(--ink); font-family: var(--mono);
     }
     .hero-stat .lbl { font-size: 0.66rem; color: var(--text-faint); letter-spacing: 0.14em; margin-top: 0.6rem; text-transform: uppercase; }
+    /* feature-name variant: keyword as the bold word, smaller than the number tiles */
+    .hero-stats--feat .val { font-size: 1.05rem; line-height: 1.3; }
     .hero-shot {
       margin: 4rem auto 0;
       max-width: 960px;
@@ -768,6 +770,25 @@
     .rec-k { font-family: var(--mono); font-size: 0.78rem; color: var(--text-faint); min-width: 96px; text-transform: uppercase; letter-spacing: 0.06em; }
     .rec-v { font-size: 1rem; color: var(--text); }
 
+    /* ── PR receipt card ─────────────────────────────────────── */
+    .pr-receipt { text-align: left; box-shadow: 0 24px 70px rgba(0,0,0,0.35); align-self: start; }
+    .hrcpt-head { display: flex; align-items: center; gap: 10px; padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+    .hrcpt-gh { font-family: var(--mono); font-size: 0.82rem; color: var(--text-dim); }
+    .hrcpt-mark { margin-left: auto; font-family: var(--mono); font-size: 0.72rem; color: var(--green); }
+    .hrcpt-score { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+    .hrcpt-tree { font-size: 1.7rem; line-height: 1; }
+    .hrcpt-num { font-size: 2.3rem; font-weight: 800; color: var(--ink); line-height: 1; }
+    .hrcpt-den { font-size: 1rem; font-weight: 600; color: var(--text-faint); }
+    .hrcpt-tier { font-size: 1.05rem; font-weight: 700; color: var(--cyan); }
+    .hrcpt-cov { margin-left: auto; font-size: 0.8rem; color: var(--text-faint); font-family: var(--mono); }
+    .hrcpt-bars { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 22px; margin: 12px 0 16px; }
+    .hrcpt-bar { display: flex; align-items: center; gap: 9px; font-size: 0.74rem; }
+    .hrcpt-bar > i { width: 84px; color: var(--text-dim); font-style: normal; flex: none; }
+    .hrcpt-bar > b { flex: 1; height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
+    .hrcpt-bar > b > u { display: block; height: 100%; border-radius: 3px; background: var(--green); }
+    .hrcpt-note { font-size: 0.78rem; color: var(--text-faint); font-style: italic; margin-top: 12px; }
+    @media (max-width: 560px) { .hrcpt-bars { grid-template-columns: 1fr; } .hrcpt-cov { display: none; } }
+
     /* message thread */
     .thread { display: flex; flex-direction: column; gap: 12px; }
     .bubble { border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; max-width: 90%; background: var(--bg-card); }
@@ -855,8 +876,7 @@
       <span class="shine-text">Next-Gen AI-Aware Git</span>
     </h1>
     <p class="hero-sub">
-      <strong>h5i</strong> (pronounced <em>high-five</em>) is a Git sidecar for teams where AI agents write code alongside humans.
-      Git records <strong>what changed</strong>. h5i records the rest: <strong>who, why, what the agent knew, whether it was safe, and how the next agent picks up where the last left off</strong>.
+      <strong>Git tracks the diff. h5i tracks the run.</strong> AI agents follow prompts, run commands, and make decisions that never reach the commit. <strong>h5i</strong> captures that missing execution layer as Git-backed evidence.
     </p>
     <div class="hero-actions">
       <a href="#install" class="btn btn-primary">Get Started</a>
@@ -867,11 +887,11 @@
       <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh</code>
       <button class="copy-btn" onclick="copyInstall()">copy</button>
     </div>
-    <div class="hero-stats">
-      <div class="hero-stat"><div class="val">Sandbox</div><div class="lbl">CONFINED &amp; AUDITABLE</div></div>
-      <div class="hero-stat"><div class="val">95%</div><div class="lbl">LESS TOKEN WASTE</div></div>
-      <div class="hero-stat"><div class="val">3.5x</div><div class="lbl">PR INFORMATIVENESS</div></div>
-      <div class="hero-stat"><div class="val">1.8x</div><div class="lbl">MULTI-AGENT LOOP</div></div>
+    <div class="hero-stats hero-stats--feat">
+      <div class="hero-stat"><div class="val">Token Reduction</div><div class="lbl">up to 95% less</div></div>
+      <div class="hero-stat"><div class="val">Claude &harr; Codex</div><div class="lbl">real-time, over Git</div></div>
+      <div class="hero-stat"><div class="val">Sandbox</div><div class="lbl">confined by default</div></div>
+      <div class="hero-stat"><div class="val">Vibe-Check</div><div class="lbl">maturity of any AI PR</div></div>
     </div>
   </div>
 </section>
@@ -895,14 +915,14 @@
   <div class="container">
     <div class="section-head reveal">
       <span class="section-tag">The Problem</span>
-      <h2 class="section-title">Git records the diff. AI agents need more than Git can give.</h2>
-      <p class="section-sub">An agent opens a PR — having run your commands to make it. Before a human can approve, six gaps Git was never built to fill.</p>
+      <h2 class="section-title">The AI work disappears before review.</h2>
+      <p class="section-sub">An agent opens a PR, having run your commands to make it. Today the work behind it lives everywhere but the repo: prompts pasted into chat, terminal logs scrolled past, agent runs screenshotted, reviewers trusting a green check. Three weeks later, no one can say who prompted what. Before a human can approve, six gaps Git was never built to fill:</p>
       <div class="divider"></div>
     </div>
     <div class="qlist reveal">
-      <div class="qrow"><span class="q">What prompt produced this change?</span><span class="gx">git can't say</span></div>
+      <div class="qrow"><span class="q">What prompt produced this change, and was it any good?</span><span class="gx">git can't say</span></div>
       <div class="qrow"><span class="q">Which files did the agent read before editing?</span><span class="gx">git can't say</span></div>
-      <div class="qrow"><span class="q">Did the tests pass — and which ones?</span><span class="gx">git can't say</span></div>
+      <div class="qrow"><span class="q">Did the tests pass, and which ones?</span><span class="gx">git can't say</span></div>
       <div class="qrow"><span class="q">Did another agent already review or hand this off?</span><span class="gx">git can't say</span></div>
       <div class="qrow"><span class="q">Any secret leak or prompt-injection risk in the reasoning?</span><span class="gx">git can't say</span></div>
       <div class="qrow"><span class="q">Was the agent sandboxed from secrets, network, and local state?</span><span class="gx">git can't say</span></div>
@@ -972,6 +992,44 @@
         </div>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- ── Prompt Maturity ───────────────────────────────────────── -->
+<section id="prompt-maturity">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">Prompt Maturity Score</span>
+      <h2 class="section-title">Prompt quality, scored and trended</h2>
+      <p class="section-sub">h5i already records the prompt behind every AI commit. Now it gives each one a deterministic <strong>0&ndash;100</strong> score for <em>how well the work was delegated</em>, then rolls it up across the branch, right at the top of the PR brief. Fully offline: no LLM, no network, no API key.</p>
+      <div class="divider"></div>
+    </div>
+    <div class="split2 reveal">
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">PR brief</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post</span>
+
+<span class="t-bold">🌳 Prompt maturity: 81/100</span> <span class="t-out">·</span> <span class="t-ai">advanced</span>
+   <span class="t-out">7 prompts scored (100% of AI commits)</span>
+   <span class="t-cmt">Heuristic signal of prompt craft, not a developer rating.</span>
+
+  <span class="t-out">Specificity                 </span><span class="t-pass">████████░░</span><span class="t-out">  0.82</span>
+  <span class="t-out">Control / acceptance        </span><span class="t-pass">████████░░</span><span class="t-out">  0.79</span>
+  <span class="t-out">Context grounding           </span><span class="t-warn">████░░░░░░</span><span class="t-out">  0.41</span>
+  <span class="t-out">Structure                   </span><span class="t-pass">███████░░░</span><span class="t-out">  0.68</span>
+  <span class="t-out">Lexical diversity           </span><span class="t-pass">███████░░░</span><span class="t-out">  0.71</span>
+  <span class="t-out">Clarity (readability band)  </span><span class="t-pass">████████░░</span><span class="t-out">  0.80</span>
+  <span class="t-out">Length adequacy             </span><span class="t-pass">██████████</span><span class="t-out">  1.00</span></pre></div>
+      </div>
+      <div class="stack">
+        <div class="feat-card reveal"><span class="feat-cmd">scores the ask, not the output</span><div class="feat-name">Free, deterministic, explainable</div><div class="feat-desc">Readability indices, lexical diversity, and curated lexicons only. The same prompt always scores the same, so it's reproducible in CI and won't drift when a model is deprecated. Every point traces to a feature you can name.</div></div>
+        <div class="feat-card reveal"><span class="feat-cmd">seven weighted signals</span><div class="feat-name">Specificity &amp; control dominate</div><div class="feat-desc">Rewards prompts that name the goal, set constraints, reference real files, and ask for verification. Readability is the quietest voice (8%) because it misleads on terse technical text.</div></div>
+      </div>
+    </div>
+    <p class="section-sub reveal" style="margin-top:28px;">Prompt quality becomes <strong>inspectable, trendable, and reviewable</strong> across commits: a simple way for a team to see and improve how it delegates work to agents. It's a heuristic signal of prompt craft, <strong>not a developer rating</strong>. <a href="/blog/prompt-maturity-score/">Read how it works →</a></p>
   </div>
 </section>
 
@@ -1056,18 +1114,23 @@
       <div class="divider"></div>
     </div>
     <div class="split2 reveal">
-      <div class="pr">
-        <div class="pr-head">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="gh">PR #42 · fix token refresh</span>
-          <span class="marker">h5i ✓ sticky</span>
+      <div class="rec-card pr-receipt">
+        <div class="hrcpt-head">
+          <span class="hrcpt-gh">PR #42 · fix token refresh</span>
+          <span class="hrcpt-mark">h5i ✓ sticky</span>
         </div>
-        <div class="pr-body">
-          <div class="pr-sec"><span class="pr-h">Intent</span><span class="pr-c">Ship OAuth token refresh safely</span></div>
-          <div class="pr-sec"><span class="pr-h">Review focus</span><span class="pr-c"><code>token.rs</code> refresh window · cache scope in <code>session.rs</code></span></div>
-          <div class="pr-sec"><span class="pr-h">Provenance</span><span class="pr-c">3 AI commits · claude-code, codex · all tested</span></div>
-          <div class="pr-sec"><span class="pr-h">Audit</span><span class="pr-c"><span class="t-pass">no secrets</span> · <span class="t-pass">no injection</span> · 1 blind edit reviewed</span></div>
-          <div class="pr-sec"><span class="pr-h">Agent threads</span><span class="pr-c">codex flagged cache scope → resolved</span></div>
+        <div class="hrcpt-score">
+          <span class="hrcpt-tree">🌳</span>
+          <span class="hrcpt-num">81<span class="hrcpt-den">/100</span></span>
+          <span class="hrcpt-tier">advanced</span>
+          <span class="hrcpt-cov">prompt maturity · 7 prompts</span>
+        </div>
+        <div class="rec">
+          <div class="rec-row"><span class="rec-k">intent</span><span class="rec-v">ship OAuth token refresh safely</span></div>
+          <div class="rec-row"><span class="rec-k">focus</span><span class="rec-v"><code>token.rs</code> refresh window · cache scope in <code>session.rs</code></span></div>
+          <div class="rec-row"><span class="rec-k">provenance</span><span class="rec-v">3 AI commits · claude-code, codex · all tested</span></div>
+          <div class="rec-row"><span class="rec-k">audit</span><span class="rec-v"><span class="t-pass">no secrets · no injection</span> · 1 blind edit reviewed</span></div>
+          <div class="rec-row"><span class="rec-k">threads</span><span class="rec-v">codex flagged cache scope → resolved</span></div>
         </div>
       </div>
       <div class="stack">
@@ -1117,7 +1180,6 @@
       <div class="stack">
         <div class="feat-card reveal"><span class="feat-cmd">h5i audit review --limit 50</span><div class="feat-name">Triage funnel</div><div class="feat-desc">Riskiest AI commits first, before humans spend review cycles.</div></div>
         <div class="feat-card reveal"><span class="feat-cmd">h5i audit scan</span><div class="feat-name">Injection scan</div><div class="feat-desc">Scan reasoning traces for prompt-injection and exfiltration patterns.</div></div>
-        <div class="feat-card reveal"><span class="feat-cmd">h5i audit policy init</span><div class="feat-name">Policy gate</div><div class="feat-desc"><code>.h5i/policy.toml</code> rules — block on credential leak, require audit on auth.</div></div>
       </div>
     </div>
   </div>
@@ -1152,9 +1214,26 @@
       </div>
       <div class="stack">
         <div class="feat-card reveal"><span class="feat-cmd">h5i env create · shell</span><div class="feat-name">Work in a box</div><div class="feat-desc">Make a confined environment, then work in it — or hand it to an agent. Every command inside is confined by construction.</div></div>
-        <div class="feat-card reveal"><span class="feat-cmd">tiered isolation</span><div class="feat-name">As strong as the host allows</div><div class="feat-desc">Landlock + seccomp + namespaces up to a rootless network egress allowlist — no root, no VM. If the host can't enforce it, h5i refuses rather than quietly running with less.</div></div>
         <div class="feat-card reveal"><span class="feat-cmd">h5i env diff · log · apply</span><div class="feat-name">Audit, then merge</div><div class="feat-desc">See what changed and every blocked access, then merge onto your branch — reviewer-selected, never automatic.</div></div>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Built with h5i (dogfood proof) ────────────────────────── -->
+<section id="built-with">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">Built with h5i</span>
+      <h2 class="section-title">h5i builds h5i</h2>
+      <p class="section-sub">This very page was rewritten by <strong>Claude and Codex coordinating over <code>h5i msg</code></strong>: the agents traded positioning notes, flagged risks, and signed off, all on <code>refs/h5i/*</code>. The project keeps its own development record inside itself.</p>
+      <div class="divider"></div>
+    </div>
+    <div class="hero-stats reveal">
+      <div class="hero-stat"><div class="val">256</div><div class="lbl">CROSS-AGENT MESSAGES</div></div>
+      <div class="hero-stat"><div class="val">96</div><div class="lbl">REASONING MILESTONES</div></div>
+      <div class="hero-stat"><div class="val">1,200+</div><div class="lbl">OBSERVE / THINK / ACT TRACES</div></div>
+      <div class="hero-stat"><div class="val">0</div><div class="lbl">EXTERNAL SERVICES — ALL IN GIT</div></div>
     </div>
   </div>
 </section>
@@ -1263,6 +1342,14 @@
       <details class="faq-item">
         <summary>How is h5i different from plain Git?</summary>
         <div class="faq-answer">Git versions code. h5i adds five semantic dimensions on top: temporal (history), structural (AST), intentional (AI provenance), empirical (test metrics), and associative (cross-agent messaging). It stores this metadata in dedicated <code>refs/h5i/*</code> refs, so it travels with the repo without touching your commit history.</div>
+      </details>
+      <details class="faq-item">
+        <summary>What is the Prompt Maturity Score?</summary>
+        <div class="faq-answer">A deterministic <strong>0–100</strong> score for the prompt behind a commit, rolled up across a branch and rendered at the top of the PR brief. It rewards prompts that name the goal, set constraints, reference real files, and ask for verification — computed <strong>fully offline</strong> from text features (no LLM, no API key), so it's free on every commit, reproducible in CI, and explainable point-by-point. It scores the engineer's <em>input</em>, not the model's output, and is a heuristic signal of prompt craft — not a developer rating.</div>
+      </details>
+      <details class="faq-item">
+        <summary>Who is h5i for?</summary>
+        <div class="faq-answer">The first adopters are <strong>platform, security, and DevEx leads</strong> at engineering orgs rolling out Claude Code and Codex: the people who have to keep PR review and audit defensible while agents write a growing share of production diffs. h5i is the <strong>audit trail for AI coding sessions</strong>: every change carries who/which-model authored it, how well it was prompted, what commands ran, whether tests passed, and what risks were flagged, all versioned in your own Git repo, shareable with <code>push</code>/<code>pull</code>, no SaaS. It makes agent work reproducible, reviewable, and accountable without adding a new system of record.</div>
       </details>
       <details class="faq-item">
         <summary>Can h5i reduce AI token costs?</summary>

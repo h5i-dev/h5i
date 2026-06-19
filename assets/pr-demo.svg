@@ -25,6 +25,8 @@
 
   <!-- Body -->
   <text x="126" y="140" class="h1">h5i review brief</text>
+  <rect x="534" y="120" width="280" height="30" rx="15" fill="#1a7f37" opacity=".18" stroke="#2ea043"/>
+  <text x="552" y="140" class="chip" fill="#3fb950">🌳 Prompt maturity  81/100 · advanced</text>
 
   <text x="126" y="184" class="strong">🧭 Merge status:</text>
   <text x="270" y="184" class="body">🟡 review needed · 🔐 security clean · 🧬 3 duplicate-code findings</text>

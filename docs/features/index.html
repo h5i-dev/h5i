@@ -774,6 +774,11 @@
     </div>
     <div class="feat-grid">
       <div class="feat-card reveal">
+        <span class="feat-cmd">h5i share pr post</span>
+        <div class="feat-name">Prompt Maturity Score</div>
+        <div class="feat-desc">A deterministic 0–100 score for the prompt behind every commit — how well the work was delegated — rolled up across the branch and rendered at the top of the PR brief. Fully offline (no LLM, no API key): specificity and control dominate, anti-gaming guards stop keyword-stuffing.</div>
+      </div>
+      <div class="feat-card reveal">
         <span class="feat-cmd">h5i recall context</span>
         <div class="feat-name">Versioned reasoning</div>
         <div class="feat-desc">Every observation, decision, and action is saved as a node linked to its commit — so the why behind the code survives session resets and handoffs.</div>
@@ -789,7 +794,7 @@
         <div class="feat-desc">Record verified facts and snapshot agent memory so the next session skips re-grounding — a reproducible N=5 experiment cut estimated session cost by 51%.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i capture commit --prompt …</span>
+        <span class="feat-cmd">h5i capture commit --model … --agent …</span>
         <div class="feat-name">AI-tagged commits</div>
         <div class="feat-desc">Every diff carries the exact prompt, model, agent, and test result — captured automatically once hooks are installed.</div>
       </div>
