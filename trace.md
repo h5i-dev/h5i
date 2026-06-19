@@ -2006,3 +2006,4 @@ _[Checkpoint: 6a357ede — edited src/mcp.rs; edited src/mcp.rs; edited docs/bor
 [17:43:16] ACT: edited src/secrets_broker.rs
 [17:43:54] ACT: edited src/sandbox.rs
 [17:44:02] ACT: edited src/env.rs
+[17:44:06] OBSERVE: read src/container.rs
