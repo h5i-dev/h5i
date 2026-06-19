@@ -75,7 +75,8 @@ Agent Workspace
 - **New: Sandboxed agent workspaces (`h5i env`).** Hand an agent a disposable, confined worktree, prove what it couldn't reach, and apply the result only after review. [Jump to the sandboxed workspace ↓](#confine-the-workspace-h5i-env)
 - **New: Prompt Maturity Score.** Every AI commit's prompt gets a deterministic, fully-offline **0–100** quality signal, rolled up across the branch and rendered in the PR evidence. [Jump to prompt-aware commits ↓](#record-the-work-h5i-capture-commit)
 - **New: Compressed tool logs.** Agents see a compact summary while the full output stays out of context, recoverable via Git LFS. [Jump to compressed logs ↓](#compress-the-logs-h5i-capture-run)
-- **Agent handoffs reached 100+ points on Hacker News.** Read the discussion [here](https://news.ycombinator.com/item?id=48345837).
+- **Agent Radio reached 100+ points on Hacker News.** Read the discussion [here](https://news.ycombinator.com/item?id=48345837).
+- **New: Agent Radio.** Since your agents' context already lives in Git, they can now talk to each other through it. h5i msg adds a cross-agent message channel stored in refs/h5i/msg. [Jump to Agent Radio ↓](#multi-ai-conversation-h5i-msg)
 
 ---
 
@@ -251,7 +252,7 @@ On top of that provenance, the **Prompt Maturity Score** turns the recorded prom
 
 Prompt quality becomes **inspectable, trendable, and reviewable** across commits, a simple way for a team to see and improve how it delegates work to agents, without sending a single prompt to another model. (Design write-up: [How to Measure Prompt Quality Offline](https://h5i.dev/blog/prompt-maturity-score/).)
 
-### Coordinate agents: `h5i msg`
+### Multi-AI Conversation: `h5i msg`
 
 Because the workspace already lives in Git, your agents can also **hand off to each other through it**: `h5i msg` (a.k.a. *Agent Radio*) is a Git-backed cross-agent message channel stored in `refs/h5i/msg`, built for typed operational handoffs (`ASK` · `REVIEW_REQUEST` · `RISK` · `DONE` · `ACK`). Claude can ask, Codex can review, risks can be flagged and resolved, and the whole log survives clones, machines, and branches. It travels with `h5i share push` / `pull`, and divergent sends from two machines **union-merge with no messages lost**. *What this proves: the workspace is the shared, auditable substrate for Claude ↔ Codex.*
 
