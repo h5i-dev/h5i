@@ -1962,3 +1962,4 @@ _[Checkpoint: 6a355530 — edited docs/borrowing-from-coasts.md; edited docs/bor
 I'll wait for the three mappers to return their precise structural maps, then start implementing Idea 0.
 [17:29:07] THINK: rs` (I'll be editing these) while the env.
 [17:29:07] THINK: Let me start with **Idea 0 (fleet/doctor)**.
+[17:29:07] THINK: Let me insert the `doctor` function and renderer into env.
