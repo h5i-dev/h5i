@@ -1275,7 +1275,10 @@ fn pull_roundtrips_h5i_refs_through_a_bare_remote() {
             .args(["push", "-u", "origin", "main"])
             .current_dir(sender.path()),
     );
-    let push_out = sender.h5i_ok(&["push", "--remote", "origin"]);
+    // Full-sync push: this roundtrip asserts sender/receiver agree on the exact
+    // notes OID, which holds on the --all-branches (force) path; the scoped
+    // default rebuilds a per-branch union commit with a different OID by design.
+    let push_out = sender.h5i_ok(&["push", "--remote", "origin", "--all-branches"]);
     let push_s = stdout(&push_out);
     assert!(
         push_s.contains("refs/h5i/notes"),
@@ -1478,7 +1481,10 @@ fn pull_fast_forwards_when_remote_extends_local() {
             .args(["push", "-u", "origin", "main"])
             .current_dir(sender.path()),
     );
-    sender.h5i_ok(&["push", "--remote", "origin"]);
+    // Full-sync push (--all-branches) so the remote carries the sender's exact
+    // notes commit — the scoped default rebuilds a per-branch union commit whose
+    // OID intentionally differs, which this exact-OID FF test is not about.
+    sender.h5i_ok(&["push", "--remote", "origin", "--all-branches"]);
 
     let receiver = repo_wired_to(&remote_url);
     receiver.h5i_ok(&["pull", "--remote", "origin"]);
@@ -1486,7 +1492,7 @@ fn pull_fast_forwards_when_remote_extends_local() {
 
     // Sender extends notes with another commit, then pushes.
     sender.make_commit("b.rs", "fn extra() {}", "second");
-    sender.h5i_ok(&["push", "--remote", "origin"]);
+    sender.h5i_ok(&["push", "--remote", "origin", "--all-branches"]);
     let sender_tip = resolve_ref_in(&sender, "refs/h5i/notes").unwrap();
     assert_ne!(sender_tip, after_first, "sender should have moved forward");
 
@@ -1875,21 +1881,59 @@ fn push_branch_bare_uses_current_git_branch() {
     );
 }
 
-/// Without `--branch`, every branch's context ref is pushed (the default), so the
-/// refactor that added scoping must not regress the wildcard path.
+/// `--all-branches` pushes every branch's context ref (the opt-out from the
+/// default current-branch scoping); the wildcard path must not regress.
 #[test]
-fn push_without_branch_pushes_all_context_refs() {
+fn push_all_branches_pushes_every_context_ref() {
     let (remote, sender) = sender_with_two_context_branches();
 
-    sender.h5i_ok(&["push", "--remote", "origin"]);
+    sender.h5i_ok(&["push", "--remote", "origin", "--all-branches"]);
 
     assert!(
         remote_ref_exists(remote.path(), "refs/h5i/context/main"),
-        "unscoped push must include main's context ref"
+        "--all-branches must include main's context ref"
     );
     assert!(
         remote_ref_exists(remote.path(), "refs/h5i/context/feature"),
-        "unscoped push must include feature's context ref"
+        "--all-branches must include feature's context ref"
+    );
+}
+
+/// With no flag at all, the push defaults to the *current* git branch — only the
+/// checked-out branch's context ref travels, not other branches'.
+#[test]
+fn push_defaults_to_current_branch() {
+    let (remote, sender) = sender_with_two_context_branches();
+
+    // Helper leaves the sender on `feature`.
+    sender.h5i_ok(&["push", "--remote", "origin"]);
+
+    assert!(
+        remote_ref_exists(remote.path(), "refs/h5i/context/feature"),
+        "default push should include the current branch's (feature) context ref"
+    );
+    assert!(
+        !remote_ref_exists(remote.path(), "refs/h5i/context/main"),
+        "default push must NOT include other branches' context refs"
+    );
+}
+
+/// `--branch` and `--all-branches` are mutually exclusive.
+#[test]
+fn push_branch_conflicts_with_all_branches() {
+    let (_remote, sender) = sender_with_two_context_branches();
+
+    let out = sender.h5i(&[
+        "push",
+        "--remote",
+        "origin",
+        "--branch",
+        "feature",
+        "--all-branches",
+    ]);
+    assert!(
+        !out.status.success(),
+        "--branch with --all-branches must be rejected"
     );
 }
 

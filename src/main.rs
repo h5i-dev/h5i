@@ -837,13 +837,19 @@ enum Commands {
         #[arg(short, long, default_value = "origin")]
         remote: String,
 
-        /// Scope the context-DAG push to a single branch's
-        /// `refs/h5i/context/<branch>` instead of every branch (the default
-        /// wildcard). Pass a name, or pass `--branch` bare to use the current
-        /// git branch. Only the context refs are scoped — the SHA-keyed global
-        /// refs (notes/ast/objects) and shared refs (msg/env) still push in full.
-        #[arg(short, long, value_name = "BRANCH", num_args = 0..=1, default_missing_value = "")]
+        /// Branch whose h5i material to push. Defaults to the current git
+        /// branch — like `git push`, only the current branch's material travels:
+        /// its `refs/h5i/context/<branch>`, the notes for commits reachable from
+        /// it, and the objects manifests captured on it. Pass an explicit name to
+        /// scope to another branch. (ast/msg/env/memory always push in full.)
+        /// Use `--all-branches` to push every branch's material instead.
+        #[arg(short, long, value_name = "BRANCH", num_args = 0..=1, default_missing_value = "", conflicts_with = "all_branches")]
         branch: Option<String>,
+
+        /// Push every branch's h5i material (the pre-scoping behavior), rather
+        /// than just the current branch. Useful for a first full sync or CI.
+        #[arg(long)]
+        all_branches: bool,
     },
 
     /// Fetch all h5i refs (notes + memory + context + ast) from a remote in one shot.
@@ -7036,26 +7042,29 @@ fn main() -> anyhow::Result<()> {
             rt.block_on(h5i_core::server::serve(repo_path, port))?;
         }
 
-        Commands::Push { remote, branch } => {
+        Commands::Push {
+            remote,
+            branch,
+            all_branches,
+        } => {
             let workdir = std::env::current_dir()?;
 
-            // Resolve the optional context-DAG scope.
-            //   None            → unscoped (wildcard, every branch's context).
-            //   Some("")        → `--branch` bare → current git branch.
-            //   Some(name)      → that explicit branch.
-            let ctx_scope: Option<String> = match branch {
-                None => None,
-                Some(name) => {
-                    let resolved = if name.is_empty() {
-                        h5i_core::ctx::current_git_branch(&workdir)
-                    } else {
-                        name
-                    };
-                    if let Err(e) = h5i_core::cli_routing::validate_ctx_branch_name(&resolved) {
-                        anyhow::bail!("invalid --branch: {e}");
-                    }
-                    Some(resolved)
+            // Resolve which branch's material to push. Scoping to the current
+            // branch is the DEFAULT (like `git push`); `--all-branches` opts out.
+            //   --all-branches  → None (push every branch's material).
+            //   --branch <name> → that explicit branch.
+            //   --branch (bare) / omitted → the current git branch.
+            let ctx_scope: Option<String> = if all_branches {
+                None
+            } else {
+                let resolved = match branch {
+                    Some(name) if !name.is_empty() => name,
+                    _ => h5i_core::ctx::current_git_branch(&workdir),
+                };
+                if let Err(e) = h5i_core::cli_routing::validate_ctx_branch_name(&resolved) {
+                    anyhow::bail!("invalid --branch: {e}");
                 }
+                Some(resolved)
             };
 
             println!(
@@ -7067,9 +7076,16 @@ fn main() -> anyhow::Result<()> {
             if let Some(b) = &ctx_scope {
                 println!(
                     "  {} scoped to branch {} — context + notes + objects for this branch only \
-                     (notes/objects union non-destructively onto the remote; ast/msg/env push in full)",
+                     (ast/msg/env/memory push in full; use {} for every branch)",
                     style("•").dim(),
                     style(b).cyan(),
+                    style("--all-branches").bold(),
+                );
+            } else {
+                println!(
+                    "  {} {} — every branch's material",
+                    style("•").dim(),
+                    style("--all-branches").bold(),
                 );
             }
 
@@ -7158,16 +7174,23 @@ fn main() -> anyhow::Result<()> {
                     &remote,
                     &format!("+refs/h5i/notes:{temp}"),
                 ]);
-                // Commit set reachable from the branch (empty if it has no git ref).
-                let reachable: std::collections::HashSet<String> =
-                    match git_run(&["rev-list", &format!("refs/heads/{branch}")]) {
+                // Commit set reachable from the branch. Prefer the branch ref;
+                // fall back to HEAD so a detached checkout (common in CI) still
+                // scopes to the checked-out history rather than pushing nothing.
+                let rev_list = |rev: &str| -> std::collections::HashSet<String> {
+                    match git_run(&["rev-list", rev]) {
                         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
                             .lines()
                             .map(|l| l.trim().to_string())
                             .filter(|s| !s.is_empty())
                             .collect(),
                         _ => std::collections::HashSet::new(),
-                    };
+                    }
+                };
+                let mut reachable = rev_list(&format!("refs/heads/{branch}"));
+                if reachable.is_empty() {
+                    reachable = rev_list("HEAD");
+                }
                 let g2 = git2::Repository::open(&workdir)
                     .map_err(|e| anyhow::anyhow!("open git repo: {e}"))?;
                 let copied =
