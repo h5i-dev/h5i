@@ -115,10 +115,10 @@ Requires Rust 1.70+.
 
 ```bash
 # From crates.io (via git)
-cargo install --git https://github.com/Koukyosyumei/h5i h5i-core
+cargo install --git https://github.com/h5i-dev/h5i h5i-core
 
 # From a local clone
-git clone https://github.com/Koukyosyumei/h5i
+git clone https://github.com/h5i-dev/h5i
 cd h5i && cargo install --path .
 ```
 
