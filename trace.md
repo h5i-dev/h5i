@@ -1504,3 +1504,4 @@ _[Checkpoint: 6a348f2d — edited docs/index.html; edited docs/index.html; edite
 [04:25:49] ACT: edited claude-code-hooks-vs-git-hooks/index.html
 [04:25:52] ACT: edited README.md
 [04:25:53] ACT: edited track-claude-code-prompts-diffs-git/index.html
+[04:25:55] ACT: edited prompt-injection-in-agent-traces/index.html
