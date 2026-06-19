@@ -1960,3 +1960,4 @@ _[Checkpoint: 6a355530 — edited docs/borrowing-from-coasts.md; edited docs/bor
 [17:29:07] THINK: One new dependency.
 
 I'll wait for the three mappers to return their precise structural maps, then start implementing Idea 0.
+[17:29:07] THINK: rs` (I'll be editing these) while the env.
