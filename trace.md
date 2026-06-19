@@ -1789,3 +1789,4 @@ _[Checkpoint: 6a355478 — session ended (auto-checkpoint)]_
 [14:40:38] ACT: edited docs/borrowing-from-coasts.md
 [14:40:52] ACT: edited docs/borrowing-from-coasts.md
 [14:41:09] ACT: edited docs/borrowing-from-coasts.md
+[14:41:30] THINK: Now let me apply the secrets-section refinements (the factual correction + extractor-execution guardrail + richer record fields).
