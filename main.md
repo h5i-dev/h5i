@@ -970,11 +970,13 @@ implement h5i pull subcommand to mirror h5i push (fetches refs/h5i/{notes,memory
 - [x] edited README.md; edited README.md; edited docs/index.html
 - [x] Added dogfood proof + sharper pain + beachhead (owner-approved subset of Codex investor review)
 - [x] edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html
+- [x] edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/index.html
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-06-19 00:11 UTC] `prompt-score`: edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/index.html
 - [2026-06-19 00:09 UTC] `prompt-score`: edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html
 - [2026-06-19 00:09 UTC] `prompt-score`: Added dogfood proof + sharper pain + beachhead (owner-approved subset of Codex investor review)
 - [2026-06-19 00:07 UTC] `prompt-score`: edited README.md; edited README.md; edited docs/index.html
