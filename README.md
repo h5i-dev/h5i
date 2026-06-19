@@ -57,8 +57,6 @@ Use `h5i` if you want your AI agents to stop leaving their work in thin air.
 
 **Who it's for:** platform, security, and DevEx leads at orgs rolling out Claude Code and Codex who need PR review and audit to stay defensible as agents write more of the diff.
 
-> **Built with h5i.** This repository develops itself through h5i: **256** cross-agent messages on `refs/h5i/msg`, **~96** reasoning milestones, and **1,200+** OBSERVE / THINK / ACT trace lines — and this very README was rewritten by Claude and Codex coordinating over `h5i msg`, reviewing each other's work along the way.
-
 ### Recent News
 
 - **New: Prompt Maturity Score.** Every AI commit's prompt now gets a deterministic, fully-offline **0–100** quality score, rolled up across the branch and rendered in the PR brief. [Jump to Prompt Maturity Score ↓](#32-prompt-maturity-score--make-prompt-craft-a-visible-signal)
