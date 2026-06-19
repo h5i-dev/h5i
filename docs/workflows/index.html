@@ -77,13 +77,13 @@
     </header>
 
     <div class="callout">
-      <strong>An auditable workspace</strong> is the place an AI agent does its work — a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. <em>Workspace = worktree + prompt + model + commands + logs + policy + messages + PR evidence.</em>
+      <strong>An auditable workspace</strong> is the place an AI agent does its work, a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. <em>Workspace = worktree + prompt + model + commands + logs + policy + messages + PR evidence.</em>
       <br><br>
-      The whole record <strong>lives in your Git</strong> (<code>refs/h5i/*</code>) and travels with the repo — no SaaS, no lock-in, works offline. h5i is not a Git replacement, not a hosted sandbox; it's a Git sidecar for auditable agent workspaces.
+      The whole record <strong>lives in your Git</strong> (<code>refs/h5i/*</code>) and travels with the repo, no SaaS, no lock-in, works offline. h5i is not a Git replacement, not a hosted sandbox; it's a Git sidecar for auditable agent workspaces.
     </div>
 
     <h2>The golden path</h2>
-    <p>Every workflow below is the same journey: open a workspace, hand it to an agent, let evidence accrue (commands, logs, prompts, handoffs), let a reviewer read the provable record on the PR, then a human applies and merges. <code>h5i env</code> — the sandboxed worktree — is the canonical auditable workspace and the entry point.</p>
+    <p>Every workflow below is the same journey: open a workspace, hand it to an agent, let evidence accrue (commands, logs, prompts, handoffs), let a reviewer read the provable record on the PR, then a human applies and merges. <code>h5i env</code>, the sandboxed worktree, is the canonical auditable workspace and the entry point.</p>
 
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">golden-path</span></div>
@@ -129,7 +129,7 @@
     </div>
 
     <h2>The workspace stack</h2>
-    <p>Each layer is a property of the same auditable workspace — provenance (who/why/what the agent knew), confinement (what it <em>couldn't</em> reach, provable), and governance (deterministic audit, no model in the loop).</p>
+    <p>Each layer is a property of the same auditable workspace, provenance (who/why/what the agent knew), confinement (what it <em>couldn't</em> reach, provable), and governance (deterministic audit, no model in the loop).</p>
 
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">stack</span></div>
@@ -155,7 +155,7 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i init</span></pre></div>
     </div>
 
-    <h2>Flow A — Solo developer with Claude Code</h2>
+    <h2>Flow A: Solo developer with Claude Code</h2>
     <p>A day in an auditable workspace: you open a confined worktree, Claude Code works inside it, evidence accrues automatically, and you review the provable record before merging. <code>h5i hook setup</code> wires Claude Code's hooks once; from then on file reads, edits, prompts, and stop-checkpoints flow into the context trace.</p>
 
     <div class="terminal">
@@ -176,8 +176,8 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i env apply ship-oauth</span></pre></div>
     </div>
 
-    <h2>Flow B — Claude + Codex review loop</h2>
-    <p>One agent proposes, another reviews — on the same Git-backed evidence. Claude works in its workspace and proposes; Codex pulls the shared <code>refs/h5i/*</code> evidence, reviews the provable record, and applies on its own clone. Handoffs are Git-backed (<code>h5i msg</code>, the "Agent Radio"), so nothing depends on a shared chat window.</p>
+    <h2>Flow B: Claude + Codex review loop</h2>
+    <p>One agent proposes, another reviews, on the same Git-backed evidence. Claude works in its workspace and proposes; Codex pulls the shared <code>refs/h5i/*</code> evidence, reviews the provable record, and applies on its own clone. Handoffs are Git-backed (<code>h5i msg</code>, the "Agent Radio"), so nothing depends on a shared chat window.</p>
 
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">claude-codex-loop</span></div>
@@ -195,7 +195,7 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i env apply refactor-client</span></pre></div>
     </div>
 
-    <h2>Flow C — Security-sensitive refactor</h2>
+    <h2>Flow C: Security-sensitive refactor</h2>
     <p>When the work touches auth, secrets, or anything you'd rather an agent didn't run loose in your tree, the workspace's <strong>confinement</strong> pillar carries the weight: "the agent physically could not exfiltrate" beats "we logged it." <code>h5i env create</code> picks the strongest isolation the host can enforce (Landlock + seccomp, and a network egress allowlist on the container tier). Every blocked access and every command is recorded; nothing reaches your branch until you <code>apply</code>.</p>
 
     <div class="terminal">
@@ -214,8 +214,8 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i env apply rotate-secrets</span></pre></div>
     </div>
 
-    <h2>Flow D — Team PR review</h2>
-    <p>The reviewer never has to take the agent's word for it. Provenance, audit signals, and the captured command record travel with the repo as <code>refs/h5i/*</code> and surface as review-ready PR evidence — a sticky comment with review-focus files, goal, evidence, checklist, audit signals, and per-commit provenance. Teammates sync the sidecar with <code>h5i share</code>.</p>
+    <h2>Flow D: Team PR review</h2>
+    <p>The reviewer never has to take the agent's word for it. Provenance, audit signals, and the captured command record travel with the repo as <code>refs/h5i/*</code> and surface as review-ready PR evidence, a sticky comment with review-focus files, goal, evidence, checklist, audit signals, and per-commit provenance. Teammates sync the sidecar with <code>h5i share</code>.</p>
 
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">team-review</span></div>
@@ -285,7 +285,7 @@
     <p>Use <code>--style review</code> when reviewers need a triage-oriented view of the evidence. Use <code>receipt</code> for a screenshot-friendly summary, <code>detective</code> for a narrative brief, <code>replay</code> when the reasoning DAG should be the hero, and <code>minimal</code> for quiet internal provenance.</p>
 
     <div class="callout">
-      <strong>Rule of thumb:</strong> open the auditable workspace first (<code>h5i env</code>), capture commands and commits while the agent works, audit before merge, and post review-ready PR evidence through the style that matches the moment. It all lives in your Git (<code>refs/h5i/*</code>) — no SaaS, no lock-in.
+      <strong>Rule of thumb:</strong> open the auditable workspace first (<code>h5i env</code>), capture commands and commits while the agent works, audit before merge, and post review-ready PR evidence through the style that matches the moment. It all lives in your Git (<code>refs/h5i/*</code>), no SaaS, no lock-in.
     </div>
 
     <div class="callout">

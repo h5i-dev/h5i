@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Git Notes vs h5i for AI Coding Workflows — h5i</title>
+  <title>Git Notes vs h5i for AI Coding Workflows: h5i</title>
   <meta name="description" content="Git notes can attach metadata to commits without rewriting them. h5i builds an AI coding workflow around provenance, context, audit, recall, and sharing.">
   <meta name="keywords" content="git notes vs h5i, git notes ai coding, ai code provenance git notes, h5i provenance, git sidecar ai agents">
   <meta name="author" content="Koukyosyumei">
@@ -96,7 +96,7 @@
       </div>
     </header>
 
-<p>Git notes and h5i solve related but different problems. Git notes are a low-level Git feature for attaching extra information to objects without changing those objects. h5i is a Git sidecar for <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspaces</strong></a> — it stores prompts, agent provenance, context traces, risk signals, memory, and messages in Git-sidecar refs, making every session's work provable after the fact.</p>
+<p>Git notes and h5i solve related but different problems. Git notes are a low-level Git feature for attaching extra information to objects without changing those objects. h5i is a Git sidecar for <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspaces</strong></a>, it stores prompts, agent provenance, context traces, risk signals, memory, and messages in Git-sidecar refs, making every session's work provable after the fact.</p>
 <h2>What Git notes do well</h2>
 <p>The official Git documentation describes notes as data attached to objects without touching the objects themselves. By default, notes are stored under <code>refs/notes/commits</code>, and <code>git log</code> can display them alongside commit messages. That makes notes a good fit for lightweight commit annotations.</p>
 <p>For AI coding, you could store a prompt or test summary in a note. That is simple, Git-native, and compatible with existing repositories.</p>

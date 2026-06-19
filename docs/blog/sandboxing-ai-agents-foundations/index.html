@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sandboxing AI Agents, Part 1: Foundations — h5i</title>
+  <title>Sandboxing AI Agents, Part 1: Foundations: h5i</title>
   <meta name="description" content="Learn AI agent sandboxing basics: threat models, isolation layers, enforcement boundaries, and why permission prompts are not enough.">
   <meta name="keywords" content="AI agent sandbox, sandboxing basics, threat model, isolation, seccomp, Landlock, containers, microVMs">
   <meta name="author" content="Koukyosyumei">
@@ -70,7 +70,7 @@
     </header>
 
     <p>
-      An AI coding agent is a strange security subject. It is not exactly malware, because you invited it in. It is not exactly a normal developer tool, because it reads untrusted project text and then chooses commands. It is not exactly a compiler, because it can browse your repository, run package managers, inspect environment variables, invoke shells, and decide that the next step is a network request. Sandboxing is the discipline of making that power conditional — and it is the confinement pillar of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>: the place where you can say the agent physically could not reach certain resources, provably.
+      An AI coding agent is a strange security subject. It is not exactly malware, because you invited it in. It is not exactly a normal developer tool, because it reads untrusted project text and then chooses commands. It is not exactly a compiler, because it can browse your repository, run package managers, inspect environment variables, invoke shells, and decide that the next step is a network request. Sandboxing is the discipline of making that power conditional, and it is the confinement pillar of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>: the place where you can say the agent physically could not reach certain resources, provably.
     </p>
 
     <div class="callout">

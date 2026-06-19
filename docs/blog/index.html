@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>The h5i Blog — Auditable Workspaces for AI Agents</title>
-  <meta name="description" content="Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, and compressed tool logs — all Git-backed, in your repo.">
+  <title>The h5i Blog: Auditable Workspaces for AI Agents</title>
+  <meta name="description" content="Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, and compressed tool logs, all Git-backed, in your repo.">
   <meta name="keywords" content="auditable workspaces for ai agents, ai agent sandbox, claude code blog, ai code review, prompt provenance, agent confinement, compressed tool logs, content-addressed claims, prompt injection detection, h5i blog">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
@@ -16,13 +16,13 @@
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="The h5i Blog — Auditable Workspaces for AI Agents">
-  <meta property="og:description" content="Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, and compressed tool logs — Git-backed, in your repo.">
+  <meta property="og:title" content="The h5i Blog: Auditable Workspaces for AI Agents">
+  <meta property="og:description" content="Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, and compressed tool logs, Git-backed, in your repo.">
   <meta property="og:url" content="https://h5i.dev/blog/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="The h5i Blog — Auditable Workspaces for AI Agents">
+  <meta name="twitter:title" content="The h5i Blog: Auditable Workspaces for AI Agents">
   <meta name="twitter:description" content="Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, and compressed tool logs.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
@@ -97,7 +97,7 @@
   <div class="post-eyebrow">The h5i Blog</div>
   <h1>Auditable workspaces for AI agents</h1>
   <p>
-    Git tracks the diff. h5i tracks the workspace behind it — a Git-backed worktree
+    Git tracks the diff. h5i tracks the workspace behind it, a Git-backed worktree
     where every prompt, command, log, policy, and handoff is recorded in your repo and
     provable after the fact. Posts on four pillars: sandboxed workspaces, reviewable
     agent work, prompt provenance, and context compression.
@@ -114,7 +114,7 @@
         <span>12 min read</span>
       </div>
       <h2>Why AI Agents Need Auditable Workspaces</h2>
-      <p>The definition the rest of this blog builds on. An auditable workspace is where an agent does its work — a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. The three pillars (provenance, confinement, governance), the workspace stack, and the golden path.</p>
+      <p>The definition the rest of this blog builds on. An auditable workspace is where an agent does its work, a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. The three pillars (provenance, confinement, governance), the workspace stack, and the golden path.</p>
     </a>
   </div>
 
@@ -123,7 +123,7 @@
     <div class="post-group-body">
       <div class="post-group-eyebrow">Pillar</div>
       <h2>Sandboxed workspaces</h2>
-      <p>The sandboxed worktree is the canonical auditable workspace — what it could and couldn't reach, provable. <code>h5i env</code>.</p>
+      <p>The sandboxed worktree is the canonical auditable workspace, what it could and couldn't reach, provable. <code>h5i env</code>.</p>
     </div>
   </div>
 
@@ -134,7 +134,7 @@
       <span>10 min read</span>
     </div>
     <h2>An Auditable Sandbox for AI Agents</h2>
-    <p>Run an agent in a confined, disposable environment — a git worktree plus tiered isolation (Landlock, seccomp, namespaces) and an airtight, rootless network egress allowlist a raw socket can't bypass — then audit everything it did before it touches your branch.</p>
+    <p>Run an agent in a confined, disposable environment, a git worktree plus tiered isolation (Landlock, seccomp, namespaces) and an airtight, rootless network egress allowlist a raw socket can't bypass, then audit everything it did before it touches your branch.</p>
   </a>
 
   <a class="post-card" href="/blog/sandboxing-ai-agents-foundations/">
@@ -202,7 +202,7 @@
     <div class="post-group-body">
       <div class="post-group-eyebrow">Pillar</div>
       <h2>Reviewable agent work</h2>
-      <p>Git tracks the diff; reviewers need the workspace behind it — intent, context coverage, risk, evidence, and a way to undo by intent. Review-ready PR evidence.</p>
+      <p>Git tracks the diff; reviewers need the workspace behind it, intent, context coverage, risk, evidence, and a way to undo by intent. Review-ready PR evidence.</p>
     </div>
   </div>
 
@@ -253,7 +253,7 @@
       <span>8 min read</span>
     </div>
     <h2>From <code>git blame</code> to AI blame: per-line provenance for AI-era code</h2>
-    <p><code>git blame</code> answers "who wrote this" with a name and a date. h5i recall blame adds the prompt, the model, the agent, and the test result that produced each line — same ergonomics, four more answers.</p>
+    <p><code>git blame</code> answers "who wrote this" with a name and a date. h5i recall blame adds the prompt, the model, the agent, and the test result that produced each line, same ergonomics, four more answers.</p>
   </a>
 
   <a class="post-card" href="/blog/auditing-ai-generated-code/">
@@ -263,7 +263,7 @@
       <span>9 min read</span>
     </div>
     <h2>Auditing AI-Generated Code: A Practical Framework</h2>
-    <p>Your team merges 50 PRs a week, 30 of them AI-assisted. A four-vector framework — blind edits, uncertainty, scope creep, prompt injection — produces a single ranked review queue.</p>
+    <p>Your team merges 50 PRs a week, 30 of them AI-assisted. A four-vector framework, blind edits, uncertainty, scope creep, prompt injection, produces a single ranked review queue.</p>
   </a>
 
   <a class="post-card" href="/blog/uncertainty-heatmap/">
@@ -311,7 +311,7 @@
     <div class="post-group-body">
       <div class="post-group-eyebrow">Pillar</div>
       <h2>Prompt provenance</h2>
-      <p>Who asked, why, what the agent knew, and how agents hand work to each other — recorded in <code>refs/h5i/notes</code> and <code>refs/h5i/context</code>.</p>
+      <p>Who asked, why, what the agent knew, and how agents hand work to each other, recorded in <code>refs/h5i/notes</code> and <code>refs/h5i/context</code>.</p>
     </div>
   </div>
 
@@ -321,8 +321,8 @@
       <span>2026-06-17</span>
       <span>11 min read</span>
     </div>
-    <h2>How to Measure Prompt Quality Offline — the Prompt Maturity Score</h2>
-    <p>A prompt quality signal without an LLM: h5i turns each AI commit's prompt into an explainable 0–100 score — seven classical-NLP signals, anti-gaming guards, and balance gates.</p>
+    <h2>How to Measure Prompt Quality Offline: the Prompt Maturity Score</h2>
+    <p>A prompt quality signal without an LLM: h5i turns each AI commit's prompt into an explainable 0–100 score, seven classical-NLP signals, anti-gaming guards, and balance gates.</p>
   </a>
 
   <a class="post-card" href="/blog/track-claude-code-prompts-diffs-git/">
@@ -372,7 +372,7 @@
       <span>7 min read</span>
     </div>
     <h2>Git-Native Messaging Between AI Coding Agents</h2>
-    <p>Two agents sharing one repo usually have no way to talk. i5h gives them a channel built from Git: typed work handoffs — ask, review, hand off, done — appended as durable, replayable Git objects, with no server to run.</p>
+    <p>Two agents sharing one repo usually have no way to talk. i5h gives them a channel built from Git: typed work handoffs, ask, review, hand off, done, appended as durable, replayable Git objects, with no server to run.</p>
   </a>
 
   <a class="post-card" href="/blog/persistent-memory-for-claude-code/">
@@ -382,7 +382,7 @@
       <span>8 min read</span>
     </div>
     <h2>Giving Claude Code Persistent Memory Across Sessions</h2>
-    <p>Anthropic gives you a memory primitive. h5i gives you the layers above it — versioned reasoning, per-commit snapshots, and a SessionStart hook that injects the right slice of context into every new session.</p>
+    <p>Anthropic gives you a memory primitive. h5i gives you the layers above it, versioned reasoning, per-commit snapshots, and a SessionStart hook that injects the right slice of context into every new session.</p>
   </a>
 
   <div class="post-group">
@@ -390,7 +390,7 @@
     <div class="post-group-body">
       <div class="post-group-eyebrow">Pillar</div>
       <h2>Context compression</h2>
-      <p>The workspace keeps raw logs out of the agent's context window — recoverable, structured, searchable. Compressed tool logs and content-addressed claims.</p>
+      <p>The workspace keeps raw logs out of the agent's context window, recoverable, structured, searchable. Compressed tool logs and content-addressed claims.</p>
     </div>
   </div>
 
@@ -401,7 +401,7 @@
       <span>8 min read</span>
     </div>
     <h2>Cut Agent Token Usage 95% with h5i Capture</h2>
-    <p>A content-addressed object store keeps raw tool output (test logs, builds, big JSON) out of the context window and hands the agent a structured summary — ~95% fewer tokens in a reproducible benchmark, fully recoverable.</p>
+    <p>A content-addressed object store keeps raw tool output (test logs, builds, big JSON) out of the context window and hands the agent a structured summary, ~95% fewer tokens in a reproducible benchmark, fully recoverable.</p>
   </a>
 
   <a class="post-card" href="/blog/structured-tool-output-schema/">
@@ -411,7 +411,7 @@
       <span>7 min read</span>
     </div>
     <h2>One Schema for Every Tool: Structured Output for AI Agents</h2>
-    <p>Compressed tool logs make output small; a unified JSON/YAML result schema makes it actionable — one shape across tests, compilers, linters, and type checkers, that an agent can branch on, dedupe, and query. h5i's layer beyond rtk/headroom.</p>
+    <p>Compressed tool logs make output small; a unified JSON/YAML result schema makes it actionable, one shape across tests, compilers, linters, and type checkers, that an agent can branch on, dedupe, and query. h5i's layer beyond rtk/headroom.</p>
   </a>
 
   <a class="post-card" href="/blog/content-addressed-claims-agent-memory/">

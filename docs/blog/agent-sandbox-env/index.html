@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>An Auditable Sandbox for AI Agents — h5i</title>
+  <title>An Auditable Sandbox for AI Agents: h5i</title>
   <meta name="description" content="Run AI agents in an auditable sandbox: Git worktree isolation, Landlock, seccomp, namespaces, and rootless egress controls.">
   <meta name="keywords" content="ai agent sandbox, confined agent environment, agent isolation, network egress allowlist, landlock seccomp sandbox, rootless sandbox, claude code sandbox, audit agent commands">
   <meta name="author" content="Koukyosyumei">
@@ -17,7 +17,7 @@
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="An Auditable Sandbox for AI Agents">
-  <meta property="og:description" content="A git worktree plus tiered isolation and an airtight, rootless network egress allowlist — hand an agent a confined box, then audit everything it did.">
+  <meta property="og:description" content="A git worktree plus tiered isolation and an airtight, rootless network egress allowlist, hand an agent a confined box, then audit everything it did.">
   <meta property="og:url" content="https://h5i.dev/blog/agent-sandbox-env/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="article:published_time" content="2026-06-10">
@@ -74,7 +74,7 @@
       <div class="post-eyebrow">Feature · 2026-06-10</div>
       <h1>An Auditable Sandbox for AI Agents</h1>
       <p class="post-deck">
-        You want an agent to run the dependency upgrade, the refactor, the unfamiliar build — but
+        You want an agent to run the dependency upgrade, the refactor, the unfamiliar build, but
         not loose in your working tree with your credentials and your network. h5i's
         <code>env</code> gives it a disposable, confined box instead: a git worktree plus a policy
         that limits what code can read, write, and reach, and a record of everything it did.
@@ -91,17 +91,17 @@
       access your shell has. Most of the time it installs a package and edits a file. Sometimes a
       poisoned dependency, a prompt-injected README, or an over-eager plan turns "run the build" into
       reading <code>~/.ssh</code>, posting your environment to a webhook, or rewriting files far
-      outside the task. The uncomfortable combination — private data, untrusted content, and network
-      egress in the same process — is what makes an agent worth sandboxing rather than trusting.
+      outside the task. The uncomfortable combination, private data, untrusted content, and network
+      egress in the same process, is what makes an agent worth sandboxing rather than trusting.
     </p>
 
     <p>
       The confinement pillar of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>
       answers this directly: the agent physically could not reach your credentials or the open internet
-      — provable, because the policy is pinned by hash and the denials are captured alongside the run.
+     , provable, because the policy is pinned by hash and the denials are captured alongside the run.
       h5i takes a narrower goal than a standalone container: give the agent an isolated
       <em>environment</em> tied to your Git history, confine it with what the host already provides,
-      and keep a tamper-evident record — so you can hand off the risky work and audit exactly what
+      and keep a tamper-evident record, so you can hand off the risky work and audit exactly what
       happened.
     </p>
 
@@ -128,7 +128,7 @@
 
     <p>
       <code>create</code> freezes a base commit and forks a branch. <code>shell</code> drops you (or
-      the agent) into the box with a real terminal — so every command the session runs is confined,
+      the agent) into the box with a real terminal, so every command the session runs is confined,
       not just the ones someone remembered to wrap. <code>diff</code> shows the change against the
       frozen base. <code>propose</code> commits the worktree through a path-checked mediation step and
       produces a review brief. <code>apply</code> then merges the proposed env onto your branch, and it
@@ -142,7 +142,7 @@
       "Confined" means different things on different machines, and h5i is honest about it. Isolation
       is a ladder of tiers, and <code>h5i env create</code> with no flag picks the strongest level the
       host can actually enforce. If you ask for a level the host can't provide, it refuses rather than
-      quietly running with less — you never think you're sandboxed when you aren't.
+      quietly running with less, you never think you're sandboxed when you aren't.
     </p>
 
     <div class="tbl-wrap">
@@ -151,10 +151,10 @@
           <tr><th>Tier</th><th>What confines the code</th><th>Network</th></tr>
         </thead>
         <tbody>
-          <tr><td><strong>workspace</strong></td><td>git worktree only — for trusted code</td><td>host (unrestricted)</td></tr>
+          <tr><td><strong>workspace</strong></td><td>git worktree only, for trusted code</td><td>host (unrestricted)</td></tr>
           <tr><td><strong>process</strong></td><td>Landlock filesystem allowlist + a seccomp syscall deny-list + user/mount/net namespaces + cgroup limits, all rootless</td><td>off, or full</td></tr>
           <tr><td><strong>supervised</strong></td><td>the process tier + a live seccomp socket gate</td><td>off, or a real <strong>egress allowlist</strong></td></tr>
-          <tr><td><strong>container</strong></td><td>rootless Podman — dropped capabilities, read-only root filesystem, no docker socket</td><td>an egress allowlist (L7 proxy)</td></tr>
+          <tr><td><strong>container</strong></td><td>rootless Podman, dropped capabilities, read-only root filesystem, no docker socket</td><td>an egress allowlist (L7 proxy)</td></tr>
         </tbody>
       </table>
     </div>
@@ -169,8 +169,8 @@
 
     <p>
       Filesystem confinement is well-trodden. Network egress is where most sandboxes get honest about
-      their limits. An L7 proxy allowlist — the kind a container egress filter or a SOCKS proxy gives
-      you — only stops programs that respect the proxy; a raw socket to an IP walks straight past it.
+      their limits. An L7 proxy allowlist, the kind a container egress filter or a SOCKS proxy gives
+      you, only stops programs that respect the proxy; a raw socket to an IP walks straight past it.
       h5i's <code>supervised</code> tier enforces the allowlist a layer lower, at L3/L4, where a raw
       socket can't help:
     </p>
@@ -181,7 +181,7 @@
 <span class="t-out">net.egress = </span><span class="t-cmd">["example.com", "pypi.org", "github.com:443"]</span></pre></div>
     </div>
 
-    <p>Inside the box, the allowlist holds — and there's no DNS channel for anything off it:</p>
+    <p>Inside the box, the allowlist holds, and there's no DNS channel for anything off it:</p>
 
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">box</span></div>
@@ -196,14 +196,14 @@
     <p>Three pieces make that work, all without root:</p>
 
     <ul>
-      <li><strong>A namespaced uplink.</strong> The confined process gets its own network namespace, and <code>slirp4netns</code> gives that namespace a NAT'd uplink from user space — no <code>CAP_NET_ADMIN</code> on the host required.</li>
+      <li><strong>A namespaced uplink.</strong> The confined process gets its own network namespace, and <code>slirp4netns</code> gives that namespace a NAT'd uplink from user space, no <code>CAP_NET_ADMIN</code> on the host required.</li>
       <li><strong>An nftables default-drop allowlist.</strong> Inside its namespace the process holds capabilities over its <em>own</em> network only, so it installs an <code>nftables</code> ruleset that drops everything except the pinned addresses. This is the layer that actually stops a packet.</li>
       <li><strong>DNS pinned through <code>/etc/hosts</code>.</strong> Each allowlisted host is resolved once, at startup, and written into a private <code>/etc/hosts</code> bound only inside the box. No port 53 is opened at all: allowlisted names resolve to exactly the address nftables permits, and everything else simply doesn't resolve. That kills both DNS rebinding and DNS as an exfiltration side-channel.</li>
     </ul>
 
     <p>
       The natural objection: if the code runs with capabilities over its own network namespace, can't
-      it just delete the firewall? It tries — and can't:
+      it just delete the firewall? It tries, and can't:
     </p>
 
     <div class="terminal">
@@ -217,15 +217,15 @@
     <p>
       The seccomp socket gate sits in front of <code>socket()</code> and denies the
       <code>AF_NETLINK</code> family outright. <code>nft</code>, <code>ip</code>, and every other tool
-      that would rewrite the ruleset or the routes needs a netlink socket to do it — so they can't
+      that would rewrite the ruleset or the routes needs a netlink socket to do it, so they can't
       open the door they'd need. The firewall is set before the untrusted program starts and is out of
-      its reach afterward. Two cheap mechanisms — a syscall gate and a packet filter — compose into
+      its reach afterward. Two cheap mechanisms, a syscall gate and a packet filter, compose into
       something neither gives alone.
     </p>
 
     <div class="callout">
       <strong>Rootless, the whole way down.</strong> namespaces, the slirp uplink, nftables in the
-      namespace, the bind-mounted <code>/etc/hosts</code> — none of it needs host root or a VM. The
+      namespace, the bind-mounted <code>/etc/hosts</code>, none of it needs host root or a VM. The
       tradeoff is honest: this is strong containment for ordinary and opportunistic threats, not a
       hardware boundary against a determined kernel exploit. For that, h5i reserves microVM tiers it
       doesn't pretend to ship yet.
@@ -235,7 +235,7 @@
 
     <p>
       Confinement decides what code <em>can</em> do; the record tells you what it <em>did</em>. Every
-      run in an env is captured — its output, exit code, the exact policy that was enforced (pinned by
+      run in an env is captured, its output, exit code, the exact policy that was enforced (pinned by
       hash, so it's tamper-evident), and any secrets redacted out of the evidence. Blocked accesses
       are recorded too, not silently swallowed.
     </p>
@@ -261,10 +261,10 @@
     <p>
       Use an env whenever you'd hesitate to let a command touch your real tree or your real network: a
       dependency upgrade, a build you don't fully trust, an agent working unattended, a refactor you
-      want to diff before it lands. Skip it for quick, trusted edits — that's what the
+      want to diff before it lands. Skip it for quick, trusted edits, that's what the
       <code>workspace</code> tier is for, and it costs nothing. The point isn't maximum paranoia on
       every command; it's that when the work is risky, you get a box that's confined as strongly as
-      your host allows and a record you can actually audit — in the same tool that already holds your
+      your host allows and a record you can actually audit, in the same tool that already holds your
       history.
     </p>
 

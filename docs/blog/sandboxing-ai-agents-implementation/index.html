@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sandboxing AI Agents, Part 2: Implementation — h5i</title>
+  <title>Sandboxing AI Agents, Part 2: Implementation: h5i</title>
   <meta name="description" content="Implement an AI agent sandbox with worktrees, Landlock, seccomp, namespaces, cgroups, egress allowlists, secrets, and audit logs.">
   <meta name="keywords" content="implement sandbox, Linux sandbox, Landlock, seccomp, namespaces, cgroups, network namespace, AI agent sandbox">
   <meta name="author" content="Koukyosyumei">
@@ -71,7 +71,7 @@
     </header>
 
     <p>
-      A sandbox implementation is not one mechanism. It is a launch protocol. You prepare a filesystem view, create namespaces, drop privileges, install syscall policy, install resource limits, configure networking, start the workload, observe the workload, and preserve enough evidence to review the result. The order matters because a process that runs before the boundary is complete is not confined by the boundary. Implementation is how the confinement pillar of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> becomes precise — or collapses.
+      A sandbox implementation is not one mechanism. It is a launch protocol. You prepare a filesystem view, create namespaces, drop privileges, install syscall policy, install resource limits, configure networking, start the workload, observe the workload, and preserve enough evidence to review the result. The order matters because a process that runs before the boundary is complete is not confined by the boundary. Implementation is how the confinement pillar of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> becomes precise, or collapses.
     </p>
 
     <p>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>How to Track Claude Code Prompts and Diffs in Git — h5i</title>
+  <title>How to Track Claude Code Prompts and Diffs in Git: h5i</title>
   <meta name="description" content="Track Claude Code prompts, file edits, diffs, and test evidence in Git using h5i provenance and Claude Code lifecycle hooks.">
   <meta name="keywords" content="track claude code prompts, claude code diffs git, claude code provenance, claude code hooks, ai generated code tracking">
   <meta name="author" content="Koukyosyumei">
@@ -96,7 +96,7 @@
       </div>
     </header>
 
-<p>An <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> is where prompt provenance lives: who asked, what the agent knew, what it changed, and what evidence supports the result — all versioned in your repo. Claude Code already works inside a Git repository. That means every edit can end in a normal commit and pull request. The problem is that Git does not automatically store the Claude Code prompt, the model identity, the files Claude observed, or the test evidence behind the change.</p>
+<p>An <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a> is where prompt provenance lives: who asked, what the agent knew, what it changed, and what evidence supports the result, all versioned in your repo. Claude Code already works inside a Git repository. That means every edit can end in a normal commit and pull request. The problem is that Git does not automatically store the Claude Code prompt, the model identity, the files Claude observed, or the test evidence behind the change.</p>
 <p>h5i fills that gap by capturing AI provenance as Git-sidecar data. The repository still behaves like a normal Git repo. The AI layer gives reviewers and future maintainers a way to answer, "what did Claude Code do, and why?"</p>
 <h2>What to capture</h2>
 <p>For Claude Code work, capture at least five fields: the task prompt, the agent name, the model if known, the changed commit, and the test result. For longer sessions, also capture context traces and decisions. Those records make the diff explainable without storing an entire chat transcript in the commit message.</p>

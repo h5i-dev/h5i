@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>From Git Blame to AI Blame for AI-Era Code — h5i</title>
+  <title>From Git Blame to AI Blame for AI-Era Code: h5i</title>
   <meta name="description" content="Extend git blame for AI-assisted code with per-line provenance: the prompt, model, coding agent, commit, and captured test result.">
   <meta name="keywords" content="git blame, ai blame, ai authorship tracking, who wrote this code ai, ai provenance, git blame ai code, claude code blame, h5i blame">
   <meta name="author" content="Koukyosyumei">
@@ -75,7 +75,7 @@
       <h1>From <code>git blame</code> to AI blame: per-line provenance for AI-era code</h1>
       <p class="post-deck">
         <code>git blame</code> answers "who wrote this" with a name, a SHA, and a date. In an AI-assisted
-        codebase that is necessary but no longer sufficient. Here's the upgrade — per-line lineage
+        codebase that is necessary but no longer sufficient. Here's the upgrade, per-line lineage
         that includes the prompt, the model, the agent, and the test result that produced each line.
       </p>
       <div class="post-meta">
@@ -86,19 +86,19 @@
     </header>
 
     <p>
-      Provenance — who asked, with what prompt, from what context — is a core property of an
+      Provenance, who asked, with what prompt, from what context, is a core property of an
       <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>. Per-line AI blame
       is how that provenance reaches the developer who later needs to understand a line of code.
       <code>git blame</code> is one of the most-googled git commands ever shipped, and for good reason. The
       sequence "see suspicious line → run blame → read commit message → understand the change" is a
       foundational debugging primitive. It works because in a pre-AI codebase, the author's name
-      plus the commit message is enough context — the human author <em>knew</em> why they wrote that line,
+      plus the commit message is enough context, the human author <em>knew</em> why they wrote that line,
       and the commit message captures the why with reasonable fidelity.
     </p>
 
     <p>
       That model breaks the moment a line was written by Claude. The git author is the human who
-      ran <code>git commit</code>, but they didn't write the line — they reviewed it. The commit message
+      ran <code>git commit</code>, but they didn't write the line, they reviewed it. The commit message
       summarizes the user-visible intent ("add retry logic") but loses the actual prompt, the model
       version, the agent identity, and the tests that ran. When you're debugging at 2am, the
       difference between "Alice wrote this in 2026" and "Alice prompted claude-sonnet-4-6 with
@@ -148,7 +148,7 @@
     </div>
 
     <p>
-      The four extra fields — agent, model, prompt, test result — are the difference between
+      The four extra fields, agent, model, prompt, test result, are the difference between
       knowing <em>that</em> Alice landed the change and knowing <em>what</em> the change was actually for. Same
       git commit, four times as much context.
     </p>
@@ -179,7 +179,7 @@
     </div>
 
     <p>
-      The notes ref isn't pulled by a plain <code>git fetch</code> — it would clutter remotes that don't care.
+      The notes ref isn't pulled by a plain <code>git fetch</code>, it would clutter remotes that don't care.
       <code>h5i share push</code> and <code>h5i share pull</code> sync the h5i refs alongside your code, so teammates who opt in
       see the full provenance and others see normal git behavior.
     </p>
@@ -236,7 +236,7 @@
       This is the answer to "why is this line the way it is?" not just at the most recent edit but
       across its whole life. When debugging a regression that bisects to a refactor, the ancestry
       view tells you whether the line you're staring at was rewritten by the refactor or merely
-      moved — and what was on the prompt that moved it.
+      moved, and what was on the prompt that moved it.
     </p>
 
     <h2>AST-mode blame</h2>
@@ -308,7 +308,7 @@
 
     <p>
       AI blame is not a copyright assertion. The git author is still legally and organizationally
-      the one accountable for the commit — they ran the prompt, reviewed the diff, and merged. The
+      the one accountable for the commit, they ran the prompt, reviewed the diff, and merged. The
       AI fields are <em>provenance</em>, not <em>attribution</em>. They tell you what tools shaped the line, the
       same way <code>git log</code> tells you what compiler version the CI ran. Useful for debugging,
       auditing, and triage; not for ownership.

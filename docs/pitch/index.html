@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>h5i Pitch Deck — Auditable Workspaces for AI Agents</title>
-<meta name="description" content="h5i pitch deck: a Git sidecar that gives every AI agent task an auditable workspace — a sandboxed worktree plus prompt, model, commands, logs, policy, handoffs, and review-ready PR evidence, all versioned in your repo.">
+<title>h5i Pitch Deck: Auditable Workspaces for AI Agents</title>
+<meta name="description" content="h5i pitch deck: a Git sidecar that gives every AI agent task an auditable workspace, a sandboxed worktree plus prompt, model, commands, logs, policy, handoffs, and review-ready PR evidence, all versioned in your repo.">
 <meta name="keywords" content="h5i pitch, auditable workspaces, ai agents, agent sandbox, git sidecar, agent provenance, claude code, codex, agent confinement, ai code review, agent governance">
 <meta name="author" content="h5i-dev">
 <meta name="theme-color" content="#D21C1C">
@@ -21,15 +21,15 @@
 <!-- Open Graph -->
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="h5i">
-<meta property="og:title" content="h5i Pitch Deck — Auditable Workspaces for AI Agents">
-<meta property="og:description" content="Git tracks the diff. h5i tracks the workspace behind it: a sandboxed, auditable worktree per agent task — prompt, model, commands, logs, policy, handoffs, and review-ready PR evidence, all in your repo.">
+<meta property="og:title" content="h5i Pitch Deck: Auditable Workspaces for AI Agents">
+<meta property="og:description" content="Git tracks the diff. h5i tracks the workspace behind it: a sandboxed, auditable worktree per agent task, prompt, model, commands, logs, policy, handoffs, and review-ready PR evidence, all in your repo.">
 <meta property="og:url" content="https://h5i.dev/pitch/">
 <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="h5i Pitch Deck — Auditable Workspaces for AI Agents">
-<meta name="twitter:description" content="Git tracks the diff. h5i tracks the workspace behind it: a sandboxed, auditable worktree per agent task — prompt, commands, logs, policy, handoffs, and review-ready PR evidence, in your repo.">
+<meta name="twitter:title" content="h5i Pitch Deck: Auditable Workspaces for AI Agents">
+<meta name="twitter:description" content="Git tracks the diff. h5i tracks the workspace behind it: a sandboxed, auditable worktree per agent task, prompt, commands, logs, policy, handoffs, and review-ready PR evidence, in your repo.">
 <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -590,7 +590,7 @@
   <div style="width:100%;max-width:980px;">
     <div class="section-tag">Auditable workspaces for AI agents</div>
     <h2>Git tracks the diff.<br>h5i tracks the <span class="red">workspace</span> behind it.</h2>
-    <p class="lede" style="max-width:740px;">50 years of version control got better at recording the <em>diff</em>. AI agents don't just write diffs — they run commands, read logs, retry, and coordinate. The era's answer is the <span class="cyan">auditable workspace</span>: a Git-backed worktree where every prompt, command, log, and policy is provable after the fact.</p>
+    <p class="lede" style="max-width:740px;">50 years of version control got better at recording the <em>diff</em>. AI agents don't just write diffs, they run commands, read logs, retry, and coordinate. The era's answer is the <span class="cyan">auditable workspace</span>: a Git-backed worktree where every prompt, command, log, and policy is provable after the fact.</p>
 
     <div class="tl-rows" style="margin-top:30px;">
       <!-- Row 1: legacy tools -->
@@ -642,14 +642,14 @@
   <div style="width:100%;max-width:900px;">
     <div class="section-tag">The problem</div>
     <h2>Agents do the work.<br>Git records only the <span class="red">output</span>.</h2>
-    <p class="lede">AI agents now do unreviewed operational work — they run commands, inspect logs, retry, coordinate with each other, and touch files long before a human ever opens a PR. Git captures the final diff. <span class="cyan">The run that produced it is gone.</span></p>
+    <p class="lede">AI agents now do unreviewed operational work, they run commands, inspect logs, retry, coordinate with each other, and touch files long before a human ever opens a PR. Git captures the final diff. <span class="cyan">The run that produced it is gone.</span></p>
 
     <div class="qlist" style="margin-top:24px;">
-      <div class="qrow"><span class="q">What prompt produced this change — and was it any good?</span><span class="gx">git can't say</span></div>
+      <div class="qrow"><span class="q">What prompt produced this change, and was it any good?</span><span class="gx">git can't say</span></div>
       <div class="qrow"><span class="q">Which commands did the agent run, and what did the logs show?</span><span class="gx">git can't say</span></div>
-      <div class="qrow"><span class="q">Did the tests pass — and which ones?</span><span class="gx">git can't say</span></div>
-      <div class="qrow"><span class="q">What sandbox policy confined it — and what did it try to reach?</span><span class="gx">git can't say</span></div>
-      <div class="qrow"><span class="q">Did another agent review or hand this off — and at what risk?</span><span class="gx">git can't say</span></div>
+      <div class="qrow"><span class="q">Did the tests pass, and which ones?</span><span class="gx">git can't say</span></div>
+      <div class="qrow"><span class="q">What sandbox policy confined it, and what did it try to reach?</span><span class="gx">git can't say</span></div>
+      <div class="qrow"><span class="q">Did another agent review or hand this off, and at what risk?</span><span class="gx">git can't say</span></div>
     </div>
   </div>
 </div>
@@ -661,7 +661,7 @@
   <div style="width:100%;max-width:1040px;">
     <div class="section-tag">The solution</div>
     <h2>One <span class="red">auditable workspace</span><br>per agent task</h2>
-    <p class="lede" style="max-width:760px;">h5i is a Git sidecar. For every agent task it opens an auditable workspace — a Git-backed worktree where the agent works, and every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. <span class="cyan">No SaaS, no lock-in, works offline.</span></p>
+    <p class="lede" style="max-width:760px;">h5i is a Git sidecar. For every agent task it opens an auditable workspace, a Git-backed worktree where the agent works, and every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. <span class="cyan">No SaaS, no lock-in, works offline.</span></p>
 
     <div class="card card-red" style="margin-top:24px;padding:18px 22px;">
       <div class="mono" style="font-size:1.15rem;color:var(--ink);line-height:1.6;">
@@ -671,8 +671,8 @@
     </div>
 
     <div class="g3" style="margin-top:22px;">
-      <div class="feat-card"><span class="feat-cmd">h5i env</span><p class="feat-desc" style="margin-top:6px;">A sandboxed worktree the agent works inside — confined by policy, disposable.</p></div>
-      <div class="feat-card"><span class="feat-cmd">refs/h5i/*</span><p class="feat-desc" style="margin-top:6px;">The evidence — prompts, logs, messages, policy — versioned beside your code.</p></div>
+      <div class="feat-card"><span class="feat-cmd">h5i env</span><p class="feat-desc" style="margin-top:6px;">A sandboxed worktree the agent works inside, confined by policy, disposable.</p></div>
+      <div class="feat-card"><span class="feat-cmd">refs/h5i/*</span><p class="feat-desc" style="margin-top:6px;">The evidence, prompts, logs, messages, policy, versioned beside your code.</p></div>
       <div class="feat-card"><span class="feat-cmd">h5i share pr</span><p class="feat-desc" style="margin-top:6px;">The provable record, surfaced on the PR a human actually reviews.</p></div>
     </div>
   </div>
@@ -685,13 +685,13 @@
   <div style="width:100%;max-width:1040px;">
     <div class="section-tag">What "auditable" means</div>
     <h2>Three properties of<br>every <span class="red">workspace</span></h2>
-    <p class="lede" style="max-width:760px;">Not three products — three things the workspace lets you prove. Each is recorded in your repo and replayable without a model in the loop.</p>
+    <p class="lede" style="max-width:760px;">Not three products, three things the workspace lets you prove. Each is recorded in your repo and replayable without a model in the loop.</p>
 
     <div class="g3" style="margin-top:26px;align-items:stretch;">
       <div class="feat-card">
         <span class="pill cyan">Provenance</span>
         <h3 style="margin-top:8px;">Who / why / what it knew</h3>
-        <p class="feat-desc">The prompt, model, files read, decisions, and tests behind every commit — written to <code>refs/h5i/notes</code> and <code>refs/h5i/context</code>.</p>
+        <p class="feat-desc">The prompt, model, files read, decisions, and tests behind every commit, written to <code>refs/h5i/notes</code> and <code>refs/h5i/context</code>.</p>
       </div>
       <div class="feat-card">
         <span class="pill red">Confinement</span>
@@ -701,11 +701,11 @@
       <div class="feat-card">
         <span class="pill green">Governance</span>
         <h3 style="margin-top:8px;">Deterministic audit</h3>
-        <p class="feat-desc">Rule-based risk triage and compliance — blind edits, secrets, prompt injection — reproducible in CI, no model in the loop. <code>h5i audit</code>.</p>
+        <p class="feat-desc">Rule-based risk triage and compliance, blind edits, secrets, prompt injection, reproducible in CI, no model in the loop. <code>h5i audit</code>.</p>
       </div>
     </div>
 
-    <p class="kicker" style="margin-top:20px;text-align:center;">Lives in your Git (<code>refs/h5i/*</code>) and travels with the repo — no SaaS, no new VCS, no lock-in.</p>
+    <p class="kicker" style="margin-top:20px;text-align:center;">Lives in your Git (<code>refs/h5i/*</code>) and travels with the repo, no SaaS, no new VCS, no lock-in.</p>
   </div>
 </div>
 
@@ -716,7 +716,7 @@
   <div style="width:100%;max-width:1040px;">
     <div class="section-tag">Pillar · Confinement · the hero</div>
     <h2>The sandbox is the <span class="red">teeth</span><br>behind the audit claim</h2>
-    <p class="lede" style="max-width:760px;"><code>h5i env</code> hands an agent a disposable, policy-confined worktree — it picks the strongest isolation the host supports (Landlock, namespaces, rootless Podman) and records every command and every blocked access. Nothing reaches your branch until a human applies.</p>
+    <p class="lede" style="max-width:760px;"><code>h5i env</code> hands an agent a disposable, policy-confined worktree, it picks the strongest isolation the host supports (Landlock, namespaces, rootless Podman) and records every command and every blocked access. Nothing reaches your branch until a human applies.</p>
 
     <div class="g2" style="margin-top:22px;align-items:start;gap:28px;">
       <div class="terminal">
@@ -737,9 +737,9 @@
   <span class="t-red">Operation not permitted</span><span class="t-out">  — can't undo it</span></pre></div>
       </div>
       <div style="display:flex;flex-direction:column;gap:14px;">
-        <p style="font-size:1.08rem;">Docker and Codespaces give an agent a box. h5i gives it a box <span class="cyan">wired into Git review</span> — the diff, the policy, and every blocked access land in your repo, and merge is a <code>git</code>-native <code>diff → apply</code> a human drives.</p>
+        <p style="font-size:1.08rem;">Docker and Codespaces give an agent a box. h5i gives it a box <span class="cyan">wired into Git review</span>, the diff, the policy, and every blocked access land in your repo, and merge is a <code>git</code>-native <code>diff → apply</code> a human drives.</p>
         <div class="feat-card"><span class="feat-cmd">h5i env create · shell · run</span><p class="feat-desc" style="margin-top:6px;">Make a confined box, then hand it to an agent. Every command is confined and captured by construction.</p></div>
-        <div class="feat-card"><span class="feat-cmd">h5i env diff · apply</span><p class="feat-desc" style="margin-top:6px;">Review what changed and what was blocked, then merge — reviewer-selected, never automatic.</p></div>
+        <div class="feat-card"><span class="feat-cmd">h5i env diff · apply</span><p class="feat-desc" style="margin-top:6px;">Review what changed and what was blocked, then merge, reviewer-selected, never automatic.</p></div>
       </div>
     </div>
   </div>
@@ -771,7 +771,7 @@
 <span class="t-out"># the diff — now with the </span><span class="t-ai">why</span><span class="t-out"> attached</span></pre></div>
       </div>
       <div style="display:flex;flex-direction:column;gap:14px;">
-        <p style="font-size:1.1rem;">One command turns an agent's edit into a reviewable record — written to <code>refs/h5i/notes</code>, never touching your source tree.</p>
+        <p style="font-size:1.1rem;">One command turns an agent's edit into a reviewable record, written to <code>refs/h5i/notes</code>, never touching your source tree.</p>
         <div class="card">
           <div class="rec">
             <div class="rec-row"><span class="rec-k">prompt</span><span class="rec-v">"harden refresh window"</span></div>
@@ -817,12 +817,12 @@
         <div class="feat-card">
           <span class="feat-cmd">h5i msg review · risk · handoff</span>
           <h3 style="margin-top:4px;">Agents coordinate through Git</h3>
-          <p class="feat-desc">Claude and Codex share one repo and a typed channel — ask, review, risk, handoff, done — stored append-only in <code>refs/h5i/msg</code>. No server, no daemon.</p>
+          <p class="feat-desc">Claude and Codex share one repo and a typed channel, ask, review, risk, handoff, done, stored append-only in <code>refs/h5i/msg</code>. No server, no daemon.</p>
         </div>
         <div class="feat-card">
           <span class="feat-cmd">h5i capture run -- &lt;cmd&gt;</span>
           <h3 style="margin-top:4px;">Logs without the bloat</h3>
-          <p class="feat-desc">Raw tool output stays out-of-band and recoverable — only a tiny structured summary lands in context. Up to <span class="green">95% less token waste</span>.</p>
+          <p class="feat-desc">Raw tool output stays out-of-band and recoverable, only a tiny structured summary lands in context. Up to <span class="green">95% less token waste</span>.</p>
         </div>
       </div>
     </div>
@@ -836,16 +836,16 @@
   <div style="width:100%;max-width:920px;">
     <div class="section-tag">The moat</div>
     <h2>Evidence <span class="red">compounds</span><br>inside your Git</h2>
-    <p class="lede">Every workspace writes to its own <code>refs/h5i/*</code> refs that travel with the repo. Your commits, branches, and remotes are untouched — and the record only grows as agents do more work.</p>
+    <p class="lede">Every workspace writes to its own <code>refs/h5i/*</code> refs that travel with the repo. Your commits, branches, and remotes are untouched, and the record only grows as agents do more work.</p>
 
     <div class="refstack" style="margin-top:24px;">
-      <div class="ref-layer"><span class="ref-name">refs/h5i/notes</span><span class="ref-desc">provenance per commit — prompt, model, agent, tests, decisions, risk</span></div>
-      <div class="ref-layer"><span class="ref-name">refs/h5i/context</span><span class="ref-desc">versioned reasoning trace — OBSERVE / THINK / ACT, branched like Git</span></div>
-      <div class="ref-layer"><span class="ref-name">refs/h5i/msg</span><span class="ref-desc">cross-agent handoffs — typed asks, reviews, risks, done</span></div>
-      <div class="ref-layer"><span class="ref-name">refs/h5i/objects</span><span class="ref-desc">compressed tool logs — raw output kept out of context, recoverable</span></div>
-      <div class="ref-layer"><span class="ref-name">refs/h5i/env</span><span class="ref-desc">sandbox policy & blocked-access evidence — what the agent couldn't reach</span></div>
+      <div class="ref-layer"><span class="ref-name">refs/h5i/notes</span><span class="ref-desc">provenance per commit, prompt, model, agent, tests, decisions, risk</span></div>
+      <div class="ref-layer"><span class="ref-name">refs/h5i/context</span><span class="ref-desc">versioned reasoning trace, OBSERVE / THINK / ACT, branched like Git</span></div>
+      <div class="ref-layer"><span class="ref-name">refs/h5i/msg</span><span class="ref-desc">cross-agent handoffs, typed asks, reviews, risks, done</span></div>
+      <div class="ref-layer"><span class="ref-name">refs/h5i/objects</span><span class="ref-desc">compressed tool logs, raw output kept out of context, recoverable</span></div>
+      <div class="ref-layer"><span class="ref-name">refs/h5i/env</span><span class="ref-desc">sandbox policy & blocked-access evidence, what the agent couldn't reach</span></div>
       <div class="ref-join">▲  h5i sidecar  ·  carried by <code>h5i share push / pull</code>  ▲</div>
-      <div class="ref-git"><span class="ref-name">your Git repo</span><span class="ref-desc">commits, branches, any remote — unchanged. No SaaS, no new VCS, no lock-in.</span></div>
+      <div class="ref-git"><span class="ref-name">your Git repo</span><span class="ref-desc">commits, branches, any remote, unchanged. No SaaS, no new VCS, no lock-in.</span></div>
     </div>
   </div>
 </div>
@@ -875,16 +875,16 @@
         </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:14px;">
-        <p style="font-size:1.1rem;">One command renders everything h5i knows about the branch into a sticky, idempotent GitHub PR comment — so a human reviewer sees the context, not just the diff.</p>
+        <p style="font-size:1.1rem;">One command renders everything h5i knows about the branch into a sticky, idempotent GitHub PR comment, so a human reviewer sees the context, not just the diff.</p>
         <div class="feat-card">
           <span class="feat-cmd">h5i share pr post --style review</span>
           <h3 style="margin-top:4px;">Sticky &amp; idempotent</h3>
-          <p class="feat-desc">Upserts in place via an HTML marker — re-run after every push, no comment spam. Uses the <code>gh</code> CLI you already have.</p>
+          <p class="feat-desc">Upserts in place via an HTML marker, re-run after every push, no comment spam. Uses the <code>gh</code> CLI you already have.</p>
         </div>
         <div class="feat-card">
           <span class="feat-cmd">h5i share pr body --style review</span>
           <h3 style="margin-top:4px;">Render anywhere</h3>
-          <p class="feat-desc">Print the markdown to stdout — pipe into CI or any review tool, no <code>gh</code> required.</p>
+          <p class="feat-desc">Print the markdown to stdout, pipe into CI or any review tool, no <code>gh</code> required.</p>
         </div>
       </div>
     </div>
@@ -898,7 +898,7 @@
   <div style="width:100%;max-width:1000px;">
     <div class="section-tag">Why not just …</div>
     <h2>Why not E2B, Codespaces,<br>or a <span class="red">platform feature?</span></h2>
-    <p class="lede" style="max-width:760px;">Sandboxes and hosted dev environments give an agent somewhere to run. None of them make the run <em>auditable in your repo</em>. h5i is not a Git replacement, not a hosted SaaS, not just a sandbox — it's a Git sidecar for auditable agent workspaces.</p>
+    <p class="lede" style="max-width:760px;">Sandboxes and hosted dev environments give an agent somewhere to run. None of them make the run <em>auditable in your repo</em>. h5i is not a Git replacement, not a hosted SaaS, not just a sandbox, it's a Git sidecar for auditable agent workspaces.</p>
 
     <div class="vs-table" style="margin-top:24px;">
       <div class="vs-row head">
@@ -933,7 +933,7 @@
       </div>
     </div>
 
-    <p class="kicker" style="margin-top:18px;text-align:center;">The moat: git-native, offline, no SaaS, audit-first — it travels with the repo and can't be left behind.</p>
+    <p class="kicker" style="margin-top:18px;text-align:center;">The moat: git-native, offline, no SaaS, audit-first, it travels with the repo and can't be left behind.</p>
   </div>
 </div>
 
@@ -944,21 +944,21 @@
   <div style="width:100%;max-width:940px;">
     <div class="section-tag">Why now</div>
     <h2>Agents ship at machine speed.<br>Review and audit <span class="red">don't scale</span> with them.</h2>
-    <p class="lede">Agents already author production diffs and do unreviewed operational work. The run behind them evaporates when a session ends — every team adopting agents is quietly accumulating change that is unreviewable, unauditable, and unreproducible. h5i drops onto the Git, PRs, and agents teams already run, with no migration.</p>
+    <p class="lede">Agents already author production diffs and do unreviewed operational work. The run behind them evaporates when a session ends, every team adopting agents is quietly accumulating change that is unreviewable, unauditable, and unreproducible. h5i drops onto the Git, PRs, and agents teams already run, with no migration.</p>
 
     <div class="g3" style="margin-top:28px;">
-      <div class="metric"><span style="font-family:var(--mono);font-size:0.86rem;color:var(--text-faint);letter-spacing:0.08em;">UP TO</span><span class="mv">95%</span><span class="ml">less token waste — raw logs stay out of context</span></div>
+      <div class="metric"><span style="font-family:var(--mono);font-size:0.86rem;color:var(--text-faint);letter-spacing:0.08em;">UP TO</span><span class="mv">95%</span><span class="ml">less token waste, raw logs stay out of context</span></div>
       <div class="metric"><span class="mv">5</span><span class="ml">evidence refs that travel with the repo</span></div>
       <div class="metric"><span class="mv">0</span><span class="ml">SaaS, daemons, or migrations to adopt</span></div>
     </div>
 
     <div class="g3" style="margin-top:18px;">
-      <div class="card-sm"><span class="pill">more agent diffs</span><p style="margin-top:8px;font-size:0.98rem;">A rising share of every PR is machine-authored — and it only grows.</p></div>
+      <div class="card-sm"><span class="pill">more agent diffs</span><p style="margin-top:8px;font-size:0.98rem;">A rising share of every PR is machine-authored, and it only grows.</p></div>
       <div class="card-sm"><span class="pill cyan">Git-native distribution</span><p style="margin-top:8px;font-size:0.98rem;">Ships through the remotes teams already have, with no SaaS.</p></div>
       <div class="card-sm"><span class="pill green">rising accountability</span><p style="margin-top:8px;font-size:0.98rem;">Security, compliance, and provenance demands climb as AI becomes production labor.</p></div>
     </div>
 
-    <p style="margin-top:22px;font-size:1rem;color:var(--text-dim);"><span class="green">Built with h5i:</span> this repo develops itself through h5i — cross-agent messages, reasoning milestones, and this pitch + docs rewritten by Claude and Codex coordinating over <code>h5i msg</code>.</p>
+    <p style="margin-top:22px;font-size:1rem;color:var(--text-dim);"><span class="green">Built with h5i:</span> this repo develops itself through h5i, cross-agent messages, reasoning milestones, and this pitch + docs rewritten by Claude and Codex coordinating over <code>h5i msg</code>.</p>
   </div>
 </div>
 

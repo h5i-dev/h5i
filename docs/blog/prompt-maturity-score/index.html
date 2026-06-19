@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>How to Measure Prompt Quality Offline — the h5i Prompt Maturity Score</title>
-  <meta name="description" content="Measure and score prompt quality without an LLM. h5i turns each AI commit's prompt into an explainable 0–100 score from seven classical-NLP signals — offline, deterministic, no API call.">
+  <title>How to Measure Prompt Quality Offline: the h5i Prompt Maturity Score</title>
+  <meta name="description" content="Measure and score prompt quality without an LLM. h5i turns each AI commit's prompt into an explainable 0–100 score from seven classical-NLP signals, offline, deterministic, no API call.">
   <meta name="keywords" content="measure prompt quality, prompt quality score, score prompt quality without llm, prompt engineering metrics, offline prompt scoring, evaluate prompts, prompt maturity score, h5i prompt score">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
@@ -16,7 +16,7 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="How to Measure Prompt Quality Offline — the h5i Prompt Maturity Score">
+  <meta property="og:title" content="How to Measure Prompt Quality Offline: the h5i Prompt Maturity Score">
   <meta property="og:description" content="Score prompt quality without an LLM: an offline, deterministic 0–100 measure of how well an engineer prompted an AI coding agent, from seven classical-NLP signals.">
   <meta property="og:url" content="https://h5i.dev/blog/prompt-maturity-score/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
@@ -24,8 +24,8 @@
   <meta property="article:author" content="Koukyosyumei">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="How to Measure Prompt Quality Offline — h5i Prompt Maturity Score">
-  <meta name="twitter:description" content="Score prompt quality without an LLM — offline, deterministic, explainable. Here's exactly how the 0–100 number is built.">
+  <meta name="twitter:title" content="How to Measure Prompt Quality Offline: h5i Prompt Maturity Score">
+  <meta name="twitter:description" content="Score prompt quality without an LLM, offline, deterministic, explainable. Here's exactly how the 0–100 number is built.">
   <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
   <script type="application/ld+json">
@@ -72,11 +72,11 @@
   <article class="post">
     <header>
       <div class="post-eyebrow">Deep dive · 2026-06-17</div>
-      <h1>How to measure prompt quality offline — the h5i Prompt Maturity Score</h1>
+      <h1>How to measure prompt quality offline: the h5i Prompt Maturity Score</h1>
       <p class="post-deck">
         <strong>Grade the ask, not the answer.</strong> h5i already records the prompt behind every AI
         commit; this is the logic that turns those prompts into a single, explainable
-        <strong>0–100 prompt-quality score</strong> — built from seven classical-NLP signals, hardened
+        <strong>0–100 prompt-quality score</strong>, built from seven classical-NLP signals, hardened
         with anti-gaming guards, and computed fully offline with no LLM call. Here is exactly how the
         number is made, and why every design choice is a defence against the obvious ways to fake it.
       </p>
@@ -95,13 +95,13 @@
       commit. What it doesn't tell you is <em>how well</em> it was asked. Two engineers ship the same
       feature; one steered the agent with <em>"fix the off-by-one in <code>parse_range()</code> in
       src/util.rs, add a test for the empty-range case, don't touch the public signature,"</em> the
-      other typed <em>"make it work."</em> Same diff, wildly different craft — and nothing in the
+      other typed <em>"make it work."</em> Same diff, wildly different craft, and nothing in the
       review surfaces the difference.
     </p>
 
     <p>
       The Prompt Maturity Score is how h5i <strong>measures prompt quality</strong> and makes that craft
-      a visible, trackable signal. It scores the <strong>input</strong> — the engineer's ask — not the
+      a visible, trackable signal. It scores the <strong>input</strong>, the engineer's ask, not the
       model's output. And it does so with a hard constraint: <strong>no LLM</strong>, no network, fully
       deterministic, so you can score prompt quality inside a git hook, in CI, or in a PR render without
       an API key.
@@ -112,14 +112,14 @@
     <p>
       The obvious implementation is "send the prompt to a judge model and ask it to grade." We
       rejected that on purpose. Prompt-eval frameworks like PromptBench (arXiv 2312.07910), APE
-      (arXiv 2211.01910), and Promptfoo already do something adjacent — but they score a prompt by
+      (arXiv 2211.01910), and Promptfoo already do something adjacent, but they score a prompt by
       <em>running</em> a model and judging its <strong>output</strong>. They need API access, a task
       dataset, and they cost money and latency on every evaluation. They answer "did the model do
       well?"
     </p>
 
     <p>
-      Prompt maturity answers the complementary question — "did the engineer ask well?" — purely
+      Prompt maturity answers the complementary question, "did the engineer ask well?", purely
       from text features. That buys three things a model judge can't: it's <strong>free</strong> (runs
       on every commit with zero marginal cost), <strong>deterministic</strong> (the same prompt always
       scores the same, so it's reproducible in CI and won't drift when a model is deprecated), and
@@ -131,14 +131,14 @@
 
     <p>
       The first instinct when you hear "score the writing quality of a prompt" is to reach for
-      readability indices — Flesch Reading Ease, Flesch–Kincaid grade level, Gunning Fog. They're
+      readability indices, Flesch Reading Ease, Flesch–Kincaid grade level, Gunning Fog. They're
       well-studied, classical, and cheap. They're also a trap.
     </p>
 
     <p>
       A terse, precise technical ask is an <em>excellent</em> prompt that scores <em>badly</em> on raw
       reading-ease. <em>"Fix the off-by-one in <code>parse_range()</code> in src/util.rs, add a test"</em>
-      is dense with file paths and identifiers — exactly the tokens that wreck a syllable counter and
+      is dense with file paths and identifiers, exactly the tokens that wreck a syllable counter and
       tank a reading-ease score. If readability drove the number, the best prompts would be punished
       for being concrete. The literature on these indices is explicit about this: they are
       length-sensitive and penalise terse technical text.
@@ -147,10 +147,10 @@
     <p>
       So readability is deliberately the <strong>smallest-weighted</strong> signal, it is applied as a
       <strong>band</strong> (both extremes penalised, not "higher is better"), and it is computed on a
-      <strong>code-masked</strong> copy of the prompt — every path, <code>func()</code> call, URL, and
+      <strong>code-masked</strong> copy of the prompt, every path, <code>func()</code> call, URL, and
       <code>snake_case</code> identifier is replaced with a neutral token before a single syllable is
-      counted. That one decision — treating readability as a bounded sub-signal rather than the score
-      — is the single most important guard against the metric punishing good engineering.
+      counted. That one decision, treating readability as a bounded sub-signal rather than the score
+     , is the single most important guard against the metric punishing good engineering.
     </p>
 
     <h2>The composite: seven signals, fixed weights</h2>
@@ -158,7 +158,7 @@
     <p>
       The score is a weighted sum of seven sub-signals, each normalised to <code>0.0–1.0</code>. The
       weights were locked deliberately and sum to exactly 1.0 (the code asserts it in a test). The
-      ranking is the whole philosophy in one table — what a reviewer actually wants to see ranks
+      ranking is the whole philosophy in one table, what a reviewer actually wants to see ranks
       highest; the signal most likely to mislead ranks lowest.
     </p>
 
@@ -168,13 +168,13 @@
           <tr><th>Signal</th><th>Weight</th><th>What it captures</th></tr>
         </thead>
         <tbody>
-          <tr><td><strong>Specificity</strong></td><td>24%</td><td>Concreteness — code refs, identifiers, quoted symbols, numbers — <em>minus</em> a vagueness penalty for weak words.</td></tr>
+          <tr><td><strong>Specificity</strong></td><td>24%</td><td>Concreteness, code refs, identifiers, quoted symbols, numbers, <em>minus</em> a vagueness penalty for weak words.</td></tr>
           <tr><td><strong>Control</strong></td><td>24%</td><td>Did the engineer bound the agent? Constraints, output shape, acceptance criteria, edge cases, scope, safety.</td></tr>
           <tr><td><strong>Context</strong></td><td>18%</td><td>Background, the goal / why, the current state, grounding in real repo entities.</td></tr>
-          <tr><td><strong>Structure</strong></td><td>10%</td><td>Decomposition — bullets, numbered steps, headings, code fences, multi-sentence shape.</td></tr>
-          <tr><td><strong>Diversity</strong></td><td>10%</td><td>Lexical richness (adaptive MATTR) — non-repetitive, not phrase-farmed.</td></tr>
-          <tr><td><strong>Clarity</strong></td><td>8%</td><td>Readability inside a target band (trapezoid — both extremes penalised).</td></tr>
-          <tr><td><strong>Adequacy</strong></td><td>6%</td><td>Length in a sweet spot — not one word, not a 1,200-word wall.</td></tr>
+          <tr><td><strong>Structure</strong></td><td>10%</td><td>Decomposition, bullets, numbered steps, headings, code fences, multi-sentence shape.</td></tr>
+          <tr><td><strong>Diversity</strong></td><td>10%</td><td>Lexical richness (adaptive MATTR), non-repetitive, not phrase-farmed.</td></tr>
+          <tr><td><strong>Clarity</strong></td><td>8%</td><td>Readability inside a target band (trapezoid, both extremes penalised).</td></tr>
+          <tr><td><strong>Adequacy</strong></td><td>6%</td><td>Length in a sweet spot, not one word, not a 1,200-word wall.</td></tr>
         </tbody>
       </table>
     </div>
@@ -196,8 +196,8 @@
       <li>
         <strong>Specificity</strong> = concreteness − vagueness. Concreteness is a capped blend of code
         references (40%), action verbs (22%), quoted symbols (20%), and numbers (18%). Vagueness comes
-        from the NALABS / Femmer "requirements smells" lexicon — words like <em>appropriate</em>,
-        <em>robust</em>, <em>somehow</em>, <em>as needed</em> — whose density per 100 words drags the
+        from the NALABS / Femmer "requirements smells" lexicon, words like <em>appropriate</em>,
+        <em>robust</em>, <em>somehow</em>, <em>as needed</em>, whose density per 100 words drags the
         signal down.
       </li>
       <li>
@@ -210,7 +210,7 @@
       <li>
         <strong>Diversity</strong> uses an <em>adaptive MATTR</em> (Moving-Average Type-Token Ratio)
         with a window that scales to prompt length. Short prompts fall back to a confidence-weighted
-        type-token ratio pulled toward a neutral 0.5 — a five-word prompt has no room to demonstrate
+        type-token ratio pulled toward a neutral 0.5, a five-word prompt has no room to demonstrate
         vocabulary, so it's neither rewarded nor punished for it.
       </li>
       <li>
@@ -223,7 +223,7 @@
 
     <div class="callout">
       <strong>The cap is the trick.</strong> Every category feeds the score through a
-      <code>cap_ratio(count, cap)</code> — a linear ramp that saturates at a small cap (often 3 or 4).
+      <code>cap_ratio(count, cap)</code>, a linear ramp that saturates at a small cap (often 3 or 4).
       So the fourth <code>must</code> in a prompt adds nothing. No single lexicon can farm a whole
       signal by repetition; you have to actually cover different ground.
     </div>
@@ -231,7 +231,7 @@
     <h2>Anti-gaming: the guards that sit on top</h2>
 
     <p>
-      A naïve weighted sum of keyword counts is trivially gameable — paste the lexicons into your
+      A naïve weighted sum of keyword counts is trivially gameable, paste the lexicons into your
       prompt and score 100. The interesting engineering is the layer that makes that not work. Four
       guards sit on top of the weighted sum, in order:
     </p>
@@ -240,17 +240,17 @@
       <li>
         <strong>Repetition penalty.</strong> The fraction of bigrams that are exact repeats becomes a
         multiplier (floored at 0.6). <em>"must test format must test format"</em> gets multiplied down
-        — phrase-farming is detected and punished directly.
+       , phrase-farming is detected and punished directly.
       </li>
       <li>
         <strong>Balance gates.</strong> You cannot look mature on one axis alone. <em>Control</em> is a
         <strong>hard gate</strong>: a prompt that sets no constraints or acceptance criteria is capped
         below "advanced" (≤ 69) no matter how concrete it is. Low specificity additionally caps at 79
-        — you can't be "exemplary" while vague.
+       , you can't be "exemplary" while vague.
       </li>
       <li>
         <strong>Hard length caps.</strong> Under 8 words caps at 20; under 15 words caps at 45. A
-        1,200-word unstructured wall caps at 75 — that's a dump, not a mature prompt. Keyword density
+        1,200-word unstructured wall caps at 75, that's a dump, not a mature prompt. Keyword density
         can't buy its way past a length floor.
       </li>
       <li>
@@ -262,11 +262,11 @@
       The balance gates have a subtlety worth calling out, because it's where the metric earns its
       keep. An earlier version hard-capped any prompt with weak <em>context</em>. But a prompt like
       <em>"run <code>cargo test</code>, fix the clippy warning in src/foo.rs, don't change the
-      signature"</em> is a perfectly legitimate <strong>tactical</strong> ask — the agent already holds
+      signature"</em> is a perfectly legitimate <strong>tactical</strong> ask, the agent already holds
       the repo context, so demanding a "why" paragraph would be punishing good practice. So context
       became a <strong>soft</strong> gate: a prompt that is already both specific (≥ 0.6) and bounded
       (control ≥ 0.5) is exempt from the context cap. Weak context still surfaces as a
-      <em>diagnostic flag</em> — it just no longer drags a crisp tactical prompt into mediocrity.
+      <em>diagnostic flag</em>, it just no longer drags a crisp tactical prompt into mediocrity.
     </p>
 
     <h2>From one prompt to a whole branch</h2>
@@ -281,7 +281,7 @@
     </p>
 
     <p>
-      The roll-up also tracks <strong>coverage</strong> — how many AI commits actually carried a prompt
+      The roll-up also tracks <strong>coverage</strong>, how many AI commits actually carried a prompt
       to score. If fewer than 80% did, the result is flagged low-confidence, because a score built
       from a minority of commits shouldn't be read as a verdict on the branch.
     </p>
@@ -289,7 +289,7 @@
     <h2>What it looks like in a PR</h2>
 
     <p>
-      The score renders right under the hero of an <code>h5i share pr post</code> body — a screenshot-clean
+      The score renders right under the hero of an <code>h5i share pr post</code> body, a screenshot-clean
       headline with the per-signal detail one click away:
     </p>
 
@@ -311,9 +311,9 @@
     </div>
 
     <p>
-      Note the disclaimer baked into the render: <em>"Heuristic signal of prompt craft — not a
+      Note the disclaimer baked into the render: <em>"Heuristic signal of prompt craft, not a
       developer rating."</em> That line is not decoration. The score is an offline proxy over prompt
-      text — it is not a performance metric, not a leaderboard rank, and the diagnostic flags are
+      text, it is not a performance metric, not a leaderboard rank, and the diagnostic flags are
       deliberately <em>descriptive</em> ("weak context", "no acceptance criteria"), never prescriptive.
       We don't hand engineers a keyword list to stuff, because the moment the metric becomes a target
       to optimise, it stops measuring anything real.
@@ -322,18 +322,18 @@
     <h2>Honesty about what this is</h2>
 
     <p>
-      The weights and gate thresholds are <strong>normative</strong> — hand-tuned and locked through
+      The weights and gate thresholds are <strong>normative</strong>, hand-tuned and locked through
       review, not learned from data. They're an explainable proxy, not a validated model, and the code
       says so in a standing <code>TODO</code>. The path forward is deliberately conservative: the
       per-prompt features are already exposed, so a future version can join them against h5i's existing
-      per-commit outcome signals — test pass/fail, review-flag scores, diff churn, later reverts — over
+      per-commit outcome signals, test pass/fail, review-flag scores, diff churn, later reverts, over
       a real commit corpus, and <em>learn</em> the weights while keeping every feature explainable. What
       it must <em>not</em> do is regress from a tiny biased sample, where a senior engineer writes both
       good prompts and good code and the metric just rediscovers seniority.
     </p>
 
     <p>
-      Until then, the value isn't precision to the decimal — it's making prompt craft <em>visible</em>.
+      Until then, the value isn't precision to the decimal, it's making prompt craft <em>visible</em>.
       A reviewer who sees "context grounding 0.41" across a branch learns something true and actionable
       about how the agent was steered, with no model call and no guesswork.
     </p>
@@ -342,7 +342,7 @@
       <span class="label">Read next</span>
       <a href="/blog/from-git-blame-to-ai-blame/">
         <h3>From git blame to AI blame</h3>
-        <p>The score grades the prompt; AI blame attaches that prompt — plus model, agent, and test result — to every line it produced.</p>
+        <p>The score grades the prompt; AI blame attaches that prompt, plus model, agent, and test result, to every line it produced.</p>
       </a>
     </div>
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Auditable Workspaces for AI Agents: What h5i Records and Why — h5i</title>
+  <title>Auditable Workspaces for AI Agents: What h5i Records and Why: h5i</title>
   <meta name="description" content="An auditable workspace is a Git-backed worktree where every prompt, decision, command, log, and handoff is recorded in your repo and provable after the fact. Here is what h5i records and why.">
   <meta name="keywords" content="auditable workspace ai agents, version control for ai agents, ai coding agents, ai code provenance, agentic development, h5i, git sidecar">
   <meta name="author" content="Koukyosyumei">
@@ -88,7 +88,7 @@
     <header>
       <div class="post-eyebrow">Pillar · Auditable workspaces for AI agents</div>
       <h1>Auditable Workspaces for AI Agents: What h5i Records and Why</h1>
-      <p class="post-deck">Git remains the source of truth for code. An auditable workspace adds the missing layer: why an agent changed the code, what context it used, what evidence it saw, and how reviewers can audit the result — all versioned in your repo, no SaaS required.</p>
+      <p class="post-deck">Git remains the source of truth for code. An auditable workspace adds the missing layer: why an agent changed the code, what context it used, what evidence it saw, and how reviewers can audit the result, all versioned in your repo, no SaaS required.</p>
       <div class="post-meta">
         <span><strong>Published</strong> 2026-06-03</span>
         <span><strong>Reading time</strong> 9 min read</span>
@@ -96,11 +96,11 @@
       </div>
     </header>
 
-<p>h5i gives AI agents an <strong>auditable workspace</strong>: a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. For the canonical definition and the full sandbox story, see the <a href="../auditable-workspaces-for-ai-agents/">cornerstone post on auditable workspaces</a>. This post explains what h5i records, why each layer matters, and how the pieces fit together — starting from the version-control angle most teams encounter first.</p>
+<p>h5i gives AI agents an <strong>auditable workspace</strong>: a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. For the canonical definition and the full sandbox story, see the <a href="../auditable-workspaces-for-ai-agents/">cornerstone post on auditable workspaces</a>. This post explains what h5i records, why each layer matters, and how the pieces fit together, starting from the version-control angle most teams encounter first.</p>
 <p>Git records what changed. It does not record why, by whom (agent vs. human), with what context, or whether the result was tested. When Claude Code, Codex, or another coding agent writes a patch, the reviewable artifact is not just the diff. The artifact includes the prompt that started the task, the files the agent inspected, the assumptions it made, the tests it ran, the uncertainty it expressed, and the handoff messages exchanged with other agents or humans.</p>
 <h2>What an auditable workspace records</h2>
 <p><strong>An auditable workspace stores code changes plus the agent context that produced them.</strong> Workspace = worktree + prompt + model + commands + logs + policy + messages + PR evidence. In a practical system, that means prompts, model and agent identity, reasoning milestones, tool events, test results, risk signals, and reviewer handoff data are stored in a durable, queryable form tied to commits and branches.</p>
-<p>The key design constraint is compatibility. Developers should still be able to use <code>git log</code>, <code>git diff</code>, pull requests, branches, and normal CI. The AI layer rides alongside Git as a sidecar — it does not replace it, and it never forces every teammate into a new source-control platform.</p>
+<p>The key design constraint is compatibility. Developers should still be able to use <code>git log</code>, <code>git diff</code>, pull requests, branches, and normal CI. The AI layer rides alongside Git as a sidecar, it does not replace it, and it never forces every teammate into a new source-control platform.</p>
 <h2>Why Git alone is not enough</h2>
 <p>Git tracks snapshots and object history. It does not know that a change was generated from a prompt. It does not know whether an agent read the migration file before editing the model. It does not know that the agent chose a smaller refactor because the larger one looked risky. Commit messages can describe some of this, but they are manually written summaries, not reliable evidence.</p>
 <p>That gap matters during review. A human reviewer needs to know where to focus. A compliance reviewer needs to know whether AI participated. A maintainer debugging a regression needs to know which intent introduced the behavior. A second agent resuming the work needs the last agent's working memory, not only the final patch.</p>
@@ -127,7 +127,7 @@
 <p>The trigger is simple: if your team would ask, "why did the agent do this?" after a bad merge, you should capture the answer before the merge.</p>
 <h2>FAQ</h2>
 <h3>Is an auditable workspace different from Git?</h3>
-<p>It is an additional layer on top of Git — a Git sidecar. The best implementations keep commits and branches normal while storing AI-specific metadata in sidecar refs or other durable records.</p>
+<p>It is an additional layer on top of Git, a Git sidecar. The best implementations keep commits and branches normal while storing AI-specific metadata in sidecar refs or other durable records.</p>
 <h3>Is a prompt enough provenance?</h3>
 <p>No. The prompt explains the request, but not the evidence the agent used, the decisions it made, the tests it ran, or the risks it introduced.</p>
 <h3>Can this work with both Claude Code and Codex?</h3>

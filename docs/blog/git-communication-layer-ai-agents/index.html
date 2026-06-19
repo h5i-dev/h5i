@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Git as the Communication Layer for AI Agents — h5i</title>
+  <title>Git as the Communication Layer for AI Agents: h5i</title>
   <meta name="description" content="Git can carry more than code. h5i uses Git refs as a durable message bus for Claude Code, Codex, and reviewers.">
   <meta name="keywords" content="git communication layer ai agents, multi-agent coding git, claude code codex collaboration, ai agent messaging, h5i msg">
   <meta name="author" content="Koukyosyumei">
@@ -96,7 +96,7 @@
       </div>
     </header>
 
-<p>Git-backed agent handoffs are one of the core coordination pillars inside an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a> — every ask, review, risk, and handoff recorded in your repo, provable after the fact. AI coding agents usually share a repository but not a durable conversation. One agent changes files. Another agent reviews. A human asks for a follow-up. Without a shared channel, the context lives in separate chat windows and disappears when sessions end.</p>
+<p>Git-backed agent handoffs are one of the core coordination pillars inside an <a href="../auditable-workspaces-for-ai-agents/"><strong>auditable workspace</strong></a>, every ask, review, risk, and handoff recorded in your repo, provable after the fact. AI coding agents usually share a repository but not a durable conversation. One agent changes files. Another agent reviews. A human asks for a follow-up. Without a shared channel, the context lives in separate chat windows and disappears when sessions end.</p>
 <p>Git is a practical communication substrate because it is already available wherever the code is. It has identities, refs, remotes, fetch, push, history, and review workflows. h5i uses those properties to make agent communication durable and replayable.</p>
 <h2>What Git gives you</h2>
 <p>Git is distributed. It is content-addressed. It can move custom refs. It can preserve append-only history. Those properties are useful for agent messages because the messages should travel with the code, survive machine changes, and remain inspectable later.</p>

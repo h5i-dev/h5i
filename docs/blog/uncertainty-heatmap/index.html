@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Claude Code Uncertainty Heatmap for AI Code Review — h5i</title>
+  <title>Claude Code Uncertainty Heatmap for AI Code Review: h5i</title>
   <meta name="description" content="Turn captured Claude Code uncertainty signals into a per-file review heatmap so human reviewers can focus on risky AI-assisted edits.">
   <meta name="keywords" content="claude code uncertainty, ai code review, vibe coding, claude code thinking blocks, h5i notes uncertainty, ai-generated code review, claude code self-doubt">
   <meta name="author" content="Koukyosyumei">
@@ -89,7 +89,7 @@
     </p>
 
     <p>
-      Not the review itself — the <em>targeting</em>. You stare at a diff that touched 23 files across
+      Not the review itself, the <em>targeting</em>. You stare at a diff that touched 23 files across
       1,400 lines, and you start from line 1. You read the obvious stuff carefully. You skim the
       boring stuff. You hope the risky stuff isn't buried somewhere in the middle.
     </p>
@@ -112,13 +112,13 @@
 
     <blockquote>
       <p>"I'm not sure this is the right migration path for the foreign key constraint…"</p>
-      <p>"This might break the async flush if the buffer is partially written — need to verify."</p>
-      <p>"Tricky — the lock order here assumes single-threaded initialization, which may not hold."</p>
+      <p>"This might break the async flush if the buffer is partially written, need to verify."</p>
+      <p>"Tricky, the lock order here assumes single-threaded initialization, which may not hold."</p>
     </blockquote>
 
     <p>
       The AI is hedging. It's expressing doubt. It's waving a tiny red flag that says <em>a human should
-      look here</em> — and then burying that flag in a log file you've never opened.
+      look here</em>, and then burying that flag in a log file you've never opened.
     </p>
 
     <p>
@@ -176,8 +176,8 @@
     </p>
 
     <ul>
-      <li><code>migrations.rs</code> is where the AI was genuinely nervous — two high-risk signals, average confidence 28%</li>
-      <li>The timeline shows signals clustered around turns 18, 52, and 55 — a burst of uncertainty mid-session, not at the end</li>
+      <li><code>migrations.rs</code> is where the AI was genuinely nervous, two high-risk signals, average confidence 28%</li>
+      <li>The timeline shows signals clustered around turns 18, 52, and 55, a burst of uncertainty mid-session, not at the end</li>
       <li>The individual snippets give you the <em>reason</em> for the doubt, quoted verbatim from the AI's thinking</li>
     </ul>
 
@@ -190,7 +190,7 @@
     <p>
       The standard review process is symmetric: every line costs the same amount of reviewer
       attention. But AI-generated code isn't symmetric. Some of it the model wrote with total
-      confidence — patterns it has seen ten thousand times. Some of it the model wrote while
+      confidence, patterns it has seen ten thousand times. Some of it the model wrote while
       silently hedging, reaching into unfamiliar territory, making assumptions it flagged to
       itself as unverified.
     </p>
@@ -202,8 +202,8 @@
 
     <p>
       <code>h5i recall notes uncertainty</code> makes the review process <em>asymmetric in the right direction</em>.
-      High-confidence AI code gets a lighter pass. Low-confidence AI code — the stuff the model
-      itself flagged — gets your full attention.
+      High-confidence AI code gets a lighter pass. Low-confidence AI code, the stuff the model
+      itself flagged, gets your full attention.
     </p>
 
     <p>
@@ -240,7 +240,7 @@
     </p>
 
     <p>
-      This isn't sentiment analysis. It's the AI's own internal calibration — surfaced, structured,
+      This isn't sentiment analysis. It's the AI's own internal calibration, surfaced, structured,
       and pointed at the files that deserve your eyes.
     </p>
 
@@ -257,7 +257,7 @@
 
     <p>
       Useful when you're reviewing a PR and want to jump straight to the model's doubts about the
-      file you're responsible for — without wading through signals from unrelated parts of the diff.
+      file you're responsible for, without wading through signals from unrelated parts of the diff.
     </p>
 
     <h2>The workflow</h2>
@@ -288,7 +288,7 @@
     <h2>Under the hood</h2>
 
     <p>
-      h5i reads Claude Code's session logs — <code>.jsonl</code> files that record every message, tool call,
+      h5i reads Claude Code's session logs, <code>.jsonl</code> files that record every message, tool call,
       and thinking block in a session. It auto-detects the latest session for your repository, so
       you rarely need to pass a path manually.
     </p>
@@ -328,8 +328,7 @@
     </p>
 
     <p>
-      <em>h5i is open source. The uncertainty heatmap is one of several session-analysis features —
-      alongside causal chain reconstruction, file churn tracking, and AI-assisted review point
+      <em>h5i is open source. The uncertainty heatmap is one of several session-analysis features, alongside causal chain reconstruction, file churn tracking, and AI-assisted review point
       identification. If the idea resonates, star the repo and try it on your next AI-assisted PR.</em>
     </p>
 

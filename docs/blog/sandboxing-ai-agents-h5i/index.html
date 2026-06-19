@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sandboxing AI Agents, Part 4: h5i's Design — h5i</title>
+  <title>Sandboxing AI Agents, Part 4: h5i's Design: h5i</title>
   <meta name="description" content="How h5i env sandboxes AI agents with worktrees, tiered isolation, rootless egress, mediated commits, secrets, and audit captures.">
   <meta name="keywords" content="h5i env, AI agent sandbox, rootless egress allowlist, Landlock seccomp, supervised sandbox, Git provenance">
   <meta name="author" content="Koukyosyumei">
@@ -71,7 +71,7 @@
     </header>
 
     <p>
-      h5i's sandbox feature is named <code>env</code>. The name is deliberate. An environment is more than a container and more than a worktree. It is the place an agent works, the policy that confines it, the evidence that records it, and the review lifecycle that decides whether the result reaches the main branch. This is the confinement pillar made concrete: inside an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>, the agent physically could not reach your credentials or the open internet — and the policy digest in Git proves it.
+      h5i's sandbox feature is named <code>env</code>. The name is deliberate. An environment is more than a container and more than a worktree. It is the place an agent works, the policy that confines it, the evidence that records it, and the review lifecycle that decides whether the result reaches the main branch. This is the confinement pillar made concrete: inside an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>, the agent physically could not reach your credentials or the open internet, and the policy digest in Git proves it.
     </p>
 
     <div class="callout">
@@ -96,7 +96,7 @@ $ h5i env apply fix-auth</pre></div>
     </div>
 
     <p>
-      The user gets a normal review shape: create, run or shell, inspect logs, inspect diff, propose the mediated commit, and apply when satisfied. Apply refuses an unproposed environment — the mediated-commit step is mandatory, never implicit. The agent gets a workspace that feels like a real project. The repository gets a durable record rather than an unstructured transcript.
+      The user gets a normal review shape: create, run or shell, inspect logs, inspect diff, propose the mediated commit, and apply when satisfied. Apply refuses an unproposed environment, the mediated-commit step is mandatory, never implicit. The agent gets a workspace that feels like a real project. The repository gets a durable record rather than an unstructured transcript.
     </p>
 
     <h2>Tiered isolation</h2>

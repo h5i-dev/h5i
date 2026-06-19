@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Auditing AI-Generated Code: A Practical Framework — h5i</title>
+  <title>Auditing AI-Generated Code: A Practical Framework: h5i</title>
   <meta name="description" content="Audit AI-generated code with four deterministic risk signals: blind edits, uncertainty, scope creep, and prompt injection.">
   <meta name="keywords" content="audit ai generated code, ai code review checklist, ai provenance, ai code governance, claude code review, blind edits, ai code compliance">
   <meta name="author" content="Koukyosyumei">
@@ -17,7 +17,7 @@
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="Auditing AI-Generated Code: A Practical Framework">
-  <meta property="og:description" content="A four-vector framework — blind edits, uncertainty, scope creep, prompt injection — for finding the AI commits that actually need human eyes.">
+  <meta property="og:description" content="A four-vector framework, blind edits, uncertainty, scope creep, prompt injection, for finding the AI commits that actually need human eyes.">
   <meta property="og:url" content="https://h5i.dev/blog/auditing-ai-generated-code/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
   <meta property="article:published_time" content="2026-05-06">
@@ -75,7 +75,7 @@
       <h1>Auditing AI-Generated Code: A Practical Framework</h1>
       <p class="post-deck">
         Your team merges 50 PRs a week. Thirty are AI-assisted. You don't have the bandwidth to
-        review them all carefully — so which ones do you scrutinize? Here's a four-vector framework
+        review them all carefully, so which ones do you scrutinize? Here's a four-vector framework
         and the deterministic signals that produce a ranked review queue.
       </p>
       <div class="post-meta">
@@ -87,7 +87,7 @@
 
     <p>
       "Treat AI-generated code like junior-engineer code" is a popular maxim and a useless one.
-      A junior engineer's output is uniform — uniformly cautious, uniformly inexperienced.
+      A junior engineer's output is uniform, uniformly cautious, uniformly inexperienced.
       AI output isn't. The same model produces flawless boilerplate and dangerously confident
       hallucinations in the same PR. Treating both halves with the same review intensity wastes
       the half of your reviewer attention that's worth most.
@@ -98,7 +98,7 @@
       minutes on the dangerous half. The trick is knowing which is which <strong>before</strong> you start
       reading. This is the governance pillar of an <a href="../auditable-workspaces-for-ai-agents/">auditable workspace</a>:
       every prompt, decision, command, and file touch is recorded in your repo and provable after the fact,
-      so the audit path is deterministic — no model in the loop.
+      so the audit path is deterministic, no model in the loop.
     </p>
 
     <p>
@@ -131,10 +131,10 @@
 
     <p>
       Each vector is an independent input to a composite risk score. The score is the only thing your
-      reviewers actually need to look at — it sorts PRs into "skim" and "really read."
+      reviewers actually need to look at, it sorts PRs into "skim" and "really read."
     </p>
 
-    <h2>Vector 1 — Blind edits</h2>
+    <h2>Vector 1: Blind edits</h2>
 
     <p>
       A <em>blind edit</em> is a Write or Edit call to a file with no preceding Read of the same file in
@@ -167,11 +167,11 @@
       eyes regardless of how clean the diff looks.
     </p>
 
-    <h2>Vector 2 — Uncertainty</h2>
+    <h2>Vector 2: Uncertainty</h2>
 
     <p>
-      Models hedge in their thinking blocks. The hedges don't appear in the chat output — by the time
-      the model addresses you, it's converged on a confident-sounding answer — but they're recorded
+      Models hedge in their thinking blocks. The hedges don't appear in the chat output, by the time
+      the model addresses you, it's converged on a confident-sounding answer, but they're recorded
       in the session log.
     </p>
 
@@ -189,11 +189,11 @@
       that tells you where to start reading.
     </p>
 
-    <h2>Vector 3 — Scope creep</h2>
+    <h2>Vector 3: Scope creep</h2>
 
     <p>
       The user asked Claude to fix a bug in <code>parser.rs</code>. The PR touches eleven files. Maybe that's
-      fine — the parser is a hub. Maybe it's not — five of those files are unrelated and the model
+      fine, the parser is a hub. Maybe it's not, five of those files are unrelated and the model
       "noticed" minor issues while it was there.
     </p>
 
@@ -204,11 +204,11 @@
     </p>
 
     <p>
-      You can also enforce scope at policy level — <code>h5i audit policy</code> rules can require that AI commits
+      You can also enforce scope at policy level, <code>h5i audit policy</code> rules can require that AI commits
       restrict edits to files mentioned in the prompt or its session's reading set.
     </p>
 
-    <h2>Vector 4 — Prompt injection</h2>
+    <h2>Vector 4: Prompt injection</h2>
 
     <p>
       An agent that reads a poisoned README, scrapes a malicious doc, or follows a hostile link can
@@ -252,8 +252,7 @@
     </div>
 
     <p>
-      Reviewer workflow: open the top five, ignore the rest. The bottom-half PRs aren't unreviewed —
-      they pass through your standard reviewer-allocation, but with one fewer pair of eyes than the
+      Reviewer workflow: open the top five, ignore the rest. The bottom-half PRs aren't unreviewed, they pass through your standard reviewer-allocation, but with one fewer pair of eyes than the
       flagged ones.
     </p>
 
@@ -307,7 +306,7 @@
       <li>It does not approve PRs. It ranks them. Humans still review.</li>
       <li>It does not catch bugs the model never noticed. Uncertainty signals are a recall floor, not a ceiling.</li>
       <li>It does not score human-written commits. It scores AI-tagged commits with associated session logs.</li>
-      <li>It does not call another model. Every signal is a regex, a tool-call sequence comparison, or a diff-vs-prompt analysis. The audit path is fully deterministic — by design, so the audit itself can be audited.</li>
+      <li>It does not call another model. Every signal is a regex, a tool-call sequence comparison, or a diff-vs-prompt analysis. The audit path is fully deterministic, by design, so the audit itself can be audited.</li>
     </ul>
 
     <h2>Try it on your last week of merges</h2>
