@@ -1965,3 +1965,9 @@ I'll wait for the three mappers to return their precise structural maps, then st
 [17:29:07] THINK: Let me insert the `doctor` function and renderer into env.
 [17:29:07] THINK: Idea 0 wiring is in. Let me build (with reduced parallelism per the WSL2 OOM note) to catch errors early.
 [17:29:07] NOTE: DEFERRAL (~/Dev/h5i/docs/borrowing-from-coasts.md): real dev server reachable on its dynamic port. **Honestly deferred** (with clear in-code messages where relevant): canonical `checkout` forwarders, su…
+
+
+---
+_[Checkpoint: 6a357c63 — edited src/mcp.rs; edited src/mcp.rs; edited docs/borrowing-from-coasts.md]_
+---
+
