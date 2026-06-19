@@ -1775,3 +1775,4 @@ _[Checkpoint: 6a355473 — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a355478 — session ended (auto-checkpoint)]_
 ---
 
+[14:39:12] OBSERVE: read docs/borrowing-from-coasts.md
