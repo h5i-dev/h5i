@@ -1791,3 +1791,9 @@ _[Checkpoint: 6a355478 — session ended (auto-checkpoint)]_
 [14:41:09] ACT: edited docs/borrowing-from-coasts.md
 [14:41:30] THINK: Now let me apply the secrets-section refinements (the factual correction + extractor-execution guardrail + richer record fields).
 [14:41:30] NOTE: DEFERRAL (~/Dev/h5i/docs/borrowing-from-coasts.md): Codex's follow-up has genuinely useful refinements — notably a factual correction (don't imply the broker
+
+
+---
+_[Checkpoint: 6a35551a — edited docs/borrowing-from-coasts.md; edited docs/borrowing-from-coasts.md; edited docs/borrowing-from-coasts.md]_
+---
+
