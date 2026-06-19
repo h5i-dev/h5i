@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://h5i.dev/" target="_blank">
-    <img src="./assets/logo.svg" alt="h5i logo" height="126">
+    <img src="./docs/_static/logo.png" alt="h5i logo" height="126">
   </a>
 </p>
 
