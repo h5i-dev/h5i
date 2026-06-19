@@ -1955,3 +1955,4 @@ _[Checkpoint: 6a355530 — edited docs/borrowing-from-coasts.md; edited docs/bor
 [17:21:25] ACT: edited src/mcp.rs
 [17:21:37] ACT: edited src/mcp.rs
 [17:28:20] ACT: edited docs/borrowing-from-coasts.md
+[17:29:07] THINK: Implementing all five ideas is a large effort, so I'll work incrementally in the doc's build order: **0 (fleet/doctor) → 3 (private_paths) → 1 (secrets) → 3.
