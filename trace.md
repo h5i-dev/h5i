@@ -1606,3 +1606,9 @@ _[Checkpoint: 6a34cb93 — edited docs/blog/index.html; edited docs/blog/index.h
 ---
 
 [04:55:17] THINK: Say the word and I'll commit them (one new commit, or amended into `d7ac0541`).
+
+
+---
+_[Checkpoint: 6a34cbb5 — edited docs/blog/index.html; edited docs/blog/index.html; edited docs/_static/blog.css]_
+---
+
