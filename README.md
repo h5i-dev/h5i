@@ -16,9 +16,6 @@
   <a href="#compress-the-logs-h5i-capture-run"><img alt="Compressed Logs" src="https://img.shields.io/badge/Compressed%20Logs-95%25%20less%20token%20waste-2ea44f"></a>
 </p>
 
-> **Auditable workspaces for AI agents.**
-> Sandboxed worktrees, prompt-aware commits, compressed logs, multi-agent conversation, and review-ready PR evidence, versioned in your Git, no SaaS.
-
 **Git tracks the diff. h5i tracks the run.**
 
 AI coding agents do more than edit files. They follow prompts, talk to other agents, run tests, inspect logs, retry commands, skip failures, touch the filesystem, and make decisions that Git never records.
@@ -26,9 +23,9 @@ AI coding agents do more than edit files. They follow prompts, talk to other age
 h5i gives each agent a **Git-backed workspace**: a sandboxed worktree, prompt-aware commits, compressed command logs, agent-to-agent handoffs, and PR-ready evidence, all stored in `refs/h5i/*`, traveling with the repo.
 
 
-> **What is an auditable workspace?** It's the place an AI agent does its work, a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact.
+> **What is an auditable workspace?** It's the place an AI agent does its work, a Git-backed worktree where every prompt, decision, command, log, policy, and multi-AI conversation is recorded in your repo and provable after the fact.
 >
-> **Workspace = worktree + prompt + model + commands + logs + policy + messages + PR evidence.**
+> **Auditable Workspace = worktree + prompt + model + commands + logs + policy + messages + PR evidence.**
 
 ```text
 Agent Workspace
