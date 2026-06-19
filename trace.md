@@ -1614,3 +1614,4 @@ _[Checkpoint: 6a34cbb5 — edited docs/blog/index.html; edited docs/blog/index.h
 
 [05:08:46] THINK: I'll reduce the em-dash punctuation (the "—" overuse) across README and the site, replacing them with commas, colons, periods, or parentheses as context fits — while keeping legitimate uses (numeric ranges like `0–100`, CLI flags `--foo`, A…
 [05:08:46] THINK: Let me sample real usages to choose the right approach (mechanical vs.
+[05:08:46] THINK: Em-dashes are essentially all the spaced `" — "` form, with only a few inside `<pre>` blocks (which I'll protect) and 3 unspaced ones in the pitch.
