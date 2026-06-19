@@ -1978,3 +1978,4 @@ _[Checkpoint: 6a357d65 — edited src/mcp.rs; edited src/mcp.rs; edited docs/bor
 ---
 
 [17:39:26] OBSERVE: read src/env.rs
+[17:39:26] OBSERVE: searched prepare_private_paths|pub for "8"
