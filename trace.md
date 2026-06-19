@@ -1716,3 +1716,4 @@ _[Checkpoint: 6a3547ef — edited /home/koukyosyumei/Dev/h5i/docs/pitch/index.ht
 [14:37:55] ACT: edited docs/borrowing-from-coasts.md
 [14:38:15] ACT: edited docs/borrowing-from-coasts.md
 [14:38:23] OBSERVE: listed files under src
+[14:38:23] OBSERVE: listed files under ../coasts
