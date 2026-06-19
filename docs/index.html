@@ -876,7 +876,7 @@
       <span class="shine-text">Auditable Workspaces for AI Agents</span>
     </h1>
     <p class="hero-sub">
-      <strong>Git tracks the diff. h5i tracks the workspace behind it.</strong> h5i gives Claude Code, Codex, and other coding agents a Git-backed workspace where prompts, commands, logs, sandbox policy, agent handoffs, and PR evidence travel with the branch — versioned in <code>refs/h5i/*</code>, no SaaS.
+      <strong>Git tracks the diff. h5i tracks the workspace behind it.</strong> h5i gives Claude Code, Codex, and other coding agents a Git-backed workspace where prompts, commands, logs, sandbox policy, multi-agents conversations, and PR evidence travel with the branch.
     </p>
     <div class="hero-actions">
       <a href="#install" class="btn btn-primary">Get Started</a>
@@ -915,8 +915,8 @@
   <div class="container">
     <div class="section-head reveal">
       <span class="section-tag">The Problem</span>
-      <h2 class="section-title">AI agents work outside the review trail.</h2>
-      <p class="section-sub">An agent opens a PR, having run your commands to make it. But it did more than edit files — it followed a prompt, read the tree, ran commands, retried failures, and maybe coordinated with another agent. Today that work lives everywhere but the repo: prompts pasted into chat, terminal logs scrolled past, agent runs screenshotted, reviewers trusting a green check. Before a human can approve, six questions Git was never built to answer:</p>
+      <h2 class="section-title">The AI work disappears before review.</h2>
+      <p class="section-sub">An agent opens a PR, having run your commands to make it. But it did more than edit files — it followed a prompt, read the tree, ran commands, retried failures, and maybe coordinated with another agent. Today that work lives everywhere but the repo: prompts pasted into chat, terminal logs scrolled past, agent runs screenshotted, reviewers trusting a green check. Before a human can approve, six gaps Git was never built to fill:</p>
       <div class="divider"></div>
     </div>
     <div class="qlist reveal">
@@ -936,29 +936,9 @@
     <div class="section-head reveal">
       <span class="section-tag">The Solution</span>
       <h2 class="section-title">An auditable workspace beside every Git branch</h2>
-      <p class="section-sub">An auditable workspace is the place an AI agent does its work — a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded in your repo and provable after the fact. h5i is a Git sidecar: your commits, branches, and remotes stay exactly as they are, while the workspace and its evidence travel with the repo in <code>refs/h5i/*</code>. <strong>Not a Git replacement, not a hosted SaaS, not just a sandbox — a Git sidecar for auditable agent workspaces.</strong></p>
+      <p class="section-sub">An auditable workspace is the place an AI agent does its work — a Git-backed worktree where every prompt, decision, command, log, policy, and handoff is recorded and provable after the fact. <strong>Not a Git replacement, not a hosted SaaS, not just a sandbox — a Git sidecar for auditable agent workspaces, versioned beside your code in <code>refs/h5i/*</code>.</strong></p>
       <div class="divider"></div>
       <p class="section-sub" style="margin-top:.5rem"><strong>Workspace = worktree + prompt + model + commands + logs + policy + messages + PR evidence.</strong></p>
-    </div>
-    <div class="split2 reveal" style="margin-bottom:2rem">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">the workspace stack</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-out">Agent Workspace</span>
-<span class="t-out">├─ Sandboxed worktree        </span><span class="t-cmd">h5i env</span>
-<span class="t-out">├─ Prompt-aware commits      </span><span class="t-cmd">h5i capture commit</span>
-<span class="t-out">├─ Compressed tool logs      </span><span class="t-cmd">h5i capture run</span>
-<span class="t-out">├─ Agent handoffs            </span><span class="t-cmd">h5i msg</span>
-<span class="t-out">├─ Risk/audit signals        </span><span class="t-cmd">h5i audit</span>
-<span class="t-out">└─ PR evidence brief         </span><span class="t-cmd">h5i share pr</span></pre></div>
-      </div>
-      <div class="stack">
-        <div class="feat-card reveal"><span class="feat-cmd">provenance</span><div class="feat-name">Who / why / what it knew</div><div class="feat-desc"><code>refs/h5i/notes</code>, <code>refs/h5i/context</code> — the prompt, model, and reasoning behind every change.</div></div>
-        <div class="feat-card reveal"><span class="feat-cmd">confinement</span><div class="feat-name">What it couldn't reach</div><div class="feat-desc"><code>refs/h5i/env</code> — the agent physically could not exfiltrate, and the policy digest in Git proves it.</div></div>
-        <div class="feat-card reveal"><span class="feat-cmd">governance</span><div class="feat-name">Deterministic audit</div><div class="feat-desc"><code>h5i audit</code> — risk and injection signals with no model in the loop.</div></div>
-      </div>
     </div>
     <!-- <div class="refstack reveal">
       <div class="ref-layer"><span class="ref-name">refs/h5i/env</span><span class="ref-desc">sandbox environments — confined agent runs, Git-based auditable logs</span></div>
@@ -971,7 +951,42 @@
       </div> --!>
     <div class="hero-shot">
       <img src="/_static/h5i-concept.svg" width="1240" height="380" alt="h5i concept diagram showing Codex and Claude sharing versioned context through refs/h5i">
-      <div class="hero-shot-caption">Agents capture and recall the same versioned context through <code>refs/h5i/*</code>; audits, dashboards, and PR comments are views over that shared record.</div>
+      <div class="hero-shot-caption">Agents share one workspace through <code>refs/h5i/*</code>; audits, dashboards, and PR comments are views over that recorded, provable evidence.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Agent Sandbox ─────────────────────────────────────────── -->
+<section id="sandbox">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">h5i env</span>
+      <h2 class="section-title">The sandboxed agent workspace</h2>
+      <p class="section-sub">The canonical auditable workspace — the command humans actually run. A disposable, confined worktree that limits what code can read, write, and reach over the network, and applies to your branch only when you choose. <strong>The agent physically could not exfiltrate — the policy digest in Git proves it.</strong></p>
+      <div class="divider"></div>
+    </div>
+    <div class="split2 reveal">
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">~/my-project</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create fix-auth</span>
+  <span class="t-out">created env · isolation: </span><span class="t-ai">supervised</span>
+  <span class="t-cmt"># net.egress = ["example.com"]  — allowlist</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell fix-auth</span>
+<span class="t-ai">box$</span> <span class="t-cmd">curl https://example.com</span>
+  <span class="t-pass">200 OK</span><span class="t-out">          — on the allowlist</span>
+<span class="t-ai">box$</span> <span class="t-cmd">curl https://evil.example</span>
+  <span class="t-red">could not resolve host — blocked</span>
+<span class="t-ai">box$</span> <span class="t-cmd">nft flush ruleset</span>
+  <span class="t-red">Operation not permitted — can't undo it</span></pre></div>
+      </div>
+      <div class="stack">
+        <div class="feat-card reveal"><span class="feat-cmd">h5i env create · shell</span><div class="feat-name">Work in a box</div><div class="feat-desc">Make a confined environment, then work in it — or hand it to an agent. Every command inside is confined by construction.</div></div>
+        <div class="feat-card reveal"><span class="feat-cmd">h5i env diff · log · apply</span><div class="feat-name">Audit, then merge</div><div class="feat-desc">See what changed and every blocked access, then merge onto your branch — reviewer-selected, never automatic.</div></div>
+      </div>
     </div>
   </div>
 </section>
@@ -1054,6 +1069,26 @@
   </div>
 </section>
 
+<!-- ── Objects ───────────────────────────────────────────────── -->
+<section id="objects">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="section-tag">h5i capture run</span>
+      <h2 class="section-title">Tool output stops eating the context window</h2>
+      <p class="section-sub">A test or build log can be megabytes. The agent needs the two failures and the count — not the noise. h5i stores raw output out-of-band and surfaces a tiny structured summary.</p>
+      <div class="divider"></div>
+    </div>
+    <figure class="reveal" style="margin:0;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--bg-term);padding:1.6rem;">
+      <img src="/_static/token-reduction-unified.svg" width="1060" height="500" alt="h5i object store: raw pytest and cargo output (1,424 and 1,397 tokens) normalized into one ToolResult schema at 47 and 73 tokens — 97% and 95% fewer; raw bytes kept out-of-band and recoverable with h5i recall object" loading="lazy" style="width:100%;height:auto;display:block;">
+    </figure>
+    <div class="cards3 reveal" style="margin-top:1.5rem;">
+      <div class="feat-card"><span class="feat-cmd">h5i capture run -- cargo test</span><div class="feat-desc" style="margin-top:0.5rem;">Wrap any command. Failures always captured &amp; searchable.</div></div>
+      <div class="feat-card"><span class="feat-cmd">h5i recall objects --status failed</span><div class="feat-desc" style="margin-top:0.5rem;">Query findings across every capture — "did this fail before?"</div></div>
+      <div class="feat-card"><span class="feat-cmd">h5i recall object 82bf…</span><div class="feat-desc" style="margin-top:0.5rem;">Rehydrate full bytes on demand — never sits in context unless asked.</div></div>
+    </div>
+  </div>
+</section>
+
 <!-- ── Msg ───────────────────────────────────────────────────── -->
 <section id="msg">
   <div class="container">
@@ -1105,22 +1140,38 @@
   </div>
 </section>
 
-<!-- ── Objects ───────────────────────────────────────────────── -->
-<section id="objects">
+<!-- ── Audit ─────────────────────────────────────────────────── -->
+<section id="audit">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">h5i capture run</span>
-      <h2 class="section-title">Tool output stops eating the context window</h2>
-      <p class="section-sub">A test or build log can be megabytes. The agent needs the two failures and the count — not the noise. h5i stores raw output out-of-band and surfaces a tiny structured summary.</p>
+      <span class="section-tag">h5i audit</span>
+      <h2 class="section-title">Deterministic risk triage — no model in the loop</h2>
+      <p class="section-sub">Every signal is rule-based and reproducible — blind edits, scope creep, secrets, prompt injection. Riskiest commits surface first; bad ones blocked at commit time.</p>
       <div class="divider"></div>
     </div>
-    <figure class="reveal" style="margin:0;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--bg-term);padding:1.6rem;">
-      <img src="/_static/token-reduction-unified.svg" width="1060" height="500" alt="h5i object store: raw pytest and cargo output (1,424 and 1,397 tokens) normalized into one ToolResult schema at 47 and 73 tokens — 97% and 95% fewer; raw bytes kept out-of-band and recoverable with h5i recall object" loading="lazy" style="width:100%;height:auto;display:block;">
-    </figure>
-    <div class="cards3 reveal" style="margin-top:1.5rem;">
-      <div class="feat-card"><span class="feat-cmd">h5i capture run -- cargo test</span><div class="feat-desc" style="margin-top:0.5rem;">Wrap any command. Failures always captured &amp; searchable.</div></div>
-      <div class="feat-card"><span class="feat-cmd">h5i recall objects --status failed</span><div class="feat-desc" style="margin-top:0.5rem;">Query findings across every capture — "did this fail before?"</div></div>
-      <div class="feat-card"><span class="feat-cmd">h5i recall object 82bf…</span><div class="feat-desc" style="margin-top:0.5rem;">Rehydrate full bytes on demand — never sits in context unless asked.</div></div>
+    <div class="split2 reveal">
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="terminal-path">~/my-project</span>
+        </div>
+        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit policy check</span>
+  <span class="t-pass">✔</span> <span class="t-out">model declared (claude-sonnet-4-6)</span>
+  <span class="t-pass">✔</span> <span class="t-out">audit flag present</span>
+  <span class="t-red">✗</span> <span class="t-red">test metrics missing          [error]</span>
+  <span class="t-red">1 error — commit blocked</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">h5i audit compliance --since 2026-04-01</span>
+<span class="t-bold">── Compliance Report ──────────────────────</span>
+  <span class="t-out">AI-generated:    </span><span class="t-pass">74%</span><span class="t-out"> of commits (30d)</span>
+  <span class="t-out">Audit coverage:  </span><span class="t-pass">91%</span>
+  <span class="t-out">Policy errors:   </span><span class="t-red">3</span>  <span class="t-out">warnings: </span><span class="t-warn">8</span>
+  <span class="t-out">Top risk file:   </span><span class="t-ai">src/billing/token.rs</span></pre></div>
+      </div>
+      <div class="stack">
+        <div class="feat-card reveal"><span class="feat-cmd">h5i audit review --limit 50</span><div class="feat-name">Triage funnel</div><div class="feat-desc">Riskiest AI commits first, before humans spend review cycles.</div></div>
+        <div class="feat-card reveal"><span class="feat-cmd">h5i audit scan</span><div class="feat-name">Injection scan</div><div class="feat-desc">Scan reasoning traces for prompt-injection and exfiltration patterns.</div></div>
+      </div>
     </div>
   </div>
 </section>
@@ -1165,77 +1216,6 @@
           <div class="feat-name">Render anywhere</div>
           <div class="feat-desc">Print the markdown to stdout — pipe into CI or any review tool, no <code>gh</code> required.</div>
         </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ── Audit ─────────────────────────────────────────────────── -->
-<section id="audit">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">h5i audit</span>
-      <h2 class="section-title">Deterministic risk triage — no model in the loop</h2>
-      <p class="section-sub">Every signal is rule-based and reproducible — blind edits, scope creep, secrets, prompt injection. Riskiest commits surface first; bad ones blocked at commit time.</p>
-      <div class="divider"></div>
-    </div>
-    <div class="split2 reveal">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">~/my-project</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit policy check</span>
-  <span class="t-pass">✔</span> <span class="t-out">model declared (claude-sonnet-4-6)</span>
-  <span class="t-pass">✔</span> <span class="t-out">audit flag present</span>
-  <span class="t-red">✗</span> <span class="t-red">test metrics missing          [error]</span>
-  <span class="t-red">1 error — commit blocked</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i audit compliance --since 2026-04-01</span>
-<span class="t-bold">── Compliance Report ──────────────────────</span>
-  <span class="t-out">AI-generated:    </span><span class="t-pass">74%</span><span class="t-out"> of commits (30d)</span>
-  <span class="t-out">Audit coverage:  </span><span class="t-pass">91%</span>
-  <span class="t-out">Policy errors:   </span><span class="t-red">3</span>  <span class="t-out">warnings: </span><span class="t-warn">8</span>
-  <span class="t-out">Top risk file:   </span><span class="t-ai">src/billing/token.rs</span></pre></div>
-      </div>
-      <div class="stack">
-        <div class="feat-card reveal"><span class="feat-cmd">h5i audit review --limit 50</span><div class="feat-name">Triage funnel</div><div class="feat-desc">Riskiest AI commits first, before humans spend review cycles.</div></div>
-        <div class="feat-card reveal"><span class="feat-cmd">h5i audit scan</span><div class="feat-name">Injection scan</div><div class="feat-desc">Scan reasoning traces for prompt-injection and exfiltration patterns.</div></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ── Agent Sandbox ─────────────────────────────────────────── -->
-<section id="sandbox">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">h5i env</span>
-      <h2 class="section-title">The sandboxed agent workspace</h2>
-      <p class="section-sub">This is the canonical auditable workspace — the command humans actually run. Hand an agent a disposable, confined worktree plus a policy that limits what code can read, write, and reach over the network. It picks the strongest isolation the host supports, records every command and blocked access, and nothing reaches your branch until you apply. <strong>The agent physically could not exfiltrate — and the policy digest in Git proves it.</strong></p>
-      <div class="divider"></div>
-    </div>
-    <div class="split2 reveal">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">~/my-project</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create fix-auth</span>
-  <span class="t-out">created env · isolation: </span><span class="t-ai">supervised</span>
-  <span class="t-cmt"># net.egress = ["example.com"]  — allowlist</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell fix-auth</span>
-<span class="t-ai">box$</span> <span class="t-cmd">curl https://example.com</span>
-  <span class="t-pass">200 OK</span><span class="t-out">          — on the allowlist</span>
-<span class="t-ai">box$</span> <span class="t-cmd">curl https://evil.example</span>
-  <span class="t-red">could not resolve host — blocked</span>
-<span class="t-ai">box$</span> <span class="t-cmd">nft flush ruleset</span>
-  <span class="t-red">Operation not permitted — can't undo it</span></pre></div>
-      </div>
-      <div class="stack">
-        <div class="feat-card reveal"><span class="feat-cmd">h5i env create · shell</span><div class="feat-name">Work in a box</div><div class="feat-desc">Make a confined environment, then work in it — or hand it to an agent. Every command inside is confined by construction.</div></div>
-        <div class="feat-card reveal"><span class="feat-cmd">h5i env diff · log · apply</span><div class="feat-name">Audit, then merge</div><div class="feat-desc">See what changed and every blocked access, then merge onto your branch — reviewer-selected, never automatic.</div></div>
       </div>
     </div>
   </div>

@@ -447,18 +447,33 @@ footer.blog-footer {
 /* pillar group heading inside the editorial list */
 .post-group {
   grid-column: 1 / -1;
-  border-bottom: 1px solid var(--border);
-  padding: 2.6rem 0.4rem 1.1rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 1.3rem;
+  border-top: 1px solid var(--border);
+  margin-top: 2.4rem;
+  padding: 2.4rem 0.4rem 1rem;
 }
-.post-group:first-child { padding-top: 1.4rem; }
+.post-group .post-group-num {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 2.9rem;
+  font-weight: 700;
+  line-height: 0.82;
+  letter-spacing: -0.03em;
+  color: var(--red);
+  -webkit-text-fill-color: transparent;
+  -webkit-text-stroke: 1.4px var(--red);
+}
+.post-group .post-group-body { min-width: 0; }
 .post-group .post-group-eyebrow {
   font-family: var(--mono); font-size: 0.7rem;
-  letter-spacing: 0.14em; color: var(--red-text);
-  text-transform: uppercase; margin-bottom: 0.5rem;
+  letter-spacing: 0.18em; color: var(--red-text);
+  text-transform: uppercase; margin-bottom: 0.4rem;
 }
 .post-group h2 {
-  font-size: 1.55rem; font-weight: 700; line-height: 1.2;
-  margin: 0 0 0.35rem; color: var(--ink); letter-spacing: -0.02em;
+  font-size: 1.7rem; font-weight: 700; line-height: 1.15;
+  margin: 0 0 0.4rem; color: var(--ink); letter-spacing: -0.02em;
 }
 .post-group p {
   color: var(--text-dim); font-size: 0.95rem; margin: 0; line-height: 1.55;
