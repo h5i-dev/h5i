@@ -2895,3 +2895,4 @@ _[Checkpoint: 6a366f1c — session ended (auto-checkpoint)]_
 [10:45:11] OBSERVE: read activate.md
 [10:45:19] OBSERVE: read CLAUDE.md
 [10:45:27] OBSERVE: read adaptive.md
+[10:47:05] NOTE: DEFERRAL: till waiting on the h5i env inventory agent for the precise deferred-work list. Let me check if it's done
