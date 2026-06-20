@@ -13,6 +13,7 @@ import type { IconName } from "@blueprintjs/icons";
 import {
   api,
   type BranchInfo,
+  type Commit,
   type ContextDag,
   type ContextDiff,
   type ContextMilestoneEntry,
@@ -43,6 +44,8 @@ interface AllCtx {
   snapshots: ContextSnapshotItem[];
   branches: BranchInfo[];
   milestones: ContextMilestoneEntry[];
+  /** The picked branch's own commits (base..branch), for snapshot scoping. */
+  branchCommits: Commit[];
 }
 
 export function ContextView({ branch }: { branch?: string | null }) {
@@ -62,16 +65,22 @@ export function ContextView({ branch }: { branch?: string | null }) {
         const branches = await api.branches();
         const picked = branch ? branches.find((b) => b.name === branch) : null;
         const scope = picked?.has_context_branch ? branch ?? undefined : undefined;
-        const [status, show, promotion, dag, snapshots, milestones] = await Promise.all([
-          api.contextStatus(),
-          api.contextShow(scope),
-          api.contextPromotion(scope),
-          api.contextDag(scope),
-          api.contextSnapshots(),
-          api.contextMilestones(scope),
-        ]);
+        const [status, show, promotion, dag, snapshots, milestones, branchCommits] =
+          await Promise.all([
+            api.contextStatus(),
+            api.contextShow(scope),
+            api.contextPromotion(scope),
+            api.contextDag(scope),
+            api.contextSnapshots(),
+            api.contextMilestones(scope),
+            // Snapshots are git-commit-linked, so scope them by the picked git
+            // branch's own commits (base..branch), not by context branch.
+            branch
+              ? api.commits({ limit: 500, branch, branchOnly: true })
+              : Promise.resolve([] as Commit[]),
+          ]);
         if (!cancelled) {
-          setData({ status, show, promotion, dag, snapshots, branches, milestones });
+          setData({ status, show, promotion, dag, snapshots, branches, milestones, branchCommits });
         }
       } catch (e) {
         if (!cancelled) setError(String(e));
@@ -101,7 +110,7 @@ export function ContextView({ branch }: { branch?: string | null }) {
     );
   }
 
-  const { status, show, promotion, dag, snapshots, branches, milestones } = data;
+  const { status, show, promotion, dag, snapshots, branches, milestones, branchCommits } = data;
   // Newest milestones at the top. The structured /api/context/milestones is
   // the preferred source — it has SHA + timestamp per row. We fall back to
   // the bare-string list from /api/context/show if the structured call
@@ -122,12 +131,22 @@ export function ContextView({ branch }: { branch?: string | null }) {
   const pickedGit = branch ? branches.find((b) => b.name === branch) : null;
   const noContextForPicked = !!pickedGit && !pickedGit.has_context_branch;
 
-  // Snapshots carry the *context* branch they belong to. Show only the context
-  // branch currently displayed (the picked branch's shadow, or the active one
-  // in the fallback case) so the history matches the rest of the dashboard.
-  const effectiveContextBranch =
-    (pickedGit?.has_context_branch ? branch : null) ?? status.current_branch;
-  const branchSnapshots = snapshots.filter((s) => s.branch === effectiveContextBranch);
+  // Snapshots are linked to git commits (`sha`), so scope the history to the
+  // selected git branch's own commits — not the context-branch tag (a snapshot
+  // for an improve-ui commit is tagged with whatever context branch was active
+  // at commit time, e.g. prompt-score). Default branch (no base) → its full
+  // history; no branch → all snapshots.
+  const branchShas = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of branchCommits) {
+      s.add(c.git_oid);
+      s.add(c.short_oid);
+    }
+    return s;
+  }, [branchCommits]);
+  const branchSnapshots = branch
+    ? snapshots.filter((s) => branchShas.has(s.sha) || branchShas.has(s.sha_short))
+    : snapshots;
 
   return (
     <div className="ctx-view">
@@ -223,7 +242,7 @@ export function ContextView({ branch }: { branch?: string | null }) {
 
       {branchSnapshots.length > 0 ? (
         <Section
-          title={`Snapshot history · ${effectiveContextBranch}`}
+          title={branch ? `Snapshot history · ${branch}` : "Snapshot history"}
           count={branchSnapshots.length}
         >
           <SnapshotsTable snapshots={branchSnapshots} />
