@@ -1887,6 +1887,1036 @@ async fn api_env_capture(
     }
 }
 
+// ── Replay (the flight recorder) ───────────────────────────────────────────────
+//
+// The roadmap's centerpiece: "Review the run, not just the diff." A Replay is a
+// single chronological timeline of what an agent did inside a workspace before
+// producing a diff — prompt → reads → commands → blocked accesses → tests →
+// edits → diff — plus a per-file "workspace heatmap" (read/edited/tested/
+// blocked/risky) and the evidence behind each event. Two anchors:
+//   • env run    — the cleanest "what the agent could and couldn't reach" story,
+//                  assembled from captures + egress + enforced policy + risk.
+//   • commit     — the fallback for ordinary history, assembled from the commit
+//                  record (prompt, tests) + the analyzed Claude Code session.
+// Both produce the same shape so the frontend renders one view.
+
+/// One event on the replay timeline. `kind` drives the icon/colour; `lane`
+/// groups it (intent / fs / net / proc / test / provenance / lifecycle / msg).
+#[derive(Serialize)]
+pub struct ReplayEvent {
+    pub seq: usize,
+    pub ts: String,
+    /// PROMPT | THINK | READ | RUN | TEST_PASS | TEST_FAIL | BLOCKED | EDIT |
+    /// NOTE | DIFF | CREATE | PROPOSE | APPLY | ABORT | MSG | EVENT
+    pub kind: String,
+    pub lane: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// info | good | warning | critical — the loud one is `critical` (blocked).
+    pub severity: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capture_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+}
+
+/// One file's status across the run — the center-pane heatmap cell.
+#[derive(Serialize, Clone)]
+pub struct FileHeat {
+    pub path: String,
+    pub read: bool,
+    pub edited: bool,
+    pub tested: bool,
+    pub blocked: bool,
+    /// Edited without first reading it — "changed without enough context".
+    pub risky: bool,
+}
+
+/// Run-level summary for the replay header / trust strip.
+#[derive(Serialize)]
+pub struct ReplayHeader {
+    /// "env" | "commit"
+    pub anchor: String,
+    pub id: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub isolation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_digest: Option<String>,
+    pub blocked_count: u64,
+    pub allowed_count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tests_passed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tests_failed: Option<u64>,
+    pub risk_score: u32,
+    pub risk_level: String,
+    pub run_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diffstat: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ReplayView {
+    pub header: ReplayHeader,
+    pub timeline: Vec<ReplayEvent>,
+    pub heatmap: Vec<FileHeat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<EnforcedPolicy>,
+    pub findings: Vec<crate::risk::Finding>,
+}
+
+/// Get-or-create a heatmap cell.
+fn heat_cell<'a>(
+    heat: &'a mut std::collections::BTreeMap<String, FileHeat>,
+    path: &str,
+) -> &'a mut FileHeat {
+    heat.entry(path.to_string()).or_insert_with(|| FileHeat {
+        path: path.to_string(),
+        read: false,
+        edited: false,
+        tested: false,
+        blocked: false,
+        risky: false,
+    })
+}
+
+/// Test pass/fail tallies from a capture's structured result, when it is a test
+/// run. `None` for non-test captures.
+fn capture_test_counts(cap: &crate::objects::Manifest) -> Option<(u64, u64)> {
+    let s = cap.structured.as_ref()?;
+    let is_test = matches!(s.kind, crate::structured::ResultKind::Test)
+        || s.counts.contains_key("passed")
+        || s.counts.contains_key("failed");
+    if !is_test {
+        return None;
+    }
+    let passed = s.counts.get("passed").copied().unwrap_or(0);
+    let failed = s.counts.get("failed").copied().unwrap_or(0);
+    Some((passed, failed))
+}
+
+/// Assemble a replay from an environment's runs (the primary anchor).
+#[allow(clippy::too_many_arguments)]
+fn build_env_replay(
+    git: &git2::Repository,
+    h5i_root: &std::path::Path,
+    m: &crate::env::EnvManifest,
+    events: &[crate::env::EnvEvent],
+    captures: &[crate::objects::Manifest],
+    policy: Option<&crate::sandbox::Profile>,
+    risk: &crate::risk::EnvRisk,
+) -> ReplayView {
+    use std::collections::BTreeMap;
+    let mut timeline: Vec<ReplayEvent> = Vec::new();
+    let mut heat: BTreeMap<String, FileHeat> = BTreeMap::new();
+    let mut seq = 0usize;
+    let mut push = |timeline: &mut Vec<ReplayEvent>, e: ReplayEvent| {
+        let mut e = e;
+        e.seq = seq;
+        seq += 1;
+        timeline.push(e);
+    };
+
+    let cap_by_id: HashMap<&str, &crate::objects::Manifest> =
+        captures.iter().map(|c| (c.id.as_str(), c)).collect();
+
+    let mut blocked_count: u64 = 0;
+    let mut allowed_count: u64 = 0;
+    let mut tests_passed: u64 = 0;
+    let mut tests_failed: u64 = 0;
+    let mut had_tests = false;
+    let mut run_count = 0usize;
+
+    for ev in events {
+        match ev.event.as_str() {
+            "created" => push(
+                &mut timeline,
+                ReplayEvent {
+                    seq: 0,
+                    ts: ev.ts.clone(),
+                    kind: "CREATE".into(),
+                    lane: "lifecycle".into(),
+                    title: format!("Environment created · {}", m.isolation_claim),
+                    detail: ev.detail.clone(),
+                    severity: "info".into(),
+                    files: vec![],
+                    capture_id: None,
+                    exit_code: None,
+                },
+            ),
+            "exec" => {
+                run_count += 1;
+                let cap = ev.capture.as_deref().and_then(|id| cap_by_id.get(id).copied());
+                let cmd = cap
+                    .and_then(|c| c.cmd.clone())
+                    .or_else(|| {
+                        ev.detail
+                            .as_ref()
+                            .and_then(|d| d.split("cmd=`").nth(1))
+                            .and_then(|s| s.split('`').next())
+                            .map(|s| s.to_string())
+                    })
+                    .unwrap_or_else(|| "command".into());
+                let exit = cap.and_then(|c| c.exit_code);
+                push(
+                    &mut timeline,
+                    ReplayEvent {
+                        seq: 0,
+                        ts: ev.ts.clone(),
+                        kind: "RUN".into(),
+                        lane: "proc".into(),
+                        title: cmd.clone(),
+                        detail: cap.map(|c| c.summary.clone()),
+                        severity: if exit.unwrap_or(0) != 0 { "warning" } else { "info" }.into(),
+                        files: vec![],
+                        capture_id: ev.capture.clone(),
+                        exit_code: exit,
+                    },
+                );
+                if let Some(cap) = cap {
+                    // reads (files mentioned, not edited)
+                    let edited: HashSet<&str> = cap.diff_files.iter().map(|s| s.as_str()).collect();
+                    let reads: Vec<String> = cap
+                        .files
+                        .iter()
+                        .filter(|f| !edited.contains(f.as_str()))
+                        .cloned()
+                        .collect();
+                    for f in &reads {
+                        heat_cell(&mut heat, f).read = true;
+                    }
+                    if !reads.is_empty() {
+                        push(
+                            &mut timeline,
+                            ReplayEvent {
+                                seq: 0,
+                                ts: ev.ts.clone(),
+                                kind: "READ".into(),
+                                lane: "fs".into(),
+                                title: format!("touched {} file(s)", reads.len()),
+                                detail: Some(reads.join("\n")),
+                                severity: "info".into(),
+                                files: reads.clone(),
+                                capture_id: ev.capture.clone(),
+                                exit_code: None,
+                            },
+                        );
+                    }
+                    // edits (working-tree diff at capture time)
+                    if !cap.diff_files.is_empty() {
+                        for f in &cap.diff_files {
+                            let c = heat_cell(&mut heat, f);
+                            c.edited = true;
+                        }
+                        push(
+                            &mut timeline,
+                            ReplayEvent {
+                                seq: 0,
+                                ts: ev.ts.clone(),
+                                kind: "EDIT".into(),
+                                lane: "fs".into(),
+                                title: format!("changed {} file(s)", cap.diff_files.len()),
+                                detail: Some(cap.diff_files.join("\n")),
+                                severity: "info".into(),
+                                files: cap.diff_files.clone(),
+                                capture_id: ev.capture.clone(),
+                                exit_code: None,
+                            },
+                        );
+                    }
+                    // tests
+                    if let Some((p, f)) = capture_test_counts(cap) {
+                        had_tests = true;
+                        tests_passed += p;
+                        tests_failed += f;
+                        for path in &cap.files {
+                            heat_cell(&mut heat, path).tested = true;
+                        }
+                        let failed = f > 0;
+                        push(
+                            &mut timeline,
+                            ReplayEvent {
+                                seq: 0,
+                                ts: ev.ts.clone(),
+                                kind: if failed { "TEST_FAIL" } else { "TEST_PASS" }.into(),
+                                lane: "test".into(),
+                                title: if failed {
+                                    format!("{f} failed · {p} passed")
+                                } else {
+                                    format!("{p} passed")
+                                },
+                                detail: cap.structured.as_ref().and_then(|s| s.body.clone()),
+                                severity: if failed { "critical" } else { "good" }.into(),
+                                files: vec![],
+                                capture_id: ev.capture.clone(),
+                                exit_code: cap.exit_code,
+                            },
+                        );
+                    }
+                    // egress — the hero signal: blocked accesses
+                    if let Some(eg) = &cap.egress {
+                        allowed_count += eg.allowed;
+                        blocked_count += eg.denied;
+                        for h in &eg.hosts {
+                            if h.denied > 0 {
+                                push(
+                                    &mut timeline,
+                                    ReplayEvent {
+                                        seq: 0,
+                                        ts: ev.ts.clone(),
+                                        kind: "BLOCKED".into(),
+                                        lane: "net".into(),
+                                        title: format!("blocked egress → {}:{}", h.host, h.port),
+                                        detail: Some(format!(
+                                            "{} request(s) refused by the egress allowlist (off-policy host)",
+                                            h.denied
+                                        )),
+                                        severity: "critical".into(),
+                                        files: vec![],
+                                        capture_id: ev.capture.clone(),
+                                        exit_code: None,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            "violation" => {
+                blocked_count += 1;
+                push(
+                    &mut timeline,
+                    ReplayEvent {
+                        seq: 0,
+                        ts: ev.ts.clone(),
+                        kind: "BLOCKED".into(),
+                        lane: "provenance".into(),
+                        title: "mediated commit refused".into(),
+                        detail: ev.detail.clone(),
+                        severity: "critical".into(),
+                        files: vec![],
+                        capture_id: ev.capture.clone(),
+                        exit_code: None,
+                    },
+                );
+            }
+            "proposed" | "applied" | "aborted" | "gc" | "status" => {
+                let kind = match ev.event.as_str() {
+                    "proposed" => "PROPOSE",
+                    "applied" => "APPLY",
+                    "aborted" => "ABORT",
+                    _ => "EVENT",
+                };
+                push(
+                    &mut timeline,
+                    ReplayEvent {
+                        seq: 0,
+                        ts: ev.ts.clone(),
+                        kind: kind.into(),
+                        lane: "lifecycle".into(),
+                        title: ev.event.clone(),
+                        detail: ev.detail.clone(),
+                        severity: "info".into(),
+                        files: vec![],
+                        capture_id: ev.capture.clone(),
+                        exit_code: None,
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+
+    // diffstat (the proposed state) as a closing DIFF event.
+    let diffstat = crate::env::diff(git, h5i_root, m, true).ok().filter(|s| !s.trim().is_empty());
+    if let Some(ds) = &diffstat {
+        let first = ds.lines().last().unwrap_or("").trim().to_string();
+        push(
+            &mut timeline,
+            ReplayEvent {
+                seq: 0,
+                ts: m.updated_at.clone(),
+                kind: "DIFF".into(),
+                lane: "fs".into(),
+                title: if first.is_empty() { "proposed diff".into() } else { first },
+                detail: Some(ds.clone()),
+                severity: "info".into(),
+                files: vec![],
+                capture_id: None,
+                exit_code: None,
+            },
+        );
+    }
+
+    // mark blocked/risky heat from risk findings + read-before-edit.
+    for f in &risk.findings {
+        if matches!(f.lane, crate::risk::Lane::Fs) && f.severity == crate::risk::Severity::Critical {
+            for c in heat.values_mut() {
+                if f.evidence.contains(&c.path) {
+                    c.blocked = true;
+                }
+            }
+        }
+    }
+    for c in heat.values_mut() {
+        if c.edited && !c.read {
+            c.risky = true;
+        }
+    }
+
+    let mut heatmap: Vec<FileHeat> = heat.into_values().collect();
+    heatmap.sort_by(|a, b| score_heat(b).cmp(&score_heat(a)).then(a.path.cmp(&b.path)));
+
+    ReplayView {
+        header: ReplayHeader {
+            anchor: "env".into(),
+            id: m.id.clone(),
+            title: m.slug.clone(),
+            subtitle: Some(format!("{} · {}", m.agent, m.status)),
+            agent: Some(m.agent.clone()),
+            model: None,
+            isolation: Some(m.isolation_claim.clone()),
+            prompt: None,
+            policy_digest: Some(m.policy_digest.clone()),
+            blocked_count,
+            allowed_count,
+            tests_passed: had_tests.then_some(tests_passed),
+            tests_failed: had_tests.then_some(tests_failed),
+            risk_score: risk.score,
+            risk_level: format!("{:?}", risk.level).to_lowercase(),
+            run_count,
+            created_at: Some(m.created_at.clone()),
+            diffstat,
+        },
+        timeline,
+        heatmap,
+        policy: policy.map(EnforcedPolicy::from),
+        findings: risk.findings.clone(),
+    }
+}
+
+/// Sort key so the loudest files float up: blocked > risky > edited > tested > read.
+fn score_heat(h: &FileHeat) -> u8 {
+    (h.blocked as u8) << 4
+        | (h.risky as u8) << 3
+        | (h.edited as u8) << 2
+        | (h.tested as u8) << 1
+        | (h.read as u8)
+}
+
+/// Paths changed by a commit (vs its first parent / the empty tree for a root).
+fn commit_changed_files(git: &git2::Repository, commit: &git2::Commit) -> Vec<String> {
+    let Ok(tree) = commit.tree() else {
+        return vec![];
+    };
+    let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+    let Ok(diff) = git.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None) else {
+        return vec![];
+    };
+    let mut files: Vec<String> = Vec::new();
+    let _ = diff.foreach(
+        &mut |delta, _| {
+            if files.len() >= 200 {
+                return false;
+            }
+            if let Some(p) = delta.new_file().path().or_else(|| delta.old_file().path()) {
+                if let Some(s) = p.to_str() {
+                    files.push(s.to_string());
+                }
+            }
+            true
+        },
+        None,
+        None,
+        None,
+    );
+    files.sort();
+    files.dedup();
+    files
+}
+
+/// Assemble a replay from a commit + its analyzed session (the fallback anchor).
+fn build_commit_replay(
+    repo: &H5iRepository,
+    oid: git2::Oid,
+) -> anyhow::Result<ReplayView> {
+    use std::collections::BTreeMap;
+    let git = repo.git();
+    let commit = git.find_commit(oid)?;
+    let message = commit.message().unwrap_or("").trim().to_string();
+    let subject = message.lines().next().unwrap_or("").to_string();
+    let author = commit.author().name().unwrap_or("Unknown").to_string();
+    let ts = repo
+        .load_h5i_record(oid)
+        .ok()
+        .map(|r| r.timestamp.to_rfc3339())
+        .unwrap_or_default();
+    let record = repo.load_h5i_record(oid).ok();
+    let analysis = session_log::load_analysis(&repo.h5i_root, &oid.to_string())
+        .ok()
+        .flatten();
+
+    let mut timeline: Vec<ReplayEvent> = Vec::new();
+    let mut heat: BTreeMap<String, FileHeat> = BTreeMap::new();
+    let mut seq = 0usize;
+    let mut emit = |timeline: &mut Vec<ReplayEvent>, kind: &str, lane: &str, title: String, detail: Option<String>, severity: &str, files: Vec<String>| {
+        timeline.push(ReplayEvent {
+            seq,
+            ts: ts.clone(),
+            kind: kind.into(),
+            lane: lane.into(),
+            title,
+            detail,
+            severity: severity.into(),
+            files,
+            capture_id: None,
+            exit_code: None,
+        });
+        seq += 1;
+    };
+
+    // PROMPT
+    let prompt = record
+        .as_ref()
+        .and_then(|r| r.ai_metadata.as_ref())
+        .map(|ai| ai.prompt.clone())
+        .filter(|p| !p.is_empty())
+        .or_else(|| analysis.as_ref().map(|a| a.causal_chain.user_trigger.clone()).filter(|s| !s.is_empty()));
+    if let Some(p) = &prompt {
+        emit(&mut timeline, "PROMPT", "intent", "Prompt".into(), Some(p.clone()), "info", vec![]);
+    }
+
+    if let Some(a) = &analysis {
+        for d in a.causal_chain.key_decisions.iter().take(8) {
+            emit(&mut timeline, "THINK", "intent", d.clone(), None, "info", vec![]);
+        }
+        let reads: Vec<String> = a.footprint.consulted.iter().map(|c| c.path.clone()).collect();
+        for r in &reads {
+            heat_cell(&mut heat, r).read = true;
+        }
+        if !reads.is_empty() {
+            emit(&mut timeline, "READ", "fs", format!("consulted {} file(s)", reads.len()), Some(reads.join("\n")), "info", reads.clone());
+        }
+        for cmd in a.footprint.bash_commands.iter().take(20) {
+            emit(&mut timeline, "RUN", "proc", cmd.clone(), None, "info", vec![]);
+        }
+        let mut edits = a.causal_chain.edit_sequence.clone();
+        edits.sort_by_key(|e| e.turn);
+        for e in &edits {
+            heat_cell(&mut heat, &e.file).edited = true;
+            emit(&mut timeline, "EDIT", "fs", format!("{} {}", e.operation, e.file), None, "info", vec![e.file.clone()]);
+        }
+        for u in a.uncertainty.iter().take(6) {
+            emit(&mut timeline, "NOTE", "intent", format!("uncertainty in {}", u.context_file), Some(u.snippet.clone()), "warning", vec![u.context_file.clone()]);
+        }
+        for o in a.omissions.iter().take(6) {
+            emit(&mut timeline, "NOTE", "intent", format!("{:?} near {}", o.kind, o.context_file), Some(o.snippet.clone()), "warning", vec![o.context_file.clone()]);
+        }
+        // coverage heat
+        for cov in &a.coverage {
+            let c = heat_cell(&mut heat, &cov.file);
+            if !cov.read_ranges.is_empty() {
+                c.read = true;
+            }
+            if !cov.edit_turns.is_empty() {
+                c.edited = true;
+            }
+            if cov.blind_edit_count > 0 {
+                c.risky = true;
+            }
+        }
+    }
+
+    // tests
+    if let Some(tm) = record.as_ref().and_then(|r| r.test_metrics.as_ref()) {
+        let failed = tm.failed > 0;
+        emit(
+            &mut timeline,
+            if failed { "TEST_FAIL" } else { "TEST_PASS" },
+            "test",
+            if failed { format!("{} failed · {} passed", tm.failed, tm.passed) } else { format!("{} passed", tm.passed) },
+            tm.summary.clone(),
+            if failed { "critical" } else { "good" },
+            vec![],
+        );
+    }
+
+    // diff (changed files in this commit)
+    let changed = commit_changed_files(git, &commit);
+    for f in &changed {
+        heat_cell(&mut heat, f).edited = true;
+    }
+    if !changed.is_empty() {
+        emit(&mut timeline, "DIFF", "fs", format!("{} file(s) changed", changed.len()), Some(changed.join("\n")), "info", changed.clone());
+    }
+
+    for c in heat.values_mut() {
+        if c.edited && !c.read && !c.risky {
+            c.risky = true;
+        }
+    }
+    let mut heatmap: Vec<FileHeat> = heat.into_values().collect();
+    heatmap.sort_by(|a, b| score_heat(b).cmp(&score_heat(a)).then(a.path.cmp(&b.path)));
+
+    let (agent, model) = record
+        .as_ref()
+        .and_then(|r| r.ai_metadata.as_ref())
+        .map(|ai| (Some(ai.agent_id.clone()).filter(|s| !s.is_empty()), Some(ai.model_name.clone()).filter(|s| !s.is_empty())))
+        .unwrap_or((None, None));
+    let (tp, tf) = record
+        .as_ref()
+        .and_then(|r| r.test_metrics.as_ref())
+        .map(|tm| (Some(tm.passed), Some(tm.failed)))
+        .unwrap_or((None, None));
+    let prov = record.as_ref().and_then(|r| r.env_provenance.as_ref());
+
+    Ok(ReplayView {
+        header: ReplayHeader {
+            anchor: "commit".into(),
+            id: oid.to_string(),
+            title: subject,
+            subtitle: Some(author),
+            agent,
+            model,
+            isolation: prov.map(|p| p.isolation_claim.clone()),
+            prompt,
+            policy_digest: prov.map(|p| p.policy_digest.clone()),
+            blocked_count: 0,
+            allowed_count: 0,
+            tests_passed: tp,
+            tests_failed: tf,
+            risk_score: 0,
+            risk_level: "info".into(),
+            run_count: analysis.as_ref().map(|a| a.footprint.bash_commands.len()).unwrap_or(0),
+            created_at: Some(ts),
+            diffstat: None,
+        },
+        timeline,
+        heatmap,
+        policy: None,
+        findings: vec![],
+    })
+}
+
+/// GET /api/env/:agent/:slug/replay — the env-anchored flight recorder.
+async fn api_env_replay(
+    State(state): State<Arc<AppState>>,
+    Path((agent, slug)): Path<(String, String)>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<ReplayView>> {
+        let repo = H5iRepository::open(&path)?;
+        let git = repo.git();
+        let h5i_root = &repo.h5i_root;
+        let id = format!("env/{agent}/{slug}");
+        let Some(m) = crate::env::list(h5i_root).into_iter().find(|m| m.id == id) else {
+            return Ok(None);
+        };
+        let events = crate::env::read_events(git, Some(&m.id));
+        let captures = resolve_env_captures(git, &m);
+        let policy = crate::env::load_policy(h5i_root, &m).ok().map(|rp| rp.profile);
+        let risk = crate::risk::classify_env(&m, policy.as_ref(), &events, &captures);
+        Ok(Some(build_env_replay(
+            git,
+            h5i_root,
+            &m,
+            &events,
+            &captures,
+            policy.as_ref(),
+            &risk,
+        )))
+    })
+    .await;
+    match result.ok().and_then(|r| r.ok()).flatten() {
+        Some(v) => Json(v).into_response(),
+        None => (StatusCode::NOT_FOUND, "environment not found").into_response(),
+    }
+}
+
+/// GET /api/commit/:oid/replay — the commit-anchored fallback replay.
+async fn api_commit_replay(
+    State(state): State<Arc<AppState>>,
+    Path(oid): Path<String>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<ReplayView> {
+        let repo = H5iRepository::open(&path)?;
+        let oid = git2::Oid::from_str(&oid)?;
+        build_commit_replay(&repo, oid)
+    })
+    .await;
+    match result.ok().and_then(|r| r.ok()) {
+        Some(v) => Json(v).into_response(),
+        None => (StatusCode::NOT_FOUND, "commit not found").into_response(),
+    }
+}
+
+// ── Reviewer cockpit + prompt coach + agent radio ──────────────────────────────
+
+/// A file the reviewer should look at first, with the reason it surfaced.
+#[derive(Serialize)]
+pub struct CockpitFile {
+    pub path: String,
+    pub reason: String,
+    pub severity: String,
+}
+
+/// The compact "should I trust this PR?" card (roadmap §4).
+#[derive(Serialize)]
+pub struct ReviewerCockpit {
+    pub oid: String,
+    pub short_oid: String,
+    pub message: String,
+    pub author: String,
+    pub timestamp: String,
+    /// 0..=100, higher = safer to merge.
+    pub merge_confidence: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_maturity: Option<f64>,
+    pub provenance: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_digest: Option<String>,
+    pub net_blocked: u64,
+    pub net_allowed: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tests_passed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tests_failed: Option<u64>,
+    pub integrity_level: String,
+    pub integrity_score: f64,
+    pub risk: String,
+    pub review_first: Vec<CockpitFile>,
+    pub review_score: f32,
+}
+
+#[derive(Deserialize)]
+struct OidQuery {
+    oid: String,
+}
+
+/// GET /api/cockpit?oid=… — the reviewer cockpit card for one commit.
+async fn api_cockpit(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<OidQuery>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<ReviewerCockpit> {
+        let repo = H5iRepository::open(&path)?;
+        let oid = git2::Oid::from_str(&q.oid)?;
+        let commit = repo.git().find_commit(oid)?;
+        let message = commit.message().unwrap_or("").trim().lines().next().unwrap_or("").to_string();
+        let author = commit.author().name().unwrap_or("Unknown").to_string();
+        let record = repo.load_h5i_record(oid).ok();
+        let integrity = repo.verify_commit_integrity(oid).unwrap_or_else(|_| fallback_report());
+        let analysis = session_log::load_analysis(&repo.h5i_root, &oid.to_string()).ok().flatten();
+
+        let prompt_score = record
+            .as_ref()
+            .and_then(|r| r.ai_metadata.as_ref())
+            .map(|ai| crate::prompt_score::score_prompt(&ai.prompt))
+            .filter(|s| s.words > 0);
+
+        let model = record.as_ref().and_then(|r| r.ai_metadata.as_ref()).map(|ai| ai.model_name.clone()).filter(|s| !s.is_empty());
+        let prov = record.as_ref().and_then(|r| r.env_provenance.as_ref());
+        let (tp, tf) = record.as_ref().and_then(|r| r.test_metrics.as_ref()).map(|tm| (Some(tm.passed), Some(tm.failed))).unwrap_or((None, None));
+
+        // review point for this commit (deterministic triggers).
+        let rp = repo
+            .suggest_review_points(500, 0.0)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|p| p.commit_oid == oid.to_string());
+
+        // review-first files: integrity findings paths + session blind edits + edits.
+        let mut review_first: Vec<CockpitFile> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        if let Some(a) = &analysis {
+            for cov in &a.coverage {
+                if cov.blind_edit_count > 0 && seen.insert(cov.file.clone()) {
+                    review_first.push(CockpitFile {
+                        path: cov.file.clone(),
+                        reason: "edited without reading first".into(),
+                        severity: "warning".into(),
+                    });
+                }
+            }
+            for o in &a.omissions {
+                if seen.insert(o.context_file.clone()) {
+                    review_first.push(CockpitFile {
+                        path: o.context_file.clone(),
+                        reason: format!("{:?}", o.kind).to_lowercase(),
+                        severity: "warning".into(),
+                    });
+                }
+            }
+            for e in &a.causal_chain.edit_sequence {
+                if review_first.len() >= 8 {
+                    break;
+                }
+                if seen.insert(e.file.clone()) {
+                    review_first.push(CockpitFile {
+                        path: e.file.clone(),
+                        reason: "changed in this run".into(),
+                        severity: "info".into(),
+                    });
+                }
+            }
+        }
+        review_first.truncate(8);
+
+        // merge confidence: start high, dock for real risk signals.
+        let mut conf: i32 = 100;
+        if tf.unwrap_or(0) > 0 {
+            conf -= 35;
+        }
+        match integrity.level {
+            crate::metadata::IntegrityLevel::Violation => conf -= 30,
+            crate::metadata::IntegrityLevel::Warning => conf -= 12,
+            _ => {}
+        }
+        if let Some(ps) = &prompt_score {
+            if ps.score < 40.0 {
+                conf -= 12;
+            } else if ps.score < 60.0 {
+                conf -= 6;
+            }
+        }
+        if let Some(rp) = &rp {
+            conf -= (rp.quality_score * 25.0) as i32;
+        }
+        let blind = analysis.as_ref().map(|a| a.coverage.iter().map(|c| c.blind_edit_count).sum::<usize>()).unwrap_or(0);
+        if blind > 0 {
+            conf -= (blind.min(4) as i32) * 4;
+        }
+        let merge_confidence = conf.clamp(0, 100) as u32;
+        let risk = if merge_confidence >= 75 {
+            "low"
+        } else if merge_confidence >= 50 {
+            "medium"
+        } else {
+            "high"
+        };
+
+        let provenance = match (&record.as_ref().and_then(|r| r.ai_metadata.as_ref()).map(|ai| ai.agent_id.clone()), prov) {
+            (Some(agent), Some(p)) if !agent.is_empty() => format!("{} · {}", agent, p.isolation_claim),
+            (Some(agent), None) if !agent.is_empty() => agent.clone(),
+            _ => "unknown".into(),
+        };
+
+        Ok(ReviewerCockpit {
+            oid: oid.to_string(),
+            short_oid: oid.to_string()[..8].to_string(),
+            message,
+            author,
+            timestamp: record.as_ref().map(|r| r.timestamp.to_rfc3339()).unwrap_or_default(),
+            merge_confidence,
+            prompt_maturity: prompt_score.as_ref().map(|s| s.score),
+            provenance,
+            model,
+            sandbox: prov.map(|p| p.isolation_claim.clone()),
+            policy_digest: prov.map(|p| p.policy_digest.clone()),
+            net_blocked: 0,
+            net_allowed: 0,
+            tests_passed: tp,
+            tests_failed: tf,
+            integrity_level: format!("{:?}", integrity.level),
+            integrity_score: integrity.score as f64,
+            risk: risk.into(),
+            review_first,
+            review_score: rp.as_ref().map(|p| p.score).unwrap_or(0.0),
+        })
+    })
+    .await;
+    match result.ok().and_then(|r| r.ok()) {
+        Some(c) => Json(c).into_response(),
+        None => (StatusCode::NOT_FOUND, "commit not found").into_response(),
+    }
+}
+
+/// The prompt-maturity coach payload (roadmap §6): score + weak spots + a
+/// concrete suggested rewrite. Scores the task delegation, not the developer.
+#[derive(Serialize)]
+pub struct PromptMaturity {
+    pub prompt: String,
+    pub score: f64,
+    pub level: String,
+    pub words: usize,
+    pub flags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_upgrade: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PromptQuery {
+    oid: Option<String>,
+    text: Option<String>,
+}
+
+/// Build a concrete "upgrade" scaffold from the diagnostic flags — never a
+/// keyword list, just the missing delegation structure.
+fn suggested_upgrade(prompt: &str, flags: &[crate::prompt_score::Flag]) -> Option<String> {
+    use crate::prompt_score::Flag;
+    let mut adds: Vec<&str> = Vec::new();
+    for f in flags {
+        match f {
+            Flag::WeakVerification => adds.push("Run <command> and confirm it passes before finishing."),
+            Flag::WeakContext => adds.push("Scope: change only <file/module>; do not touch <out-of-scope area>."),
+            Flag::Vague => adds.push("Acceptance criteria: <observable outcome that means done>."),
+            Flag::TooShort => adds.push("State the goal, the files in scope, and how to verify the result."),
+            _ => {}
+        }
+    }
+    if adds.is_empty() {
+        return None;
+    }
+    let base = prompt.trim();
+    let mut out = String::new();
+    if !base.is_empty() {
+        out.push_str(base);
+        out.push_str("\n\n");
+    }
+    for a in adds {
+        out.push_str("- ");
+        out.push_str(a);
+        out.push('\n');
+    }
+    Some(out.trim_end().to_string())
+}
+
+/// GET /api/prompt-score?oid=…  or  ?text=… — the prompt-maturity coach.
+async fn api_prompt_score(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<PromptQuery>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<PromptMaturity>> {
+        let prompt = if let Some(t) = q.text.filter(|s| !s.is_empty()) {
+            t
+        } else if let Some(oid_s) = q.oid {
+            let repo = H5iRepository::open(&path)?;
+            let oid = git2::Oid::from_str(&oid_s)?;
+            match repo.load_h5i_record(oid).ok().and_then(|r| r.ai_metadata).map(|ai| ai.prompt) {
+                Some(p) if !p.is_empty() => p,
+                _ => return Ok(None),
+            }
+        } else {
+            return Ok(None);
+        };
+        let s = crate::prompt_score::score_prompt(&prompt);
+        let upgrade = suggested_upgrade(&prompt, &s.flags);
+        Ok(Some(PromptMaturity {
+            prompt,
+            score: s.score,
+            level: s.level.label().to_string(),
+            words: s.words,
+            flags: s.flags.iter().map(|f| f.label().to_string()).collect(),
+            suggested_upgrade: upgrade,
+        }))
+    })
+    .await;
+    match result.ok().and_then(|r| r.ok()).flatten() {
+        Some(p) => Json(p).into_response(),
+        None => Json(serde_json::Value::Null).into_response(),
+    }
+}
+
+/// One agent-radio message, sanitized for display.
+#[derive(Serialize)]
+pub struct RadioMessage {
+    pub id: String,
+    pub ts: String,
+    pub from: String,
+    pub to: String,
+    pub kind: String,
+    pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub focus: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk: Option<String>,
+}
+
+/// A review/risk-resolution thread (roadmap §7 — code review, not chat).
+#[derive(Serialize)]
+pub struct RadioThread {
+    pub thread_id: String,
+    pub latest_ts: String,
+    pub branch: Option<String>,
+    pub status: String,
+    pub messages: Vec<RadioMessage>,
+}
+
+/// GET /api/radio — agent messages grouped into review threads.
+async fn api_radio(State(state): State<Arc<AppState>>) -> Json<Vec<RadioThread>> {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<RadioThread>> {
+        let repo = H5iRepository::open(&path)?;
+        let msgs = crate::msg::history(repo.git(), None, None, 1000).unwrap_or_default();
+        let mut by_root: HashMap<String, Vec<crate::msg::Message>> = HashMap::new();
+        for m in msgs {
+            by_root.entry(m.thread_root()).or_default().push(m);
+        }
+        let mut threads: Vec<RadioThread> = by_root
+            .into_iter()
+            .map(|(thread_id, mut ms)| {
+                ms.sort_by(|a, b| (a.ts.as_str(), a.id.as_str()).cmp(&(b.ts.as_str(), b.id.as_str())));
+                let latest_ts = ms.last().map(|m| m.ts.clone()).unwrap_or_default();
+                let branch = ms.iter().find_map(|m| m.branch.clone());
+                // Resolution state: latest typed status in the thread.
+                let status = ms
+                    .iter()
+                    .rev()
+                    .find_map(|m| m.status.clone())
+                    .unwrap_or_else(|| "open".into());
+                let messages = ms
+                    .into_iter()
+                    .map(|m| RadioMessage {
+                        kind: m.effective_kind(),
+                        id: m.id,
+                        ts: m.ts,
+                        from: crate::msg::sanitize_display(&m.from),
+                        to: crate::msg::sanitize_display(&m.to),
+                        body: crate::msg::sanitize_display(&m.body),
+                        status: m.status,
+                        priority: m.priority,
+                        branch: m.branch,
+                        focus: m.focus.into_iter().map(|f| crate::msg::sanitize_display(&f)).collect(),
+                        risk: m.risk.map(|r| crate::msg::sanitize_display(&r)),
+                    })
+                    .collect();
+                RadioThread { thread_id, latest_ts, branch, status, messages }
+            })
+            .collect();
+        threads.sort_by(|a, b| b.latest_ts.cmp(&a.latest_ts));
+        Ok(threads)
+    })
+    .await;
+    Json(result.ok().and_then(|r| r.ok()).unwrap_or_default())
+}
+
 /// Host isolation readiness, for the dashboard's top-strip vitals.
 #[derive(Serialize)]
 pub struct ProbeResponse {
@@ -2086,7 +3116,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/envs", get(api_envs))
         .route("/api/env/probe", get(api_env_probe))
         .route("/api/env/:agent/:slug", get(api_env_detail))
+        .route("/api/env/:agent/:slug/replay", get(api_env_replay))
         .route("/api/env/:agent/:slug/captures/:id", get(api_env_capture))
+        // Replay (commit fallback) + reviewer cockpit + prompt coach + radio
+        .route("/api/commit/:oid/replay", get(api_commit_replay))
+        .route("/api/cockpit", get(api_cockpit))
+        .route("/api/prompt-score", get(api_prompt_score))
+        .route("/api/radio", get(api_radio))
         .with_state(state)
 }
 

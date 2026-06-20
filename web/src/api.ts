@@ -418,6 +418,136 @@ export interface ProbeResponse {
   supervisor: SupervisorProbe;
 }
 
+// ── Replay (the flight recorder) ────────────────────────────────────────────
+// Mirror of the unified replay endpoints in server.rs. One shape for both the
+// env anchor (/api/env/:a/:s/replay) and the commit fallback
+// (/api/commit/:oid/replay).
+
+export type ReplayKind =
+  | "PROMPT" | "THINK" | "READ" | "RUN" | "TEST_PASS" | "TEST_FAIL"
+  | "BLOCKED" | "EDIT" | "NOTE" | "DIFF" | "CREATE" | "PROPOSE"
+  | "APPLY" | "ABORT" | "MSG" | "EVENT" | string;
+
+export type ReplayLane =
+  | "intent" | "fs" | "net" | "proc" | "test" | "provenance" | "lifecycle" | "msg" | string;
+
+export type ReplaySeverity = "info" | "good" | "warning" | "critical";
+
+export interface ReplayEvent {
+  seq: number;
+  ts: string;
+  kind: ReplayKind;
+  lane: ReplayLane;
+  title: string;
+  detail?: string | null;
+  severity: ReplaySeverity;
+  files?: string[];
+  capture_id?: string | null;
+  exit_code?: number | null;
+}
+
+export interface FileHeat {
+  path: string;
+  read: boolean;
+  edited: boolean;
+  tested: boolean;
+  blocked: boolean;
+  risky: boolean;
+}
+
+export interface ReplayHeader {
+  anchor: "env" | "commit" | string;
+  id: string;
+  title: string;
+  subtitle?: string | null;
+  agent?: string | null;
+  model?: string | null;
+  isolation?: string | null;
+  prompt?: string | null;
+  policy_digest?: string | null;
+  blocked_count: number;
+  allowed_count: number;
+  tests_passed?: number | null;
+  tests_failed?: number | null;
+  risk_score: number;
+  risk_level: string;
+  run_count: number;
+  created_at?: string | null;
+  diffstat?: string | null;
+}
+
+export interface ReplayView {
+  header: ReplayHeader;
+  timeline: ReplayEvent[];
+  heatmap: FileHeat[];
+  policy?: EnforcedPolicy | null;
+  findings: RiskFinding[];
+}
+
+// ── Reviewer cockpit ────────────────────────────────────────────────────────
+
+export interface CockpitFile {
+  path: string;
+  reason: string;
+  severity: string;
+}
+export interface ReviewerCockpit {
+  oid: string;
+  short_oid: string;
+  message: string;
+  author: string;
+  timestamp: string;
+  merge_confidence: number;
+  prompt_maturity?: number | null;
+  provenance: string;
+  model?: string | null;
+  sandbox?: string | null;
+  policy_digest?: string | null;
+  net_blocked: number;
+  net_allowed: number;
+  tests_passed?: number | null;
+  tests_failed?: number | null;
+  integrity_level: string;
+  integrity_score: number;
+  risk: "low" | "medium" | "high" | string;
+  review_first: CockpitFile[];
+  review_score: number;
+}
+
+// ── Prompt-maturity coach ───────────────────────────────────────────────────
+
+export interface PromptMaturity {
+  prompt: string;
+  score: number;
+  level: string;
+  words: number;
+  flags: string[];
+  suggested_upgrade?: string | null;
+}
+
+// ── Agent radio (review threads, not chat) ──────────────────────────────────
+
+export interface RadioMessage {
+  id: string;
+  ts: string;
+  from: string;
+  to: string;
+  kind: string;
+  body: string;
+  status?: string | null;
+  priority?: string | null;
+  branch?: string | null;
+  focus?: string[];
+  risk?: string | null;
+}
+export interface RadioThread {
+  thread_id: string;
+  latest_ts: string;
+  branch?: string | null;
+  status: string;
+  messages: RadioMessage[];
+}
+
 async function getJSON<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${url}`);
@@ -484,6 +614,23 @@ export const api = {
         slug,
       )}/captures/${encodeURIComponent(id)}`,
     ),
+
+  // Replay (the flight recorder) + cockpit + prompt coach + radio
+  envReplay: (agent: string, slug: string) =>
+    getJSON<ReplayView>(
+      `/api/env/${encodeURIComponent(agent)}/${encodeURIComponent(slug)}/replay`,
+    ),
+  commitReplay: (oid: string) =>
+    getJSON<ReplayView>(`/api/commit/${encodeURIComponent(oid)}/replay`),
+  cockpit: (oid: string) =>
+    getJSON<ReviewerCockpit>(`/api/cockpit?oid=${encodeURIComponent(oid)}`),
+  promptScore: (opts: { oid?: string; text?: string }) => {
+    const p = new URLSearchParams();
+    if (opts.oid) p.set("oid", opts.oid);
+    if (opts.text) p.set("text", opts.text);
+    return getJSON<PromptMaturity | null>(`/api/prompt-score?${p.toString()}`);
+  },
+  radio: () => getJSON<RadioThread[]>("/api/radio"),
 };
 
 // ── GitHub URL helpers ─────────────────────────────────────────────────────────
