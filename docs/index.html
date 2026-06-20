@@ -107,7 +107,7 @@
           {
             "@type": "Question",
             "name": "Can h5i reduce AI token costs?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i records verified facts as content-addressed claims and snapshots agent memory, so the next session skips re-grounding. In a reproducible N=5 experiment, seeded claims reduced estimated session cost by 51% and cache-read tokens by 35.5% with full task fidelity."}
+            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i keeps raw tool output out of the agent's context with content-addressed capture and snapshots agent memory, so the next session skips re-grounding. In a reproducible benchmark, capture cut tool-output tokens by ~95% with full task fidelity."}
           },
           {
             "@type": "Question",
@@ -1246,7 +1246,7 @@
     <div class="explore-band reveal">
       <div>
         <h2 class="section-title" style="font-size:clamp(1.6rem,3vw,2.2rem);">See every command in action</h2>
-        <p class="section-sub" style="margin-top:0.6rem;">Eight worked use cases, blame, resume, uncertainty heatmaps, claims, the web dashboard, and the full five-verb feature reference.</p>
+        <p class="section-sub" style="margin-top:0.6rem;">Eight worked use cases, blame, resume, uncertainty heatmaps, the web dashboard, and the full five-verb feature reference.</p>
       </div>
       <a href="/features/" class="btn btn-primary">Explore all features &amp; use cases →</a>
     </div>
@@ -1359,7 +1359,7 @@
       </details>
       <details class="faq-item">
         <summary>Can h5i reduce AI token costs?</summary>
-        <div class="faq-answer">Yes. h5i records verified facts as content-addressed claims and snapshots agent memory, so the next session skips re-grounding. In a reproducible N=5 experiment, seeded claims reduced <strong>estimated session cost by 51%</strong> and cache-read tokens by 35.5% with full task fidelity.</div>
+        <div class="faq-answer">Yes. h5i keeps raw tool output out of the agent's context with content-addressed capture and snapshots agent memory, so the next session skips re-grounding. In a reproducible benchmark, capture cut <strong>tool-output tokens by ~95%</strong> with full task fidelity.</div>
       </details>
       <details class="faq-item">
         <summary>Is h5i free and open source?</summary>

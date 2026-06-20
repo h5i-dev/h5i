@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>h5i Pitch Deck: Git-Native Evidence for AI Agent Work</title>
-<meta name="description" content="h5i pitch deck: a Git sidecar that makes AI agent work reviewable by preserving prompts, commands, logs, policy, handoffs, claims, and PR evidence in repo-owned refs.">
+<meta name="description" content="h5i pitch deck: a Git sidecar that makes AI agent work reviewable by preserving prompts, commands, logs, policy, handoffs, and PR evidence in repo-owned refs.">
 <meta name="keywords" content="h5i pitch, auditable workspaces, ai agents, agent sandbox, git sidecar, agent provenance, claude code, codex, agent confinement, ai code review, agent governance">
 <meta name="author" content="h5i-dev">
 <meta name="theme-color" content="#D21C1C">
@@ -15,21 +15,21 @@
 <link rel="apple-touch-icon" href="/_static/logo.png">
 
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i Pitch Deck", "headline": "h5i Pitch Deck: Git-Native Evidence for AI Agent Work", "description": "A Git sidecar that makes AI agent work reviewable by preserving prompts, commands, logs, policy, handoffs, claims, and PR evidence in repo-owned refs.", "url": "https://h5i.dev/pitch/", "inLanguage": "en", "author": {"@type": "Organization", "name": "h5i-dev", "url": "https://github.com/h5i-dev/h5i"}, "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}}, "about": {"@type": "SoftwareApplication", "name": "h5i", "applicationCategory": "DeveloperApplication"}}
+{"@context": "https://schema.org", "@type": "PresentationDigitalDocument", "name": "h5i Pitch Deck", "headline": "h5i Pitch Deck: Git-Native Evidence for AI Agent Work", "description": "A Git sidecar that makes AI agent work reviewable by preserving prompts, commands, logs, policy, handoffs, and PR evidence in repo-owned refs.", "url": "https://h5i.dev/pitch/", "inLanguage": "en", "author": {"@type": "Organization", "name": "h5i-dev", "url": "https://github.com/h5i-dev/h5i"}, "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}}, "about": {"@type": "SoftwareApplication", "name": "h5i", "applicationCategory": "DeveloperApplication"}}
 </script>
 
 <!-- Open Graph -->
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="h5i">
 <meta property="og:title" content="h5i Pitch Deck: Auditable Workspaces for AI Agents">
-<meta property="og:description" content="h5i makes AI agent work reviewable by preserving prompts, commands, logs, policy, handoffs, claims, and PR evidence in repo-owned Git refs.">
+<meta property="og:description" content="h5i makes AI agent work reviewable by preserving prompts, commands, logs, policy, handoffs, and PR evidence in repo-owned Git refs.">
 <meta property="og:url" content="https://h5i.dev/pitch/">
 <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="h5i Pitch Deck: Auditable Workspaces for AI Agents">
-<meta name="twitter:description" content="h5i makes AI agent work reviewable by preserving prompts, commands, logs, policy, handoffs, claims, and PR evidence in repo-owned Git refs.">
+<meta name="twitter:description" content="h5i makes AI agent work reviewable by preserving prompts, commands, logs, policy, handoffs, and PR evidence in repo-owned Git refs.">
 <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -646,7 +646,7 @@
 
     <div class="qlist" style="margin-top:24px;">
       <div class="qrow"><span class="q">What prompt and model produced this change?</span><span class="gx">missing</span></div>
-      <div class="qrow"><span class="q">What files, logs, and prior claims did the agent rely on?</span><span class="gx">missing</span></div>
+      <div class="qrow"><span class="q">What files and logs did the agent rely on?</span><span class="gx">missing</span></div>
       <div class="qrow"><span class="q">Which commands ran, and what did they output?</span><span class="gx">missing</span></div>
       <div class="qrow"><span class="q">What was the sandbox allowed to touch or reach?</span><span class="gx">missing</span></div>
       <div class="qrow"><span class="q">What should the reviewer focus on before merge?</span><span class="gx">missing</span></div>
@@ -661,7 +661,7 @@
   <div style="width:100%;max-width:1040px;">
     <div class="section-tag">The product</div>
     <h2>h5i gives each agent task<br>an <span class="red">auditable workspace</span>.</h2>
-    <p class="lede" style="max-width:780px;">A workspace is the missing review object: a disposable worktree plus the prompt, model, commands, logs, policy, messages, claims, and PR evidence that explain how the diff came to exist.</p>
+    <p class="lede" style="max-width:780px;">A workspace is the missing review object: a disposable worktree plus the prompt, model, commands, logs, policy, messages, and PR evidence that explain how the diff came to exist.</p>
 
     <div class="card card-red" style="margin-top:24px;padding:18px 22px;">
       <div class="mono" style="font-size:1.15rem;color:var(--ink);line-height:1.6;">
@@ -672,7 +672,7 @@
 
     <div class="g3" style="margin-top:22px;">
       <div class="feat-card"><span class="feat-cmd">h5i env</span><p class="feat-desc" style="margin-top:6px;">Create a confined worktree for agent work. Review and apply only the patch you accept.</p></div>
-      <div class="feat-card"><span class="feat-cmd">h5i capture</span><p class="feat-desc" style="margin-top:6px;">Attach prompts, command output, tests, claims, and commit provenance to Git refs.</p></div>
+      <div class="feat-card"><span class="feat-cmd">h5i capture</span><p class="feat-desc" style="margin-top:6px;">Attach prompts, command output, tests, and commit provenance to Git refs.</p></div>
       <div class="feat-card"><span class="feat-cmd">h5i share</span><p class="feat-desc" style="margin-top:6px;">Turn the record into PR-native evidence where approval already happens.</p></div>
     </div>
   </div>
@@ -970,7 +970,7 @@
     <div class="hero-badge">Git sidecar for agent execution</div>
     <h1>Make AI-written code<br><span class="shine-text">reviewable by default</span>.</h1>
     <p class="mono" style="margin:14px auto 0;font-size:1rem;color:var(--text-dim);letter-spacing:0.01em;">Git tracks the diff. <span class="red">h5i tracks the workspace behind it.</span></p>
-    <p class="lede" style="margin:16px auto 0;text-align:center;">A sandboxed workspace per agent task, with prompt, commands, logs, policy, handoffs, claims, and PR evidence versioned in your repo. No SaaS required. No lock-in. Works offline.</p>
+    <p class="lede" style="margin:16px auto 0;text-align:center;">A sandboxed workspace per agent task, with prompt, commands, logs, policy, handoffs, and PR evidence versioned in your repo. No SaaS required. No lock-in. Works offline.</p>
 
     <div class="cta-install" style="margin-top:30px;">
       <span class="pmt">$</span> curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh

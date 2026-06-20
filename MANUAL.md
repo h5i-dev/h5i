@@ -39,8 +39,6 @@ Command reference for all h5i subcommands and flags.
 - [h5i capture commit](#h5i-capture-commit)
 - [h5i recall log](#h5i-recall-log)
 - [h5i recall blame](#h5i-recall-blame)
-- [h5i rollback](#h5i-rollback)
-- [h5i rewind](#h5i-rewind)
 - [h5i recall notes](#h5i-recall-notes)
   - [h5i recall notes analyze](#h5i-recall-notes-analyze)
   - [h5i recall notes show](#h5i-recall-notes-show)
@@ -79,10 +77,6 @@ Command reference for all h5i subcommands and flags.
   - [h5i recall memory restore](#h5i-recall-memory-restore)
   - [h5i share memory push](#h5i-share-memory-push)
   - [h5i share memory pull](#h5i-share-memory-pull)
-- [h5i claims](#h5i-claims)
-  - [h5i capture claim](#h5i-capture-claim)
-  - [h5i recall claims](#h5i-recall-claims)
-  - [h5i claims prune](#h5i-claims-prune)
 - [h5i recall resume](#h5i-recall-resume)
 - [h5i recall vibe](#h5i-recall-vibe)
 - [h5i audit policy](#h5i-audit-policy)
@@ -133,8 +127,8 @@ legacy equivalents, and the corresponding MCP tool names.
 
 | Noun | Verbs | What it covers |
 |---|---|---|
-| `h5i capture` | `commit`, `claim`, `memory`, `run` | Record provenance, content-addressed claims, memory snapshots, and large command output (token reduction). |
-| `h5i recall` | `log`, `blame`, `diff`, `context`, `claims`, `notes`, `memory`, `recap`, `resume`, `vibe`, `object`, `objects` | Read history, context, and captured tool output. |
+| `h5i capture` | `commit`, `memory`, `run` | Record provenance, memory snapshots, and large command output (token reduction). |
+| `h5i recall` | `log`, `blame`, `diff`, `context`, `notes`, `memory`, `recap`, `resume`, `vibe`, `object`, `objects` | Read history, context, and captured tool output. |
 | `h5i audit` | `review`, `scan`, `compliance`, `policy`, `vibe` | Assess risk on AI-generated changes. |
 | `h5i share` | `push`, `pull`, `pr`, `memory` | Publish: push refs, pull refs, post a GitHub PR comment. |
 | `h5i objects` | `run`, `put`, `get`, `list`, `gc`, `pin`, `unpin`, `fsck`, `push`, `pull`, `filters`, `trust`, `setup` | Token-reduction object store: capture huge output, surface a summary, share raw blobs, maintain the store. See [h5i objects](#h5i-objects-token-reduction). |
@@ -158,12 +152,10 @@ proceeds normally. Pipes are unaffected because the hint goes to stderr.
 | Legacy (still works) | Canonical (shown in `--help`) |
 |---|---|
 | `h5i commit -m … --model …` | `h5i capture commit -m … --model …` |
-| `h5i claims add … --path …` | `h5i capture claim … --path …` |
 | `h5i memory snapshot` | `h5i capture memory` |
 | `h5i log --limit N` | `h5i recall log --limit N` |
 | `h5i blame <file>` | `h5i recall blame <file>` |
 | `h5i context <sub>` | `h5i recall context <sub>` |
-| `h5i claims list` / `prune` | `h5i recall claims [--group-by-path]` / `h5i claims prune` |
 | `h5i notes show` / `footprint` / … | `h5i recall notes <sub>` |
 | `h5i memory log` / `diff` / `restore` | `h5i recall memory <sub>` |
 | `h5i recap` (was `h5i context recap`) | `h5i recall recap` |
@@ -194,7 +186,7 @@ error: `h5i audit revew` is not a known subcommand.
 h5i init
 ```
 
-Initialize h5i in the current Git repository. Creates `.git/.h5i/` with subdirectories for session logs, claims, and memory snapshots.
+Initialize h5i in the current Git repository. Creates `.git/.h5i/` with subdirectories for session logs and memory snapshots.
 
 Also bootstraps agent-facing instructions:
 
@@ -293,7 +285,7 @@ Once registered, Claude Code gains native access to h5i tools (`h5i_log`, `h5i_b
 h5i hook session-start
 ```
 
-The shared `SessionStart` handler for both Claude Code and Codex. Injects prior context (goal, recent decisions, live claims) into the new session's context window, and notes any unread cross-agent messages on resume. Registered automatically by `h5i hook setup --write`; you rarely run it by hand.
+The shared `SessionStart` handler for both Claude Code and Codex. Injects prior context (goal, recent decisions) into the new session's context window, and notes any unread cross-agent messages on resume. Registered automatically by `h5i hook setup --write`; you rarely run it by hand.
 
 ### h5i hook wrap-bash
 
@@ -485,21 +477,17 @@ instructions; agents are told to evaluate and decide.
 
 ## h5i capture
 
-Record provenance: commit code, pin claims, snapshot agent memory.
+Record provenance: commit code, snapshot agent memory.
 
 | Verb | Equivalent legacy form | What it does |
 |---|---|---|
 | `h5i capture commit` | `h5i commit` | Git commit + AI provenance (prompt, model, agent, tokens, tests, decisions). See [h5i capture commit](#h5i-capture-commit). |
-| `h5i capture claim` | `h5i claims add` | Pin a content-addressed fact backed by evidence files. See [h5i capture claim](#h5i-capture-claim). |
 | `h5i capture memory` | `h5i memory snapshot` | Snapshot the active agent's memory directory into `refs/h5i/memory`. See [h5i capture memory](#h5i-capture-memory). |
 | `h5i capture run` | _(new)_ | Run a command, store its full output out-of-band, surface only a filtered/structured summary. See [h5i objects](#h5i-objects-token-reduction). |
 
 ```bash
 h5i capture commit -m "switch session store to Redis" \
     --model claude-sonnet-4-6 --agent claude-code --prompt "sessions must survive restarts"
-
-h5i capture claim "HTTP only src/api/client.py: fetch_user, create_post" \
-    --path src/api/client.py
 
 h5i capture memory --agent claude
 ```
@@ -515,7 +503,6 @@ Read AI history & context.
 | `h5i recall log` | `h5i log` | Commit history with AI provenance. |
 | `h5i recall blame` | `h5i blame` | Line-based blame annotated with AI prompts. |
 | `h5i recall context <sub>` | `h5i context <sub>` | The reasoning workspace (full subtree). |
-| `h5i recall claims` | `h5i claims list` | List live & stale content-addressed claims. |
 | `h5i recall notes <sub>` | `h5i notes <sub>` | Footprint, uncertainty, coverage, churn, omissions. |
 | `h5i recall memory <sub>` | `h5i memory <sub>` | Log / diff / restore agent memory snapshots. |
 | `h5i recall recap` | `h5i context recap` | Import Claude Code `away_summary` entries as milestones. |
@@ -1102,108 +1089,6 @@ h5i recall blame src/auth.rs --show-prompt
 ── commit 9e21b04 ── (no prompt recorded) ──
      9e21b04  alice        | pub fn authenticate(token: &str) -> Result<User> {
 ```
-
----
-
-## h5i rollback
-
-```
-h5i rollback <description> [options]
-```
-
-Revert a commit by matching a description against stored prompts and commit messages. No commit hash required.
-
-Uses Claude for semantic matching when `ANTHROPIC_API_KEY` is set; falls back to keyword matching otherwise.
-
-**Options**
-
-| Option | Description |
-|--------|-------------|
-| `--dry-run` | Preview the matched commit without reverting |
-| `--yes` | Skip the confirmation prompt (useful in CI) |
-
-**Example**
-
-```bash
-h5i rollback "the OAuth login changes"
-```
-
-```
-Matched commit:
-  a3f9c2b  add OAuth login with GitHub provider
-  Agent:   claude-code  ·  Prompt: "implement OAuth login flow with GitHub"
-  Date:    2026-03-10 14:22 UTC
-
-Revert this commit? [y/N]
-```
-
----
-
-## h5i rewind
-
-```
-h5i rewind <sha> [options]
-```
-
-Restore the working tree to the exact file state of any past commit **without moving HEAD**. Unlike `rollback` (which creates a new revert commit), `rewind` directly overwrites files in place so you can inspect the result with `git diff HEAD` before deciding what to do next.
-
-**Safety**: before touching any file, the current dirty state is committed to `refs/h5i/shadow/<yyyymmdd-hhmmss>` — a lightweight WIP commit that is never on any branch. Recovery is always possible:
-
-```bash
-git checkout refs/h5i/shadow/<timestamp> -- .
-```
-
-**Options**
-
-| Option | Description |
-|--------|-------------|
-| `<sha>` | Git commit SHA to restore. Accepts full or short SHAs and rev expressions (`HEAD~3`, branch names, tags). Required. |
-| `--dry-run` | Print the list of files that would change without touching the working tree. |
-| `--force` | Skip saving the dirty state to a shadow ref. Safe when the working tree is already clean. |
-
-**Example — preview before committing**
-
-```bash
-h5i rewind abc1234 --dry-run
-```
-
-```
-◈  3 files would change:
-
-    ~ src/http_client.rs
-    + src/retry.rs
-    - src/legacy_retry.rs
-
---dry-run  No changes made.
-```
-
-**Example — recover from a bad agent run**
-
-```bash
-# Rewind to the commit before the agent introduced the regression.
-h5i rewind HEAD~2
-# → dirty state saved → refs/h5i/shadow/20260420-143012
-# → 5 files restored  1 added  3 modified  1 deleted
-# → HEAD stays at abc1234 — review with git diff HEAD before committing.
-
-# If the result looks good, commit normally.
-git add -A
-h5i capture commit -m "rewind: restore state before broken refactor" \
-  --agent claude-code --model claude-sonnet-4-6
-
-# If you want to undo the rewind instead, recover the pre-rewind state.
-git checkout refs/h5i/shadow/20260420-143012 -- .
-```
-
-**What changes after a rewind**
-
-| Files in target commit | Files in HEAD only | Untracked files |
-|------------------------|-------------------|-----------------|
-| Restored to target content | Deleted from working tree | Left untouched |
-
-HEAD is not moved — all restored content shows up as staged (index updated by `checkout_tree`) and `git status` reports the full diff.
-
-**MCP tool**: `h5i_rewind` — takes `sha` (required), `dry_run`, and `force` boolean params. Returns `{ files_changed, files, shadow_ref }`.
 
 ---
 
@@ -2233,94 +2118,6 @@ Fetch `refs/h5i/memory` from the remote (default: `origin`).
 
 ---
 
-## h5i claims
-
-Record content-addressed claims about the codebase that **auto-invalidate** when their evidence files change. A claim pins `(path, blob_oid)` pairs at HEAD as a Merkle-style fingerprint; any edit to any evidence blob flips the claim from `live` to `stale`. Live claims are injected into the `h5i recall context prompt` preamble so future sessions can treat them as pre-verified facts instead of re-deriving them from scratch.
-
-Stored under `.git/.h5i/claims/<id>.json`.
-
-**When to use:** record a claim after the agent (or you) concludes something non-obvious about the code that took exploration to establish — "the retry loop lives in `send()`, not a middleware layer," "error variant `FooError::Parse` is never constructed outside `parser.rs`," "the CRDT snapshot cadence is driven by commit, not time." These are the conclusions you'd otherwise pay input tokens to re-derive next session.
-
----
-
-### h5i capture claim
-
-```
-h5i capture claim <text> --path <PATH> [--path <PATH>...] [--author <name>]
-```
-
-Record a claim with one or more evidence paths. The paths must exist in HEAD. Canonical form of the legacy `h5i claims add`.
-
-**Options**
-
-| Option | Description |
-|--------|-------------|
-| `<text>` | The claim itself (positional, required) |
-| `-p, --path <PATH>` | An evidence path. Pass repeatedly for multi-file evidence. Required. |
-| `--author <name>` | Author tag (default: `$H5I_AGENT_ID`, else `human`) |
-
-```bash
-h5i capture claim "retry logic lives in HttpClient::send, not middleware" \
-  --path src/http_client.rs --path src/middleware.rs
-```
-
-```
-✔  Recorded claim 478be84c61e7
-  ↳  retry logic lives in HttpClient::send, not middleware
-  ↳  evidence: src/http_client.rs, src/middleware.rs
-```
-
----
-
-### h5i recall claims
-
-```
-h5i recall claims [--group-by-path]
-```
-
-Show all claims with live/stale status based on the current HEAD. A claim is **live** iff the Merkle fingerprint over its evidence paths still matches the value recorded at `add` time.
-
-```
-STATUS    ID              CREATED                 TEXT
-● live    478be84c61e7    2026-04-24 14:49 UTC    retry logic lives in HttpClient::send, not middleware
-          ↳  src/http_client.rs, src/middleware.rs
-○ stale   9f02ab1e733c    2026-04-18 09:12 UTC    FooError::Parse is only constructed in parser.rs
-          ↳  src/parser.rs, src/error.rs
-
-  → 1 live, 1 stale
-```
-
-**`--group-by-path`** organises the same data by file path, with each claim listed under every path it pins. Useful for the per-file orientation view ("what do I know about `src/api/client.py`?"). Multi-path claims appear under each of their paths, with the *also pins* line surfacing the cross-cutting nature.
-
-```
-src/api/client.py
-  ● live  478be84c61e7  HTTP only src/api/client.py: fetch_user, create_post, delete_post.
-src/http_client.rs
-  ● live  c2d7e1f9aa31  retry logic lives in HttpClient::send, not middleware
-          ↳ also pins: src/middleware.rs
-src/middleware.rs
-  ● live  c2d7e1f9aa31  retry logic lives in HttpClient::send, not middleware
-          ↳ also pins: src/http_client.rs
-
-  → 2 live, 0 stale across 3 paths
-```
-
----
-
-### h5i claims prune
-
-```
-h5i claims prune
-```
-
-Delete all claims whose evidence blobs have changed since recording. Live claims are untouched.
-
-```
-✔  Pruned 1 stale claim
-```
-
----
-
 ## h5i recall resume
 
 ```
@@ -2992,7 +2789,6 @@ After restarting Claude Code, all h5i tools become available natively inside any
 | Tool | Equivalent CLI | Description |
 |------|----------------|-------------|
 | `h5i_commit` | `h5i commit` | Create a git commit with AI provenance. Files must be staged first (`git add`). |
-| `h5i_rewind` | `h5i rewind` | Restore working tree to any past commit. Saves dirty state to a shadow ref before touching anything. |
 | `h5i_notes_analyze` | `h5i notes analyze` | Parse the current session log and link analysis to HEAD. Call once at session end. |
 | `h5i_log` | `h5i log` | Recent commits with AI provenance metadata |
 | `h5i_blame` | `h5i blame` | Per-line authorship with model/prompt annotation |
@@ -3016,9 +2812,6 @@ After restarting Claude Code, all h5i tools become available natively inside any
 | `h5i_context_scan` | `h5i context scan` | Prompt-injection risk scan of the trace |
 | `h5i_context_pack` | `h5i context pack` | Three-pass lossless compaction of the OTA trace |
 | `h5i_context_search` | `h5i context search` | BM25-style search over OTA trace entries with co-change ranking |
-| `h5i_claims_add` | `h5i claims add` | Record a content-addressed claim pinned to evidence paths at HEAD |
-| `h5i_claims_list` | `h5i claims list` | All claims with live/stale status |
-| `h5i_claims_prune` | `h5i claims prune` | Drop claims whose evidence blobs changed |
 
 **Tool parameters**
 
@@ -3028,9 +2821,6 @@ After restarting Claude Code, all h5i tools become available natively inside any
 | `h5i_commit` | `prompt` | string | no | — | The prompt that triggered this commit |
 | `h5i_commit` | `model` | string | no | — | Model name, e.g. `claude-sonnet-4-6` |
 | `h5i_commit` | `agent_id` | string | no | — | Agent identifier, e.g. `claude-code` |
-| `h5i_rewind` | `sha` | string | **yes** | — | Commit SHA or rev expression to restore |
-| `h5i_rewind` | `dry_run` | boolean | no | false | Preview changes without touching files |
-| `h5i_rewind` | `force` | boolean | no | false | Skip shadow-ref backup |
 | `h5i_log` | `limit` | integer | no | 20 | Max commits to return |
 | `h5i_blame` | `file` | string | **yes** | — | Relative path to blame |
 | `h5i_notes_show` | `commit` | string | no | HEAD | Commit OID or prefix |
@@ -3052,9 +2842,6 @@ After restarting Claude Code, all h5i tools become available natively inside any
 | `h5i_context_show` | `branch` | string | no | current | Branch to inspect |
 | `h5i_context_show` | `window` | integer | no | 3 | Recent checkpoints to include |
 | `h5i_context_show` | `trace` | boolean | no | false | Include recent OTA trace lines |
-| `h5i_claims_add` | `text` | string | **yes** | — | Claim text (caveman-style, ≈30 tokens; up to ~80 tokens for per-file orientation claims) |
-| `h5i_claims_add` | `paths` | string[] | **yes** | — | Evidence paths tracked in HEAD; minimal set whose edits would invalidate the claim |
-| `h5i_claims_add` | `author` | string | no | `$H5I_AGENT_ID` else `human` | Author tag |
 
 ### Resources
 
@@ -3234,8 +3021,6 @@ status 1; otherwise it exits 0.
 │   └── <commit-oid>/
 │       ├── <uuid>.jsonl             # session log files / memory artifacts
 │       └── _meta.json               # snapshot timestamp + file count
-├── claims/                          # content-addressed claims with auto-invalidation
-│   └── <claim-id>.json              # {text, evidence_paths, evidence_oid (Merkle over (path, blob_oid)), author, created_at}
 ├── summaries/                       # blob-OID-keyed file summaries (immutable per blob)
 │   └── <blob-oid>.json              # {blob_oid, path, text, author, created_at}
 ├── session_log/                     # Claude Code session analyses
@@ -3261,7 +3046,6 @@ status 1; otherwise it exits 0.
 | `refs/h5i/memory` | Linear commit history | Agent memory snapshots as git tree objects; each commit carries the linked code-commit OID |
 | `refs/h5i/context` | Git tree | Context workspace: `main.md`, `.current_branch`, `branches/<name>/{commit.md,trace.md,dag.json,ephemeral.md,metadata.yaml}` |
 | `refs/h5i/objects` | Append-only JSONL | Token-reduction manifests: per-capture pointer + structured `ToolResult` summary (raw blobs stay local, see above) |
-| `refs/h5i/shadow/<yyyymmdd-hhmmss>` | WIP commit | Pre-rewind working-tree snapshot created by `h5i rewind` before overwriting files. Never on any branch; recover with `git checkout refs/h5i/shadow/<ts> -- .` |
 
 The context workspace commands display paths under `.h5i-ctx/` in their output, but the data is stored in `refs/h5i/context`.
 
@@ -3341,7 +3125,7 @@ Auto-captured when the Claude Code hook is installed; you usually do not set the
 |----------|---------|---------|
 | `H5I_PROMPT` | unset | User prompt that triggered the current commit. Falls back to `--prompt` if both are present. |
 | `H5I_MODEL` | unset | AI model name recorded on the commit (e.g. `claude-sonnet-4-6`). |
-| `H5I_AGENT_ID` | unset | Agent identifier recorded on the commit (e.g. `claude-code`, `codex`). Also used as the default `--author` for `h5i claims` and the default backend for `h5i hook codex` / inference. |
+| `H5I_AGENT_ID` | unset | Agent identifier recorded on the commit (e.g. `claude-code`, `codex`). Also used as the default backend for `h5i hook codex` / inference. |
 
 ### Tests
 
@@ -3364,12 +3148,6 @@ Auto-captured when the Claude Code hook is installed; you usually do not set the
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `H5I_TRUST_FILTERS` | unset | When `1`/`true`, apply a project-local `.h5i/filters.toml` without the content-hash trust gate (for CI). See [h5i objects trust](#h5i-objects-filters--trust). |
-
-### Claims
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `H5I_CLAIMS_FREQUENCY` | `low` | How eagerly agents should record `h5i capture claim` entries. One of `off` / `low` / `high`. Surfaced in the SessionStart prelude when not `low`. See [h5i claims](#h5i-claims). |
 
 ### Intent / search
 

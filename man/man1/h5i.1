@@ -57,7 +57,6 @@ for the verb table with runnable examples and the corresponding MCP tool names.
 .B h5i capture
 \(em record provenance:
 .BR commit ,
-.BR claim ,
 .BR memory ,
 .BR run .
 .IP \(bu 2
@@ -67,7 +66,6 @@ for the verb table with runnable examples and the corresponding MCP tool names.
 .BR blame ,
 .BR diff ,
 .BR context ,
-.BR claims ,
 .BR notes ,
 .BR memory ,
 .BR recap ,
@@ -144,7 +142,6 @@ Initialize the h5i sidecar in the current Git repository.
 Creates
 .I .git/.h5i/
 with subdirectories
-.BR claims/ ,
 .BR memory/ ,
 and
 .BR session_log/ .
@@ -295,78 +292,6 @@ OID of the incoming branch.
 .TP
 .I FILE
 Relative path to the file to resolve.
-.RE
-.
-.\" ─── rewind ────────────────────────────────────────────────────────────────
-.SS h5i rewind \fISHA\fR [\fIOPTIONS\fR]
-Restore the working tree to the exact file state of
-.I SHA
-without moving HEAD.
-Files in the target commit are restored to their stored content; files that
-exist in HEAD but are absent from the target commit are deleted from disk.
-After the rewind,
-.B git diff HEAD
-shows the full picture \(em review it before deciding to commit.
-.PP
-.B Safety:
-before touching any file, the current dirty state (staged + unstaged) is
-committed to
-.BI refs/h5i/shadow/ <yyyymmdd\-hhmmss>
-so recovery is always possible:
-.PP
-.RS 4
-.nf
-git checkout refs/h5i/shadow/<timestamp> \-\- .
-.fi
-.RE
-.PP
-.B Options
-.RS 4
-.TP
-.B \-\-dry\-run
-Print the list of files that would change without touching the working tree.
-.TP
-.B \-\-force
-Skip saving dirty state to a shadow ref.
-Safe when the working tree is already clean.
-.RE
-.PP
-.B Examples
-.RS 4
-.nf
-h5i rewind HEAD~2 \-\-dry\-run          # preview only
-h5i rewind abc1234                    # restore + save shadow ref if dirty
-h5i rewind abc1234 \-\-force           # restore without backup
-.fi
-.RE
-.
-.\" ─── rollback ───────────────────────────────────────────────────────────────
-.SS h5i rollback \fIINTENT\fR [\fIOPTIONS\fR]
-Revert the commit whose stored prompt or message best matches the
-natural-language
-.I INTENT
-description.
-Uses semantic search via Claude when
-.B ANTHROPIC_API_KEY
-is set; falls back to keyword matching otherwise.
-.PP
-Before reverting, h5i checks whether any later commits declared the
-matched commit as a
-.B \-\-caused\-by
-dependency and warns accordingly.
-.PP
-.B Options
-.RS 4
-.TP
-.BI \-l,\ \-\-limit\  N
-Number of recent commits to search (default:
-.BR 50 ).
-.TP
-.B \-\-dry\-run
-Show the matched commit without reverting.
-.TP
-.B \-y,\ \-\-yes
-Skip the confirmation prompt (useful in CI).
 .RE
 .
 .\" ─── serve ──────────────────────────────────────────────────────────────────
@@ -1681,7 +1606,7 @@ or
 .TP
 .B tools
 Twenty-four tools covering
-.BR h5i_commit ,\  h5i_rewind ,\  h5i_notes_analyze ,\  h5i_log ,\  h5i_blame ,\  h5i_notes_* ,
+.BR h5i_commit ,\  h5i_notes_analyze ,\  h5i_log ,\  h5i_blame ,\  h5i_notes_* ,
 and
 .B h5i_context_*
 (including
@@ -1972,9 +1897,7 @@ without the content-hash trust gate (for CI). See
 .BR "h5i objects trust" .
 .TP
 .B ANTHROPIC_API_KEY
-When set, enables semantic search in
-.B h5i rollback
-and Claude-assisted intent extraction in
+When set, enables Claude-assisted intent extraction in
 .BR "h5i recall notes graph \-\-mode analyze" .
 .
 .SH FILES
@@ -2027,14 +1950,6 @@ Git ref storing AI provenance, test metrics, causal links, and integrity
 reports as JSON blobs attached to each commit.
 Inspect with:
 .B git notes \-\-ref refs/h5i/notes show <oid>
-.TP
-.I refs/h5i/shadow/<yyyymmdd\-hhmmss>
-Lightweight WIP commit created by
-.B h5i rewind
-to preserve the pre-rewind working-tree state.
-Never on any branch.
-Recover with:
-.B git checkout refs/h5i/shadow/<ts> \-\- .
 .TP
 .I refs/h5i/memory
 Git ref storing Claude memory snapshots as a linear commit history of
@@ -2120,25 +2035,6 @@ h5i capture commit \-m "add rate limiting" \\
 h5i capture commit \-m "fix off-by-one in validate_token" \\
     \-\-caused\-by a3f9c2b \\
     \-\-prompt "fix the bug introduced by the rate limiter"
-.fi
-.SS Intent-based rollback
-.nf
-h5i rollback "the OAuth login changes" \-\-dry\-run
-h5i rollback "rate limiting" \-\-yes
-.fi
-.SS Rewind working tree to any past commit
-.nf
-# Preview what would change
-h5i rewind HEAD~3 \-\-dry\-run
-
-# Restore (dirty state is saved to refs/h5i/shadow/<ts>)
-h5i rewind abc1234
-git diff HEAD                                # review the result
-git add \-A
-h5i capture commit \-m "rewind: restore pre-regression state" \-\-agent claude\-code
-
-# Undo the rewind if you change your mind
-git checkout refs/h5i/shadow/20260420\-143012 \-\- .
 .fi
 .SS Session analysis workflow
 .nf
