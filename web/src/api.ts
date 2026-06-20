@@ -596,10 +596,13 @@ export const api = {
 
   // Workbench-mode views
   memorySnapshots: () => getJSON<MemorySnapshot[]>("/api/memory/snapshots"),
-  reviewPoints: (limit = 100, minScore = 0.25) =>
-    getJSON<ReviewPoint[]>(
-      `/api/review-points?limit=${limit}&min_score=${minScore}`,
-    ),
+  reviewPoints: (limit = 100, minScore = 0.25, branch?: string | null) => {
+    const p = new URLSearchParams();
+    p.set("limit", String(limit));
+    p.set("min_score", String(minScore));
+    if (branch) p.set("branch", branch);
+    return getJSON<ReviewPoint[]>(`/api/review-points?${p.toString()}`);
+  },
 
   // Sandbox dashboard
   envs: () => getJSON<EnvFleetItem[]>("/api/envs"),

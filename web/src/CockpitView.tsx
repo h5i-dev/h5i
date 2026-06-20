@@ -16,20 +16,31 @@ import {
 // first, with the prompt-maturity coach (scores the delegation, not the dev).
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function CockpitView({ onOpenReplay }: { onOpenReplay?: (oid: string) => void }) {
+export function CockpitView({
+  onOpenReplay,
+  branch,
+}: {
+  onOpenReplay?: (oid: string) => void;
+  branch?: string | null;
+}) {
   const [points, setPoints] = useState<ReviewPoint[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
+    setPoints(null);
+    setError(null);
     api
-      .reviewPoints(200, 0.0)
+      .reviewPoints(200, 0.0, branch)
       .then((ps) => {
         setPoints(ps);
-        setSelected((cur) => cur ?? ps[0]?.commit_oid ?? null);
+        // Keep the selection if it's still on this branch, else jump to the top.
+        setSelected((cur) =>
+          cur && ps.some((p) => p.commit_oid === cur) ? cur : ps[0]?.commit_oid ?? null,
+        );
       })
       .catch((e) => setError(String(e)));
-  }, []);
+  }, [branch]);
 
   if (error) {
     return <NonIdealState icon="error" title="Failed to load" description={error} />;
@@ -42,14 +53,21 @@ export function CockpitView({ onOpenReplay }: { onOpenReplay?: (oid: string) => 
     <div className="ckp-shell">
       <div className="ckp-list">
         <div className="rpl-pane-head">
-          <span>Commits by review priority</span>
+          <span>Review priority</span>
+          {branch ? (
+            <Tag minimal icon="git-branch" intent="primary" title="Scoped to the picked branch">
+              {branch}
+            </Tag>
+          ) : null}
           <Tag minimal round>
             {points.length}
           </Tag>
         </div>
         <div className="ckp-list-body">
           {points.length === 0 ? (
-            <div className="rpl-empty-hint">No commits analysed yet.</div>
+            <div className="rpl-empty-hint">
+              {branch ? `No commits on ${branch} to review.` : "No commits analysed yet."}
+            </div>
           ) : (
             points.map((p) => (
               <button

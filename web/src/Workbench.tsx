@@ -203,6 +203,7 @@ export function Workbench() {
         <ReplayView focusOid={replayFocusOid} />
       ) : mode === "cockpit" ? (
         <CockpitView
+          branch={branchInUI}
           onOpenReplay={(oid) => {
             setReplayFocusOid(oid);
             setMode("replay");

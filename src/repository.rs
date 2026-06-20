@@ -2162,6 +2162,26 @@ impl H5iRepository {
         limit: usize,
         min_score: f32,
     ) -> Result<Vec<crate::review::ReviewPoint>, H5iError> {
+        self.suggest_review_points_impl(None, limit, min_score)
+    }
+
+    /// Branch-scoped variant: walk review points from `branch`'s tip instead of
+    /// HEAD. `None` (or an empty string) falls back to HEAD.
+    pub fn suggest_review_points_at(
+        &self,
+        branch: Option<&str>,
+        limit: usize,
+        min_score: f32,
+    ) -> Result<Vec<crate::review::ReviewPoint>, H5iError> {
+        self.suggest_review_points_impl(branch, limit, min_score)
+    }
+
+    fn suggest_review_points_impl(
+        &self,
+        branch: Option<&str>,
+        limit: usize,
+        min_score: f32,
+    ) -> Result<Vec<crate::review::ReviewPoint>, H5iError> {
         use crate::review::{ReviewPoint, ReviewTrigger, Tier};
         use std::collections::HashSet;
 
@@ -2180,7 +2200,22 @@ impl H5iRepository {
         };
 
         let mut revwalk = self.git_repo.revwalk()?;
-        revwalk.push_head()?;
+        match branch {
+            Some(b) if !b.is_empty() => {
+                // Resolve like get_log_at_branch: local → remote-tracking → revparse.
+                let local = self.git_repo.find_branch(b, git2::BranchType::Local).ok();
+                let remote = self.git_repo.find_branch(b, git2::BranchType::Remote).ok();
+                let oid = if let Some(br) = local.or(remote) {
+                    br.get().target().ok_or_else(|| {
+                        H5iError::Git(git2::Error::from_str("branch has no target oid"))
+                    })?
+                } else {
+                    self.git_repo.revparse_single(b)?.id()
+                };
+                revwalk.push(oid)?;
+            }
+            _ => revwalk.push_head()?,
+        }
 
         let mut results: Vec<ReviewPoint> = Vec::new();
 

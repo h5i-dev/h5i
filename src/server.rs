@@ -87,6 +87,8 @@ pub struct IntentGraphQuery {
 pub struct ReviewQuery {
     pub limit: Option<usize>,
     pub min_score: Option<f32>,
+    /// When set, walk review points from this branch's tip instead of HEAD.
+    pub branch: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -737,10 +739,11 @@ async fn api_review_points(
     let path = state.repo_path.clone();
     let limit = params.limit.unwrap_or(100);
     let min_score = params.min_score.unwrap_or(REVIEW_THRESHOLD);
+    let branch = params.branch.clone();
 
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<ReviewPoint>> {
         let repo = H5iRepository::open(&path)?;
-        Ok(repo.suggest_review_points(limit, min_score)?)
+        Ok(repo.suggest_review_points_at(branch.as_deref(), limit, min_score)?)
     })
     .await;
 
@@ -2632,12 +2635,15 @@ async fn api_cockpit(
         let prov = record.as_ref().and_then(|r| r.env_provenance.as_ref());
         let (tp, tf) = record.as_ref().and_then(|r| r.test_metrics.as_ref()).map(|tm| (Some(tm.passed), Some(tm.failed))).unwrap_or((None, None));
 
-        // review point for this commit (deterministic triggers).
+        // review point for this commit (deterministic triggers). Seed the walk
+        // at the commit itself so it resolves even when it is not on HEAD's
+        // history (revparse_single accepts a raw OID).
+        let oid_str = oid.to_string();
         let rp = repo
-            .suggest_review_points(500, 0.0)
+            .suggest_review_points_at(Some(&oid_str), 64, 0.0)
             .unwrap_or_default()
             .into_iter()
-            .find(|p| p.commit_oid == oid.to_string());
+            .find(|p| p.commit_oid == oid_str);
 
         // review-first files: integrity findings paths + session blind edits + edits.
         let mut review_first: Vec<CockpitFile> = Vec::new();
