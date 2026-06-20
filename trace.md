@@ -3442,3 +3442,9 @@ _[Checkpoint: 6a36fbb3 — edited docs/guides/ai-code-provenance/index.html; edi
 [21:47:45] OBSERVE: read web/package.json
 [21:47:45] OBSERVE: read web/src/main.tsx
 [21:47:49] OBSERVE: read src/msg.rs
+
+
+---
+_[Checkpoint: 6a370a9b — Helped Claude design ensemble/team feature: recommended CLI-first h5i team orchestration over env/msg/capture with h5i serve visualization, strict sealed phases, and no TUI-first MVP.]_
+---
+
