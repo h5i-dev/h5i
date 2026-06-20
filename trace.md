@@ -2976,3 +2976,4 @@ _[Checkpoint: 6a367026 — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a367028 — session ended (auto-checkpoint)]_
 ---
 
+[10:52:15] OBSERVE: read src/sandbox_policy.rs
