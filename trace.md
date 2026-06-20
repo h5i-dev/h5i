@@ -3019,3 +3019,4 @@ _[Checkpoint: 6a3674a8 — Implement #1: per-env credential/session isolation]_
 The fix has a clean home in the existing code: I'll mirror the `PrivateBind`/`prepare_private_paths` + `ProtectedHookConfigGuard` machinery to (a) seed a per-env copy of the runtime's HOME state, (b) bind it over `$HOME/.
 [11:08:40] THINK: All 5 pass. Now clippy with `-D warnings` (CI gate), and I'll check both feature configs per the web-feature-gate note:
 [11:08:40] THINK: Let me find an existing functional run test there to mirror its gating:
+[11:08:40] THINK: I'll add a functional test in `src/sandbox.
