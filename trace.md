@@ -2957,3 +2957,9 @@ _[Checkpoint: 6a366fa9 — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a36700f — session ended (auto-checkpoint)]_
 ---
 
+
+
+---
+_[Checkpoint: 6a36701c — Compared ../codex sandbox/execpolicy architecture against h5i env; recommended borrowing policy transform, diagnostics, exec rule, platform adapter, and debug ideas without replacing h5i env provenance model.]_
+---
+
