@@ -3563,3 +3563,9 @@ _[Checkpoint: 6a370e06 — Added persona/multi-system-prompt roster model to tea
 ---
 
 [22:03:09] NOTE: PLACEHOLDER (~/Dev/h5i/roadmap/team-design.md): `msg.rs`/`objects.rs`, and the serve handler/`TeamView.tsx` stubs). Want me to draft that, or wait in case Codex sends a final note
+
+
+---
+_[Checkpoint: 6a370e1d — edited roadmap/team-design.md; edited roadmap/team-design.md; edited roadmap/team-design.md]_
+---
+

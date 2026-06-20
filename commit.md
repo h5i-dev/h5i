@@ -2604,3 +2604,16 @@ team agent = (runtime, model, persona); roster can be N same-runtime agents with
 
 ---
 
+## Commit 6a370e1d — 2026-06-20 22:03 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+team agent = (runtime, model, persona); roster can be N same-runtime agents with different system prompts/skills/roles. agent_id is ref-safe key, persona_digest = provenance anchor on TeamAgent+TeamArtifact, per-env home isolation already covers same-runtime cred races, dispatch materializes persona (claude --append-system-prompt+skills / codex profile), serve lanes labeled by persona.
+
+### This Commit's Contribution
+
+
+---
+
