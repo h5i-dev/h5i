@@ -3129,3 +3129,9 @@ _[Checkpoint: 6a369730 — edited src/env.rs; edited src/sandbox.rs; edited CLAU
 [13:52:49] THINK: The command-invoking tests use the alias form (still valid), but I should point the main ones at the canonical `hook …` path to prove the new nesting parses end-to-end, and keep one alias smoke test.
 [13:52:49] THINK: Now let me run clippy (the CI gate) to confirm warning-clean:
 [13:52:49] NOTE: UNFULFILLED (~/Dev/h5i/src/main.rs): laude …` entries in place as duplicates that double-fire. I need to also strip the legacy paths on merge. Let me update `hooks.rs`
+
+
+---
+_[Checkpoint: 6a369b31 — edited AGENTS.md; edited .claude/skills/h5i-workflow/SKILL.md; edited .claude/skills/h5i-workflow/SKILL.md]_
+---
+
