@@ -3488,3 +3488,4 @@ _[Checkpoint: 6a370b2c — wrote roadmap/team-design.md]_
 _[Checkpoint: 6a370b98 — Hardened team design with Codex invariants]_
 ---
 
+[21:52:37] THINK: I'll fold these in and restructure the doc to the cleaner 8-section layout Codex suggested.
