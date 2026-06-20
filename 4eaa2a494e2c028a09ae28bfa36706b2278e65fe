@@ -1,0 +1,1 @@
+{"git_oid":"4eaa2a494e2c028a09ae28bfa36706b2278e65fe","parent_oid":"c41a1dcaec9a274f5774ec9773fb01b8d4546768","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"Snapshot history in the CONTEXT tab still shows all info without filtered with selected branch","agent_id":"claude-code","usage":null},"test_metrics":null,"timestamp":"2026-06-20T10:11:45.601660759Z"}
