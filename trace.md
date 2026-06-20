@@ -2837,3 +2837,4 @@ _[Checkpoint: 6a366a01 — edited web/src/ContextView.tsx; edited web/src/Contex
 [10:44:09] OBSERVE: read taskengine.md
 [10:44:10] OBSERVE: read taskflow.md
 [10:44:11] OBSERVE: read src/sandbox_policy.rs
+[10:44:12] OBSERVE: read src/supervisor.rs
