@@ -3456,3 +3456,9 @@ _[Checkpoint: 6a370a9b — Helped Claude design ensemble/team feature: recommend
 _[Checkpoint: 6a370aaa — edited MANUAL.md; edited MANUAL.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a370ab3 — Consulted with Claude on ensemble/team system design: answered ASK with thin orchestration over env, manual compare+serve MVP, append-only run events with artifact refs, and env-scale traps.]_
+---
+
