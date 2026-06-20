@@ -3562,3 +3562,4 @@ _[Checkpoint: 6a370ca4 — edited roadmap/team-design.md; edited roadmap/team-de
 _[Checkpoint: 6a370e06 — Added persona/multi-system-prompt roster model to team design]_
 ---
 
+[22:03:09] NOTE: PLACEHOLDER (~/Dev/h5i/roadmap/team-design.md): `msg.rs`/`objects.rs`, and the serve handler/`TeamView.tsx` stubs). Want me to draft that, or wait in case Codex sends a final note
