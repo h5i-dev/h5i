@@ -94,9 +94,9 @@ h5i capture commit -m "…" --model claude-sonnet-4-6 --agent claude-code
 
 **Do not pass `--intent` (or the old `--prompt`).** In Claude Code the verbatim
 human prompt is captured automatically by the `UserPromptSubmit` hook and wins
-over any agent-supplied intent — write a clear commit message and let the hook
-record what the human actually asked. `--intent` stays as a fallback only for
-Codex, CI, scripts, or manual commits where no prompt-capture hook runs.
+over any agent-supplied intent — so just write a clear commit message and let the
+hook record what the human actually asked. (`--intent` stays as a fallback for
+Codex, CI, scripts, or manual commits where no prompt-capture hook runs.)
 
 (Or the `h5i_commit` MCP tool if the MCP server is configured.)
 
@@ -173,6 +173,6 @@ Monitor tool is experimental/host-dependent — don't rely on it.
 ### Sharing h5i Data
 
 ```bash
-h5i share push   # push all h5i refs (notes, context, memory, ast, msg) to origin
+h5i share push   # push all h5i refs (notes, context, memory, msg) to origin
 h5i share pull   # pull h5i refs from origin
 ```
