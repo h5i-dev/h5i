@@ -2935,3 +2935,4 @@ _[Checkpoint: 6a366fa9 — session ended (auto-checkpoint)]_
 [10:48:44] OBSERVE: read ../codex/codex-rs/sandboxing/src/manager.rs
 [10:48:44] OBSERVE: read ../codex/codex-rs/sandboxing/src/policy_transforms.rs
 [10:48:44] OBSERVE: read ../codex/codex-rs/execpolicy/src/rule.rs
+[10:48:44] OBSERVE: read ../codex/codex-rs/execpolicy/src/decision.rs
