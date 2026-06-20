@@ -2656,3 +2656,16 @@ design+implement prompt maturity score (classical offline NLP), surface in share
 
 ---
 
+## Commit 6a370f2a — 2026-06-20 22:07 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+8 constraints: persona resolved+frozen (digest=canonical JSON over resolved bytes+skill content digests+version), persona text under independence rule (round-edit=new digest=improvement input), persona_event_id on artifact, agent_id is actor key (dispatch targets persona not bare runtime), local-only isolation (no provider account claim), fail-closed dispatch, SkillPin content-pinning, persona bodies not peer-granted by default.
+
+### This Commit's Contribution
+
+
+---
+
