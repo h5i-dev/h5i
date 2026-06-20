@@ -2704,3 +2704,4 @@ _[Checkpoint: 6a360276 — edited src/server.rs; edited src/server.rs; edited we
 _[Checkpoint: 6a36042e — edited web/src/CockpitView.tsx; edited web/src/CockpitView.tsx; edited web/src/Workbench.tsx]_
 ---
 
+[03:10:58] OBSERVE: read src/pr.rs
