@@ -3302,3 +3302,4 @@ _[Checkpoint: 6a36f1ec — edited src/repository.rs; edited .claude/h5i.md; edit
 [20:11:37] THINK: xml` entries.
 
 I'll kick off the reference-doc updates now via a fork, and in parallel ask you about the blog posts since deleting published articles (with live URLs/SEO) is a real call.
+[20:11:37] THINK: Let me map the blog structure precisely.
