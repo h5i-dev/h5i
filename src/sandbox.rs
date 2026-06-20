@@ -43,8 +43,8 @@ use crate::error::H5iError;
 // imports them from `sandbox_policy` directly, breaking the `sandbox →
 // container → sandbox` dispatch cycle.
 pub use crate::sandbox_policy::{
-    AgentRuntime, AuditCapture, AuditPolicy, BoxGitPath, ExecOutcome, IsolationClaim, NetMode,
-    PrivateBind, PrivatePath, Profile, ResolvedPolicy, SecretGrant, DEFAULT_WALL,
+    AgentRuntime, AuditCapture, AuditPolicy, BoxGitPath, ExecOutcome, HomeBind, IsolationClaim,
+    NetMode, PrivateBind, PrivatePath, Profile, ResolvedPolicy, SecretGrant, DEFAULT_WALL,
 };
 
 /// Repo-relative path of the checked-in policy file.
@@ -1305,6 +1305,21 @@ pub(crate) fn build_confined_command(
         })
         .collect();
 
+    // HOME-state redirect binds (#1, per-env credential/session isolation): each
+    // per-env copy backing the agent runtime's real `~/.claude`/`~/.codex`, bound
+    // over the real absolute path so the box's writes land in its own copy and
+    // never race the shared real files. Like the private binds these force a mount
+    // namespace and are applied before Landlock, in the (egress-)private ns.
+    let home_bind_c: Vec<(std::ffi::CString, std::ffi::CString)> = policy
+        .home_binds
+        .iter()
+        .filter_map(|b| {
+            let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
+            let tc = std::ffi::CString::new(b.target.as_os_str().as_encoded_bytes()).ok()?;
+            Some((bc, tc))
+        })
+        .collect();
+
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).current_dir(&work);
 
@@ -1360,7 +1375,7 @@ pub(crate) fn build_confined_command(
             // (supervised is pidns=false, so it would otherwise have none). The
             // bind is contained: a mount ns under a fresh userns reduces shared
             // mounts to slave, so it never propagates to the host.
-            if !config_lock_c.is_empty() || !private_bind_c.is_empty() {
+            if !config_lock_c.is_empty() || !private_bind_c.is_empty() || !home_bind_c.is_empty() {
                 flags |= libc::CLONE_NEWNS;
             }
             if libc::unshare(flags) != 0 {
@@ -1569,6 +1584,29 @@ pub(crate) fn build_confined_command(
                 {
                     return Err(Error::other(format!(
                         "private-path bind failed: {}",
+                        Error::last_os_error()
+                    )));
+                }
+            }
+
+            // 1f. HOME-state redirect binds (#1). Bind each per-env credential copy
+            //     over the agent runtime's real `~/.claude`/`~/.claude.json`/`~/.codex`
+            //     so in-box writes (session history, refreshed tokens) land in the
+            //     env's own copy — concurrent agent boxes never race the shared real
+            //     files, and the real HOME is never written. Same private mount ns,
+            //     before Landlock; the backing copy is separately Landlock-granted
+            //     rw host-side (it was pushed onto fs_write). Fail-closed.
+            for (backing, target) in &home_bind_c {
+                if libc::mount(
+                    backing.as_ptr(),
+                    target.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_BIND,
+                    std::ptr::null(),
+                ) != 0
+                {
+                    return Err(Error::other(format!(
+                        "home-state bind failed: {}",
                         Error::last_os_error()
                     )));
                 }
@@ -2002,6 +2040,55 @@ pub(crate) fn wait_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Functional, real-kernel proof that `policy.home_binds` shadows the target
+    /// path inside the confined child (the in-box half of per-env credential
+    /// isolation #1). A backing file is bound over a target file; the confined
+    /// `cat target` must read the BACKING bytes, never the target's own. Skips
+    /// where process-tier confinement can't run (CI/AppArmor), like the rest of
+    /// the kernel-tier suite. Net-deny so it needs no egress stack.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn home_bind_shadows_target_inside_confined_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        // Both live under $WORK (implicitly rw-granted) so the test exercises the
+        // bind, not Landlock. `target` stands in for the real `~/.claude.json`.
+        std::fs::write(work.join("target"), "REAL-HOST-CREDS").unwrap();
+        std::fs::write(work.join("backing"), "PER-ENV-COPY").unwrap();
+
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            Profile::builtin("default", IsolationClaim::Process),
+        );
+        pol.home_binds.push(HomeBind {
+            backing: work.join("backing"),
+            target: work.join("target"),
+        });
+
+        if verify_exec(&pol).is_err() {
+            eprintln!("SKIP home_bind_shadows_target_inside_confined_child: process tier not runnable");
+            return;
+        }
+        let out = run_with_env(
+            &pol,
+            &work,
+            &["/bin/sh".into(), "-c".into(), "cat target".into()],
+            &[],
+        )
+        .expect("confined run");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("PER-ENV-COPY"),
+            "the bind must redirect `target` to the backing copy; got: {stdout:?} / {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !stdout.contains("REAL-HOST-CREDS"),
+            "the real target bytes must be shadowed by the bind"
+        );
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
