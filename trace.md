@@ -2629,3 +2629,8 @@ _[Checkpoint: 6a35f56e — edited docs/guides/git-blame-for-ai-code/index.html; 
 [02:42:51] ACT: edited web/src/Workbench.tsx
 [02:43:02] ACT: edited web/src/Workbench.tsx
 [02:48:06] THINK: I'll start by reading the roadmap document and understanding the current UI structure.
+[02:48:06] THINK: ## Proposed plan
+
+Rather than a from-scratch rewrite (the theme and data layer are good), I'll **re-center the app on Replay** as the default experience, reusing the flight-recorder data:
+
+1.
