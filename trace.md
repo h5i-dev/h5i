@@ -3367,3 +3367,4 @@ _[Checkpoint: 6a36f40e — edited docs/features/index.html; edited docs/features
 _[Checkpoint: 6a36f59a — edited docs/blog/what-is-ai-aware-version-control/index.html; edited docs/blog/pr-body-ai-code-review/index.html; edited…]_
 ---
 
+[20:27:02] OBSERVE: read src/cli_routing.rs
