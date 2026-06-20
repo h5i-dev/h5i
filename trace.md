@@ -2939,3 +2939,4 @@ _[Checkpoint: 6a366fa9 — session ended (auto-checkpoint)]_
 [10:48:44] OBSERVE: searched SandboxablePreference\|pub for "enum"
 [10:48:44] OBSERVE: searched effective_permission_profile\|pub for "fn"
 [10:48:44] OBSERVE: searched ../codex/codex-rs/execpolicy/src/policy.rs for "../codex/codex-rs/execpolicy/src/rule.rs"
+[10:48:44] OBSERVE: searched Isolation\|struct for "enum"
