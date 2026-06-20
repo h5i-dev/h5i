@@ -2848,3 +2848,4 @@ _[Checkpoint: 6a366a01 — edited web/src/ContextView.tsx; edited web/src/Contex
 [10:44:17] OBSERVE: read adaptive.md
 [10:44:18] OBSERVE: read controlflow.md
 [10:44:18] OBSERVE: read agentflow.md
+[10:44:18] OBSERVE: read context_pipeline.md
