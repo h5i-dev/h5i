@@ -272,8 +272,8 @@ fn msg_session_note(workdir: &Path) -> Option<String> {
 
 /// Codex turn-delivery: surface unread messages for the Codex identity and
 /// mark them read. Best-effort — never fails the host command. Folded into
-/// `h5i codex prelude` / `sync` / `finish`; `h5i hook setup --target codex`
-/// installs `h5i codex finish` as the Stop hook.
+/// `h5i hook codex prelude` / `sync` / `finish`; `h5i hook setup --target codex`
+/// installs `h5i hook codex finish` as the Stop hook.
 fn deliver_codex_inbox(workdir: &Path) {
     let Ok(repo) = H5iRepository::open(workdir) else {
         return;
@@ -662,7 +662,7 @@ enum Commands {
 
         /// The agent's stated intent for this change (the ask being fulfilled).
         /// Optional fallback: in Claude Code the verbatim human prompt is
-        /// captured automatically by the `h5i claude prompt` (UserPromptSubmit)
+        /// captured automatically by the `h5i hook claude prompt` (UserPromptSubmit)
         /// hook and takes precedence, so you normally don't pass this. Provide it
         /// for Codex, CI, scripts, or manual commits where no prompt-capture hook
         /// runs. `--prompt` is kept as a backward-compatible alias.
@@ -887,13 +887,17 @@ enum Commands {
     #[command(subcommand)]
     Hook(HookCommands),
 
-    /// Claude Code integration hook handlers
+    /// Deprecated alias for `h5i hook claude` (kept so already-installed hooks
+    /// keep firing). Use `h5i hook claude` instead.
+    #[command(hide = true)]
     Claude {
         #[command(subcommand)]
         action: ClaudeCommands,
     },
 
-    /// Codex integration helpers for context restore, trace sync, and closeout
+    /// Deprecated alias for `h5i hook codex` (kept so already-installed hooks
+    /// keep firing). Use `h5i hook codex` instead.
+    #[command(hide = true)]
     Codex {
         #[command(subcommand)]
         action: CodexCommands,
@@ -2277,6 +2281,17 @@ enum HookCommands {
     /// Register in .claude/settings.json under "PreToolUse" with matcher "Bash".
     WrapBash,
 
+    /// Claude Code integration hook handlers (PostToolUse / Stop / UserPromptSubmit).
+    Claude {
+        #[command(subcommand)]
+        action: ClaudeCommands,
+    },
+
+    /// Codex integration hook handlers for context restore, trace sync, and closeout.
+    Codex {
+        #[command(subcommand)]
+        action: CodexCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2577,7 +2592,7 @@ Codex should use `h5i recall context` as shared cross-session memory and `h5i ca
 
 **At the start of a non-trivial task:**
 ```bash
-h5i codex prelude
+h5i hook codex prelude
 # If no workspace exists yet, initialize it once:
 h5i recall context init --goal "<one-line task summary>"
 ```
@@ -2585,12 +2600,12 @@ h5i recall context init --goal "<one-line task summary>"
 **While working:**
 ```bash
 h5i recall context relevant <file>   # before editing — surfaces prior reasoning + claims that mention this file
-h5i codex sync                # after a burst of reads/edits — auto-traces OBSERVE/ACT and mines THINK/NOTE from your transcript
+h5i hook codex sync           # after a burst of reads/edits — auto-traces OBSERVE/ACT and mines THINK/NOTE from your transcript
 ```
 
 You do not need to emit OBSERVE / THINK / ACT trace entries by hand —
-`h5i codex sync` (and `h5i codex finish`) derives them from the Codex
-session JSONL. The only trace you should write directly is an explicit
+`h5i hook codex sync` (and `h5i hook codex finish`) derives them from the
+Codex session JSONL. The only trace you should write directly is an explicit
 flag a reviewer must see immediately:
 
 ```bash
@@ -2599,7 +2614,7 @@ h5i recall context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 
 **After a logical milestone:**
 ```bash
-h5i codex finish --summary "<milestone summary>"
+h5i hook codex finish --summary "<milestone summary>"
 ```
 
 ### Claims — pin reusable facts
@@ -2607,7 +2622,7 @@ h5i codex finish --summary "<milestone summary>"
 After establishing a non-obvious fact a future session would otherwise re-derive
 (where a helper lives, which module owns a concern, a subtle invariant), record
 a content-addressed claim pointing at the files that back it. Live claims are
-injected into `h5i codex prelude` / `h5i recall context prompt`, so the next session
+injected into `h5i hook codex prelude` / `h5i recall context prompt`, so the next session
 treats them as pre-verified — trust them; don't re-read the files.
 
 **Two flavors:**
@@ -2641,7 +2656,7 @@ h5i capture commit -m "…" --agent codex
 ```
 
 When `h5i hook setup --write --target codex` has installed the Stop hook,
-`h5i codex finish` records the raw human prompt from the Codex session JSONL.
+`h5i hook codex finish` records the raw human prompt from the Codex session JSONL.
 `--intent` remains a fallback for CI/scripts/manual commits where no Codex
 session sync runs.
 
@@ -2677,7 +2692,7 @@ h5i msg inbox                           # show unread, mark read (numbers them)
 h5i msg reply|ack|done|decline <n> [text]   # threaded replies to message #n
 ```
 
-Inbound messages for `codex` are delivered by `h5i codex prelude`, `sync`, and
+Inbound messages for `codex` are delivered by `h5i hook codex prelude`, `sync`, and
 `finish` (they print unread and mark it read). But when you are **waiting on a
 request or reply from another agent, do not check once and finish** — that
 misses anything that arrives a moment later. Block on the waiter instead:
@@ -2782,7 +2797,9 @@ fn write_codex_instructions(workdir: &Path) -> anyhow::Result<()> {
 
     let agents_md = workdir.join("AGENTS.md");
     let existing = std::fs::read_to_string(&agents_md).unwrap_or_default();
-    if existing.contains("h5i codex prelude") {
+    // Stable marker (survives the `h5i codex` → `h5i hook codex` rename) so an
+    // already-instructed AGENTS.md isn't appended to twice.
+    if existing.contains("Codex should use `h5i recall context`") {
         return Ok(());
     }
 
@@ -4465,7 +4482,16 @@ fn main() -> anyhow::Result<()> {
     }
     let cli = Cli::parse_from(argv);
 
-    match cli.command {
+    // `h5i hook claude …` / `h5i hook codex …` are the canonical forms; the bare
+    // `h5i claude …` / `h5i codex …` survive as hidden aliases. Normalize the
+    // nested form into the top-level dispatch arms below so there's one handler.
+    let command = match cli.command {
+        Commands::Hook(HookCommands::Claude { action }) => Commands::Claude { action },
+        Commands::Hook(HookCommands::Codex { action }) => Commands::Codex { action },
+        other => other,
+    };
+
+    match command {
         // These four arms only fire if the pre-clap rewriter missed (it shouldn't —
         // it always rewrites or exits). Defensive fallback: print noun help.
         Commands::Capture { .. } => {
@@ -6382,15 +6408,15 @@ fn main() -> anyhow::Result<()> {
                     style("SessionStart:").dim(),
                     style("h5i hook session-start").bold(),
                     style("Claude PostToolUse:").dim(),
-                    style("h5i claude sync").bold(),
+                    style("h5i hook claude sync").bold(),
                     style("Edit|Write|Read").dim(),
                 );
                 println!(
                     "   {} {}   ·   {} {}",
                     style("Claude Stop:").dim(),
-                    style("h5i claude finish").bold(),
+                    style("h5i hook claude finish").bold(),
                     style("Codex Stop:").dim(),
-                    style("h5i codex finish").bold(),
+                    style("h5i hook codex finish").bold(),
                 );
                 if wrap_bash {
                     println!(
@@ -6431,7 +6457,7 @@ fn main() -> anyhow::Result<()> {
                         "   {} prompt capture (UserPromptSubmit → {}) is now wired; the MCP\n\
                          \x20    server stays manual — run {} for those instructions.",
                         style("→").dim(),
-                        style("h5i claude prompt").bold(),
+                        style("h5i hook claude prompt").bold(),
                         style("h5i hook setup").bold(),
                     );
                 }
@@ -6483,7 +6509,7 @@ fn main() -> anyhow::Result<()> {
         "hooks": [
           {
             "type": "command",
-            "command": "h5i claude prompt"
+            "command": "h5i hook claude prompt"
           }
         ]
       }
@@ -6503,7 +6529,7 @@ fn main() -> anyhow::Result<()> {
         "hooks": [
           {
             "type": "command",
-            "command": "h5i claude sync"
+            "command": "h5i hook claude sync"
           }
         ]
       }
@@ -6513,7 +6539,7 @@ fn main() -> anyhow::Result<()> {
         "hooks": [
           {
             "type": "command",
-            "command": "h5i claude finish"
+            "command": "h5i hook claude finish"
           }
         ]
       }
@@ -10485,6 +10511,13 @@ fn main() -> anyhow::Result<()> {
                 Ok(briefing) => h5i_core::resume::print_briefing(&briefing),
                 Err(e) => println!("{} Failed to generate briefing: {}", ERROR, style(e).red()),
             }
+        }
+
+        // The nested `h5i hook claude|codex …` forms are rewritten to the
+        // top-level `Commands::Claude`/`Commands::Codex` aliases before this
+        // match (see the normalization above), so they never reach here.
+        Commands::Hook(HookCommands::Claude { .. } | HookCommands::Codex { .. }) => {
+            unreachable!("`h5i hook claude|codex` is normalized to the top-level alias before dispatch")
         }
     }
 

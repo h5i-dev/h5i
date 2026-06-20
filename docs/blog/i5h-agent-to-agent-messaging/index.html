@@ -228,7 +228,7 @@
       wires up once with <code>h5i msg setup claude</code>, which installs a Stop hook that
       surfaces new messages between turns (and a SessionStart note for anything unread on
       resume). <strong>Codex</strong> picks up messages through its
-      <code>h5i codex prelude / sync / finish</code> session commands and by reading its
+      <code>h5i hook codex prelude / sync / finish</code> session commands and by reading its
       <code>inbox</code> directly. Either way, the rule is the same: a message is shown as
       quoted collaborator input, never injected as a system instruction.
     </p>

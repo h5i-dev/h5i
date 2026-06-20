@@ -254,17 +254,17 @@
 <span class="t-cmd">{
   "hooks": {
     "UserPromptSubmit": [{
-      "hooks": [{ "type": "command", "command": "h5i claude prompt" }]
+      "hooks": [{ "type": "command", "command": "h5i hook claude prompt" }]
     }],
     "SessionStart": [{
       "hooks": [{ "type": "command", "command": "h5i hook session-start" }]
     }],
     "PostToolUse": [{
       "matcher": "Edit|Write|Read",
-      "hooks": [{ "type": "command", "command": "h5i claude sync" }]
+      "hooks": [{ "type": "command", "command": "h5i hook claude sync" }]
     }],
     "Stop": [{
-      "hooks": [{ "type": "command", "command": "h5i claude finish" }]
+      "hooks": [{ "type": "command", "command": "h5i hook claude finish" }]
     }]
   }
 }</span></pre></div>

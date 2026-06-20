@@ -12,11 +12,11 @@ use toml::value::Table;
 /// output).
 const CORE_HOOKS: &[(&str, Option<&str>, &str)] = &[
     ("SessionStart", None, "h5i hook session-start"),
-    ("PostToolUse", Some("Edit|Write|Read"), "h5i claude sync"),
-    ("Stop", None, "h5i claude finish"),
+    ("PostToolUse", Some("Edit|Write|Read"), "h5i hook claude sync"),
+    ("Stop", None, "h5i hook claude finish"),
     // Capture the verbatim human prompt so `h5i capture commit` records what
     // the human actually typed, not the agent's paraphrase.
-    ("UserPromptSubmit", None, "h5i claude prompt"),
+    ("UserPromptSubmit", None, "h5i hook claude prompt"),
 ];
 
 /// The opt-in Bash capture-wrap entry (PreToolUse: rewrites the command
@@ -24,7 +24,18 @@ const CORE_HOOKS: &[(&str, Option<&str>, &str)] = &[
 const WRAP_BASH_HOOK: (&str, Option<&str>, &str) =
     ("PreToolUse", Some("Bash"), "h5i hook wrap-bash");
 
-const CODEX_STOP_HOOK: &str = "h5i codex finish --quiet";
+const CODEX_STOP_HOOK: &str = "h5i hook codex finish --quiet";
+
+/// Pre-rename command paths (`h5i claude …` / `h5i codex …`), superseded by the
+/// `h5i hook …` forms. They still resolve via hidden CLI aliases, but the merge
+/// strips any surviving managed entry so re-running `setup --write` migrates an
+/// old install in place instead of leaving a duplicate that double-fires.
+const LEGACY_AGENT_HOOKS: &[&str] = &[
+    "h5i claude sync",
+    "h5i claude finish",
+    "h5i claude prompt",
+    "h5i codex finish",
+];
 
 /// The retired PostToolUse Bash observation hook: superseded by wrap-bash
 /// (which captures AND token-reduces). The subcommand no longer exists, so
@@ -67,6 +78,15 @@ pub fn merge_hook_settings_json(existing: &str, wrap_bash: bool) -> Result<Strin
         .and_then(|v| v.as_array_mut())
     {
         arr.retain(|entry| !entry_has_command(entry, LEGACY_OBSERVE_BASH));
+    }
+    // Drop any pre-rename `h5i claude …` / `h5i codex …` entries across every
+    // event so a re-run migrates an old install rather than duplicating it.
+    for arr in hooks_obj.values_mut().filter_map(|v| v.as_array_mut()) {
+        arr.retain(|entry| {
+            !LEGACY_AGENT_HOOKS
+                .iter()
+                .any(|legacy| entry_has_command(entry, legacy))
+        });
     }
     if wrap_bash {
         let (event, matcher, command) = WRAP_BASH_HOOK;
@@ -124,7 +144,7 @@ pub fn merge_codex_config_toml(existing: &str, wrap_bash: bool) -> Result<String
     for &(event, matcher, command) in CORE_HOOKS {
         // UserPromptSubmit and PostToolUse are Claude-Code-specific here:
         // Codex prompt/tool provenance is mined from session JSONL by
-        // `h5i codex finish`, installed below as the Stop hook.
+        // `h5i hook codex finish`, installed below as the Stop hook.
         if matches!(event, "UserPromptSubmit" | "PostToolUse") {
             continue;
         }
@@ -139,6 +159,17 @@ pub fn merge_codex_config_toml(existing: &str, wrap_bash: bool) -> Result<String
         .and_then(|v| v.as_array_mut())
     {
         arr.retain(|entry| !toml_entry_has_command(entry, LEGACY_OBSERVE_BASH));
+    }
+    // Drop any pre-rename `h5i codex …` entries across every event so a re-run
+    // migrates an old install rather than duplicating it.
+    for (_event, v) in hooks_table.iter_mut() {
+        if let Some(arr) = v.as_array_mut() {
+            arr.retain(|entry| {
+                !LEGACY_AGENT_HOOKS
+                    .iter()
+                    .any(|legacy| toml_entry_has_command(entry, legacy))
+            });
+        }
     }
     if wrap_bash {
         let (event, matcher, command) = WRAP_BASH_HOOK;
@@ -282,7 +313,7 @@ fn ensure_toml_hook_entry(
 
 /// True if a hooks-array entry contains an inner command that is `command`
 /// (exactly, or followed by arguments). Exact-or-space matching so
-/// `h5i claude sync` never claims `h5i claude sync-something-else`.
+/// `h5i hook claude sync` never claims `h5i hook claude sync-something-else`.
 fn entry_has_command(entry: &Value, command: &str) -> bool {
     entry
         .get("hooks")
@@ -352,14 +383,14 @@ mod tests {
             commands_under(&v, "SessionStart"),
             vec!["h5i hook session-start"]
         );
-        assert_eq!(commands_under(&v, "PostToolUse"), vec!["h5i claude sync"]);
-        assert_eq!(commands_under(&v, "Stop"), vec!["h5i claude finish"]);
+        assert_eq!(commands_under(&v, "PostToolUse"), vec!["h5i hook claude sync"]);
+        assert_eq!(commands_under(&v, "Stop"), vec!["h5i hook claude finish"]);
         assert_eq!(
             commands_under(&v, "UserPromptSubmit"),
-            vec!["h5i claude prompt"]
+            vec!["h5i hook claude prompt"]
         );
         assert!(!out.contains("wrap-bash"));
-        // The Edit|Write|Read matcher rides along with `h5i claude sync`.
+        // The Edit|Write|Read matcher rides along with `h5i hook claude sync`.
         assert_eq!(
             v.pointer("/hooks/PostToolUse/0/matcher")
                 .and_then(|m| m.as_str()),
@@ -425,13 +456,13 @@ command = "h5i msg hook"
         assert_eq!(v["model"].as_str(), Some("gpt-5.4"));
         assert!(out.contains("command = \"h5i hook session-start\""));
         assert!(!out.contains("command = \"h5i hook run\""));
-        assert!(out.contains("command = \"h5i codex finish --quiet\""));
+        assert!(out.contains("command = \"h5i hook codex finish --quiet\""));
         assert!(!out.contains("command = \"h5i hook stop\""));
         assert!(out.contains("command = \"h5i msg hook\""));
         assert!(!out.contains("wrap-bash"));
         // UserPromptSubmit is Claude-only; Codex config must not carry it.
         assert!(!out.contains("UserPromptSubmit"));
-        assert!(!out.contains("h5i claude prompt"));
+        assert!(!out.contains("h5i hook claude prompt"));
     }
 
     #[test]
@@ -457,6 +488,43 @@ command = "h5i msg hook"
     }
 
     #[test]
+    fn legacy_agent_command_paths_are_migrated_in_place() {
+        // An install wired before the `h5i claude/codex` → `h5i hook claude/codex`
+        // rename. A re-run must swap each to the canonical path with no duplicate
+        // left behind (a surviving alias entry would double-fire).
+        let existing = r#"{
+            "hooks": {
+                "PostToolUse": [ { "matcher": "Edit|Write|Read", "hooks": [ { "type": "command", "command": "h5i claude sync" } ] } ],
+                "Stop": [ { "hooks": [ { "type": "command", "command": "h5i claude finish" } ] } ],
+                "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "h5i claude prompt" } ] } ]
+            }
+        }"#;
+        let out = merge_hook_settings_json(existing, false).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(commands_under(&v, "PostToolUse"), vec!["h5i hook claude sync"]);
+        assert_eq!(commands_under(&v, "Stop"), vec!["h5i hook claude finish"]);
+        assert_eq!(
+            commands_under(&v, "UserPromptSubmit"),
+            vec!["h5i hook claude prompt"]
+        );
+    }
+
+    #[test]
+    fn legacy_codex_stop_hook_is_migrated_in_place() {
+        let existing = r#"
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "h5i codex finish --quiet"
+"#;
+        let out = merge_codex_config_toml(existing, false).unwrap();
+        assert!(out.contains("command = \"h5i hook codex finish --quiet\""));
+        // The bare legacy path must be gone (only the new one, which has it as a
+        // non-matching prefix, remains).
+        assert!(!out.contains("\"h5i codex finish --quiet\""));
+    }
+
+    #[test]
     fn idempotent_under_reapplication() {
         let once = merge_hook_settings_json("", true).unwrap();
         let twice = merge_hook_settings_json(&once, true).unwrap();
@@ -479,7 +547,7 @@ command = "h5i msg hook"
         );
         let stop = commands_under(&v, "Stop");
         assert!(stop.contains(&"h5i msg hook --block".to_string()));
-        assert!(stop.contains(&"h5i claude finish".to_string()));
+        assert!(stop.contains(&"h5i hook claude finish".to_string()));
     }
 
     #[test]
@@ -505,9 +573,9 @@ command = "h5i msg hook"
         let out = merge_hook_settings_json(existing, false).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         let cmds = commands_under(&v, "PostToolUse");
-        // The unrelated `run-custom` survives next to the managed `h5i claude sync`.
+        // The unrelated `run-custom` survives next to the managed `h5i hook claude sync`.
         assert!(cmds.contains(&"h5i hook run-custom".to_string()));
-        assert!(cmds.contains(&"h5i claude sync".to_string()));
+        assert!(cmds.contains(&"h5i hook claude sync".to_string()));
     }
 
     #[test]

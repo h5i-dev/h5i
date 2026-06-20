@@ -9,7 +9,7 @@ Codex should use `h5i recall context` as shared cross-session memory and `h5i ca
 
 **At the start of a non-trivial task:**
 ```bash
-h5i codex prelude
+h5i hook codex prelude
 # If no workspace exists yet, initialize it once:
 h5i recall context init --goal "<one-line task summary>"
 ```
@@ -17,11 +17,11 @@ h5i recall context init --goal "<one-line task summary>"
 **While working:**
 ```bash
 h5i recall context relevant <file>   # before editing — surfaces prior reasoning + claims that mention this file
-h5i codex sync                # after a burst of reads/edits — auto-traces OBSERVE/ACT and mines THINK/NOTE from your transcript
+h5i hook codex sync           # after a burst of reads/edits — auto-traces OBSERVE/ACT and mines THINK/NOTE from your transcript
 ```
 
 You do not need to emit OBSERVE / THINK / ACT trace entries by hand —
-`h5i codex sync` (and `h5i codex finish`) derives them from the Codex
+`h5i hook codex sync` (and `h5i hook codex finish`) derives them from the Codex
 session JSONL. The only trace you should write directly is an explicit
 flag a reviewer must see immediately:
 
@@ -31,7 +31,7 @@ h5i recall context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 
 **After a logical milestone:**
 ```bash
-h5i codex finish --summary "<milestone summary>"
+h5i hook codex finish --summary "<milestone summary>"
 ```
 
 ### Claims — pin reusable facts
@@ -39,7 +39,7 @@ h5i codex finish --summary "<milestone summary>"
 After establishing a non-obvious fact a future session would otherwise re-derive
 (where a helper lives, which module owns a concern, a subtle invariant), record
 a content-addressed claim pointing at the files that back it. Live claims are
-injected into `h5i codex prelude` / `h5i recall context prompt`, so the next session
+injected into `h5i hook codex prelude` / `h5i recall context prompt`, so the next session
 treats them as pre-verified — trust them; don't re-read the files.
 
 **Two flavors:**
@@ -104,7 +104,7 @@ h5i msg inbox                           # show unread, mark read (numbers them)
 h5i msg reply|ack|done|decline <n> [text]   # threaded replies to message #n
 ```
 
-Inbound messages for `codex` are delivered by `h5i codex prelude`, `sync`, and
+Inbound messages for `codex` are delivered by `h5i hook codex prelude`, `sync`, and
 `finish` (they print unread and mark it read). But when you are **waiting on a
 request or reply from another agent, do not check once and finish** — that
 misses anything that arrives a moment later. Block on the waiter instead:
