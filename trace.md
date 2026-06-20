@@ -2698,3 +2698,9 @@ _[Checkpoint: 6a360276 — edited src/server.rs; edited src/server.rs; edited we
 [03:06:32] ACT: edited web/src/CockpitView.tsx
 [03:06:38] ACT: edited web/src/Workbench.tsx
 [03:08:30] THINK: Let me compile the lib (clippy), typecheck + build the frontend, then test the branch-scoped endpoint live:
+
+
+---
+_[Checkpoint: 6a36042e — edited web/src/CockpitView.tsx; edited web/src/CockpitView.tsx; edited web/src/Workbench.tsx]_
+---
+
