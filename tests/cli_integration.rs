@@ -169,7 +169,7 @@ fn doctor_repair_creates_storage_layout() {
 
     let h5i_dir = repo.path().join(".git").join(".h5i");
     assert!(h5i_dir.join("storage-version").exists());
-    assert!(h5i_dir.join("claims").is_dir());
+    assert!(h5i_dir.join("metadata").is_dir());
 }
 
 #[test]

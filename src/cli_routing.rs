@@ -87,9 +87,9 @@ pub fn plan_noun_route(argv: &[String]) -> NounRoute {
 /// Return the verb under `noun` whose name is closest (Levenshtein ≤ 2) to `typo`.
 pub fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
     let candidates: &[&'static str] = match noun {
-        "capture" => &["commit", "claim", "memory", "run"],
+        "capture" => &["commit", "memory", "run"],
         "recall" => &[
-            "log", "blame", "context", "claims", "notes", "memory", "recap", "resume",
+            "log", "blame", "context", "notes", "memory", "recap", "resume",
             "vibe", "object", "objects", "search",
         ],
         "audit" => &["review", "scan", "compliance", "policy", "vibe"],
@@ -145,8 +145,6 @@ pub fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
     Some(match (noun, verb) {
         // ── capture ─────────────────────────────────────────────────────
         ("capture", "commit") => &["commit"],
-        ("capture", "claim") => &["claims", "add"],
-        ("capture", "claims") => &["claims", "add"],
         ("capture", "memory") => &["memory", "snapshot"],
         ("capture", "run") => &["objects", "run"],
         ("capture", "output") => &["objects", "run"],
@@ -155,8 +153,6 @@ pub fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("recall", "log") => &["log"],
         ("recall", "blame") => &["blame"],
         ("recall", "context") => &["context"],
-        ("recall", "claims") => &["claims", "list"],
-        ("recall", "claim") => &["claims", "list"],
         ("recall", "notes") => &["notes"],
         ("recall", "memory") => &["memory"],
         ("recall", "recap") => &["context", "recap"],
@@ -285,10 +281,6 @@ mod tests {
         assert_eq!(
             plan_noun_route(&argv(&["h5i", "recall", "search", "needle", "--json"])),
             NounRoute::Rewritten(argv(&["h5i", "objects", "search", "needle", "--json"]))
-        );
-        assert_eq!(
-            plan_noun_route(&argv(&["h5i", "capture", "claim", "fact"])),
-            NounRoute::Rewritten(argv(&["h5i", "claims", "add", "fact"]))
         );
     }
 

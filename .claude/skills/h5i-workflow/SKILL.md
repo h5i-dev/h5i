@@ -160,17 +160,6 @@ h5i audit vibe                            # repo-wide AI-footprint audit
 
 ---
 
-## Pinning facts as claims
-
-When you establish a fact that should auto-invalidate if its backing files change:
-
-```bash
-h5i capture claim "<the fact>" --path <file>   # content-addressed, evidence-backed
-h5i recall claims                              # list live & stale claims
-```
-
----
-
 ## End of session
 
 The `Stop` hook auto-checkpoints the context workspace if installed. If not,

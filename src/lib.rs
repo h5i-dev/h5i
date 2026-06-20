@@ -7,7 +7,6 @@
 // surface. These form the crate's de-facto public API. (`error` stays public
 // because `H5iError` appears in the signatures of many of them.)
 pub mod blame;
-pub mod claims;
 pub mod claude;
 pub mod cli_routing;
 pub mod codex;

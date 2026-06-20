@@ -2,7 +2,7 @@
 
 This repository uses **h5i** (a Git sidecar for AI-era version control).
 
-**Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, `h5i_claims_add`, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
+**Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
 
 h5i metadata lives in `refs/h5i/*` and is NOT pushed by plain `git push`. Use `h5i share push` to share it.
 
@@ -105,63 +105,6 @@ Add flags when relevant:
 - `--audit`  — security-sensitive, authentication, or high-risk changes
 
 Every `h5i capture commit` automatically snapshots the context workspace and links it to the git commit SHA, so the workspace state is recoverable per code commit (`h5i recall context restore <sha>`, `h5i recall context diff <sha1> <sha2>`).
-
----
-
-### Claims — pin reusable facts
-
-`h5i recall claims` records content-addressed facts so future sessions don't re-derive them. Each claim pins a Merkle hash over its evidence files at HEAD; it stays **live** until any evidence blob changes, then auto-invalidates. Live claims are injected into the SessionStart prelude / `h5i recall context prompt` as pre-verified facts.
-
-**Two flavors, both stored as plain claims (only the length and path-count differ):**
-- **Cross-cutting fact** (~30 tokens, multiple paths). Example: *"HTTP only src/api/{client,auth,billing}.py."*
-- **Per-file orientation** (~80 tokens, single path) — replaces the deprecated `h5i summary`. Example: *"src/api/client.py | HTTP. fetch_user(id: int)→dict GET, create_post(...)→dict POST, delete_post(id: int)→bool DELETE. Logger \`log\` top."*
-
-**Record a claim when you have just established a non-obvious fact a future session would otherwise re-derive** — "X lives only in Y", "module M owns concern N", a subtle invariant, the public API of a struct, where *not* to look. Don't pin trivia a quick grep would answer.
-
-Via Bash:
-```bash
-h5i capture claim "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
-  --path src/api/client.py
-h5i recall claims                  # all claims, flat
-h5i recall claims --group-by-path  # claims grouped by file ("what's known about each file")
-h5i claims prune                 # drop claims whose evidence changed
-```
-
-(Or the `h5i_claims_add` / `h5i_claims_list` / `h5i_claims_prune` MCP tools if the MCP server is configured.)
-
-**Evidence-path rule — the single most important thing to get right:**
-Pick the *minimum* set of files whose content, if edited, should cause the claim to be re-checked. Ask: *"If I changed file X, would this claim's truth be in doubt?"* If no, do not include X — even if you read X while establishing the claim.
-
-Why: the claim auto-invalidates the moment *any* evidence blob changes. Over-listing guarantees rapid staleness from unrelated edits and trains future sessions to distrust claims.
-
-Concrete example. Claim: *"HTTP only in `src/api/client.py`"*.
-- ✔ Good: `--path src/api/client.py` (one path). If client.py changes, re-check. Edits to formatters/validators/main.py do not affect the truth of this claim.
-- ✖ Bad: `--path src/api/client.py --path src/utils/format.py --path main.py`. Goes stale the next time someone touches an unrelated helper — even though the claim was still true.
-
-Rule of thumb: **most good claims cite 1 file; >3 is a red flag** you're confusing "files I read" with "files that back the claim".
-
-**Other rules:**
-- Evidence paths must be tracked in HEAD.
-- If the SessionStart prelude already shows a claim covering what you were about to investigate, trust it — don't re-read the files unless the user asks.
-- If a live claim is wrong, fix it: `h5i claims prune` removes only stale ones; you can also delete the JSON in `.git/.h5i/claims/` directly to remove a wrong-but-live claim.
-
-**Write claim text in caveman style.**
-- Cross-cutting: ~30 tokens. Per-file orientation: ~80 tokens.
-- Drop articles, copulas, fluff. Keep paths, identifier names, types, numeric constants exact.
-- Live claims are re-read on every cached-prefix turn forever — every word costs forever.
-
-| | Bloated (don't) | Caveman (do) |
-|---|---|---|
-| Cross-cutting | "All HTTP-making functions in this project live only in src/api/client.py (fetch_user, create_post, delete_post). main.py and src/utils/* contain no direct HTTP." | "HTTP only src/api/client.py: fetch_user, create_post, delete_post. main.py + utils/* no HTTP." |
-| Per-file | "The src/api/client.py file is an HTTP client module that uses the requests library to call the example API. It exports three functions and a logger." | "src/api/client.py \\| HTTP. requests to api.example.com. fetch_user(id: int)→dict GET, create_post(...)→dict POST, delete_post(id: int)→bool DELETE. Logger \\`log\\` top." |
-| Invariant | "The session token must be validated using a constant-time comparison to avoid timing attacks." | "Session token: constant-time compare. Timing attack risk." |
-
-**Frequency knob (`$H5I_CLAIMS_FREQUENCY`)** — the user can tune how eagerly you record claims:
-- `off` — do not record any this session, even if one would normally be warranted.
-- `low` (default) — only non-obvious, genuinely reusable facts.
-- `high` — record liberally; pin any reusable codebase insight. The evidence-path rule applies *especially* here.
-
-The SessionStart prelude prints the active policy when it is `off` or `high`. Follow the most recent policy line you see, even if it contradicts this base guidance.
 
 ---
 
