@@ -2524,3 +2524,4 @@ _[Checkpoint: 6a35dec6 — edited src/objects.rs; edited src/main.rs; edited man
 _[Checkpoint: 6a35f224 — edited man/man1/h5i.1; edited src/secrets.rs; edited .claude/skills/h5i-workflow/SKILL.md]_
 ---
 
+[01:54:56] OBSERVE: read MANUAL.md
