@@ -3656,3 +3656,4 @@ _[Checkpoint: 6a371796 — edited roadmap/team-design.md; edited roadmap/team-de
 [22:54:57] ACT: edited roadmap/team-design.md
 [22:55:18] ACT: edited roadmap/team-design.md
 [22:55:30] THINK: Let me close one real gap I can decide myself: my question (3) — a **judge agent shouldn't also be a contender** (conflict of interest).
+[22:55:30] NOTE: PLACEHOLDER (~/Dev/h5i/roadmap/team-design.md): rs *behind* `TestsPass` (so you can't win by deleting tests/stubbing features). - Under `Discuss`, a voter can't vote for a candidate it co-authored/d…
