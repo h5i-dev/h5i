@@ -2766,3 +2766,4 @@ _[Checkpoint: 6a3609ae — edited web/src/CockpitView.tsx; edited web/src/Cockpi
 _[Checkpoint: 6a360c21 — edited web/src/CockpitView.tsx; edited web/src/CockpitView.tsx; edited web/src/CockpitView.tsx]_
 ---
 
+[03:49:18] OBSERVE: read web/src/Workbench.tsx
