@@ -3234,3 +3234,4 @@ _[Checkpoint: 6a36edda — edited AGENTS.md; edited .claude/skills/h5i-workflow/
 [19:57:44] ACT: edited src/storage.rs
 [19:57:47] OBSERVE: read src/storage.rs
 [19:58:01] ACT: edited src/storage.rs
+[19:58:06] ACT: edited tests/cli_integration.rs
