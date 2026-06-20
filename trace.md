@@ -3450,3 +3450,9 @@ _[Checkpoint: 6a370a9b — Helped Claude design ensemble/team feature: recommend
 
 [21:48:26] THINK: Let me understand the existing primitives I'd build on (`env`, `server`, `msg`) before designing.
 [21:48:26] THINK: rs` (the workspace primitive I'll build on) and `server.
+
+
+---
+_[Checkpoint: 6a370aaa — edited MANUAL.md; edited MANUAL.md]_
+---
+
