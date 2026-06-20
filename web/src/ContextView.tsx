@@ -136,14 +136,14 @@ export function ContextView({ branch }: { branch?: string | null }) {
   // for an improve-ui commit is tagged with whatever context branch was active
   // at commit time, e.g. prompt-score). Default branch (no base) → its full
   // history; no branch → all snapshots.
-  const branchShas = useMemo(() => {
-    const s = new Set<string>();
-    for (const c of branchCommits) {
-      s.add(c.git_oid);
-      s.add(c.short_oid);
-    }
-    return s;
-  }, [branchCommits]);
+  // Plain const (not useMemo) — this runs after the early-return guards above,
+  // so a hook here would violate the Rules of Hooks. The set build over ≤500
+  // commits is negligible per render.
+  const branchShas = new Set<string>();
+  for (const c of branchCommits) {
+    branchShas.add(c.git_oid);
+    branchShas.add(c.short_oid);
+  }
   const branchSnapshots = branch
     ? snapshots.filter((s) => branchShas.has(s.sha) || branchShas.has(s.sha_short))
     : snapshots;
