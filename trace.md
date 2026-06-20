@@ -3643,3 +3643,4 @@ _[Checkpoint: 6a370fa6 — edited roadmap/team-design.md; edited roadmap/team-de
 _[Checkpoint: 6a37175b — Added opt-in discussion + automated finalization policy to team design]_
 ---
 
+[22:43:34] THINK: Now let me add a dedicated policy section (§4a) defining the communication + finalization policies.
