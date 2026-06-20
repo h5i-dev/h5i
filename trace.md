@@ -3137,3 +3137,9 @@ _[Checkpoint: 6a369b31 — edited AGENTS.md; edited .claude/skills/h5i-workflow/
 
 [13:54:34] OBSERVE: read tests/msg_integration.rs
 [13:55:35] THINK: First let me confirm I'm on a feature branch (not main):
+
+
+---
+_[Checkpoint: 6a369bd7 — edited AGENTS.md; edited .claude/skills/h5i-workflow/SKILL.md; edited .claude/skills/h5i-workflow/SKILL.md]_
+---
+
