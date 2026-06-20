@@ -3029,3 +3029,4 @@ The fix has a clean home in the existing code: I'll mirror the `PrivateBind`/`pr
 _[Checkpoint: 6a3674b8 — edited src/env.rs; edited src/sandbox.rs; edited CLAUDE.md]_
 ---
 
+[11:09:32] THINK: Done. #1 is implemented, tested, and clean — not yet committed (I'll wait for your go-ahead).
