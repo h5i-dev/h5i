@@ -2637,3 +2637,4 @@ Rather than a from-scratch rewrite (the theme and data layer are good), I'll **r
 [02:48:06] THINK: Let me set up task tracking and pull the exact Rust structs I'll need to build the server endpoints.
 [02:48:06] THINK: Let me set up task tracking for this multi-phase rewrite, then read the reusable Rust APIs I'll build on.
 [02:48:06] THINK: Now let me compile the library to catch errors (wrapping with capture per project convention, limited jobs per the WSL2 OOM note).
+[02:48:06] THINK: Let me run clippy (CI gate is `-D warnings`) on the lib to catch any lint issues now while it's fresh.
