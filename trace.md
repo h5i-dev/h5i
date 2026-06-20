@@ -2658,3 +2658,9 @@ _[Checkpoint: 6a35ff94 — edited web/src/Workbench.tsx; edited web/src/Workbenc
 [02:53:28] ACT: edited web/src/RadioView.tsx
 [02:53:32] ACT: edited web/src/Workbench.tsx
 [02:54:26] THINK: Let me wire the active branch through and filter by it (with an "all branches" escape, since many threads are untagged).
+
+
+---
+_[Checkpoint: 6a3600e2 — edited web/src/RadioView.tsx; edited web/src/RadioView.tsx; edited web/src/Workbench.tsx]_
+---
+
