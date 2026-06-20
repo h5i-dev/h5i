@@ -2635,3 +2635,4 @@ Rather than a from-scratch rewrite (the theme and data layer are good), I'll **r
 
 1.
 [02:48:06] THINK: Let me set up task tracking and pull the exact Rust structs I'll need to build the server endpoints.
+[02:48:06] THINK: Let me set up task tracking for this multi-phase rewrite, then read the reusable Rust APIs I'll build on.
