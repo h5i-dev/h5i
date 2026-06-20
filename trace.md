@@ -2672,3 +2672,4 @@ _[Checkpoint: 6a3600e2 — edited web/src/RadioView.tsx; edited web/src/RadioVie
 [02:57:20] OBSERVE: read web/src/Workbench.tsx
 [02:57:22] OBSERVE: read web/src/Workbench.tsx
 [02:57:27] ACT: edited web/src/Workbench.tsx
+[02:58:44] THINK: Let me remove the big block (embedded-frontend comment + `FRONTEND_HTML` const + the legacy-only `frontend_tests` module = lines 3128–EOF) via sed, then the small references via edits.
