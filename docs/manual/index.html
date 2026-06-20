@@ -158,41 +158,25 @@
 <a class="t3" href="#legacy-forms">Legacy forms</a>
 </div>
 <a class="t2" href="#migration-cheat-sheet">Migration Cheat Sheet</a>
-<a class="t2" href="#h5i-init">h5i init</a>
-<a class="t2" href="#h5i-hook">h5i hook</a>
+<a class="t2" href="#core-commands">Core commands</a>
 <div class="t3group">
-<a class="t3" href="#h5i-hook-setup">h5i hook setup</a>
-<a class="t3" href="#h5i-hook-session-start">h5i hook session-start</a>
-<a class="t3" href="#h5i-hook-wrap-bash">h5i hook wrap-bash</a>
-</div>
-<a class="t2" href="#h5i-hook-claude">h5i hook claude</a>
-<div class="t3group">
-<a class="t3" href="#h5i-hook-claude-sync">h5i hook claude sync</a>
-<a class="t3" href="#h5i-hook-claude-finish">h5i hook claude finish</a>
-<a class="t3" href="#h5i-hook-claude-prompt">h5i hook claude prompt</a>
-</div>
-<a class="t2" href="#h5i-hook-codex">h5i hook codex</a>
-<div class="t3group">
-<a class="t3" href="#h5i-hook-codex-prelude">h5i hook codex prelude</a>
-<a class="t3" href="#h5i-hook-codex-sync">h5i hook codex sync</a>
-<a class="t3" href="#h5i-hook-codex-finish">h5i hook codex finish</a>
-</div>
-<a class="t2" href="#h5i-msg">h5i msg</a>
-<div class="t3group">
-<a class="t3" href="#setup-and-identity">Setup and identity</a>
-<a class="t3" href="#sending">Sending</a>
-<a class="t3" href="#reading-and-replying">Reading and replying</a>
-<a class="t3" href="#delivery-modes">Delivery modes</a>
+<a class="t3" href="#h5i-init">h5i init</a>
+<a class="t3" href="#h5i-resolve">h5i resolve</a>
 </div>
 <a class="t2" href="#h5i-capture">h5i capture</a>
-<a class="t2" href="#h5i-recall">h5i recall</a>
-<a class="t2" href="#h5i-audit">h5i audit</a>
 <div class="t3group">
-<a class="t3" href="#quality-vs-shape-signals">Quality vs Shape signals</a>
+<a class="t3" href="#h5i-capture-commit">h5i capture commit</a>
+<a class="t3" href="#h5i-capture-memory">h5i capture memory</a>
 </div>
-<a class="t2" href="#h5i-share">h5i share</a>
+<a class="t2" href="#h5i-recall">h5i recall</a>
 <div class="t3group">
-<a class="t3" href="#h5i-share-pr">h5i share pr</a>
+<a class="t3" href="#h5i-recall-log">h5i recall log</a>
+<a class="t3" href="#h5i-recall-blame">h5i recall blame</a>
+<a class="t3" href="#h5i-recall-notes">h5i recall notes</a>
+<a class="t3" href="#h5i-recall-context">h5i recall context</a>
+<a class="t3" href="#h5i-recall-recap">h5i recall recap</a>
+<a class="t3" href="#h5i-recall-memory">h5i recall memory</a>
+<a class="t3" href="#h5i-recall-resume">h5i recall resume</a>
 </div>
 <a class="t2" href="#h5i-objects-token-reduction">h5i objects (token reduction)</a>
 <div class="t3group">
@@ -204,63 +188,30 @@
 <a class="t3" href="#h5i-objects-filters--trust">h5i objects filters / trust</a>
 <a class="t3" href="#h5i-objects-setup">h5i objects setup</a>
 </div>
-<a class="t2" href="#h5i-capture-commit">h5i capture commit</a>
-<a class="t2" href="#h5i-recall-log">h5i recall log</a>
-<a class="t2" href="#h5i-recall-blame">h5i recall blame</a>
-<a class="t2" href="#h5i-recall-notes">h5i recall notes</a>
+<a class="t2" href="#h5i-audit">h5i audit</a>
 <div class="t3group">
-<a class="t3" href="#h5i-recall-notes-analyze">h5i recall notes analyze</a>
-<a class="t3" href="#h5i-recall-notes-show">h5i recall notes show</a>
-<a class="t3" href="#h5i-recall-notes-footprint">h5i recall notes footprint</a>
-<a class="t3" href="#h5i-recall-notes-uncertainty">h5i recall notes uncertainty</a>
-<a class="t3" href="#h5i-recall-notes-omissions">h5i recall notes omissions</a>
-<a class="t3" href="#h5i-recall-notes-coverage">h5i recall notes coverage</a>
-<a class="t3" href="#h5i-recall-notes-churn">h5i recall notes churn</a>
-<a class="t3" href="#h5i-recall-notes-graph">h5i recall notes graph</a>
+<a class="t3" href="#quality-vs-shape-signals">Quality vs Shape signals</a>
 <a class="t3" href="#h5i-audit-review">h5i audit review</a>
-</div>
-<a class="t2" href="#h5i-recall-context">h5i recall context</a>
-<div class="t3group">
-<a class="t3" href="#h5i-recall-context-init">h5i recall context init</a>
-<a class="t3" href="#h5i-recall-context-show">h5i recall context show</a>
-<a class="t3" href="#h5i-recall-context-trace">h5i recall context trace</a>
-<a class="t3" href="#h5i-recall-context-commit">h5i recall context commit</a>
-<a class="t3" href="#h5i-recall-context-branch">h5i recall context branch</a>
-<a class="t3" href="#h5i-recall-context-checkout">h5i recall context checkout</a>
-<a class="t3" href="#h5i-recall-context-merge">h5i recall context merge</a>
-<a class="t3" href="#h5i-recall-context-scope">h5i recall context scope</a>
-<a class="t3" href="#h5i-recall-context-status">h5i recall context status</a>
-<a class="t3" href="#h5i-recall-context-todo">h5i recall context todo</a>
-<a class="t3" href="#h5i-recall-context-knowledge">h5i recall context knowledge</a>
-<a class="t3" href="#h5i-recall-context-prompt">h5i recall context prompt</a>
 <a class="t3" href="#h5i-audit-scan">h5i audit scan</a>
-<a class="t3" href="#h5i-recall-context-restore">h5i recall context restore</a>
-<a class="t3" href="#h5i-recall-context-diff">h5i recall context diff</a>
-<a class="t3" href="#h5i-recall-context-relevant">h5i recall context relevant</a>
-<a class="t3" href="#h5i-recall-context-smart">h5i recall context smart</a>
-<a class="t3" href="#h5i-recall-context-pack">h5i recall context pack</a>
-<a class="t3" href="#h5i-recall-context-ephemeral">h5i recall context ephemeral</a>
-<a class="t3" href="#h5i-recall-context-cached-prefix">h5i recall context cached-prefix</a>
-<a class="t3" href="#h5i-recall-recap">h5i recall recap</a>
+<a class="t3" href="#h5i-audit-vibe">h5i audit vibe</a>
+<a class="t3" href="#h5i-audit-policy">h5i audit policy</a>
+<a class="t3" href="#h5i-audit-compliance">h5i audit compliance</a>
 </div>
-<a class="t2" href="#h5i-recall-memory">h5i recall memory</a>
+<a class="t2" href="#h5i-share">h5i share</a>
 <div class="t3group">
-<a class="t3" href="#h5i-capture-memory">h5i capture memory</a>
-<a class="t3" href="#h5i-recall-memory-log">h5i recall memory log</a>
-<a class="t3" href="#h5i-recall-memory-diff">h5i recall memory diff</a>
-<a class="t3" href="#h5i-recall-memory-restore">h5i recall memory restore</a>
+<a class="t3" href="#h5i-share-push">h5i share push</a>
+<a class="t3" href="#h5i-share-pull">h5i share pull</a>
+<a class="t3" href="#h5i-share-pr">h5i share pr</a>
 <a class="t3" href="#h5i-share-memory-push">h5i share memory push</a>
 <a class="t3" href="#h5i-share-memory-pull">h5i share memory pull</a>
 </div>
-<a class="t2" href="#h5i-recall-resume">h5i recall resume</a>
-<a class="t2" href="#h5i-audit-vibe">h5i audit vibe</a>
-<a class="t2" href="#h5i-audit-policy">h5i audit policy</a>
+<a class="t2" href="#h5i-msg">h5i msg</a>
 <div class="t3group">
-<a class="t3" href="#h5i-audit-policy-init">h5i audit policy init</a>
-<a class="t3" href="#h5i-audit-policy-check">h5i audit policy check</a>
-<a class="t3" href="#h5i-audit-policy-show">h5i audit policy show</a>
+<a class="t3" href="#setup-and-identity">Setup and identity</a>
+<a class="t3" href="#sending">Sending</a>
+<a class="t3" href="#reading-and-replying">Reading and replying</a>
+<a class="t3" href="#delivery-modes">Delivery modes</a>
 </div>
-<a class="t2" href="#h5i-audit-compliance">h5i audit compliance</a>
 <a class="t2" href="#h5i-env-isolated-agent-sandboxes">h5i env (isolated agent sandboxes)</a>
 <div class="t3group">
 <a class="t3" href="#lifecycle-commands">Lifecycle commands</a>
@@ -271,6 +222,14 @@
 <a class="t3" href="#services-and-dynamic-ports">Services and dynamic ports</a>
 <a class="t3" href="#resource-limits">Resource limits</a>
 </div>
+<a class="t2" href="#h5i-hook">h5i hook</a>
+<div class="t3group">
+<a class="t3" href="#h5i-hook-setup">h5i hook setup</a>
+<a class="t3" href="#h5i-hook-session-start">h5i hook session-start</a>
+<a class="t3" href="#h5i-hook-wrap-bash">h5i hook wrap-bash</a>
+<a class="t3" href="#h5i-hook-claude">h5i hook claude</a>
+<a class="t3" href="#h5i-hook-codex">h5i hook codex</a>
+</div>
 <a class="t2" href="#h5i-serve">h5i serve</a>
 <a class="t2" href="#h5i-mcp">h5i mcp</a>
 <div class="t3group">
@@ -280,9 +239,6 @@
 <a class="t3" href="#resource-subscriptions">Resource Subscriptions</a>
 <a class="t3" href="#typical-agent-workflow-using-mcp-tools">Typical agent workflow using MCP tools</a>
 </div>
-<a class="t2" href="#h5i-share-push">h5i share push</a>
-<a class="t2" href="#h5i-share-pull">h5i share pull</a>
-<a class="t2" href="#h5i-resolve">h5i resolve</a>
 <a class="t2" href="#appendix-storage-layout">Appendix: Storage Layout</a>
 <div class="t3group">
 <a class="t3" href="#filesystem-gith5i">Filesystem (.git/.h5i/)</a>
@@ -451,7 +407,9 @@ error: `h5i audit revew` is not a known subcommand.
        Run `h5i audit --help` for the full list.
 </code></pre>
 <hr />
-<h2 id="h5i-init">h5i init</h2>
+<h2 id="core-commands">Core commands</h2>
+<p>Global commands that sit outside the noun-verb groups.</p>
+<h3 id="h5i-init">h5i init</h3>
 <pre><code>h5i init
 </code></pre>
 <p>Initialize h5i in the current Git repository. Creates <code>.git/.h5i/</code> with subdirectories for session logs and memory snapshots.</p>
@@ -466,194 +424,21 @@ h5i init
 # → h5i sidecar initialized at .git/.h5i
 </code></pre>
 <hr />
-<h2 id="h5i-hook">h5i hook</h2>
-<pre><code>h5i hook setup                          # print install instructions
-h5i hook setup --write                  # write both Claude and Codex hook config
-h5i hook setup --write --target claude  # Claude only
-h5i hook setup --write --target codex   # Codex only
-h5i hook setup --write --scope user     # write to ~/.claude (all projects)
-h5i hook setup --write --wrap-bash      # also register the Bash capture-wrap hook
-h5i hook session-start                  # SessionStart handler (context prelude)
-h5i hook wrap-bash                      # PreToolUse Bash handler (token-reduction)
+<h3 id="h5i-resolve">h5i resolve</h3>
+<pre><code>h5i resolve &lt;ours-oid&gt; &lt;theirs-oid&gt; &lt;file&gt;
 </code></pre>
-<p><code>h5i hook</code> manages the agent hook wiring that drives h5i's automatic prompt capture and context tracing. The handlers that do the actual per-event work are <strong>agent-specific</strong> and live under <a href="#h5i-hook-claude"><code>h5i hook claude</code></a> (Claude Code) and <a href="#h5i-hook-codex"><code>h5i hook codex</code></a> (Codex); <code>h5i hook</code> itself also owns the cross-agent <code>setup</code>, <code>session-start</code>, and <code>wrap-bash</code> subcommands. (The bare <code>h5i claude …</code> / <code>h5i codex …</code> paths still work as deprecated aliases so already-installed hooks keep firing.)</p>
-<h3 id="h5i-hook-setup">h5i hook setup</h3>
-<p><code>h5i hook setup</code> (no flags) prints the install instructions. <code>h5i hook setup --write</code> writes the wiring directly: Claude Code into <code>.claude/settings.json</code> and Codex into <code>.codex/config.toml</code>, merged idempotently (each managed command is replaced in place; your own hooks and env keys are preserved). Add <code>--target claude</code> or <code>--target codex</code> to write only one agent's config, <code>--scope user</code> to write the user-level config instead of the repo's, and <code>--wrap-bash</code> to also register the optional Bash capture-wrap hook.</p>
-<p>For <strong>Claude Code</strong>, <code>--write</code> installs four hooks into <code>.claude/settings.json</code>:</p>
-<pre><code class="language-json">{
-  &quot;hooks&quot;: {
-    &quot;UserPromptSubmit&quot;: [
-      { &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i hook claude prompt&quot; }] }
-    ],
-    &quot;SessionStart&quot;: [
-      { &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i hook session-start&quot; }] }
-    ],
-    &quot;PostToolUse&quot;: [
-      { &quot;matcher&quot;: &quot;Edit|Write|Read&quot;,
-        &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i hook claude sync&quot; }] }
-    ],
-    &quot;Stop&quot;: [
-      { &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i hook claude finish&quot; }] }
-    ]
-  }
-}
-</code></pre>
-<ul>
-<li><strong>UserPromptSubmit → <code>h5i hook claude prompt</code></strong> — captures the verbatim human prompt so <code>h5i capture commit</code> records what you actually typed, not the agent's paraphrase.</li>
-<li><strong>SessionStart → <code>h5i hook session-start</code></strong> — injects prior context into every new session, and notes any unread messages on resume.</li>
-<li><strong>PostToolUse (Edit|Write|Read) → <code>h5i hook claude sync</code></strong> — auto-traces OBSERVE for every Read, ACT for every Edit/Write.</li>
-<li><strong>Stop → <code>h5i hook claude finish</code></strong> — mines THINK / NOTE entries from the session transcript and auto-checkpoints the context workspace.</li>
-</ul>
-<p>For <strong>Codex</strong>, <code>--write --target codex</code> merges inline hook tables into <code>.codex/config.toml</code>. Codex only supports the agent-agnostic <code>SessionStart</code> and <code>Stop</code> events here (the <code>UserPromptSubmit</code> / <code>PostToolUse</code> handlers are Claude-Code-specific and are skipped):</p>
-<pre><code class="language-toml">[[hooks.SessionStart]]
-[[hooks.SessionStart.hooks]]
-type = &quot;command&quot;
-command = &quot;h5i hook session-start&quot;
-
-[[hooks.Stop]]
-[[hooks.Stop.hooks]]
-type = &quot;command&quot;
-command = &quot;h5i hook codex finish --quiet&quot;
-</code></pre>
-<p>Codex requires reviewing/trusting local hooks via <code>/hooks</code>; project-local hooks only load after the project <code>.codex/</code> layer is trusted.</p>
-<p><strong>Bash capture-wrap (<code>--wrap-bash</code>, optional).</strong> Adds a <code>PreToolUse</code> Bash hook (<code>h5i hook wrap-bash</code>) that rewrites every Bash command into a <code>h5i capture run</code> wrapper, so the agent receives a token-reduced summary for large/failing output while the full raw bytes stay stored and searchable via <code>h5i recall</code>. Off by default. Note: with it enabled, permission allowlists then match the rewritten <code>h5i capture run …</code> command, not the original.</p>
-<p><strong>MCP server (manual).</strong> Hook setup no longer wires the MCP server — register it by hand if you want native h5i tools in Claude Code. Add the <code>mcpServers</code> block to <code>~/.claude/settings.json</code>:</p>
-<pre><code class="language-json">{
-  &quot;mcpServers&quot;: {
-    &quot;h5i&quot;: { &quot;command&quot;: &quot;h5i&quot;, &quot;args&quot;: [&quot;mcp&quot;] }
-  }
-}
-</code></pre>
-<p>Once registered, Claude Code gains native access to h5i tools (<code>h5i_log</code>, <code>h5i_blame</code>, <code>h5i_context_trace</code>, <code>h5i_notes_show</code>, etc.) without needing shell commands. See <a href="#h5i-mcp">h5i mcp</a> for the full tool list.</p>
-<h3 id="h5i-hook-session-start">h5i hook session-start</h3>
-<pre><code>h5i hook session-start
-</code></pre>
-<p>The shared <code>SessionStart</code> handler for both Claude Code and Codex. Injects prior context (goal, recent decisions) into the new session's context window, and notes any unread cross-agent messages on resume. Registered automatically by <code>h5i hook setup --write</code>; you rarely run it by hand.</p>
-<h3 id="h5i-hook-wrap-bash">h5i hook wrap-bash</h3>
-<pre><code>h5i hook wrap-bash
-</code></pre>
-<p>The optional <code>PreToolUse</code> handler for the Bash tool (Claude Code ≥ 2.0.10). Reads the tool event JSON from stdin and rewrites the command (via <code>updatedInput</code>) into a <code>h5i capture run</code> wrapper so the agent receives a token-reduced summary for large/failing output, while the full raw bytes are stored for <code>h5i recall</code>. Skips h5i's own commands, top-level <code>cd</code> (session cwd tracking), and anything outside a git repo; every failure path emits nothing, so the original command runs untouched. Register it with <code>h5i hook setup --write --wrap-bash</code>, or by hand under <code>PreToolUse</code> with matcher <code>Bash</code>.</p>
-<hr />
-<h2 id="h5i-hook-claude">h5i hook claude</h2>
-<pre><code>h5i hook claude sync     # PostToolUse handler (reads JSON from stdin)
-h5i hook claude finish   # Stop handler
-h5i hook claude prompt   # UserPromptSubmit handler (reads JSON from stdin)
-</code></pre>
-<p>Claude Code integration hook handlers. These are wired into <code>.claude/settings.json</code> by <code>h5i hook setup --write</code> (see <a href="#h5i-hook-setup">h5i hook setup</a>) and run automatically per event — you normally never invoke them by hand. They all fail open (no-op outside an h5i-initialized repo, never block the turn). (The bare <code>h5i claude …</code> path remains as a deprecated alias.)</p>
-<h3 id="h5i-hook-claude-sync">h5i hook claude sync</h3>
-<pre><code>h5i hook claude sync
-</code></pre>
-<p>The <code>PostToolUse</code> handler. Reads the tool-event JSON from stdin and emits an <code>h5i recall context trace</code> entry for the appropriate kind (OBSERVE on <code>Read</code>, ACT on <code>Edit</code>/<code>Write</code>); on <code>Read</code> events it injects prior reasoning about the file into Claude's context window so accumulated THINK entries surface before the file is modified.</p>
-<h3 id="h5i-hook-claude-finish">h5i hook claude finish</h3>
-<pre><code>h5i hook claude finish
-</code></pre>
-<p>The <code>Stop</code> handler. Mines THINK / NOTE entries from the session transcript (including deferrals, placeholders, and unfulfilled promises detected in the agent's reasoning) and auto-checkpoints the context workspace milestone, so you never have to call <code>h5i recall context trace</code> or <code>commit</code> by hand.</p>
-<h3 id="h5i-hook-claude-prompt">h5i hook claude prompt</h3>
-<pre><code>h5i hook claude prompt
-</code></pre>
-<p>The <code>UserPromptSubmit</code> handler. Reads the hook JSON from stdin and records the <strong>verbatim</strong> human prompt into <code>.git/.h5i/pending_context.json</code>, accumulating across turns. <code>h5i capture commit</code> then uses this raw human prompt as the recorded prompt — it wins over an agent-authored <code>--intent</code> — so AI provenance reflects what the human actually asked rather than the agent's paraphrase.</p>
-<hr />
-<h2 id="h5i-hook-codex">h5i hook codex</h2>
-<pre><code>h5i hook codex prelude
-h5i hook codex sync
-h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
-</code></pre>
-<p>Codex integration hook handlers for restoring shared context, syncing Codex session activity into <code>h5i recall context</code>, and auto-checkpointing the context workspace. <code>h5i hook setup --write --target codex</code> wires <code>h5i hook session-start</code> (SessionStart) and <code>h5i hook codex finish --quiet</code> (Stop) into <code>.codex/config.toml</code>. (The bare <code>h5i codex …</code> path remains as a deprecated alias.)</p>
-<p>Unlike Claude Code's handlers under <a href="#h5i-hook-claude"><code>h5i hook claude</code></a>, these read the active Codex JSONL session under <code>~/.codex/sessions/</code> directly and replay relevant file activity into <code>refs/h5i/context</code>, so they also work as plain commands you can run by hand if Codex's hook layer isn't trusted.</p>
-<h3 id="h5i-hook-codex-prelude">h5i hook codex prelude</h3>
-<pre><code>h5i hook codex prelude
-</code></pre>
-<p>Print the current shared context in a compact session-start format: goal, branch, milestones, recent THINK/ACT entries, and open TODOs.</p>
-<p>Use this at the beginning of a Codex session, or whenever you want to re-orient the agent without manually stitching together <code>h5i recall context show</code>, <code>status</code>, and <code>todo</code>.</p>
-<h3 id="h5i-hook-codex-sync">h5i hook codex sync</h3>
-<pre><code>h5i hook codex sync
-</code></pre>
-<p>Scan the active Codex session log for this repository and backfill <code>OBSERVE</code> / <code>ACT</code> trace entries into <code>h5i recall context</code>.</p>
-<p>Currently synced activity includes:</p>
-<ul>
-<li>file reads</li>
-<li>searches</li>
-<li>file listing operations</li>
-<li><code>apply_patch</code> edits, adds, and deletes</li>
-</ul>
-<p>Sync state is recorded in <code>.git/.h5i/codex_sync_state.json</code>, so repeated runs only process new session events.</p>
-<h3 id="h5i-hook-codex-finish">h5i hook codex finish</h3>
-<pre><code>h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
-</code></pre>
-<p>Run <code>h5i hook codex sync</code>, then auto-checkpoint the current context workspace. This is the command installed as Codex's <code>Stop</code> hook (as <code>h5i hook codex finish --quiet</code>).</p>
-<p>If <code>--summary</code> is omitted, h5i derives a short checkpoint summary from the most recent <code>ACT</code> entries. Pass <code>--quiet</code> to suppress stdout for hook use.</p>
-<hr />
-<h2 id="h5i-msg">h5i msg</h2>
-<pre><code>h5i msg                                   # inbox dashboard
-h5i msg setup [&lt;name&gt;] [--scope project|user] [--no-block]
-h5i msg send &lt;agent&gt; &lt;text&gt;               # `all` = broadcast
-h5i msg ask|review|risk|handoff &lt;agent&gt; &lt;text&gt; [flags]
-h5i msg reply|ack|done|decline &lt;n&gt; [text]
-h5i msg inbox [--peek] | history [--with &lt;agent&gt;] | replay [--with &lt;agent&gt;] [--interval S] | team
-h5i msg wait [--all] [--timeout N] | watch [--all] | hook [--block] | as &lt;name&gt; | whoami
-</code></pre>
-<p>Cross-agent messaging stored <strong>in Git</strong> (<code>refs/h5i/msg</code>), not a local database, so
-a conversation survives clones, machines, and branches and is shared with
-<code>h5i share push</code> / <code>pull</code> (divergent sends union-merge by message id). Messages
-follow the <strong>i5h protocol</strong> (<a href="docs/i5h-protocol.md">docs/i5h-protocol.md</a>): typed,
-operational handoffs rather than chat.</p>
-<h3 id="setup-and-identity">Setup and identity</h3>
-<p>Identity is <strong>per-agent</strong>, supplied by <code>$H5I_AGENT</code> (no <code>--as</code> on commands).
-Resolution order: <code>--from</code>/<code>--as</code> flag → <code>$H5I_AGENT</code> → stored default.</p>
-<pre><code># Claude Code (one-time, per project): sets env H5I_AGENT + a turn-delivery Stop hook
-h5i msg setup claude            # → ./.claude/settings.json (autonomous --block hook)
-h5i msg setup claude --scope user   # → ~/.claude/settings.json (all projects)
-h5i msg setup claude --no-block     # notify-only hook instead of autonomous
-
-# Codex: just launch it with the identity in its environment
-H5I_AGENT=codex codex
-</code></pre>
-<p>Several agents can share one clone safely: identity is per-process (env), the
-message ref is concurrency-safe (compare-and-swap on send), and read-state is
-kept in per-agent files (<code>.git/.h5i/msg/cursors/&lt;agent&gt;.json</code>,
-<code>views/&lt;agent&gt;.json</code>). Never use <code>h5i msg as</code> when two agents share a clone — it
-writes a single shared identity file; prefer <code>$H5I_AGENT</code>.</p>
-<h3 id="sending">Sending</h3>
-<pre><code>h5i msg send codex deploy is done            # free text (joined with spaces)
-h5i msg send all standup in 5                # broadcast to everyone else
-h5i msg ask codex can you inspect the failing test
-h5i msg review --branch auth --focus src/auth.rs --pr 42 codex review token refresh
-h5i msg risk --focus src/auth.rs --priority high all auth cache crosses requests
-h5i msg handoff --branch auth --context auth reviewer please take expiry work
-</code></pre>
-<p>Typed verbs set the i5h <code>kind</code> (<code>ASK</code>, <code>REVIEW_REQUEST</code>, <code>RISK</code>, <code>HANDOFF</code>) and
-structured fields. <strong>Options must precede the recipient</strong> (the body is variadic).</p>
-<h3 id="reading-and-replying">Reading and replying</h3>
-<pre><code>h5i msg                          # dashboard: header · inbox · GIT PROOF band (a glance; does not consume)
-h5i msg inbox                    # show unread, mark read, number them
-h5i msg reply 1 on it            # threaded reply to message #1 of your last view
-h5i msg ack 1                    # ACK / DONE / DECLINE are typed threaded replies
-h5i msg done 1 fixed in 1a2b3c4
-h5i msg history --with codex     # full conversation log
-h5i msg replay --with codex      # replay the log as a live feed (1s between messages)
-h5i msg team                     # known agents
-</code></pre>
-<p>Add <code>--plain</code> to any read command for greppable, uncoloured output.</p>
-<h3 id="delivery-modes">Delivery modes</h3>
-<ul>
-<li><strong>Turn delivery (primary).</strong> The Stop hook (<code>h5i msg hook</code>) surfaces new
-  messages between turns. Default (<code>--block</code>) emits <code>decision:block</code> so the
-  agent autonomously handles the message; <code>--no-block</code> (via setup) emits a
-  notify-only <code>systemMessage</code>. <code>h5i hook session-start</code> also notes unread on
-  resume.</li>
-<li><strong>Codex.</strong> <code>h5i hook codex prelude</code> / <code>sync</code> / <code>finish</code> auto-deliver Codex's inbox
-  (Codex has no Stop hook).</li>
-<li><strong><code>h5i msg wait</code>.</strong> The autonomous wake primitive: blocks until a message
-  arrives (returns existing unread immediately), prints it, and exits — peek
-  only. Run it as a background task (Claude Code) or in a poll loop (Codex) so
-  an <em>idle</em> agent is woken on a reply rather than missing it. <code>--timeout N</code>
-  (0 = forever), <code>--all</code> for the whole channel.</li>
-<li><strong><code>h5i msg watch</code>.</strong> A live stream — your inbox with an identity, or the whole
-  channel with <code>--all</code> / no identity (a human-facing dashboard). Real-time push
-  into a running agent via the Monitor tool is experimental / host-dependent.</li>
-</ul>
-<p>Incoming messages are framed as <strong>untrusted collaborator input</strong>, never as
-instructions; agents are told to evaluate and decide.</p>
+<p>Run a text-based 3-way merge for <code>&lt;file&gt;</code> between two commits. The ancestor
+is the <code>git merge-base</code> of the two OIDs; h5i materializes the three blobs and
+delegates to <code>git merge-file -p</code>, then prints the merged content to stdout.</p>
+<p>When textual conflicts cannot be resolved, the output contains the usual
+<code>&lt;&lt;&lt;&lt;&lt;&lt;&lt; ours / ======= / &gt;&gt;&gt;&gt;&gt;&gt;&gt; theirs</code> markers and the command exits with
+status 1; otherwise it exits 0.</p>
+<blockquote>
+<p><strong>Note:</strong> Earlier versions of <code>h5i resolve</code> did a Yjs CRDT semantic merge
+reading from a per-commit <code>crdt_states</code> field. That dependency has been
+removed; <code>resolve</code> now behaves like a deterministic, git-native 3-way
+merge.</p>
+</blockquote>
 <hr />
 <h2 id="h5i-capture">h5i capture</h2>
 <p>Record provenance: commit code, snapshot agent memory.</p>
@@ -687,6 +472,164 @@ instructions; agents are told to evaluate and decide.</p>
     --model claude-sonnet-4-6 --agent claude-code --prompt &quot;sessions must survive restarts&quot;
 
 h5i capture memory --agent claude
+</code></pre>
+<hr />
+<h3 id="h5i-capture-commit">h5i capture commit</h3>
+<pre><code>h5i capture commit -m &lt;message&gt; [options]
+</code></pre>
+<p>Create a Git commit and store AI provenance metadata in <code>refs/h5i/notes</code>. Canonical form of the legacy <code>h5i commit</code>.</p>
+<p>Flag resolution order: CLI flag → environment variable → pending context file (written by the Claude Code hook).</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Env var</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-m, --message &lt;text&gt;</code></td>
+<td>—</td>
+<td>Commit message (required)</td>
+</tr>
+<tr>
+<td><code>--prompt &lt;text&gt;</code></td>
+<td><code>H5I_PROMPT</code></td>
+<td>The user prompt that triggered this commit. Auto-captured when the hook is installed.</td>
+</tr>
+<tr>
+<td><code>--model &lt;name&gt;</code></td>
+<td><code>H5I_MODEL</code></td>
+<td>Model name, e.g. <code>claude-sonnet-4-6</code></td>
+</tr>
+<tr>
+<td><code>--agent &lt;id&gt;</code></td>
+<td><code>H5I_AGENT_ID</code></td>
+<td>Agent identifier, e.g. <code>claude-code</code></td>
+</tr>
+<tr>
+<td><code>--decisions &lt;file&gt;</code></td>
+<td>—</td>
+<td>Path to a JSON file of structured design decisions (see below)</td>
+</tr>
+<tr>
+<td><code>--caused-by &lt;oid&gt;</code></td>
+<td>—</td>
+<td>OID of a commit that causally triggered this one. Repeatable.</td>
+</tr>
+<tr>
+<td><code>--test-results &lt;file&gt;</code></td>
+<td><code>H5I_TEST_RESULTS</code></td>
+<td>Path to a JSON test results file (see <a href="#appendix-test-adapter-schema">Appendix: Test Adapter Schema</a>)</td>
+</tr>
+<tr>
+<td><code>--test-cmd &lt;cmd&gt;</code></td>
+<td>—</td>
+<td>Shell command whose stdout produces a test results JSON object</td>
+</tr>
+<tr>
+<td><code>--tests</code></td>
+<td>—</td>
+<td>Scan staged files for inline <code>h5_i_test_start</code> / <code>h5_i_test_end</code> markers</td>
+</tr>
+<tr>
+<td><code>--audit</code></td>
+<td>—</td>
+<td>Run integrity rules before committing (see <a href="#appendix-integrity-rules">Appendix: Integrity Rules</a>)</td>
+</tr>
+<tr>
+<td><code>--force</code></td>
+<td>—</td>
+<td>Commit despite integrity warnings. Violations always block regardless of this flag.</td>
+</tr>
+<tr>
+<td><code>--add &lt;path&gt;</code></td>
+<td>—</td>
+<td>Stage this path before committing (equivalent to <code>git add &lt;path&gt;</code>). Repeatable. Eliminates the separate <code>git add</code> step when used in scripts or MCP tool calls.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Example — basic commit with hooks</strong></p>
+<pre><code class="language-bash"># Prompt is captured automatically from the Claude Code session
+h5i capture commit -m &quot;add rate limiting&quot;
+</code></pre>
+<pre><code>✔  Committed a3f9c2b  add rate limiting
+   model: claude-sonnet-4-6 · agent: claude-code · 312 tokens
+</code></pre>
+<p><strong>Example — commit with test results and audit</strong></p>
+<pre><code class="language-bash">h5i capture commit -m &quot;add login tests&quot; \
+  --test-cmd &quot;python plugin/h5i-pytest-adapter.py&quot; \
+  --audit
+</code></pre>
+<p><strong>Example — causal chain</strong></p>
+<p>Link a fix to the commit that introduced the bug:</p>
+<pre><code class="language-bash">h5i capture commit -m &quot;fix off-by-one in validate_token&quot; --caused-by a3f9c2b
+</code></pre>
+<p>When rolling back a commit, h5i warns if later commits declared it as a cause:</p>
+<pre><code>⚠ Warning: 2 later commits causally depend on this one:
+  → b2f3a1c &quot;fix bug introduced by rate limiter&quot;
+Continue anyway? [y/N]
+</code></pre>
+<p><strong>Example — design decisions</strong></p>
+<p>Record which alternatives were considered and why the chosen approach was preferred:</p>
+<pre><code class="language-bash">cat &gt; decisions.json &lt;&lt; 'EOF'
+[
+  {
+    &quot;location&quot;: &quot;src/session.rs:44&quot;,
+    &quot;choice&quot;: &quot;Redis over in-process HashMap&quot;,
+    &quot;alternatives&quot;: [&quot;in-process HashMap&quot;, &quot;Memcached&quot;],
+    &quot;reason&quot;: &quot;survives process restarts; required for horizontal scaling&quot;
+  }
+]
+EOF
+
+h5i capture commit -m &quot;switch session store to Redis&quot; --decisions decisions.json
+</code></pre>
+<p>Decisions are stored in <code>refs/h5i/notes</code> and shown in <code>h5i recall log</code>:</p>
+<pre><code>Decisions:
+  ◆ src/session.rs:44  Redis over in-process HashMap
+    alternatives: in-process HashMap, Memcached
+    survives process restarts; required for horizontal scaling
+</code></pre>
+<p>Decision schema: array of objects. <code>location</code> and <code>choice</code> are required; <code>alternatives</code> and <code>reason</code> are optional but recommended.</p>
+<pre><code class="language-json">{
+  &quot;location&quot;:     &quot;src/file.rs:42&quot;,
+  &quot;choice&quot;:       &quot;the approach taken&quot;,
+  &quot;alternatives&quot;: [&quot;option A&quot;, &quot;option B&quot;],
+  &quot;reason&quot;:       &quot;why this was chosen&quot;
+}
+</code></pre>
+<hr />
+<h3 id="h5i-capture-memory">h5i capture memory</h3>
+<pre><code>h5i capture memory [options]
+</code></pre>
+<p>Snapshot the current state of an agent memory backend and store it as a git object linked to a commit. Canonical form of the legacy <code>h5i memory snapshot</code>.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--commit &lt;oid&gt;</code></td>
+<td>Link snapshot to a specific commit (default: HEAD)</td>
+</tr>
+<tr>
+<td><code>--agent &lt;claude\|codex&gt;</code></td>
+<td>Memory backend to snapshot</td>
+</tr>
+<tr>
+<td><code>--path &lt;dir&gt;</code></td>
+<td>Override the source directory completely</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">h5i capture memory --agent codex
 </code></pre>
 <hr />
 <h2 id="h5i-recall">h5i recall</h2>
@@ -748,321 +691,1105 @@ h5i capture memory --agent claude
 </tbody>
 </table>
 <hr />
-<h2 id="h5i-audit">h5i audit</h2>
-<p>Assess risk on AI-generated changes.</p>
-<table>
-<thead>
-<tr>
-<th>Verb</th>
-<th>Equivalent legacy form</th>
-<th>What it does</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>h5i audit review</code></td>
-<td><code>h5i notes review</code></td>
-<td>Rank commits by Quality + Shape signals.</td>
-</tr>
-<tr>
-<td><code>h5i audit scan</code></td>
-<td><code>h5i context scan</code></td>
-<td>Scan reasoning traces for prompt-injection patterns.</td>
-</tr>
-<tr>
-<td><code>h5i audit compliance</code></td>
-<td><code>h5i compliance</code></td>
-<td>Date-ranged audit report (text / json / html).</td>
-</tr>
-<tr>
-<td><code>h5i audit policy &lt;sub&gt;</code></td>
-<td><code>h5i policy &lt;sub&gt;</code></td>
-<td>Manage <code>.h5i/policy.toml</code> rules.</td>
-</tr>
-<tr>
-<td><code>h5i audit vibe</code></td>
-<td><code>h5i vibe</code></td>
-<td>Repo-wide AI footprint summary. See <a href="#h5i-audit-vibe">h5i audit vibe</a>.</td>
-</tr>
-</tbody>
-</table>
-<pre><code class="language-bash">h5i audit review --limit 50
-h5i audit compliance --since 2026-01-01 --until 2026-03-31 \
-    --format html --output audit.html
-h5i audit vibe --limit 1000 --json
+<h3 id="h5i-recall-log">h5i recall log</h3>
+<pre><code>h5i recall log [options]
 </code></pre>
-<h3 id="quality-vs-shape-signals">Quality vs Shape signals</h3>
-<p><code>h5i audit review</code> (and the PR-comment 🚩) split rules into two tiers so
-size-based noise stops drowning out real risk signals.</p>
-<p><strong>Quality</strong> (high-precision — these alone can flag a commit):</p>
+<p>Show commit history with full AI provenance inline. Canonical form of the legacy <code>h5i log</code>.</p>
+<p><strong>Options</strong></p>
 <table>
 <thead>
 <tr>
-<th>Rule</th>
-<th>Fires when</th>
+<th>Option</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>CREDENTIAL_LEAK</code></td>
-<td>Added line matches the embedded regex pack (AWS / GCP / GitHub / Slack / Stripe / Anthropic / OpenAI / JWT / PEM private key) or an entropy-gated generic key=value assignment. Lockfiles, vendor dirs, fonts, binaries, and <code>testdata/</code> are allowlisted; lines containing placeholder substrings (<code>your-key-here</code>, <code>EXAMPLE</code>, <code>${ENV}</code>, …) are suppressed. Matched values redacted to first 4 chars.</td>
+<td><code>--limit &lt;n&gt;</code></td>
+<td>Number of commits to show (default: all)</td>
 </tr>
 <tr>
-<td><code>CODE_EXECUTION</code></td>
-<td>Added line invokes <code>eval()</code>, <code>os.system()</code>, <code>subprocess.*</code>, <code>Runtime.exec()</code>, etc.</td>
-</tr>
-<tr>
-<td><code>SENSITIVE_FILE_MODIFIED</code></td>
-<td>Touched a <code>.env</code>, <code>.pem</code>, <code>.key</code>, or similar high-value path.</td>
-</tr>
-<tr>
-<td><code>CI_CD_MODIFIED</code></td>
-<td>Touched a CI/CD workflow file.</td>
-</tr>
-<tr>
-<td><code>PERMISSION_CHANGE</code></td>
-<td>File mode bits changed (e.g. chmod +x).</td>
-</tr>
-<tr>
-<td><code>TEST_REGRESSION</code></td>
-<td>Tests were passing on parent and now failing, OR coverage dropped &gt;5%.</td>
-</tr>
-<tr>
-<td><code>BLIND_EDIT</code></td>
-<td>Agent edited a file with no prior <code>Read</code> in the session.</td>
-</tr>
-<tr>
-<td><code>DUPLICATED_CODE</code></td>
-<td>≥10 identical significant lines repeated within the same file.</td>
-</tr>
-<tr>
-<td><code>MASS_DELETION</code></td>
-<td>&gt;100 lines deleted and &gt;80% of the diff is deletions.</td>
-</tr>
-<tr>
-<td><code>BINARY_FILE</code></td>
-<td>Opaque binary file modified.</td>
-</tr>
-<tr>
-<td><code>AI_NO_PROMPT</code></td>
-<td>AI-tagged commit with empty <code>prompt</code> (provenance gap).</td>
+<td><code>--ancestry &lt;file&gt;:&lt;line&gt;</code></td>
+<td>Trace every commit that touched a specific line, annotated with its prompt</td>
 </tr>
 </tbody>
 </table>
-<p><strong>Shape</strong> (informational — never flag a commit alone):</p>
-<table>
-<thead>
-<tr>
-<th>Rule</th>
-<th>Fires when</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>LARGE_DIFF</code></td>
-<td>&gt;50 / &gt;200 / &gt;500 lines changed.</td>
-</tr>
-<tr>
-<td><code>WIDE_IMPACT</code></td>
-<td>&gt;5 / &gt;10 / &gt;20 files changed.</td>
-</tr>
-<tr>
-<td><code>CROSS_CUTTING</code></td>
-<td>Changes span &gt;3 / &gt;5 top-level directories.</td>
-</tr>
-<tr>
-<td><code>BURST_AFTER_GAP</code></td>
-<td>First commit after a &gt;3 / &gt;7 day quiet period.</td>
-</tr>
-<tr>
-<td><code>POLYGLOT_CHANGE</code></td>
-<td>&gt;4 distinct file extensions changed.</td>
-</tr>
-<tr>
-<td><code>UNTESTED_CHANGE</code></td>
-<td>&gt;100 lines changed, no test metrics, and the project has tests elsewhere.</td>
-</tr>
-</tbody>
-</table>
-<p>The PR-comment 🚩 fires when <code>quality_score &gt;= 0.25</code>. Shape signals are
-listed in a secondary "shape signals (informational)" line — <em>only</em> when a
-Quality signal also fired. <code>LARGE_DIFF</code> alone is noise; <code>LARGE_DIFF + BLIND_EDIT</code>
-is a real review point.</p>
-<p>The credential scanner lives in <code>src/secrets.rs</code> as an embedded regex pack —
-there is no runtime dependency on the gitleaks binary.</p>
+<p><strong>Example — recent commits</strong></p>
+<pre><code class="language-bash">h5i recall log --limit 3
+</code></pre>
+<pre><code>● a3f9c2b  add rate limiting
+  2026-03-27 14:02  Alice &lt;alice@example.com&gt;
+  model: claude-sonnet-4-6 · agent: claude-code · 312 tokens
+  prompt: &quot;add per-IP rate limiting to the auth endpoint&quot;
+  tests:  ✔ 42 passed, 0 failed, 1.23s [pytest]
+
+● 9e21b04  fix off-by-one in parser
+  2026-03-26 11:45  Bob &lt;bob@example.com&gt;
+  (no AI metadata)
+</code></pre>
+<p><strong>Example — prompt ancestry for a specific line</strong></p>
+<pre><code class="language-bash">h5i recall log --ancestry src/auth.rs:42
+</code></pre>
+<pre><code>── Prompt ancestry for src/auth.rs:42
+
+  [1 of 3]  a3f9c2b  Alice · 2026-03-27 14:02 UTC
+       line:    check_rate_limit(&amp;ip, &amp;config.rate_limit)
+       prompt:  &quot;add per-IP rate limiting to the auth endpoint&quot;
+
+  [2 of 3]  9e21b04  Bob · 2026-03-26 11:45 UTC
+       line:    check_rate_limit(&amp;ip)
+       prompt:  (none recorded)
+
+  [3 of 3]  4c8d2a1  Alice · 2026-03-20 09:10 UTC
+       line:    true  // placeholder
+       prompt:  &quot;stub out the rate limiter&quot;
+</code></pre>
 <hr />
-<h2 id="h5i-share">h5i share</h2>
-<p>Publish provenance to teammates and PRs.</p>
+<h3 id="h5i-recall-blame">h5i recall blame</h3>
+<pre><code>h5i recall blame &lt;file&gt; [options]
+</code></pre>
+<p>Show line-level authorship with AI provenance. Canonical form of the legacy <code>h5i blame</code>. A status column precedes each line:</p>
+<ul>
+<li>Test status: <code>✅</code> passing, <code>✖</code> failing, blank = no data</li>
+</ul>
+<p><strong>Options</strong></p>
 <table>
 <thead>
 <tr>
-<th>Verb</th>
-<th>Equivalent legacy form</th>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--show-prompt</code></td>
+<td>Annotate each commit boundary with the human prompt that triggered it</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Example</strong></p>
+<pre><code class="language-bash">h5i recall blame src/auth.rs
+</code></pre>
+<pre><code>STAT COMMIT   AUTHOR/AGENT    | CONTENT
+✅✨  a3f9c2b  claude-code     | fn validate_token(tok: &amp;str) -&gt; bool {
+✅✨  a3f9c2b  claude-code     |     tok.len() == 64 &amp;&amp; tok.chars().all(|c| c.is_ascii_hexdigit())
+     9eff001  alice           | }
+</code></pre>
+<p><strong>Example — with prompt annotations</strong></p>
+<pre><code class="language-bash">h5i recall blame src/auth.rs --show-prompt
+</code></pre>
+<pre><code>── commit a3f9c2b ── prompt: &quot;add per-IP rate limiting to the auth endpoint&quot; ──
+✅✨  a3f9c2b  claude-code  | pub fn check_rate_limit(ip: IpAddr) -&gt; bool {
+── commit 9e21b04 ── (no prompt recorded) ──
+     9e21b04  alice        | pub fn authenticate(token: &amp;str) -&gt; Result&lt;User&gt; {
+</code></pre>
+<hr />
+<h3 id="h5i-recall-notes">h5i recall notes</h3>
+<p>Parse Claude Code session logs and store enriched metadata linked to commits. Session logs are read from <code>~/.claude/projects/&lt;repo&gt;/</code>.</p>
+<p>All <code>h5i recall notes</code> subcommands accept <code>--commit &lt;oid&gt;</code> to target a specific commit (default: HEAD).</p>
+<hr />
+<h4 id="h5i-recall-notes-analyze">h5i recall notes analyze</h4>
+<pre><code>h5i recall notes analyze [options]
+</code></pre>
+<p>Parse a Claude Code session log and store the analysis in <code>.git/.h5i/session_log/&lt;commit-oid&gt;/analysis.json</code>. Run this after each session before using any other <code>h5i recall notes</code> subcommand.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--session &lt;path&gt;</code></td>
+<td>Path to a specific JSONL session file. Defaults to the most recent log in <code>~/.claude/projects/&lt;repo&gt;/</code>.</td>
+</tr>
+<tr>
+<td><code>--commit &lt;oid&gt;</code></td>
+<td>Link the analysis to a specific commit (default: HEAD)</td>
+</tr>
+<tr>
+<td><code>--since &lt;oid&gt;</code></td>
+<td>Only analyze messages after the given commit's timestamp</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h4 id="h5i-recall-notes-show">h5i recall notes show</h4>
+<pre><code>h5i recall notes show [--commit &lt;oid&gt;]
+</code></pre>
+<p>Print the raw stored analysis for a commit: session ID, message count, tool call count, files consulted and edited.</p>
+<hr />
+<h4 id="h5i-recall-notes-footprint">h5i recall notes footprint</h4>
+<pre><code>h5i recall notes footprint [--commit &lt;oid&gt;]
+</code></pre>
+<p>Show which files Claude read vs. edited, and which files were read but not edited (<em>implicit dependencies</em> — what Claude had to understand to make the change, which Git's diff never captures).</p>
+<pre><code>── Exploration Footprint ──────────────────────────────────────
+  Session 90130372  ·  503 messages  ·  181 tool calls
+
+  Files Consulted:
+    📖 src/main.rs ×13  [Read]
+    📖 src/server.rs ×17  [Read,Grep]
+
+  Files Edited:
+    ✏ src/main.rs  ×18 edit(s)
+    ✏ src/server.rs  ×17 edit(s)
+
+  Implicit Dependencies (read but not edited):
+    → src/metadata.rs
+    → Cargo.toml
+</code></pre>
+<hr />
+<h4 id="h5i-recall-notes-uncertainty">h5i recall notes uncertainty</h4>
+<pre><code>h5i recall notes uncertainty [options]
+</code></pre>
+<p>Show every moment Claude expressed uncertainty, with the exact quote, confidence score, and the file being edited at that moment.</p>
+<p>Confidence scoring: <strong>red</strong> (&lt;35%) = very uncertain, <strong>yellow</strong> (35–55%) = moderate, <strong>green</strong> (&gt;55%) = incidental mention.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--commit &lt;oid&gt;</code></td>
+<td>Target a specific commit (default: HEAD)</td>
+</tr>
+<tr>
+<td><code>--file &lt;path&gt;</code></td>
+<td>Filter signals to a specific file</td>
+</tr>
+</tbody>
+</table>
+<pre><code>── Uncertainty Heatmap ─────────────────────────────────────────────────
+  7 signals  ·  3 files
+
+  src/auth.rs    ████████████░░░░  ●●●  4 signals  avg 28%
+  src/main.rs    ██████░░░░░░░░░░  ●●   2 signals  avg 40%
+  src/server.rs  ██░░░░░░░░░░░░░░  ●    1 signal   avg 52%
+
+  ██ t:32   not sure    src/auth.rs  [25%]
+       &quot;…token validation might break if the token contains special chars…&quot;
+
+  ▓▓ t:220  let me check  src/main.rs  [45%]
+       &quot;…The LSP shows the match still isn't seeing the new arm. Let me check…&quot;
+
+  ░░ t:496  perhaps        src/server.rs  [52%]
+       &quot;…perhaps we should also handle the case where body is empty…&quot;
+</code></pre>
+<hr />
+<h4 id="h5i-recall-notes-omissions">h5i recall notes omissions</h4>
+<pre><code>h5i recall notes omissions [options]
+</code></pre>
+<p>Detect incomplete work Claude left behind, extracted from its thinking blocks. Three categories:</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Badge</th>
+<th>Trigger phrases</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Deferral</strong></td>
+<td><code>⏭</code></td>
+<td><code>"for now"</code>, <code>"out of scope"</code>, <code>"separate PR"</code>, <code>"leave this for later"</code></td>
+</tr>
+<tr>
+<td><strong>Placeholder</strong></td>
+<td><code>⬜</code></td>
+<td><code>"stub"</code>, <code>"hardcoded for now"</code>, <code>"simplified version"</code>, <code>"workaround"</code></td>
+</tr>
+<tr>
+<td><strong>Unfulfilled promise</strong></td>
+<td><code>💬</code></td>
+<td><code>"I'll also update X"</code> / <code>"I should also add Y"</code> where that file was never edited</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--commit &lt;oid&gt;</code></td>
+<td>Target a specific commit (default: HEAD)</td>
+</tr>
+<tr>
+<td><code>--file &lt;path&gt;</code></td>
+<td>Filter signals to a specific file</td>
+</tr>
+</tbody>
+</table>
+<pre><code>── Omission Report ─────────────────────────────────────────────
+  5 signals  ·  2 deferrals  ·  2 placeholders  ·  1 unfulfilled promise
+
+  ⏭ DEFERRAL    src/auth.rs · t:18 · &quot;for now&quot;
+       &quot;…I'll hardcode the token TTL for now — a proper config value can be added later…&quot;
+
+  ⬜ PLACEHOLDER  src/session.rs · t:55 · &quot;hardcoded for now&quot;
+       &quot;…session timeout is hardcoded for now at 3600s, should come from config…&quot;
+
+  💬 UNFULFILLED  src/auth.rs · t:61 · &quot;i'll also update&quot;
+     → promised file: src/auth/tests.rs  (never edited)
+</code></pre>
+<p>For unfulfilled promises that name a file path, h5i cross-checks whether that file appeared in the session's edit sequence. If it did not, the omission is flagged.</p>
+<hr />
+<h4 id="h5i-recall-notes-coverage">h5i recall notes coverage</h4>
+<pre><code>h5i recall notes coverage [options]
+</code></pre>
+<p>Show per-file attention coverage: the fraction of edits that were preceded by at least one Read in the same session. An edit with no prior Read is a <strong>blind edit</strong> — Claude modified the file without direct evidence it understood the current state.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--commit &lt;oid&gt;</code></td>
+<td>Target a specific commit (default: HEAD)</td>
+</tr>
+<tr>
+<td><code>--max-ratio &lt;f&gt;</code></td>
+<td>Only show files at or below this coverage ratio (0.0–1.0)</td>
+</tr>
+</tbody>
+</table>
+<pre><code>── Attention Coverage — a3f9c2b
+
+  File                    Edits   Coverage   Blind edits
+  src/auth.rs                 4       75%             1
+  src/session.rs              2        0%             2   ← review these
+  src/main.rs                 1      100%             0
+
+  2 file(s) with blind edits.
+</code></pre>
+<p>Files are sorted by blind edit count (most risky first). When coverage data is available, <code>h5i audit review</code> adds a <code>BLIND_EDIT</code> signal weighted at 0.10 per file (max contribution 0.30) to the review score.</p>
+<hr />
+<h4 id="h5i-recall-notes-churn">h5i recall notes churn</h4>
+<pre><code>h5i recall notes churn [--limit &lt;n&gt;]
+</code></pre>
+<p>Show per-file churn: the edit-to-read ratio across all analyzed sessions. High churn indicates trial-and-error rather than confident, planned changes.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--limit &lt;n&gt;</code></td>
+<td>Number of files to show (default: all)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h4 id="h5i-recall-notes-graph">h5i recall notes graph</h4>
+<pre><code>h5i recall notes graph [options]
+</code></pre>
+<p>Visualize the causal chain across commits — which AI commit triggered which.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--limit &lt;n&gt;</code></td>
+<td>Number of commits to include (default: 20)</td>
+</tr>
+<tr>
+<td><code>--mode &lt;mode&gt;</code></td>
+<td>Output mode (default: terminal graph)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="h5i-recall-context">h5i recall context</h3>
+<p>A version-controlled reasoning workspace stored in <code>refs/h5i/context</code> that survives session resets. Command structure mirrors Git. Based on <a href="https://arxiv.org/abs/2508.00031">arXiv:2508.00031</a>, enhanced with five capabilities derived from recent research (CMV paper arXiv:2602.22402, Claude Code design-space analysis arXiv:2604.14228):</p>
+<ol>
+<li><strong>DAG trace nodes</strong> — every <code>trace</code> entry is a node in a directed acyclic graph with explicit <code>parent_ids</code>; merge operations create two-parent nodes so parallel branches stay causally connected.</li>
+<li><strong>Ephemeral traces</strong> (<code>--ephemeral</code>) — scratch observations excluded from the DAG, excluded from snapshots, and cleared on the next <code>context commit</code>; analogous to Claude Code's <code>/btw</code>.</li>
+<li><strong>Three-pass lossless <code>pack</code></strong> — removes subsumed OBSERVEs, merges consecutive OBSERVEs about the same file, and preserves all THINK/ACT/NOTE entries verbatim.</li>
+<li><strong>Stable-prefix / dynamic-suffix split</strong> — <code>context status</code> and <code>context cached-prefix</code> show the prompt-caching boundary in the trace.</li>
+<li><strong>Subagent-scoped sub-contexts</strong> (<code>context scope</code>) — lightweight <code>scope/&lt;name&gt;</code> branches for delegated subagent investigation, shown separately in <code>status</code>.</li>
+</ol>
+<p><strong>Workspace layout</strong> (stored entirely inside <code>refs/h5i/context</code>)</p>
+<pre><code>refs/h5i/context tree:
+├── main.md                        ← global roadmap: goal, milestones, notes
+├── .current_branch                ← active branch name
+├── git-goals/
+│   └── &lt;git-branch&gt;.md            ← goal for the current Git branch
+└── branches/
+    └── &lt;context-branch&gt;/
+        ├── commit.md              ← milestone summaries (append-only)
+        ├── trace.md              ← human-readable OTA execution trace
+        ├── dag.json              ← DAG of trace nodes with parent links
+        ├── ephemeral.md          ← scratch traces (cleared on context commit)
+        └── metadata.yaml         ← file structure, dependencies, env config
+</code></pre>
+<p><strong>Recommended per-session workflow</strong></p>
+<pre><code class="language-bash">h5i recall context init --goal &quot;implement retry-safe HTTP client&quot; # once per Git branch
+h5i recall context branch retry-backoff --purpose &quot;try exponential backoff with jitter&quot;
+h5i recall context show --trace                                   # session start: restore state
+# ── while you work: trace entries are derived automatically ─────────────
+#   PostToolUse hook → OBSERVE for each Read, ACT for each Edit/Write
+#   Stop hook        → THINK / NOTE mined from the session transcript
+# You only need to type a trace by hand to flag something urgent for review:
+h5i recall context trace --kind NOTE &quot;TODO: integration test for failover path&quot;
+h5i recall context commit &quot;Summary&quot; --detail &quot;...&quot;                # after milestone: checkpoint + clear ephemeral
+h5i recall context cached-prefix                                  # check prompt-cache efficiency
+h5i recall context status                                         # session end: overview
+</code></pre>
+<p><code>h5i recall context trace</code> and <code>h5i recall context commit</code> require both setup layers:</p>
+<ul>
+<li>the current <strong>Git branch</strong> has a goal from <code>h5i recall context init --goal "&lt;goal&gt;"</code></li>
+<li>the active <strong>h5i context branch</strong> has a purpose from <code>h5i recall context branch &lt;name&gt; --purpose "&lt;intent&gt;"</code></li>
+</ul>
+<p>One Git branch can contain multiple h5i context branches, so agents can explore several options without switching Git branches.</p>
+<hr />
+<h4 id="h5i-recall-context-init">h5i recall context init</h4>
+<pre><code>h5i recall context init --goal &lt;text&gt;
+</code></pre>
+<p>Create the context workspace if needed and set the goal for the current Git branch. Run it once per Git branch before writing context on that branch.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--goal &lt;text&gt;</code></td>
+<td>Goal for the current Git branch (required before <code>trace</code> / <code>commit</code>)</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">h5i recall context init --goal &quot;Build an OAuth2 login system&quot;
+h5i recall context init --goal &quot;Implement retry-safe HTTP client&quot;   # on another Git branch
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-show">h5i recall context show</h4>
+<pre><code>h5i recall context show [options]
+</code></pre>
+<p>Print working context: current Git branch goal, active h5i context branch, milestone progress, recent commits, and optionally the OTA trace.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--branch &lt;name&gt;</code></td>
+<td>Show context for a branch without switching to it</td>
+</tr>
+<tr>
+<td><code>--commit &lt;hash&gt;</code></td>
+<td>Pull a specific milestone entry by hash prefix</td>
+</tr>
+<tr>
+<td><code>--trace</code></td>
+<td>Include recent OTA trace lines</td>
+</tr>
+<tr>
+<td><code>--window &lt;n&gt;</code></td>
+<td>Number of recent milestone commits to include (default: 3)</td>
+</tr>
+<tr>
+<td><code>--trace-offset &lt;n&gt;</code></td>
+<td>Scroll back N lines from the end of the trace (sliding window)</td>
+</tr>
+<tr>
+<td><code>--metadata &lt;segment&gt;</code></td>
+<td>Pull a named section from <code>metadata.yaml</code></td>
+</tr>
+</tbody>
+</table>
+<pre><code>── Context ──────────────────────────────────────────────────
+  Goal: Build an OAuth2 login system  (branch: oauth-provider)
+  Git branch: feature/oauth  |  Context branch: oauth-provider
+
+  Milestones:
+    ✔ [x] Initial setup
+    ✔ [x] GitHub provider integration
+    ○ [ ] Token refresh flow  ← resume here
+
+  Recent Commits:
+    ◈ Implemented GitHub provider integration
+
+  Recent Trace:
+    [ACT] Switching session store to Redis in src/session.rs
+    [NOTE] TODO: add integration test for the timeout path
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-trace">h5i recall context trace</h4>
+<pre><code>h5i recall context trace --kind &lt;KIND&gt; [--ephemeral] &lt;content&gt;
+</code></pre>
+<p>Append a single OTA (Observe–Think–Act) entry to the trace log.</p>
+<p>Before writing, the CLI verifies that the current Git branch has a goal and the active h5i context branch has a purpose. If either is missing, it prints the setup command to run.</p>
+<p>By default the entry is <strong>durable</strong>: it is written to <code>trace.md</code> (human-readable) and to <code>dag.json</code> (the DAG), and it survives snapshots and session resets.</p>
+<p>With <code>--ephemeral</code> the entry goes to <code>ephemeral.md</code> only — it is excluded from the DAG, excluded from snapshots, and <strong>automatically cleared on the next <code>h5i recall context commit</code></strong>. Use this for scratch observations you only need for the current step (analogous to Claude Code's <code>/btw</code>).</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--kind &lt;KIND&gt;</code></td>
+<td>Entry type: <code>OBSERVE</code>, <code>THINK</code>, <code>ACT</code>, or <code>NOTE</code> (case-insensitive, required)</td>
+</tr>
+<tr>
+<td><code>--ephemeral</code></td>
+<td>Write to scratch buffer only; cleared on next <code>context commit</code>, never in DAG or snapshots</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">h5i recall context trace --kind OBSERVE &quot;Redis p99 latency is 2 ms under load&quot;
+h5i recall context trace --kind THINK   &quot;40 MB overhead is acceptable given the scale&quot;
+h5i recall context trace --kind ACT     &quot;Switched session store to Redis in src/session.rs&quot;
+h5i recall context trace --kind NOTE    &quot;TODO: add integration test for the timeout path&quot;
+
+# Scratch observation — never persists past the next context commit
+h5i recall context trace --kind OBSERVE &quot;checking line 42 quickly&quot; --ephemeral
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-commit">h5i recall context commit</h4>
+<pre><code>h5i recall context commit &lt;summary&gt; [--detail &lt;text&gt;]
+</code></pre>
+<p>Save a milestone checkpoint. Appended to <code>commit.md</code> on the current branch.</p>
+<p>Like <code>trace</code>, this refuses to write until the current Git branch has a goal and the active h5i context branch has a purpose.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;summary&gt;</code></td>
+<td>Short summary of the milestone (required, positional)</td>
+</tr>
+<tr>
+<td><code>--detail &lt;text&gt;</code></td>
+<td>Full explanation to store alongside the summary</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">h5i recall context commit &quot;Implemented token refresh flow&quot; \
+  --detail &quot;Handles 401s transparently; refresh token stored in HttpOnly cookie.&quot;
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-branch">h5i recall context branch</h4>
+<pre><code>h5i recall context branch &lt;name&gt; --purpose &lt;text&gt;
+</code></pre>
+<p>Create a new h5i context branch and switch to it. Use this before exploring a risky alternative so the current context branch is preserved. Multiple h5i context branches can live under the same Git branch.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;name&gt;</code></td>
+<td>Branch name (required, positional)</td>
+</tr>
+<tr>
+<td><code>--purpose &lt;text&gt;</code></td>
+<td>One-line description of what this context branch is exploring (required by the CLI)</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">h5i recall context branch experiment/sync-session --purpose &quot;try synchronous session store as fallback&quot;
+h5i recall context branch experiment/redis-session --purpose &quot;try Redis-backed session store&quot;
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-checkout">h5i recall context checkout</h4>
+<pre><code>h5i recall context checkout &lt;name&gt;
+</code></pre>
+<p>Switch to an existing context branch.</p>
+<pre><code class="language-bash">h5i recall context checkout main
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-merge">h5i recall context merge</h4>
+<pre><code>h5i recall context merge &lt;branch&gt;
+</code></pre>
+<p>Merge a branch's commit log and trace into the current branch. A <strong>DAG merge node</strong> is appended to the target branch's <code>dag.json</code> with two parent IDs — one from the target branch head and one from the source branch head — so the full causal history of both branches is preserved.</p>
+<pre><code class="language-bash">h5i recall context merge experiment/sync-session
+h5i recall context merge scope/investigate-auth    # merge a subagent scope back in
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-scope">h5i recall context scope</h4>
+<pre><code>h5i recall context scope &lt;name&gt; [--purpose &lt;text&gt;]
+</code></pre>
+<p>Create a <strong>subagent-scoped sub-context</strong>: a lightweight branch prefixed <code>scope/</code> whose metadata marks it as a delegation scope. Scoped branches are shown separately under <strong>Scoped subagents</strong> in <code>h5i recall context status</code>, making it easy to track active delegations at a glance.</p>
+<p>Use this when spawning a subagent to investigate something in isolation. When the subagent finishes, merge its findings back with <code>h5i recall context merge scope/&lt;name&gt;</code>, which records a two-parent DAG merge node.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;name&gt;</code></td>
+<td>Scope name. Stored as <code>scope/&lt;name&gt;</code> (the <code>scope/</code> prefix is added automatically if omitted).</td>
+</tr>
+<tr>
+<td><code>--purpose &lt;text&gt;</code></td>
+<td>One-line description of what the subagent is investigating</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">h5i recall context scope investigate-auth --purpose &quot;check token validation edge cases&quot;
+# subagent works here …
+h5i recall context checkout main
+h5i recall context merge scope/investigate-auth
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-status">h5i recall context status</h4>
+<pre><code>h5i recall context status
+</code></pre>
+<p>Print an overview of the current workspace state:</p>
+<ul>
+<li>Current Git branch and its goal</li>
+<li>Active h5i context branch and its milestone commit + trace-line counts</li>
+<li>Other h5i context branches (if any)</li>
+<li><strong>Scoped subagents</strong> — <code>scope/*</code> branches listed separately so active delegations are visible at a glance</li>
+<li><strong>Trace cache split</strong> — how many trace lines fall in the stable prefix (prompt-cache friendly) vs. the dynamic suffix (changes every step)</li>
+<li><strong>Commits flagged for review</strong> — if <code>h5i recall notes analyze</code> has been run, the top 3 commits scoring above 0.40 on the review heuristic are surfaced inline, so you don't need a separate <code>h5i audit review</code> call to spot what needs human attention</li>
+</ul>
+<pre><code>── Context Status ──────────────────────────────────────────────
+  Git branch: feature/auth  |  goal: Build OAuth2 login system
+  Context branch: oauth-provider  |  3 branches  |  5 commits  |  87 log lines
+  Other branches: experiment/sync-session
+  Scoped subagents: scope/investigate-auth
+  Trace: stable 47 lines  ·  dynamic 40 lines  (prompt-cache boundary)
+
+  Commits flagged for review:
+    ⚑ a3f8c12 score 0.74  &quot;add retry logic to HTTP client&quot;
+      · high uncertainty (5 signals)
+    ⚑ 9e21b04 score 0.52  &quot;refactor auth middleware&quot;
+      · BLIND_EDIT in src/auth.rs
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-todo">h5i recall context todo</h4>
+<pre><code>h5i recall context todo
+</code></pre>
+<p>Extract all open TODO / FIXME / BLOCKED items from the current branch's trace. Only NOTE and THINK entries containing these keywords are surfaced, so noise from OBSERVE lines is filtered out.</p>
+<pre><code>── Open TODOs ─────────────────────────────────── main ──
+  □ add integration test for the timeout path
+  □ FIXME: token refresh is hardcoded to 3600s — should come from config
+  □ BLOCKED: waiting on legal sign-off before shipping the audit log
+
+  ◈ 3 items found
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-knowledge">h5i recall context knowledge</h4>
+<pre><code>h5i recall context knowledge
+</code></pre>
+<p>Distill all THINK entries from <strong>every</strong> context branch into a project-wide knowledge base. Entries are deduplicated by content and labelled with the branch they came from. The current branch's entries are highlighted in cyan; entries from other branches appear dimmed.</p>
+<p>Use this at the start of a session to re-absorb the project's accumulated design rationale without re-reading the full trace on every branch.</p>
+<pre><code>── Project Knowledge (distilled THINK entries) ─────────────
+  ◈ [main]              exponential backoff with jitter is safest under high load
+  ◈ [main]              Redis chosen over in-process HashMap — survives restarts
+  ◈ [experiment/sync]   synchronous fallback would block the async runtime
+  ◈ [main]              auth middleware rewrite driven by legal compliance, not tech debt
+
+  ◈ 4 design decisions across all branches
+</code></pre>
+<p><strong>MCP tool</strong>: <code>h5i_context_knowledge</code> — returns <code>{ "thoughts": [{ "branch", "thought" }, ...] }</code>.</p>
+<hr />
+<h4 id="h5i-recall-context-prompt">h5i recall context prompt</h4>
+<pre><code>h5i recall context prompt
+</code></pre>
+<p>Print a ready-made system prompt that can be prepended to an agent session to give it full awareness of the <code>h5i recall context</code> commands and the recommended workflow.</p>
+<hr />
+<h4 id="h5i-recall-context-restore">h5i recall context restore</h4>
+<pre><code>h5i recall context restore &lt;sha&gt;
+</code></pre>
+<p>Restore the context workspace to the state it was in when a specific git commit was made. Every <code>h5i capture commit</code> automatically snapshots the current context state; this command replays that snapshot.</p>
+<p>Restoration is <strong>non-destructive</strong>: a new commit is appended to <code>refs/h5i/context</code> whose tree mirrors the snapshot, so the full history is preserved. You can always see where you restored from.</p>
+<p><strong>Arguments</strong></p>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;sha&gt;</code></td>
+<td>Git commit SHA (prefix accepted, e.g. <code>a3f8c12</code>)</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">h5i recall context restore a3f8c12
+
+# ✔  Context restored: branch: main  ·  goal: add retry logic to HTTP client
+#   → Run `h5i recall context show --trace` to verify the restored state.
+</code></pre>
+<p><strong>When to use</strong></p>
+<ul>
+<li>Continuing a task after a gap of several days — restore the context from the last working commit rather than re-deriving everything from scratch.</li>
+<li>Debugging a regression — restore context to the commit before the regression was introduced to recover the reasoning state.</li>
+<li>Handing off to a colleague — they can restore the exact context you had when you last worked on a feature.</li>
+</ul>
+<hr />
+<h4 id="h5i-recall-context-diff">h5i recall context diff</h4>
+<pre><code>h5i recall context diff &lt;from&gt; &lt;to&gt;
+</code></pre>
+<p>Show how the context workspace changed between two git commits. Requires both commits to have context snapshots (created automatically by <code>h5i capture commit</code>).</p>
+<p><strong>Arguments</strong></p>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;from&gt;</code></td>
+<td>Earlier git commit SHA (prefix accepted)</td>
+</tr>
+<tr>
+<td><code>&lt;to&gt;</code></td>
+<td>Later git commit SHA (prefix accepted)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Output</strong></p>
+<ul>
+<li><strong>Goal change</strong> — whether the project goal was updated between the two commits</li>
+<li><strong>New milestones</strong> — context commits (reasoning checkpoints) added after <code>&lt;from&gt;</code></li>
+<li><strong>New OTA trace steps</strong> — OBSERVE/THINK/ACT/NOTE entries added after <code>&lt;from&gt;</code> (up to 30)</li>
+</ul>
+<pre><code>── Context diff  a3f8c12..9e21b04 ───────────────────────────────────────────
+
+  New milestones: (2)
+    + Analyzed retry entry points in src/http.rs
+    + Implemented exponential backoff with jitter
+
+  New OTA trace steps: (5)
+    [10:14:22] OBSERVE: HttpClient::send has no retry logic
+    [10:15:03] THINK: exponential backoff with jitter is safest
+    [10:15:44] ACT: added retry loop in send() with 5-attempt cap
+    [10:16:10] OBSERVE: tests pass — 47/47 green
+    [10:16:30] NOTE: TODO: add integration test for timeout path
+</code></pre>
+<pre><code class="language-bash">h5i recall context diff a3f8c12 9e21b04
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-relevant">h5i recall context relevant</h4>
+<pre><code>h5i recall context relevant &lt;file&gt;
+</code></pre>
+<p>Retrieve all context workspace entries that mention a specific file. Run this <strong>before editing a file</strong> to recover accumulated reasoning about it — past decisions, uncertainties, and OTA steps — without re-reading the full trace.</p>
+<p><strong>Arguments</strong></p>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;file&gt;</code></td>
+<td>File path to look up (e.g. <code>src/repository.rs</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Output sections</strong></p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Milestones</strong></td>
+<td>Context commits whose contribution text mentions the file</td>
+</tr>
+<tr>
+<td><strong>Trace mentions</strong></td>
+<td>OTA trace lines that mention the file, with one line of surrounding context</td>
+</tr>
+<tr>
+<td><strong>Cross-branch</strong></td>
+<td>Trace lines and milestones from other h5i context branches that mention the file</td>
+</tr>
+</tbody>
+</table>
+<pre><code>── Context relevant to src/repository.rs ─────────────────────────────────────
+
+  Milestones: (1)
+    ◈ rewrote H5iRepository::commit to support decisions field
+
+  Trace mentions: (3)
+    [10:04:17] THINK: repository.rs commit path needs a decisions param
+    [10:04:55] ACT: added decisions: Vec&lt;Decision&gt; to repository.rs:commit()
+    [10:05:10] OBSERVE: all tests green after repository.rs edit
+
+  Cross-branch: (1)
+    [experiment/alt-api] [10:22:00] THINK: repository.rs API is too wide — consider splitting
+</code></pre>
+<pre><code class="language-bash">h5i recall context relevant src/repository.rs
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-smart">h5i recall context smart</h4>
+<pre><code>h5i recall context smart --query &quot;&lt;current task&gt;&quot; [--limit &lt;n&gt;]
+</code></pre>
+<p>Recall task-aware prior context without tying the feature to a specific agent. This ranks prior trace snippets and session footprint evidence against the current task and prints the most relevant files to inspect first.</p>
+<p><code>smart</code> is off unless you invoke it explicitly. The legacy spelling <code>h5i context smart --query ...</code> also works, but the preferred command is under <code>h5i recall</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--query &lt;text&gt;</code></td>
+<td>Task prompt/query to rank prior context against</td>
+</tr>
+<tr>
+<td><code>--limit &lt;n&gt;</code></td>
+<td>Maximum recalled file results to show (default: 5)</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">h5i recall context smart --query &quot;add retry-aware HTTP client&quot; --limit 5
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-pack">h5i recall context pack</h4>
+<pre><code>h5i recall context pack
+</code></pre>
+<p>Compact the current branch's OTA trace using a <strong>three-pass structurally-lossless algorithm</strong> derived from the Contextual Memory Virtualisation paper (arXiv:2602.22402):</p>
+<table>
+<thead>
+<tr>
+<th>Pass</th>
 <th>What it does</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>h5i share push</code></td>
-<td><code>h5i push</code></td>
-<td>Push all refs/h5i/<em> (notes, context, memory, msg, </em><em>object manifests</em>*) to a remote.</td>
+<td><strong>Pass 1 — subsumption</strong></td>
+<td>Remove OBSERVE entries whose subject token (file name or first significant word) already appears in a later THINK or ACT entry — those observations have been "consumed" by higher-level reasoning and are redundant.</td>
 </tr>
 <tr>
-<td><code>h5i share pull</code></td>
-<td><code>h5i pull</code></td>
-<td>Fetch &amp; union-merge refs/h5i/* from a remote.</td>
+<td><strong>Pass 2 — preservation</strong></td>
+<td>Retain every THINK, ACT, and NOTE entry verbatim; these represent irreplaceable decisions and actions.</td>
 </tr>
 <tr>
-<td><code>h5i share pr &lt;sub&gt;</code></td>
-<td><em>(new)</em></td>
-<td>Post / preview a GitHub PR comment with h5i provenance.</td>
-</tr>
-<tr>
-<td><code>h5i share memory push|pull</code></td>
-<td><code>h5i memory push|pull</code></td>
-<td>Push or pull only the agent-memory refs.</td>
+<td><strong>Pass 3 — consolidation</strong></td>
+<td>Merge consecutive OBSERVE entries that share the same subject token into a single entry annotated with a <code>(×N)</code> count.</td>
 </tr>
 </tbody>
 </table>
-<blockquote>
-<p><strong>Raw tool output is <em>not</em> shared by <code>share push</code>/<code>pull</code>.</strong> It carries the
-small token-reduction <strong>manifests</strong> (<code>refs/h5i/objects</code> — pointers + filtered
-summaries), but never the huge raw blobs (<code>refs/h5i/objects-data</code> / Git LFS).
-Those travel only when you explicitly run <a href="#h5i-objects-push--pull--sharing-raw-blobs-optional"><code>h5i objects push</code></a>
-(and are fetched by <code>h5i objects pull</code>, or lazily by <code>recall</code> from LFS). So a
-teammate who <code>h5i share pull</code>s sees every capture's summary and pulls only the raw
-bytes they actually need.</p>
-</blockquote>
-<h3 id="h5i-share-pr">h5i share pr</h3>
-<pre><code>h5i share pr post [--number N] [--limit N] [--style STYLE] [--dry-run]
-                  [--no-msg] [--msg-bodies] [--msg-limit N]
-h5i share pr body [--limit N] [--style STYLE]
-                  [--no-msg] [--msg-bodies] [--msg-limit N]
+<p>The compacted trace is written back to both <code>trace.md</code> and <code>dag.json</code>. Run <code>git gc</code> afterwards to reclaim object storage.</p>
+<pre><code class="language-bash">h5i recall context pack
+# ✔  Three-pass lossless pack complete:
+#    − 12 subsumed OBSERVE entries removed
+#    ⇒  4 consecutive OBSERVE entries merged
+#    ✔  31 THINK/ACT/NOTE entries preserved verbatim
+#   → Run `git gc` to reclaim disk space.
+
+# If nothing needs compacting:
+# ℹ  Nothing to pack — context history is already compact.
 </code></pre>
-<p>Posts or previews a sticky GitHub PR comment summarising h5i provenance for
-every AI-authored commit on the current branch. Re-running upserts in place
-via an HTML marker (<code>&lt;!-- h5i:pr-comment v1 --&gt;</code>), so the PR never accumulates
-duplicate comments.</p>
-<p>The comment renders, for each AI commit:</p>
-<ul>
-<li>the prompt that drove it</li>
-<li>model, agent, and token usage</li>
-<li>test metrics (passed / failed / total, exit code)</li>
-<li>structured <code>--decisions</code> if recorded at commit time</li>
-<li>a 🚩 flag with <code>h5i audit review</code> triggers (uncertainty, blind edits, churn, scope) when the commit crosses the review threshold</li>
-</ul>
-<p><strong>💬 Agent coordination (i5h messages)</strong></p>
-<p>Below the reasoning DAG, the comment folds in the cross-agent message threads
-(<code>refs/h5i/msg</code>, see <a href="#h5i-msg"><code>h5i msg</code></a>) that are <strong>relevant to this branch</strong> —
-a thread is included when at least one of its messages was tagged with the PR
-branch, and the whole thread (including replies tagged for another branch or
-none) travels with it. The section is collapsed by default and self-omits when
-no branch-relevant threads exist.</p>
-<p>Messages are <strong>auto-tagged with the sender's current git branch</strong>, so a normal
-back-and-forth conducted while working on the branch is captured without any
-extra flags. <code>send</code>, <code>ask</code>, <code>review</code>, <code>risk</code>, and <code>handoff</code> all accept
-<code>--branch &lt;b&gt;</code> to tag for a different branch, or <code>--branch ""</code> to leave a
-message untagged. Replies (<code>reply</code>/<code>ack</code>/<code>done</code>/<code>decline</code>) do <strong>not</strong> use the
-responder's checkout — they inherit their thread's branch, so acknowledging a
-thread from an unrelated branch can't drag it into the wrong PR.</p>
-<p>Because a PR comment is published, message text is treated as untrusted and
-disclosure-safe by default:</p>
-<ul>
-<li>Only <strong>review-typed</strong> messages (<code>REVIEW_REQUEST</code>, <code>RISK</code>, <code>HANDOFF</code>, <code>ASK</code>
-  and their <code>ACK</code>/<code>DONE</code>/<code>DECLINE</code>/<code>BLOCKED</code> replies) show a one-line excerpt;
-  <code>FYI</code> / free-text messages are rendered <strong>metadata-only</strong> (kind, who, when).</li>
-<li>Every rendered field is <strong>secret-redacted</strong> (the <code>h5i</code> secret rule pack, with
-  control/escape bytes stripped <em>before</em> redaction so a split token can't be
-  reassembled afterwards) and Markdown/HTML-escaped.</li>
-<li>A footer line records the <code>refs/h5i/msg</code> tip OID the data came from.</li>
-</ul>
-<p><strong>🪙 Token reduction</strong></p>
-<p>When the branch has token-reduction captures (<code>h5i capture run</code>, see
-<a href="#h5i-objects-token-reduction">h5i objects</a>), the comment includes a one-line
-<code>[!NOTE]</code> summarising how much raw tool output was kept out of the agent's
-context — <code>raw → summary</code> tokens and <code>% saved</code> across the branch's captures —
-with a collapsible per-tool breakdown when more than one tool was captured. It
-self-omits when there were no captures on the branch (or no net saving). The raw
-output remains recoverable with <code>h5i recall object</code>.</p>
-<p>Flags:</p>
+<p><strong>When to use</strong></p>
+<p>On long-running tasks the trace grows one line per OTA step. After many iterations the OBSERVE entries — tool outputs, file reads, test results — tend to dwarf the THINK/ACT reasoning that actually matters. <code>h5i recall context pack</code> strips the noise while guaranteeing that no decision or action is ever lost.</p>
+<hr />
+<h4 id="h5i-recall-context-ephemeral">h5i recall context ephemeral</h4>
+<pre><code>h5i recall context ephemeral [--branch &lt;name&gt;]
+</code></pre>
+<p>Display the current ephemeral scratch traces for a branch. Ephemeral entries are written with <code>h5i recall context trace --ephemeral</code> and are automatically cleared on the next <code>h5i recall context commit</code>.</p>
+<p><strong>Options</strong></p>
 <table>
 <thead>
 <tr>
-<th>Flag</th>
-<th>Effect</th>
+<th>Option</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>--no-msg</code></td>
-<td>Omit the Agent coordination section entirely.</td>
-</tr>
-<tr>
-<td><code>--msg-bodies</code></td>
-<td>Show a (still redacted + sanitized) excerpt for <strong>every</strong> kind, not just review-typed ones. Opt-in — accepts that <code>FYI</code>/free-text bodies are published.</td>
-</tr>
-<tr>
-<td><code>--msg-limit N</code></td>
-<td>Cap the number of threads rendered before eliding (default 12).</td>
+<td><code>--branch &lt;name&gt;</code></td>
+<td>Branch to inspect (default: current branch)</td>
 </tr>
 </tbody>
 </table>
-<p><strong>Hero block styles (<code>--style</code>)</strong></p>
-<p>The top of the comment — the part that fits in a screenshot — switches between
-the layouts below. The audit sections below the fold (secrets, duplicates,
-reasoning DAG, per-commit provenance) stay shared across styles, except
-<code>replay</code>, which promotes the DAG above the fold.</p>
+<pre><code class="language-bash">h5i recall context ephemeral
+# ── Ephemeral Traces (scratch, not persisted) ──────────────
+#   [14:03:12] OBSERVE: checking line 42 quickly
+#   [14:04:01] NOTE: might be worth re-reading this later
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-cached-prefix">h5i recall context cached-prefix</h4>
+<pre><code>h5i recall context cached-prefix [--tail &lt;n&gt;]
+</code></pre>
+<p>Show the <strong>stable-prefix / dynamic-suffix boundary</strong> in the current branch's trace. Lines in the stable prefix are unchanged across most agent steps and benefit from prompt-cache hits. Lines in the dynamic suffix change every step.</p>
+<p>The boundary is defined as: everything except the last <code>--tail</code> lines (default: 40) is stable.</p>
+<p><strong>Options</strong></p>
 <table>
 <thead>
 <tr>
-<th>Style</th>
-<th>When to use</th>
+<th>Option</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>receipt</code> (default)</td>
-<td>Punchline H1 headline (<code># 🪙 60% AI-authored · 12.3k tokens · ~$0.04 · 8 files</code>), goal in a native <code>[!IMPORTANT]</code> callout, centered HTML stat card (6 cells), the triggering prompt promoted to its own section, then cleaned milestone list. Optimised for screenshot / social share.</td>
-</tr>
-<tr>
-<td><code>review</code></td>
-<td>Reviewer-first triage brief: merge status, review-focus files, evidence line, goal, a short reviewer checklist, then compact THINK/NOTE highlights. Keeps the Mermaid DAG collapsed below the audit sections.</td>
-</tr>
-<tr>
-<td><code>detective</code></td>
-<td>Narrative arc: 🎯 goal callout → 📊 by the numbers → 🧭 considered (from <code>--decisions</code>) → 💡 key insight (latest THINK) → 🚢 shipped (cleaned milestones). Reads like a mini blog post.</td>
-</tr>
-<tr>
-<td><code>replay</code></td>
-<td>Mermaid reasoning swim-lane DAG promoted above the fold (expanded), with a goal callout and stats line above and an arrow-separated milestone trail below.</td>
-</tr>
-<tr>
-<td><code>minimal</code></td>
-<td>Quiet variant for routine internal PRs that want h5i provenance without the marketing flourish. Same data, no H1 headline, no stat table, no dollar figures, no callouts beyond audit alerts.</td>
+<td><code>--tail &lt;n&gt;</code></td>
+<td>Number of volatile tail lines to treat as dynamic (default: 40)</td>
 </tr>
 </tbody>
 </table>
-<pre><code class="language-bash">h5i share pr post                          # upsert sticky comment (needs `gh auth login`)
-h5i share pr post --dry-run                # render to stdout without calling gh
-h5i share pr body --limit 25               # render markdown to stdout (for CI / `gh pr edit --body-file -`)
-h5i share pr post --number 42              # target a specific PR (default: auto-detect from current branch)
-h5i share pr body --style review           # preview the reviewer-triage layout
-h5i share pr body --style detective        # preview the narrative layout
-h5i share pr post --style replay --dry-run # preview the DAG-as-hero layout
-h5i share pr body --no-msg                  # drop the Agent coordination section
-h5i share pr body --msg-bodies              # include excerpts for FYI/free-text too
-h5i share pr body --msg-limit 5             # cap coordination threads at 5
+<pre><code class="language-bash">h5i recall context cached-prefix
+# ── Stable-prefix boundary (tail=40) ────────────────────────
+#   ▓▓ Stable prefix: 47 lines (prompt-cache friendly)
+#   ░░ Dynamic suffix: 40 lines (changes every step)
+#
+#   ▓ Last stable line:
+#     [10:15:44] ACT: added retry loop in send() with 5-attempt cap
+#   ░ First dynamic line:
+#     [10:16:10] OBSERVE: tests pass — 47/47 green
 </code></pre>
-<p><strong>Requirements</strong></p>
+<p><strong>Why this matters</strong></p>
+<p>Anthropic's prompt caching has a 5-minute TTL. If the stable prefix (goal, milestones, older trace entries) is serialised before the volatile suffix, repeated agent steps pay only for the dynamic suffix while the stable portion is served from cache. This maps to the cost-recovery finding in the CMV paper (arXiv:2602.22402): cost neutrality within ~10 conversational turns.</p>
+<hr />
+<h3 id="h5i-recall-recap">h5i recall recap</h3>
+<pre><code>h5i recall recap [--session &lt;path&gt;] [--since &lt;iso8601&gt;] [--dry-run]
+</code></pre>
+<p>Import Claude Code <strong>Recap</strong> entries (internally <code>{"type":"system","subtype":"away_summary"}</code> JSONL records) from the active session log as context commits.</p>
+<p>Claude Code periodically emits a recap of the form <code>Goal: … &lt;what was done&gt;. Next: … (disable recaps in /config)</code>. <code>h5i recall recap</code> harvests those records, splits each body into <code>(summary, detail)</code> on the <code>Next:</code> boundary, and creates one <code>h5i recall context commit</code> per recap. Imported UUIDs are tracked in <code>recaps.json</code> at the root of <code>refs/h5i/context</code>, so repeated runs are idempotent.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--session &lt;path&gt;</code></td>
+<td>Explicit JSONL session log to scan (default: auto-detect the latest for the current working directory)</td>
+</tr>
+<tr>
+<td><code>--since &lt;iso8601&gt;</code></td>
+<td>Only import recaps with a timestamp strictly after this cutoff, e.g. <code>2026-04-23T00:00:00Z</code></td>
+</tr>
+<tr>
+<td><code>--dry-run</code></td>
+<td>Report what would be imported without modifying the workspace</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">h5i recall recap --dry-run
+# ✔  would import 2 new recap(s)
+#   ✓ def39987  Goal: simplify the README around the basic workflow. I rewrote it…
+#   ✓ 3df7814b  Goal: audit the commit flow. I traced H5iRepository::commit…
+
+h5i recall recap
+# ✔  imported 2 new recap(s)
+
+h5i recall recap            # idempotent on re-run
+# ✔  imported 0 new recap(s) · 2 already imported
+</code></pre>
+<p><strong>When to use</strong></p>
+<p>Recaps are already concise, timestamped checkpoints produced by Claude Code itself — running <code>h5i recall recap</code> before <code>h5i recall context commit</code> lets you cheaply promote them into durable milestones instead of writing each summary by hand. The trailing <code>(disable recaps in /config)</code> marker and the originating UUID / session ID are preserved in the commit detail so each milestone is traceable back to its source record.</p>
+<hr />
+<h3 id="h5i-recall-memory">h5i recall memory</h3>
+<p>Version and share agent memory files under <code>refs/h5i/memory</code>.</p>
+<p>Supported built-in memory backends:</p>
 <ul>
-<li>The <a href="https://cli.github.com/"><code>gh</code> CLI</a> must be installed and authenticated (<code>gh auth status</code> clean).</li>
-<li>The current branch must have an open pull request (use <code>--number</code> to target a specific PR otherwise).</li>
+<li><code>claude</code> → <code>~/.claude/projects/&lt;repo-path&gt;/memory/</code></li>
+<li><code>codex</code> → <code>~/.codex/memories/</code></li>
 </ul>
-<p><strong>Sticky upsert behaviour</strong></p>
-<p><code>h5i share pr post</code> finds the existing h5i comment by HTML marker prefix and
-issues a <code>PATCH /repos/&lt;owner&gt;/&lt;repo&gt;/issues/comments/&lt;id&gt;</code> via <code>gh api</code>. If no
-marked comment exists yet, it falls back to <code>gh pr comment --body-file -</code> for
-the first post.</p>
+<p>When <code>--agent</code> is omitted, h5i infers the backend from <code>H5I_AGENT_ID</code> and falls back to <code>claude</code>.</p>
+<hr />
+<h4 id="h5i-recall-memory-log">h5i recall memory log</h4>
+<pre><code>h5i recall memory log
+</code></pre>
+<p>List all memory snapshots in reverse chronological order, showing the linked commit OID, timestamp, file count, and annotation message.</p>
+<hr />
+<h4 id="h5i-recall-memory-diff">h5i recall memory diff</h4>
+<pre><code>h5i recall memory diff [&lt;from-oid&gt; [&lt;to-oid&gt;]]
+</code></pre>
+<p>Show what changed between two memory snapshots, or between a snapshot and the live agent memory directory.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--agent &lt;claude\|codex&gt;</code></td>
+<td>Backend to use when diffing against live memory</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Form</th>
+<th>Compares</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>h5i recall memory diff</code></td>
+<td>Last snapshot → live memory</td>
+</tr>
+<tr>
+<td><code>h5i recall memory diff &lt;oid&gt;</code></td>
+<td>Snapshot at <code>&lt;oid&gt;</code> → live memory</td>
+</tr>
+<tr>
+<td><code>h5i recall memory diff &lt;oid-a&gt; &lt;oid-b&gt;</code></td>
+<td>Snapshot at <code>&lt;oid-a&gt;</code> → snapshot at <code>&lt;oid-b&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<pre><code>memory diff a3f9c2b..b2f3a1c
+────────────────────────────────────────────────────────────
+  added     project_auth.md
+    +  The auth middleware rewrite is driven by legal compliance
+    +  requirements around session token storage.
+  modified  feedback_tests.md
+    +How to apply: always use a real DB in integration tests.
+────────────────────────────────────────────────────────────
+  1 added, 0 removed, 1 modified
+</code></pre>
+<hr />
+<h4 id="h5i-recall-memory-restore">h5i recall memory restore</h4>
+<pre><code>h5i recall memory restore &lt;oid&gt; [options]
+</code></pre>
+<p>Restore an agent memory backend to the state captured in a snapshot. Prompts for confirmation by default.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;oid&gt;</code></td>
+<td>Commit OID whose linked snapshot to restore (required, positional)</td>
+</tr>
+<tr>
+<td><code>--agent &lt;claude\|codex&gt;</code></td>
+<td>Memory backend to restore into</td>
+</tr>
+<tr>
+<td><code>-y, --yes</code></td>
+<td>Skip the confirmation prompt</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="h5i-recall-resume">h5i recall resume</h3>
+<pre><code>h5i recall resume [&lt;branch&gt;]
+</code></pre>
+<p>Generate a session handoff briefing assembled entirely from local h5i data — no API call required. Prints branch state, goal, milestone progress, last session statistics, high-risk files, memory changes since the last snapshot, and a suggested opening prompt for Claude.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;branch&gt;</code></td>
+<td>Branch to generate a briefing for (default: current branch)</td>
+</tr>
+</tbody>
+</table>
+<p>The briefing grows richer as more h5i features are active:</p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Requires</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Git-branch goal + milestone progress</td>
+<td><code>h5i recall context init --goal "&lt;goal&gt;"</code> and an active context branch purpose</td>
+</tr>
+<tr>
+<td>Last session stats + risky files</td>
+<td><code>h5i recall notes analyze</code> run after each session</td>
+</tr>
+<tr>
+<td>Memory changes</td>
+<td><code>h5i capture memory</code> run after each session</td>
+</tr>
+<tr>
+<td>Agent + model in header</td>
+<td>Claude Code hook, or <code>H5I_MODEL</code> / <code>H5I_AGENT_ID</code> env vars</td>
+</tr>
+</tbody>
+</table>
+<p>If none of these are set up, <code>h5i recall resume</code> still shows branch, HEAD commit, and a suggested prompt.</p>
+<p><strong>Risk score formula</strong> used to rank high-risk files:</p>
+<pre><code>risk = 0.4 × (1 − avg_confidence) + 0.3 × churn_score + 0.3 × (signal_count / max_signal_count)
+</code></pre>
+<p>Top 5 files by risk score are shown.</p>
+<p><strong>Recommended end-of-session checklist</strong></p>
+<pre><code class="language-bash">h5i recall notes analyze                        # index the session log
+h5i capture memory -m &quot;end of session&quot;  # checkpoint memory
+</code></pre>
+<p>Then at the start of the next session:</p>
+<pre><code class="language-bash">h5i recall resume                               # get the full briefing
+</code></pre>
 <hr />
 <h2 id="h5i-objects-token-reduction">h5i objects (token reduction)</h2>
 <p>Large tool outputs — test logs, build output, big JSON, traces — are the biggest
@@ -1276,465 +2003,148 @@ Idempotent; <code>h5i init</code> already includes the guidance for new projects
 <pre><code class="language-bash">h5i objects setup
 </code></pre>
 <hr />
-<h2 id="h5i-capture-commit">h5i capture commit</h2>
-<pre><code>h5i capture commit -m &lt;message&gt; [options]
-</code></pre>
-<p>Create a Git commit and store AI provenance metadata in <code>refs/h5i/notes</code>. Canonical form of the legacy <code>h5i commit</code>.</p>
-<p>Flag resolution order: CLI flag → environment variable → pending context file (written by the Claude Code hook).</p>
-<p><strong>Options</strong></p>
+<h2 id="h5i-audit">h5i audit</h2>
+<p>Assess risk on AI-generated changes.</p>
 <table>
 <thead>
 <tr>
-<th>Option</th>
-<th>Env var</th>
-<th>Description</th>
+<th>Verb</th>
+<th>Equivalent legacy form</th>
+<th>What it does</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>-m, --message &lt;text&gt;</code></td>
-<td>—</td>
-<td>Commit message (required)</td>
+<td><code>h5i audit review</code></td>
+<td><code>h5i notes review</code></td>
+<td>Rank commits by Quality + Shape signals.</td>
 </tr>
 <tr>
-<td><code>--prompt &lt;text&gt;</code></td>
-<td><code>H5I_PROMPT</code></td>
-<td>The user prompt that triggered this commit. Auto-captured when the hook is installed.</td>
+<td><code>h5i audit scan</code></td>
+<td><code>h5i context scan</code></td>
+<td>Scan reasoning traces for prompt-injection patterns.</td>
 </tr>
 <tr>
-<td><code>--model &lt;name&gt;</code></td>
-<td><code>H5I_MODEL</code></td>
-<td>Model name, e.g. <code>claude-sonnet-4-6</code></td>
+<td><code>h5i audit compliance</code></td>
+<td><code>h5i compliance</code></td>
+<td>Date-ranged audit report (text / json / html).</td>
 </tr>
 <tr>
-<td><code>--agent &lt;id&gt;</code></td>
-<td><code>H5I_AGENT_ID</code></td>
-<td>Agent identifier, e.g. <code>claude-code</code></td>
+<td><code>h5i audit policy &lt;sub&gt;</code></td>
+<td><code>h5i policy &lt;sub&gt;</code></td>
+<td>Manage <code>.h5i/policy.toml</code> rules.</td>
 </tr>
 <tr>
-<td><code>--decisions &lt;file&gt;</code></td>
-<td>—</td>
-<td>Path to a JSON file of structured design decisions (see below)</td>
-</tr>
-<tr>
-<td><code>--caused-by &lt;oid&gt;</code></td>
-<td>—</td>
-<td>OID of a commit that causally triggered this one. Repeatable.</td>
-</tr>
-<tr>
-<td><code>--test-results &lt;file&gt;</code></td>
-<td><code>H5I_TEST_RESULTS</code></td>
-<td>Path to a JSON test results file (see <a href="#appendix-test-adapter-schema">Appendix: Test Adapter Schema</a>)</td>
-</tr>
-<tr>
-<td><code>--test-cmd &lt;cmd&gt;</code></td>
-<td>—</td>
-<td>Shell command whose stdout produces a test results JSON object</td>
-</tr>
-<tr>
-<td><code>--tests</code></td>
-<td>—</td>
-<td>Scan staged files for inline <code>h5_i_test_start</code> / <code>h5_i_test_end</code> markers</td>
-</tr>
-<tr>
-<td><code>--audit</code></td>
-<td>—</td>
-<td>Run integrity rules before committing (see <a href="#appendix-integrity-rules">Appendix: Integrity Rules</a>)</td>
-</tr>
-<tr>
-<td><code>--force</code></td>
-<td>—</td>
-<td>Commit despite integrity warnings. Violations always block regardless of this flag.</td>
-</tr>
-<tr>
-<td><code>--add &lt;path&gt;</code></td>
-<td>—</td>
-<td>Stage this path before committing (equivalent to <code>git add &lt;path&gt;</code>). Repeatable. Eliminates the separate <code>git add</code> step when used in scripts or MCP tool calls.</td>
+<td><code>h5i audit vibe</code></td>
+<td><code>h5i vibe</code></td>
+<td>Repo-wide AI footprint summary. See <a href="#h5i-audit-vibe">h5i audit vibe</a>.</td>
 </tr>
 </tbody>
 </table>
-<p><strong>Example — basic commit with hooks</strong></p>
-<pre><code class="language-bash"># Prompt is captured automatically from the Claude Code session
-h5i capture commit -m &quot;add rate limiting&quot;
+<pre><code class="language-bash">h5i audit review --limit 50
+h5i audit compliance --since 2026-01-01 --until 2026-03-31 \
+    --format html --output audit.html
+h5i audit vibe --limit 1000 --json
 </code></pre>
-<pre><code>✔  Committed a3f9c2b  add rate limiting
-   model: claude-sonnet-4-6 · agent: claude-code · 312 tokens
-</code></pre>
-<p><strong>Example — commit with test results and audit</strong></p>
-<pre><code class="language-bash">h5i capture commit -m &quot;add login tests&quot; \
-  --test-cmd &quot;python plugin/h5i-pytest-adapter.py&quot; \
-  --audit
-</code></pre>
-<p><strong>Example — causal chain</strong></p>
-<p>Link a fix to the commit that introduced the bug:</p>
-<pre><code class="language-bash">h5i capture commit -m &quot;fix off-by-one in validate_token&quot; --caused-by a3f9c2b
-</code></pre>
-<p>When rolling back a commit, h5i warns if later commits declared it as a cause:</p>
-<pre><code>⚠ Warning: 2 later commits causally depend on this one:
-  → b2f3a1c &quot;fix bug introduced by rate limiter&quot;
-Continue anyway? [y/N]
-</code></pre>
-<p><strong>Example — design decisions</strong></p>
-<p>Record which alternatives were considered and why the chosen approach was preferred:</p>
-<pre><code class="language-bash">cat &gt; decisions.json &lt;&lt; 'EOF'
-[
-  {
-    &quot;location&quot;: &quot;src/session.rs:44&quot;,
-    &quot;choice&quot;: &quot;Redis over in-process HashMap&quot;,
-    &quot;alternatives&quot;: [&quot;in-process HashMap&quot;, &quot;Memcached&quot;],
-    &quot;reason&quot;: &quot;survives process restarts; required for horizontal scaling&quot;
-  }
-]
-EOF
-
-h5i capture commit -m &quot;switch session store to Redis&quot; --decisions decisions.json
-</code></pre>
-<p>Decisions are stored in <code>refs/h5i/notes</code> and shown in <code>h5i recall log</code>:</p>
-<pre><code>Decisions:
-  ◆ src/session.rs:44  Redis over in-process HashMap
-    alternatives: in-process HashMap, Memcached
-    survives process restarts; required for horizontal scaling
-</code></pre>
-<p>Decision schema: array of objects. <code>location</code> and <code>choice</code> are required; <code>alternatives</code> and <code>reason</code> are optional but recommended.</p>
-<pre><code class="language-json">{
-  &quot;location&quot;:     &quot;src/file.rs:42&quot;,
-  &quot;choice&quot;:       &quot;the approach taken&quot;,
-  &quot;alternatives&quot;: [&quot;option A&quot;, &quot;option B&quot;],
-  &quot;reason&quot;:       &quot;why this was chosen&quot;
-}
-</code></pre>
-<hr />
-<h2 id="h5i-recall-log">h5i recall log</h2>
-<pre><code>h5i recall log [options]
-</code></pre>
-<p>Show commit history with full AI provenance inline. Canonical form of the legacy <code>h5i log</code>.</p>
-<p><strong>Options</strong></p>
+<h3 id="quality-vs-shape-signals">Quality vs Shape signals</h3>
+<p><code>h5i audit review</code> (and the PR-comment 🚩) split rules into two tiers so
+size-based noise stops drowning out real risk signals.</p>
+<p><strong>Quality</strong> (high-precision — these alone can flag a commit):</p>
 <table>
 <thead>
 <tr>
-<th>Option</th>
-<th>Description</th>
+<th>Rule</th>
+<th>Fires when</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>--limit &lt;n&gt;</code></td>
-<td>Number of commits to show (default: all)</td>
+<td><code>CREDENTIAL_LEAK</code></td>
+<td>Added line matches the embedded regex pack (AWS / GCP / GitHub / Slack / Stripe / Anthropic / OpenAI / JWT / PEM private key) or an entropy-gated generic key=value assignment. Lockfiles, vendor dirs, fonts, binaries, and <code>testdata/</code> are allowlisted; lines containing placeholder substrings (<code>your-key-here</code>, <code>EXAMPLE</code>, <code>${ENV}</code>, …) are suppressed. Matched values redacted to first 4 chars.</td>
 </tr>
 <tr>
-<td><code>--ancestry &lt;file&gt;:&lt;line&gt;</code></td>
-<td>Trace every commit that touched a specific line, annotated with its prompt</td>
+<td><code>CODE_EXECUTION</code></td>
+<td>Added line invokes <code>eval()</code>, <code>os.system()</code>, <code>subprocess.*</code>, <code>Runtime.exec()</code>, etc.</td>
+</tr>
+<tr>
+<td><code>SENSITIVE_FILE_MODIFIED</code></td>
+<td>Touched a <code>.env</code>, <code>.pem</code>, <code>.key</code>, or similar high-value path.</td>
+</tr>
+<tr>
+<td><code>CI_CD_MODIFIED</code></td>
+<td>Touched a CI/CD workflow file.</td>
+</tr>
+<tr>
+<td><code>PERMISSION_CHANGE</code></td>
+<td>File mode bits changed (e.g. chmod +x).</td>
+</tr>
+<tr>
+<td><code>TEST_REGRESSION</code></td>
+<td>Tests were passing on parent and now failing, OR coverage dropped &gt;5%.</td>
+</tr>
+<tr>
+<td><code>BLIND_EDIT</code></td>
+<td>Agent edited a file with no prior <code>Read</code> in the session.</td>
+</tr>
+<tr>
+<td><code>DUPLICATED_CODE</code></td>
+<td>≥10 identical significant lines repeated within the same file.</td>
+</tr>
+<tr>
+<td><code>MASS_DELETION</code></td>
+<td>&gt;100 lines deleted and &gt;80% of the diff is deletions.</td>
+</tr>
+<tr>
+<td><code>BINARY_FILE</code></td>
+<td>Opaque binary file modified.</td>
+</tr>
+<tr>
+<td><code>AI_NO_PROMPT</code></td>
+<td>AI-tagged commit with empty <code>prompt</code> (provenance gap).</td>
 </tr>
 </tbody>
 </table>
-<p><strong>Example — recent commits</strong></p>
-<pre><code class="language-bash">h5i recall log --limit 3
-</code></pre>
-<pre><code>● a3f9c2b  add rate limiting
-  2026-03-27 14:02  Alice &lt;alice@example.com&gt;
-  model: claude-sonnet-4-6 · agent: claude-code · 312 tokens
-  prompt: &quot;add per-IP rate limiting to the auth endpoint&quot;
-  tests:  ✔ 42 passed, 0 failed, 1.23s [pytest]
-
-● 9e21b04  fix off-by-one in parser
-  2026-03-26 11:45  Bob &lt;bob@example.com&gt;
-  (no AI metadata)
-</code></pre>
-<p><strong>Example — prompt ancestry for a specific line</strong></p>
-<pre><code class="language-bash">h5i recall log --ancestry src/auth.rs:42
-</code></pre>
-<pre><code>── Prompt ancestry for src/auth.rs:42
-
-  [1 of 3]  a3f9c2b  Alice · 2026-03-27 14:02 UTC
-       line:    check_rate_limit(&amp;ip, &amp;config.rate_limit)
-       prompt:  &quot;add per-IP rate limiting to the auth endpoint&quot;
-
-  [2 of 3]  9e21b04  Bob · 2026-03-26 11:45 UTC
-       line:    check_rate_limit(&amp;ip)
-       prompt:  (none recorded)
-
-  [3 of 3]  4c8d2a1  Alice · 2026-03-20 09:10 UTC
-       line:    true  // placeholder
-       prompt:  &quot;stub out the rate limiter&quot;
-</code></pre>
-<hr />
-<h2 id="h5i-recall-blame">h5i recall blame</h2>
-<pre><code>h5i recall blame &lt;file&gt; [options]
-</code></pre>
-<p>Show line-level authorship with AI provenance. Canonical form of the legacy <code>h5i blame</code>. A status column precedes each line:</p>
-<ul>
-<li>Test status: <code>✅</code> passing, <code>✖</code> failing, blank = no data</li>
-</ul>
-<p><strong>Options</strong></p>
+<p><strong>Shape</strong> (informational — never flag a commit alone):</p>
 <table>
 <thead>
 <tr>
-<th>Option</th>
-<th>Description</th>
+<th>Rule</th>
+<th>Fires when</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>--show-prompt</code></td>
-<td>Annotate each commit boundary with the human prompt that triggered it</td>
+<td><code>LARGE_DIFF</code></td>
+<td>&gt;50 / &gt;200 / &gt;500 lines changed.</td>
+</tr>
+<tr>
+<td><code>WIDE_IMPACT</code></td>
+<td>&gt;5 / &gt;10 / &gt;20 files changed.</td>
+</tr>
+<tr>
+<td><code>CROSS_CUTTING</code></td>
+<td>Changes span &gt;3 / &gt;5 top-level directories.</td>
+</tr>
+<tr>
+<td><code>BURST_AFTER_GAP</code></td>
+<td>First commit after a &gt;3 / &gt;7 day quiet period.</td>
+</tr>
+<tr>
+<td><code>POLYGLOT_CHANGE</code></td>
+<td>&gt;4 distinct file extensions changed.</td>
+</tr>
+<tr>
+<td><code>UNTESTED_CHANGE</code></td>
+<td>&gt;100 lines changed, no test metrics, and the project has tests elsewhere.</td>
 </tr>
 </tbody>
 </table>
-<p><strong>Example</strong></p>
-<pre><code class="language-bash">h5i recall blame src/auth.rs
-</code></pre>
-<pre><code>STAT COMMIT   AUTHOR/AGENT    | CONTENT
-✅✨  a3f9c2b  claude-code     | fn validate_token(tok: &amp;str) -&gt; bool {
-✅✨  a3f9c2b  claude-code     |     tok.len() == 64 &amp;&amp; tok.chars().all(|c| c.is_ascii_hexdigit())
-     9eff001  alice           | }
-</code></pre>
-<p><strong>Example — with prompt annotations</strong></p>
-<pre><code class="language-bash">h5i recall blame src/auth.rs --show-prompt
-</code></pre>
-<pre><code>── commit a3f9c2b ── prompt: &quot;add per-IP rate limiting to the auth endpoint&quot; ──
-✅✨  a3f9c2b  claude-code  | pub fn check_rate_limit(ip: IpAddr) -&gt; bool {
-── commit 9e21b04 ── (no prompt recorded) ──
-     9e21b04  alice        | pub fn authenticate(token: &amp;str) -&gt; Result&lt;User&gt; {
-</code></pre>
-<hr />
-<h2 id="h5i-recall-notes">h5i recall notes</h2>
-<p>Parse Claude Code session logs and store enriched metadata linked to commits. Session logs are read from <code>~/.claude/projects/&lt;repo&gt;/</code>.</p>
-<p>All <code>h5i recall notes</code> subcommands accept <code>--commit &lt;oid&gt;</code> to target a specific commit (default: HEAD).</p>
-<hr />
-<h3 id="h5i-recall-notes-analyze">h5i recall notes analyze</h3>
-<pre><code>h5i recall notes analyze [options]
-</code></pre>
-<p>Parse a Claude Code session log and store the analysis in <code>.git/.h5i/session_log/&lt;commit-oid&gt;/analysis.json</code>. Run this after each session before using any other <code>h5i recall notes</code> subcommand.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--session &lt;path&gt;</code></td>
-<td>Path to a specific JSONL session file. Defaults to the most recent log in <code>~/.claude/projects/&lt;repo&gt;/</code>.</td>
-</tr>
-<tr>
-<td><code>--commit &lt;oid&gt;</code></td>
-<td>Link the analysis to a specific commit (default: HEAD)</td>
-</tr>
-<tr>
-<td><code>--since &lt;oid&gt;</code></td>
-<td>Only analyze messages after the given commit's timestamp</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h3 id="h5i-recall-notes-show">h5i recall notes show</h3>
-<pre><code>h5i recall notes show [--commit &lt;oid&gt;]
-</code></pre>
-<p>Print the raw stored analysis for a commit: session ID, message count, tool call count, files consulted and edited.</p>
-<hr />
-<h3 id="h5i-recall-notes-footprint">h5i recall notes footprint</h3>
-<pre><code>h5i recall notes footprint [--commit &lt;oid&gt;]
-</code></pre>
-<p>Show which files Claude read vs. edited, and which files were read but not edited (<em>implicit dependencies</em> — what Claude had to understand to make the change, which Git's diff never captures).</p>
-<pre><code>── Exploration Footprint ──────────────────────────────────────
-  Session 90130372  ·  503 messages  ·  181 tool calls
-
-  Files Consulted:
-    📖 src/main.rs ×13  [Read]
-    📖 src/server.rs ×17  [Read,Grep]
-
-  Files Edited:
-    ✏ src/main.rs  ×18 edit(s)
-    ✏ src/server.rs  ×17 edit(s)
-
-  Implicit Dependencies (read but not edited):
-    → src/metadata.rs
-    → Cargo.toml
-</code></pre>
-<hr />
-<h3 id="h5i-recall-notes-uncertainty">h5i recall notes uncertainty</h3>
-<pre><code>h5i recall notes uncertainty [options]
-</code></pre>
-<p>Show every moment Claude expressed uncertainty, with the exact quote, confidence score, and the file being edited at that moment.</p>
-<p>Confidence scoring: <strong>red</strong> (&lt;35%) = very uncertain, <strong>yellow</strong> (35–55%) = moderate, <strong>green</strong> (&gt;55%) = incidental mention.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--commit &lt;oid&gt;</code></td>
-<td>Target a specific commit (default: HEAD)</td>
-</tr>
-<tr>
-<td><code>--file &lt;path&gt;</code></td>
-<td>Filter signals to a specific file</td>
-</tr>
-</tbody>
-</table>
-<pre><code>── Uncertainty Heatmap ─────────────────────────────────────────────────
-  7 signals  ·  3 files
-
-  src/auth.rs    ████████████░░░░  ●●●  4 signals  avg 28%
-  src/main.rs    ██████░░░░░░░░░░  ●●   2 signals  avg 40%
-  src/server.rs  ██░░░░░░░░░░░░░░  ●    1 signal   avg 52%
-
-  ██ t:32   not sure    src/auth.rs  [25%]
-       &quot;…token validation might break if the token contains special chars…&quot;
-
-  ▓▓ t:220  let me check  src/main.rs  [45%]
-       &quot;…The LSP shows the match still isn't seeing the new arm. Let me check…&quot;
-
-  ░░ t:496  perhaps        src/server.rs  [52%]
-       &quot;…perhaps we should also handle the case where body is empty…&quot;
-</code></pre>
-<hr />
-<h3 id="h5i-recall-notes-omissions">h5i recall notes omissions</h3>
-<pre><code>h5i recall notes omissions [options]
-</code></pre>
-<p>Detect incomplete work Claude left behind, extracted from its thinking blocks. Three categories:</p>
-<table>
-<thead>
-<tr>
-<th>Kind</th>
-<th>Badge</th>
-<th>Trigger phrases</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Deferral</strong></td>
-<td><code>⏭</code></td>
-<td><code>"for now"</code>, <code>"out of scope"</code>, <code>"separate PR"</code>, <code>"leave this for later"</code></td>
-</tr>
-<tr>
-<td><strong>Placeholder</strong></td>
-<td><code>⬜</code></td>
-<td><code>"stub"</code>, <code>"hardcoded for now"</code>, <code>"simplified version"</code>, <code>"workaround"</code></td>
-</tr>
-<tr>
-<td><strong>Unfulfilled promise</strong></td>
-<td><code>💬</code></td>
-<td><code>"I'll also update X"</code> / <code>"I should also add Y"</code> where that file was never edited</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--commit &lt;oid&gt;</code></td>
-<td>Target a specific commit (default: HEAD)</td>
-</tr>
-<tr>
-<td><code>--file &lt;path&gt;</code></td>
-<td>Filter signals to a specific file</td>
-</tr>
-</tbody>
-</table>
-<pre><code>── Omission Report ─────────────────────────────────────────────
-  5 signals  ·  2 deferrals  ·  2 placeholders  ·  1 unfulfilled promise
-
-  ⏭ DEFERRAL    src/auth.rs · t:18 · &quot;for now&quot;
-       &quot;…I'll hardcode the token TTL for now — a proper config value can be added later…&quot;
-
-  ⬜ PLACEHOLDER  src/session.rs · t:55 · &quot;hardcoded for now&quot;
-       &quot;…session timeout is hardcoded for now at 3600s, should come from config…&quot;
-
-  💬 UNFULFILLED  src/auth.rs · t:61 · &quot;i'll also update&quot;
-     → promised file: src/auth/tests.rs  (never edited)
-</code></pre>
-<p>For unfulfilled promises that name a file path, h5i cross-checks whether that file appeared in the session's edit sequence. If it did not, the omission is flagged.</p>
-<hr />
-<h3 id="h5i-recall-notes-coverage">h5i recall notes coverage</h3>
-<pre><code>h5i recall notes coverage [options]
-</code></pre>
-<p>Show per-file attention coverage: the fraction of edits that were preceded by at least one Read in the same session. An edit with no prior Read is a <strong>blind edit</strong> — Claude modified the file without direct evidence it understood the current state.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--commit &lt;oid&gt;</code></td>
-<td>Target a specific commit (default: HEAD)</td>
-</tr>
-<tr>
-<td><code>--max-ratio &lt;f&gt;</code></td>
-<td>Only show files at or below this coverage ratio (0.0–1.0)</td>
-</tr>
-</tbody>
-</table>
-<pre><code>── Attention Coverage — a3f9c2b
-
-  File                    Edits   Coverage   Blind edits
-  src/auth.rs                 4       75%             1
-  src/session.rs              2        0%             2   ← review these
-  src/main.rs                 1      100%             0
-
-  2 file(s) with blind edits.
-</code></pre>
-<p>Files are sorted by blind edit count (most risky first). When coverage data is available, <code>h5i audit review</code> adds a <code>BLIND_EDIT</code> signal weighted at 0.10 per file (max contribution 0.30) to the review score.</p>
-<hr />
-<h3 id="h5i-recall-notes-churn">h5i recall notes churn</h3>
-<pre><code>h5i recall notes churn [--limit &lt;n&gt;]
-</code></pre>
-<p>Show per-file churn: the edit-to-read ratio across all analyzed sessions. High churn indicates trial-and-error rather than confident, planned changes.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--limit &lt;n&gt;</code></td>
-<td>Number of files to show (default: all)</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h3 id="h5i-recall-notes-graph">h5i recall notes graph</h3>
-<pre><code>h5i recall notes graph [options]
-</code></pre>
-<p>Visualize the causal chain across commits — which AI commit triggered which.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--limit &lt;n&gt;</code></td>
-<td>Number of commits to include (default: 20)</td>
-</tr>
-<tr>
-<td><code>--mode &lt;mode&gt;</code></td>
-<td>Output mode (default: terminal graph)</td>
-</tr>
-</tbody>
-</table>
+<p>The PR-comment 🚩 fires when <code>quality_score &gt;= 0.25</code>. Shape signals are
+listed in a secondary "shape signals (informational)" line — <em>only</em> when a
+Quality signal also fired. <code>LARGE_DIFF</code> alone is noise; <code>LARGE_DIFF + BLIND_EDIT</code>
+is a real review point.</p>
+<p>The credential scanner lives in <code>src/secrets.rs</code> as an embedded regex pack —
+there is no runtime dependency on the gitleaks binary.</p>
 <hr />
 <h3 id="h5i-audit-review">h5i audit review</h3>
 <pre><code>h5i audit review [options]
@@ -1775,320 +2185,6 @@ h5i capture commit -m &quot;switch session store to Redis&quot; --decisions deci
      refactor parser
      moderate complexity
 </code></pre>
-<hr />
-<h2 id="h5i-recall-context">h5i recall context</h2>
-<p>A version-controlled reasoning workspace stored in <code>refs/h5i/context</code> that survives session resets. Command structure mirrors Git. Based on <a href="https://arxiv.org/abs/2508.00031">arXiv:2508.00031</a>, enhanced with five capabilities derived from recent research (CMV paper arXiv:2602.22402, Claude Code design-space analysis arXiv:2604.14228):</p>
-<ol>
-<li><strong>DAG trace nodes</strong> — every <code>trace</code> entry is a node in a directed acyclic graph with explicit <code>parent_ids</code>; merge operations create two-parent nodes so parallel branches stay causally connected.</li>
-<li><strong>Ephemeral traces</strong> (<code>--ephemeral</code>) — scratch observations excluded from the DAG, excluded from snapshots, and cleared on the next <code>context commit</code>; analogous to Claude Code's <code>/btw</code>.</li>
-<li><strong>Three-pass lossless <code>pack</code></strong> — removes subsumed OBSERVEs, merges consecutive OBSERVEs about the same file, and preserves all THINK/ACT/NOTE entries verbatim.</li>
-<li><strong>Stable-prefix / dynamic-suffix split</strong> — <code>context status</code> and <code>context cached-prefix</code> show the prompt-caching boundary in the trace.</li>
-<li><strong>Subagent-scoped sub-contexts</strong> (<code>context scope</code>) — lightweight <code>scope/&lt;name&gt;</code> branches for delegated subagent investigation, shown separately in <code>status</code>.</li>
-</ol>
-<p><strong>Workspace layout</strong> (stored entirely inside <code>refs/h5i/context</code>)</p>
-<pre><code>refs/h5i/context tree:
-├── main.md                        ← global roadmap: goal, milestones, notes
-├── .current_branch                ← active branch name
-├── git-goals/
-│   └── &lt;git-branch&gt;.md            ← goal for the current Git branch
-└── branches/
-    └── &lt;context-branch&gt;/
-        ├── commit.md              ← milestone summaries (append-only)
-        ├── trace.md              ← human-readable OTA execution trace
-        ├── dag.json              ← DAG of trace nodes with parent links
-        ├── ephemeral.md          ← scratch traces (cleared on context commit)
-        └── metadata.yaml         ← file structure, dependencies, env config
-</code></pre>
-<p><strong>Recommended per-session workflow</strong></p>
-<pre><code class="language-bash">h5i recall context init --goal &quot;implement retry-safe HTTP client&quot; # once per Git branch
-h5i recall context branch retry-backoff --purpose &quot;try exponential backoff with jitter&quot;
-h5i recall context show --trace                                   # session start: restore state
-# ── while you work: trace entries are derived automatically ─────────────
-#   PostToolUse hook → OBSERVE for each Read, ACT for each Edit/Write
-#   Stop hook        → THINK / NOTE mined from the session transcript
-# You only need to type a trace by hand to flag something urgent for review:
-h5i recall context trace --kind NOTE &quot;TODO: integration test for failover path&quot;
-h5i recall context commit &quot;Summary&quot; --detail &quot;...&quot;                # after milestone: checkpoint + clear ephemeral
-h5i recall context cached-prefix                                  # check prompt-cache efficiency
-h5i recall context status                                         # session end: overview
-</code></pre>
-<p><code>h5i recall context trace</code> and <code>h5i recall context commit</code> require both setup layers:</p>
-<ul>
-<li>the current <strong>Git branch</strong> has a goal from <code>h5i recall context init --goal "&lt;goal&gt;"</code></li>
-<li>the active <strong>h5i context branch</strong> has a purpose from <code>h5i recall context branch &lt;name&gt; --purpose "&lt;intent&gt;"</code></li>
-</ul>
-<p>One Git branch can contain multiple h5i context branches, so agents can explore several options without switching Git branches.</p>
-<hr />
-<h3 id="h5i-recall-context-init">h5i recall context init</h3>
-<pre><code>h5i recall context init --goal &lt;text&gt;
-</code></pre>
-<p>Create the context workspace if needed and set the goal for the current Git branch. Run it once per Git branch before writing context on that branch.</p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--goal &lt;text&gt;</code></td>
-<td>Goal for the current Git branch (required before <code>trace</code> / <code>commit</code>)</td>
-</tr>
-</tbody>
-</table>
-<pre><code class="language-bash">h5i recall context init --goal &quot;Build an OAuth2 login system&quot;
-h5i recall context init --goal &quot;Implement retry-safe HTTP client&quot;   # on another Git branch
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-show">h5i recall context show</h3>
-<pre><code>h5i recall context show [options]
-</code></pre>
-<p>Print working context: current Git branch goal, active h5i context branch, milestone progress, recent commits, and optionally the OTA trace.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--branch &lt;name&gt;</code></td>
-<td>Show context for a branch without switching to it</td>
-</tr>
-<tr>
-<td><code>--commit &lt;hash&gt;</code></td>
-<td>Pull a specific milestone entry by hash prefix</td>
-</tr>
-<tr>
-<td><code>--trace</code></td>
-<td>Include recent OTA trace lines</td>
-</tr>
-<tr>
-<td><code>--window &lt;n&gt;</code></td>
-<td>Number of recent milestone commits to include (default: 3)</td>
-</tr>
-<tr>
-<td><code>--trace-offset &lt;n&gt;</code></td>
-<td>Scroll back N lines from the end of the trace (sliding window)</td>
-</tr>
-<tr>
-<td><code>--metadata &lt;segment&gt;</code></td>
-<td>Pull a named section from <code>metadata.yaml</code></td>
-</tr>
-</tbody>
-</table>
-<pre><code>── Context ──────────────────────────────────────────────────
-  Goal: Build an OAuth2 login system  (branch: oauth-provider)
-  Git branch: feature/oauth  |  Context branch: oauth-provider
-
-  Milestones:
-    ✔ [x] Initial setup
-    ✔ [x] GitHub provider integration
-    ○ [ ] Token refresh flow  ← resume here
-
-  Recent Commits:
-    ◈ Implemented GitHub provider integration
-
-  Recent Trace:
-    [ACT] Switching session store to Redis in src/session.rs
-    [NOTE] TODO: add integration test for the timeout path
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-trace">h5i recall context trace</h3>
-<pre><code>h5i recall context trace --kind &lt;KIND&gt; [--ephemeral] &lt;content&gt;
-</code></pre>
-<p>Append a single OTA (Observe–Think–Act) entry to the trace log.</p>
-<p>Before writing, the CLI verifies that the current Git branch has a goal and the active h5i context branch has a purpose. If either is missing, it prints the setup command to run.</p>
-<p>By default the entry is <strong>durable</strong>: it is written to <code>trace.md</code> (human-readable) and to <code>dag.json</code> (the DAG), and it survives snapshots and session resets.</p>
-<p>With <code>--ephemeral</code> the entry goes to <code>ephemeral.md</code> only — it is excluded from the DAG, excluded from snapshots, and <strong>automatically cleared on the next <code>h5i recall context commit</code></strong>. Use this for scratch observations you only need for the current step (analogous to Claude Code's <code>/btw</code>).</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--kind &lt;KIND&gt;</code></td>
-<td>Entry type: <code>OBSERVE</code>, <code>THINK</code>, <code>ACT</code>, or <code>NOTE</code> (case-insensitive, required)</td>
-</tr>
-<tr>
-<td><code>--ephemeral</code></td>
-<td>Write to scratch buffer only; cleared on next <code>context commit</code>, never in DAG or snapshots</td>
-</tr>
-</tbody>
-</table>
-<pre><code class="language-bash">h5i recall context trace --kind OBSERVE &quot;Redis p99 latency is 2 ms under load&quot;
-h5i recall context trace --kind THINK   &quot;40 MB overhead is acceptable given the scale&quot;
-h5i recall context trace --kind ACT     &quot;Switched session store to Redis in src/session.rs&quot;
-h5i recall context trace --kind NOTE    &quot;TODO: add integration test for the timeout path&quot;
-
-# Scratch observation — never persists past the next context commit
-h5i recall context trace --kind OBSERVE &quot;checking line 42 quickly&quot; --ephemeral
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-commit">h5i recall context commit</h3>
-<pre><code>h5i recall context commit &lt;summary&gt; [--detail &lt;text&gt;]
-</code></pre>
-<p>Save a milestone checkpoint. Appended to <code>commit.md</code> on the current branch.</p>
-<p>Like <code>trace</code>, this refuses to write until the current Git branch has a goal and the active h5i context branch has a purpose.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>&lt;summary&gt;</code></td>
-<td>Short summary of the milestone (required, positional)</td>
-</tr>
-<tr>
-<td><code>--detail &lt;text&gt;</code></td>
-<td>Full explanation to store alongside the summary</td>
-</tr>
-</tbody>
-</table>
-<pre><code class="language-bash">h5i recall context commit &quot;Implemented token refresh flow&quot; \
-  --detail &quot;Handles 401s transparently; refresh token stored in HttpOnly cookie.&quot;
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-branch">h5i recall context branch</h3>
-<pre><code>h5i recall context branch &lt;name&gt; --purpose &lt;text&gt;
-</code></pre>
-<p>Create a new h5i context branch and switch to it. Use this before exploring a risky alternative so the current context branch is preserved. Multiple h5i context branches can live under the same Git branch.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>&lt;name&gt;</code></td>
-<td>Branch name (required, positional)</td>
-</tr>
-<tr>
-<td><code>--purpose &lt;text&gt;</code></td>
-<td>One-line description of what this context branch is exploring (required by the CLI)</td>
-</tr>
-</tbody>
-</table>
-<pre><code class="language-bash">h5i recall context branch experiment/sync-session --purpose &quot;try synchronous session store as fallback&quot;
-h5i recall context branch experiment/redis-session --purpose &quot;try Redis-backed session store&quot;
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-checkout">h5i recall context checkout</h3>
-<pre><code>h5i recall context checkout &lt;name&gt;
-</code></pre>
-<p>Switch to an existing context branch.</p>
-<pre><code class="language-bash">h5i recall context checkout main
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-merge">h5i recall context merge</h3>
-<pre><code>h5i recall context merge &lt;branch&gt;
-</code></pre>
-<p>Merge a branch's commit log and trace into the current branch. A <strong>DAG merge node</strong> is appended to the target branch's <code>dag.json</code> with two parent IDs — one from the target branch head and one from the source branch head — so the full causal history of both branches is preserved.</p>
-<pre><code class="language-bash">h5i recall context merge experiment/sync-session
-h5i recall context merge scope/investigate-auth    # merge a subagent scope back in
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-scope">h5i recall context scope</h3>
-<pre><code>h5i recall context scope &lt;name&gt; [--purpose &lt;text&gt;]
-</code></pre>
-<p>Create a <strong>subagent-scoped sub-context</strong>: a lightweight branch prefixed <code>scope/</code> whose metadata marks it as a delegation scope. Scoped branches are shown separately under <strong>Scoped subagents</strong> in <code>h5i recall context status</code>, making it easy to track active delegations at a glance.</p>
-<p>Use this when spawning a subagent to investigate something in isolation. When the subagent finishes, merge its findings back with <code>h5i recall context merge scope/&lt;name&gt;</code>, which records a two-parent DAG merge node.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>&lt;name&gt;</code></td>
-<td>Scope name. Stored as <code>scope/&lt;name&gt;</code> (the <code>scope/</code> prefix is added automatically if omitted).</td>
-</tr>
-<tr>
-<td><code>--purpose &lt;text&gt;</code></td>
-<td>One-line description of what the subagent is investigating</td>
-</tr>
-</tbody>
-</table>
-<pre><code class="language-bash">h5i recall context scope investigate-auth --purpose &quot;check token validation edge cases&quot;
-# subagent works here …
-h5i recall context checkout main
-h5i recall context merge scope/investigate-auth
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-status">h5i recall context status</h3>
-<pre><code>h5i recall context status
-</code></pre>
-<p>Print an overview of the current workspace state:</p>
-<ul>
-<li>Current Git branch and its goal</li>
-<li>Active h5i context branch and its milestone commit + trace-line counts</li>
-<li>Other h5i context branches (if any)</li>
-<li><strong>Scoped subagents</strong> — <code>scope/*</code> branches listed separately so active delegations are visible at a glance</li>
-<li><strong>Trace cache split</strong> — how many trace lines fall in the stable prefix (prompt-cache friendly) vs. the dynamic suffix (changes every step)</li>
-<li><strong>Commits flagged for review</strong> — if <code>h5i recall notes analyze</code> has been run, the top 3 commits scoring above 0.40 on the review heuristic are surfaced inline, so you don't need a separate <code>h5i audit review</code> call to spot what needs human attention</li>
-</ul>
-<pre><code>── Context Status ──────────────────────────────────────────────
-  Git branch: feature/auth  |  goal: Build OAuth2 login system
-  Context branch: oauth-provider  |  3 branches  |  5 commits  |  87 log lines
-  Other branches: experiment/sync-session
-  Scoped subagents: scope/investigate-auth
-  Trace: stable 47 lines  ·  dynamic 40 lines  (prompt-cache boundary)
-
-  Commits flagged for review:
-    ⚑ a3f8c12 score 0.74  &quot;add retry logic to HTTP client&quot;
-      · high uncertainty (5 signals)
-    ⚑ 9e21b04 score 0.52  &quot;refactor auth middleware&quot;
-      · BLIND_EDIT in src/auth.rs
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-todo">h5i recall context todo</h3>
-<pre><code>h5i recall context todo
-</code></pre>
-<p>Extract all open TODO / FIXME / BLOCKED items from the current branch's trace. Only NOTE and THINK entries containing these keywords are surfaced, so noise from OBSERVE lines is filtered out.</p>
-<pre><code>── Open TODOs ─────────────────────────────────── main ──
-  □ add integration test for the timeout path
-  □ FIXME: token refresh is hardcoded to 3600s — should come from config
-  □ BLOCKED: waiting on legal sign-off before shipping the audit log
-
-  ◈ 3 items found
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-knowledge">h5i recall context knowledge</h3>
-<pre><code>h5i recall context knowledge
-</code></pre>
-<p>Distill all THINK entries from <strong>every</strong> context branch into a project-wide knowledge base. Entries are deduplicated by content and labelled with the branch they came from. The current branch's entries are highlighted in cyan; entries from other branches appear dimmed.</p>
-<p>Use this at the start of a session to re-absorb the project's accumulated design rationale without re-reading the full trace on every branch.</p>
-<pre><code>── Project Knowledge (distilled THINK entries) ─────────────
-  ◈ [main]              exponential backoff with jitter is safest under high load
-  ◈ [main]              Redis chosen over in-process HashMap — survives restarts
-  ◈ [experiment/sync]   synchronous fallback would block the async runtime
-  ◈ [main]              auth middleware rewrite driven by legal compliance, not tech debt
-
-  ◈ 4 design decisions across all branches
-</code></pre>
-<p><strong>MCP tool</strong>: <code>h5i_context_knowledge</code> — returns <code>{ "thoughts": [{ "branch", "thought" }, ...] }</code>.</p>
-<hr />
-<h3 id="h5i-recall-context-prompt">h5i recall context prompt</h3>
-<pre><code>h5i recall context prompt
-</code></pre>
-<p>Print a ready-made system prompt that can be prepended to an agent session to give it full awareness of the <code>h5i recall context</code> commands and the recommended workflow.</p>
 <hr />
 <h3 id="h5i-audit-scan">h5i audit scan</h3>
 <pre><code>h5i audit scan [options]
@@ -2206,501 +2302,7 @@ h5i audit scan
 # The scan does NOT block any action — it is advisory only.
 </code></pre>
 <hr />
-<h3 id="h5i-recall-context-restore">h5i recall context restore</h3>
-<pre><code>h5i recall context restore &lt;sha&gt;
-</code></pre>
-<p>Restore the context workspace to the state it was in when a specific git commit was made. Every <code>h5i capture commit</code> automatically snapshots the current context state; this command replays that snapshot.</p>
-<p>Restoration is <strong>non-destructive</strong>: a new commit is appended to <code>refs/h5i/context</code> whose tree mirrors the snapshot, so the full history is preserved. You can always see where you restored from.</p>
-<p><strong>Arguments</strong></p>
-<table>
-<thead>
-<tr>
-<th>Argument</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>&lt;sha&gt;</code></td>
-<td>Git commit SHA (prefix accepted, e.g. <code>a3f8c12</code>)</td>
-</tr>
-</tbody>
-</table>
-<pre><code class="language-bash">h5i recall context restore a3f8c12
-
-# ✔  Context restored: branch: main  ·  goal: add retry logic to HTTP client
-#   → Run `h5i recall context show --trace` to verify the restored state.
-</code></pre>
-<p><strong>When to use</strong></p>
-<ul>
-<li>Continuing a task after a gap of several days — restore the context from the last working commit rather than re-deriving everything from scratch.</li>
-<li>Debugging a regression — restore context to the commit before the regression was introduced to recover the reasoning state.</li>
-<li>Handing off to a colleague — they can restore the exact context you had when you last worked on a feature.</li>
-</ul>
-<hr />
-<h3 id="h5i-recall-context-diff">h5i recall context diff</h3>
-<pre><code>h5i recall context diff &lt;from&gt; &lt;to&gt;
-</code></pre>
-<p>Show how the context workspace changed between two git commits. Requires both commits to have context snapshots (created automatically by <code>h5i capture commit</code>).</p>
-<p><strong>Arguments</strong></p>
-<table>
-<thead>
-<tr>
-<th>Argument</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>&lt;from&gt;</code></td>
-<td>Earlier git commit SHA (prefix accepted)</td>
-</tr>
-<tr>
-<td><code>&lt;to&gt;</code></td>
-<td>Later git commit SHA (prefix accepted)</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Output</strong></p>
-<ul>
-<li><strong>Goal change</strong> — whether the project goal was updated between the two commits</li>
-<li><strong>New milestones</strong> — context commits (reasoning checkpoints) added after <code>&lt;from&gt;</code></li>
-<li><strong>New OTA trace steps</strong> — OBSERVE/THINK/ACT/NOTE entries added after <code>&lt;from&gt;</code> (up to 30)</li>
-</ul>
-<pre><code>── Context diff  a3f8c12..9e21b04 ───────────────────────────────────────────
-
-  New milestones: (2)
-    + Analyzed retry entry points in src/http.rs
-    + Implemented exponential backoff with jitter
-
-  New OTA trace steps: (5)
-    [10:14:22] OBSERVE: HttpClient::send has no retry logic
-    [10:15:03] THINK: exponential backoff with jitter is safest
-    [10:15:44] ACT: added retry loop in send() with 5-attempt cap
-    [10:16:10] OBSERVE: tests pass — 47/47 green
-    [10:16:30] NOTE: TODO: add integration test for timeout path
-</code></pre>
-<pre><code class="language-bash">h5i recall context diff a3f8c12 9e21b04
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-relevant">h5i recall context relevant</h3>
-<pre><code>h5i recall context relevant &lt;file&gt;
-</code></pre>
-<p>Retrieve all context workspace entries that mention a specific file. Run this <strong>before editing a file</strong> to recover accumulated reasoning about it — past decisions, uncertainties, and OTA steps — without re-reading the full trace.</p>
-<p><strong>Arguments</strong></p>
-<table>
-<thead>
-<tr>
-<th>Argument</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>&lt;file&gt;</code></td>
-<td>File path to look up (e.g. <code>src/repository.rs</code>)</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Output sections</strong></p>
-<table>
-<thead>
-<tr>
-<th>Section</th>
-<th>Source</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Milestones</strong></td>
-<td>Context commits whose contribution text mentions the file</td>
-</tr>
-<tr>
-<td><strong>Trace mentions</strong></td>
-<td>OTA trace lines that mention the file, with one line of surrounding context</td>
-</tr>
-<tr>
-<td><strong>Cross-branch</strong></td>
-<td>Trace lines and milestones from other h5i context branches that mention the file</td>
-</tr>
-</tbody>
-</table>
-<pre><code>── Context relevant to src/repository.rs ─────────────────────────────────────
-
-  Milestones: (1)
-    ◈ rewrote H5iRepository::commit to support decisions field
-
-  Trace mentions: (3)
-    [10:04:17] THINK: repository.rs commit path needs a decisions param
-    [10:04:55] ACT: added decisions: Vec&lt;Decision&gt; to repository.rs:commit()
-    [10:05:10] OBSERVE: all tests green after repository.rs edit
-
-  Cross-branch: (1)
-    [experiment/alt-api] [10:22:00] THINK: repository.rs API is too wide — consider splitting
-</code></pre>
-<pre><code class="language-bash">h5i recall context relevant src/repository.rs
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-smart">h5i recall context smart</h3>
-<pre><code>h5i recall context smart --query &quot;&lt;current task&gt;&quot; [--limit &lt;n&gt;]
-</code></pre>
-<p>Recall task-aware prior context without tying the feature to a specific agent. This ranks prior trace snippets and session footprint evidence against the current task and prints the most relevant files to inspect first.</p>
-<p><code>smart</code> is off unless you invoke it explicitly. The legacy spelling <code>h5i context smart --query ...</code> also works, but the preferred command is under <code>h5i recall</code>.</p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--query &lt;text&gt;</code></td>
-<td>Task prompt/query to rank prior context against</td>
-</tr>
-<tr>
-<td><code>--limit &lt;n&gt;</code></td>
-<td>Maximum recalled file results to show (default: 5)</td>
-</tr>
-</tbody>
-</table>
-<pre><code class="language-bash">h5i recall context smart --query &quot;add retry-aware HTTP client&quot; --limit 5
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-pack">h5i recall context pack</h3>
-<pre><code>h5i recall context pack
-</code></pre>
-<p>Compact the current branch's OTA trace using a <strong>three-pass structurally-lossless algorithm</strong> derived from the Contextual Memory Virtualisation paper (arXiv:2602.22402):</p>
-<table>
-<thead>
-<tr>
-<th>Pass</th>
-<th>What it does</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Pass 1 — subsumption</strong></td>
-<td>Remove OBSERVE entries whose subject token (file name or first significant word) already appears in a later THINK or ACT entry — those observations have been "consumed" by higher-level reasoning and are redundant.</td>
-</tr>
-<tr>
-<td><strong>Pass 2 — preservation</strong></td>
-<td>Retain every THINK, ACT, and NOTE entry verbatim; these represent irreplaceable decisions and actions.</td>
-</tr>
-<tr>
-<td><strong>Pass 3 — consolidation</strong></td>
-<td>Merge consecutive OBSERVE entries that share the same subject token into a single entry annotated with a <code>(×N)</code> count.</td>
-</tr>
-</tbody>
-</table>
-<p>The compacted trace is written back to both <code>trace.md</code> and <code>dag.json</code>. Run <code>git gc</code> afterwards to reclaim object storage.</p>
-<pre><code class="language-bash">h5i recall context pack
-# ✔  Three-pass lossless pack complete:
-#    − 12 subsumed OBSERVE entries removed
-#    ⇒  4 consecutive OBSERVE entries merged
-#    ✔  31 THINK/ACT/NOTE entries preserved verbatim
-#   → Run `git gc` to reclaim disk space.
-
-# If nothing needs compacting:
-# ℹ  Nothing to pack — context history is already compact.
-</code></pre>
-<p><strong>When to use</strong></p>
-<p>On long-running tasks the trace grows one line per OTA step. After many iterations the OBSERVE entries — tool outputs, file reads, test results — tend to dwarf the THINK/ACT reasoning that actually matters. <code>h5i recall context pack</code> strips the noise while guaranteeing that no decision or action is ever lost.</p>
-<hr />
-<h3 id="h5i-recall-context-ephemeral">h5i recall context ephemeral</h3>
-<pre><code>h5i recall context ephemeral [--branch &lt;name&gt;]
-</code></pre>
-<p>Display the current ephemeral scratch traces for a branch. Ephemeral entries are written with <code>h5i recall context trace --ephemeral</code> and are automatically cleared on the next <code>h5i recall context commit</code>.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--branch &lt;name&gt;</code></td>
-<td>Branch to inspect (default: current branch)</td>
-</tr>
-</tbody>
-</table>
-<pre><code class="language-bash">h5i recall context ephemeral
-# ── Ephemeral Traces (scratch, not persisted) ──────────────
-#   [14:03:12] OBSERVE: checking line 42 quickly
-#   [14:04:01] NOTE: might be worth re-reading this later
-</code></pre>
-<hr />
-<h3 id="h5i-recall-context-cached-prefix">h5i recall context cached-prefix</h3>
-<pre><code>h5i recall context cached-prefix [--tail &lt;n&gt;]
-</code></pre>
-<p>Show the <strong>stable-prefix / dynamic-suffix boundary</strong> in the current branch's trace. Lines in the stable prefix are unchanged across most agent steps and benefit from prompt-cache hits. Lines in the dynamic suffix change every step.</p>
-<p>The boundary is defined as: everything except the last <code>--tail</code> lines (default: 40) is stable.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--tail &lt;n&gt;</code></td>
-<td>Number of volatile tail lines to treat as dynamic (default: 40)</td>
-</tr>
-</tbody>
-</table>
-<pre><code class="language-bash">h5i recall context cached-prefix
-# ── Stable-prefix boundary (tail=40) ────────────────────────
-#   ▓▓ Stable prefix: 47 lines (prompt-cache friendly)
-#   ░░ Dynamic suffix: 40 lines (changes every step)
-#
-#   ▓ Last stable line:
-#     [10:15:44] ACT: added retry loop in send() with 5-attempt cap
-#   ░ First dynamic line:
-#     [10:16:10] OBSERVE: tests pass — 47/47 green
-</code></pre>
-<p><strong>Why this matters</strong></p>
-<p>Anthropic's prompt caching has a 5-minute TTL. If the stable prefix (goal, milestones, older trace entries) is serialised before the volatile suffix, repeated agent steps pay only for the dynamic suffix while the stable portion is served from cache. This maps to the cost-recovery finding in the CMV paper (arXiv:2602.22402): cost neutrality within ~10 conversational turns.</p>
-<hr />
-<h3 id="h5i-recall-recap">h5i recall recap</h3>
-<pre><code>h5i recall recap [--session &lt;path&gt;] [--since &lt;iso8601&gt;] [--dry-run]
-</code></pre>
-<p>Import Claude Code <strong>Recap</strong> entries (internally <code>{"type":"system","subtype":"away_summary"}</code> JSONL records) from the active session log as context commits.</p>
-<p>Claude Code periodically emits a recap of the form <code>Goal: … &lt;what was done&gt;. Next: … (disable recaps in /config)</code>. <code>h5i recall recap</code> harvests those records, splits each body into <code>(summary, detail)</code> on the <code>Next:</code> boundary, and creates one <code>h5i recall context commit</code> per recap. Imported UUIDs are tracked in <code>recaps.json</code> at the root of <code>refs/h5i/context</code>, so repeated runs are idempotent.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--session &lt;path&gt;</code></td>
-<td>Explicit JSONL session log to scan (default: auto-detect the latest for the current working directory)</td>
-</tr>
-<tr>
-<td><code>--since &lt;iso8601&gt;</code></td>
-<td>Only import recaps with a timestamp strictly after this cutoff, e.g. <code>2026-04-23T00:00:00Z</code></td>
-</tr>
-<tr>
-<td><code>--dry-run</code></td>
-<td>Report what would be imported without modifying the workspace</td>
-</tr>
-</tbody>
-</table>
-<pre><code class="language-bash">h5i recall recap --dry-run
-# ✔  would import 2 new recap(s)
-#   ✓ def39987  Goal: simplify the README around the basic workflow. I rewrote it…
-#   ✓ 3df7814b  Goal: audit the commit flow. I traced H5iRepository::commit…
-
-h5i recall recap
-# ✔  imported 2 new recap(s)
-
-h5i recall recap            # idempotent on re-run
-# ✔  imported 0 new recap(s) · 2 already imported
-</code></pre>
-<p><strong>When to use</strong></p>
-<p>Recaps are already concise, timestamped checkpoints produced by Claude Code itself — running <code>h5i recall recap</code> before <code>h5i recall context commit</code> lets you cheaply promote them into durable milestones instead of writing each summary by hand. The trailing <code>(disable recaps in /config)</code> marker and the originating UUID / session ID are preserved in the commit detail so each milestone is traceable back to its source record.</p>
-<hr />
-<h2 id="h5i-recall-memory">h5i recall memory</h2>
-<p>Version and share agent memory files under <code>refs/h5i/memory</code>.</p>
-<p>Supported built-in memory backends:</p>
-<ul>
-<li><code>claude</code> → <code>~/.claude/projects/&lt;repo-path&gt;/memory/</code></li>
-<li><code>codex</code> → <code>~/.codex/memories/</code></li>
-</ul>
-<p>When <code>--agent</code> is omitted, h5i infers the backend from <code>H5I_AGENT_ID</code> and falls back to <code>claude</code>.</p>
-<hr />
-<h3 id="h5i-capture-memory">h5i capture memory</h3>
-<pre><code>h5i capture memory [options]
-</code></pre>
-<p>Snapshot the current state of an agent memory backend and store it as a git object linked to a commit. Canonical form of the legacy <code>h5i memory snapshot</code>.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--commit &lt;oid&gt;</code></td>
-<td>Link snapshot to a specific commit (default: HEAD)</td>
-</tr>
-<tr>
-<td><code>--agent &lt;claude\|codex&gt;</code></td>
-<td>Memory backend to snapshot</td>
-</tr>
-<tr>
-<td><code>--path &lt;dir&gt;</code></td>
-<td>Override the source directory completely</td>
-</tr>
-</tbody>
-</table>
-<pre><code class="language-bash">h5i capture memory --agent codex
-</code></pre>
-<hr />
-<h3 id="h5i-recall-memory-log">h5i recall memory log</h3>
-<pre><code>h5i recall memory log
-</code></pre>
-<p>List all memory snapshots in reverse chronological order, showing the linked commit OID, timestamp, file count, and annotation message.</p>
-<hr />
-<h3 id="h5i-recall-memory-diff">h5i recall memory diff</h3>
-<pre><code>h5i recall memory diff [&lt;from-oid&gt; [&lt;to-oid&gt;]]
-</code></pre>
-<p>Show what changed between two memory snapshots, or between a snapshot and the live agent memory directory.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>--agent &lt;claude\|codex&gt;</code></td>
-<td>Backend to use when diffing against live memory</td>
-</tr>
-</tbody>
-</table>
-<table>
-<thead>
-<tr>
-<th>Form</th>
-<th>Compares</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>h5i recall memory diff</code></td>
-<td>Last snapshot → live memory</td>
-</tr>
-<tr>
-<td><code>h5i recall memory diff &lt;oid&gt;</code></td>
-<td>Snapshot at <code>&lt;oid&gt;</code> → live memory</td>
-</tr>
-<tr>
-<td><code>h5i recall memory diff &lt;oid-a&gt; &lt;oid-b&gt;</code></td>
-<td>Snapshot at <code>&lt;oid-a&gt;</code> → snapshot at <code>&lt;oid-b&gt;</code></td>
-</tr>
-</tbody>
-</table>
-<pre><code>memory diff a3f9c2b..b2f3a1c
-────────────────────────────────────────────────────────────
-  added     project_auth.md
-    +  The auth middleware rewrite is driven by legal compliance
-    +  requirements around session token storage.
-  modified  feedback_tests.md
-    +How to apply: always use a real DB in integration tests.
-────────────────────────────────────────────────────────────
-  1 added, 0 removed, 1 modified
-</code></pre>
-<hr />
-<h3 id="h5i-recall-memory-restore">h5i recall memory restore</h3>
-<pre><code>h5i recall memory restore &lt;oid&gt; [options]
-</code></pre>
-<p>Restore an agent memory backend to the state captured in a snapshot. Prompts for confirmation by default.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>&lt;oid&gt;</code></td>
-<td>Commit OID whose linked snapshot to restore (required, positional)</td>
-</tr>
-<tr>
-<td><code>--agent &lt;claude\|codex&gt;</code></td>
-<td>Memory backend to restore into</td>
-</tr>
-<tr>
-<td><code>-y, --yes</code></td>
-<td>Skip the confirmation prompt</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<h3 id="h5i-share-memory-push">h5i share memory push</h3>
-<pre><code>h5i share memory push [--remote &lt;name&gt;]
-</code></pre>
-<p>Push <code>refs/h5i/memory</code> to the remote (default: <code>origin</code>).</p>
-<hr />
-<h3 id="h5i-share-memory-pull">h5i share memory pull</h3>
-<pre><code>h5i share memory pull [--remote &lt;name&gt;]
-</code></pre>
-<p>Fetch <code>refs/h5i/memory</code> from the remote (default: <code>origin</code>).</p>
-<hr />
-<h2 id="h5i-recall-resume">h5i recall resume</h2>
-<pre><code>h5i recall resume [&lt;branch&gt;]
-</code></pre>
-<p>Generate a session handoff briefing assembled entirely from local h5i data — no API call required. Prints branch state, goal, milestone progress, last session statistics, high-risk files, memory changes since the last snapshot, and a suggested opening prompt for Claude.</p>
-<p><strong>Options</strong></p>
-<table>
-<thead>
-<tr>
-<th>Option</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>&lt;branch&gt;</code></td>
-<td>Branch to generate a briefing for (default: current branch)</td>
-</tr>
-</tbody>
-</table>
-<p>The briefing grows richer as more h5i features are active:</p>
-<table>
-<thead>
-<tr>
-<th>Section</th>
-<th>Requires</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Git-branch goal + milestone progress</td>
-<td><code>h5i recall context init --goal "&lt;goal&gt;"</code> and an active context branch purpose</td>
-</tr>
-<tr>
-<td>Last session stats + risky files</td>
-<td><code>h5i recall notes analyze</code> run after each session</td>
-</tr>
-<tr>
-<td>Memory changes</td>
-<td><code>h5i capture memory</code> run after each session</td>
-</tr>
-<tr>
-<td>Agent + model in header</td>
-<td>Claude Code hook, or <code>H5I_MODEL</code> / <code>H5I_AGENT_ID</code> env vars</td>
-</tr>
-</tbody>
-</table>
-<p>If none of these are set up, <code>h5i recall resume</code> still shows branch, HEAD commit, and a suggested prompt.</p>
-<p><strong>Risk score formula</strong> used to rank high-risk files:</p>
-<pre><code>risk = 0.4 × (1 − avg_confidence) + 0.3 × churn_score + 0.3 × (signal_count / max_signal_count)
-</code></pre>
-<p>Top 5 files by risk score are shown.</p>
-<p><strong>Recommended end-of-session checklist</strong></p>
-<pre><code class="language-bash">h5i recall notes analyze                        # index the session log
-h5i capture memory -m &quot;end of session&quot;  # checkpoint memory
-</code></pre>
-<p>Then at the start of the next session:</p>
-<pre><code class="language-bash">h5i recall resume                               # get the full briefing
-</code></pre>
-<hr />
-<h2 id="h5i-audit-vibe">h5i audit vibe</h2>
+<h3 id="h5i-audit-vibe">h5i audit vibe</h3>
 <pre><code>h5i audit vibe [OPTIONS]
 </code></pre>
 <p>Show an instant AI footprint audit of the repository: what fraction of recent commits are AI-generated, which directories are fully AI-written, and which files carry the highest risk.</p>
@@ -2813,13 +2415,13 @@ h5i capture memory -m &quot;end of session&quot;  # checkpoint memory
 }
 </code></pre>
 <hr />
-<h2 id="h5i-audit-policy">h5i audit policy</h2>
+<h3 id="h5i-audit-policy">h5i audit policy</h3>
 <pre><code>h5i audit policy &lt;subcommand&gt;
 </code></pre>
 <p>Manage governance rules for AI-assisted commits. Rules live in <code>.h5i/policy.toml</code> — committed alongside your code so the policy is version-controlled and shared with the team.</p>
 <p>Policy rules are evaluated automatically on every <code>h5i capture commit</code>. A rule violation blocks the commit unless <code>--force</code> is passed.</p>
 <hr />
-<h3 id="h5i-audit-policy-init">h5i audit policy init</h3>
+<h4 id="h5i-audit-policy-init">h5i audit policy init</h4>
 <pre><code>h5i audit policy init
 </code></pre>
 <p>Create <code>.h5i/policy.toml</code> with a commented-out starter configuration. Edit the file to enable the rules you need.</p>
@@ -2849,7 +2451,7 @@ max_ai_ratio = 0.8            # flag if &gt;80% of commits in this path are AI
 max_blind_edit_ratio = 0.3    # flag if &gt;30% of edits were blind (no prior Read)
 </code></pre>
 <hr />
-<h3 id="h5i-audit-policy-check">h5i audit policy check</h3>
+<h4 id="h5i-audit-policy-check">h5i audit policy check</h4>
 <pre><code>h5i audit policy check
 </code></pre>
 <p>Run a dry-run policy check against the currently staged files without committing. Useful in pre-commit hooks or CI.</p>
@@ -2857,7 +2459,7 @@ max_blind_edit_ratio = 0.3    # flag if &gt;30% of edits were blind (no prior Re
 h5i audit policy check || exit 1
 </code></pre>
 <hr />
-<h3 id="h5i-audit-policy-show">h5i audit policy show</h3>
+<h4 id="h5i-audit-policy-show">h5i audit policy show</h4>
 <pre><code>h5i audit policy show
 </code></pre>
 <p>Display the parsed policy configuration in a human-readable format.</p>
@@ -2875,7 +2477,7 @@ h5i audit policy check || exit 1
       max_blind_edit_ratio = 0.30
 </code></pre>
 <hr />
-<h2 id="h5i-audit-compliance">h5i audit compliance</h2>
+<h3 id="h5i-audit-compliance">h5i audit compliance</h3>
 <pre><code>h5i audit compliance [OPTIONS]
 </code></pre>
 <p>Generate a compliance audit report over a date range. Walks the commit history, re-evaluates policy rules on each commit, and aggregates session data (blind edits, uncertainty, prompt-injection signals) into a structured report.</p>
@@ -3017,6 +2619,328 @@ open report.html
 </tbody>
 </table>
 <hr />
+<h2 id="h5i-share">h5i share</h2>
+<p>Publish provenance to teammates and PRs.</p>
+<table>
+<thead>
+<tr>
+<th>Verb</th>
+<th>Equivalent legacy form</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>h5i share push</code></td>
+<td><code>h5i push</code></td>
+<td>Push all refs/h5i/<em> (notes, context, memory, msg, </em><em>object manifests</em>*) to a remote.</td>
+</tr>
+<tr>
+<td><code>h5i share pull</code></td>
+<td><code>h5i pull</code></td>
+<td>Fetch &amp; union-merge refs/h5i/* from a remote.</td>
+</tr>
+<tr>
+<td><code>h5i share pr &lt;sub&gt;</code></td>
+<td><em>(new)</em></td>
+<td>Post / preview a GitHub PR comment with h5i provenance.</td>
+</tr>
+<tr>
+<td><code>h5i share memory push|pull</code></td>
+<td><code>h5i memory push|pull</code></td>
+<td>Push or pull only the agent-memory refs.</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Raw tool output is <em>not</em> shared by <code>share push</code>/<code>pull</code>.</strong> It carries the
+small token-reduction <strong>manifests</strong> (<code>refs/h5i/objects</code> — pointers + filtered
+summaries), but never the huge raw blobs (<code>refs/h5i/objects-data</code> / Git LFS).
+Those travel only when you explicitly run <a href="#h5i-objects-push--pull--sharing-raw-blobs-optional"><code>h5i objects push</code></a>
+(and are fetched by <code>h5i objects pull</code>, or lazily by <code>recall</code> from LFS). So a
+teammate who <code>h5i share pull</code>s sees every capture's summary and pulls only the raw
+bytes they actually need.</p>
+</blockquote>
+<h3 id="h5i-share-push">h5i share push</h3>
+<pre><code>h5i share push [--remote &lt;name&gt;] [--branch [&lt;name&gt;] | --all-branches]
+</code></pre>
+<p>Push the <code>refs/h5i/*</code> families (notes, memory, context, msg, object manifests, env state) to the remote (default: <code>origin</code>). None of these are included in a plain <code>git push</code>. Canonical form of the legacy <code>h5i push</code>.</p>
+<p><strong>Branch-scoped by default.</strong> Like <code>git push</code>, <code>share push</code> sends only the <em>current branch's</em> h5i material — it does not publish the reasoning, provenance, captures, conversations, or environments of unrelated branches. Pass <code>--branch &lt;name&gt;</code> to scope to a different branch, or <code>--all-branches</code> to push every branch's material (a first full sync, or CI):</p>
+<pre><code>h5i share push                      # the current branch's material (default)
+h5i share push --branch feature-x   # another branch's material
+h5i share push --all-branches       # every branch's material
+</code></pre>
+<p>What gets scoped:</p>
+<table>
+<thead>
+<tr>
+<th>Ref family</th>
+<th>Scoped how</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>context</strong> (<code>refs/h5i/context/*</code>)</td>
+<td>Only <code>refs/h5i/context/&lt;branch&gt;</code> is pushed (one ref per branch). Legacy whole-workspace refs are skipped.</td>
+</tr>
+<tr>
+<td><strong>notes</strong> (<code>refs/h5i/notes</code>)</td>
+<td>Only the provenance for commits reachable from <code>&lt;branch&gt;</code> travels.</td>
+</tr>
+<tr>
+<td><strong>objects</strong> (<code>refs/h5i/objects</code>)</td>
+<td>Only manifests whose <code>branch</code> field equals <code>&lt;branch&gt;</code> travel.</td>
+</tr>
+<tr>
+<td><strong>msg</strong> (<code>refs/h5i/msg</code>)</td>
+<td>Only messages tagged with <code>&lt;branch&gt;</code> travel (sends auto-tag the current branch; replies inherit the thread's). The agent roster always travels.</td>
+</tr>
+<tr>
+<td><strong>env</strong> (<code>refs/h5i/env/meta</code> + <code>…/code/*</code>)</td>
+<td>Only envs whose <code>parent_branch</code> is <code>&lt;branch&gt;</code> travel — their manifests/policies/events and their code branches.</td>
+</tr>
+<tr>
+<td><strong>memory</strong></td>
+<td>Pushed in full — a cumulative full-state snapshot whose facts are branch-independent.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Non-destructive.</strong> notes/objects/msg/env are single aggregate refs shared by every branch, so a scoped push does <strong>not</strong> force a filtered subset (which would delete other branches' data on the remote). Instead it fetches the remote's current ref and <em>unions</em> only this branch's entries onto it, then pushes the result as a fast-forward. Other branches' data already on the remote is always preserved.</p>
+<blockquote>
+<p><strong>Note:</strong> because <code>msg</code> is filtered by each message's <code>branch</code> tag, a <code>msg review --branch X</code> sent while you are on a <em>different</em> git branch is carried by <code>--branch X</code> (or <code>--all-branches</code>), not by a plain current-branch push.</p>
+</blockquote>
+<p>To automate in CI:</p>
+<pre><code class="language-yaml">- name: Push h5i metadata
+  run: |
+    git push origin refs/h5i/notes
+    git push origin refs/h5i/memory
+</code></pre>
+<p>To make <code>git pull</code> fetch h5i refs automatically, add fetch refspecs to <code>.git/config</code>:</p>
+<pre><code class="language-ini">[remote &quot;origin&quot;]
+    url = git@github.com:you/repo.git
+    fetch = +refs/heads/*:refs/remotes/origin/*
+    fetch = +refs/h5i/notes:refs/h5i/notes
+    fetch = +refs/h5i/memory:refs/h5i/memory
+</code></pre>
+<hr />
+<h3 id="h5i-share-pull">h5i share pull</h3>
+<pre><code>h5i share pull [--remote &lt;name&gt;]
+</code></pre>
+<p>Fetch both <code>refs/h5i/notes</code> and <code>refs/h5i/memory</code> from the remote (default: <code>origin</code>). Canonical form of the legacy <code>h5i pull</code>.</p>
+<hr />
+<h3 id="h5i-share-pr">h5i share pr</h3>
+<pre><code>h5i share pr post [--number N] [--limit N] [--style STYLE] [--dry-run]
+                  [--no-msg] [--msg-bodies] [--msg-limit N]
+h5i share pr body [--limit N] [--style STYLE]
+                  [--no-msg] [--msg-bodies] [--msg-limit N]
+</code></pre>
+<p>Posts or previews a sticky GitHub PR comment summarising h5i provenance for
+every AI-authored commit on the current branch. Re-running upserts in place
+via an HTML marker (<code>&lt;!-- h5i:pr-comment v1 --&gt;</code>), so the PR never accumulates
+duplicate comments.</p>
+<p>The comment renders, for each AI commit:</p>
+<ul>
+<li>the prompt that drove it</li>
+<li>model, agent, and token usage</li>
+<li>test metrics (passed / failed / total, exit code)</li>
+<li>structured <code>--decisions</code> if recorded at commit time</li>
+<li>a 🚩 flag with <code>h5i audit review</code> triggers (uncertainty, blind edits, churn, scope) when the commit crosses the review threshold</li>
+</ul>
+<p><strong>💬 Agent coordination (i5h messages)</strong></p>
+<p>Below the reasoning DAG, the comment folds in the cross-agent message threads
+(<code>refs/h5i/msg</code>, see <a href="#h5i-msg"><code>h5i msg</code></a>) that are <strong>relevant to this branch</strong> —
+a thread is included when at least one of its messages was tagged with the PR
+branch, and the whole thread (including replies tagged for another branch or
+none) travels with it. The section is collapsed by default and self-omits when
+no branch-relevant threads exist.</p>
+<p>Messages are <strong>auto-tagged with the sender's current git branch</strong>, so a normal
+back-and-forth conducted while working on the branch is captured without any
+extra flags. <code>send</code>, <code>ask</code>, <code>review</code>, <code>risk</code>, and <code>handoff</code> all accept
+<code>--branch &lt;b&gt;</code> to tag for a different branch, or <code>--branch ""</code> to leave a
+message untagged. Replies (<code>reply</code>/<code>ack</code>/<code>done</code>/<code>decline</code>) do <strong>not</strong> use the
+responder's checkout — they inherit their thread's branch, so acknowledging a
+thread from an unrelated branch can't drag it into the wrong PR.</p>
+<p>Because a PR comment is published, message text is treated as untrusted and
+disclosure-safe by default:</p>
+<ul>
+<li>Only <strong>review-typed</strong> messages (<code>REVIEW_REQUEST</code>, <code>RISK</code>, <code>HANDOFF</code>, <code>ASK</code>
+  and their <code>ACK</code>/<code>DONE</code>/<code>DECLINE</code>/<code>BLOCKED</code> replies) show a one-line excerpt;
+  <code>FYI</code> / free-text messages are rendered <strong>metadata-only</strong> (kind, who, when).</li>
+<li>Every rendered field is <strong>secret-redacted</strong> (the <code>h5i</code> secret rule pack, with
+  control/escape bytes stripped <em>before</em> redaction so a split token can't be
+  reassembled afterwards) and Markdown/HTML-escaped.</li>
+<li>A footer line records the <code>refs/h5i/msg</code> tip OID the data came from.</li>
+</ul>
+<p><strong>🪙 Token reduction</strong></p>
+<p>When the branch has token-reduction captures (<code>h5i capture run</code>, see
+<a href="#h5i-objects-token-reduction">h5i objects</a>), the comment includes a one-line
+<code>[!NOTE]</code> summarising how much raw tool output was kept out of the agent's
+context — <code>raw → summary</code> tokens and <code>% saved</code> across the branch's captures —
+with a collapsible per-tool breakdown when more than one tool was captured. It
+self-omits when there were no captures on the branch (or no net saving). The raw
+output remains recoverable with <code>h5i recall object</code>.</p>
+<p>Flags:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--no-msg</code></td>
+<td>Omit the Agent coordination section entirely.</td>
+</tr>
+<tr>
+<td><code>--msg-bodies</code></td>
+<td>Show a (still redacted + sanitized) excerpt for <strong>every</strong> kind, not just review-typed ones. Opt-in — accepts that <code>FYI</code>/free-text bodies are published.</td>
+</tr>
+<tr>
+<td><code>--msg-limit N</code></td>
+<td>Cap the number of threads rendered before eliding (default 12).</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Hero block styles (<code>--style</code>)</strong></p>
+<p>The top of the comment — the part that fits in a screenshot — switches between
+the layouts below. The audit sections below the fold (secrets, duplicates,
+reasoning DAG, per-commit provenance) stay shared across styles, except
+<code>replay</code>, which promotes the DAG above the fold.</p>
+<table>
+<thead>
+<tr>
+<th>Style</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>receipt</code> (default)</td>
+<td>Punchline H1 headline (<code># 🪙 60% AI-authored · 12.3k tokens · ~$0.04 · 8 files</code>), goal in a native <code>[!IMPORTANT]</code> callout, centered HTML stat card (6 cells), the triggering prompt promoted to its own section, then cleaned milestone list. Optimised for screenshot / social share.</td>
+</tr>
+<tr>
+<td><code>review</code></td>
+<td>Reviewer-first triage brief: merge status, review-focus files, evidence line, goal, a short reviewer checklist, then compact THINK/NOTE highlights. Keeps the Mermaid DAG collapsed below the audit sections.</td>
+</tr>
+<tr>
+<td><code>detective</code></td>
+<td>Narrative arc: 🎯 goal callout → 📊 by the numbers → 🧭 considered (from <code>--decisions</code>) → 💡 key insight (latest THINK) → 🚢 shipped (cleaned milestones). Reads like a mini blog post.</td>
+</tr>
+<tr>
+<td><code>replay</code></td>
+<td>Mermaid reasoning swim-lane DAG promoted above the fold (expanded), with a goal callout and stats line above and an arrow-separated milestone trail below.</td>
+</tr>
+<tr>
+<td><code>minimal</code></td>
+<td>Quiet variant for routine internal PRs that want h5i provenance without the marketing flourish. Same data, no H1 headline, no stat table, no dollar figures, no callouts beyond audit alerts.</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">h5i share pr post                          # upsert sticky comment (needs `gh auth login`)
+h5i share pr post --dry-run                # render to stdout without calling gh
+h5i share pr body --limit 25               # render markdown to stdout (for CI / `gh pr edit --body-file -`)
+h5i share pr post --number 42              # target a specific PR (default: auto-detect from current branch)
+h5i share pr body --style review           # preview the reviewer-triage layout
+h5i share pr body --style detective        # preview the narrative layout
+h5i share pr post --style replay --dry-run # preview the DAG-as-hero layout
+h5i share pr body --no-msg                  # drop the Agent coordination section
+h5i share pr body --msg-bodies              # include excerpts for FYI/free-text too
+h5i share pr body --msg-limit 5             # cap coordination threads at 5
+</code></pre>
+<p><strong>Requirements</strong></p>
+<ul>
+<li>The <a href="https://cli.github.com/"><code>gh</code> CLI</a> must be installed and authenticated (<code>gh auth status</code> clean).</li>
+<li>The current branch must have an open pull request (use <code>--number</code> to target a specific PR otherwise).</li>
+</ul>
+<p><strong>Sticky upsert behaviour</strong></p>
+<p><code>h5i share pr post</code> finds the existing h5i comment by HTML marker prefix and
+issues a <code>PATCH /repos/&lt;owner&gt;/&lt;repo&gt;/issues/comments/&lt;id&gt;</code> via <code>gh api</code>. If no
+marked comment exists yet, it falls back to <code>gh pr comment --body-file -</code> for
+the first post.</p>
+<hr />
+<h3 id="h5i-share-memory-push">h5i share memory push</h3>
+<pre><code>h5i share memory push [--remote &lt;name&gt;]
+</code></pre>
+<p>Push <code>refs/h5i/memory</code> to the remote (default: <code>origin</code>).</p>
+<hr />
+<h3 id="h5i-share-memory-pull">h5i share memory pull</h3>
+<pre><code>h5i share memory pull [--remote &lt;name&gt;]
+</code></pre>
+<p>Fetch <code>refs/h5i/memory</code> from the remote (default: <code>origin</code>).</p>
+<hr />
+<h2 id="h5i-msg">h5i msg</h2>
+<pre><code>h5i msg                                   # inbox dashboard
+h5i msg setup [&lt;name&gt;] [--scope project|user] [--no-block]
+h5i msg send &lt;agent&gt; &lt;text&gt;               # `all` = broadcast
+h5i msg ask|review|risk|handoff &lt;agent&gt; &lt;text&gt; [flags]
+h5i msg reply|ack|done|decline &lt;n&gt; [text]
+h5i msg inbox [--peek] | history [--with &lt;agent&gt;] | replay [--with &lt;agent&gt;] [--interval S] | team
+h5i msg wait [--all] [--timeout N] | watch [--all] | hook [--block] | as &lt;name&gt; | whoami
+</code></pre>
+<p>Cross-agent messaging stored <strong>in Git</strong> (<code>refs/h5i/msg</code>), not a local database, so
+a conversation survives clones, machines, and branches and is shared with
+<code>h5i share push</code> / <code>pull</code> (divergent sends union-merge by message id). Messages
+follow the <strong>i5h protocol</strong> (<a href="docs/i5h-protocol.md">docs/i5h-protocol.md</a>): typed,
+operational handoffs rather than chat.</p>
+<h3 id="setup-and-identity">Setup and identity</h3>
+<p>Identity is <strong>per-agent</strong>, supplied by <code>$H5I_AGENT</code> (no <code>--as</code> on commands).
+Resolution order: <code>--from</code>/<code>--as</code> flag → <code>$H5I_AGENT</code> → stored default.</p>
+<pre><code># Claude Code (one-time, per project): sets env H5I_AGENT + a turn-delivery Stop hook
+h5i msg setup claude            # → ./.claude/settings.json (autonomous --block hook)
+h5i msg setup claude --scope user   # → ~/.claude/settings.json (all projects)
+h5i msg setup claude --no-block     # notify-only hook instead of autonomous
+
+# Codex: just launch it with the identity in its environment
+H5I_AGENT=codex codex
+</code></pre>
+<p>Several agents can share one clone safely: identity is per-process (env), the
+message ref is concurrency-safe (compare-and-swap on send), and read-state is
+kept in per-agent files (<code>.git/.h5i/msg/cursors/&lt;agent&gt;.json</code>,
+<code>views/&lt;agent&gt;.json</code>). Never use <code>h5i msg as</code> when two agents share a clone — it
+writes a single shared identity file; prefer <code>$H5I_AGENT</code>.</p>
+<h3 id="sending">Sending</h3>
+<pre><code>h5i msg send codex deploy is done            # free text (joined with spaces)
+h5i msg send all standup in 5                # broadcast to everyone else
+h5i msg ask codex can you inspect the failing test
+h5i msg review --branch auth --focus src/auth.rs --pr 42 codex review token refresh
+h5i msg risk --focus src/auth.rs --priority high all auth cache crosses requests
+h5i msg handoff --branch auth --context auth reviewer please take expiry work
+</code></pre>
+<p>Typed verbs set the i5h <code>kind</code> (<code>ASK</code>, <code>REVIEW_REQUEST</code>, <code>RISK</code>, <code>HANDOFF</code>) and
+structured fields. <strong>Options must precede the recipient</strong> (the body is variadic).</p>
+<h3 id="reading-and-replying">Reading and replying</h3>
+<pre><code>h5i msg                          # dashboard: header · inbox · GIT PROOF band (a glance; does not consume)
+h5i msg inbox                    # show unread, mark read, number them
+h5i msg reply 1 on it            # threaded reply to message #1 of your last view
+h5i msg ack 1                    # ACK / DONE / DECLINE are typed threaded replies
+h5i msg done 1 fixed in 1a2b3c4
+h5i msg history --with codex     # full conversation log
+h5i msg replay --with codex      # replay the log as a live feed (1s between messages)
+h5i msg team                     # known agents
+</code></pre>
+<p>Add <code>--plain</code> to any read command for greppable, uncoloured output.</p>
+<h3 id="delivery-modes">Delivery modes</h3>
+<ul>
+<li><strong>Turn delivery (primary).</strong> The Stop hook (<code>h5i msg hook</code>) surfaces new
+  messages between turns. Default (<code>--block</code>) emits <code>decision:block</code> so the
+  agent autonomously handles the message; <code>--no-block</code> (via setup) emits a
+  notify-only <code>systemMessage</code>. <code>h5i hook session-start</code> also notes unread on
+  resume.</li>
+<li><strong>Codex.</strong> <code>h5i hook codex prelude</code> / <code>sync</code> / <code>finish</code> auto-deliver Codex's inbox
+  (Codex has no Stop hook).</li>
+<li><strong><code>h5i msg wait</code>.</strong> The autonomous wake primitive: blocks until a message
+  arrives (returns existing unread immediately), prints it, and exits — peek
+  only. Run it as a background task (Claude Code) or in a poll loop (Codex) so
+  an <em>idle</em> agent is woken on a reply rather than missing it. <code>--timeout N</code>
+  (0 = forever), <code>--all</code> for the whole channel.</li>
+<li><strong><code>h5i msg watch</code>.</strong> A live stream — your inbox with an identity, or the whole
+  channel with <code>--all</code> / no identity (a human-facing dashboard). Real-time push
+  into a running agent via the Monitor tool is experimental / host-dependent.</li>
+</ul>
+<p>Incoming messages are framed as <strong>untrusted collaborator input</strong>, never as
+instructions; agents are told to evaluate and decide.</p>
+<hr />
 <h2 id="h5i-env-isolated-agent-sandboxes">h5i env (isolated agent sandboxes)</h2>
 <p>An <strong>environment</strong> is a Git-addressed, policy-confined, fully-observed unit of
 agent work — the "triple fusion" of:</p>
@@ -3056,7 +2980,7 @@ another reviews and applies). See <code>docs/environments-design.md</code> and t
 </tr>
 <tr>
 <td><code>h5i env shell &lt;name&gt; [-- &lt;cmd&gt;]</code></td>
-<td>Open an <strong>interactive</strong> confined session <em>inside</em> the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. Defaults to a login shell. Exit code passes through. The session is <strong>observed</strong>: a <code>shell</code> event is logged, and per-command evidence is staged + ingested where the tier supports it (see <a href="#env-in-box">In-box git, capture &amp; commit</a>).</td>
+<td>Open an <strong>interactive</strong> confined session <em>inside</em> the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. Defaults to a login shell. Exit code passes through. The session is <strong>observed</strong>: a <code>shell</code> event is logged, and per-command evidence is staged + ingested where the tier supports it (see <a href="#in-box-git-capture--commit">In-box git, capture &amp; commit</a>).</td>
 </tr>
 <tr>
 <td><code>h5i env probe</code></td>
@@ -3372,6 +3296,123 @@ delegated <code>user@&lt;uid&gt;.service</code> subtree, no root needed). Where 
 unavailable, it falls back to rlimits (<code>RLIMIT_AS</code>/<code>NPROC</code>/<code>FSIZE</code>/<code>CPU</code>).
 <code>h5i env probe</code> reports whether cgroups are usable. A wall-clock timeout kills
 the whole process tree (<code>exit 124</code>).</p>
+<hr />
+<h2 id="h5i-hook">h5i hook</h2>
+<pre><code>h5i hook setup                          # print install instructions
+h5i hook setup --write                  # write both Claude and Codex hook config
+h5i hook setup --write --target claude  # Claude only
+h5i hook setup --write --target codex   # Codex only
+h5i hook setup --write --scope user     # write to ~/.claude (all projects)
+h5i hook setup --write --wrap-bash      # also register the Bash capture-wrap hook
+h5i hook session-start                  # SessionStart handler (context prelude)
+h5i hook wrap-bash                      # PreToolUse Bash handler (token-reduction)
+</code></pre>
+<p><code>h5i hook</code> manages the agent hook wiring that drives h5i's automatic prompt capture and context tracing. The handlers that do the actual per-event work are <strong>agent-specific</strong> and live under <a href="#h5i-hook-claude"><code>h5i hook claude</code></a> (Claude Code) and <a href="#h5i-hook-codex"><code>h5i hook codex</code></a> (Codex); <code>h5i hook</code> itself also owns the cross-agent <code>setup</code>, <code>session-start</code>, and <code>wrap-bash</code> subcommands. (The bare <code>h5i claude …</code> / <code>h5i codex …</code> paths still work as deprecated aliases so already-installed hooks keep firing.)</p>
+<h3 id="h5i-hook-setup">h5i hook setup</h3>
+<p><code>h5i hook setup</code> (no flags) prints the install instructions. <code>h5i hook setup --write</code> writes the wiring directly: Claude Code into <code>.claude/settings.json</code> and Codex into <code>.codex/config.toml</code>, merged idempotently (each managed command is replaced in place; your own hooks and env keys are preserved). Add <code>--target claude</code> or <code>--target codex</code> to write only one agent's config, <code>--scope user</code> to write the user-level config instead of the repo's, and <code>--wrap-bash</code> to also register the optional Bash capture-wrap hook.</p>
+<p>For <strong>Claude Code</strong>, <code>--write</code> installs four hooks into <code>.claude/settings.json</code>:</p>
+<pre><code class="language-json">{
+  &quot;hooks&quot;: {
+    &quot;UserPromptSubmit&quot;: [
+      { &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i hook claude prompt&quot; }] }
+    ],
+    &quot;SessionStart&quot;: [
+      { &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i hook session-start&quot; }] }
+    ],
+    &quot;PostToolUse&quot;: [
+      { &quot;matcher&quot;: &quot;Edit|Write|Read&quot;,
+        &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i hook claude sync&quot; }] }
+    ],
+    &quot;Stop&quot;: [
+      { &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i hook claude finish&quot; }] }
+    ]
+  }
+}
+</code></pre>
+<ul>
+<li><strong>UserPromptSubmit → <code>h5i hook claude prompt</code></strong> — captures the verbatim human prompt so <code>h5i capture commit</code> records what you actually typed, not the agent's paraphrase.</li>
+<li><strong>SessionStart → <code>h5i hook session-start</code></strong> — injects prior context into every new session, and notes any unread messages on resume.</li>
+<li><strong>PostToolUse (Edit|Write|Read) → <code>h5i hook claude sync</code></strong> — auto-traces OBSERVE for every Read, ACT for every Edit/Write.</li>
+<li><strong>Stop → <code>h5i hook claude finish</code></strong> — mines THINK / NOTE entries from the session transcript and auto-checkpoints the context workspace.</li>
+</ul>
+<p>For <strong>Codex</strong>, <code>--write --target codex</code> merges inline hook tables into <code>.codex/config.toml</code>. Codex only supports the agent-agnostic <code>SessionStart</code> and <code>Stop</code> events here (the <code>UserPromptSubmit</code> / <code>PostToolUse</code> handlers are Claude-Code-specific and are skipped):</p>
+<pre><code class="language-toml">[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = &quot;command&quot;
+command = &quot;h5i hook session-start&quot;
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = &quot;command&quot;
+command = &quot;h5i hook codex finish --quiet&quot;
+</code></pre>
+<p>Codex requires reviewing/trusting local hooks via <code>/hooks</code>; project-local hooks only load after the project <code>.codex/</code> layer is trusted.</p>
+<p><strong>Bash capture-wrap (<code>--wrap-bash</code>, optional).</strong> Adds a <code>PreToolUse</code> Bash hook (<code>h5i hook wrap-bash</code>) that rewrites every Bash command into a <code>h5i capture run</code> wrapper, so the agent receives a token-reduced summary for large/failing output while the full raw bytes stay stored and searchable via <code>h5i recall</code>. Off by default. Note: with it enabled, permission allowlists then match the rewritten <code>h5i capture run …</code> command, not the original.</p>
+<p><strong>MCP server (manual).</strong> Hook setup no longer wires the MCP server — register it by hand if you want native h5i tools in Claude Code. Add the <code>mcpServers</code> block to <code>~/.claude/settings.json</code>:</p>
+<pre><code class="language-json">{
+  &quot;mcpServers&quot;: {
+    &quot;h5i&quot;: { &quot;command&quot;: &quot;h5i&quot;, &quot;args&quot;: [&quot;mcp&quot;] }
+  }
+}
+</code></pre>
+<p>Once registered, Claude Code gains native access to h5i tools (<code>h5i_log</code>, <code>h5i_blame</code>, <code>h5i_context_trace</code>, <code>h5i_notes_show</code>, etc.) without needing shell commands. See <a href="#h5i-mcp">h5i mcp</a> for the full tool list.</p>
+<h3 id="h5i-hook-session-start">h5i hook session-start</h3>
+<pre><code>h5i hook session-start
+</code></pre>
+<p>The shared <code>SessionStart</code> handler for both Claude Code and Codex. Injects prior context (goal, recent decisions) into the new session's context window, and notes any unread cross-agent messages on resume. Registered automatically by <code>h5i hook setup --write</code>; you rarely run it by hand.</p>
+<h3 id="h5i-hook-wrap-bash">h5i hook wrap-bash</h3>
+<pre><code>h5i hook wrap-bash
+</code></pre>
+<p>The optional <code>PreToolUse</code> handler for the Bash tool (Claude Code ≥ 2.0.10). Reads the tool event JSON from stdin and rewrites the command (via <code>updatedInput</code>) into a <code>h5i capture run</code> wrapper so the agent receives a token-reduced summary for large/failing output, while the full raw bytes are stored for <code>h5i recall</code>. Skips h5i's own commands, top-level <code>cd</code> (session cwd tracking), and anything outside a git repo; every failure path emits nothing, so the original command runs untouched. Register it with <code>h5i hook setup --write --wrap-bash</code>, or by hand under <code>PreToolUse</code> with matcher <code>Bash</code>.</p>
+<hr />
+<h3 id="h5i-hook-claude">h5i hook claude</h3>
+<pre><code>h5i hook claude sync     # PostToolUse handler (reads JSON from stdin)
+h5i hook claude finish   # Stop handler
+h5i hook claude prompt   # UserPromptSubmit handler (reads JSON from stdin)
+</code></pre>
+<p>Claude Code integration hook handlers. These are wired into <code>.claude/settings.json</code> by <code>h5i hook setup --write</code> (see <a href="#h5i-hook-setup">h5i hook setup</a>) and run automatically per event — you normally never invoke them by hand. They all fail open (no-op outside an h5i-initialized repo, never block the turn). (The bare <code>h5i claude …</code> path remains as a deprecated alias.)</p>
+<h4 id="h5i-hook-claude-sync">h5i hook claude sync</h4>
+<pre><code>h5i hook claude sync
+</code></pre>
+<p>The <code>PostToolUse</code> handler. Reads the tool-event JSON from stdin and emits an <code>h5i recall context trace</code> entry for the appropriate kind (OBSERVE on <code>Read</code>, ACT on <code>Edit</code>/<code>Write</code>); on <code>Read</code> events it injects prior reasoning about the file into Claude's context window so accumulated THINK entries surface before the file is modified.</p>
+<h4 id="h5i-hook-claude-finish">h5i hook claude finish</h4>
+<pre><code>h5i hook claude finish
+</code></pre>
+<p>The <code>Stop</code> handler. Mines THINK / NOTE entries from the session transcript (including deferrals, placeholders, and unfulfilled promises detected in the agent's reasoning) and auto-checkpoints the context workspace milestone, so you never have to call <code>h5i recall context trace</code> or <code>commit</code> by hand.</p>
+<h4 id="h5i-hook-claude-prompt">h5i hook claude prompt</h4>
+<pre><code>h5i hook claude prompt
+</code></pre>
+<p>The <code>UserPromptSubmit</code> handler. Reads the hook JSON from stdin and records the <strong>verbatim</strong> human prompt into <code>.git/.h5i/pending_context.json</code>, accumulating across turns. <code>h5i capture commit</code> then uses this raw human prompt as the recorded prompt — it wins over an agent-authored <code>--intent</code> — so AI provenance reflects what the human actually asked rather than the agent's paraphrase.</p>
+<hr />
+<h3 id="h5i-hook-codex">h5i hook codex</h3>
+<pre><code>h5i hook codex prelude
+h5i hook codex sync
+h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
+</code></pre>
+<p>Codex integration hook handlers for restoring shared context, syncing Codex session activity into <code>h5i recall context</code>, and auto-checkpointing the context workspace. <code>h5i hook setup --write --target codex</code> wires <code>h5i hook session-start</code> (SessionStart) and <code>h5i hook codex finish --quiet</code> (Stop) into <code>.codex/config.toml</code>. (The bare <code>h5i codex …</code> path remains as a deprecated alias.)</p>
+<p>Unlike Claude Code's handlers under <a href="#h5i-hook-claude"><code>h5i hook claude</code></a>, these read the active Codex JSONL session under <code>~/.codex/sessions/</code> directly and replay relevant file activity into <code>refs/h5i/context</code>, so they also work as plain commands you can run by hand if Codex's hook layer isn't trusted.</p>
+<h4 id="h5i-hook-codex-prelude">h5i hook codex prelude</h4>
+<pre><code>h5i hook codex prelude
+</code></pre>
+<p>Print the current shared context in a compact session-start format: goal, branch, milestones, recent THINK/ACT entries, and open TODOs.</p>
+<p>Use this at the beginning of a Codex session, or whenever you want to re-orient the agent without manually stitching together <code>h5i recall context show</code>, <code>status</code>, and <code>todo</code>.</p>
+<h4 id="h5i-hook-codex-sync">h5i hook codex sync</h4>
+<pre><code>h5i hook codex sync
+</code></pre>
+<p>Scan the active Codex session log for this repository and backfill <code>OBSERVE</code> / <code>ACT</code> trace entries into <code>h5i recall context</code>.</p>
+<p>Currently synced activity includes:</p>
+<ul>
+<li>file reads</li>
+<li>searches</li>
+<li>file listing operations</li>
+<li><code>apply_patch</code> edits, adds, and deletes</li>
+</ul>
+<p>Sync state is recorded in <code>.git/.h5i/codex_sync_state.json</code>, so repeated runs only process new session events.</p>
+<h4 id="h5i-hook-codex-finish">h5i hook codex finish</h4>
+<pre><code>h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
+</code></pre>
+<p>Run <code>h5i hook codex sync</code>, then auto-checkpoint the current context workspace. This is the command installed as Codex's <code>Stop</code> hook (as <code>h5i hook codex finish --quiet</code>).</p>
+<p>If <code>--summary</code> is omitted, h5i derives a short checkpoint summary from the most recent <code>ACT</code> entries. Pass <code>--quiet</code> to suppress stdout for hook use.</p>
 <hr />
 <h2 id="h5i-serve">h5i serve</h2>
 <pre><code>h5i serve [options]
@@ -3914,89 +3955,6 @@ h5i serve --port 8080
 → h5i_notes_coverage {}
 </code></pre>
 <hr />
-<h2 id="h5i-share-push">h5i share push</h2>
-<pre><code>h5i share push [--remote &lt;name&gt;] [--branch [&lt;name&gt;] | --all-branches]
-</code></pre>
-<p>Push the <code>refs/h5i/*</code> families (notes, memory, context, msg, object manifests, env state) to the remote (default: <code>origin</code>). None of these are included in a plain <code>git push</code>. Canonical form of the legacy <code>h5i push</code>.</p>
-<p><strong>Branch-scoped by default.</strong> Like <code>git push</code>, <code>share push</code> sends only the <em>current branch's</em> h5i material — it does not publish the reasoning, provenance, captures, conversations, or environments of unrelated branches. Pass <code>--branch &lt;name&gt;</code> to scope to a different branch, or <code>--all-branches</code> to push every branch's material (a first full sync, or CI):</p>
-<pre><code>h5i share push                      # the current branch's material (default)
-h5i share push --branch feature-x   # another branch's material
-h5i share push --all-branches       # every branch's material
-</code></pre>
-<p>What gets scoped:</p>
-<table>
-<thead>
-<tr>
-<th>Ref family</th>
-<th>Scoped how</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>context</strong> (<code>refs/h5i/context/*</code>)</td>
-<td>Only <code>refs/h5i/context/&lt;branch&gt;</code> is pushed (one ref per branch). Legacy whole-workspace refs are skipped.</td>
-</tr>
-<tr>
-<td><strong>notes</strong> (<code>refs/h5i/notes</code>)</td>
-<td>Only the provenance for commits reachable from <code>&lt;branch&gt;</code> travels.</td>
-</tr>
-<tr>
-<td><strong>objects</strong> (<code>refs/h5i/objects</code>)</td>
-<td>Only manifests whose <code>branch</code> field equals <code>&lt;branch&gt;</code> travel.</td>
-</tr>
-<tr>
-<td><strong>msg</strong> (<code>refs/h5i/msg</code>)</td>
-<td>Only messages tagged with <code>&lt;branch&gt;</code> travel (sends auto-tag the current branch; replies inherit the thread's). The agent roster always travels.</td>
-</tr>
-<tr>
-<td><strong>env</strong> (<code>refs/h5i/env/meta</code> + <code>…/code/*</code>)</td>
-<td>Only envs whose <code>parent_branch</code> is <code>&lt;branch&gt;</code> travel — their manifests/policies/events and their code branches.</td>
-</tr>
-<tr>
-<td><strong>memory</strong></td>
-<td>Pushed in full — a cumulative full-state snapshot whose facts are branch-independent.</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Non-destructive.</strong> notes/objects/msg/env are single aggregate refs shared by every branch, so a scoped push does <strong>not</strong> force a filtered subset (which would delete other branches' data on the remote). Instead it fetches the remote's current ref and <em>unions</em> only this branch's entries onto it, then pushes the result as a fast-forward. Other branches' data already on the remote is always preserved.</p>
-<blockquote>
-<p><strong>Note:</strong> because <code>msg</code> is filtered by each message's <code>branch</code> tag, a <code>msg review --branch X</code> sent while you are on a <em>different</em> git branch is carried by <code>--branch X</code> (or <code>--all-branches</code>), not by a plain current-branch push.</p>
-</blockquote>
-<p>To automate in CI:</p>
-<pre><code class="language-yaml">- name: Push h5i metadata
-  run: |
-    git push origin refs/h5i/notes
-    git push origin refs/h5i/memory
-</code></pre>
-<p>To make <code>git pull</code> fetch h5i refs automatically, add fetch refspecs to <code>.git/config</code>:</p>
-<pre><code class="language-ini">[remote &quot;origin&quot;]
-    url = git@github.com:you/repo.git
-    fetch = +refs/heads/*:refs/remotes/origin/*
-    fetch = +refs/h5i/notes:refs/h5i/notes
-    fetch = +refs/h5i/memory:refs/h5i/memory
-</code></pre>
-<hr />
-<h2 id="h5i-share-pull">h5i share pull</h2>
-<pre><code>h5i share pull [--remote &lt;name&gt;]
-</code></pre>
-<p>Fetch both <code>refs/h5i/notes</code> and <code>refs/h5i/memory</code> from the remote (default: <code>origin</code>). Canonical form of the legacy <code>h5i pull</code>.</p>
-<hr />
-<h2 id="h5i-resolve">h5i resolve</h2>
-<pre><code>h5i resolve &lt;ours-oid&gt; &lt;theirs-oid&gt; &lt;file&gt;
-</code></pre>
-<p>Run a text-based 3-way merge for <code>&lt;file&gt;</code> between two commits. The ancestor
-is the <code>git merge-base</code> of the two OIDs; h5i materializes the three blobs and
-delegates to <code>git merge-file -p</code>, then prints the merged content to stdout.</p>
-<p>When textual conflicts cannot be resolved, the output contains the usual
-<code>&lt;&lt;&lt;&lt;&lt;&lt;&lt; ours / ======= / &gt;&gt;&gt;&gt;&gt;&gt;&gt; theirs</code> markers and the command exits with
-status 1; otherwise it exits 0.</p>
-<blockquote>
-<p><strong>Note:</strong> Earlier versions of <code>h5i resolve</code> did a Yjs CRDT semantic merge
-reading from a per-commit <code>crdt_states</code> field. That dependency has been
-removed; <code>resolve</code> now behaves like a deterministic, git-native 3-way
-merge.</p>
-</blockquote>
-<hr />
 <h2 id="appendix-storage-layout">Appendix: Storage Layout</h2>
 <h3 id="filesystem-gith5i">Filesystem (<code>.git/.h5i/</code>)</h3>
 <pre><code>.git/.h5i/
@@ -4249,7 +4207,7 @@ merge.</p>
 <tr>
 <td><code>H5I_SECRET_&lt;NAME&gt;</code></td>
 <td>unset</td>
-<td>Default source for a secret grant <code>&lt;name&gt;</code> whose profile <code>source</code> is <code>env:H5I_SECRET_&lt;NAME&gt;</code> (the default). The broker injects it into the run, redacts it from evidence, and audits it by fingerprint — never the value. See <a href="#env-secrets-broker">secrets</a>.</td>
+<td>Default source for a secret grant <code>&lt;name&gt;</code> whose profile <code>source</code> is <code>env:H5I_SECRET_&lt;NAME&gt;</code> (the default). The broker injects it into the run, redacts it from evidence, and audits it by fingerprint — never the value. See <a href="#secrets-broker">secrets</a>.</td>
 </tr>
 </tbody>
 </table>
