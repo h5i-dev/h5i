@@ -3482,3 +3482,9 @@ _[Checkpoint: 6a370b2c — wrote roadmap/team-design.md]_
 ---
 
 [21:52:11] ACT: wrote roadmap/team-design.md
+
+
+---
+_[Checkpoint: 6a370b98 — Hardened team design with Codex invariants]_
+---
+
