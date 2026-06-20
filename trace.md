@@ -3403,3 +3403,9 @@ _[Checkpoint: 6a36f59a — edited docs/blog/what-is-ai-aware-version-control/ind
 _[Checkpoint: 6a36f8e1 — edited docs/guides/ai-code-provenance/index.html; edited docs/blog/from-git-blame-to-ai-blame/index.html; edited docs/gu…]_
 ---
 
+
+
+---
+_[Checkpoint: 6a36fa4c — edited docs/guides/ai-code-provenance/index.html; edited docs/blog/from-git-blame-to-ai-blame/index.html; edited docs/gu…]_
+---
+
