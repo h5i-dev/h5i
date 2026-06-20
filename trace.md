@@ -2886,3 +2886,4 @@ _[Checkpoint: 6a366f1c — session ended (auto-checkpoint)]_
 [10:44:44] OBSERVE: read Dockerfile
 [10:44:45] OBSERVE: read docker.sh
 [10:44:47] OBSERVE: read pytask.py
+[10:44:48] OBSERVE: read docker-entrypoint
