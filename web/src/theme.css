@@ -2543,3 +2543,7 @@ body { line-height: 1.5; }
   font-size: 11px; color: var(--bp-text); text-align: right;
 }
 .ckp-pdim-max { color: var(--bp-text-dim); }
+
+/* Context: fallback note when picked git branch has no context shadow */
+.ctx-scope-note { margin-bottom: 4px; }
+.ctx-scope-note code { font-size: 11px; }

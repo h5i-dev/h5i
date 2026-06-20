@@ -594,9 +594,18 @@ export const api = {
       `/api/integrity/commit?oid=${encodeURIComponent(oid)}`,
     ),
   contextStatus: () => getJSON<ContextStatus>("/api/context/status"),
-  contextShow: () => getJSON<ContextShow>("/api/context/show"),
-  contextPromotion: () => getJSON<ContextPromotion>("/api/context/promotion"),
-  contextDag: () => getJSON<ContextDag>("/api/context/dag"),
+  contextShow: (branch?: string | null) =>
+    getJSON<ContextShow>(
+      `/api/context/show${branch ? `?branch=${encodeURIComponent(branch)}` : ""}`,
+    ),
+  contextPromotion: (branch?: string | null) =>
+    getJSON<ContextPromotion>(
+      `/api/context/promotion${branch ? `?branch=${encodeURIComponent(branch)}` : ""}`,
+    ),
+  contextDag: (branch?: string | null) =>
+    getJSON<ContextDag>(
+      `/api/context/dag${branch ? `?branch=${encodeURIComponent(branch)}` : ""}`,
+    ),
   contextSnapshots: () => getJSON<ContextSnapshotItem[]>("/api/context/snapshots"),
   contextDiff: (from: string, to: string) =>
     getJSON<ContextDiff>(

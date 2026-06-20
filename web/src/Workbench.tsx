@@ -62,7 +62,9 @@ export function Workbench() {
       setError(null);
       setCommits(null);
       api
-        .commits({ limit: 200, branch })
+        // Scope Explore to the branch's own commits (base..branch); the default
+        // branch has no base and falls back to a full walk.
+        .commits({ limit: 200, branch, branchOnly: !!branch })
         .then((cs) => {
           setCommits(cs);
           // When the branch changes, prefer the new tip; otherwise keep current
@@ -78,16 +80,21 @@ export function Workbench() {
     [],
   );
 
+  // Resolve the branch the whole workbench follows: an explicit picker override,
+  // else the repo's current branch. Commit logs (Explore) and the context
+  // dashboard both scope to this.
+  const branchInUI = activeBranch ?? repo?.branch ?? null;
+
   useEffect(() => {
     loadRepo();
   }, [loadRepo]);
   useEffect(() => {
-    loadCommits(activeBranch);
-  }, [activeBranch, loadCommits]);
+    loadCommits(branchInUI);
+  }, [branchInUI, loadCommits]);
 
   const refresh = () => {
     loadRepo();
-    loadCommits(activeBranch);
+    loadCommits(branchInUI);
   };
 
   const selected = useMemo(
@@ -99,8 +106,6 @@ export function Workbench() {
     setMode("explore");
     setSelectedOid(oid);
   };
-
-  const branchInUI = activeBranch ?? repo?.branch ?? null;
   const ghBranchUrl = repo?.github_url
     ? (b: string) => githubBranchUrl(repo.github_url, b)
     : null;
@@ -246,7 +251,7 @@ export function Workbench() {
           <div className="wb-pane">
             <div className="wb-pane-header">Context workspace</div>
             <div className="wb-pane-body wb-context-body">
-              <ContextView />
+              <ContextView branch={branchInUI} />
             </div>
           </div>
         </div>

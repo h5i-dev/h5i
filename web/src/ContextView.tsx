@@ -45,27 +45,42 @@ interface AllCtx {
   milestones: ContextMilestoneEntry[];
 }
 
-export function ContextView() {
+export function ContextView({ branch }: { branch?: string | null }) {
   const [data, setData] = useState<AllCtx | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setData(null);
     setError(null);
-    Promise.all([
-      api.contextStatus(),
-      api.contextShow(),
-      api.contextPromotion(),
-      api.contextDag(),
-      api.contextSnapshots(),
-      api.branches(),
-      api.contextMilestones(),
-    ])
-      .then(([status, show, promotion, dag, snapshots, branches, milestones]) => {
-        setData({ status, show, promotion, dag, snapshots, branches, milestones });
-      })
-      .catch((e) => setError(String(e)));
-  }, []);
+    let cancelled = false;
+    (async () => {
+      try {
+        // The header picks a *git* branch, but the context dashboard is keyed to
+        // *context* branches (refs/h5i/context/*). Only scope when the picked git
+        // branch has a matching context shadow — otherwise the views would be
+        // empty, so we keep the active context branch and flag the fallback.
+        const branches = await api.branches();
+        const picked = branch ? branches.find((b) => b.name === branch) : null;
+        const scope = picked?.has_context_branch ? branch ?? undefined : undefined;
+        const [status, show, promotion, dag, snapshots, milestones] = await Promise.all([
+          api.contextStatus(),
+          api.contextShow(scope),
+          api.contextPromotion(scope),
+          api.contextDag(scope),
+          api.contextSnapshots(),
+          api.contextMilestones(scope),
+        ]);
+        if (!cancelled) {
+          setData({ status, show, promotion, dag, snapshots, branches, milestones });
+        }
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [branch]);
 
   if (error) {
     return (
@@ -97,10 +112,25 @@ export function ContextView() {
       : stripCheckmarks(show.milestones)
           .map((s) => ({ sha_short: "", timestamp: "", contribution: s }))
           .reverse();
-  const activeBranch = branches.find((b) => b.is_head) ?? null;
+  const activeBranch =
+    (branch ? branches.find((b) => b.name === branch) : null) ??
+    branches.find((b) => b.is_head) ??
+    null;
+
+  // When the picked git branch has no context shadow, we couldn't scope to it —
+  // tell the user we're showing the active context branch instead.
+  const pickedGit = branch ? branches.find((b) => b.name === branch) : null;
+  const noContextForPicked = !!pickedGit && !pickedGit.has_context_branch;
 
   return (
     <div className="ctx-view">
+      {noContextForPicked ? (
+        <Callout intent="none" icon="git-branch" className="ctx-scope-note">
+          Branch <code>{branch}</code> has no context workspace — showing the active
+          context branch <code>{status.current_branch}</code>. Create one with{" "}
+          <code>h5i context branch {branch} --purpose "&lt;intent&gt;"</code>.
+        </Callout>
+      ) : null}
       <Hero
         status={status}
         show={show}
