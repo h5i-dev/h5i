@@ -2857,3 +2857,4 @@ _[Checkpoint: 6a366a01 — edited web/src/ContextView.tsx; edited web/src/Contex
 [10:44:20] OBSERVE: read pytask.py
 [10:44:21] OBSERVE: read src/env.rs
 [10:44:21] OBSERVE: read pytask.py
+[10:44:23] OBSERVE: read CLAUDE.md
