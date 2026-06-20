@@ -2942,3 +2942,4 @@ _[Checkpoint: 6a366fa9 — session ended (auto-checkpoint)]_
 [10:48:44] OBSERVE: searched Isolation\|struct for "enum"
 [10:48:44] OBSERVE: read src/env.rs
 [10:48:44] OBSERVE: read src/sandbox.rs
+[10:48:44] OBSERVE: read src/sandbox.rs
