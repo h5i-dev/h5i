@@ -491,6 +491,12 @@ export interface CockpitFile {
   reason: string;
   severity: string;
 }
+export interface ConfidenceFactor {
+  label: string;
+  delta: number;
+  status: "penalty" | "ok" | "unmeasured" | string;
+  detail: string;
+}
 export interface ReviewerCockpit {
   oid: string;
   short_oid: string;
@@ -498,6 +504,7 @@ export interface ReviewerCockpit {
   author: string;
   timestamp: string;
   merge_confidence: number;
+  confidence_breakdown: ConfidenceFactor[];
   prompt_maturity?: number | null;
   provenance: string;
   model?: string | null;

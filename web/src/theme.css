@@ -2489,3 +2489,37 @@ body { line-height: 1.5; }
   padding: 0 5px; border-radius: 8px;
 }
 .radio-scope-chip.active .radio-scope-count { color: var(--h5-accent-hi); background: rgba(66,226,208,0.18); }
+
+/* Merge-confidence breakdown (auditable deductions) */
+.ckp-breakdown {
+  list-style: none; margin: 12px 0 0; padding: 12px 0 0;
+  border-top: 1px solid var(--bp-border);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.ckp-breakdown li {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: baseline;
+  font-size: 12px;
+}
+.ckp-bd-label { color: var(--bp-text); font-weight: 500; white-space: nowrap; }
+.ckp-bd-detail {
+  color: var(--bp-text-dim); font-size: 11px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ckp-bd-delta {
+  font-family: "SFMono-Regular", monospace; font-variant-numeric: tabular-nums;
+  font-weight: 700; text-align: right; white-space: nowrap;
+}
+.ckp-bd-base { color: var(--bp-text-dim); padding-bottom: 3px; }
+.ckp-bd-base .ckp-bd-label { color: var(--bp-text-dim); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; }
+.ckp-bd-base .ckp-bd-delta { color: var(--bp-text-muted); }
+.ckp-bd-row.st-penalty .ckp-bd-delta { color: var(--bp-red); }
+.ckp-bd-row.st-penalty .ckp-bd-label { color: var(--bp-text); }
+.ckp-bd-row.st-ok .ckp-bd-delta { color: var(--bp-green-hi); }
+.ckp-bd-row.st-ok .ckp-bd-label,
+.ckp-bd-row.st-unmeasured .ckp-bd-label { color: var(--bp-text-muted); }
+.ckp-bd-row.st-unmeasured { opacity: 0.65; }
+.ckp-bd-row.st-unmeasured .ckp-bd-delta { color: var(--bp-text-dim); }
+.ckp-bd-clean { font-size: 11px; color: var(--bp-green-hi); font-style: italic; }
+/* widen the gauge column so the breakdown rows have room */
+.ckp-confidence { grid-template-columns: minmax(240px, 300px) 1fr; }
+@media (max-width: 760px) { .ckp-confidence { grid-template-columns: 1fr; } }

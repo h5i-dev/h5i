@@ -3,6 +3,7 @@ import { Button, Code, NonIdealState, Spinner, Tag } from "@blueprintjs/core";
 
 import {
   api,
+  type ConfidenceFactor,
   type PromptMaturity,
   type ReviewerCockpit,
   type ReviewPoint,
@@ -158,7 +159,7 @@ function CockpitCard({
       </div>
 
       <div className="ckp-confidence">
-        <ConfidenceGauge value={c.merge_confidence} risk={c.risk} />
+        <ConfidenceGauge value={c.merge_confidence} risk={c.risk} breakdown={c.confidence_breakdown} />
         <div className="ckp-confidence-meta">
           <Row k="Provenance" v={c.provenance} />
           {c.model ? <Row k="Model" v={c.model} /> : null}
@@ -242,9 +243,18 @@ function Row({
   );
 }
 
-function ConfidenceGauge({ value, risk }: { value: number; risk: string }) {
+function ConfidenceGauge({
+  value,
+  risk,
+  breakdown,
+}: {
+  value: number;
+  risk: string;
+  breakdown: ConfidenceFactor[];
+}) {
   const color =
     risk === "low" ? "var(--bp-green-hi)" : risk === "medium" ? "var(--bp-orange)" : "var(--bp-red)";
+  const penalties = breakdown.filter((f) => f.delta < 0);
   return (
     <div className="ckp-gauge">
       <div className="ckp-gauge-num" style={{ color }}>
@@ -262,6 +272,25 @@ function ConfidenceGauge({ value, risk }: { value: number; risk: string }) {
       >
         {risk} risk
       </Tag>
+      <ul className="ckp-breakdown">
+        <li className="ckp-bd-base">
+          <span className="ckp-bd-label">baseline</span>
+          <span className="ckp-bd-detail" />
+          <span className="ckp-bd-delta">100</span>
+        </li>
+        {breakdown.map((f) => (
+          <li key={f.label} className={"ckp-bd-row st-" + f.status}>
+            <span className="ckp-bd-label">{f.label}</span>
+            <span className="ckp-bd-detail">{f.detail}</span>
+            <span className="ckp-bd-delta">
+              {f.delta < 0 ? f.delta : f.status === "unmeasured" ? "–" : "✓"}
+            </span>
+          </li>
+        ))}
+        {penalties.length === 0 ? (
+          <li className="ckp-bd-clean">no deductions — all checks clean</li>
+        ) : null}
+      </ul>
     </div>
   );
 }

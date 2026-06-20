@@ -2577,6 +2577,16 @@ pub struct CockpitFile {
     pub severity: String,
 }
 
+/// One line of the merge-confidence breakdown — what was checked and how many
+/// points it cost. `delta` is `<= 0`; `status` is "penalty" | "ok" | "unmeasured".
+#[derive(Serialize)]
+pub struct ConfidenceFactor {
+    pub label: String,
+    pub delta: i32,
+    pub status: String,
+    pub detail: String,
+}
+
 /// The compact "should I trust this PR?" card (roadmap §4).
 #[derive(Serialize)]
 pub struct ReviewerCockpit {
@@ -2587,6 +2597,8 @@ pub struct ReviewerCockpit {
     pub timestamp: String,
     /// 0..=100, higher = safer to merge.
     pub merge_confidence: u32,
+    /// Per-factor deductions behind `merge_confidence` (auditable, sums to it).
+    pub confidence_breakdown: Vec<ConfidenceFactor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_maturity: Option<f64>,
     pub provenance: String,
@@ -2687,30 +2699,85 @@ async fn api_cockpit(
         }
         review_first.truncate(8);
 
-        // merge confidence: start high, dock for real risk signals.
+        // merge confidence: start at 100, dock for real risk signals. Every
+        // factor is recorded so the gauge can show *why* the score is what it
+        // is (penalty = docked, ok = checked & clean, unmeasured = no signal).
         let mut conf: i32 = 100;
-        if tf.unwrap_or(0) > 0 {
-            conf -= 35;
+        let mut breakdown: Vec<ConfidenceFactor> = Vec::new();
+        let mut factor = |label: &str, delta: i32, status: &str, detail: String| {
+            breakdown.push(ConfidenceFactor {
+                label: label.to_string(),
+                delta,
+                status: status.to_string(),
+                detail,
+            });
+        };
+
+        // Tests
+        match (tp, tf) {
+            (_, Some(f)) if f > 0 => {
+                conf -= 35;
+                factor("Tests", -35, "penalty", format!("{f} failing, {} passing", tp.unwrap_or(0)));
+            }
+            (Some(p), Some(_)) => factor("Tests", 0, "ok", format!("{p} passing, 0 failing")),
+            _ => factor("Tests", 0, "unmeasured", "no test metrics captured".into()),
         }
+
+        // Integrity (intent ↔ action)
         match integrity.level {
-            crate::metadata::IntegrityLevel::Violation => conf -= 30,
-            crate::metadata::IntegrityLevel::Warning => conf -= 12,
-            _ => {}
-        }
-        if let Some(ps) = &prompt_score {
-            if ps.score < 40.0 {
+            crate::metadata::IntegrityLevel::Violation => {
+                conf -= 30;
+                factor("Integrity", -30, "penalty", format!("Violation ({:.2})", integrity.score));
+            }
+            crate::metadata::IntegrityLevel::Warning => {
                 conf -= 12;
-            } else if ps.score < 60.0 {
-                conf -= 6;
+                factor("Integrity", -12, "penalty", format!("Warning ({:.2})", integrity.score));
+            }
+            crate::metadata::IntegrityLevel::Valid => {
+                factor("Integrity", 0, "ok", format!("Valid ({:.2})", integrity.score));
             }
         }
-        if let Some(rp) = &rp {
-            conf -= (rp.quality_score * 25.0) as i32;
+
+        // Prompt maturity
+        match &prompt_score {
+            Some(ps) if ps.score < 40.0 => {
+                conf -= 12;
+                factor("Prompt maturity", -12, "penalty", format!("weak ({:.0}/100)", ps.score));
+            }
+            Some(ps) if ps.score < 60.0 => {
+                conf -= 6;
+                factor("Prompt maturity", -6, "penalty", format!("moderate ({:.0}/100)", ps.score));
+            }
+            Some(ps) => factor("Prompt maturity", 0, "ok", format!("strong ({:.0}/100)", ps.score)),
+            None => factor("Prompt maturity", 0, "unmeasured", "no captured prompt".into()),
         }
-        let blind = analysis.as_ref().map(|a| a.coverage.iter().map(|c| c.blind_edit_count).sum::<usize>()).unwrap_or(0);
+
+        // Deterministic review triggers
+        match &rp {
+            Some(rp) if rp.quality_score > 0.0 => {
+                let d = (rp.quality_score * 25.0) as i32;
+                conf -= d;
+                let n = rp.quality_triggers().count();
+                factor("Review signals", -d, "penalty", format!("{n} quality trigger(s)"));
+            }
+            _ => factor("Review signals", 0, "ok", "no quality triggers".into()),
+        }
+
+        // Blind edits (edited without reading first)
+        let blind = analysis
+            .as_ref()
+            .map(|a| a.coverage.iter().map(|c| c.blind_edit_count).sum::<usize>())
+            .unwrap_or(0);
         if blind > 0 {
-            conf -= (blind.min(4) as i32) * 4;
+            let d = (blind.min(4) as i32) * 4;
+            conf -= d;
+            factor("Blind edits", -d, "penalty", format!("{blind} file(s) edited without reading"));
+        } else if analysis.is_some() {
+            factor("Blind edits", 0, "ok", "none".into());
+        } else {
+            factor("Blind edits", 0, "unmeasured", "no session analysis".into());
         }
+
         let merge_confidence = conf.clamp(0, 100) as u32;
         let risk = if merge_confidence >= 75 {
             "low"
@@ -2733,6 +2800,7 @@ async fn api_cockpit(
             author,
             timestamp: record.as_ref().map(|r| r.timestamp.to_rfc3339()).unwrap_or_default(),
             merge_confidence,
+            confidence_breakdown: breakdown,
             prompt_maturity: prompt_score.as_ref().map(|s| s.score),
             provenance,
             model,
