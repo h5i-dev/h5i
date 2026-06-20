@@ -122,6 +122,13 @@ export function ContextView({ branch }: { branch?: string | null }) {
   const pickedGit = branch ? branches.find((b) => b.name === branch) : null;
   const noContextForPicked = !!pickedGit && !pickedGit.has_context_branch;
 
+  // Snapshots carry the *context* branch they belong to. Show only the context
+  // branch currently displayed (the picked branch's shadow, or the active one
+  // in the fallback case) so the history matches the rest of the dashboard.
+  const effectiveContextBranch =
+    (pickedGit?.has_context_branch ? branch : null) ?? status.current_branch;
+  const branchSnapshots = snapshots.filter((s) => s.branch === effectiveContextBranch);
+
   return (
     <div className="ctx-view">
       {noContextForPicked ? (
@@ -214,9 +221,12 @@ export function ContextView({ branch }: { branch?: string | null }) {
         <BranchesTable branches={branches} />
       </Section>
 
-      {snapshots.length > 0 ? (
-        <Section title="Snapshot history" count={snapshots.length}>
-          <SnapshotsTable snapshots={snapshots} />
+      {branchSnapshots.length > 0 ? (
+        <Section
+          title={`Snapshot history · ${effectiveContextBranch}`}
+          count={branchSnapshots.length}
+        >
+          <SnapshotsTable snapshots={branchSnapshots} />
         </Section>
       ) : null}
 
