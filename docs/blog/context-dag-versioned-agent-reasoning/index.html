@@ -148,13 +148,13 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i recall context relevant src/auth.rs</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i recall context trace --kind THINK \
   "Redis sessions over in-process map because restarts must not log users out"</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i codex sync</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i codex finish --summary "implemented refresh-token storage"</span></pre></div>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i hook codex sync</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i hook codex finish --summary "implemented refresh-token storage"</span></pre></div>
     </div>
 
     <p>
       Claude Code can automate much of this through <code>h5i hook setup</code>. Codex uses
-      explicit <code>h5i codex prelude</code>, <code>sync</code>, and <code>finish</code> commands.
+      explicit <code>h5i hook codex prelude</code>, <code>sync</code>, and <code>finish</code> commands.
       Both end up writing to the same shared context workspace.
     </p>
 

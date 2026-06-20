@@ -870,7 +870,7 @@
         <div class="feat-proves">the reasoning behind the diff is recoverable, commit by commit.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i codex prelude · h5i hook setup</span>
+        <span class="feat-cmd">h5i hook codex prelude · h5i hook setup</span>
         <div class="feat-name">Session handoff for Claude &amp; Codex</div>
         <div class="feat-desc">Both agents restore the shared workspace context when a session starts and check their work back in when it ends, Claude Code via hooks and MCP, Codex via explicit commands.</div>
         <div class="feat-proves">work resumes from a recorded state, not from scratch.</div>
@@ -1017,7 +1017,7 @@
           <span class="terminal-path">~/my-project , new Codex session starts</span>
         </div>
         <div class="terminal-body"><pre><span class="t-cmt"># Start by restoring the shared context:</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i codex prelude</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i hook codex prelude</span>
 
 <span class="t-bold">[h5i] Context workspace active — prior reasoning follows.</span>
 
@@ -1045,8 +1045,8 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i recall context diff a3f9c2b 7216039</span>
 
 <span class="t-cmt"># Close with synced traces and a checkpoint:</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i codex sync</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i codex finish --summary "implemented token refresh flow"</span></pre></div>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i hook codex sync</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i hook codex finish --summary "implemented token refresh flow"</span></pre></div>
       </div>
     </div>
 

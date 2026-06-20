@@ -144,7 +144,7 @@ fn init_writes_codex_agents_file() {
     let agents_md = repo.path().join("AGENTS.md");
     let contents = fs::read_to_string(&agents_md).expect("AGENTS.md should exist");
     assert!(contents.contains("## h5i Integration"));
-    assert!(contents.contains("h5i codex prelude"));
+    assert!(contents.contains("h5i hook codex prelude"));
     assert!(contents.contains("--agent codex"));
 }
 
@@ -299,11 +299,11 @@ fn commit_with_ai_provenance() {
     );
 }
 
-/// Feed a JSON payload to `h5i claude prompt` on stdin (the UserPromptSubmit
+/// Feed a JSON payload to `h5i hook claude prompt` on stdin (the UserPromptSubmit
 /// handler), returning its output. Mirrors how Claude Code invokes the hook.
 fn run_prompt_hook(repo: &Repo, payload: &serde_json::Value) -> Output {
     Command::new(H5I)
-        .args(["claude", "prompt"])
+        .args(["hook", "claude", "prompt"])
         .current_dir(repo.path())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -316,7 +316,7 @@ fn run_prompt_hook(repo: &Repo, payload: &serde_json::Value) -> Output {
             }
             child.wait_with_output()
         })
-        .expect("claude prompt failed to spawn")
+        .expect("hook claude prompt failed to spawn")
 }
 
 #[test]
@@ -964,9 +964,12 @@ fn hook_setup_write_default_writes_claude_and_codex_configs() {
         claude.contains("\"command\": \"h5i hook session-start\""),
         "{claude}"
     );
-    assert!(claude.contains("\"command\": \"h5i claude sync\""), "{claude}");
     assert!(
-        claude.contains("\"command\": \"h5i claude finish\""),
+        claude.contains("\"command\": \"h5i hook claude sync\""),
+        "{claude}"
+    );
+    assert!(
+        claude.contains("\"command\": \"h5i hook claude finish\""),
         "{claude}"
     );
     assert!(
@@ -981,7 +984,7 @@ fn hook_setup_write_default_writes_claude_and_codex_configs() {
     );
     assert!(!config.contains("command = \"h5i hook run\""), "{config}");
     assert!(
-        config.contains("command = \"h5i codex finish --quiet\""),
+        config.contains("command = \"h5i hook codex finish --quiet\""),
         "{config}"
     );
     assert!(!config.contains("command = \"h5i hook stop\""), "{config}");
@@ -1161,10 +1164,10 @@ fn codex_sync_replays_session_activity_into_context() {
     );
     fs::write(&session_path, session).unwrap();
 
-    let sync = repo.h5i_with_home(home.path(), &["codex", "sync"]);
+    let sync = repo.h5i_with_home(home.path(), &["hook", "codex", "sync"]);
     assert!(
         sync.status.success(),
-        "codex sync failed: {}",
+        "hook codex sync failed: {}",
         stderr(&sync)
     );
 
@@ -1187,6 +1190,8 @@ fn codex_finish_quiet_emits_no_stdout_for_stop_hook() {
     repo.h5i_ok(&["context", "init", "--goal", "codex stop hook test"]);
 
     let home = TempDir::new().unwrap();
+    // Deliberately the bare `codex …` alias (not `hook codex …`) so this also
+    // covers the back-compat path kept for already-installed Stop hooks.
     let out = repo.h5i_with_home(home.path(), &["codex", "finish", "--quiet"]);
     assert!(
         out.status.success(),

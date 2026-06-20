@@ -165,17 +165,17 @@
 <a class="t3" href="#h5i-hook-session-start">h5i hook session-start</a>
 <a class="t3" href="#h5i-hook-wrap-bash">h5i hook wrap-bash</a>
 </div>
-<a class="t2" href="#h5i-claude">h5i claude</a>
+<a class="t2" href="#h5i-hook-claude">h5i hook claude</a>
 <div class="t3group">
-<a class="t3" href="#h5i-claude-sync">h5i claude sync</a>
-<a class="t3" href="#h5i-claude-finish">h5i claude finish</a>
-<a class="t3" href="#h5i-claude-prompt">h5i claude prompt</a>
+<a class="t3" href="#h5i-hook-claude-sync">h5i hook claude sync</a>
+<a class="t3" href="#h5i-hook-claude-finish">h5i hook claude finish</a>
+<a class="t3" href="#h5i-hook-claude-prompt">h5i hook claude prompt</a>
 </div>
-<a class="t2" href="#h5i-codex">h5i codex</a>
+<a class="t2" href="#h5i-hook-codex">h5i hook codex</a>
 <div class="t3group">
-<a class="t3" href="#h5i-codex-prelude">h5i codex prelude</a>
-<a class="t3" href="#h5i-codex-sync">h5i codex sync</a>
-<a class="t3" href="#h5i-codex-finish">h5i codex finish</a>
+<a class="t3" href="#h5i-hook-codex-prelude">h5i hook codex prelude</a>
+<a class="t3" href="#h5i-hook-codex-sync">h5i hook codex sync</a>
+<a class="t3" href="#h5i-hook-codex-finish">h5i hook codex finish</a>
 </div>
 <a class="t2" href="#h5i-msg">h5i msg</a>
 <div class="t3group">
@@ -475,7 +475,7 @@ error: `h5i audit revew` is not a known subcommand.
 <p>Also bootstraps agent-facing instructions:</p>
 <ul>
 <li><code>CLAUDE.md</code> / <code>.claude/h5i.md</code> for Claude Code</li>
-<li><code>AGENTS.md</code> for Codex, including the <code>h5i codex</code> workflow</li>
+<li><code>AGENTS.md</code> for Codex, including the <code>h5i hook codex</code> workflow</li>
 </ul>
 <p>Must be run once per repository before any other h5i command.</p>
 <pre><code class="language-bash">cd your-project
@@ -493,33 +493,33 @@ h5i hook setup --write --wrap-bash      # also register the Bash capture-wrap ho
 h5i hook session-start                  # SessionStart handler (context prelude)
 h5i hook wrap-bash                      # PreToolUse Bash handler (token-reduction)
 </code></pre>
-<p><code>h5i hook</code> manages the agent hook wiring that drives h5i's automatic prompt capture and context tracing. The handlers that do the actual per-event work are <strong>agent-specific</strong> and live under <a href="#h5i-claude"><code>h5i claude</code></a> (Claude Code) and <a href="#h5i-codex"><code>h5i codex</code></a> (Codex); <code>h5i hook</code> itself owns the cross-agent <code>setup</code>, <code>session-start</code>, and <code>wrap-bash</code> subcommands.</p>
+<p><code>h5i hook</code> manages the agent hook wiring that drives h5i's automatic prompt capture and context tracing. The handlers that do the actual per-event work are <strong>agent-specific</strong> and live under <a href="#h5i-hook-claude"><code>h5i hook claude</code></a> (Claude Code) and <a href="#h5i-hook-codex"><code>h5i hook codex</code></a> (Codex); <code>h5i hook</code> itself also owns the cross-agent <code>setup</code>, <code>session-start</code>, and <code>wrap-bash</code> subcommands. (The bare <code>h5i claude …</code> / <code>h5i codex …</code> paths still work as deprecated aliases so already-installed hooks keep firing.)</p>
 <h3 id="h5i-hook-setup">h5i hook setup</h3>
 <p><code>h5i hook setup</code> (no flags) prints the install instructions. <code>h5i hook setup --write</code> writes the wiring directly: Claude Code into <code>.claude/settings.json</code> and Codex into <code>.codex/config.toml</code>, merged idempotently (each managed command is replaced in place; your own hooks and env keys are preserved). Add <code>--target claude</code> or <code>--target codex</code> to write only one agent's config, <code>--scope user</code> to write the user-level config instead of the repo's, and <code>--wrap-bash</code> to also register the optional Bash capture-wrap hook.</p>
 <p>For <strong>Claude Code</strong>, <code>--write</code> installs four hooks into <code>.claude/settings.json</code>:</p>
 <pre><code class="language-json">{
   &quot;hooks&quot;: {
     &quot;UserPromptSubmit&quot;: [
-      { &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i claude prompt&quot; }] }
+      { &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i hook claude prompt&quot; }] }
     ],
     &quot;SessionStart&quot;: [
       { &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i hook session-start&quot; }] }
     ],
     &quot;PostToolUse&quot;: [
       { &quot;matcher&quot;: &quot;Edit|Write|Read&quot;,
-        &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i claude sync&quot; }] }
+        &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i hook claude sync&quot; }] }
     ],
     &quot;Stop&quot;: [
-      { &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i claude finish&quot; }] }
+      { &quot;hooks&quot;: [{ &quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;h5i hook claude finish&quot; }] }
     ]
   }
 }
 </code></pre>
 <ul>
-<li><strong>UserPromptSubmit → <code>h5i claude prompt</code></strong> — captures the verbatim human prompt so <code>h5i capture commit</code> records what you actually typed, not the agent's paraphrase.</li>
+<li><strong>UserPromptSubmit → <code>h5i hook claude prompt</code></strong> — captures the verbatim human prompt so <code>h5i capture commit</code> records what you actually typed, not the agent's paraphrase.</li>
 <li><strong>SessionStart → <code>h5i hook session-start</code></strong> — injects prior context into every new session, and notes any unread messages on resume.</li>
-<li><strong>PostToolUse (Edit|Write|Read) → <code>h5i claude sync</code></strong> — auto-traces OBSERVE for every Read, ACT for every Edit/Write.</li>
-<li><strong>Stop → <code>h5i claude finish</code></strong> — mines THINK / NOTE entries from the session transcript and auto-checkpoints the context workspace.</li>
+<li><strong>PostToolUse (Edit|Write|Read) → <code>h5i hook claude sync</code></strong> — auto-traces OBSERVE for every Read, ACT for every Edit/Write.</li>
+<li><strong>Stop → <code>h5i hook claude finish</code></strong> — mines THINK / NOTE entries from the session transcript and auto-checkpoints the context workspace.</li>
 </ul>
 <p>For <strong>Codex</strong>, <code>--write --target codex</code> merges inline hook tables into <code>.codex/config.toml</code>. Codex only supports the agent-agnostic <code>SessionStart</code> and <code>Stop</code> events here (the <code>UserPromptSubmit</code> / <code>PostToolUse</code> handlers are Claude-Code-specific and are skipped):</p>
 <pre><code class="language-toml">[[hooks.SessionStart]]
@@ -530,7 +530,7 @@ command = &quot;h5i hook session-start&quot;
 [[hooks.Stop]]
 [[hooks.Stop.hooks]]
 type = &quot;command&quot;
-command = &quot;h5i codex finish --quiet&quot;
+command = &quot;h5i hook codex finish --quiet&quot;
 </code></pre>
 <p>Codex requires reviewing/trusting local hooks via <code>/hooks</code>; project-local hooks only load after the project <code>.codex/</code> layer is trusted.</p>
 <p><strong>Bash capture-wrap (<code>--wrap-bash</code>, optional).</strong> Adds a <code>PreToolUse</code> Bash hook (<code>h5i hook wrap-bash</code>) that rewrites every Bash command into a <code>h5i capture run</code> wrapper, so the agent receives a token-reduced summary for large/failing output while the full raw bytes stay stored and searchable via <code>h5i recall</code>. Off by default. Note: with it enabled, permission allowlists then match the rewritten <code>h5i capture run …</code> command, not the original.</p>
@@ -551,39 +551,39 @@ command = &quot;h5i codex finish --quiet&quot;
 </code></pre>
 <p>The optional <code>PreToolUse</code> handler for the Bash tool (Claude Code ≥ 2.0.10). Reads the tool event JSON from stdin and rewrites the command (via <code>updatedInput</code>) into a <code>h5i capture run</code> wrapper so the agent receives a token-reduced summary for large/failing output, while the full raw bytes are stored for <code>h5i recall</code>. Skips h5i's own commands, top-level <code>cd</code> (session cwd tracking), and anything outside a git repo; every failure path emits nothing, so the original command runs untouched. Register it with <code>h5i hook setup --write --wrap-bash</code>, or by hand under <code>PreToolUse</code> with matcher <code>Bash</code>.</p>
 <hr />
-<h2 id="h5i-claude">h5i claude</h2>
-<pre><code>h5i claude sync     # PostToolUse handler (reads JSON from stdin)
-h5i claude finish   # Stop handler
-h5i claude prompt   # UserPromptSubmit handler (reads JSON from stdin)
+<h2 id="h5i-hook-claude">h5i hook claude</h2>
+<pre><code>h5i hook claude sync     # PostToolUse handler (reads JSON from stdin)
+h5i hook claude finish   # Stop handler
+h5i hook claude prompt   # UserPromptSubmit handler (reads JSON from stdin)
 </code></pre>
-<p>Claude Code integration hook handlers. These are wired into <code>.claude/settings.json</code> by <code>h5i hook setup --write</code> (see <a href="#h5i-hook-setup">h5i hook setup</a>) and run automatically per event — you normally never invoke them by hand. They all fail open (no-op outside an h5i-initialized repo, never block the turn).</p>
-<h3 id="h5i-claude-sync">h5i claude sync</h3>
-<pre><code>h5i claude sync
+<p>Claude Code integration hook handlers. These are wired into <code>.claude/settings.json</code> by <code>h5i hook setup --write</code> (see <a href="#h5i-hook-setup">h5i hook setup</a>) and run automatically per event — you normally never invoke them by hand. They all fail open (no-op outside an h5i-initialized repo, never block the turn). (The bare <code>h5i claude …</code> path remains as a deprecated alias.)</p>
+<h3 id="h5i-hook-claude-sync">h5i hook claude sync</h3>
+<pre><code>h5i hook claude sync
 </code></pre>
 <p>The <code>PostToolUse</code> handler. Reads the tool-event JSON from stdin and emits an <code>h5i recall context trace</code> entry for the appropriate kind (OBSERVE on <code>Read</code>, ACT on <code>Edit</code>/<code>Write</code>); on <code>Read</code> events it injects prior reasoning about the file into Claude's context window so accumulated THINK entries surface before the file is modified.</p>
-<h3 id="h5i-claude-finish">h5i claude finish</h3>
-<pre><code>h5i claude finish
+<h3 id="h5i-hook-claude-finish">h5i hook claude finish</h3>
+<pre><code>h5i hook claude finish
 </code></pre>
 <p>The <code>Stop</code> handler. Mines THINK / NOTE entries from the session transcript (including deferrals, placeholders, and unfulfilled promises detected in the agent's reasoning) and auto-checkpoints the context workspace milestone, so you never have to call <code>h5i recall context trace</code> or <code>commit</code> by hand.</p>
-<h3 id="h5i-claude-prompt">h5i claude prompt</h3>
-<pre><code>h5i claude prompt
+<h3 id="h5i-hook-claude-prompt">h5i hook claude prompt</h3>
+<pre><code>h5i hook claude prompt
 </code></pre>
 <p>The <code>UserPromptSubmit</code> handler. Reads the hook JSON from stdin and records the <strong>verbatim</strong> human prompt into <code>.git/.h5i/pending_context.json</code>, accumulating across turns. <code>h5i capture commit</code> then uses this raw human prompt as the recorded prompt — it wins over an agent-authored <code>--intent</code> — so AI provenance reflects what the human actually asked rather than the agent's paraphrase.</p>
 <hr />
-<h2 id="h5i-codex">h5i codex</h2>
-<pre><code>h5i codex prelude
-h5i codex sync
-h5i codex finish [--summary &lt;text&gt;] [--quiet]
+<h2 id="h5i-hook-codex">h5i hook codex</h2>
+<pre><code>h5i hook codex prelude
+h5i hook codex sync
+h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
 </code></pre>
-<p>Codex integration hook handlers for restoring shared context, syncing Codex session activity into <code>h5i recall context</code>, and auto-checkpointing the context workspace. <code>h5i hook setup --write --target codex</code> wires <code>h5i hook session-start</code> (SessionStart) and <code>h5i codex finish --quiet</code> (Stop) into <code>.codex/config.toml</code>.</p>
-<p>Unlike Claude Code's handlers under <a href="#h5i-claude"><code>h5i claude</code></a>, these read the active Codex JSONL session under <code>~/.codex/sessions/</code> directly and replay relevant file activity into <code>refs/h5i/context</code>, so they also work as plain commands you can run by hand if Codex's hook layer isn't trusted.</p>
-<h3 id="h5i-codex-prelude">h5i codex prelude</h3>
-<pre><code>h5i codex prelude
+<p>Codex integration hook handlers for restoring shared context, syncing Codex session activity into <code>h5i recall context</code>, and auto-checkpointing the context workspace. <code>h5i hook setup --write --target codex</code> wires <code>h5i hook session-start</code> (SessionStart) and <code>h5i hook codex finish --quiet</code> (Stop) into <code>.codex/config.toml</code>. (The bare <code>h5i codex …</code> path remains as a deprecated alias.)</p>
+<p>Unlike Claude Code's handlers under <a href="#h5i-hook-claude"><code>h5i hook claude</code></a>, these read the active Codex JSONL session under <code>~/.codex/sessions/</code> directly and replay relevant file activity into <code>refs/h5i/context</code>, so they also work as plain commands you can run by hand if Codex's hook layer isn't trusted.</p>
+<h3 id="h5i-hook-codex-prelude">h5i hook codex prelude</h3>
+<pre><code>h5i hook codex prelude
 </code></pre>
 <p>Print the current shared context in a compact session-start format: goal, branch, milestones, recent THINK/ACT entries, and open TODOs.</p>
 <p>Use this at the beginning of a Codex session, or whenever you want to re-orient the agent without manually stitching together <code>h5i recall context show</code>, <code>status</code>, and <code>todo</code>.</p>
-<h3 id="h5i-codex-sync">h5i codex sync</h3>
-<pre><code>h5i codex sync
+<h3 id="h5i-hook-codex-sync">h5i hook codex sync</h3>
+<pre><code>h5i hook codex sync
 </code></pre>
 <p>Scan the active Codex session log for this repository and backfill <code>OBSERVE</code> / <code>ACT</code> trace entries into <code>h5i recall context</code>.</p>
 <p>Currently synced activity includes:</p>
@@ -594,10 +594,10 @@ h5i codex finish [--summary &lt;text&gt;] [--quiet]
 <li><code>apply_patch</code> edits, adds, and deletes</li>
 </ul>
 <p>Sync state is recorded in <code>.git/.h5i/codex_sync_state.json</code>, so repeated runs only process new session events.</p>
-<h3 id="h5i-codex-finish">h5i codex finish</h3>
-<pre><code>h5i codex finish [--summary &lt;text&gt;] [--quiet]
+<h3 id="h5i-hook-codex-finish">h5i hook codex finish</h3>
+<pre><code>h5i hook codex finish [--summary &lt;text&gt;] [--quiet]
 </code></pre>
-<p>Run <code>h5i codex sync</code>, then auto-checkpoint the current context workspace. This is the command installed as Codex's <code>Stop</code> hook (as <code>h5i codex finish --quiet</code>).</p>
+<p>Run <code>h5i hook codex sync</code>, then auto-checkpoint the current context workspace. This is the command installed as Codex's <code>Stop</code> hook (as <code>h5i hook codex finish --quiet</code>).</p>
 <p>If <code>--summary</code> is omitted, h5i derives a short checkpoint summary from the most recent <code>ACT</code> entries. Pass <code>--quiet</code> to suppress stdout for hook use.</p>
 <hr />
 <h2 id="h5i-msg">h5i msg</h2>
@@ -658,7 +658,7 @@ h5i msg team                     # known agents
   agent autonomously handles the message; <code>--no-block</code> (via setup) emits a
   notify-only <code>systemMessage</code>. <code>h5i hook session-start</code> also notes unread on
   resume.</li>
-<li><strong>Codex.</strong> <code>h5i codex prelude</code> / <code>sync</code> / <code>finish</code> auto-deliver Codex's inbox
+<li><strong>Codex.</strong> <code>h5i hook codex prelude</code> / <code>sync</code> / <code>finish</code> auto-deliver Codex's inbox
   (Codex has no Stop hook).</li>
 <li><strong><code>h5i msg wait</code>.</strong> The autonomous wake primitive: blocks until a message
   arrives (returns existing unread immediately), prints it, and exits — peek
@@ -4488,7 +4488,7 @@ merge.</p>
 <tr>
 <td><code>H5I_AGENT_ID</code></td>
 <td>unset</td>
-<td>Agent identifier recorded on the commit (e.g. <code>claude-code</code>, <code>codex</code>). Also used as the default <code>--author</code> for <code>h5i claims</code> and the default backend for <code>h5i codex</code> / inference.</td>
+<td>Agent identifier recorded on the commit (e.g. <code>claude-code</code>, <code>codex</code>). Also used as the default <code>--author</code> for <code>h5i claims</code> and the default backend for <code>h5i hook codex</code> / inference.</td>
 </tr>
 </tbody>
 </table>
