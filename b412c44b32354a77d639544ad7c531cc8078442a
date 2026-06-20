@@ -1,0 +1,1 @@
+{"git_oid":"b412c44b32354a77d639544ad7c531cc8078442a","parent_oid":"6e33cfa71317d283c9bdef5eaee68b1acc24d2d4","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"In Radio tab, the shown conversation is not filtered to the picked branch.","agent_id":"claude-code","usage":null},"test_metrics":null,"timestamp":"2026-06-20T02:54:21.115406770Z"}
