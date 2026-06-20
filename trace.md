@@ -2740,3 +2740,4 @@ _[Checkpoint: 6a360880 — edited web/src/ReplayView.tsx; edited web/src/ReplayV
 [03:29:30] ACT: edited src/server.rs
 [03:29:34] ACT: edited src/server.rs
 [03:29:58] ACT: edited web/src/api.ts
+[03:30:05] ACT: edited web/src/CockpitView.tsx
