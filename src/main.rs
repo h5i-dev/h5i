@@ -624,7 +624,7 @@ enum Commands {
         rest: Vec<String>,
     },
 
-    /// Read AI history — log, blame, diff, context, notes, memory, recap, resume, vibe.
+    /// Read AI history — log, blame, diff, context, notes, memory, recap, resume.
     /// Run `h5i recall --help` for the verb table.
     Recall {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -3939,12 +3939,6 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     example: "h5i recall resume",
                 },
                 NounVerb {
-                    verb: "vibe",
-                    summary: "Quick AI-footprint audit (also under `audit`).",
-                    legacy: "h5i vibe",
-                    example: "h5i recall vibe",
-                },
-                NounVerb {
                     verb: "object",
                     summary: "Rehydrate a captured raw output (full bytes, or --summary / --manifest).",
                     legacy: "(new)",
@@ -4223,7 +4217,7 @@ fn maybe_legacy_hint(argv: &[String]) {
             "memory" => Some("h5i recall memory  (or `h5i capture memory` / `h5i share memory`)"),
             "notes" => Some("h5i recall notes   (or `h5i audit review`)"),
             "context" => Some("h5i recall context"),
-            "vibe" => Some("h5i recall vibe    (or `h5i audit vibe`)"),
+            "vibe" => Some("h5i audit vibe"),
             "compliance" => Some("h5i audit compliance"),
             "pr" => Some("h5i share pr"),
             _ => None,

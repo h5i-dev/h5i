@@ -78,7 +78,7 @@ Command reference for all h5i subcommands and flags.
   - [h5i share memory push](#h5i-share-memory-push)
   - [h5i share memory pull](#h5i-share-memory-pull)
 - [h5i recall resume](#h5i-recall-resume)
-- [h5i recall vibe](#h5i-recall-vibe)
+- [h5i audit vibe](#h5i-audit-vibe)
 - [h5i audit policy](#h5i-audit-policy)
   - [h5i audit policy init](#h5i-audit-policy-init)
   - [h5i audit policy check](#h5i-audit-policy-check)
@@ -128,7 +128,7 @@ legacy equivalents, and the corresponding MCP tool names.
 | Noun | Verbs | What it covers |
 |---|---|---|
 | `h5i capture` | `commit`, `memory`, `run` | Record provenance, memory snapshots, and large command output (token reduction). |
-| `h5i recall` | `log`, `blame`, `diff`, `context`, `notes`, `memory`, `recap`, `resume`, `vibe`, `object`, `objects` | Read history, context, and captured tool output. |
+| `h5i recall` | `log`, `blame`, `diff`, `context`, `notes`, `memory`, `recap`, `resume`, `object`, `objects` | Read history, context, and captured tool output. |
 | `h5i audit` | `review`, `scan`, `compliance`, `policy`, `vibe` | Assess risk on AI-generated changes. |
 | `h5i share` | `push`, `pull`, `pr`, `memory` | Publish: push refs, pull refs, post a GitHub PR comment. |
 | `h5i objects` | `run`, `put`, `get`, `list`, `gc`, `pin`, `unpin`, `fsck`, `push`, `pull`, `filters`, `trust`, `setup` | Token-reduction object store: capture huge output, surface a summary, share raw blobs, maintain the store. See [h5i objects](#h5i-objects-token-reduction). |
@@ -160,7 +160,7 @@ proceeds normally. Pipes are unaffected because the hint goes to stderr.
 | `h5i memory log` / `diff` / `restore` | `h5i recall memory <sub>` |
 | `h5i recap` (was `h5i context recap`) | `h5i recall recap` |
 | `h5i resume` | `h5i recall resume` |
-| `h5i vibe` | `h5i recall vibe` _or_ `h5i audit vibe` |
+| `h5i vibe` | `h5i audit vibe` |
 | `h5i notes review --limit N` | `h5i audit review --limit N` |
 | `h5i context scan` | `h5i audit scan` |
 | `h5i compliance …` | `h5i audit compliance …` |
@@ -507,7 +507,6 @@ Read AI history & context.
 | `h5i recall memory <sub>` | `h5i memory <sub>` | Log / diff / restore agent memory snapshots. |
 | `h5i recall recap` | `h5i context recap` | Import Claude Code `away_summary` entries as milestones. |
 | `h5i recall resume` | `h5i resume` | Print a structured handoff briefing. |
-| `h5i recall vibe` | `h5i vibe` | Quick AI-footprint audit (also under `audit`). |
 | `h5i recall object` | _(new)_ | Rehydrate a captured raw output (full bytes, or `--summary`/`--manifest`). See [h5i objects](#h5i-objects-token-reduction). |
 | `h5i recall objects` | _(new)_ | List captured outputs; filter by `--status`/`--tool`/`--branch`/`--file`/`--diff`. |
 
@@ -523,7 +522,7 @@ Assess risk on AI-generated changes.
 | `h5i audit scan` | `h5i context scan` | Scan reasoning traces for prompt-injection patterns. |
 | `h5i audit compliance` | `h5i compliance` | Date-ranged audit report (text / json / html). |
 | `h5i audit policy <sub>` | `h5i policy <sub>` | Manage `.h5i/policy.toml` rules. |
-| `h5i audit vibe` | `h5i vibe` | Repo-wide AI footprint summary. |
+| `h5i audit vibe` | `h5i vibe` | Repo-wide AI footprint summary. See [h5i audit vibe](#h5i-audit-vibe). |
 
 ```bash
 h5i audit review --limit 50
@@ -2166,10 +2165,10 @@ h5i recall resume                               # get the full briefing
 
 ---
 
-## h5i recall vibe
+## h5i audit vibe
 
 ```
-h5i recall vibe [OPTIONS]
+h5i audit vibe [OPTIONS]
 ```
 
 Show an instant AI footprint audit of the repository: what fraction of recent commits are AI-generated, which directories are fully AI-written, and which files carry the highest risk.

@@ -253,7 +253,7 @@
 <a class="t3" href="#h5i-share-memory-pull">h5i share memory pull</a>
 </div>
 <a class="t2" href="#h5i-recall-resume">h5i recall resume</a>
-<a class="t2" href="#h5i-recall-vibe">h5i recall vibe</a>
+<a class="t2" href="#h5i-audit-vibe">h5i audit vibe</a>
 <a class="t2" href="#h5i-audit-policy">h5i audit policy</a>
 <div class="t3group">
 <a class="t3" href="#h5i-audit-policy-init">h5i audit policy init</a>
@@ -335,7 +335,7 @@ legacy equivalents, and the corresponding MCP tool names.</p>
 </tr>
 <tr>
 <td><code>h5i recall</code></td>
-<td><code>log</code>, <code>blame</code>, <code>diff</code>, <code>context</code>, <code>notes</code>, <code>memory</code>, <code>recap</code>, <code>resume</code>, <code>vibe</code>, <code>object</code>, <code>objects</code></td>
+<td><code>log</code>, <code>blame</code>, <code>diff</code>, <code>context</code>, <code>notes</code>, <code>memory</code>, <code>recap</code>, <code>resume</code>, <code>object</code>, <code>objects</code></td>
 <td>Read history, context, and captured tool output.</td>
 </tr>
 <tr>
@@ -412,7 +412,7 @@ proceeds normally. Pipes are unaffected because the hint goes to stderr.</p>
 </tr>
 <tr>
 <td><code>h5i vibe</code></td>
-<td><code>h5i recall vibe</code> <em>or</em> <code>h5i audit vibe</code></td>
+<td><code>h5i audit vibe</code></td>
 </tr>
 <tr>
 <td><code>h5i notes review --limit N</code></td>
@@ -736,11 +736,6 @@ h5i capture memory --agent claude
 <td>Print a structured handoff briefing.</td>
 </tr>
 <tr>
-<td><code>h5i recall vibe</code></td>
-<td><code>h5i vibe</code></td>
-<td>Quick AI-footprint audit (also under <code>audit</code>).</td>
-</tr>
-<tr>
 <td><code>h5i recall object</code></td>
 <td><em>(new)</em></td>
 <td>Rehydrate a captured raw output (full bytes, or <code>--summary</code>/<code>--manifest</code>). See <a href="#h5i-objects-token-reduction">h5i objects</a>.</td>
@@ -787,7 +782,7 @@ h5i capture memory --agent claude
 <tr>
 <td><code>h5i audit vibe</code></td>
 <td><code>h5i vibe</code></td>
-<td>Repo-wide AI footprint summary.</td>
+<td>Repo-wide AI footprint summary. See <a href="#h5i-audit-vibe">h5i audit vibe</a>.</td>
 </tr>
 </tbody>
 </table>
@@ -2705,8 +2700,8 @@ h5i capture memory -m &quot;end of session&quot;  # checkpoint memory
 <pre><code class="language-bash">h5i recall resume                               # get the full briefing
 </code></pre>
 <hr />
-<h2 id="h5i-recall-vibe">h5i recall vibe</h2>
-<pre><code>h5i recall vibe [OPTIONS]
+<h2 id="h5i-audit-vibe">h5i audit vibe</h2>
+<pre><code>h5i audit vibe [OPTIONS]
 </code></pre>
 <p>Show an instant AI footprint audit of the repository: what fraction of recent commits are AI-generated, which directories are fully AI-written, and which files carry the highest risk.</p>
 <p><strong>Options</strong></p>
