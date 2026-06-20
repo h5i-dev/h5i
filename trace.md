@@ -2932,3 +2932,4 @@ _[Checkpoint: 6a366fa9 — session ended (auto-checkpoint)]_
 [10:48:44] OBSERVE: read ../codex/codex-rs/sandboxing/src/manager.rs
 [10:48:44] OBSERVE: read ../codex/codex-rs/sandboxing/src/bwrap.rs
 [10:48:44] OBSERVE: read ../codex/codex-rs/sandboxing/src/landlock.rs
+[10:48:44] OBSERVE: read ../codex/codex-rs/sandboxing/src/manager.rs
