@@ -1,0 +1,1 @@
+{"git_oid":"81dbe1f322db24bf5b26ba65ed75c560d7b5897b","parent_oid":"86a6742f6fb1d5f56f99c38bca54e372dfc95949","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"you should also update all ./docs's content including MANUAL and all other pages","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"timestamp":"2026-06-20T02:05:12.928675753Z"}
