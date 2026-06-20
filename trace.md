@@ -3007,3 +3007,9 @@ _[Checkpoint: 6a367028 — session ended (auto-checkpoint)]_
 [11:04:49] OBSERVE: read src/sandbox.rs
 [11:05:01] ACT: edited src/sandbox.rs
 [11:07:51] ACT: edited CLAUDE.md
+
+
+---
+_[Checkpoint: 6a3674a8 — Implement #1: per-env credential/session isolation]_
+---
+
