@@ -2814,3 +2814,4 @@ _[Checkpoint: 6a366888 — edited web/src/ContextView.tsx; edited web/src/Contex
 _[Checkpoint: 6a366a01 — edited web/src/ContextView.tsx; edited web/src/ContextView.tsx; edited web/src/ContextView.tsx]_
 ---
 
+[10:43:35] OBSERVE: read README.md
