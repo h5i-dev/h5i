@@ -1,0 +1,1 @@
+{"git_oid":"a0287edf4ae24c69de9f9b9d9f46b76d2ee305c8","parent_oid":"4eaa2a494e2c028a09ae28bfa36706b2278e65fe","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"while improve-ui is selected, the snapshot history in CONTEXT tab shows the prompt-score branch's history","agent_id":"claude-code","usage":null},"test_metrics":null,"timestamp":"2026-06-20T10:16:29.448499225Z"}
