@@ -3014,3 +3014,6 @@ _[Checkpoint: 6a3674a8 — Implement #1: per-env credential/session isolation]_
 ---
 
 [11:08:40] THINK: Let me confirm how `config_lock_paths` does redirect-style bind mounts in `pre_exec` (my mechanism for redirecting `~/.
+[11:08:40] THINK: claude.json`.
+
+The fix has a clean home in the existing code: I'll mirror the `PrivateBind`/`prepare_private_paths` + `ProtectedHookConfigGuard` machinery to (a) seed a per-env copy of the runtime's HOME state, (b) bind it over `$HOME/.
