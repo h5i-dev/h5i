@@ -2266,3 +2266,16 @@ Agent boxes now redirect ~/.claude/~/.claude.json/~/.codex to a per-env copy und
 
 ---
 
+## Commit 6a3674b8 — 2026-06-20 11:08 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+Agent boxes now redirect ~/.claude/~/.claude.json/~/.codex to a per-env copy under <env>/home (copy-in only, persist per-env), bound over the real path in pre_exec (sandbox.rs home_bind_c) and granted via policy.home_binds. Real HOME never written. Kernel-tier only. New: HomeBind type (sandbox_policy.rs), env::prepare_home_state + copy_tree, 5 unit + 1 real-kernel functional test. All green: 47 sandbox + 28 env + 101 env_integration; clippy -D warnings clean both feature configs. NOT committed (awaiting user). Follow-up: container-tier home isolation, optional copy-out flag.
+
+### This Commit's Contribution
+
+
+---
+
