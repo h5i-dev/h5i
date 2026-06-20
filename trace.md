@@ -3013,3 +3013,4 @@ _[Checkpoint: 6a367028 — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a3674a8 — Implement #1: per-env credential/session isolation]_
 ---
 
+[11:08:40] THINK: Let me confirm how `config_lock_paths` does redirect-style bind mounts in `pre_exec` (my mechanism for redirecting `~/.
