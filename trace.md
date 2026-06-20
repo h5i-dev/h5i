@@ -3143,3 +3143,9 @@ _[Checkpoint: 6a369b31 — edited AGENTS.md; edited .claude/skills/h5i-workflow/
 _[Checkpoint: 6a369bd7 — edited AGENTS.md; edited .claude/skills/h5i-workflow/SKILL.md; edited .claude/skills/h5i-workflow/SKILL.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a36edda — edited AGENTS.md; edited .claude/skills/h5i-workflow/SKILL.md; edited .claude/skills/h5i-workflow/SKILL.md]_
+---
+
