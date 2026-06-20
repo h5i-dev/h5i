@@ -3395,3 +3395,4 @@ _[Checkpoint: 6a36f59a — edited docs/blog/what-is-ai-aware-version-control/ind
 [20:30:40] ACT: edited docs/blog/from-git-blame-to-ai-blame/index.html
 [20:30:57] ACT: edited docs/guides/ai-code-provenance/index.html
 [20:32:33] THINK: Let me examine the MANUAL/man structure to see if there's a separate `audit vibe` detail section or whether the detail lives only under `recall vibe`.
+[20:32:33] THINK: Let me gather the remaining specifics (TOC, tables, man page structure) to do it precisely.
