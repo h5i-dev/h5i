@@ -1,0 +1,1 @@
+{"git_oid":"c41a1dcaec9a274f5774ec9773fb01b8d4546768","parent_oid":"01c5aa12d715a4c7db706dea33a3e766ffa5d6d6","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"In both CONTEXT and EXPLORE tabs, the commit logs are not filtered with the selected branch","agent_id":"claude-code","usage":null},"test_metrics":null,"timestamp":"2026-06-20T03:55:48.966721449Z"}
