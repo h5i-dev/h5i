@@ -1,0 +1,1 @@
+{"git_oid":"26d80c721870fdc1d81fc4d8a5cab0602700d3b1","parent_oid":"5bba8fffd9da374d1876121470e9a2bb2390959c","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"Detail tab in REPLAY section also shows the unfiltered commit/prompt messages","agent_id":"claude-code","usage":null},"test_metrics":null,"timestamp":"2026-06-20T03:23:23.371313180Z"}
