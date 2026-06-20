@@ -3556,3 +3556,9 @@ _[Checkpoint: 6a370ca4 — edited roadmap/team-design.md; edited roadmap/team-de
 [22:01:56] ACT: edited roadmap/team-design.md
 [22:02:07] OBSERVE: read roadmap/team-design.md
 [22:02:18] ACT: edited roadmap/team-design.md
+
+
+---
+_[Checkpoint: 6a370e06 — Added persona/multi-system-prompt roster model to team design]_
+---
+

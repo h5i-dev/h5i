@@ -2591,3 +2591,16 @@ v3: removed secret-redaction overclaim, phase/state as derived projections, seal
 
 ---
 
+## Commit 6a370e06 — 2026-06-20 22:02 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+team agent = (runtime, model, persona); roster can be N same-runtime agents with different system prompts/skills/roles. agent_id is ref-safe key, persona_digest = provenance anchor on TeamAgent+TeamArtifact, per-env home isolation already covers same-runtime cred races, dispatch materializes persona (claude --append-system-prompt+skills / codex profile), serve lanes labeled by persona.
+
+---
+
