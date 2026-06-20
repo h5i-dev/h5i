@@ -2527,3 +2527,4 @@ _[Checkpoint: 6a35f224 — edited man/man1/h5i.1; edited src/secrets.rs; edited 
 [01:54:56] OBSERVE: read MANUAL.md
 [01:55:14] OBSERVE: read src/repository.rs
 [01:56:14] OBSERVE: read src/storage.rs
+[01:56:29] ACT: edited MANUAL.md
