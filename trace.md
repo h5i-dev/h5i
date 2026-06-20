@@ -2984,3 +2984,4 @@ _[Checkpoint: 6a367028 — session ended (auto-checkpoint)]_
 [10:52:51] OBSERVE: read src/env.rs
 [10:53:15] OBSERVE: read src/container.rs
 [10:53:44] OBSERVE: read src/sandbox.rs
+[10:53:47] OBSERVE: read src/sandbox.rs
