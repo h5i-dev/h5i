@@ -2517,3 +2517,4 @@ _[Checkpoint: 6a35dec6 — edited src/objects.rs; edited src/main.rs; edited man
 [01:45:02] ACT: edited src/secrets.rs
 [01:45:06] OBSERVE: read .claude/skills/h5i-workflow/SKILL.md
 [01:45:18] ACT: edited .claude/skills/h5i-workflow/SKILL.md
+[01:51:32] NOTE: DEFERRAL (~/Dev/h5i/.claude/skills/h5i-workflow/SKILL.md): that range-deletes across interleaved code are risky. One follow-up you may want eventually: the generated docs site (`docs/manual/index.html`, etc.) …
