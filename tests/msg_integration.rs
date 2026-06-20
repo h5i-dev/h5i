@@ -733,7 +733,10 @@ fn cross_clone_review_done_thread_roundtrip() {
         "--branch", "auth", "--focus", "src/auth.rs", "--pr", "42",
         "codex", "review token refresh",
     ]);
-    a.h5i_ok(&["share", "push"]);
+    // The review is tagged for branch `auth` (not the clone's current git
+    // branch), so full cross-clone sync needs --all-branches; the scoped default
+    // would only carry the current branch's messages.
+    a.h5i_ok(&["share", "push", "--all-branches"]);
 
     // B pulls and Codex auto-delivery surfaces it (and numbers it for reply).
     b.h5i_ok(&["share", "pull"]);
@@ -741,7 +744,8 @@ fn cross_clone_review_done_thread_roundtrip() {
     assert!(delivered.contains("review token refresh"), "codex didn't get it: {delivered}");
 
     b.h5i_ok(&["msg", "done", "--from", "codex", "1", "fixed in 1a2b3c4"]);
-    b.h5i_ok(&["share", "push"]);
+    // The DONE reply inherits the thread's `auth` branch tag → --all-branches.
+    b.h5i_ok(&["share", "push", "--all-branches"]);
 
     // A pulls the merged log and sees the threaded DONE with the structured
     // review fields intact.
@@ -901,7 +905,10 @@ fn structured_fields_survive_divergent_union_merge() {
     // cross-clone union-merge byte-for-byte, not just the body.
     let (_root, a, b) = two_clones();
     a.h5i_ok(&["msg", "send", "--from", "alice", "bob", "base"]);
-    a.h5i_ok(&["share", "push"]);
+    // Full cross-clone sync: the review below is tagged for branch `auth` (not
+    // the clone's git branch), so --all-branches is needed to carry it; the
+    // scoped default would only push the current branch's messages.
+    a.h5i_ok(&["share", "push", "--all-branches"]);
     b.h5i_ok(&["share", "pull"]);
 
     // A files a structured review while offline; B sends something concurrently.
@@ -911,7 +918,7 @@ fn structured_fields_survive_divergent_union_merge() {
         "bob", "check token refresh",
     ]);
     b.h5i_ok(&["msg", "send", "--from", "carol", "bob", "meanwhile"]);
-    a.h5i_ok(&["share", "push"]);
+    a.h5i_ok(&["share", "push", "--all-branches"]);
     b.h5i_ok(&["share", "pull"]); // union-merge on B
 
     let log = b.msg_log();

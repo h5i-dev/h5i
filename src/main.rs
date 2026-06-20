@@ -7075,8 +7075,8 @@ fn main() -> anyhow::Result<()> {
             );
             if let Some(b) = &ctx_scope {
                 println!(
-                    "  {} scoped to branch {} — context + notes + objects for this branch only \
-                     (ast/msg/env/memory push in full; use {} for every branch)",
+                    "  {} scoped to branch {} — context + notes + objects + msg + env for this \
+                     branch only (ast/memory push in full; use {} for every branch)",
                     style("•").dim(),
                     style(b).cyan(),
                     style("--all-branches").bold(),
@@ -7227,22 +7227,34 @@ fn main() -> anyhow::Result<()> {
 
             // Objects: union the remote's manifest log with the local manifests
             // captured on the branch (the `branch` field of each record).
-            let scoped_push_objects = |branch: &str| -> anyhow::Result<bool> {
-                let temp = "refs/h5i/_scoped_push/objects";
-                let _ = git_run(&["update-ref", "-d", temp]);
-                print!(
-                    "  {} {} … ",
-                    style("→").dim(),
-                    style("refs/h5i/objects").yellow()
-                );
+            // Generic scoped non-destructive merge-push for an aggregate log ref
+            // (objects / msg / env-meta). `build` reads the local ref + the
+            // fetched remote `base` and returns the merged commit to push (remote
+            // ∪ this branch's records), or None when there is nothing for the
+            // branch. The push is a fast-forward off the remote tip — never a
+            // force of a filtered subset — so other branches' data survives.
+            type ScopedBuild = dyn Fn(
+                &git2::Repository,
+                &str,
+                Option<git2::Oid>,
+            ) -> Result<Option<git2::Oid>, h5i_core::error::H5iError>;
+            let scoped_merge_push = |branch: &str,
+                                     refname: &str,
+                                     no_data: &str,
+                                     build: &ScopedBuild|
+             -> anyhow::Result<bool> {
+                let leaf = refname.rsplit('/').next().unwrap_or("ref");
+                let temp = format!("refs/h5i/_scoped_push/{leaf}");
+                let _ = git_run(&["update-ref", "-d", &temp]);
+                print!("  {} {} … ", style("→").dim(), style(refname).yellow());
                 std::io::stdout().flush()?;
                 let _ = git_run(&[
                     "fetch",
                     "--no-write-fetch-head",
                     &remote,
-                    &format!("+refs/h5i/objects:{temp}"),
+                    &format!("+{refname}:{temp}"),
                 ]);
-                let base_oid = git_run(&["rev-parse", "--verify", "--quiet", temp])
+                let base_oid = git_run(&["rev-parse", "--verify", "--quiet", &temp])
                     .ok()
                     .filter(|o| o.status.success())
                     .and_then(|o| {
@@ -7250,21 +7262,16 @@ fn main() -> anyhow::Result<()> {
                     });
                 let g2 = git2::Repository::open(&workdir)
                     .map_err(|e| anyhow::anyhow!("open git repo: {e}"))?;
-                let merged =
-                    h5i_core::objects::build_branch_scoped_merge(&g2, branch, base_oid)
-                        .map_err(|e| anyhow::anyhow!("scope objects: {e}"))?;
+                let merged = build(&g2, branch, base_oid)
+                    .map_err(|e| anyhow::anyhow!("scope {refname}: {e}"))?;
                 let Some(oid) = merged else {
-                    let _ = git_run(&["update-ref", "-d", temp]);
-                    println!(
-                        "{} (no captures for branch {})",
-                        style("skipped").yellow(),
-                        style(branch).cyan()
-                    );
+                    let _ = git_run(&["update-ref", "-d", &temp]);
+                    println!("{} ({no_data})", style("skipped").yellow());
                     return Ok(false);
                 };
-                let _ = git_run(&["update-ref", temp, &oid.to_string()]);
-                let status = git_run(&["push", &remote, &format!("{temp}:refs/h5i/objects")])?;
-                let _ = git_run(&["update-ref", "-d", temp]);
+                let _ = git_run(&["update-ref", &temp, &oid.to_string()]);
+                let status = git_run(&["push", &remote, &format!("{temp}:{refname}")])?;
+                let _ = git_run(&["update-ref", "-d", &temp]);
                 if status.status.success() {
                     println!("{} (scoped to {})", style("ok").green(), style(branch).cyan());
                     Ok(true)
@@ -7411,19 +7418,47 @@ fn main() -> anyhow::Result<()> {
                 "no AST snapshots yet",
             )?;
 
-            // Push the cross-agent message log (refs/h5i/msg)
-            try_push(
-                msg::MSG_REF,
-                style("h5i msg send").bold(),
-                "no messages yet",
-            )?;
+            // Push the cross-agent message log (refs/h5i/msg). Scoped to the
+            // branch's conversation (messages auto-tagged with the branch) when
+            // --branch is given; else the whole log. The roster always travels.
+            if let Some(b) = &ctx_scope {
+                scoped_merge_push(
+                    b,
+                    msg::MSG_REF,
+                    "no messages for this branch",
+                    &h5i_core::msg::build_branch_scoped_merge,
+                )?;
+            } else {
+                try_push(
+                    msg::MSG_REF,
+                    style("h5i msg send").bold(),
+                    "no messages yet",
+                )?;
+            }
 
             // Push the token-reduction manifest log (refs/h5i/objects).
             // Only the small pointer records travel; raw blobs stay local
             // until a remote object backend exists (git-lfs style). Scoped to
             // the branch's captures when --branch is given; else the whole ref.
             if let Some(b) = &ctx_scope {
-                scoped_push_objects(b)?;
+                // Also carry the evidence captures of envs forked from this
+                // branch (their objects are tagged with the env's own branch, so
+                // a plain branch match would miss them).
+                let env_ids = git2::Repository::open(&workdir)
+                    .ok()
+                    .map(|r| h5i_core::env::local_env_ids_for_branch(&r, b))
+                    .unwrap_or_default();
+                let build_objects = move |repo: &git2::Repository,
+                                          branch: &str,
+                                          base: Option<git2::Oid>| {
+                    h5i_core::objects::build_branch_scoped_merge(repo, branch, &env_ids, base)
+                };
+                scoped_merge_push(
+                    b,
+                    h5i_core::objects::OBJECTS_REF,
+                    "no captures for this branch",
+                    &build_objects,
+                )?;
             } else {
                 try_push(
                     h5i_core::objects::OBJECTS_REF,
@@ -7433,11 +7468,22 @@ fn main() -> anyhow::Result<()> {
             }
 
             // Push the shareable env state (manifests + policies + event log).
-            try_push(
-                h5i_core::env::ENV_REF,
-                style("h5i env create").bold(),
-                "no environments yet",
-            )?;
+            // Scoped to the envs forked from the branch (manifest parent_branch)
+            // when --branch is given; else the whole ref.
+            if let Some(b) = &ctx_scope {
+                scoped_merge_push(
+                    b,
+                    h5i_core::env::ENV_REF,
+                    "no environments for this branch",
+                    &h5i_core::env::build_branch_scoped_merge,
+                )?;
+            } else {
+                try_push(
+                    h5i_core::env::ENV_REF,
+                    style("h5i env create").bold(),
+                    "no environments yet",
+                )?;
+            }
             let git_out = |args: &[&str]| {
                 std::process::Command::new("git")
                     .args(args)
@@ -7462,19 +7508,45 @@ fn main() -> anyhow::Result<()> {
                     style("refs/h5i/env/code/*").yellow()
                 );
                 std::io::stdout().flush()?;
-                let status = std::process::Command::new("git")
-                    .args(["push", &remote, ENV_CODE_PUSH_REFSPEC])
-                    .current_dir(&workdir)
-                    .status()
-                    .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
-                println!(
-                    "{}",
-                    if status.success() {
-                        style("ok").green()
-                    } else {
-                        style("failed").red()
-                    }
-                );
+                // When scoped, push only the code branches of envs forked from
+                // this branch (remapped onto the hidden code namespace); else the
+                // wildcard carries every env branch.
+                let refspecs: Vec<String> = if let Some(b) = &ctx_scope {
+                    git2::Repository::open(&workdir)
+                        .ok()
+                        .map(|r| h5i_core::env::scoped_code_branch_refs(&r, b))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|full| {
+                            full.strip_prefix("refs/heads/h5i/env/")
+                                .map(|suffix| format!("+{full}:refs/h5i/env/code/{suffix}"))
+                        })
+                        .collect()
+                } else {
+                    vec![ENV_CODE_PUSH_REFSPEC.to_string()]
+                };
+                if refspecs.is_empty() {
+                    println!(
+                        "{} (no env code for this branch)",
+                        style("skipped").yellow()
+                    );
+                } else {
+                    let mut args: Vec<String> = vec!["push".into(), remote.clone()];
+                    args.extend(refspecs);
+                    let status = std::process::Command::new("git")
+                        .args(&args)
+                        .current_dir(&workdir)
+                        .status()
+                        .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+                    println!(
+                        "{}",
+                        if status.success() {
+                            style("ok").green()
+                        } else {
+                            style("failed").red()
+                        }
+                    );
+                }
             }
 
             // Env code is published under refs/h5i/env/code/* (above); it must

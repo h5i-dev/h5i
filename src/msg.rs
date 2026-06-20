@@ -1003,6 +1003,79 @@ pub fn union_merge_commits(
     Ok(oid)
 }
 
+/// Build the commit to push for a branch-scoped `h5i share push` of
+/// `refs/h5i/msg`: `base`'s messages (the remote tip, or empty) unioned with the
+/// local messages tagged with `branch`.
+///
+/// Messages auto-tag the sender's current branch at send time (see [`send_msg`]),
+/// and replies inherit the thread's branch, so a branch's conversation carries
+/// its `branch` field. The agent roster (`agents.json`) always travels in full —
+/// identity is global, and the receiver needs it to attribute any message.
+///
+/// Non-destructive: every message already in `base` is preserved (other
+/// branches' conversations on the remote survive); only this branch's local
+/// messages are added, deduped by id. The new commit descends from `base` (so
+/// the push fast-forwards), or is a root when there is no remote tip. Returns
+/// `Ok(None)` when there is nothing to push — no local message on `branch` and
+/// no `base`. (Untagged/broadcast messages travel only via `--all-branches`.)
+pub fn build_branch_scoped_merge(
+    repo: &Repository,
+    branch: &str,
+    base: Option<Oid>,
+) -> Result<Option<Oid>, H5iError> {
+    // Messages already on the remote (preserved wholesale).
+    let base_msgs = match base {
+        Some(oid) => {
+            parse_messages(&read_file_from_commit(repo, oid, MESSAGES_FILE).unwrap_or_default())
+        }
+        None => Vec::new(),
+    };
+    // Local messages tagged with this branch — the only additions.
+    let local_branch_msgs: Vec<Message> = read_messages(repo)
+        .into_iter()
+        .filter(|m| m.branch.as_deref() == Some(branch))
+        .collect();
+    if base.is_none() && local_branch_msgs.is_empty() {
+        return Ok(None);
+    }
+    let merged_log = merge_message_sets(base_msgs, local_branch_msgs);
+
+    // Roster: the remote's, unioned with the full local roster (identity is global).
+    let mut roster = match base {
+        Some(oid) => read_roster_from(repo, oid),
+        None => Roster::default(),
+    };
+    for (name, seen) in read_roster(repo).agents {
+        roster
+            .agents
+            .entry(name)
+            .and_modify(|cur| {
+                if seen > *cur {
+                    *cur = seen.clone();
+                }
+            })
+            .or_insert(seen);
+    }
+    let roster_json = serde_json::to_string_pretty(&roster)?;
+
+    let base_commit = match base {
+        Some(oid) => Some(repo.find_commit(oid)?),
+        None => None,
+    };
+    let base_tree = base_commit.as_ref().and_then(|c| c.tree().ok());
+    let tree_oid = build_tree(
+        repo,
+        base_tree.as_ref(),
+        &[(MESSAGES_FILE, &merged_log), (AGENTS_FILE, &roster_json)],
+    )?;
+    let tree = repo.find_tree(tree_oid)?;
+    let sig = signature(repo)?;
+    let message = format!("h5i push: branch-scoped msg ({branch})");
+    let parents: Vec<&git2::Commit> = base_commit.iter().collect();
+    let oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
+    Ok(Some(oid))
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────
@@ -2078,5 +2151,67 @@ mod tests {
         let (_d, repo, root) = fixture();
         let m = send(&repo, &root, "alice", "bob", "hi", None).unwrap();
         assert_eq!(m.branch, None);
+    }
+
+    // ── build_branch_scoped_merge (branch-scoped `h5i share push`) ──────────
+    // (reuses the `send_on(.., branch, reply_to)` helper defined above)
+
+    fn bodies_in(repo: &Repository, oid: Oid) -> Vec<String> {
+        parse_messages(&read_file_from_commit(repo, oid, MESSAGES_FILE).unwrap())
+            .into_iter()
+            .map(|m| m.body)
+            .collect()
+    }
+
+    #[test]
+    fn scoped_merge_keeps_only_branch_messages() {
+        let (_d, repo, root) = fixture();
+        send_on(&repo, &root, "alice", "bob", "on-main", Some("main"), None);
+        send_on(&repo, &root, "alice", "bob", "on-feature", Some("feature"), None);
+
+        let oid = build_branch_scoped_merge(&repo, "feature", None)
+            .unwrap()
+            .expect("feature has a message");
+        assert_eq!(bodies_in(&repo, oid), vec!["on-feature".to_string()]);
+    }
+
+    #[test]
+    fn scoped_merge_preserves_base_messages_and_roster() {
+        let (_d, repo, root) = fixture();
+        // "remote" base carries another branch's conversation.
+        send_on(&repo, &root, "carol", "dave", "other-conv", Some("other"), None);
+        let base = repo.refname_to_id(MSG_REF).unwrap();
+        // Local then has a feature conversation (and an unrelated main one).
+        send_on(&repo, &root, "alice", "bob", "feat-conv", Some("feature"), None);
+        send_on(&repo, &root, "alice", "bob", "main-conv", Some("main"), None);
+
+        let oid = build_branch_scoped_merge(&repo, "feature", Some(base))
+            .unwrap()
+            .unwrap();
+        let bodies: std::collections::HashSet<String> = bodies_in(&repo, oid).into_iter().collect();
+        assert!(bodies.contains("other-conv"), "base conversation preserved");
+        assert!(bodies.contains("feat-conv"), "feature conversation added");
+        assert!(
+            !bodies.contains("main-conv"),
+            "unrelated main conversation must not leak"
+        );
+
+        // Roster carries every agent (identity is global).
+        let roster: Roster =
+            serde_json::from_str(&read_file_from_commit(&repo, oid, AGENTS_FILE).unwrap()).unwrap();
+        for who in ["carol", "dave", "alice", "bob"] {
+            assert!(roster.agents.contains_key(who), "roster missing {who}");
+        }
+        // Descends from base → fast-forward push.
+        assert_eq!(repo.find_commit(oid).unwrap().parent_id(0).unwrap(), base);
+    }
+
+    #[test]
+    fn scoped_merge_none_when_branch_empty_and_no_base() {
+        let (_d, repo, root) = fixture();
+        send_on(&repo, &root, "alice", "bob", "on-main", Some("main"), None);
+        assert!(build_branch_scoped_merge(&repo, "feature", None)
+            .unwrap()
+            .is_none());
     }
 }

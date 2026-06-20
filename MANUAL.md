@@ -3150,16 +3150,17 @@ When a subscription is registered, h5i spawns a background polling thread (2-sec
 ## h5i share push
 
 ```
-h5i share push [--remote <name>] [--branch [<name>]]
+h5i share push [--remote <name>] [--branch [<name>] | --all-branches]
 ```
 
-Push every `refs/h5i/*` family (notes, memory, context, ast, msg, object manifests, env state) to the remote (default: `origin`). None of these are included in a plain `git push`. Canonical form of the legacy `h5i push`.
+Push the `refs/h5i/*` families (notes, memory, context, ast, msg, object manifests, env state) to the remote (default: `origin`). None of these are included in a plain `git push`. Canonical form of the legacy `h5i push`.
 
-**Branch-scoped push (`--branch`).** By default `share push` ships *every* branch's h5i material, so pushing one code branch also publishes the reasoning, provenance, and captures of unrelated branches. Pass `--branch <name>` (or `--branch` bare for the current git branch) to send only the material linked to that branch — analogous to how `git push` sends only the pushed branch's commits:
+**Branch-scoped by default.** Like `git push`, `share push` sends only the *current branch's* h5i material — it does not publish the reasoning, provenance, captures, conversations, or environments of unrelated branches. Pass `--branch <name>` to scope to a different branch, or `--all-branches` to push every branch's material (a first full sync, or CI):
 
 ```
-h5i share push --branch feature-x   # only feature-x's h5i material
-h5i share push --branch             # only the current branch's material
+h5i share push                      # the current branch's material (default)
+h5i share push --branch feature-x   # another branch's material
+h5i share push --all-branches       # every branch's material
 ```
 
 What gets scoped:
@@ -3169,9 +3170,13 @@ What gets scoped:
 | **context** (`refs/h5i/context/*`) | Only `refs/h5i/context/<branch>` is pushed (one ref per branch). Legacy whole-workspace refs are skipped. |
 | **notes** (`refs/h5i/notes`) | Only the provenance for commits reachable from `<branch>` travels. |
 | **objects** (`refs/h5i/objects`) | Only manifests whose `branch` field equals `<branch>` travel. |
-| **ast / msg / env / memory** | Pushed in full — AST is deduplicated content-addressed structure; msg/env/memory are genuinely cross-branch. |
+| **msg** (`refs/h5i/msg`) | Only messages tagged with `<branch>` travel (sends auto-tag the current branch; replies inherit the thread's). The agent roster always travels. |
+| **env** (`refs/h5i/env/meta` + `…/code/*`) | Only envs whose `parent_branch` is `<branch>` travel — their manifests/policies/events and their code branches. |
+| **ast / memory** | Pushed in full. AST is deduplicated content-addressed structure; memory is a cumulative full-state snapshot whose facts are branch-independent. |
 
-**Non-destructive.** `notes` and `objects` are single aggregate refs shared by every branch, so a scoped push does **not** force a filtered subset (which would delete other branches' data on the remote). Instead it fetches the remote's current ref and *unions* only this branch's entries onto it, then pushes the result as a fast-forward. Other branches' notes and captures already on the remote are always preserved.
+**Non-destructive.** notes/objects/msg/env are single aggregate refs shared by every branch, so a scoped push does **not** force a filtered subset (which would delete other branches' data on the remote). Instead it fetches the remote's current ref and *unions* only this branch's entries onto it, then pushes the result as a fast-forward. Other branches' data already on the remote is always preserved.
+
+> **Note:** because `msg` is filtered by each message's `branch` tag, a `msg review --branch X` sent while you are on a *different* git branch is carried by `--branch X` (or `--all-branches`), not by a plain current-branch push.
 
 To automate in CI:
 

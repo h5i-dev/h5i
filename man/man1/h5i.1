@@ -644,9 +644,13 @@ a capture/commit that fails with \fI"h5i data store not writable"\fR means
 .
 .\" ─── share push ─────────────────────────────────────────────────────────────
 .SS h5i share push [\fIOPTIONS\fR] (alias: h5i push)
-Push all h5i refs (everything under
+Push the h5i refs (everything under
 .IR refs/h5i/* )
-to a remote in one shot.
+to a remote. Branch-scoped by default: like
+.BR "git push" ,
+only the
+.B current branch's
+h5i material travels.
 .PP
 .B Options
 .RS 4
@@ -656,24 +660,29 @@ Remote to push to (default:
 .BR origin ).
 .TP
 .BI \-b,\ \-\-branch\ [ BRANCH ]
-Push only the h5i material linked to a single branch instead of every branch.
-Pass a name, or pass
+Scope to a specific branch instead of the current one. Pass a name, or
 .B \-\-branch
-bare to use the current git branch. Scopes the context ref
+bare for the current git branch (the default). Scoping carries the branch's
+context ref
 .RB ( refs/h5i/context/<branch> ),
 the
 .B notes
-for commits reachable from the branch, and the
+for commits reachable from it, the
 .B objects
-manifests whose
-.I branch
-field matches; AST, msg, env, and memory still push in full. The
-.B notes
-and
-.B objects
-refs are aggregates shared by all branches, so the scoped push unions this
-branch's entries onto the remote's current ref (a fast\-forward) rather than
-force\-pushing a subset \(em other branches' data on the remote is never deleted.
+manifests captured on it (plus the evidence of envs forked from it), the
+.B msg
+messages tagged with it, and the
+.B env
+state + code branches of envs whose
+.I parent_branch
+matches. AST and memory always push in full. These aggregate refs are unioned
+onto the remote's current ref (a fast\-forward) rather than force\-pushing a
+subset \(em other branches' data on the remote is never deleted.
+.TP
+.B \-\-all\-branches
+Push every branch's h5i material (the pre-scoping behavior). Use for a first
+full sync or in CI. Mutually exclusive with
+.BR \-\-branch .
 .RE
 .
 .\" ─── share pr ───────────────────────────────────────────────────────────────

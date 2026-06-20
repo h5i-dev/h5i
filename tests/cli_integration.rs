@@ -2146,6 +2146,63 @@ fn scoped_push_is_nondestructive_to_other_branches_on_remote() {
     );
 }
 
+/// The remote's `messages.jsonl` (msg log), or empty if absent.
+fn remote_msg_raw(remote: &Path) -> String {
+    let out = Command::new("git")
+        .args(["cat-file", "-p", "refs/h5i/msg:messages.jsonl"])
+        .current_dir(remote)
+        .output()
+        .unwrap();
+    if out.status.success() {
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    } else {
+        String::new()
+    }
+}
+
+/// `--branch` scopes the cross-agent message log: only messages tagged with the
+/// branch (auto-tagged at send time) travel; another branch's stay local.
+#[test]
+fn scoped_push_sends_only_branch_messages() {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    let sender = repo_wired_to(&remote_url);
+    sender.make_commit("a.rs", "fn a() {}", "seed");
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+
+    // A message while on main (auto-tagged main).
+    sender.h5i_ok(&["msg", "send", "--from", "alice", "bob", "hi-main"]);
+    // A message while on feature (auto-tagged feature).
+    run_ok(
+        Command::new("git")
+            .args(["checkout", "-b", "feature"])
+            .current_dir(sender.path()),
+    );
+    sender.h5i_ok(&["msg", "send", "--from", "alice", "bob", "hi-feature"]);
+
+    sender.h5i_ok(&["push", "--remote", "origin", "--branch", "feature"]);
+
+    let raw = remote_msg_raw(remote.path());
+    assert!(
+        raw.contains("hi-feature"),
+        "feature's message should be on the remote:\n{raw}"
+    );
+    assert!(
+        !raw.contains("hi-main"),
+        "a main-tagged message must NOT leak under a feature-scoped push:\n{raw}"
+    );
+}
+
 // ─── h5i share setup-remote / migrate-remote ─────────────────────────────────
 //
 // These exercise the two remote-management verbs added to fix the
