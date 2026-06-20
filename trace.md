@@ -3414,3 +3414,4 @@ _[Checkpoint: 6a36fa4c — edited docs/guides/ai-code-provenance/index.html; edi
 [20:43:26] ACT: edited MANUAL.md
 [20:43:30] ACT: edited MANUAL.md
 [20:44:35] THINK: When it completes I'll review the new structure and verification results, sanity-check the rendered manual myself, and commit.
+[20:44:35] THINK: I'll use the gh-slug scheme consistently (the TOC already uses it, and it works on both GitHub and the rendered site — no `{#.
