@@ -2646,3 +2646,4 @@ Rather than a from-scratch rewrite (the theme and data layer are good), I'll **r
 _[Checkpoint: 6a35ff66 — edited web/src/Workbench.tsx; edited web/src/Workbench.tsx; edited web/src/Workbench.tsx]_
 ---
 
+[02:48:52] THINK: Per the project's h5i workflow, I'll stage the files explicitly (not `git add .
