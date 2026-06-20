@@ -3646,3 +3646,4 @@ _[Checkpoint: 6a37175b — Added opt-in discussion + automated finalization poli
 [22:43:34] THINK: Now let me add a dedicated policy section (§4a) defining the communication + finalization policies.
 [22:43:34] THINK: Let me update the reuses table and the `Verdict` struct, then the §6/§8 sections:
 [22:43:34] THINK: Let me add the `independent` flag to `TeamArtifact` and update the `Verdict` struct:
+[22:43:34] THINK: Let me checkpoint and run this past Codex (it touches the invariants it cares about, and the gaming/collusion angles are exactly its kind of adversarial check).
