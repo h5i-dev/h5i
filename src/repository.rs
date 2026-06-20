@@ -2176,6 +2176,48 @@ impl H5iRepository {
         self.suggest_review_points_impl(branch, limit, min_score)
     }
 
+    /// The default branch's tip OID, used to scope a branch walk to its own
+    /// commits (`base..branch`). Candidate bases, most-accurate first:
+    /// `origin/HEAD`'s target, then `main`, then `master`, each resolved as
+    /// `origin/<name>` then local `<name>`. Returns `None` when no base resolves,
+    /// when `tip` *is* the base branch, or when `tip` has not diverged from it —
+    /// so the caller degrades to a full walk.
+    fn scope_base_oid(&self, tip: git2::Oid) -> Option<git2::Oid> {
+        let repo = &self.git_repo;
+        let mut names: Vec<String> = Vec::new();
+        if let Some(d) = repo
+            .find_reference("refs/remotes/origin/HEAD")
+            .ok()
+            .and_then(|r| r.symbolic_target().map(str::to_string))
+            .and_then(|t| t.rsplit('/').next().map(str::to_string))
+        {
+            names.push(d);
+        }
+        names.push("main".to_string());
+        names.push("master".to_string());
+
+        for name in names {
+            let base = ["refs/remotes/origin/", "refs/heads/"].iter().find_map(|p| {
+                repo.find_reference(&format!("{p}{name}"))
+                    .ok()
+                    .and_then(|r| r.peel_to_commit().ok())
+                    .map(|c| c.id())
+            });
+            let Some(base) = base else { continue };
+            if base == tip {
+                continue; // tip IS this base branch → nothing to scope to.
+            }
+            // Only scope when the branch has commits the base doesn't (i.e. the
+            // merge-base isn't the tip itself — that'd mean the branch is behind).
+            if let Ok(mb) = repo.merge_base(tip, base) {
+                if mb != tip {
+                    return Some(base);
+                }
+            }
+        }
+        None
+    }
+
     fn suggest_review_points_impl(
         &self,
         branch: Option<&str>,
@@ -2205,14 +2247,20 @@ impl H5iRepository {
                 // Resolve like get_log_at_branch: local → remote-tracking → revparse.
                 let local = self.git_repo.find_branch(b, git2::BranchType::Local).ok();
                 let remote = self.git_repo.find_branch(b, git2::BranchType::Remote).ok();
-                let oid = if let Some(br) = local.or(remote) {
+                let tip = if let Some(br) = local.or(remote) {
                     br.get().target().ok_or_else(|| {
                         H5iError::Git(git2::Error::from_str("branch has no target oid"))
                     })?
                 } else {
                     self.git_repo.revparse_single(b)?.id()
                 };
-                revwalk.push(oid)?;
+                revwalk.push(tip)?;
+                // Scope to the branch's *own* commits (base..branch): hide the
+                // default branch so the shared ancestry doesn't flood the list.
+                // For the default branch itself there is no base → full walk.
+                if let Some(base) = self.scope_base_oid(tip) {
+                    let _ = revwalk.hide(base);
+                }
             }
             _ => revwalk.push_head()?,
         }
