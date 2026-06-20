@@ -3248,3 +3248,4 @@ _[Checkpoint: 6a36edda — edited AGENTS.md; edited .claude/skills/h5i-workflow/
 _[Checkpoint: 6a36f1ec — edited src/repository.rs; edited .claude/h5i.md; edited .claude/skills/h5i-workflow/SKILL.md]_
 ---
 
+[20:05:24] OBSERVE: read MANUAL.md
