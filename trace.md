@@ -3126,3 +3126,4 @@ _[Checkpoint: 6a369730 — edited src/env.rs; edited src/sandbox.rs; edited CLAU
 [13:51:21] ACT: edited .claude/skills/h5i-workflow/SKILL.md
 [13:51:24] ACT: edited .claude/skills/h5i-workflow/SKILL.md
 [13:52:49] THINK: Since the alias still resolves them they're not broken, but for consistency I'll update the user-facing instruction text.
+[13:52:49] THINK: The command-invoking tests use the alias form (still valid), but I should point the main ones at the canonical `hook …` path to prove the new nesting parses end-to-end, and keep one alias smoke test.
