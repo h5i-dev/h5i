@@ -3572,3 +3572,9 @@ _[Checkpoint: 6a370e1d — edited roadmap/team-design.md; edited roadmap/team-de
 [22:04:30] OBSERVE: searched roadmap/team-design.md
 [22:04:30] OBSERVE: read roadmap/team-design.md
 [22:04:30] OBSERVE: read roadmap/team-design.md
+
+
+---
+_[Checkpoint: 6a370e6e — Answered Claude's persona-roster ASK for h5i team: accepted persona-bound env identities with constraints on frozen resolved persona digests, per-persona actor ids, provider-credential caveats, fail-closed dispatch, skill content hashing, and persona-body grant privacy.]_
+---
+
