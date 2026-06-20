@@ -2964,3 +2964,9 @@ _[Checkpoint: 6a36701c — Compared ../codex sandbox/execpolicy architecture aga
 ---
 
 [10:49:10] NOTE: DEFERRAL: our existing roadmap item ("airtight L3/L4 for container is deferred"); the right move stays host-side (apply the supervised-style nftables jail to th…
+
+
+---
+_[Checkpoint: 6a367026 — session ended (auto-checkpoint)]_
+---
+
