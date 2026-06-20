@@ -3531,3 +3531,9 @@ _[Checkpoint: 6a370c78 — Deepened consultation on h5i team design: reviewed cu
 _[Checkpoint: 6a370c85 — edited roadmap/team-design.md; edited roadmap/team-design.md; edited roadmap/team-design.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a370c8f — Applied Codex 3rd-pass corrections to team design]_
+---
+
