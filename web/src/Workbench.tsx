@@ -218,7 +218,7 @@ export function Workbench() {
       ) : mode === "radio" ? (
         <div className="wb-body wb-body-single">
           <div className="wb-pane">
-            <RadioView />
+            <RadioView branch={branchInUI} />
           </div>
         </div>
       ) : mode === "explore" ? (

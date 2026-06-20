@@ -2469,3 +2469,23 @@ body { line-height: 1.5; }
   font-size: 11px; background: var(--bp-elev); color: var(--bp-text-muted);
   padding: 1px 6px; border-radius: 2px;
 }
+
+/* Radio branch-scope filter */
+.radio-scope { display: inline-flex; gap: 4px; }
+.radio-scope-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; padding: 3px 9px; border-radius: 12px;
+  border: 1px solid var(--bp-border); background: transparent;
+  color: var(--bp-text-muted); cursor: pointer;
+}
+.radio-scope-chip:hover { background: var(--bp-surface-2); }
+.radio-scope-chip.active {
+  background: var(--h5-accent-bg); border-color: var(--h5-accent); color: var(--h5-accent-hi);
+}
+.radio-scope-chip .bp5-icon { color: inherit; }
+.radio-scope-count {
+  font-family: "SFMono-Regular", monospace; font-variant-numeric: tabular-nums;
+  font-size: 10px; color: var(--bp-text-dim); background: var(--bp-elev);
+  padding: 0 5px; border-radius: 8px;
+}
+.radio-scope-chip.active .radio-scope-count { color: var(--h5-accent-hi); background: rgba(66,226,208,0.18); }
