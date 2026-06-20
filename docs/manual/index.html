@@ -304,7 +304,6 @@
 <a class="t3" href="#tests">Tests</a>
 <a class="t3" href="#sandbox--environments-h5i-env">Sandbox / environments (h5i env)</a>
 <a class="t3" href="#token-reduction">Token reduction</a>
-<a class="t3" href="#ast-parser">AST parser</a>
 <a class="t3" href="#claims">Claims</a>
 <a class="t3" href="#intent--search">Intent / search</a>
 <a class="t3" href="#logging">Logging</a>
@@ -405,10 +404,6 @@ proceeds normally. Pipes are unaffected because the hint goes to stderr.</p>
 <td><code>h5i recall blame &lt;file&gt;</code></td>
 </tr>
 <tr>
-<td><code>h5i diff &lt;file&gt;</code></td>
-<td><code>h5i recall diff &lt;file&gt;</code></td>
-</tr>
-<tr>
 <td><code>h5i context &lt;sub&gt;</code></td>
 <td><code>h5i recall context &lt;sub&gt;</code></td>
 </tr>
@@ -476,7 +471,7 @@ error: `h5i audit revew` is not a known subcommand.
 <h2 id="h5i-init">h5i init</h2>
 <pre><code>h5i init
 </code></pre>
-<p>Initialize h5i in the current Git repository. Creates <code>.git/.h5i/</code> with subdirectories for AST snapshots, session logs, claims, and memory snapshots.</p>
+<p>Initialize h5i in the current Git repository. Creates <code>.git/.h5i/</code> with subdirectories for session logs, claims, and memory snapshots.</p>
 <p>Also bootstraps agent-facing instructions:</p>
 <ul>
 <li><code>CLAUDE.md</code> / <code>.claude/h5i.md</code> for Claude Code</li>
@@ -738,12 +733,7 @@ h5i capture memory --agent claude
 <tr>
 <td><code>h5i recall blame</code></td>
 <td><code>h5i blame</code></td>
-<td>Line- or AST-level blame annotated with AI prompts.</td>
-</tr>
-<tr>
-<td><code>h5i recall diff</code></td>
-<td><code>h5i diff</code></td>
-<td>Structural (AST) diff for a single file.</td>
+<td>Line-based blame annotated with AI prompts.</td>
 </tr>
 <tr>
 <td><code>h5i recall context &lt;sub&gt;</code></td>
@@ -950,7 +940,7 @@ there is no runtime dependency on the gitleaks binary.</p>
 <tr>
 <td><code>h5i share push</code></td>
 <td><code>h5i push</code></td>
-<td>Push all refs/h5i/<em> (notes, context, memory, ast, msg, </em><em>object manifests</em>*) to a remote.</td>
+<td>Push all refs/h5i/<em> (notes, context, memory, msg, </em><em>object manifests</em>*) to a remote.</td>
 </tr>
 <tr>
 <td><code>h5i share pull</code></td>
@@ -1382,11 +1372,6 @@ Idempotent; <code>h5i init</code> already includes the guidance for new projects
 <td>Scan staged files for inline <code>h5_i_test_start</code> / <code>h5_i_test_end</code> markers</td>
 </tr>
 <tr>
-<td><code>--ast</code></td>
-<td>—</td>
-<td>Capture an AST snapshot for semantic blame</td>
-</tr>
-<tr>
 <td><code>--audit</code></td>
 <td>—</td>
 <td>Run integrity rules before committing (see <a href="#appendix-integrity-rules">Appendix: Integrity Rules</a>)</td>
@@ -1511,10 +1496,9 @@ h5i capture commit -m &quot;switch session store to Redis&quot; --decisions deci
 <h2 id="h5i-recall-blame">h5i recall blame</h2>
 <pre><code>h5i recall blame &lt;file&gt; [options]
 </code></pre>
-<p>Show line-level authorship with AI provenance. Canonical form of the legacy <code>h5i blame</code>. Two status columns precede each line:</p>
+<p>Show line-level authorship with AI provenance. Canonical form of the legacy <code>h5i blame</code>. A status column precedes each line:</p>
 <ul>
-<li>Column 1 — test status: <code>✅</code> passing, <code>✖</code> failing, blank = no data</li>
-<li>Column 2 — AI indicator: <code>✨</code> AI-authored line</li>
+<li>Test status: <code>✅</code> passing, <code>✖</code> failing, blank = no data</li>
 </ul>
 <p><strong>Options</strong></p>
 <table>
@@ -1525,10 +1509,6 @@ h5i capture commit -m &quot;switch session store to Redis&quot; --decisions deci
 </tr>
 </thead>
 <tbody>
-<tr>
-<td><code>--mode &lt;line\|ast&gt;</code></td>
-<td>Blame mode. <code>line</code> (default) is traditional line blame; <code>ast</code> is semantic blame that tracks code structure through renames and reformatting.</td>
-</tr>
 <tr>
 <td><code>--show-prompt</code></td>
 <td>Annotate each commit boundary with the human prompt that triggered it</td>
@@ -3723,7 +3703,7 @@ h5i serve --port 8080
 <tr>
 <td><code>h5i_blame</code></td>
 <td><code>h5i blame</code></td>
-<td>Per-line or AST-node authorship with model/prompt annotation</td>
+<td>Per-line authorship with model/prompt annotation</td>
 </tr>
 <tr>
 <td><code>h5i_notes_show</code></td>
@@ -3926,14 +3906,6 @@ h5i serve --port 8080
 <td><strong>yes</strong></td>
 <td>—</td>
 <td>Relative path to blame</td>
-</tr>
-<tr>
-<td><code>h5i_blame</code></td>
-<td><code>mode</code></td>
-<td><code>"line"</code> | <code>"ast"</code></td>
-<td>no</td>
-<td><code>"line"</code></td>
-<td>Blame granularity</td>
 </tr>
 <tr>
 <td><code>h5i_notes_show</code></td>
@@ -4229,9 +4201,53 @@ h5i serve --port 8080
 </code></pre>
 <hr />
 <h2 id="h5i-share-push">h5i share push</h2>
-<pre><code>h5i share push [--remote &lt;name&gt;]
+<pre><code>h5i share push [--remote &lt;name&gt;] [--branch [&lt;name&gt;] | --all-branches]
 </code></pre>
-<p>Push both <code>refs/h5i/notes</code> and <code>refs/h5i/memory</code> to the remote (default: <code>origin</code>). Neither ref is included in a plain <code>git push</code>. Canonical form of the legacy <code>h5i push</code>.</p>
+<p>Push the <code>refs/h5i/*</code> families (notes, memory, context, msg, object manifests, env state) to the remote (default: <code>origin</code>). None of these are included in a plain <code>git push</code>. Canonical form of the legacy <code>h5i push</code>.</p>
+<p><strong>Branch-scoped by default.</strong> Like <code>git push</code>, <code>share push</code> sends only the <em>current branch's</em> h5i material — it does not publish the reasoning, provenance, captures, conversations, or environments of unrelated branches. Pass <code>--branch &lt;name&gt;</code> to scope to a different branch, or <code>--all-branches</code> to push every branch's material (a first full sync, or CI):</p>
+<pre><code>h5i share push                      # the current branch's material (default)
+h5i share push --branch feature-x   # another branch's material
+h5i share push --all-branches       # every branch's material
+</code></pre>
+<p>What gets scoped:</p>
+<table>
+<thead>
+<tr>
+<th>Ref family</th>
+<th>Scoped how</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>context</strong> (<code>refs/h5i/context/*</code>)</td>
+<td>Only <code>refs/h5i/context/&lt;branch&gt;</code> is pushed (one ref per branch). Legacy whole-workspace refs are skipped.</td>
+</tr>
+<tr>
+<td><strong>notes</strong> (<code>refs/h5i/notes</code>)</td>
+<td>Only the provenance for commits reachable from <code>&lt;branch&gt;</code> travels.</td>
+</tr>
+<tr>
+<td><strong>objects</strong> (<code>refs/h5i/objects</code>)</td>
+<td>Only manifests whose <code>branch</code> field equals <code>&lt;branch&gt;</code> travel.</td>
+</tr>
+<tr>
+<td><strong>msg</strong> (<code>refs/h5i/msg</code>)</td>
+<td>Only messages tagged with <code>&lt;branch&gt;</code> travel (sends auto-tag the current branch; replies inherit the thread's). The agent roster always travels.</td>
+</tr>
+<tr>
+<td><strong>env</strong> (<code>refs/h5i/env/meta</code> + <code>…/code/*</code>)</td>
+<td>Only envs whose <code>parent_branch</code> is <code>&lt;branch&gt;</code> travel — their manifests/policies/events and their code branches.</td>
+</tr>
+<tr>
+<td><strong>memory</strong></td>
+<td>Pushed in full — a cumulative full-state snapshot whose facts are branch-independent.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Non-destructive.</strong> notes/objects/msg/env are single aggregate refs shared by every branch, so a scoped push does <strong>not</strong> force a filtered subset (which would delete other branches' data on the remote). Instead it fetches the remote's current ref and <em>unions</em> only this branch's entries onto it, then pushes the result as a fast-forward. Other branches' data already on the remote is always preserved.</p>
+<blockquote>
+<p><strong>Note:</strong> because <code>msg</code> is filtered by each message's <code>branch</code> tag, a <code>msg review --branch X</code> sent while you are on a <em>different</em> git branch is carried by <code>--branch X</code> (or <code>--all-branches</code>), not by a plain current-branch push.</p>
+</blockquote>
 <p>To automate in CI:</p>
 <pre><code class="language-yaml">- name: Push h5i metadata
   run: |
@@ -4292,7 +4308,6 @@ merge.</p>
 ├── trusted_filters.json             # content hash of a trusted .h5i/filters.toml (local)
 └── pending_context.json             # Transient: written by hook, consumed by next commit
 </code></pre>
-<p>Three additional directories (<code>ast/</code>, <code>crdt/</code>, <code>metadata/</code>) are created on <code>h5i init</code> but are not actively used for storage — data is stored in Git refs instead.</p>
 <h3 id="git-refs">Git Refs</h3>
 <table>
 <thead>
@@ -4317,11 +4332,6 @@ merge.</p>
 <td><code>refs/h5i/context</code></td>
 <td>Git tree</td>
 <td>Context workspace: <code>main.md</code>, <code>.current_branch</code>, <code>branches/&lt;name&gt;/{commit.md,trace.md,dag.json,ephemeral.md,metadata.yaml}</code></td>
-</tr>
-<tr>
-<td><code>refs/h5i/ast</code></td>
-<td>Git objects</td>
-<td>AST hash snapshots for semantic blame</td>
 </tr>
 <tr>
 <td><code>refs/h5i/objects</code></td>
@@ -4553,29 +4563,6 @@ merge.</p>
 </tr>
 </tbody>
 </table>
-<h3 id="ast-parser">AST parser</h3>
-<p><code>h5i</code> shells out to <code>python3 h5i-py-parser.py</code> for Python AST extraction.</p>
-<table>
-<thead>
-<tr>
-<th>Variable</th>
-<th>Default</th>
-<th>Purpose</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>H5I_PARSER_DIR</code></td>
-<td>unset</td>
-<td>Directory to search <strong>first</strong> for <code>h5i-py-parser.py</code>. Must be an existing directory; if it exists but is not a directory (or does not exist), h5i logs a warning at <code>warn</code> level and falls through to <code>&lt;repo&gt;/plugin/</code> then <code>&lt;bindir&gt;/[..]/plugin/</code>.</td>
-</tr>
-<tr>
-<td><code>H5I_PARSER_TIMEOUT_SECS</code></td>
-<td><code>30</code></td>
-<td>Hard timeout (whole seconds) for the parser subprocess. The child is killed if it exceeds this. Non-positive or non-numeric values fall back to the default.</td>
-</tr>
-</tbody>
-</table>
 <h3 id="claims">Claims</h3>
 <table>
 <thead>
@@ -4628,7 +4615,7 @@ merge.</p>
 <tr>
 <td><code>H5I_LOG</code></td>
 <td><code>off</code></td>
-<td><code>tracing_subscriber</code> env filter for h5i's internal diagnostics (subprocess timeouts, invalid <code>H5I_PARSER_DIR</code>, etc.). Typical values: <code>h5i_core=warn</code>, <code>h5i_core=debug</code>. Logs go to stderr so stdout stays clean for piped/MCP consumers. <code>RUST_LOG</code> is also honored as a fallback.</td>
+<td><code>tracing_subscriber</code> env filter for h5i's internal diagnostics (subprocess timeouts, etc.). Typical values: <code>h5i_core=warn</code>, <code>h5i_core=debug</code>. Logs go to stderr so stdout stays clean for piped/MCP consumers. <code>RUST_LOG</code> is also honored as a fallback.</td>
 </tr>
 </tbody>
 </table>

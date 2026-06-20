@@ -593,7 +593,7 @@ Publish provenance to teammates and PRs.
 
 | Verb | Equivalent legacy form | What it does |
 |---|---|---|
-| `h5i share push` | `h5i push` | Push all refs/h5i/* (notes, context, memory, ast, msg, **object manifests**) to a remote. |
+| `h5i share push` | `h5i push` | Push all refs/h5i/* (notes, context, memory, msg, **object manifests**) to a remote. |
 | `h5i share pull` | `h5i pull` | Fetch & union-merge refs/h5i/* from a remote. |
 | `h5i share pr <sub>` | _(new)_ | Post / preview a GitHub PR comment with h5i provenance. |
 | `h5i share memory push|pull` | `h5i memory push|pull` | Push or pull only the agent-memory refs. |
@@ -3033,7 +3033,6 @@ After restarting Claude Code, all h5i tools become available natively inside any
 | `h5i_rewind` | `force` | boolean | no | false | Skip shadow-ref backup |
 | `h5i_log` | `limit` | integer | no | 20 | Max commits to return |
 | `h5i_blame` | `file` | string | **yes** | — | Relative path to blame |
-| `h5i_blame` | `mode` | `"line"` \| `"ast"` | no | `"line"` | Blame granularity |
 | `h5i_notes_show` | `commit` | string | no | HEAD | Commit OID or prefix |
 | `h5i_notes_uncertainty` | `commit` | string | no | HEAD | Commit OID or prefix |
 | `h5i_notes_uncertainty` | `file` | string | no | — | Filter to a specific file path |
@@ -3148,7 +3147,7 @@ When a subscription is registered, h5i spawns a background polling thread (2-sec
 h5i share push [--remote <name>] [--branch [<name>] | --all-branches]
 ```
 
-Push the `refs/h5i/*` families (notes, memory, context, ast, msg, object manifests, env state) to the remote (default: `origin`). None of these are included in a plain `git push`. Canonical form of the legacy `h5i push`.
+Push the `refs/h5i/*` families (notes, memory, context, msg, object manifests, env state) to the remote (default: `origin`). None of these are included in a plain `git push`. Canonical form of the legacy `h5i push`.
 
 **Branch-scoped by default.** Like `git push`, `share push` sends only the *current branch's* h5i material — it does not publish the reasoning, provenance, captures, conversations, or environments of unrelated branches. Pass `--branch <name>` to scope to a different branch, or `--all-branches` to push every branch's material (a first full sync, or CI):
 
@@ -3253,8 +3252,6 @@ status 1; otherwise it exits 0.
 ├── trusted_filters.json             # content hash of a trusted .h5i/filters.toml (local)
 └── pending_context.json             # Transient: written by hook, consumed by next commit
 ```
-
-Three additional directories (`ast/`, `crdt/`, `metadata/`) are created on `h5i init` but are not actively used for storage — data is stored in Git refs instead.
 
 ### Git Refs
 

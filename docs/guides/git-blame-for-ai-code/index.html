@@ -54,7 +54,7 @@
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}, {"@type": "ListItem", "position": 3, "name": "git blame for AI-generated code", "item": "https://h5i.dev/guides/git-blame-for-ai-code/"}]}
   </script>
   <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How is h5i recall blame different from git blame?", "acceptedAnswer": {"@type": "Answer", "text": "It keeps the same command shape but adds AI provenance at each commit boundary: the agent, the model, the exact prompt, and the captured test result — fields git blame has no place to store. Use --show-prompt to annotate each boundary with its prompt."}}, {"@type": "Question", "name": "Where does the prompt and test data come from?", "acceptedAnswer": {"@type": "Answer", "text": "From the provenance recorded at commit time (h5i capture commit) and stored in refs/h5i/notes, keyed by commit OID. If a line's commit had no AI metadata, blame falls back to ordinary author/date for that line."}}, {"@type": "Question", "name": "What is AST-mode blame?", "acceptedAnswer": {"@type": "Answer", "text": "Instead of attributing each line by line number, AST mode attributes authorship to the structural node (function, block) in the parsed syntax tree. It survives reformatting and reflows that would scramble line-number blame. Pass --mode ast."}}, {"@type": "Question", "name": "Can I see every prompt that ever touched one line?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i recall log --ancestry <file>:<line> walks the history of that specific line and prints the prompt behind each change, so you get the full intent trail rather than just the most recent commit."}}, {"@type": "Question", "name": "Does it work for code written by humans too?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Human-authored commits show normal author and date with no AI badge; AI-assisted commits add the agent, model, prompt, and tests. The two coexist line-by-line in the same blame output."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How is h5i recall blame different from git blame?", "acceptedAnswer": {"@type": "Answer", "text": "It keeps the same command shape but adds AI provenance at each commit boundary: the agent, the model, the exact prompt, and the captured test result — fields git blame has no place to store. Use --show-prompt to annotate each boundary with its prompt."}}, {"@type": "Question", "name": "Where does the prompt and test data come from?", "acceptedAnswer": {"@type": "Answer", "text": "From the provenance recorded at commit time (h5i capture commit) and stored in refs/h5i/notes, keyed by commit OID. If a line's commit had no AI metadata, blame falls back to ordinary author/date for that line."}}, {"@type": "Question", "name": "Can I see every prompt that ever touched one line?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i recall log --ancestry <file>:<line> walks the history of that specific line and prints the prompt behind each change, so you get the full intent trail rather than just the most recent commit."}}, {"@type": "Question", "name": "Does it work for code written by humans too?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Human-authored commits show normal author and date with no AI badge; AI-assisted commits add the agent, model, prompt, and tests. The two coexist line-by-line in the same blame output."}}]}
 </script>
 </head>
 <body>
@@ -102,8 +102,8 @@
     <h2>How h5i solves it</h2>
     <p>
       <code>h5i recall blame</code> keeps git's blame shape and adds the AI fields per commit boundary: agent, model,
-      the exact prompt, and the captured test result. It can blame by line (traditional) or by AST node
-      (semantic), and it pulls the data straight from the provenance stored in <code>refs/h5i/notes</code>.
+      the exact prompt, and the captured test result. It blames by line and pulls the data straight from the
+      provenance stored in <code>refs/h5i/notes</code>.
     </p>
 
     <h2>Commands</h2>
@@ -113,20 +113,18 @@
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/http_client.rs --show-prompt</span>
 
 <span class="t-bold">STAT COMMIT   AUTHOR/AGENT     | CONTENT</span>
-<span class="t-pass">✅</span> <span class="t-ai">✨</span> <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code     </span> | <span class="t-out">async fn send_with_retry(req: Request) -&gt; Result&lt;Response&gt; {</span>
-<span class="t-pass">✅</span>    <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code     </span> | <span class="t-out">    let mut delay = Duration::from_millis(100);</span>
+<span class="t-pass">✅</span> <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code     </span> | <span class="t-out">async fn send_with_retry(req: Request) -&gt; Result&lt;Response&gt; {</span>
+<span class="t-pass">✅</span> <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code     </span> | <span class="t-out">    let mut delay = Duration::from_millis(100);</span>
 
 <span class="t-bold">─── boundary at a3f9c2b ─────────────────────────────────────</span>
 <span class="t-ai">  Agent:   claude-code (claude-sonnet-4-6) ✨</span>
 <span class="t-warn">  Prompt:  "add exponential backoff with jitter — cap retries at 5"</span>
 <span class="t-pass">  Tests:   ✔ 42 passed, 0 failed, 1.23s [pytest]</span></pre></div>
     </div>
-    <p>Switch to semantic (AST) blame, or trace the full prompt history of a single line:</p>
+    <p>Trace the full prompt history of a single line:</p>
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/http_client.rs --mode ast</span>      <span class="t-cmt"># blame by structure, not line number</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --ancestry src/http_client.rs:88</span>      <span class="t-cmt"># every prompt that shaped this line</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --ancestry src/http_client.rs:88</span>      <span class="t-cmt"># every prompt that shaped this line</span>
 <span class="t-warn">  a3f9c2b  "add exponential backoff with jitter"</span>
 <span class="t-warn">  7c1d9f0  "extract retry into send_with_retry helper"</span></pre></div>
     </div>
@@ -138,9 +136,9 @@
       evidence attached. Fix, re-prompt, recommit with provenance, done.
     </p>
     <div class="callout">
-      <strong>AST mode survives reformatting.</strong> Line-number blame breaks when code is reflowed or a formatter
-      runs. <code>--mode ast</code> attributes authorship to the structural node, so provenance follows the function
-      even when the line numbers move.
+      <strong>Provenance, not just authorship.</strong> Plain <code>git blame</code> stops at "who and when".
+      <code>h5i recall blame</code> adds the prompt that drove each change and the test result captured at commit
+      time, so the intent and the evidence sit next to the code.
     </div>
 
 
@@ -149,8 +147,6 @@
     <p>It keeps the same command shape but adds AI provenance at each commit boundary: the agent, the model, the exact prompt, and the captured test result — fields git blame has no place to store. Use --show-prompt to annotate each boundary with its prompt.</p>
     <h3>Where does the prompt and test data come from?</h3>
     <p>From the provenance recorded at commit time (h5i capture commit) and stored in refs/h5i/notes, keyed by commit OID. If a line's commit had no AI metadata, blame falls back to ordinary author/date for that line.</p>
-    <h3>What is AST-mode blame?</h3>
-    <p>Instead of attributing each line by line number, AST mode attributes authorship to the structural node (function, block) in the parsed syntax tree. It survives reformatting and reflows that would scramble line-number blame. Pass --mode ast.</p>
     <h3>Can I see every prompt that ever touched one line?</h3>
     <p>Yes. h5i recall log --ancestry <file>:<line> walks the history of that specific line and prints the prompt behind each change, so you get the full intent trail rather than just the most recent commit.</p>
     <h3>Does it work for code written by humans too?</h3>
@@ -160,7 +156,7 @@
       <span class="label">Go deeper</span>
       <a href="/blog/from-git-blame-to-ai-blame/">
         <h3>Deep dive: from git blame to AI blame</h3>
-        <p>Where the data lives, the AST-mode internals, and the usage patterns for incident triage and inherited code.</p>
+        <p>Where the data lives and the usage patterns for incident triage and inherited code.</p>
       </a>
     </div>
 
