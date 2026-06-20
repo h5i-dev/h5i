@@ -3448,3 +3448,4 @@ _[Checkpoint: 6a36fbb3 — edited docs/guides/ai-code-provenance/index.html; edi
 _[Checkpoint: 6a370a9b — Helped Claude design ensemble/team feature: recommended CLI-first h5i team orchestration over env/msg/capture with h5i serve visualization, strict sealed phases, and no TUI-first MVP.]_
 ---
 
+[21:48:26] THINK: Let me understand the existing primitives I'd build on (`env`, `server`, `msg`) before designing.
