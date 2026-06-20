@@ -33,7 +33,6 @@ const H5I_REFS: &[&str] = &[
     // Context now lives at one ref per branch; the main branch ref is the
     // canonical "context workspace exists" signal.
     "refs/h5i/context/main",
-    "refs/h5i/ast",
     "refs/h5i/memory",
     "refs/h5i/msg",
     // Token-reduction manifest log (raw-output pointers + summaries).

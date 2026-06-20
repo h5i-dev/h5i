@@ -17,15 +17,12 @@ h5i \- Advanced Git sidecar for the AI era
 .
 .SH DESCRIPTION
 .B h5i
-(\"high-five\") extends Git with four semantic dimensions:
+(\"high-five\") extends Git with semantic dimensions:
 .PP
 .RS 4
 .IP \(bu 2
 .B Temporal
 \(em standard Git history
-.IP \(bu 2
-.B Structural
-\(em AST-level snapshots and diffs
 .IP \(bu 2
 .B Intentional
 \(em AI provenance (model, agent, prompt, token count)
@@ -147,7 +144,6 @@ Initialize the h5i sidecar in the current Git repository.
 Creates
 .I .git/.h5i/
 with subdirectories
-.BR ast/ ,
 .BR claims/ ,
 .BR memory/ ,
 and
@@ -156,7 +152,7 @@ and
 .\" ─── commit ─────────────────────────────────────────────────────────────────
 .SS h5i capture commit \-m \fIMESSAGE\fR [\fIOPTIONS\fR]
 Commit staged changes with optional AI provenance, test metrics,
-AST snapshot, and integrity audit.
+and integrity audit.
 .PP
 .B Options
 .RS 4
@@ -213,9 +209,6 @@ Scan staged source files for inline
 .B // h5_i_test_end
 markers.
 .TP
-.B \-\-ast
-Capture an AST snapshot of staged files for semantic blame.
-.TP
 .B \-\-audit
 Run all twelve integrity rules before committing.
 Violations block the commit;
@@ -259,36 +252,15 @@ Number of recent commits to display (default:
 .
 .\" ─── blame ──────────────────────────────────────────────────────────────────
 .SS h5i recall blame \fIFILE\fR [\fIOPTIONS\fR]
-Show per-line (or per-node) authorship annotated with AI metadata
-and test status.
-Each line shows two status columns:
-test status
-.RB ( \(OK\ passing ,\ \(mu\ failing ,\ blank\ =\ no\ data )
-and AI indicator
-.RB ( \(** )
-for AI-authored lines.
+Show per-line authorship annotated with AI metadata and test status.
+Each line is prefixed with a test-status column
+.RB ( \(OK\ passing ,\ \(mu\ failing ,\ blank\ =\ no\ data ).
 .PP
 .B Options
 .RS 4
 .TP
-.BI \-m,\ \-\-mode\  MODE
-.BR line \ (default)\ or\  ast .
-AST mode associates authorship with AST nodes rather than source lines.
-.RE
-.
-.\" ─── diff ───────────────────────────────────────────────────────────────────
-.SS h5i recall diff \fIFILE\fR [\fIOPTIONS\fR]
-Show the AST-level structural diff for a file.
-Supported languages include Python.
-.PP
-.B Options
-.RS 4
-.TP
-.BI \-\-from\  OID
-Compare from this commit (default: HEAD).
-.TP
-.BI \-\-to\  OID
-Compare to this commit (default: working-tree file).
+.B \-\-show-prompt
+Annotate each commit boundary with the human prompt that triggered it.
 .RE
 .
 .\" ─── resolve ────────────────────────────────────────────────────────────────
@@ -675,7 +647,7 @@ messages tagged with it, and the
 .B env
 state + code branches of envs whose
 .I parent_branch
-matches. AST and memory always push in full. These aggregate refs are unioned
+matches. memory always pushes in full. These aggregate refs are unioned
 onto the remote's current ref (a fast\-forward) rather than force\-pushing a
 subset \(em other branches' data on the remote is never deleted.
 .TP
@@ -2009,9 +1981,6 @@ and Claude-assisted intent extraction in
 .TP
 .I .git/.h5i/
 Sidecar root; all persistent metadata.
-.TP
-.I .git/.h5i/ast/
-SHA-256-keyed S-expression AST snapshots.
 .TP
 .I .git/.h5i/memory/<commit-oid>/
 Claude memory snapshots.

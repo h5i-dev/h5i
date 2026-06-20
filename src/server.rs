@@ -52,8 +52,6 @@ pub struct EnrichedCommit {
     pub test_exit_code: Option<i32>,
     pub test_summary: Option<String>,
     pub test_is_passing: Option<bool>,
-    // Structural / collaborative
-    pub ast_file_count: usize,
     // Causal chain
     pub caused_by: Vec<String>,
 }
@@ -324,7 +322,6 @@ async fn api_commits(
                 (None, None, None, None, None, None, None, None, None, None)
             };
 
-            let ast_file_count = record.ast_hashes.as_ref().map(|h| h.len()).unwrap_or(0);
             let caused_by = record.caused_by.clone();
 
             enriched.push(EnrichedCommit {
@@ -347,7 +344,6 @@ async fn api_commits(
                 test_exit_code,
                 test_summary,
                 test_is_passing,
-                ast_file_count,
                 caused_by,
             });
         }
@@ -3353,7 +3349,6 @@ function commitHTML(c, i) {
     c.test_tool ? badge('b-tool', '🔧', c.test_tool) : '',
     c.test_duration_secs > 0 ? badge('b-dur', '⏱', c.test_duration_secs.toFixed(2) + 's') : '',
     c.test_coverage > 0 ? badge('b-cov', '📊', pct(c.test_coverage) + ' cov') : '',
-    c.ast_file_count > 0 ? badge('b-ast', '🌳', c.ast_file_count + ' AST') : '',
     c.ai_tokens ? badge('b-tok', '◦', fmt(c.ai_tokens) + ' tok') : '',
     c.caused_by && c.caused_by.length > 0 ? badge('b-cause', '⛓', c.caused_by.length === 1 ? 'caused by 1' : `caused by ${c.caused_by.length}`) : '',
   ].filter(Boolean).join('');

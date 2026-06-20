@@ -3637,7 +3637,6 @@ fn stamp_apply_provenance(repo: &Repository, m: &EnvManifest, applied: git2::Oid
         parent_oid,
         ai_metadata: None,
         test_metrics: None,
-        ast_hashes: None,
         timestamp: chrono::Utc::now(),
         caused_by: Vec::new(),
         decisions: Vec::new(),

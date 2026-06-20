@@ -286,7 +286,6 @@ const PATH_ALLOWLIST: &[&str] = &[
     "/fixtures/",
     "/__fixtures__/",
     "gitleaks.toml",
-    "/h5i-py-parser",
 ];
 
 const ALLOWLISTED_EXTENSIONS: &[&str] = &[

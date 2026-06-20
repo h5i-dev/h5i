@@ -133,7 +133,7 @@ h5i capture commit -m "<message>" \
 # --intent is a fallback for CI/scripts/manual commits.
 ```
 
-Add `--tests` when tests were added or modified, `--ast` to snapshot structure,
+Add `--tests` when tests were added or modified,
 `--audit` for security-sensitive changes, and `--decisions <FILE>` to record
 non-obvious design tradeoffs (JSON array of
 `{ "location", "choice", "alternatives"?, "reason" }`).

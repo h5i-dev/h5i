@@ -1,12 +1,10 @@
 use console::style;
 use git2::{Blob, Repository};
 use git2::{Commit, ObjectType, Oid, Signature};
-use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::blame::{AncestryEntry, BlameMode, BlameResult};
+use crate::blame::{AncestryEntry, BlameResult};
 use crate::metadata::Decision;
 use crate::error::H5iError;
 use chrono::{TimeZone, Utc};
@@ -21,7 +19,6 @@ use crate::metadata::{
 /// data clearly separated from standard `refs/notes/commits` and lets a single
 /// `h5i push` sync everything under `refs/h5i/*` in one refspec.
 pub const H5I_NOTES_REF: &str = "refs/h5i/notes";
-pub const H5I_AST_REF: &str = "refs/h5i/ast";
 
 fn fallback_signature() -> Result<Signature<'static>, H5iError> {
     Signature::now("h5i", "h5i@local").map_err(H5iError::Git)
@@ -95,9 +92,6 @@ impl H5iRepository {
     /// - `claims/`, `memory/`, `session_log/` – sidecar state stores
     /// - `objects/` – content-addressed raw-output store (token-reduction captures)
     ///
-    /// (AST snapshots live in the Git object store under `refs/h5i/ast`, not on
-    /// the filesystem.)
-    ///
     /// # Parameters
     ///
     /// - `path`: A path inside the target Git repository (or the repository root).
@@ -161,8 +155,6 @@ impl H5iRepository {
     /// - `committer` – Git committer signature.
     /// - `ai_meta` – Optional AI provenance metadata associated with the commit.
     /// - `enable_test_tracking` – Enables automatic test provenance detection.
-    /// - `ast_parser` – Optional externally injected parser that converts a file
-    ///   into an AST S-expression representation.
     ///
     /// # Returns
     ///
@@ -174,14 +166,7 @@ impl H5iRepository {
     ///
     /// - the Git index cannot be accessed or written
     /// - the commit cannot be created
-    /// - AST sidecar data cannot be persisted
     /// - the `h5i` metadata record cannot be stored
-    ///
-    /// # Notes
-    ///
-    /// The AST parser is injected as a function pointer to keep the repository
-    /// layer language-agnostic. This allows external tools to supply parsers
-    /// for different programming languages without modifying the core system.
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub fn commit(
         &self,
@@ -190,59 +175,38 @@ impl H5iRepository {
         committer: &Signature,
         ai_meta: Option<AiMetadata>,
         test_source: TestSource,
-        ast_parser: Option<&dyn Fn(&Path) -> Option<String>>, // Optional externally injected parser
         caused_by: Vec<String>,
         decisions: Vec<Decision>,
         // When `Some`, the process is running inside a sandboxed env where the
         // h5i sidecar store + notes ref are sealed: the git commit still lands
         // (the box has its own object/ref grants), but the note is STAGED to
         // this spool dir for the host to apply after the session, instead of
-        // written to `refs/h5i/notes` (which would EACCES). AST harvest is also
-        // skipped in this mode (it writes the sealed object store).
+        // written to `refs/h5i/notes` (which would EACCES).
         note_spool: Option<&Path>,
     ) -> Result<Oid, H5iError> {
         let _span = tracing::info_span!(
             "h5i_commit",
             with_ai = ai_meta.is_some(),
             with_tests = !matches!(test_source, TestSource::None),
-            with_ast = ast_parser.is_some(),
             decisions = decisions.len(),
         )
         .entered();
         let mut index = self.git_repo.index()?;
 
-        // 1. Prepare optional features
-        let mut ast_hashes = None;
-
         // For ScanMarkers we look for the marker block in staged files (first hit wins).
         let mut scanned_metrics: Option<TestMetrics> = None;
-
-        // Scan staged files
-        for entry in index.iter() {
-            let path_bytes = &entry.path;
-            let path_str = std::str::from_utf8(path_bytes).map_err(|e| {
-                H5iError::InvalidPath(format!("staged path is not valid UTF-8: {e}"))
-            })?;
-            let workdir = self.git_repo.workdir().ok_or_else(|| {
-                H5iError::InvalidPath("h5i commit requires a non-bare repository".to_string())
-            })?;
-            let full_path = workdir.join(path_str);
-
-            // Harvest AST (Optional) — skipped in spool mode: `save_ast_to_sidecar`
-            // writes the sealed `.h5i/objects` store the box can't reach.
-            if note_spool.is_none() {
-                if let Some(parser) = ast_parser {
-                    let hashes = ast_hashes.get_or_insert_with(HashMap::new);
-                    if let Some(sexp) = parser(&full_path) {
-                        let hash = self.save_ast_to_sidecar(path_str, &sexp)?;
-                        hashes.insert(path_str.to_string(), hash);
-                    }
+        if matches!(test_source, TestSource::ScanMarkers) {
+            for entry in index.iter() {
+                let path_str = std::str::from_utf8(&entry.path).map_err(|e| {
+                    H5iError::InvalidPath(format!("staged path is not valid UTF-8: {e}"))
+                })?;
+                let workdir = self.git_repo.workdir().ok_or_else(|| {
+                    H5iError::InvalidPath("h5i commit requires a non-bare repository".to_string())
+                })?;
+                let full_path = workdir.join(path_str);
+                if scanned_metrics.is_none() {
+                    scanned_metrics = self.scan_test_block(&full_path);
                 }
-            }
-
-            // Scan for test markers only when requested and not yet found
-            if matches!(test_source, TestSource::ScanMarkers) && scanned_metrics.is_none() {
-                scanned_metrics = self.scan_test_block(&full_path);
             }
         }
 
@@ -288,7 +252,6 @@ impl H5iRepository {
             parent_oid: parent_commit.map(|p| p.id().to_string()),
             ai_metadata: ai_meta,
             test_metrics,
-            ast_hashes,
             timestamp: chrono::Utc::now(),
             caused_by: resolved_caused_by,
             decisions,
@@ -602,16 +565,6 @@ impl H5iRepository {
                     );
                 }
 
-                let ast_count = r.ast_hashes.map(|m| m.len()).unwrap_or(0);
-                if ast_count > 0 {
-                    println!(
-                        "{:<10} {} {} files",
-                        style("AST:").dim(),
-                        style("🧬").cyan(),
-                        ast_count
-                    );
-                }
-
                 if !r.caused_by.is_empty() {
                     for cause_oid_str in &r.caused_by {
                         // Try to get the short message of the cause commit
@@ -773,32 +726,18 @@ impl H5iRepository {
 impl H5iRepository {
     /// Computes blame information for a file using the specified mode.
     ///
-    /// This function acts as a dispatcher that selects the appropriate
-    /// blame algorithm based on the provided [`BlameMode`].
-    ///
-    /// # Modes
-    ///
-    /// - `BlameMode::Line` – Standard line-based blame using Git history.
-    /// - `BlameMode::Ast` – Semantic blame based on AST structure changes.
+    /// Line-based blame (Git history) enriched with h5i AI provenance.
     ///
     /// # Parameters
     ///
     /// - `path` – Path to the target file within the repository.
-    /// - `mode` – The blame computation strategy.
     ///
     /// # Returns
     ///
     /// Returns a vector of [`BlameResult`] entries describing the origin
-    /// of each line (or semantic unit) in the file.
-    pub fn blame(
-        &self,
-        path: &std::path::Path,
-        mode: BlameMode,
-    ) -> Result<Vec<BlameResult>, H5iError> {
-        match mode {
-            BlameMode::Line => self.blame_by_line(path),
-            BlameMode::Ast => self.blame_by_ast(path),
-        }
+    /// of each line in the file.
+    pub fn blame(&self, path: &std::path::Path) -> Result<Vec<BlameResult>, H5iError> {
+        self.blame_by_line(path)
     }
 
     /// Performs line-based blame (Git standard + AI metadata).
@@ -816,7 +755,7 @@ impl H5iRepository {
         // Load the file content at HEAD
         let blob = self.get_blob_at_head(path)?;
         let content = std::str::from_utf8(blob.content())
-            .map_err(|_| H5iError::Ast("File content is not valid UTF-8".to_string()))?;
+            .map_err(|_| H5iError::Internal("File content is not valid UTF-8".to_string()))?;
         let lines: Vec<&str> = content.lines().collect();
 
         for hunk in blame.iter() {
@@ -839,7 +778,6 @@ impl H5iRepository {
                         line_content: lines[line_idx].to_string(),
                         commit_id: commit_id.to_string(),
                         agent_info: agent_info.clone(),
-                        is_semantic_change: false,
                         line_number: line_idx + 1,
                         test_passed,
                         prompt: prompt.clone(),
@@ -1064,63 +1002,6 @@ impl H5iRepository {
         let content = std::str::from_utf8(blob.content()).ok()?;
         content.lines().nth(line_number.saturating_sub(1)).map(|s| s.to_string())
     }
-
-    /// Performs semantic blame based on AST hash changes (structural dimension).
-    ///
-    /// Unlike traditional blame, which tracks line modifications,
-    /// semantic blame identifies the commit where the logical structure
-    /// of the code last changed.
-    ///
-    /// This allows the system to detect meaningful code modifications
-    /// even when lines are moved or reformatted.
-    ///
-    /// # Algorithm
-    ///
-    /// 1. Compute standard line-based blame results.
-    /// 2. Retrieve AST hashes associated with each commit.
-    /// 3. Compare AST hashes with the parent commit.
-    /// 4. Mark the commit as a semantic change if the hash differs.
-    ///
-    /// # Returns
-    ///
-    /// Returns blame results annotated with the `is_semantic_change` flag.
-    pub fn blame_by_ast(&self, path: &Path) -> Result<Vec<BlameResult>, H5iError> {
-        // Base line information from Git blame
-        let mut line_results = self.blame_by_line(path)?;
-        let path_str = path
-            .to_str()
-            .ok_or_else(|| H5iError::InvalidPath("Invalid path encoding".to_string()))?;
-
-        for result in &mut line_results {
-            let oid = git2::Oid::from_str(&result.commit_id)?;
-            let record = self.load_h5i_record(oid)?;
-
-            // 1. Check if this commit contains an AST hash
-            if let Some(hashes) = record.ast_hashes {
-                if let Some(current_ast_hash) = hashes.get(path_str) {
-                    // 2. Compare with the parent commit's AST hash
-                    if let Some(parent_oid_str) = record.parent_oid {
-                        let parent_oid = git2::Oid::from_str(&parent_oid_str)?;
-                        if let Ok(parent_record) = self.load_h5i_record(parent_oid) {
-                            let parent_ast_hash = parent_record
-                                .ast_hashes
-                                .and_then(|h| h.get(path_str).cloned());
-
-                            // If hashes differ, this commit represents a semantic change
-                            if Some(current_ast_hash.clone()) != parent_ast_hash {
-                                result.is_semantic_change = true;
-                            }
-                        }
-                    } else {
-                        // No parent (initial commit): the AST introduction is semantic
-                        result.is_semantic_change = true;
-                    }
-                }
-            }
-        }
-
-        Ok(line_results)
-    }
 }
 
 // ============================================================
@@ -1286,135 +1167,6 @@ impl H5iRepository {
     /// - commit metadata
     pub fn h5i_path(&self) -> &Path {
         &self.h5i_root
-    }
-
-    /// Returns a closure that parses a source file into an s-expression string.
-    ///
-    /// Language detection is based on file extension. The appropriate parser
-    /// script is discovered by searching, in order:
-    ///   1. `$H5I_PARSER_DIR`
-    ///   2. `<repo_workdir>/plugin/`
-    ///   3. Directory containing the current executable (`../plugin/`)
-    ///
-    /// Currently supported extensions: `.py` (via `h5i-py-parser.py`).
-    #[allow(clippy::type_complexity)]
-    pub fn make_ast_parser(&self) -> Box<dyn Fn(&std::path::Path) -> Option<String>> {
-        let workdir = self.git_repo.workdir().map(|p| p.to_path_buf());
-
-        Box::new(move |path: &std::path::Path| {
-            let ext = path.extension()?.to_str()?;
-
-            // Resolve the script path for the detected language.
-            let script_name = match ext {
-                "py" => "h5i-py-parser.py",
-                _ => return None,
-            };
-
-            let script_path = find_parser_script(script_name, workdir.as_deref())?;
-
-            // Canonicalize the input path so symlinks resolve and we pass an
-            // absolute, normalized path to the parser. If the file does not
-            // exist on disk yet (e.g. virtual paths), fall back to the raw path.
-            let arg_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-
-            run_parser_subprocess(&script_path, &arg_path)
-        })
-    }
-
-    /// Computes the structural (AST-level) diff for `path` between two versions.
-    ///
-    /// - `from_oid`: the "old" commit (defaults to `HEAD`).
-    /// - `to_oid`:   the "new" commit (defaults to the working-tree file).
-    ///
-    /// For each version, the method first tries the stored AST sidecar, then
-    /// falls back to parsing the file content on-the-fly via `make_ast_parser`.
-    pub fn diff_ast(
-        &self,
-        path: &std::path::Path,
-        from_oid: Option<Oid>,
-        to_oid: Option<Oid>,
-    ) -> Result<crate::ast::AstDiff, H5iError> {
-        use crate::ast::SemanticAst;
-
-        let parser = self.make_ast_parser();
-
-        let from_sexp = {
-            let oid = match from_oid {
-                Some(o) => o,
-                None => self.get_head_commit()?.id(),
-            };
-            self.load_ast_at_commit(oid, path, &*parser)?
-        };
-
-        let to_sexp = match to_oid {
-            Some(oid) => self.load_ast_at_commit(oid, path, &*parser)?,
-            None => {
-                // Parse the working-tree file directly.
-                let abs = self
-                    .git_repo
-                    .workdir()
-                    .ok_or_else(|| H5iError::InvalidPath("bare repository".into()))?
-                    .join(path);
-                parser(&abs).ok_or_else(|| {
-                    H5iError::Ast(format!(
-                        "No parser available for '{}'. \
-                         Ensure python3 and the parser script are accessible.",
-                        path.display()
-                    ))
-                })?
-            }
-        };
-
-        let base = SemanticAst::from_sexp(&from_sexp);
-        let head = SemanticAst::from_sexp(&to_sexp);
-        Ok(base.diff(&head))
-    }
-
-    /// Retrieves the s-expression for `path` at `oid`.
-    ///
-    /// Lookup order:
-    ///   1. Stored AST sidecar (if the commit was made with `--ast`)
-    ///   2. On-the-fly parse of the blob content via `parser`
-    fn load_ast_at_commit(
-        &self,
-        oid: Oid,
-        path: &std::path::Path,
-        parser: &dyn Fn(&std::path::Path) -> Option<String>,
-    ) -> Result<String, H5iError> {
-        let path_str = path.to_str().unwrap_or("");
-
-        // Fast path: use the stored AST if available.
-        if let Ok(record) = self.load_h5i_record(oid) {
-            if let Some(hashes) = &record.ast_hashes {
-                if let Some(hash) = hashes.get(path_str) {
-                    // Primary: Git-object store (refs/h5i/ast)
-                    if let Some(sexp) = self.load_ast_blob(hash) {
-                        return Ok(sexp);
-                    }
-                    // Fallback: legacy filesystem sidecar (.git/.h5i/ast/)
-                    let sidecar = self.h5i_root.join("ast").join(format!("{}.sexp", hash));
-                    if let Ok(sexp) = fs::read_to_string(&sidecar) {
-                        return Ok(sexp);
-                    }
-                }
-            }
-        }
-
-        // Slow path: extract blob content and parse on-the-fly.
-        let content = self.get_content_at_oid(oid, path)?;
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("txt");
-        let tmp = self.h5i_root.join(format!("_tmp_ast.{}", ext));
-        fs::write(&tmp, &content)?;
-        let result = parser(&tmp);
-        let _ = fs::remove_file(&tmp);
-
-        result.ok_or_else(|| {
-            H5iError::Ast(format!(
-                "No parser available for '{}' at commit {}",
-                path.display(),
-                oid
-            ))
-        })
     }
 
     pub fn read_pending_context(&self) -> Result<Option<PendingContext>, H5iError> {
@@ -1980,7 +1732,7 @@ impl H5iRepository {
 
         // 4. Ensure that the entry is a Blob (file)
         if entry.kind() != Some(ObjectType::Blob) {
-            return Err(H5iError::Ast(format!(
+            return Err(H5iError::InvalidPath(format!(
                 "Path is not a file (blob): {:?}",
                 path
             )));
@@ -2111,82 +1863,6 @@ impl H5iRepository {
         } else {
             None
         }
-    }
-
-    /// Stores an externally provided S-expression (AST) into the `.h5i` sidecar.
-    ///
-    /// The AST is stored using **content-addressed storage**.
-    /// If the same AST content already exists, it will share the same hash.
-    ///
-    /// # Storage Layout
-    ///
-    /// Stored in the Git object store under `refs/h5i/ast`, one blob per AST
-    /// keyed by `<hash>.sexp` in the ref's tree (content-addressed, deduped).
-    ///
-    /// # Parameters
-    ///
-    /// - `_file_path` – Source file path (currently unused but reserved for future indexing).
-    /// - `sexp` – Serialized AST represented as an S-expression.
-    ///
-    /// # Returns
-    ///
-    /// Returns the content hash of the stored AST.
-    pub fn save_ast_to_sidecar(&self, _file_path: &str, sexp: &str) -> Result<String, H5iError> {
-        // Compute the content hash of the S-expression
-        let mut hasher = Sha256::new();
-        hasher.update(sexp.as_bytes());
-        let hash = format!("{:x}", hasher.finalize());
-
-        let filename = format!("{}.sexp", hash);
-
-        // Check if already stored (dedup).
-        if let Ok(r) = self.git_repo.find_reference(H5I_AST_REF) {
-            if let Ok(commit) = r.peel_to_commit() {
-                if commit.tree().map(|t| t.get_name(&filename).is_some()).unwrap_or(false) {
-                    return Ok(hash);
-                }
-            }
-        }
-
-        // Create a blob for the S-expression content.
-        let blob_oid = self.git_repo.blob(sexp.as_bytes())?;
-
-        // Build a new tree: start from the existing tree (if any) and insert the new blob.
-        let parent_commit = self.git_repo
-            .find_reference(H5I_AST_REF)
-            .ok()
-            .and_then(|r| r.peel_to_commit().ok());
-
-        let base_tree = parent_commit.as_ref().and_then(|c| c.tree().ok());
-        let mut builder = self.git_repo.treebuilder(base_tree.as_ref())?;
-        builder.insert(&filename, blob_oid, 0o100644)?;
-        let tree_oid = builder.write()?;
-        let tree = self.git_repo.find_tree(tree_oid)?;
-
-        let sig = repo_signature_or_fallback(&self.git_repo)?;
-        let parents: Vec<&git2::Commit> = parent_commit.iter().collect();
-        self.git_repo.commit(
-            Some(H5I_AST_REF),
-            &sig,
-            &sig,
-            &format!("ast: store {}", &hash[..12]),
-            &tree,
-            &parents,
-        )?;
-
-        Ok(hash)
-    }
-
-    /// Load an AST s-expression by its content hash from `refs/h5i/ast`.
-    fn load_ast_blob(&self, hash: &str) -> Option<String> {
-        let filename = format!("{}.sexp", hash);
-        let r = self.git_repo.find_reference(H5I_AST_REF).ok()?;
-        let commit = r.peel_to_commit().ok()?;
-        let tree = commit.tree().ok()?;
-        let entry = tree.get_name(&filename)?;
-        let obj = entry.to_object(&self.git_repo).ok()?;
-        let blob = obj.as_blob()?;
-        std::str::from_utf8(blob.content()).ok().map(|s| s.to_string())
     }
 
     /// Extracts test code between
@@ -2928,173 +2604,6 @@ fn is_artifact_path(path: &str) -> bool {
     false
 }
 
-// ── Parser script discovery ───────────────────────────────────────────────────
-
-/// Default timeout for the AST parser subprocess. Overridable via the
-/// `H5I_PARSER_TIMEOUT_SECS` environment variable.
-const PARSER_TIMEOUT_SECS_DEFAULT: u64 = 30;
-
-/// Resolves the parser timeout from an explicit env-value string. Accepts a
-/// positive integer; returns the default for any other input (unset, empty,
-/// non-numeric, zero).
-fn resolve_parser_timeout(env_value: Option<&str>) -> std::time::Duration {
-    let secs = env_value
-        .and_then(|s| s.parse::<u64>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(PARSER_TIMEOUT_SECS_DEFAULT);
-    std::time::Duration::from_secs(secs)
-}
-
-fn parser_timeout() -> std::time::Duration {
-    resolve_parser_timeout(std::env::var("H5I_PARSER_TIMEOUT_SECS").ok().as_deref())
-}
-
-/// Runs the parser script under `python3 <script> <path>` with the given
-/// timeout. Returns `None` on any failure (spawn, timeout, non-zero exit,
-/// non-UTF8 stdout, empty output). Testable variant of [`run_parser_subprocess`].
-fn run_parser_subprocess_with_timeout(
-    script_path: &std::path::Path,
-    arg_path: &std::path::Path,
-    timeout: std::time::Duration,
-) -> Option<String> {
-    use std::io::Read;
-    use std::process::Stdio;
-
-    let mut child = std::process::Command::new("python3")
-        .arg(script_path)
-        .arg(arg_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if !status.success() {
-                    return None;
-                }
-                let mut buf = String::new();
-                if let Some(out) = child.stdout.take() {
-                    // Cap output to 64 MiB to bound memory if the parser misbehaves.
-                    const MAX_OUTPUT: u64 = 64 * 1024 * 1024;
-                    let _ = out.take(MAX_OUTPUT).read_to_string(&mut buf);
-                }
-                let trimmed = buf.trim().to_string();
-                return (!trimmed.is_empty()).then_some(trimmed);
-            }
-            Ok(None) => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    tracing::warn!(
-                        script = %script_path.display(),
-                        path = %arg_path.display(),
-                        "AST parser exceeded timeout; killed"
-                    );
-                    return None;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(25));
-            }
-            Err(_) => return None,
-        }
-    }
-}
-
-fn run_parser_subprocess(
-    script_path: &std::path::Path,
-    arg_path: &std::path::Path,
-) -> Option<String> {
-    run_parser_subprocess_with_timeout(script_path, arg_path, parser_timeout())
-}
-
-/// Validates and canonicalizes a candidate script path. Returns `Some` only if
-/// the path resolves to a regular file (not a directory or broken symlink).
-fn pick_parser_path(candidate: std::path::PathBuf) -> Option<std::path::PathBuf> {
-    let meta = std::fs::metadata(&candidate).ok()?;
-    if !meta.is_file() {
-        return None;
-    }
-    std::fs::canonicalize(&candidate).ok().or(Some(candidate))
-}
-
-/// Testable core of [`find_parser_script`]. Takes the parser-dir override and
-/// exe-dir as explicit parameters so tests can drive every branch without
-/// touching process-global env state.
-///
-/// Search order:
-///   1. `parser_dir_override` (if set and is a real directory)
-///   2. `<workdir>/plugin/<script_name>`
-///   3. `<exe_dir>/plugin/<script_name>` then `<exe_dir>/../plugin/<script_name>`
-fn find_parser_script_inner(
-    script_name: &str,
-    workdir: Option<&std::path::Path>,
-    parser_dir_override: Option<&std::path::Path>,
-    exe_dir: Option<&std::path::Path>,
-) -> Option<std::path::PathBuf> {
-    if let Some(dir_path) = parser_dir_override {
-        match std::fs::metadata(dir_path) {
-            Ok(m) if m.is_dir() => {
-                if let Some(p) = pick_parser_path(dir_path.join(script_name)) {
-                    return Some(p);
-                }
-            }
-            Ok(_) => {
-                tracing::warn!(
-                    path = %dir_path.display(),
-                    "H5I_PARSER_DIR exists but is not a directory; ignoring"
-                );
-            }
-            Err(_) => {
-                tracing::warn!(
-                    path = %dir_path.display(),
-                    "H5I_PARSER_DIR does not exist; ignoring"
-                );
-            }
-        }
-    }
-
-    if let Some(wd) = workdir {
-        if let Some(p) = pick_parser_path(wd.join("plugin").join(script_name)) {
-            return Some(p);
-        }
-    }
-
-    if let Some(bin_dir) = exe_dir {
-        for candidate in [
-            bin_dir.join("plugin").join(script_name),
-            bin_dir.join("..").join("plugin").join(script_name),
-        ] {
-            if let Some(p) = pick_parser_path(candidate) {
-                return Some(p);
-            }
-        }
-    }
-
-    None
-}
-
-/// Searches for `script_name` in the standard locations and returns the first
-/// path that exists. Reads `H5I_PARSER_DIR` and `std::env::current_exe()` from
-/// the environment; delegates the actual search to [`find_parser_script_inner`].
-fn find_parser_script(
-    script_name: &str,
-    workdir: Option<&std::path::Path>,
-) -> Option<std::path::PathBuf> {
-    let parser_dir = std::env::var_os("H5I_PARSER_DIR").map(std::path::PathBuf::from);
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(|p| p.to_path_buf()));
-    find_parser_script_inner(
-        script_name,
-        workdir,
-        parser_dir.as_deref(),
-        exe_dir.as_deref(),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3166,7 +2675,6 @@ mod tests {
             &sig,
             ai_meta,
             TestSource::None,
-            None, // ast_parser
             vec![],
             vec![],
             None, // note_spool
@@ -3232,7 +2740,7 @@ mod tests {
         assert_eq!(h5i_repo.h5i_log_since(None, 10).unwrap().len(), 3);
     }
 
-    // --- 3. Blame & AST tracking ---
+    // --- 3. Blame ---
 
     #[test]
     fn test_blame_line_mode() {
@@ -3248,27 +2756,9 @@ mod tests {
             &[],
         );
 
-        let results = h5i_repo.blame(path, BlameMode::Line).unwrap();
+        let results = h5i_repo.blame(path).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].line_content, "Line 1");
-    }
-
-    #[test]
-    fn test_ast_sidecar_storage() {
-        let dir = tempdir().unwrap();
-        let h5i_repo = setup_test_repo(dir.path());
-        let sexp = "(module (fn main))";
-
-        let hash = h5i_repo.save_ast_to_sidecar("main.rs", sexp).unwrap();
-
-        // Verify content is stored in refs/h5i/ast (Git object store).
-        let loaded = h5i_repo.load_ast_blob(&hash);
-        assert!(loaded.is_some(), "AST blob should be in refs/h5i/ast");
-        assert_eq!(loaded.unwrap(), sexp);
-
-        // Idempotent: storing the same content returns the same hash.
-        let hash2 = h5i_repo.save_ast_to_sidecar("other.rs", sexp).unwrap();
-        assert_eq!(hash, hash2);
     }
 
     #[test]
@@ -3450,297 +2940,6 @@ mod tests {
         let ref_name = shadow_ref.unwrap();
         assert!(ref_name.starts_with("refs/h5i/shadow/"));
         assert!(repo.find_reference(&ref_name).is_ok(), "shadow ref must exist in git");
-    }
-
-    // ── Parser subprocess hardening tests ─────────────────────────────────
-
-    #[test]
-    fn parser_timeout_default_when_unset() {
-        assert_eq!(
-            resolve_parser_timeout(None),
-            std::time::Duration::from_secs(PARSER_TIMEOUT_SECS_DEFAULT)
-        );
-    }
-
-    #[test]
-    fn parser_timeout_uses_valid_env_value() {
-        assert_eq!(
-            resolve_parser_timeout(Some("5")),
-            std::time::Duration::from_secs(5)
-        );
-    }
-
-    #[test]
-    fn parser_timeout_rejects_zero() {
-        // Zero would mean "immediate timeout, never run" — silently fall back.
-        assert_eq!(
-            resolve_parser_timeout(Some("0")),
-            std::time::Duration::from_secs(PARSER_TIMEOUT_SECS_DEFAULT)
-        );
-    }
-
-    #[test]
-    fn parser_timeout_rejects_garbage() {
-        assert_eq!(
-            resolve_parser_timeout(Some("not-a-number")),
-            std::time::Duration::from_secs(PARSER_TIMEOUT_SECS_DEFAULT)
-        );
-        assert_eq!(
-            resolve_parser_timeout(Some("")),
-            std::time::Duration::from_secs(PARSER_TIMEOUT_SECS_DEFAULT)
-        );
-        assert_eq!(
-            resolve_parser_timeout(Some("-3")),
-            std::time::Duration::from_secs(PARSER_TIMEOUT_SECS_DEFAULT)
-        );
-    }
-
-    #[test]
-    fn find_parser_uses_valid_override() {
-        let tmp = tempdir().unwrap();
-        let dir = tmp.path();
-        let script = dir.join("h5i-py-parser.py");
-        fs::write(&script, "# stub").unwrap();
-
-        let found = find_parser_script_inner("h5i-py-parser.py", None, Some(dir), None);
-        let found = found.expect("override directory should be used");
-        assert!(found.is_absolute(), "result should be canonicalized to absolute");
-        assert_eq!(found.file_name().unwrap(), "h5i-py-parser.py");
-    }
-
-    #[test]
-    fn find_parser_rejects_override_that_is_a_file_not_dir() {
-        let tmp = tempdir().unwrap();
-        let file_not_dir = tmp.path().join("not-a-dir");
-        fs::write(&file_not_dir, "i am a file").unwrap();
-
-        let found =
-            find_parser_script_inner("h5i-py-parser.py", None, Some(&file_not_dir), None);
-        assert!(found.is_none(), "override that points at a file must be ignored");
-    }
-
-    #[test]
-    fn find_parser_ignores_missing_override() {
-        let tmp = tempdir().unwrap();
-        let missing = tmp.path().join("does-not-exist");
-        let found =
-            find_parser_script_inner("h5i-py-parser.py", None, Some(&missing), None);
-        assert!(found.is_none());
-    }
-
-    #[test]
-    fn find_parser_rejects_override_dir_without_script() {
-        // Override directory exists but the script file is not inside it.
-        let tmp = tempdir().unwrap();
-        let found =
-            find_parser_script_inner("h5i-py-parser.py", None, Some(tmp.path()), None);
-        assert!(
-            found.is_none(),
-            "empty override dir should not match anything"
-        );
-    }
-
-    #[test]
-    fn find_parser_rejects_override_pointing_to_directory_named_like_script() {
-        // The override resolves to `<dir>/h5i-py-parser.py` but that path is a
-        // directory, not a regular file. pick_parser_path must reject it.
-        let tmp = tempdir().unwrap();
-        let trap = tmp.path().join("h5i-py-parser.py");
-        fs::create_dir(&trap).unwrap();
-        let found =
-            find_parser_script_inner("h5i-py-parser.py", None, Some(tmp.path()), None);
-        assert!(found.is_none(), "a directory named like the script must not match");
-    }
-
-    #[test]
-    fn find_parser_falls_back_to_workdir_plugin_dir() {
-        let tmp = tempdir().unwrap();
-        let plugin_dir = tmp.path().join("plugin");
-        fs::create_dir(&plugin_dir).unwrap();
-        let script = plugin_dir.join("h5i-py-parser.py");
-        fs::write(&script, "# stub").unwrap();
-
-        let found = find_parser_script_inner(
-            "h5i-py-parser.py",
-            Some(tmp.path()),
-            None, // no override
-            None, // no exe_dir
-        );
-        let found = found.expect("workdir/plugin/ should be discovered");
-        assert_eq!(found.file_name().unwrap(), "h5i-py-parser.py");
-    }
-
-    #[test]
-    fn find_parser_falls_back_to_exe_dir_plugin() {
-        let tmp = tempdir().unwrap();
-        let plugin_dir = tmp.path().join("plugin");
-        fs::create_dir(&plugin_dir).unwrap();
-        let script = plugin_dir.join("h5i-py-parser.py");
-        fs::write(&script, "# stub").unwrap();
-
-        // Simulate "h5i binary lives in tmp/, script is at tmp/plugin/foo.py"
-        let found = find_parser_script_inner(
-            "h5i-py-parser.py",
-            None,
-            None,
-            Some(tmp.path()),
-        );
-        let found = found.expect("exe_dir/plugin/ should be discovered");
-        assert_eq!(found.file_name().unwrap(), "h5i-py-parser.py");
-    }
-
-    #[test]
-    fn find_parser_override_wins_over_workdir() {
-        let tmp = tempdir().unwrap();
-
-        let workdir = tmp.path().join("repo");
-        fs::create_dir_all(workdir.join("plugin")).unwrap();
-        fs::write(workdir.join("plugin/h5i-py-parser.py"), "# workdir version").unwrap();
-
-        let override_dir = tmp.path().join("override");
-        fs::create_dir(&override_dir).unwrap();
-        fs::write(override_dir.join("h5i-py-parser.py"), "# override version").unwrap();
-
-        let found = find_parser_script_inner(
-            "h5i-py-parser.py",
-            Some(&workdir),
-            Some(&override_dir),
-            None,
-        )
-        .expect("a script should be found");
-
-        // The override dir wins; canonicalize so platform-specific resolutions don't
-        // change which dir-name comparison we use.
-        let override_canon = std::fs::canonicalize(&override_dir).unwrap();
-        assert!(
-            found.starts_with(&override_canon),
-            "override should win over workdir; got {}",
-            found.display()
-        );
-    }
-
-    fn python3_available() -> bool {
-        std::process::Command::new("python3")
-            .arg("--version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
-    #[test]
-    fn run_parser_returns_stdout_on_success() {
-        if !python3_available() {
-            eprintln!("skipping: python3 not on PATH");
-            return;
-        }
-        let tmp = tempdir().unwrap();
-        let script = tmp.path().join("parser.py");
-        // The script ignores its argument and prints a fixed s-expression.
-        fs::write(&script, "import sys\nprint('(module (fn foo))')\n").unwrap();
-        let target = tmp.path().join("input.py");
-        fs::write(&target, "def foo():\n    pass\n").unwrap();
-
-        let out = run_parser_subprocess_with_timeout(
-            &script,
-            &target,
-            std::time::Duration::from_secs(10),
-        );
-        assert_eq!(out.as_deref(), Some("(module (fn foo))"));
-    }
-
-    #[test]
-    fn run_parser_returns_none_on_nonzero_exit() {
-        if !python3_available() {
-            eprintln!("skipping: python3 not on PATH");
-            return;
-        }
-        let tmp = tempdir().unwrap();
-        let script = tmp.path().join("parser.py");
-        fs::write(&script, "import sys\nsys.exit(1)\n").unwrap();
-        let target = tmp.path().join("input.py");
-        fs::write(&target, "x = 1\n").unwrap();
-
-        let out = run_parser_subprocess_with_timeout(
-            &script,
-            &target,
-            std::time::Duration::from_secs(10),
-        );
-        assert!(out.is_none());
-    }
-
-    #[test]
-    fn run_parser_returns_none_on_empty_output() {
-        if !python3_available() {
-            eprintln!("skipping: python3 not on PATH");
-            return;
-        }
-        let tmp = tempdir().unwrap();
-        let script = tmp.path().join("parser.py");
-        // Whitespace-only output trims to empty -> treated as failure.
-        fs::write(&script, "print('   ')\n").unwrap();
-        let target = tmp.path().join("input.py");
-        fs::write(&target, "x = 1\n").unwrap();
-
-        let out = run_parser_subprocess_with_timeout(
-            &script,
-            &target,
-            std::time::Duration::from_secs(10),
-        );
-        assert!(out.is_none(), "whitespace-only output should be rejected");
-    }
-
-    #[test]
-    fn run_parser_kills_runaway_child_on_timeout() {
-        if !python3_available() {
-            eprintln!("skipping: python3 not on PATH");
-            return;
-        }
-        let tmp = tempdir().unwrap();
-        let script = tmp.path().join("parser.py");
-        // Sleep longer than the timeout — parser must be killed.
-        fs::write(
-            &script,
-            "import time\nwhile True:\n    time.sleep(10)\n",
-        )
-        .unwrap();
-        let target = tmp.path().join("input.py");
-        fs::write(&target, "x = 1\n").unwrap();
-
-        let started = std::time::Instant::now();
-        let out = run_parser_subprocess_with_timeout(
-            &script,
-            &target,
-            std::time::Duration::from_millis(400),
-        );
-        let elapsed = started.elapsed();
-
-        assert!(out.is_none(), "timed-out parser must return None");
-        // Generous upper bound: deadline + poll-slop + reap. If we exceeded 5s,
-        // the kill path is broken.
-        assert!(
-            elapsed < std::time::Duration::from_secs(5),
-            "timeout did not fire within 5s (took {:?})",
-            elapsed
-        );
-    }
-
-    #[test]
-    fn run_parser_returns_none_when_script_missing() {
-        let tmp = tempdir().unwrap();
-        let missing = tmp.path().join("nope.py");
-        let target = tmp.path().join("input.py");
-        fs::write(&target, "x = 1\n").unwrap();
-
-        // python3 will exit non-zero when given a missing script (it prints to
-        // stderr which we discard) — we must surface that as None.
-        let out = run_parser_subprocess_with_timeout(
-            &missing,
-            &target,
-            std::time::Duration::from_secs(5),
-        );
-        assert!(out.is_none());
     }
 
     // ── copy_scoped_notes_onto (branch-scoped `h5i share push`) ─────────────

@@ -89,7 +89,7 @@ pub fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
     let candidates: &[&'static str] = match noun {
         "capture" => &["commit", "claim", "memory", "run"],
         "recall" => &[
-            "log", "blame", "diff", "context", "claims", "notes", "memory", "recap", "resume",
+            "log", "blame", "context", "claims", "notes", "memory", "recap", "resume",
             "vibe", "object", "objects", "search",
         ],
         "audit" => &["review", "scan", "compliance", "policy", "vibe"],
@@ -154,7 +154,6 @@ pub fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         // ── recall ──────────────────────────────────────────────────────
         ("recall", "log") => &["log"],
         ("recall", "blame") => &["blame"],
-        ("recall", "diff") => &["diff"],
         ("recall", "context") => &["context"],
         ("recall", "claims") => &["claims", "list"],
         ("recall", "claim") => &["claims", "list"],

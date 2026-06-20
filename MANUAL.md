@@ -162,7 +162,6 @@ proceeds normally. Pipes are unaffected because the hint goes to stderr.
 | `h5i memory snapshot` | `h5i capture memory` |
 | `h5i log --limit N` | `h5i recall log --limit N` |
 | `h5i blame <file>` | `h5i recall blame <file>` |
-| `h5i diff <file>` | `h5i recall diff <file>` |
 | `h5i context <sub>` | `h5i recall context <sub>` |
 | `h5i claims list` / `prune` | `h5i recall claims [--group-by-path]` / `h5i claims prune` |
 | `h5i notes show` / `footprint` / … | `h5i recall notes <sub>` |
@@ -195,7 +194,7 @@ error: `h5i audit revew` is not a known subcommand.
 h5i init
 ```
 
-Initialize h5i in the current Git repository. Creates `.git/.h5i/` with subdirectories for AST snapshots, session logs, claims, and memory snapshots.
+Initialize h5i in the current Git repository. Creates `.git/.h5i/` with subdirectories for session logs, claims, and memory snapshots.
 
 Also bootstraps agent-facing instructions:
 
@@ -514,8 +513,7 @@ Read AI history & context.
 | Verb | Equivalent legacy form | What it does |
 |---|---|---|
 | `h5i recall log` | `h5i log` | Commit history with AI provenance. |
-| `h5i recall blame` | `h5i blame` | Line- or AST-level blame annotated with AI prompts. |
-| `h5i recall diff` | `h5i diff` | Structural (AST) diff for a single file. |
+| `h5i recall blame` | `h5i blame` | Line-based blame annotated with AI prompts. |
 | `h5i recall context <sub>` | `h5i context <sub>` | The reasoning workspace (full subtree). |
 | `h5i recall claims` | `h5i claims list` | List live & stale content-addressed claims. |
 | `h5i recall notes <sub>` | `h5i notes <sub>` | Footprint, uncertainty, coverage, churn, omissions. |
@@ -925,7 +923,6 @@ Flag resolution order: CLI flag → environment variable → pending context fil
 | `--test-results <file>` | `H5I_TEST_RESULTS` | Path to a JSON test results file (see [Appendix: Test Adapter Schema](#appendix-test-adapter-schema)) |
 | `--test-cmd <cmd>` | — | Shell command whose stdout produces a test results JSON object |
 | `--tests` | — | Scan staged files for inline `h5_i_test_start` / `h5_i_test_end` markers |
-| `--ast` | — | Capture an AST snapshot for semantic blame |
 | `--audit` | — | Run integrity rules before committing (see [Appendix: Integrity Rules](#appendix-integrity-rules)) |
 | `--force` | — | Commit despite integrity warnings. Violations always block regardless of this flag. |
 | `--add <path>` | — | Stage this path before committing (equivalent to `git add <path>`). Repeatable. Eliminates the separate `git add` step when used in scripts or MCP tool calls. |
@@ -1070,16 +1067,14 @@ h5i recall log --ancestry src/auth.rs:42
 h5i recall blame <file> [options]
 ```
 
-Show line-level authorship with AI provenance. Canonical form of the legacy `h5i blame`. Two status columns precede each line:
+Show line-level authorship with AI provenance. Canonical form of the legacy `h5i blame`. A status column precedes each line:
 
-- Column 1 — test status: `✅` passing, `✖` failing, blank = no data
-- Column 2 — AI indicator: `✨` AI-authored line
+- Test status: `✅` passing, `✖` failing, blank = no data
 
 **Options**
 
 | Option | Description |
 |--------|-------------|
-| `--mode <line\|ast>` | Blame mode. `line` (default) is traditional line blame; `ast` is semantic blame that tracks code structure through renames and reformatting. |
 | `--show-prompt` | Annotate each commit boundary with the human prompt that triggered it |
 
 **Example**
@@ -3000,7 +2995,7 @@ After restarting Claude Code, all h5i tools become available natively inside any
 | `h5i_rewind` | `h5i rewind` | Restore working tree to any past commit. Saves dirty state to a shadow ref before touching anything. |
 | `h5i_notes_analyze` | `h5i notes analyze` | Parse the current session log and link analysis to HEAD. Call once at session end. |
 | `h5i_log` | `h5i log` | Recent commits with AI provenance metadata |
-| `h5i_blame` | `h5i blame` | Per-line or AST-node authorship with model/prompt annotation |
+| `h5i_blame` | `h5i blame` | Per-line authorship with model/prompt annotation |
 | `h5i_notes_show` | `h5i notes show` | Full session analysis for a commit |
 | `h5i_notes_uncertainty` | `h5i notes uncertainty` | Uncertainty moments expressed during a session |
 | `h5i_notes_coverage` | `h5i notes coverage` | Per-file blind-edit coverage |
@@ -3172,7 +3167,7 @@ What gets scoped:
 | **objects** (`refs/h5i/objects`) | Only manifests whose `branch` field equals `<branch>` travel. |
 | **msg** (`refs/h5i/msg`) | Only messages tagged with `<branch>` travel (sends auto-tag the current branch; replies inherit the thread's). The agent roster always travels. |
 | **env** (`refs/h5i/env/meta` + `…/code/*`) | Only envs whose `parent_branch` is `<branch>` travel — their manifests/policies/events and their code branches. |
-| **ast / memory** | Pushed in full. AST is deduplicated content-addressed structure; memory is a cumulative full-state snapshot whose facts are branch-independent. |
+| **memory** | Pushed in full — a cumulative full-state snapshot whose facts are branch-independent. |
 
 **Non-destructive.** notes/objects/msg/env are single aggregate refs shared by every branch, so a scoped push does **not** force a filtered subset (which would delete other branches' data on the remote). Instead it fetches the remote's current ref and *unions* only this branch's entries onto it, then pushes the result as a fast-forward. Other branches' data already on the remote is always preserved.
 
@@ -3268,7 +3263,6 @@ Three additional directories (`ast/`, `crdt/`, `metadata/`) are created on `h5i 
 | `refs/h5i/notes` | Git notes | Commit metadata: AI provenance, test metrics, causal links, integrity reports, design decisions |
 | `refs/h5i/memory` | Linear commit history | Agent memory snapshots as git tree objects; each commit carries the linked code-commit OID |
 | `refs/h5i/context` | Git tree | Context workspace: `main.md`, `.current_branch`, `branches/<name>/{commit.md,trace.md,dag.json,ephemeral.md,metadata.yaml}` |
-| `refs/h5i/ast` | Git objects | AST hash snapshots for semantic blame |
 | `refs/h5i/objects` | Append-only JSONL | Token-reduction manifests: per-capture pointer + structured `ToolResult` summary (raw blobs stay local, see above) |
 | `refs/h5i/shadow/<yyyymmdd-hhmmss>` | WIP commit | Pre-rewind working-tree snapshot created by `h5i rewind` before overwriting files. Never on any branch; recover with `git checkout refs/h5i/shadow/<ts> -- .` |
 
@@ -3374,15 +3368,6 @@ Auto-captured when the Claude Code hook is installed; you usually do not set the
 |----------|---------|---------|
 | `H5I_TRUST_FILTERS` | unset | When `1`/`true`, apply a project-local `.h5i/filters.toml` without the content-hash trust gate (for CI). See [h5i objects trust](#h5i-objects-filters--trust). |
 
-### AST parser
-
-`h5i` shells out to `python3 h5i-py-parser.py` for Python AST extraction.
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `H5I_PARSER_DIR` | unset | Directory to search **first** for `h5i-py-parser.py`. Must be an existing directory; if it exists but is not a directory (or does not exist), h5i logs a warning at `warn` level and falls through to `<repo>/plugin/` then `<bindir>/[..]/plugin/`. |
-| `H5I_PARSER_TIMEOUT_SECS` | `30` | Hard timeout (whole seconds) for the parser subprocess. The child is killed if it exceeds this. Non-positive or non-numeric values fall back to the default. |
-
 ### Claims
 
 | Variable | Default | Purpose |
@@ -3400,4 +3385,4 @@ Auto-captured when the Claude Code hook is installed; you usually do not set the
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `H5I_LOG` | `off` | `tracing_subscriber` env filter for h5i's internal diagnostics (subprocess timeouts, invalid `H5I_PARSER_DIR`, etc.). Typical values: `h5i_core=warn`, `h5i_core=debug`. Logs go to stderr so stdout stays clean for piped/MCP consumers. `RUST_LOG` is also honored as a fallback. |
+| `H5I_LOG` | `off` | `tracing_subscriber` env filter for h5i's internal diagnostics (subprocess timeouts, etc.). Typical values: `h5i_core=warn`, `h5i_core=debug`. Logs go to stderr so stdout stays clean for piped/MCP consumers. `RUST_LOG` is also honored as a fallback. |

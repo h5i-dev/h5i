@@ -2308,8 +2308,8 @@ fn setup_remote_writes_all_fetch_refspecs() {
         "banner missing:\n{s}"
     );
     assert!(
-        s.contains("8 refspec(s) added"),
-        "should add 8 refspecs:\n{s}"
+        s.contains("7 refspec(s) added"),
+        "should add 7 refspecs:\n{s}"
     );
 
     let fetch = git_in(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
@@ -2318,7 +2318,6 @@ fn setup_remote_writes_all_fetch_refspecs() {
         "+refs/h5i/notes:refs/h5i/notes",
         "+refs/h5i/memory:refs/h5i/memory",
         "+refs/h5i/context/*:refs/h5i/context/*",
-        "+refs/h5i/ast:refs/h5i/ast",
         "+refs/h5i/msg:refs/h5i/msg",
         "+refs/h5i/objects:refs/h5i/objects",
         "+refs/h5i/env/meta:refs/h5i/env/meta",

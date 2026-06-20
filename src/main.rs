@@ -3,7 +3,6 @@ use console::style;
 use git2::Oid;
 use std::path::{Path, PathBuf};
 
-use h5i_core::blame::BlameMode;
 use h5i_core::claims;
 use h5i_core::claude::{keyword_search, sanitize_human_prompt, AnthropicClient};
 use h5i_core::codex;
@@ -699,10 +698,6 @@ enum Commands {
         #[arg(long, value_name = "CMD")]
         test_cmd: Option<String>,
 
-        /// Enable AST-based structural tracking for the commit
-        #[arg(long)]
-        ast: bool,
-
         #[arg(long)]
         audit: bool,
 
@@ -742,15 +737,11 @@ enum Commands {
         ancestry: Option<String>,
     },
 
-    /// Analyze file ownership with optional structural (AST) logic
+    /// Analyze file ownership (line-based blame enriched with AI provenance)
     #[command(hide = true)]
     Blame {
         /// Path to the file to inspect
         file: PathBuf,
-
-        /// Mode of blame: 'line' (standard) or 'ast' (semantic)
-        #[arg(short, long, default_value = "line")]
-        mode: String,
 
         /// Annotate each commit boundary with the human prompt that triggered it.
         /// The prompt is printed once per unique commit, immediately after the
@@ -767,20 +758,6 @@ enum Commands {
         theirs: String,
         /// Relative path to the file to resolve
         file: String,
-    },
-
-    /// Show the AST-level structural diff for a file
-    Diff {
-        /// Path to the file to analyse (must be a supported language, e.g. .py)
-        file: PathBuf,
-
-        /// Compare from this commit OID (default: HEAD)
-        #[arg(long)]
-        from: Option<String>,
-
-        /// Compare to this commit OID (default: working-tree file)
-        #[arg(long)]
-        to: Option<String>,
     },
 
     /// Revert the AI-generated commit whose intent best matches a description
@@ -2585,7 +2562,7 @@ Monitor tool is experimental/host-dependent — don't rely on it.
 ### Sharing h5i Data
 
 ```bash
-h5i share push   # push all h5i refs (notes, context, memory, ast, msg) to origin
+h5i share push   # push all h5i refs (notes, context, memory, msg) to origin
 h5i share pull   # pull h5i refs from origin
 ```
 "#;
@@ -3358,7 +3335,6 @@ const H5I_REF_PATTERNS: &[&str] = &[
     "refs/h5i/notes",
     "refs/h5i/memory",
     "refs/h5i/context/*",
-    "refs/h5i/ast",
     "refs/h5i/msg",
     "refs/h5i/objects",
     h5i_core::env::ENV_REF, // refs/h5i/env/meta — the shareable env state
@@ -4121,15 +4097,9 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                 },
                 NounVerb {
                     verb: "blame",
-                    summary: "Line- or AST-level blame, annotated with AI prompts per commit boundary.",
+                    summary: "Line-based blame, annotated with AI prompts per commit boundary.",
                     legacy: "h5i blame",
-                    example: "h5i recall blame src/api/client.py --mode ast --show-prompt",
-                },
-                NounVerb {
-                    verb: "diff",
-                    summary: "Structural (AST) diff for a single file between two commits.",
-                    legacy: "h5i diff",
-                    example: "h5i recall diff src/model.py --from HEAD~3",
+                    example: "h5i recall blame src/api/client.py --show-prompt",
                 },
                 NounVerb {
                     verb: "context",
@@ -4235,7 +4205,7 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
             &[
                 NounVerb {
                     verb: "push",
-                    summary: "Push all refs/h5i/* (notes, context, memory, ast, msg, object manifests) to a remote. Raw blobs are NOT shared — use `h5i objects push`.",
+                    summary: "Push all refs/h5i/* (notes, context, memory, msg, object manifests) to a remote. Raw blobs are NOT shared — use `h5i objects push`.",
                     legacy: "h5i push",
                     example: "h5i share push",
                 },
@@ -5282,7 +5252,6 @@ fn main() -> anyhow::Result<()> {
             tests,
             test_results,
             test_cmd,
-            ast,
             audit,
             force,
             caused_by,
@@ -5528,11 +5497,6 @@ fn main() -> anyhow::Result<()> {
                 TestSource::None
             };
 
-            // Build a real language-aware AST parser closure.
-            let parser_box = repo.make_ast_parser();
-            type AstParser<'a> = &'a dyn Fn(&std::path::Path) -> Option<String>;
-            let ast_parser: Option<AstParser> = if ast { Some(parser_box.as_ref()) } else { None };
-
             let caused_by = caused_by.unwrap_or_default();
 
             // Load structured design decisions from JSON file if provided.
@@ -5570,7 +5534,6 @@ fn main() -> anyhow::Result<()> {
                 &sig,
                 ai_meta,
                 test_source,
-                ast_parser,
                 caused_by,
                 decisions,
                 note_spool.as_deref(),
@@ -5681,19 +5644,10 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Blame {
-            file,
-            mode,
-            show_prompt,
-        } => {
+        Commands::Blame { file, show_prompt } => {
             let repo = H5iRepository::open(".")?;
-            let blame_mode = if mode.to_lowercase() == "ast" {
-                BlameMode::Ast
-            } else {
-                BlameMode::Line
-            };
 
-            let results = repo.blame(&file, blame_mode)?;
+            let results = repo.blame(&file)?;
             println!(
                 "{}",
                 style(format!(
@@ -5714,7 +5668,6 @@ fn main() -> anyhow::Result<()> {
                     Some(false) => "❌",
                     None => "  ",
                 };
-                let semantic_indicator = if r.is_semantic_change { "✨" } else { "  " };
 
                 // Print prompt annotation when the commit changes (show_prompt mode).
                 if show_prompt {
@@ -5735,41 +5688,13 @@ fn main() -> anyhow::Result<()> {
                 }
 
                 println!(
-                    "{} {} {} {:<15} | {}",
+                    "{} {} {:<15} | {}",
                     test_indicator,
-                    semantic_indicator,
                     style(&r.commit_id[..8]).dim(),
                     style(&r.agent_info).blue(),
                     r.line_content
                 );
             }
-        }
-
-        Commands::Diff { file, from, to } => {
-            let repo = H5iRepository::open(".")?;
-
-            let from_oid = from.map(|s| Oid::from_str(&s)).transpose()?;
-            let to_oid = to.map(|s| Oid::from_str(&s)).transpose()?;
-
-            let label = match (&from_oid, &to_oid) {
-                (None, None) => "HEAD → working tree".to_string(),
-                (Some(f), None) => format!("{}… → working tree", &f.to_string()[..8]),
-                (None, Some(t)) => format!("HEAD → {}…", &t.to_string()[..8]),
-                (Some(f), Some(t)) => {
-                    format!("{}… → {}…", &f.to_string()[..8], &t.to_string()[..8])
-                }
-            };
-
-            println!(
-                "{} {} {} {}",
-                LOOKING,
-                style("Computing structural diff for").cyan().bold(),
-                style(file.display()).yellow(),
-                style(format!("({label})")).dim(),
-            );
-
-            let ast_diff = repo.diff_ast(&file, from_oid, to_oid)?;
-            ast_diff.print_stylish(&file.to_string_lossy());
         }
 
         Commands::Rollback {
@@ -7411,13 +7336,6 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            // Push AST blobs (refs/h5i/ast)
-            try_push(
-                "refs/h5i/ast",
-                style("h5i commit --ast").bold(),
-                "no AST snapshots yet",
-            )?;
-
             // Push the cross-agent message log (refs/h5i/msg). Scoped to the
             // branch's conversation (messages auto-tagged with the branch) when
             // --branch is given; else the whole log. The roster always travels.
@@ -7596,11 +7514,9 @@ fn main() -> anyhow::Result<()> {
                     \n    git fetch {} refs/h5i/notes:refs/h5i/notes\
                     \n    git fetch {} refs/h5i/memory:refs/h5i/memory\
                     \n    git fetch {} 'refs/h5i/context/*:refs/h5i/context/*'\
-                    \n    git fetch {} refs/h5i/ast:refs/h5i/ast\
                     \n    git fetch {} refs/h5i/msg:refs/h5i/msg\
                     \n\n  Or add fetch refspecs to .git/config (see README §9) so {} picks them up automatically.",
                     style("Tip:").bold(),
-                    style(&remote).yellow(),
                     style(&remote).yellow(),
                     style(&remote).yellow(),
                     style(&remote).yellow(),
@@ -7990,7 +7906,6 @@ fn main() -> anyhow::Result<()> {
                 let _ = sync_one("refs/h5i/context");
             }
 
-            sync_one("refs/h5i/ast")?;
             sync_one(msg::MSG_REF)?;
             sync_one(h5i_core::objects::OBJECTS_REF)?;
             // Shareable env state (manifests + policies + events). The

@@ -3131,7 +3131,6 @@ mod tests {
             parent_oid: None,
             ai_metadata: None,
             test_metrics: None,
-            ast_hashes: None,
             timestamp: chrono::Utc::now(),
             caused_by: Vec::new(),
             decisions: Vec::new(),

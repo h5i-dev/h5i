@@ -2,7 +2,6 @@ use chrono::{TimeZone, Utc};
 use git2::Oid;
 use git2::Repository;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use tiktoken_rs::get_bpe_from_model;
 
 /// A structured record of one design decision made during an AI coding session.
@@ -30,8 +29,6 @@ pub struct H5iCommitRecord {
     pub parent_oid: Option<String>,
     pub ai_metadata: Option<AiMetadata>,
     pub test_metrics: Option<TestMetrics>,
-    /// File path -> hash of the externally provided AST (S-expression)
-    pub ast_hashes: Option<HashMap<String, String>>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
     /// OIDs of commits that causally triggered this commit.
     /// e.g. this commit fixes a bug introduced by `caused_by[0]`.
@@ -284,7 +281,6 @@ impl H5iCommitRecord {
                 parent_oid: None,
                 ai_metadata: None,
                 test_metrics: None,
-                ast_hashes: None,
                 timestamp: Utc::now(),
                 caused_by: Vec::new(),
                 decisions: Vec::new(),
@@ -311,7 +307,6 @@ impl H5iCommitRecord {
             parent_oid,
             ai_metadata: None,  // Standard Git commits do not contain AI metadata
             test_metrics: None, // Standard Git commits do not contain testing metrics
-            ast_hashes: None,   // Standard Git commits do not contain AST hashes
             timestamp,
             caused_by: vec![],
             decisions: vec![],
@@ -479,7 +474,6 @@ mod tests {
         );
         assert!(record.ai_metadata.is_none());
         assert!(record.test_metrics.is_none());
-        assert!(record.ast_hashes.is_none());
 
         // Ensure the timestamp is not extremely far from the current time
         // (allowing a few seconds of tolerance)
