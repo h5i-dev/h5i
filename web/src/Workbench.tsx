@@ -191,13 +191,6 @@ export function Workbench() {
             </a>
           ) : null}
           <Button minimal small icon="refresh" onClick={refresh} title="Refresh" />
-          <a
-            href="/legacy"
-            className="bp5-button bp5-minimal bp5-small"
-            title="Legacy UI"
-          >
-            Legacy
-          </a>
         </div>
       </header>
 
