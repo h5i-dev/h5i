@@ -2664,3 +2664,4 @@ _[Checkpoint: 6a35ff94 — edited web/src/Workbench.tsx; edited web/src/Workbenc
 _[Checkpoint: 6a3600e2 — edited web/src/RadioView.tsx; edited web/src/RadioView.tsx; edited web/src/Workbench.tsx]_
 ---
 
+[02:56:16] OBSERVE: read src/server.rs
