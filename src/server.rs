@@ -2824,8 +2824,19 @@ async fn api_cockpit(
     }
 }
 
-/// The prompt-maturity coach payload (roadmap §6): score + weak spots + a
-/// concrete suggested rewrite. Scores the task delegation, not the developer.
+/// One sub-signal of the prompt score: how strong the dimension is (`signal`,
+/// 0..=100) and what it contributes to the 0..=100 score (`points` of `max`).
+#[derive(Serialize)]
+pub struct PromptDimension {
+    pub label: String,
+    pub signal: f64,
+    pub points: f64,
+    pub max_points: f64,
+}
+
+/// The prompt-maturity coach payload (roadmap §6): score + per-dimension
+/// breakdown + weak spots + a concrete suggested rewrite. Scores the task
+/// delegation, not the developer.
 #[derive(Serialize)]
 pub struct PromptMaturity {
     pub prompt: String,
@@ -2833,6 +2844,9 @@ pub struct PromptMaturity {
     pub level: String,
     pub words: usize,
     pub flags: Vec<String>,
+    /// The seven weighted sub-signals behind `score` (composition before the
+    /// anti-gaming guards / length caps, which can lower the final number).
+    pub dimensions: Vec<PromptDimension>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggested_upgrade: Option<String>,
 }
@@ -2895,12 +2909,30 @@ async fn api_prompt_score(
         };
         let s = crate::prompt_score::score_prompt(&prompt);
         let upgrade = suggested_upgrade(&prompt, &s.flags);
+        let b = &s.breakdown;
+        let w = &crate::prompt_score::WEIGHTS;
+        let dim = |label: &str, signal: f64, weight: f64| PromptDimension {
+            label: label.to_string(),
+            signal: (signal * 100.0).clamp(0.0, 100.0),
+            points: 100.0 * signal * weight,
+            max_points: 100.0 * weight,
+        };
+        let dimensions = vec![
+            dim("Specificity", b.specificity, w.specificity),
+            dim("Control", b.control, w.control),
+            dim("Context", b.context, w.context),
+            dim("Structure", b.structure, w.structure),
+            dim("Diversity", b.diversity, w.diversity),
+            dim("Clarity", b.clarity, w.clarity),
+            dim("Adequacy", b.adequacy, w.adequacy),
+        ];
         Ok(Some(PromptMaturity {
             prompt,
             score: s.score,
             level: s.level.label().to_string(),
             words: s.words,
             flags: s.flags.iter().map(|f| f.label().to_string()).collect(),
+            dimensions,
             suggested_upgrade: upgrade,
         }))
     })

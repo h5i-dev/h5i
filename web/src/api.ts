@@ -523,12 +523,19 @@ export interface ReviewerCockpit {
 
 // ── Prompt-maturity coach ───────────────────────────────────────────────────
 
+export interface PromptDimension {
+  label: string;
+  signal: number;
+  points: number;
+  max_points: number;
+}
 export interface PromptMaturity {
   prompt: string;
   score: number;
   level: string;
   words: number;
   flags: string[];
+  dimensions: PromptDimension[];
   suggested_upgrade?: string | null;
 }
 

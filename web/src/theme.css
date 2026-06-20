@@ -2523,3 +2523,23 @@ body { line-height: 1.5; }
 /* widen the gauge column so the breakdown rows have room */
 .ckp-confidence { grid-template-columns: minmax(240px, 300px) 1fr; }
 @media (max-width: 760px) { .ckp-confidence { grid-template-columns: 1fr; } }
+
+/* Prompt-maturity per-dimension breakdown */
+.ckp-pdims {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--bp-border);
+  display: flex; flex-direction: column; gap: 5px;
+}
+.ckp-pdim { display: grid; grid-template-columns: 84px 1fr 56px; gap: 10px; align-items: center; }
+.ckp-pdim-label { font-size: 11px; color: var(--bp-text-muted); white-space: nowrap; }
+.ckp-pdim-track {
+  height: 6px; background: var(--bp-elev); border-radius: 3px; overflow: hidden;
+}
+.ckp-pdim-fill { display: block; height: 100%; border-radius: 3px; transition: width 0.2s; }
+.ckp-pdim-fill.high { background: var(--bp-green-hi); }
+.ckp-pdim-fill.med { background: var(--bp-orange); }
+.ckp-pdim-fill.low { background: var(--bp-red); }
+.ckp-pdim-pts {
+  font-family: "SFMono-Regular", monospace; font-variant-numeric: tabular-nums;
+  font-size: 11px; color: var(--bp-text); text-align: right;
+}
+.ckp-pdim-max { color: var(--bp-text-dim); }

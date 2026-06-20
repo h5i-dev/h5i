@@ -4,6 +4,7 @@ import { Button, Code, NonIdealState, Spinner, Tag } from "@blueprintjs/core";
 import {
   api,
   type ConfidenceFactor,
+  type PromptDimension,
   type PromptMaturity,
   type ReviewerCockpit,
   type ReviewPoint,
@@ -342,6 +343,9 @@ export function PromptCoach({
           </span>
         ) : null}
       </div>
+      {coach && coach.dimensions.length > 0 ? (
+        <PromptDimensions dims={coach.dimensions} />
+      ) : null}
       {coach?.suggested_upgrade ? (
         <div className="ckp-coach-upgrade">
           <Button
@@ -354,6 +358,31 @@ export function PromptCoach({
           {showUpgrade ? <pre className="rpl-pre">{coach.suggested_upgrade}</pre> : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// Per-dimension composition of the prompt score (7 weighted sub-signals). Each
+// row shows the signal strength (fill) and its weighted points of the max.
+function PromptDimensions({ dims }: { dims: PromptDimension[] }) {
+  return (
+    <div className="ckp-pdims">
+      {dims.map((d) => {
+        const ratio = d.max_points > 0 ? d.points / d.max_points : 0;
+        const cls = ratio >= 0.66 ? "high" : ratio >= 0.33 ? "med" : "low";
+        return (
+          <div key={d.label} className="ckp-pdim" title={`${d.label}: ${d.signal.toFixed(0)}% strength`}>
+            <span className="ckp-pdim-label">{d.label}</span>
+            <span className="ckp-pdim-track">
+              <span className={"ckp-pdim-fill " + cls} style={{ width: `${d.signal}%` }} />
+            </span>
+            <span className="ckp-pdim-pts">
+              {d.points.toFixed(1)}
+              <span className="ckp-pdim-max">/{d.max_points.toFixed(0)}</span>
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
