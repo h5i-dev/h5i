@@ -2682,3 +2682,16 @@ design+implement prompt maturity score (classical offline NLP), surface in share
 
 ---
 
+## Commit 6a37175b — 2026-06-20 22:42 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+TeamPolicy{communication,finalization}: CommunicationPolicy Sealed(default)|Discuss{scope,max_messages}; FinalizationPolicy Human|Rule(metrics)|Vote|Judge. Default hands-off = rule:tests,smallest-diff + discuss off (no human). Invariant 7 explainable-verdict; discuss only post-submit + stamps independent=false; metrics from recorded evidence; gaming/collusion/no-winner guards; team discuss + team finalize commands; P2 delivers minimal-human-labor.
+
+---
+

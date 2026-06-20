@@ -3637,3 +3637,9 @@ _[Checkpoint: 6a370fa6 — edited roadmap/team-design.md; edited roadmap/team-de
 [22:41:21] ACT: edited roadmap/team-design.md
 [22:41:39] OBSERVE: read roadmap/team-design.md
 [22:42:05] ACT: edited roadmap/team-design.md
+
+
+---
+_[Checkpoint: 6a37175b — Added opt-in discussion + automated finalization policy to team design]_
+---
+
