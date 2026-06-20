@@ -2892,3 +2892,4 @@ _[Checkpoint: 6a366f1c — session ended (auto-checkpoint)]_
 [10:44:53] OBSERVE: read taskengine.md
 [10:45:01] OBSERVE: read preflight.sh
 [10:45:05] OBSERVE: read init-docs.md
+[10:45:11] OBSERVE: read activate.md
