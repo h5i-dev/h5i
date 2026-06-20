@@ -2876,3 +2876,4 @@ _[Checkpoint: 6a366a01 — edited web/src/ContextView.tsx; edited web/src/Contex
 [10:44:41] OBSERVE: read settings.json
 [10:44:43] OBSERVE: read CLAUDE.md
 [10:44:43] OBSERVE: read pytask.py
+[10:44:44] NOTE: DEFERRAL: one inventorying what `h5i env` already does (including its deferred work). I'll synthesize a concrete "what's worth borrowing" comparison once they r…
