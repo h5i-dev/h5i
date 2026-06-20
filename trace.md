@@ -3310,3 +3310,4 @@ I'll kick off the reference-doc updates now via a fork, and in parallel ask you 
 _[Checkpoint: 6a36f3f9 — edited docs/features/index.html; edited docs/features/index.html; edited docs/features/index.html]_
 ---
 
+[20:11:53] OBSERVE: read docs/sitemap.xml
