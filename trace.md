@@ -2733,3 +2733,4 @@ _[Checkpoint: 6a3607b1 — edited web/src/ReplayView.tsx; edited web/src/ReplayV
 _[Checkpoint: 6a360880 — edited web/src/ReplayView.tsx; edited web/src/ReplayView.tsx; edited web/src/Workbench.tsx]_
 ---
 
+[03:28:53] OBSERVE: read src/server.rs
