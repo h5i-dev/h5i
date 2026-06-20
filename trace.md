@@ -3303,3 +3303,4 @@ _[Checkpoint: 6a36f1ec — edited src/repository.rs; edited .claude/h5i.md; edit
 
 I'll kick off the reference-doc updates now via a fork, and in parallel ask you about the blog posts since deleting published articles (with live URLs/SEO) is a real call.
 [20:11:37] THINK: Let me map the blog structure precisely.
+[20:11:37] THINK: Let me get the full passing-mention picture, then delegate the blog work to a parallel fork (disjoint files from the running one).
