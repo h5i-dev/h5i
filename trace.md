@@ -3360,3 +3360,4 @@ _[Checkpoint: 6a36f40e — edited docs/features/index.html; edited docs/features
 [20:16:23] ACT: edited docs/blog/what-is-ai-aware-version-control/index.html
 [20:16:26] OBSERVE: read docs/blog/pr-body-ai-code-review/index.html
 [20:16:30] ACT: edited docs/blog/pr-body-ai-code-review/index.html
+[20:16:38] ACT: edited docs/blog/context-dag-versioned-agent-reasoning/index.html
