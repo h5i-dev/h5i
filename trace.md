@@ -3523,3 +3523,4 @@ _[Checkpoint: 6a370ba6 — wrote roadmap/team-design.md; wrote roadmap/team-desi
 _[Checkpoint: 6a370c78 — Deepened consultation on h5i team design: reviewed current env/msg/objects/server implementation, sent rigorous invariants/schema/MVP review, reviewed Claude's roadmap/team-design.md, and sent required corrections on secret redaction, derived state, sealed wording, event conflicts, grants, and apply semantics.]_
 ---
 
+[21:56:09] ACT: edited roadmap/team-design.md
