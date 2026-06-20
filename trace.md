@@ -3468,3 +3468,4 @@ _[Checkpoint: 6a370ab3 — Consulted with Claude on ensemble/team system design:
 _[Checkpoint: 6a370abd — session ended (auto-checkpoint)]_
 ---
 
+[21:50:11] ACT: wrote roadmap/team-design.md
