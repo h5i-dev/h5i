@@ -2640,3 +2640,9 @@ Rather than a from-scratch rewrite (the theme and data layer are good), I'll **r
 [02:48:06] THINK: Let me run clippy (CI gate is `-D warnings`) on the lib to catch any lint issues now while it's fresh.
 [02:48:06] THINK: `ReviewView.tsx` is orphaned — let me remove it, then do the full cargo build and a live verification.
 [02:48:06] THINK: Let me run clippy across all targets (CI's `-D warnings` gate) and the server unit tests, with limited jobs per the WSL2 OOM note.
+
+
+---
+_[Checkpoint: 6a35ff66 — edited web/src/Workbench.tsx; edited web/src/Workbench.tsx; edited web/src/Workbench.tsx]_
+---
+
