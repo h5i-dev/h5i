@@ -2830,4 +2830,4 @@ _[Checkpoint: 6a366a01 — edited web/src/ContextView.tsx; edited web/src/Contex
 [10:43:52] OBSERVE: read docker.sh
 [10:43:54] OBSERVE: read commands.slot.sh
 [10:43:54] OBSERVE: read src/env.rs
-[10:43:54] OBSERVE: read slot-management-system.md
+[10:43:54] OBSERVE: read checksum-and-naming-system.md
