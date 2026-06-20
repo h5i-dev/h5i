@@ -3298,3 +3298,4 @@ _[Checkpoint: 6a36f1ec — edited src/repository.rs; edited .claude/h5i.md; edit
 [20:11:01] ACT: edited docs/features/index.html
 [20:11:04] OBSERVE: read docs/features/index.html
 [20:11:12] ACT: edited docs/features/index.html
+[20:11:37] THINK: html`. Let me scope the real feature references (filtering false positives like "reclaim"/"isolation claim") and check whether the man page is also generated.
