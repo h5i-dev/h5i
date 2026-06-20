@@ -2342,3 +2342,4 @@ _[Checkpoint: 6a35d4db — edited tests/cli_integration.rs; edited MANUAL.md; ed
 [00:20:35] ACT: edited src/objects.rs
 [00:20:39] ACT: edited src/objects.rs
 [00:21:29] ACT: edited src/main.rs
+[00:27:43] OBSERVE: read man/man1/h5i.1
