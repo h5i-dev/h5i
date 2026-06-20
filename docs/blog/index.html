@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>The h5i Blog: Auditable Workspaces for AI Agents</title>
   <meta name="description" content="Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, and compressed tool logs, all Git-backed, in your repo.">
-  <meta name="keywords" content="auditable workspaces for ai agents, ai agent sandbox, claude code blog, ai code review, prompt provenance, agent confinement, compressed tool logs, content-addressed claims, prompt injection detection, h5i blog">
+  <meta name="keywords" content="auditable workspaces for ai agents, ai agent sandbox, claude code blog, ai code review, prompt provenance, agent confinement, compressed tool logs, prompt injection detection, h5i blog">
   <meta name="author" content="Koukyosyumei">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -31,7 +31,7 @@
     "@context": "https://schema.org",
     "@type": "Blog",
     "name": "The h5i Blog",
-    "description": "Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, compressed tool logs, content-addressed claims, AI provenance, and per-line AI blame — all Git-backed.",
+    "description": "Engineering posts on auditable workspaces for AI agents: sandboxed worktrees, reviewable agent work, prompt provenance, compressed tool logs, AI provenance, and per-line AI blame — all Git-backed.",
     "url": "https://h5i.dev/blog/",
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "blogPost": [
@@ -48,19 +48,16 @@
       {"@type": "BlogPosting", "headline": "How to Review Code Written by AI Agents", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/review-code-written-by-ai-agents/"},
       {"@type": "BlogPosting", "headline": "Git Notes vs h5i for AI Coding Workflows", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/"},
       {"@type": "BlogPosting", "headline": "Claude Code Hooks vs Git Hooks", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/"},
-      {"@type": "BlogPosting", "headline": "Intent-Based Rollback for AI-Generated Code", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/intent-based-rollback-ai-generated-code/"},
       {"@type": "BlogPosting", "headline": "Git as the Communication Layer for AI Agents", "datePublished": "2026-06-03", "url": "https://h5i.dev/blog/git-communication-layer-ai-agents/"},
       {"@type": "BlogPosting", "headline": "Git-Native Messaging Between AI Coding Agents", "datePublished": "2026-05-31", "url": "https://h5i.dev/blog/i5h-agent-to-agent-messaging/"},
       {"@type": "BlogPosting", "headline": "Context DAG: Version-Controlled Reasoning for AI Agents", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/context-dag-versioned-agent-reasoning/"},
       {"@type": "BlogPosting", "headline": "The AI Pull Request Body: h5i's Review Surface for Agent Work", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/pr-body-ai-code-review/"},
-      {"@type": "BlogPosting", "headline": "Content-Addressed Claims for AI Agent Memory", "datePublished": "2026-05-24", "url": "https://h5i.dev/blog/content-addressed-claims-agent-memory/"},
       {"@type": "BlogPosting", "headline": "CVE-2026-33068: When a Repo's settings.json Decides Trust", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/cve-2026-33068-bypass-permissions-settings/"},
       {"@type": "BlogPosting", "headline": "CVE-2025-59536: Claude Code Trust Dialog Bypass", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/cve-2025-59536-startup-trust-dialog/"},
       {"@type": "BlogPosting", "headline": "Giving Claude Code Persistent Memory Across Sessions", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/persistent-memory-for-claude-code/"},
       {"@type": "BlogPosting", "headline": "From Git Blame to AI Blame for AI-Era Code", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/from-git-blame-to-ai-blame/"},
       {"@type": "BlogPosting", "headline": "One Schema for Every Tool: Structured Output for AI Agents", "datePublished": "2026-06-06", "url": "https://h5i.dev/blog/structured-tool-output-schema/"},
       {"@type": "BlogPosting", "headline": "Cut Agent Token Usage 95% with h5i Capture", "datePublished": "2026-06-05", "url": "https://h5i.dev/blog/token-reduction-object-store/"},
-      {"@type": "BlogPosting", "headline": "Cut Claude Agent Costs 51% with h5i Claims", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/reduce-claude-token-costs/"},
       {"@type": "BlogPosting", "headline": "Auditing AI-Generated Code: A Practical Framework", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/auditing-ai-generated-code/"},
       {"@type": "BlogPosting", "headline": "Detecting Prompt Injection in Agent Reasoning Traces", "datePublished": "2026-05-06", "url": "https://h5i.dev/blog/prompt-injection-in-agent-traces/"},
       {"@type": "BlogPosting", "headline": "Claude Code Uncertainty Heatmap for AI Code Review", "datePublished": "2026-04-15", "url": "https://h5i.dev/blog/uncertainty-heatmap/"}
@@ -277,16 +274,6 @@
     <p>Turn captured uncertainty signals into a per-file review heatmap so human reviewers can focus on the parts of an AI-assisted diff that deserve the most attention.</p>
   </a>
 
-  <a class="post-card" href="/blog/intent-based-rollback-ai-generated-code/">
-    <div class="card-meta">
-      <span>Guide · Rollback</span>
-      <span>2026-06-03</span>
-      <span>8 min read</span>
-    </div>
-    <h2>Intent-Based Rollback for AI-Generated Code</h2>
-    <p>When an AI-generated change breaks production, the question is usually not &#x27;which hash?&#x27; It is &#x27;undo the OAuth retry change&#x27; or &#x27;revert the agent&#x27;s billing refactor.&#x27;</p>
-  </a>
-
   <a class="post-card" href="/blog/git-notes-vs-h5i-ai-coding-workflows/">
     <div class="card-meta">
       <span>Comparison · Git notes</span>
@@ -294,7 +281,7 @@
       <span>8 min read</span>
     </div>
     <h2>Git Notes vs h5i for AI Coding Workflows</h2>
-    <p>Git notes are a useful primitive for attaching metadata. h5i is the workflow layer: capture, recall, audit, share, rollback, and multi-agent context.</p>
+    <p>Git notes are a useful primitive for attaching metadata. h5i is the workflow layer: capture, recall, audit, share, and multi-agent context.</p>
   </a>
 
   <a class="post-card" href="/blog/claude-code-hooks-vs-git-hooks/">
@@ -391,7 +378,7 @@
     <div class="post-group-body">
       <div class="post-group-eyebrow">Pillar</div>
       <h2>Context compression</h2>
-      <p>The workspace keeps raw logs out of the agent's context window, recoverable, structured, searchable. Compressed tool logs and content-addressed claims.</p>
+      <p>The workspace keeps raw logs out of the agent's context window, recoverable, structured, searchable. Compressed tool logs.</p>
     </div>
   </div>
 
@@ -415,25 +402,6 @@
     <p>Compressed tool logs make output small; a unified JSON/YAML result schema makes it actionable, one shape across tests, compilers, linters, and type checkers, that an agent can branch on, dedupe, and query. h5i's layer beyond rtk/headroom.</p>
   </a>
 
-  <a class="post-card" href="/blog/content-addressed-claims-agent-memory/">
-    <div class="card-meta">
-      <span>Feature · Claims</span>
-      <span>2026-05-24</span>
-      <span>6 min read</span>
-    </div>
-    <h2>Content-Addressed Claims for AI Agent Memory</h2>
-    <p>Claims let agents reuse verified codebase facts without re-reading the same files every session. Facts stay live until their evidence changes.</p>
-  </a>
-
-  <a class="post-card" href="/blog/reduce-claude-token-costs/">
-    <div class="card-meta">
-      <span>Benchmark</span>
-      <span>2026-05-06</span>
-      <span>9 min read</span>
-    </div>
-    <h2>Cut Claude Agent Costs 51% with h5i Claims</h2>
-    <p>Prompt caching solves the cost of re-sending. It does not solve the cost of re-deriving. In a reproducible N=5 experiment, seeded claims cut estimated session cost from $4.35 to $2.13 with full task fidelity.</p>
-  </a>
 
 </section>
 

@@ -3,8 +3,7 @@ use console::style;
 use git2::Oid;
 use std::path::{Path, PathBuf};
 
-use h5i_core::claims;
-use h5i_core::claude::{keyword_search, sanitize_human_prompt, AnthropicClient};
+use h5i_core::claude::sanitize_human_prompt;
 use h5i_core::codex;
 use h5i_core::ctx;
 use h5i_core::memory;
@@ -618,14 +617,14 @@ enum Commands {
     /// Initialize the h5i sidecar in the current repository
     Init,
 
-    /// Record provenance — commit, claim, memory snapshot.
+    /// Record provenance — commit, memory snapshot.
     /// Run `h5i capture --help` for the verb table with runnable examples.
     Capture {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         rest: Vec<String>,
     },
 
-    /// Read AI history — log, blame, diff, context, claims, notes, memory, recap, resume, vibe.
+    /// Read AI history — log, blame, diff, context, notes, memory, recap, resume.
     /// Run `h5i recall --help` for the verb table.
     Recall {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -760,45 +759,6 @@ enum Commands {
         file: String,
     },
 
-    /// Revert the AI-generated commit whose intent best matches a description
-    Rollback {
-        /// Natural-language description of the change to undo (e.g. "OAuth login")
-        intent: String,
-
-        /// Number of recent commits to search
-        #[arg(short, long, default_value_t = 50)]
-        limit: usize,
-
-        /// Show the matched commit without actually reverting
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Skip the confirmation prompt
-        #[arg(short, long)]
-        yes: bool,
-    },
-
-    /// Restore the working tree to the exact state of any past commit.
-    ///
-    /// Unlike `rollback` (which creates a revert commit), `rewind` directly
-    /// overwrites files in your working tree — HEAD stays where it is, so
-    /// `git status` shows the full diff and you can review before committing.
-    ///
-    /// Current dirty state is saved to `refs/h5i/shadow/<timestamp>` before
-    /// any files are touched, so recovery is always possible.
-    Rewind {
-        /// Git commit SHA to restore (full or short). Also accepts HEAD, HEAD~1, etc.
-        sha: String,
-
-        /// Show what would change without touching the working tree.
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Skip saving the current dirty state to a shadow ref before rewinding.
-        #[arg(long)]
-        force: bool,
-    },
-
     /// Launch the h5i web dashboard in your browser
     #[cfg(feature = "web")]
     Serve {
@@ -916,15 +876,6 @@ enum Commands {
     Objects {
         #[command(subcommand)]
         action: ObjectsCommands,
-    },
-
-    /// Record and query content-addressed claims about the codebase.
-    /// Each claim pins (path, blob_oid) evidence at HEAD; it stays "live"
-    /// until any evidence blob changes, then auto-invalidates.
-    #[command(hide = true)]
-    Claims {
-        #[command(subcommand)]
-        action: ClaimsCommands,
     },
 
     /// Inspect AI session activity: footprint, uncertainty, churn, and intent graph
@@ -1937,34 +1888,6 @@ enum EnvServiceCommands {
 }
 
 #[derive(Subcommand)]
-enum ClaimsCommands {
-    /// Record a claim with evidence pinned to one or more file paths at HEAD
-    Add {
-        /// The claim text (what you want future sessions to treat as pre-verified)
-        text: String,
-        /// One or more file paths that are the evidence for this claim.
-        /// Pass repeatedly: --path src/foo.rs --path src/bar.rs
-        #[arg(short, long = "path", value_name = "PATH", required = true)]
-        paths: Vec<String>,
-        /// Author tag (default: $H5I_AGENT_ID, else "human")
-        #[arg(long)]
-        author: Option<String>,
-    },
-
-    /// List all claims with live/stale status based on current HEAD
-    List {
-        /// Group claims by file path. Multi-path claims appear under each
-        /// of their evidence paths. Replaces the per-file orientation view
-        /// that `h5i summary list` used to provide.
-        #[arg(long = "group-by-path")]
-        group_by_path: bool,
-    },
-
-    /// Remove all claims whose evidence blobs have changed since recording
-    Prune,
-}
-
-#[derive(Subcommand)]
 enum MemoryCommands {
     /// Snapshot agent memory into .git/.h5i/memory/<commit-oid>/
     Snapshot {
@@ -2349,7 +2272,7 @@ const H5I_CLAUDE_INSTRUCTIONS: &str = r#"## h5i Integration
 
 This repository uses **h5i** (a Git sidecar for AI-era version control).
 
-**Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, `h5i_claims_add`, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
+**Use the `h5i` CLI via Bash** — it works out of the box, no setup. h5i also exposes the same operations as native MCP tools (`h5i_commit`, `h5i_context_trace`, …) that avoid shell-quoting pitfalls, but they require registering the MCP server first (`claude mcp add …`). Reach for them only if that server is already configured; otherwise just use Bash.
 
 h5i metadata lives in `refs/h5i/*` and is NOT pushed by plain `git push`. Use `h5i share push` to share it.
 
@@ -2455,63 +2378,6 @@ Every `h5i capture commit` automatically snapshots the context workspace and lin
 
 ---
 
-### Claims — pin reusable facts
-
-`h5i recall claims` records content-addressed facts so future sessions don't re-derive them. Each claim pins a Merkle hash over its evidence files at HEAD; it stays **live** until any evidence blob changes, then auto-invalidates. Live claims are injected into the SessionStart prelude / `h5i recall context prompt` as pre-verified facts.
-
-**Two flavors, both stored as plain claims (only the length and path-count differ):**
-- **Cross-cutting fact** (~30 tokens, multiple paths). Example: *"HTTP only src/api/{client,auth,billing}.py."*
-- **Per-file orientation** (~80 tokens, single path) — replaces the deprecated `h5i summary`. Example: *"src/api/client.py | HTTP. fetch_user(id: int)→dict GET, create_post(...)→dict POST, delete_post(id: int)→bool DELETE. Logger \`log\` top."*
-
-**Record a claim when you have just established a non-obvious fact a future session would otherwise re-derive** — "X lives only in Y", "module M owns concern N", a subtle invariant, the public API of a struct, where *not* to look. Don't pin trivia a quick grep would answer.
-
-Via Bash:
-```bash
-h5i capture claim "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
-  --path src/api/client.py
-h5i recall claims                  # all claims, flat
-h5i recall claims --group-by-path  # claims grouped by file ("what's known about each file")
-h5i claims prune                 # drop claims whose evidence changed
-```
-
-(Or the `h5i_claims_add` / `h5i_claims_list` / `h5i_claims_prune` MCP tools if the MCP server is configured.)
-
-**Evidence-path rule — the single most important thing to get right:**
-Pick the *minimum* set of files whose content, if edited, should cause the claim to be re-checked. Ask: *"If I changed file X, would this claim's truth be in doubt?"* If no, do not include X — even if you read X while establishing the claim.
-
-Why: the claim auto-invalidates the moment *any* evidence blob changes. Over-listing guarantees rapid staleness from unrelated edits and trains future sessions to distrust claims.
-
-Concrete example. Claim: *"HTTP only in `src/api/client.py`"*.
-- ✔ Good: `--path src/api/client.py` (one path). If client.py changes, re-check. Edits to formatters/validators/main.py do not affect the truth of this claim.
-- ✖ Bad: `--path src/api/client.py --path src/utils/format.py --path main.py`. Goes stale the next time someone touches an unrelated helper — even though the claim was still true.
-
-Rule of thumb: **most good claims cite 1 file; >3 is a red flag** you're confusing "files I read" with "files that back the claim".
-
-**Other rules:**
-- Evidence paths must be tracked in HEAD.
-- If the SessionStart prelude already shows a claim covering what you were about to investigate, trust it — don't re-read the files unless the user asks.
-- If a live claim is wrong, fix it: `h5i claims prune` removes only stale ones; you can also delete the JSON in `.git/.h5i/claims/` directly to remove a wrong-but-live claim.
-
-**Write claim text in caveman style.**
-- Cross-cutting: ~30 tokens. Per-file orientation: ~80 tokens.
-- Drop articles, copulas, fluff. Keep paths, identifier names, types, numeric constants exact.
-- Live claims are re-read on every cached-prefix turn forever — every word costs forever.
-
-| | Bloated (don't) | Caveman (do) |
-|---|---|---|
-| Cross-cutting | "All HTTP-making functions in this project live only in src/api/client.py (fetch_user, create_post, delete_post). main.py and src/utils/* contain no direct HTTP." | "HTTP only src/api/client.py: fetch_user, create_post, delete_post. main.py + utils/* no HTTP." |
-| Per-file | "The src/api/client.py file is an HTTP client module that uses the requests library to call the example API. It exports three functions and a logger." | "src/api/client.py \\| HTTP. requests to api.example.com. fetch_user(id: int)→dict GET, create_post(...)→dict POST, delete_post(id: int)→bool DELETE. Logger \\`log\\` top." |
-| Invariant | "The session token must be validated using a constant-time comparison to avoid timing attacks." | "Session token: constant-time compare. Timing attack risk." |
-
-**Frequency knob (`$H5I_CLAIMS_FREQUENCY`)** — the user can tune how eagerly you record claims:
-- `off` — do not record any this session, even if one would normally be warranted.
-- `low` (default) — only non-obvious, genuinely reusable facts.
-- `high` — record liberally; pin any reusable codebase insight. The evidence-path rule applies *especially* here.
-
-The SessionStart prelude prints the active policy when it is `off` or `high`. Follow the most recent policy line you see, even if it contradicts this base guidance.
-
----
-
 ### Memory Snapshots
 
 After a significant Claude Code session, snapshot Claude's memory so it can be shared or restored:
@@ -2599,7 +2465,7 @@ h5i recall context init --goal "<one-line task summary>"
 
 **While working:**
 ```bash
-h5i recall context relevant <file>   # before editing — surfaces prior reasoning + claims that mention this file
+h5i recall context relevant <file>   # before editing — surfaces prior reasoning that mentions this file
 h5i hook codex sync           # after a burst of reads/edits — auto-traces OBSERVE/ACT and mines THINK/NOTE from your transcript
 ```
 
@@ -2616,37 +2482,6 @@ h5i recall context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 ```bash
 h5i hook codex finish --summary "<milestone summary>"
 ```
-
-### Claims — pin reusable facts
-
-After establishing a non-obvious fact a future session would otherwise re-derive
-(where a helper lives, which module owns a concern, a subtle invariant), record
-a content-addressed claim pointing at the files that back it. Live claims are
-injected into `h5i hook codex prelude` / `h5i recall context prompt`, so the next session
-treats them as pre-verified — trust them; don't re-read the files.
-
-**Two flavors:**
-
-Cross-cutting fact (~30 tokens, multiple paths):
-```bash
-h5i capture claim "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
-  --path src/api/client.py
-```
-
-Per-file orientation (~80 tokens, single path) — replaces the deprecated `h5i summary`:
-```bash
-h5i capture claim "src/api/client.py | HTTP. fetch_user(id: int)→dict GET, create_post(...)→dict POST, delete_post(id: int)→bool DELETE. Logger \`log\` top." \
-  --path src/api/client.py
-```
-
-Inspect:
-```bash
-h5i recall claims                    # live / stale badges
-h5i recall claims --group-by-path    # claims grouped by file ("what's known about each file")
-h5i claims prune                   # drop stale claims
-```
-
-**Caveman style.** Drop articles, copulas, fluff. Keep paths, identifier names, types, numbers exact. Pick the *minimum* evidence-path set: most good claims cite 1 file; >3 is a red flag you're confusing "files I read" with "files that back the claim". Live claim text is re-read on every cached-prefix turn forever — every word costs forever.
 
 ### Code commits
 
@@ -2867,32 +2702,6 @@ fn print_shared_context_prelude(workdir: &Path) {
         }
     }
 
-    if let Ok(h5i_repo) = H5iRepository::open(workdir) {
-        if let Ok(live) = claims::live_claims(&h5i_repo.h5i_root, h5i_repo.git()) {
-            if !live.is_empty() {
-                const MAX_SHOWN: usize = 10;
-                println!();
-                println!("[h5i] Live claims (pre-verified facts — trust, don't re-derive):");
-                for claim in live.iter().take(MAX_SHOWN) {
-                    let paths = claim.evidence_paths.join(", ");
-                    println!("  ● {}", claim.text);
-                    println!("      ↳ {paths}");
-                }
-                if live.len() > MAX_SHOWN {
-                    println!(
-                        "  … {} more. Run `h5i claims list` to see all.",
-                        live.len() - MAX_SHOWN
-                    );
-                }
-            }
-        }
-    }
-
-    if let Some(hint) = claims::ClaimsFrequency::from_env().prelude_hint() {
-        println!();
-        println!("{hint}");
-    }
-
     println!();
     println!("[h5i] Use `h5i context show` for full details.");
 }
@@ -2950,19 +2759,6 @@ fn session_start_context(workdir: &Path) -> Option<String> {
             let _ = writeln!(out, "[h5i] Open TODOs:");
             for t in snap.todo_items.iter().take(5) {
                 let _ = writeln!(out, "  - {t}");
-            }
-        }
-        if let Ok(h5i_repo) = H5iRepository::open(workdir) {
-            if let Ok(live) = claims::live_claims(&h5i_repo.h5i_root, h5i_repo.git()) {
-                if !live.is_empty() {
-                    let _ = writeln!(out);
-                    let _ = writeln!(out, "[h5i] Live claims (pre-verified facts):");
-                    for claim in live.iter().take(10) {
-                        let paths = claim.evidence_paths.join(", ");
-                        let _ = writeln!(out, "  - {}", claim.text);
-                        let _ = writeln!(out, "    evidence: {paths}");
-                    }
-                }
             }
         }
         let _ = writeln!(out);
@@ -4079,12 +3875,6 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     example: "h5i capture commit -m \"fix retry loop\" \\\n        --model claude-sonnet-4-6 --agent claude-code --tests",
                 },
                 NounVerb {
-                    verb: "claim",
-                    summary: "Pin a content-addressed fact backed by evidence files (auto-invalidates on edit).",
-                    legacy: "h5i claims add",
-                    example: "h5i capture claim \"HTTP only src/api/client.py: fetch_user, create_post\" \\\n        --path src/api/client.py",
-                },
-                NounVerb {
                     verb: "memory",
                     summary: "Snapshot agent (Claude/Codex) memory state into refs/h5i/memory.",
                     legacy: "h5i memory snapshot",
@@ -4098,8 +3888,8 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                 },
             ],
             &[
-                "Tip: `h5i commit` and `h5i claims add` still work but emit a deprecation hint.",
-                "MCP equivalents: h5i_commit, h5i_claims_add, h5i_memory_snapshot.",
+                "Tip: `h5i commit` still works but emits a deprecation hint.",
+                "MCP equivalents: h5i_commit, h5i_memory_snapshot.",
                 "`h5i capture run` keeps test/build logs out of your context — rehydrate via `h5i recall object`.",
             ],
         ),
@@ -4123,12 +3913,6 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     summary: "Reasoning workspace: goal, milestones, OBSERVE/THINK/ACT trace, branches.",
                     legacy: "h5i context",
                     example: "h5i recall context show --trace --window 5",
-                },
-                NounVerb {
-                    verb: "claims",
-                    summary: "List live & stale content-addressed claims.",
-                    legacy: "h5i claims list",
-                    example: "h5i recall claims --group-by-path",
                 },
                 NounVerb {
                     verb: "notes",
@@ -4155,12 +3939,6 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     example: "h5i recall resume",
                 },
                 NounVerb {
-                    verb: "vibe",
-                    summary: "Quick AI-footprint audit (also under `audit`).",
-                    legacy: "h5i vibe",
-                    example: "h5i recall vibe",
-                },
-                NounVerb {
                     verb: "object",
                     summary: "Rehydrate a captured raw output (full bytes, or --summary / --manifest).",
                     legacy: "(new)",
@@ -4175,7 +3953,7 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
             ],
             &[
                 "Tip: legacy top-level forms (`h5i log`, `h5i blame`, …) still work — they print a one-line deprecation hint.",
-                "MCP equivalents: h5i_log, h5i_blame, h5i_context_show, h5i_claims_list, h5i_notes_show.",
+                "MCP equivalents: h5i_log, h5i_blame, h5i_context_show, h5i_notes_show.",
             ],
         ),
         "audit" => (
@@ -4437,10 +4215,9 @@ fn maybe_legacy_hint(argv: &[String]) {
             "push" => Some("h5i share push"),
             "pull" => Some("h5i share pull"),
             "memory" => Some("h5i recall memory  (or `h5i capture memory` / `h5i share memory`)"),
-            "claims" => Some("h5i recall claims  (or `h5i capture claim`)"),
             "notes" => Some("h5i recall notes   (or `h5i audit review`)"),
             "context" => Some("h5i recall context"),
-            "vibe" => Some("h5i recall vibe    (or `h5i audit vibe`)"),
+            "vibe" => Some("h5i audit vibe"),
             "compliance" => Some("h5i audit compliance"),
             "pr" => Some("h5i share pr"),
             _ => None,
@@ -5720,272 +5497,6 @@ fn main() -> anyhow::Result<()> {
                     style(&r.agent_info).blue(),
                     r.line_content
                 );
-            }
-        }
-
-        Commands::Rollback {
-            intent,
-            limit,
-            dry_run,
-            yes,
-        } => {
-            let repo = H5iRepository::open(".")?;
-
-            println!(
-                "{} {} \"{}\" {} {} commits",
-                LOOKING,
-                style("Searching for intent:").cyan().bold(),
-                style(&intent).yellow(),
-                style("across last").dim(),
-                style(limit).dim(),
-            );
-
-            let commits = repo.list_ai_commits(limit)?;
-            if commits.is_empty() {
-                println!("{} No commits found in this repository.", WARN);
-                return Ok(());
-            }
-
-            // Semantic search via Claude, or fall back to keyword matching.
-            let matched_oid: Option<String> = if let Some(claude) = AnthropicClient::from_env() {
-                println!(
-                    "{} {} {}",
-                    STEP,
-                    style("Using Claude for semantic search").dim(),
-                    style(format!("({})", claude.model())).dim(),
-                );
-                claude.find_matching_commit(&commits, &intent)?
-            } else {
-                println!(
-                    "{} {} {}",
-                    WARN,
-                    style("ANTHROPIC_API_KEY not set — using keyword fallback.").yellow(),
-                    style("Set it for semantic search.").dim(),
-                );
-                keyword_search(&commits, &intent).map(|c| c.oid.clone())
-            };
-
-            let oid_str = match matched_oid {
-                Some(o) => o,
-                None => {
-                    println!(
-                        "{} No commit found matching: \"{}\"",
-                        WARN,
-                        style(&intent).yellow()
-                    );
-                    return Ok(());
-                }
-            };
-
-            let oid = Oid::from_str(&oid_str)?;
-            let commit = repo.git().find_commit(oid)?;
-            let record = repo.load_h5i_record(oid).ok();
-
-            println!("\n{}", style("Matched commit:").bold().underlined());
-            println!(
-                "  {} {}",
-                style("commit").yellow(),
-                style(&oid_str).magenta().bold()
-            );
-            println!(
-                "  {:<10} {}",
-                style("Message:").dim(),
-                commit.message().unwrap_or("").trim()
-            );
-            if let Some(ref r) = record {
-                if let Some(ref ai) = r.ai_metadata {
-                    if !ai.agent_id.is_empty() {
-                        println!(
-                            "  {:<10} {} {}",
-                            style("Agent:").dim(),
-                            style(&ai.agent_id).cyan(),
-                            style(format!("({})", ai.model_name)).dim(),
-                        );
-                    }
-                    if !ai.prompt.is_empty() {
-                        println!(
-                            "  {:<10} \"{}\"",
-                            style("Prompt:").dim(),
-                            style(&ai.prompt).italic()
-                        );
-                    }
-                }
-                println!(
-                    "  {:<10} {}",
-                    style("Date:").dim(),
-                    r.timestamp.format("%Y-%m-%d %H:%M UTC")
-                );
-            }
-
-            if dry_run {
-                println!(
-                    "\n{} {}",
-                    style("--dry-run").bold(),
-                    style("No changes made.").dim()
-                );
-                return Ok(());
-            }
-
-            // Warn if later commits causally depend on this one
-            let dependents = repo.causal_dependents(oid, 200);
-            if !dependents.is_empty() {
-                println!(
-                    "\n{} {} later commit{} causally depend{} on this one:",
-                    style("⚠ Warning:").yellow().bold(),
-                    dependents.len(),
-                    if dependents.len() == 1 { "" } else { "s" },
-                    if dependents.len() == 1 { "s" } else { "" },
-                );
-                for (dep_oid, dep_msg) in &dependents {
-                    println!(
-                        "  {} {} {}",
-                        style("→").yellow(),
-                        style(&dep_oid.to_string()[..8]).magenta(),
-                        style(format!("\"{}\"", dep_msg)).dim().italic()
-                    );
-                }
-                if !yes {
-                    print!("\nContinue anyway? [y/N] ");
-                    use std::io::Write as _;
-                    std::io::stdout().flush()?;
-                    let mut input = String::new();
-                    std::io::stdin().read_line(&mut input)?;
-                    if !input.trim().eq_ignore_ascii_case("y") {
-                        println!("{} Aborted.", style("!").dim());
-                        return Ok(());
-                    }
-                }
-            }
-
-            if !yes {
-                print!("\n{} [y/N] ", style("Revert this commit?").bold());
-                use std::io::Write as _;
-                std::io::stdout().flush()?;
-                let mut input = String::new();
-                std::io::stdin().read_line(&mut input)?;
-                if !input.trim().eq_ignore_ascii_case("y") {
-                    println!("{} Aborted.", style("!").dim());
-                    return Ok(());
-                }
-            }
-
-            let new_oid = repo.revert_commit(oid)?;
-            println!(
-                "{} {} {}",
-                SUCCESS,
-                style("Revert commit created:").green(),
-                style(new_oid).magenta().bold()
-            );
-        }
-
-        Commands::Rewind {
-            sha,
-            dry_run,
-            force,
-        } => {
-            let repo = H5iRepository::open(".")?;
-
-            // Resolve the SHA to show a friendly preview before touching anything.
-            let target_obj = repo
-                .git()
-                .revparse_single(&sha)
-                .map_err(|_| anyhow::anyhow!("'{}' does not resolve to a git object", sha))?;
-            let target_commit = target_obj
-                .peel_to_commit()
-                .map_err(|_| anyhow::anyhow!("'{}' is not a commit", sha))?;
-            let short_sha = &target_commit.id().to_string()[..8];
-            let msg = target_commit
-                .message()
-                .unwrap_or("")
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim();
-
-            println!(
-                "{} {} {} {}",
-                LOOKING,
-                style("Rewinding to:").bold(),
-                style(short_sha).magenta(),
-                style(format!("\"{}\"", msg)).italic().dim(),
-            );
-
-            let (shadow_ref, changed) = repo.rewind(&sha, force, dry_run)?;
-
-            if dry_run {
-                println!(
-                    "\n  {} {} file{} would change:\n",
-                    style("◈").dim(),
-                    style(changed.len()).cyan().bold(),
-                    if changed.len() == 1 { "" } else { "s" }
-                );
-                for (path, kind) in &changed {
-                    let symbol = match *kind {
-                        "added" => style("+").green(),
-                        "deleted" => style("-").red(),
-                        _ => style("~").yellow(),
-                    };
-                    println!("    {} {}", symbol, style(path).dim());
-                }
-                println!(
-                    "\n{} {}",
-                    style("--dry-run").bold(),
-                    style("No changes made.").dim()
-                );
-                return Ok(());
-            }
-
-            if let Some(ref r) = shadow_ref {
-                println!(
-                    "  {} Dirty state saved → {}",
-                    style("◈").dim(),
-                    style(r).cyan(),
-                );
-                println!(
-                    "    {} {}",
-                    style("Recover with:").dim(),
-                    style(format!("git checkout {} -- .", r)).cyan(),
-                );
-            }
-
-            let added = changed.iter().filter(|(_, k)| *k == "added").count();
-            let deleted = changed.iter().filter(|(_, k)| *k == "deleted").count();
-            let modded = changed.len() - added - deleted;
-
-            println!(
-                "\n{} {} file{} restored  {} added  {} modified  {} deleted",
-                SUCCESS,
-                style(changed.len()).green().bold(),
-                if changed.len() == 1 { "" } else { "s" },
-                style(added).green(),
-                style(modded).yellow(),
-                style(deleted).red(),
-            );
-            println!(
-                "  {} HEAD stays at {} — review with {} before committing.",
-                style("◈").dim(),
-                style(
-                    repo.git()
-                        .head()?
-                        .peel_to_commit()
-                        .map(|c| c.id().to_string()[..8].to_string())
-                        .unwrap_or_default()
-                )
-                .magenta(),
-                style("git diff HEAD").cyan(),
-            );
-
-            // Record the rewind in the context workspace if one exists.
-            let workdir = repo.git().workdir().map(|p| p.to_path_buf());
-            if let Some(ref wd) = workdir {
-                if ctx::is_initialized(wd) {
-                    let _ = ctx::append_log(
-                        wd,
-                        "ACT",
-                        &format!("h5i rewind: restored working tree to {short_sha} \"{msg}\""),
-                        false,
-                    );
-                }
             }
         }
 
@@ -9717,54 +9228,6 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Claims { action } => {
-            let repo = H5iRepository::open(".")?;
-
-            match action {
-                ClaimsCommands::Add {
-                    text,
-                    paths,
-                    author,
-                } => {
-                    let claim = claims::add(&repo.h5i_root, repo.git(), &text, paths, author)?;
-                    println!(
-                        "{} Recorded claim {}",
-                        SUCCESS,
-                        style(&claim.id).magenta().bold(),
-                    );
-                    println!("  {}  {}", style("↳").dim(), style(&claim.text).dim());
-                    println!(
-                        "  {}  evidence: {}",
-                        style("↳").dim(),
-                        style(claim.evidence_paths.join(", ")).dim()
-                    );
-                }
-
-                ClaimsCommands::List { group_by_path } => {
-                    let entries = claims::list_with_status(&repo.h5i_root, repo.git())?;
-                    if group_by_path {
-                        claims::print_list_grouped_by_path(&entries);
-                    } else {
-                        claims::print_list(&entries);
-                    }
-                }
-
-                ClaimsCommands::Prune => {
-                    let removed = claims::prune_stale(&repo.h5i_root, repo.git())?;
-                    if removed == 0 {
-                        println!("{} No stale claims — nothing to prune.", style("ℹ").blue(),);
-                    } else {
-                        println!(
-                            "{} Pruned {} stale claim{}",
-                            SUCCESS,
-                            style(removed).cyan().bold(),
-                            if removed == 1 { "" } else { "s" },
-                        );
-                    }
-                }
-            }
-        }
-
         Commands::Context { action } => {
             let workdir = Path::new(".");
             match action {
@@ -9940,23 +9403,6 @@ fn main() -> anyhow::Result<()> {
 
                 ContextCommands::Prompt => {
                     print!("{}", ctx::system_prompt(workdir));
-                    // Append live, content-addressed claims so the next session
-                    // can skip re-deriving facts that are still evidence-valid.
-                    // Single-path claims serve as per-file orientations
-                    // (the role formerly held by h5i summary).
-                    if let Ok(h5i_repo) = H5iRepository::open(".") {
-                        if let Ok(live) = claims::live_claims(&h5i_repo.h5i_root, h5i_repo.git()) {
-                            print!("{}", claims::render_preamble(&live));
-                        }
-                    }
-                    // Surface the user-tuned frequency policy (off/high) so the
-                    // agent's claim-recording behaviour tracks the env var under
-                    // pipelines that build the prompt via `h5i context prompt`,
-                    // not just via the SessionStart hook.
-                    if let Some(hint) = claims::ClaimsFrequency::from_env().prelude_hint() {
-                        println!();
-                        println!("{hint}");
-                    }
                 }
 
                 ContextCommands::Scan { branch, json } => {

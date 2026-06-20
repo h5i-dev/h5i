@@ -21,7 +21,6 @@ pub const STORAGE_VERSION_FILE: &str = "storage-version";
 
 const REQUIRED_DIRS: &[&str] = &[
     "metadata",
-    "claims",
     "memory",
     "session_log",
     // Content-addressed raw-output store for the token-reduction feature.
@@ -218,7 +217,6 @@ pub fn doctor(
     }
 
     validate_refs(repo, &mut issues);
-    validate_claim_files(&h5i_root, &mut issues)?;
     validate_pending_context(&h5i_root, &mut issues)?;
 
     let export_path = if let Some(dir) = export_dir {
@@ -309,30 +307,6 @@ fn validate_refs(repo: &Repository, issues: &mut Vec<DoctorIssue>) {
             )),
         }
     }
-}
-
-fn validate_claim_files(h5i_root: &Path, issues: &mut Vec<DoctorIssue>) -> Result<(), H5iError> {
-    let dir = h5i_root.join("claims");
-    if !dir.exists() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(&dir).map_err(|e| H5iError::with_path(e, &dir))? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("json") {
-            continue;
-        }
-        let raw = fs::read_to_string(&path).map_err(|e| H5iError::with_path(e, &path))?;
-        if let Err(e) = serde_json::from_str::<crate::claims::Claim>(&raw) {
-            issues.push(issue(
-                DoctorSeverity::Error,
-                "corrupt_claim",
-                format!("claim file is not valid h5i claim JSON: {} ({e})", path.display()),
-                Some("move or delete the corrupt claim file"),
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn validate_pending_context(h5i_root: &Path, issues: &mut Vec<DoctorIssue>) -> Result<(), H5iError> {
@@ -541,31 +515,17 @@ mod tests {
     }
 
     #[test]
-    fn doctor_flags_corrupt_claim_json() {
-        let (_dir, repo) = git_repo();
-        let h5i_root = h5i_root_for_repo(&repo).unwrap();
-        ensure_layout(&h5i_root).unwrap();
-        let claims_dir = h5i_root.join("claims");
-        fs::write(claims_dir.join("bad.json"), "{not valid json").unwrap();
-
-        let report = doctor(&repo, false, None).unwrap();
-
-        assert!(!report.ok);
-        assert!(report.issues.iter().any(|i| i.code == "corrupt_claim"));
-    }
-
-    #[test]
     fn doctor_export_writes_manifest_and_sidecar_copy() {
         let (_dir, repo) = git_repo();
         let h5i_root = h5i_root_for_repo(&repo).unwrap();
         ensure_layout(&h5i_root).unwrap();
-        fs::write(h5i_root.join("claims").join("note.txt"), "keep me").unwrap();
+        fs::write(h5i_root.join("memory").join("note.txt"), "keep me").unwrap();
         let export_parent = tempdir().unwrap();
 
         let report = doctor(&repo, false, Some(export_parent.path())).unwrap();
         let export_path = report.export_path.expect("export path");
 
         assert!(export_path.join("manifest.json").is_file());
-        assert!(export_path.join("sidecar").join("claims").join("note.txt").is_file());
+        assert!(export_path.join("sidecar").join("memory").join("note.txt").is_file());
     }
 }

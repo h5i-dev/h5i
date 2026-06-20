@@ -1,5 +1,4 @@
 {
-  "enabledPlugins": {},
   "env": {
     "H5I_AGENT": "claude"
   },
@@ -8,7 +7,7 @@
       {
         "hooks": [
           {
-            "command": "h5i claude sync",
+            "command": "h5i hook claude sync",
             "type": "command"
           }
         ],
@@ -40,7 +39,7 @@
       {
         "hooks": [
           {
-            "command": "h5i msg hook --block",
+            "command": "h5i hook claude finish",
             "type": "command"
           }
         ]
@@ -48,7 +47,7 @@
       {
         "hooks": [
           {
-            "command": "h5i claude finish",
+            "command": "h5i msg hook --block",
             "type": "command"
           }
         ]
@@ -58,7 +57,7 @@
       {
         "hooks": [
           {
-            "command": "h5i claude prompt",
+            "command": "h5i hook claude prompt",
             "type": "command"
           }
         ]

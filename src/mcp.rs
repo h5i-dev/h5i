@@ -9,7 +9,6 @@
 //! | Tool | h5i equivalent |
 //! |------|----------------|
 //! | `h5i_commit` | `h5i commit` |
-//! | `h5i_rewind` | `h5i rewind` |
 //! | `h5i_log` | `h5i log` |
 //! | `h5i_blame` | `h5i blame` |
 //! | `h5i_notes_show` | `h5i notes show` |
@@ -25,9 +24,6 @@
 //! | `h5i_context_merge` | `h5i context merge` |
 //! | `h5i_context_show` | `h5i context show` |
 //! | `h5i_context_status` | `h5i context status` |
-//! | `h5i_claims_add` | `h5i claims add` |
-//! | `h5i_claims_list` | `h5i claims list` |
-//! | `h5i_claims_prune` | `h5i claims prune` |
 //!
 //! ## Resources exposed
 //!
@@ -45,7 +41,6 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::claims;
 use crate::ctx::{self, ContextOpts};
 use crate::repository::H5iRepository;
 use crate::session_log;
@@ -272,35 +267,6 @@ pub fn tool_definitions() -> Value {
                     }
                 },
                 "required": ["message"]
-            }
-        },
-        // ── rewind ────────────────────────────────────────────────────────────
-        {
-            "name": "h5i_rewind",
-            "description": "Restore the working tree to the exact file state of any past commit \
-                without moving HEAD. Use this to recover from a bad agent run: files are \
-                overwritten to match the target commit, HEAD stays put, and `git diff HEAD` \
-                shows the full picture before you decide whether to commit. \
-                Current dirty state is saved to refs/h5i/shadow/<timestamp> first so \
-                recovery is always possible. Accepts full or short SHAs and rev expressions \
-                like HEAD~3.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "sha": {
-                        "type": "string",
-                        "description": "Git commit SHA or rev expression to restore (e.g. 'abc1234', 'HEAD~2')."
-                    },
-                    "dry_run": {
-                        "type": "boolean",
-                        "description": "If true, return the list of files that would change without touching the working tree."
-                    },
-                    "force": {
-                        "type": "boolean",
-                        "description": "If true, skip saving dirty state to a shadow ref before rewinding."
-                    }
-                },
-                "required": ["sha"]
             }
         },
         // ── notes/analyze ─────────────────────────────────────────────────────
@@ -590,70 +556,6 @@ pub fn tool_definitions() -> Value {
                     }
                 },
                 "required": ["query"]
-            }
-        },
-        // ── claims ─────────────────────────────────────────────────────────────
-        {
-            "name": "h5i_claims_add",
-            "description": "Record a content-addressed claim — a short fact about the \
-                codebase that a future session can treat as pre-verified. The claim \
-                is pinned via a Merkle hash over the current blob OIDs of the \
-                evidence paths at HEAD, so it auto-invalidates the instant any \
-                evidence file changes. Use this AFTER pinning down a non-obvious \
-                fact that would otherwise be re-derived: where a helper lives, which \
-                module owns a concern, a subtle invariant, or where NOT to look. \
-                Skip it for trivia a quick grep would answer. All evidence paths \
-                must be tracked in HEAD. Keep evidence paths tight — over-listing \
-                makes the claim go stale on unrelated edits.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "The claim itself (e.g. 'HTTP helpers live only in \
-                            src/api/client.py'). Keep it short, specific, and reusable."
-                    },
-                    "paths": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "File paths tracked in HEAD that are the evidence for \
-                            this claim. Any edit to any of these files will invalidate the \
-                            claim. List ONLY the files that genuinely back the statement.",
-                        "minItems": 1
-                    },
-                    "author": {
-                        "type": "string",
-                        "description": "Optional author tag. Defaults to $H5I_AGENT_ID, \
-                            then 'human'."
-                    }
-                },
-                "required": ["text", "paths"]
-            }
-        },
-        {
-            "name": "h5i_claims_list",
-            "description": "List all recorded claims with their live/stale status. A \
-                claim is 'live' when its evidence blobs match the recorded Merkle \
-                hash at HEAD, and 'stale' when any evidence file has changed. \
-                Use this to see what facts are already pinned before redoing \
-                exploratory work — the SessionStart prelude already surfaces live \
-                claims automatically, so this is mainly for verification or \
-                debugging.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {}
-            }
-        },
-        {
-            "name": "h5i_claims_prune",
-            "description": "Delete every claim whose evidence blobs no longer match \
-                HEAD (status = stale). Live claims are left untouched. Returns the \
-                number of claims removed. Safe to run at the end of a session that \
-                made significant edits — it clears out guidance that the code has \
-                outgrown, so the next session is not misled by stale pins.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {}
             }
         },
         // ── capture run (token reduction) ──────────────────────────────────────
@@ -1140,31 +1042,6 @@ fn tool_commit(params: &Value, workdir: &Path) -> Result<Value> {
     })))
 }
 
-fn tool_rewind(params: &Value, workdir: &Path) -> Result<Value> {
-    let sha = params
-        .get("sha")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("missing required param: sha"))?;
-    let dry_run = params.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
-    let force   = params.get("force").and_then(Value::as_bool).unwrap_or(false);
-
-    let repo = H5iRepository::open(workdir)?;
-    let (shadow_ref, changed) = repo.rewind(sha, force, dry_run)?;
-
-    let files: Vec<serde_json::Value> = changed
-        .iter()
-        .map(|(p, k)| serde_json::json!({ "path": p, "change": k }))
-        .collect();
-
-    Ok(json_content(serde_json::json!({
-        "dry_run": dry_run,
-        "target_sha": sha,
-        "shadow_ref": shadow_ref,
-        "files_changed": files.len(),
-        "files": files,
-    })))
-}
-
 fn tool_notes_analyze(_params: &Value, workdir: &Path) -> Result<Value> {
     let repo = H5iRepository::open(workdir)?;
     let head_oid = repo.git().head()?.peel_to_commit()?.id().to_string();
@@ -1417,92 +1294,6 @@ fn tool_context_pack(_params: &Value, workdir: &Path) -> Result<Value> {
             "Nothing to pack — context history is already compact.".to_string()
         } else {
             format!("Packed {squashed} old context commits. Run `git gc` to reclaim disk space.")
-        }
-    })))
-}
-
-// ── Claims handlers ───────────────────────────────────────────────────────────
-
-fn tool_claims_add(params: &Value, workdir: &Path) -> Result<Value> {
-    let text = params
-        .get("text")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("missing required param: text"))?;
-    let paths_value = params
-        .get("paths")
-        .ok_or_else(|| anyhow::anyhow!("missing required param: paths"))?;
-    let paths: Vec<String> = paths_value
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("paths must be an array of strings"))?
-        .iter()
-        .map(|v| {
-            v.as_str()
-                .map(str::to_string)
-                .ok_or_else(|| anyhow::anyhow!("paths must contain strings only"))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    if paths.is_empty() {
-        anyhow::bail!("paths must contain at least one element");
-    }
-    let author = params
-        .get("author")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-
-    let repo = H5iRepository::open(workdir)?;
-    let claim = claims::add(&repo.h5i_root, repo.git(), text, paths, author)?;
-    Ok(json_content(json!({
-        "id": claim.id,
-        "text": claim.text,
-        "evidence_paths": claim.evidence_paths,
-        "evidence_oid": claim.evidence_oid,
-        "author": claim.author,
-        "created_at": claim.created_at.to_rfc3339(),
-    })))
-}
-
-fn tool_claims_list(_params: &Value, workdir: &Path) -> Result<Value> {
-    let repo = H5iRepository::open(workdir)?;
-    let entries = claims::list_with_status(&repo.h5i_root, repo.git())?;
-    let rendered: Vec<Value> = entries
-        .iter()
-        .map(|e| {
-            json!({
-                "id": e.claim.id,
-                "text": e.claim.text,
-                "status": match e.status {
-                    claims::ClaimStatus::Live => "live",
-                    claims::ClaimStatus::Stale => "stale",
-                },
-                "evidence_paths": e.claim.evidence_paths,
-                "evidence_oid": e.claim.evidence_oid,
-                "current_evidence_oid": e.current_evidence_oid,
-                "author": e.claim.author,
-                "created_at": e.claim.created_at.to_rfc3339(),
-            })
-        })
-        .collect();
-    let live = entries
-        .iter()
-        .filter(|e| e.status == claims::ClaimStatus::Live)
-        .count();
-    let stale = entries.len() - live;
-    Ok(json_content(json!({
-        "claims": rendered,
-        "live": live,
-        "stale": stale,
-    })))
-}
-
-fn tool_claims_prune(_params: &Value, workdir: &Path) -> Result<Value> {
-    let repo = H5iRepository::open(workdir)?;
-    let removed = claims::prune_stale(&repo.h5i_root, repo.git())?;
-    Ok(json_content(json!({
-        "removed": removed,
-        "message": if removed == 0 {
-            "No stale claims — nothing to prune.".to_string()
-        } else {
-            format!("Pruned {removed} stale claim(s).")
         }
     })))
 }
@@ -1844,7 +1635,6 @@ fn tool_env_abort(params: &Value, workdir: &Path) -> Result<Value> {
 pub fn call_tool(name: &str, params: &Value, workdir: &Path) -> Result<Value> {
     match name {
         "h5i_commit" => tool_commit(params, workdir),
-        "h5i_rewind" => tool_rewind(params, workdir),
         "h5i_notes_analyze" => tool_notes_analyze(params, workdir),
         "h5i_log" => tool_log(params, workdir),
         "h5i_blame" => tool_blame(params, workdir),
@@ -1868,9 +1658,6 @@ pub fn call_tool(name: &str, params: &Value, workdir: &Path) -> Result<Value> {
         "h5i_context_scan" => tool_context_scan(params, workdir),
         "h5i_context_pack" => tool_context_pack(params, workdir),
         "h5i_context_search" => tool_context_search(params, workdir),
-        "h5i_claims_add" => tool_claims_add(params, workdir),
-        "h5i_claims_list" => tool_claims_list(params, workdir),
-        "h5i_claims_prune" => tool_claims_prune(params, workdir),
         "h5i_capture_run" => tool_capture_run(params, workdir),
         "h5i_env_create" => tool_env_create(params, workdir),
         "h5i_env_run" => tool_env_run(params, workdir),
@@ -2548,7 +2335,6 @@ mod tests {
 
         let expected = [
             "h5i_commit",
-            "h5i_rewind",
             "h5i_notes_analyze",
             "h5i_log",
             "h5i_blame",
@@ -2572,9 +2358,6 @@ mod tests {
             "h5i_context_scan",
             "h5i_context_pack",
             "h5i_context_search",
-            "h5i_claims_add",
-            "h5i_claims_list",
-            "h5i_claims_prune",
             "h5i_capture_run",
             "h5i_env_create",
             "h5i_env_run",
@@ -3225,211 +3008,6 @@ mod tests {
         let (_dir, path) = make_repo();
         let snap = resource_snapshot("h5i://does/not/exist", &path);
         assert!(snap.is_empty(), "unknown URI must yield empty snapshot");
-    }
-
-    // ── h5i_claims_add ────────────────────────────────────────────────────────
-
-    #[test]
-    fn claims_add_records_claim_with_evidence() {
-        let (_dir, path) = make_repo();
-        let r = tool_claims_add(
-            &json!({
-                "text": "hello.rs has a trivial fn main",
-                "paths": ["hello.rs"],
-            }),
-            &path,
-        );
-        assert!(r.is_ok(), "{:?}", r);
-        let body: Value = serde_json::from_str(
-            r.unwrap()["content"][0]["text"].as_str().unwrap(),
-        )
-        .unwrap();
-        assert_eq!(body["text"], "hello.rs has a trivial fn main");
-        assert_eq!(body["evidence_paths"], json!(["hello.rs"]));
-        assert!(body["id"].as_str().unwrap().len() >= 8);
-        assert!(!body["evidence_oid"].as_str().unwrap().is_empty());
-    }
-
-    #[test]
-    fn claims_add_missing_text_is_error() {
-        let (_dir, path) = make_repo();
-        let r = tool_claims_add(&json!({"paths": ["hello.rs"]}), &path);
-        assert!(r.is_err());
-        assert!(r.unwrap_err().to_string().contains("text"));
-    }
-
-    #[test]
-    fn claims_add_missing_paths_is_error() {
-        let (_dir, path) = make_repo();
-        let r = tool_claims_add(&json!({"text": "x"}), &path);
-        assert!(r.is_err());
-        assert!(r.unwrap_err().to_string().contains("paths"));
-    }
-
-    #[test]
-    fn claims_add_empty_paths_array_is_error() {
-        let (_dir, path) = make_repo();
-        let empty: Vec<String> = vec![];
-        let r = tool_claims_add(
-            &json!({"text": "x", "paths": empty}),
-            &path,
-        );
-        assert!(r.is_err());
-    }
-
-    #[test]
-    fn claims_add_untracked_path_is_error() {
-        let (_dir, path) = make_repo();
-        let r = tool_claims_add(
-            &json!({"text": "x", "paths": ["nope.rs"]}),
-            &path,
-        );
-        assert!(r.is_err());
-    }
-
-    // ── h5i_claims_list ───────────────────────────────────────────────────────
-
-    #[test]
-    fn claims_list_empty_repo_returns_zero_counts() {
-        let (_dir, path) = make_repo();
-        let r = tool_claims_list(&json!({}), &path).unwrap();
-        let body: Value =
-            serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(body["live"], 0);
-        assert_eq!(body["stale"], 0);
-        assert_eq!(body["claims"], json!([]));
-    }
-
-    #[test]
-    fn claims_list_reports_live_after_add() {
-        let (_dir, path) = make_repo();
-        tool_claims_add(
-            &json!({"text": "main lives in hello.rs", "paths": ["hello.rs"]}),
-            &path,
-        )
-        .unwrap();
-        let r = tool_claims_list(&json!({}), &path).unwrap();
-        let body: Value =
-            serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(body["live"], 1);
-        assert_eq!(body["stale"], 0);
-        let claims_arr = body["claims"].as_array().unwrap();
-        assert_eq!(claims_arr.len(), 1);
-        assert_eq!(claims_arr[0]["status"], "live");
-        assert_eq!(claims_arr[0]["text"], "main lives in hello.rs");
-    }
-
-    #[test]
-    fn claims_list_reports_stale_after_evidence_change() {
-        let (_dir, path) = make_repo();
-        tool_claims_add(
-            &json!({"text": "hello.rs is a stub", "paths": ["hello.rs"]}),
-            &path,
-        )
-        .unwrap();
-        // Edit hello.rs and commit — evidence_oid now differs.
-        fs::write(path.join("hello.rs"), "fn main() { println!(\"changed\"); }").unwrap();
-        let repo = git2::Repository::open(&path).unwrap();
-        let sig = git2::Signature::now("Test", "test@test.com").unwrap();
-        let mut index = repo.index().unwrap();
-        index.add_path(Path::new("hello.rs")).unwrap();
-        index.write().unwrap();
-        let tree_id = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_id).unwrap();
-        let parent = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "edit", &tree, &[&parent])
-            .unwrap();
-
-        let r = tool_claims_list(&json!({}), &path).unwrap();
-        let body: Value =
-            serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(body["live"], 0);
-        assert_eq!(body["stale"], 1);
-        assert_eq!(body["claims"][0]["status"], "stale");
-    }
-
-    // ── h5i_claims_prune ──────────────────────────────────────────────────────
-
-    #[test]
-    fn claims_prune_reports_zero_when_all_live() {
-        let (_dir, path) = make_repo();
-        tool_claims_add(
-            &json!({"text": "hello.rs is live", "paths": ["hello.rs"]}),
-            &path,
-        )
-        .unwrap();
-        let r = tool_claims_prune(&json!({}), &path).unwrap();
-        let body: Value =
-            serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(body["removed"], 0);
-    }
-
-    #[test]
-    fn claims_prune_removes_only_stale() {
-        let (_dir, path) = make_repo();
-        // Add a second file + commit, then two claims (one per file).
-        fs::write(path.join("other.rs"), "fn other() {}").unwrap();
-        let repo = git2::Repository::open(&path).unwrap();
-        let sig = git2::Signature::now("Test", "test@test.com").unwrap();
-        let mut index = repo.index().unwrap();
-        index.add_path(Path::new("other.rs")).unwrap();
-        index.write().unwrap();
-        let tree_id = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_id).unwrap();
-        let parent = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "add other", &tree, &[&parent])
-            .unwrap();
-
-        tool_claims_add(
-            &json!({"text": "hello claim", "paths": ["hello.rs"]}),
-            &path,
-        )
-        .unwrap();
-        tool_claims_add(
-            &json!({"text": "other claim", "paths": ["other.rs"]}),
-            &path,
-        )
-        .unwrap();
-
-        // Invalidate only the hello claim.
-        fs::write(path.join("hello.rs"), "fn main() { /* edit */ }").unwrap();
-        let mut index = repo.index().unwrap();
-        index.add_path(Path::new("hello.rs")).unwrap();
-        index.write().unwrap();
-        let tree_id = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_id).unwrap();
-        let parent = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "edit hello", &tree, &[&parent])
-            .unwrap();
-
-        let r = tool_claims_prune(&json!({}), &path).unwrap();
-        let body: Value =
-            serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(body["removed"], 1);
-
-        // Remaining claim should be the live one.
-        let list = tool_claims_list(&json!({}), &path).unwrap();
-        let list_body: Value =
-            serde_json::from_str(list["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(list_body["live"], 1);
-        assert_eq!(list_body["stale"], 0);
-        assert_eq!(list_body["claims"][0]["text"], "other claim");
-    }
-
-    // ── tools/list: claims present ────────────────────────────────────────────
-
-    #[test]
-    fn tools_list_includes_claims_tools() {
-        let defs = tool_definitions();
-        let names: Vec<&str> = defs
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|t| t["name"].as_str().unwrap())
-            .collect();
-        assert!(names.contains(&"h5i_claims_add"));
-        assert!(names.contains(&"h5i_claims_list"));
-        assert!(names.contains(&"h5i_claims_prune"));
     }
 
 }

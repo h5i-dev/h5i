@@ -16,13 +16,13 @@ h5i recall context init --goal "<one-line task summary>"
 
 **While working:**
 ```bash
-h5i recall context relevant <file>   # before editing — surfaces prior reasoning + claims that mention this file
+h5i recall context relevant <file>   # before editing — surfaces prior reasoning that mentions this file
 h5i hook codex sync           # after a burst of reads/edits — auto-traces OBSERVE/ACT and mines THINK/NOTE from your transcript
 ```
 
 You do not need to emit OBSERVE / THINK / ACT trace entries by hand —
-`h5i hook codex sync` (and `h5i hook codex finish`) derives them from the Codex
-session JSONL. The only trace you should write directly is an explicit
+`h5i hook codex sync` (and `h5i hook codex finish`) derives them from the
+Codex session JSONL. The only trace you should write directly is an explicit
 flag a reviewer must see immediately:
 
 ```bash
@@ -34,43 +34,17 @@ h5i recall context trace --kind NOTE "TODO: … / LIMITATION: … / RISK: …"
 h5i hook codex finish --summary "<milestone summary>"
 ```
 
-### Claims — pin reusable facts
-
-After establishing a non-obvious fact a future session would otherwise re-derive
-(where a helper lives, which module owns a concern, a subtle invariant), record
-a content-addressed claim pointing at the files that back it. Live claims are
-injected into `h5i hook codex prelude` / `h5i recall context prompt`, so the next session
-treats them as pre-verified — trust them; don't re-read the files.
-
-**Two flavors:**
-
-Cross-cutting fact (~30 tokens, multiple paths):
-```bash
-h5i capture claim "HTTP only src/api/client.py: fetch_user, create_post, delete_post." \
-  --path src/api/client.py
-```
-
-Per-file orientation (~80 tokens, single path) — replaces the deprecated `h5i summary`:
-```bash
-h5i capture claim "src/api/client.py | HTTP. fetch_user(id: int)→dict GET, create_post(...)→dict POST, delete_post(id: int)→bool DELETE. Logger \`log\` top." \
-  --path src/api/client.py
-```
-
-Inspect:
-```bash
-h5i recall claims                    # live / stale badges
-h5i recall claims --group-by-path    # claims grouped by file ("what's known about each file")
-h5i claims prune                   # drop stale claims
-```
-
-**Caveman style.** Drop articles, copulas, fluff. Keep paths, identifier names, types, numbers exact. Pick the *minimum* evidence-path set: most good claims cite 1 file; >3 is a red flag you're confusing "files I read" with "files that back the claim". Live claim text is re-read on every cached-prefix turn forever — every word costs forever.
-
 ### Code commits
 
 ```bash
 git add <exact paths>
-h5i capture commit -m "…" --agent codex --prompt "…"
+h5i capture commit -m "…" --agent codex
 ```
+
+When `h5i hook setup --write --target codex` has installed the Stop hook,
+`h5i hook codex finish` records the raw human prompt from the Codex session JSONL.
+`--intent` remains a fallback for CI/scripts/manual commits where no Codex
+session sync runs.
 
 Add flags when relevant:
 - `--tests`  — tests were added or modified

@@ -103,12 +103,6 @@
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://h5i.dev/blog/content-addressed-claims-agent-memory/</loc>
-    <lastmod>2026-06-02</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
     <loc>https://h5i.dev/blog/cve-2026-33068-bypass-permissions-settings/</loc>
     <lastmod>2026-06-02</lastmod>
     <changefreq>monthly</changefreq>
@@ -128,12 +122,6 @@
   </url>
   <url>
     <loc>https://h5i.dev/blog/from-git-blame-to-ai-blame/</loc>
-    <lastmod>2026-06-02</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://h5i.dev/blog/reduce-claude-token-costs/</loc>
     <lastmod>2026-06-02</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -243,12 +231,6 @@
   </url>
   <url>
     <loc>https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/</loc>
-    <lastmod>2026-06-03</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://h5i.dev/blog/intent-based-rollback-ai-generated-code/</loc>
     <lastmod>2026-06-03</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>

@@ -107,7 +107,7 @@
           {
             "@type": "Question",
             "name": "Can h5i reduce AI token costs?",
-            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i records verified facts as content-addressed claims and snapshots agent memory, so the next session skips re-grounding. In a reproducible N=5 experiment, seeded claims reduced estimated session cost by 51% and cache-read tokens by 35.5% with full task fidelity."}
+            "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i capture run stores the full output of noisy commands (test runs, builds) out-of-band and surfaces only a filtered summary, so large tool logs stay out of the context window but remain recoverable. It also snapshots agent memory so the next session resumes from a recorded state instead of re-grounding from scratch."}
           },
           {
             "@type": "Question",
@@ -775,7 +775,7 @@
     {"@type":"ListItem","position":4,"name":"Versioned reasoning (recall context) — OBSERVE/THINK/ACT that survives resets"},
     {"@type":"ListItem","position":5,"name":"Git-backed agent handoffs (i5h / h5i msg) — ask, review, handoff as durable Git objects"},
     {"@type":"ListItem","position":6,"name":"Deterministic workspace audit (audit review/scan/compliance/policy) — no model in the loop"},
-    {"@type":"ListItem","position":7,"name":"Workspace memory and claims (capture claim / capture run) — compressed tool logs, reusable facts"},
+    {"@type":"ListItem","position":7,"name":"Workspace memory (capture memory / capture run) — agent memory snapshots and compressed tool logs"},
     {"@type":"ListItem","position":8,"name":"Local web dashboard (h5i serve) — timeline, integrity, intent graph, memory"}
   ]}
   </script>
@@ -882,9 +882,9 @@
         <div class="feat-proves">every agent-to-agent handoff is a durable, replayable Git object.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i capture claim · h5i capture memory · h5i capture run</span>
+        <span class="feat-cmd">h5i capture memory · h5i capture run</span>
         <div class="feat-name">Workspace memory</div>
-        <div class="feat-desc">Record verified facts, snapshot agent memory, and keep raw tool logs out of context but recoverable, a reproducible N=5 experiment cut estimated session cost by 51% and token waste by ~95%.</div>
+        <div class="feat-desc">Snapshot agent memory and keep raw tool logs out of context but recoverable, so what the agent ran stays in the repo instead of being lost when the context window rolls over.</div>
         <div class="feat-proves">what the agent learned and ran stays in the repo, not lost in a context window.</div>
       </div>
 
@@ -1185,45 +1185,6 @@
       </div>
     </div>
 
-    <!-- 8 -->
-    <div class="usecase reveal">
-      <div class="usecase-header">
-        <div class="usecase-num">08</div>
-        <div>
-          <div class="usecase-title">Stop paying tokens to re-derive what the agent already figured out</div>
-          <div class="usecase-sub">Record each conclusion with its evidence pinned as a hash of the files it depends on. Live claims ride in the next session's preamble as pre-verified facts.</div>
-        </div>
-      </div>
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">~/my-project</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-cmt"># Record what the agent just figured out, pinned to its evidence files.</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i capture claim "retry logic lives in HttpClient::send, not middleware" \
-    --path src/http.rs --path src/middleware.rs</span>
-<span class="t-pass">✔</span>  <span class="t-out">Recorded claim </span><span class="t-ai">478be84c61e7</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall claims</span>
-
-<span class="t-bold">STATUS    ID            TEXT</span>
-<span class="t-pass">● live</span>    <span class="t-ai">478be84c61e7</span>  <span class="t-out">retry logic lives in HttpClient::send, not middleware</span>
-<span class="t-warn">○ stale</span>   <span class="t-ai">9f02ab1e733c</span>  <span class="t-out">FooError::Parse only constructed in parser.rs</span>
-          <span class="t-out">↳  src/parser.rs changed — evidence no longer matches</span>
-
-<span class="t-cmt"># Identical task, identical codebase — measured A/B (N=5 trials per arm):</span>
-
-<span class="t-bold">── Result ─────────────────────────────────────────────</span>
-  <span class="t-out">metric             No claims   With claims       Δ</span>
-  <span class="t-ai">Read tool calls    6.2 ± 0.4     4.0 ± 0     −35%</span>
-  <span class="t-ai">Cache-read tokens    793,425       511,824    −35%</span>
-  <span class="t-ai">Assistant turns    25.6 ± 3.8   16.6 ± 3.1    −35%</span>
-  <span class="t-ai">Est. session cost      ~$4.35         ~$2.13    −51%</span>
-  <span class="t-ai">Task fidelity            5/5           5/5  ✓</span>
-
-<span class="t-pass">✔</span>  <span class="t-out">All 5 seeded trials read exactly the 4 relevant HTTP files (σ=0).</span></pre></div>
-      </div>
-    </div>
   </div>
 </section>
 
