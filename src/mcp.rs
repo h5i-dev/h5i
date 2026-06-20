@@ -45,7 +45,6 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::blame::BlameMode;
 use crate::claims;
 use crate::ctx::{self, ContextOpts};
 use crate::repository::H5iRepository;
@@ -151,12 +150,6 @@ pub fn tool_definitions() -> Value {
                     "file": {
                         "type": "string",
                         "description": "Relative path to the file to blame."
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["line", "ast"],
-                        "description": "Blame granularity: 'line' (default) or 'ast' for \
-                            semantic node-level attribution."
                     }
                 },
                 "required": ["file"]
@@ -1015,12 +1008,8 @@ fn tool_blame(params: &Value, workdir: &Path) -> Result<Value> {
         .get("file")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("missing required param: file"))?;
-    let mode = match params.get("mode").and_then(Value::as_str).unwrap_or("line") {
-        "ast" => BlameMode::Ast,
-        _ => BlameMode::Line,
-    };
     let repo = H5iRepository::open(workdir)?;
-    let results = repo.blame(Path::new(file), mode)?;
+    let results = repo.blame(Path::new(file))?;
     Ok(json_content(serde_json::to_value(&results)?))
 }
 
@@ -1138,7 +1127,7 @@ fn tool_commit(params: &Value, workdir: &Path) -> Result<Value> {
     };
 
     let oid = repo.commit(
-        message, &sig, &sig, ai_meta, TestSource::None, None, vec![], vec![], None,
+        message, &sig, &sig, ai_meta, TestSource::None, vec![], vec![], None,
     )?;
 
     // Snapshot context if initialized.

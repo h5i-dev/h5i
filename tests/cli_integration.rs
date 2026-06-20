@@ -1275,7 +1275,10 @@ fn pull_roundtrips_h5i_refs_through_a_bare_remote() {
             .args(["push", "-u", "origin", "main"])
             .current_dir(sender.path()),
     );
-    let push_out = sender.h5i_ok(&["push", "--remote", "origin"]);
+    // Full-sync push: this roundtrip asserts sender/receiver agree on the exact
+    // notes OID, which holds on the --all-branches (force) path; the scoped
+    // default rebuilds a per-branch union commit with a different OID by design.
+    let push_out = sender.h5i_ok(&["push", "--remote", "origin", "--all-branches"]);
     let push_s = stdout(&push_out);
     assert!(
         push_s.contains("refs/h5i/notes"),
@@ -1478,7 +1481,10 @@ fn pull_fast_forwards_when_remote_extends_local() {
             .args(["push", "-u", "origin", "main"])
             .current_dir(sender.path()),
     );
-    sender.h5i_ok(&["push", "--remote", "origin"]);
+    // Full-sync push (--all-branches) so the remote carries the sender's exact
+    // notes commit — the scoped default rebuilds a per-branch union commit whose
+    // OID intentionally differs, which this exact-OID FF test is not about.
+    sender.h5i_ok(&["push", "--remote", "origin", "--all-branches"]);
 
     let receiver = repo_wired_to(&remote_url);
     receiver.h5i_ok(&["pull", "--remote", "origin"]);
@@ -1486,7 +1492,7 @@ fn pull_fast_forwards_when_remote_extends_local() {
 
     // Sender extends notes with another commit, then pushes.
     sender.make_commit("b.rs", "fn extra() {}", "second");
-    sender.h5i_ok(&["push", "--remote", "origin"]);
+    sender.h5i_ok(&["push", "--remote", "origin", "--all-branches"]);
     let sender_tip = resolve_ref_in(&sender, "refs/h5i/notes").unwrap();
     assert_ne!(sender_tip, after_first, "sender should have moved forward");
 
@@ -1773,6 +1779,430 @@ fn pull_force_still_union_merges_notes() {
     assert!(tree_s.contains(&receiver_code_oid));
 }
 
+// ─── h5i share push --branch (context-DAG scoping) ───────────────────────────
+//
+// `share push` ships one ref per context branch under `refs/h5i/context/<name>`.
+// By default it pushes every branch's DAG (wildcard); `--branch <b>` narrows the
+// push to a single branch so pushing one code branch doesn't leak the reasoning
+// of unrelated branches.
+
+/// True iff `refname` resolves in the (bare) remote at `remote_path`.
+fn remote_ref_exists(remote_path: &Path, refname: &str) -> bool {
+    Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", refname])
+        .current_dir(remote_path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Wire a sender to a fresh bare remote and give it two context DAGs:
+/// `refs/h5i/context/main` and `refs/h5i/context/feature`. Returns
+/// `(remote_tempdir, sender)`; the sender is left checked out on `feature`.
+fn sender_with_two_context_branches() -> (TempDir, Repo) {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    let sender = repo_wired_to(&remote_url);
+    sender.make_commit("a.rs", "fn a() {}", "seed");
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+
+    // Context DAG on main (init lives on the main ref), then on a feature
+    // branch — auto-follow forks a new `refs/h5i/context/feature` from main on
+    // the first *write* command (a trace), not on `context init`.
+    sender.h5i_ok(&["context", "init", "--goal", "main goal"]);
+    run_ok(
+        Command::new("git")
+            .args(["checkout", "-b", "feature"])
+            .current_dir(sender.path()),
+    );
+    // `context init` records the feature branch's goal; the first trace write
+    // then materializes `refs/h5i/context/feature` via auto-follow.
+    sender.h5i_ok(&["context", "init", "--goal", "feature goal"]);
+    sender.h5i_ok(&["context", "trace", "--kind", "NOTE", "feature work"]);
+
+    assert!(
+        resolve_ref_in(&sender, "refs/h5i/context/main").is_some(),
+        "main context ref should exist locally"
+    );
+    assert!(
+        resolve_ref_in(&sender, "refs/h5i/context/feature").is_some(),
+        "feature context ref should exist locally"
+    );
+    (remote, sender)
+}
+
+/// `--branch <b>` pushes only that branch's context ref; other branches' context
+/// DAGs stay off the remote.
+#[test]
+fn push_branch_scopes_context_to_named_branch() {
+    let (remote, sender) = sender_with_two_context_branches();
+
+    let out = stdout(&sender.h5i_ok(&["push", "--remote", "origin", "--branch", "feature"]));
+    assert!(
+        out.contains("scoped to branch") && out.contains("feature"),
+        "push should announce the scope:\n{out}"
+    );
+
+    assert!(
+        remote_ref_exists(remote.path(), "refs/h5i/context/feature"),
+        "feature context ref must land on the remote"
+    );
+    assert!(
+        !remote_ref_exists(remote.path(), "refs/h5i/context/main"),
+        "main context ref must NOT land on the remote under a feature-scoped push"
+    );
+}
+
+/// `--branch` passed bare scopes to the *current* git branch (here: feature).
+#[test]
+fn push_branch_bare_uses_current_git_branch() {
+    let (remote, sender) = sender_with_two_context_branches();
+
+    // Sender is left on `feature`; bare `--branch` should resolve to it.
+    sender.h5i_ok(&["push", "--remote", "origin", "--branch"]);
+
+    assert!(
+        remote_ref_exists(remote.path(), "refs/h5i/context/feature"),
+        "bare --branch should push the current branch's (feature) context ref"
+    );
+    assert!(
+        !remote_ref_exists(remote.path(), "refs/h5i/context/main"),
+        "bare --branch must not push other branches' context refs"
+    );
+}
+
+/// `--all-branches` pushes every branch's context ref (the opt-out from the
+/// default current-branch scoping); the wildcard path must not regress.
+#[test]
+fn push_all_branches_pushes_every_context_ref() {
+    let (remote, sender) = sender_with_two_context_branches();
+
+    sender.h5i_ok(&["push", "--remote", "origin", "--all-branches"]);
+
+    assert!(
+        remote_ref_exists(remote.path(), "refs/h5i/context/main"),
+        "--all-branches must include main's context ref"
+    );
+    assert!(
+        remote_ref_exists(remote.path(), "refs/h5i/context/feature"),
+        "--all-branches must include feature's context ref"
+    );
+}
+
+/// With no flag at all, the push defaults to the *current* git branch — only the
+/// checked-out branch's context ref travels, not other branches'.
+#[test]
+fn push_defaults_to_current_branch() {
+    let (remote, sender) = sender_with_two_context_branches();
+
+    // Helper leaves the sender on `feature`.
+    sender.h5i_ok(&["push", "--remote", "origin"]);
+
+    assert!(
+        remote_ref_exists(remote.path(), "refs/h5i/context/feature"),
+        "default push should include the current branch's (feature) context ref"
+    );
+    assert!(
+        !remote_ref_exists(remote.path(), "refs/h5i/context/main"),
+        "default push must NOT include other branches' context refs"
+    );
+}
+
+/// `--branch` and `--all-branches` are mutually exclusive.
+#[test]
+fn push_branch_conflicts_with_all_branches() {
+    let (_remote, sender) = sender_with_two_context_branches();
+
+    let out = sender.h5i(&[
+        "push",
+        "--remote",
+        "origin",
+        "--branch",
+        "feature",
+        "--all-branches",
+    ]);
+    assert!(
+        !out.status.success(),
+        "--branch with --all-branches must be rejected"
+    );
+}
+
+/// A scoped push to a branch with no context ref skips cleanly (no git error)
+/// rather than failing the whole push.
+#[test]
+fn push_branch_skips_when_branch_has_no_context() {
+    let (remote, sender) = sender_with_two_context_branches();
+
+    let out = stdout(&sender.h5i_ok(&["push", "--remote", "origin", "--branch", "nonexistent"]));
+    assert!(
+        out.contains("no context workspace for branch") && out.contains("nonexistent"),
+        "scoped push to a contextless branch should report a skip:\n{out}"
+    );
+    assert!(
+        !remote_ref_exists(remote.path(), "refs/h5i/context/nonexistent"),
+        "no ref should be created for a contextless branch"
+    );
+}
+
+/// A branch name carrying a refspec metacharacter is rejected up front (it could
+/// otherwise smuggle a second refspec component into the push).
+#[test]
+fn push_branch_rejects_invalid_name() {
+    let (_remote, sender) = sender_with_two_context_branches();
+
+    let out = sender.h5i(&["push", "--remote", "origin", "--branch", "evil:refs/heads/main"]);
+    assert!(
+        !out.status.success(),
+        "an invalid --branch must fail the command"
+    );
+    assert!(
+        stderr(&out).contains("invalid --branch"),
+        "error should name the bad --branch:\nstderr: {}",
+        stderr(&out)
+    );
+}
+
+// ─── h5i share push --branch: notes + objects scoping ────────────────────────
+//
+// notes/objects are single aggregate refs shared by every branch, so a scoped
+// push must union *only this branch's* entries onto the remote (never force a
+// filtered subset, which would delete other branches' data). These tests assert
+// both halves: this branch's material travels, and other branches' material is
+// neither leaked (when absent) nor clobbered (when already on the remote).
+
+fn head_oid(repo: &Repo) -> String {
+    String::from_utf8_lossy(
+        &run_ok(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(repo.path()),
+        )
+        .stdout,
+    )
+    .trim()
+    .to_string()
+}
+
+/// True iff the bare remote has a `refs/h5i/notes` entry for `commit`. Reads the
+/// notes tree directly (`ls-tree`) rather than `git notes list`, which does not
+/// surface h5i's flat notes layout; stripping `/` collapses any git fan-out so
+/// the entry path reconstructs the full commit OID.
+fn remote_has_note(remote: &Path, commit: &str) -> bool {
+    let out = Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", "refs/h5i/notes"])
+        .current_dir(remote)
+        .output()
+        .unwrap();
+    out.status.success()
+        && String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .any(|l| l.replace('/', "") == commit)
+}
+
+/// The remote's `manifests.jsonl` (objects log), or empty if absent.
+fn remote_objects_raw(remote: &Path) -> String {
+    let out = Command::new("git")
+        .args(["cat-file", "-p", "refs/h5i/objects:manifests.jsonl"])
+        .current_dir(remote)
+        .output()
+        .unwrap();
+    if out.status.success() {
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    } else {
+        String::new()
+    }
+}
+
+struct ProvIds {
+    c0: String,    // shared seed (ancestor of both main and feature)
+    c_feat: String, // unique to feature
+    c_main: String, // unique to main
+}
+
+/// Wire a sender to a bare remote and lay down per-branch provenance:
+/// - `c0` on main (shared seed), then branch `feature` from it
+/// - `c_feat` + a stored capture on `feature`
+/// - `c_main` + a stored capture back on `main`
+///
+/// Leaves the sender checked out on `main`. Notes come from `h5i commit`; the
+/// captures (>2 KB so they're stored) carry the branch in their manifest.
+fn sender_with_branch_provenance() -> (TempDir, Repo, ProvIds) {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    let sender = repo_wired_to(&remote_url);
+    sender.make_commit("a.rs", "fn a() {}", "c0 seed");
+    let c0 = head_oid(&sender);
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+
+    // feature branch from c0.
+    run_ok(
+        Command::new("git")
+            .args(["checkout", "-b", "feature"])
+            .current_dir(sender.path()),
+    );
+    sender.make_commit("f.rs", "fn f() {}", "c_feat");
+    let c_feat = head_oid(&sender);
+    // Stored capture on feature (large output → exceeds the ~2 KB store floor).
+    sender.h5i_ok(&["capture", "run", "--", "sh", "-c", "yes feat | head -3000"]);
+
+    // Back to main, add a main-only commit + capture.
+    run_ok(
+        Command::new("git")
+            .args(["checkout", "main"])
+            .current_dir(sender.path()),
+    );
+    sender.make_commit("m.rs", "fn m() {}", "c_main");
+    let c_main = head_oid(&sender);
+    sender.h5i_ok(&["capture", "run", "--", "sh", "-c", "yes main | head -3000"]);
+
+    (remote, sender, ProvIds { c0, c_feat, c_main })
+}
+
+/// On a fresh remote, `--branch feature` sends feature's notes/objects (plus the
+/// shared ancestor) but NOT the material unique to other branches.
+#[test]
+fn scoped_push_sends_only_branch_notes_and_objects() {
+    let (remote, sender, ids) = sender_with_branch_provenance();
+
+    sender.h5i_ok(&["push", "--remote", "origin", "--branch", "feature"]);
+
+    // Notes: shared ancestor c0 + feature's c_feat travel; main-only c_main does not.
+    assert!(
+        remote_has_note(remote.path(), &ids.c0),
+        "shared ancestor's note should travel with feature"
+    );
+    assert!(
+        remote_has_note(remote.path(), &ids.c_feat),
+        "feature's own note should travel"
+    );
+    assert!(
+        !remote_has_note(remote.path(), &ids.c_main),
+        "a main-only note must NOT leak under a feature-scoped push"
+    );
+
+    // Objects: feature's capture travels; main's does not.
+    let raw = remote_objects_raw(remote.path());
+    assert!(
+        raw.contains("\"branch\":\"feature\""),
+        "feature capture should be on the remote:\n{raw}"
+    );
+    assert!(
+        !raw.contains("\"branch\":\"main\""),
+        "main capture must NOT leak under a feature-scoped push:\n{raw}"
+    );
+}
+
+/// A scoped push must not delete other branches' notes/objects already on the
+/// remote — it unions, it does not force a filtered subset.
+#[test]
+fn scoped_push_is_nondestructive_to_other_branches_on_remote() {
+    let (remote, sender, ids) = sender_with_branch_provenance();
+
+    // Seed the remote with main's provenance (scoped).
+    sender.h5i_ok(&["push", "--remote", "origin", "--branch", "main"]);
+    assert!(remote_has_note(remote.path(), &ids.c_main));
+    assert!(remote_objects_raw(remote.path()).contains("\"branch\":\"main\""));
+
+    // Now scoped-push feature.
+    sender.h5i_ok(&["push", "--remote", "origin", "--branch", "feature"]);
+
+    // main's provenance survives, feature's is added.
+    assert!(
+        remote_has_note(remote.path(), &ids.c_main),
+        "feature push must not delete main's note"
+    );
+    assert!(
+        remote_has_note(remote.path(), &ids.c_feat),
+        "feature's note should now be present"
+    );
+    let raw = remote_objects_raw(remote.path());
+    assert!(
+        raw.contains("\"branch\":\"main\""),
+        "main capture must survive a later feature-scoped push:\n{raw}"
+    );
+    assert!(
+        raw.contains("\"branch\":\"feature\""),
+        "feature capture should now be present:\n{raw}"
+    );
+}
+
+/// The remote's `messages.jsonl` (msg log), or empty if absent.
+fn remote_msg_raw(remote: &Path) -> String {
+    let out = Command::new("git")
+        .args(["cat-file", "-p", "refs/h5i/msg:messages.jsonl"])
+        .current_dir(remote)
+        .output()
+        .unwrap();
+    if out.status.success() {
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    } else {
+        String::new()
+    }
+}
+
+/// `--branch` scopes the cross-agent message log: only messages tagged with the
+/// branch (auto-tagged at send time) travel; another branch's stay local.
+#[test]
+fn scoped_push_sends_only_branch_messages() {
+    let remote = TempDir::new().expect("tempdir");
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .current_dir(remote.path()),
+    );
+    let remote_url = remote.path().to_string_lossy().into_owned();
+
+    let sender = repo_wired_to(&remote_url);
+    sender.make_commit("a.rs", "fn a() {}", "seed");
+    run_ok(
+        Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(sender.path()),
+    );
+
+    // A message while on main (auto-tagged main).
+    sender.h5i_ok(&["msg", "send", "--from", "alice", "bob", "hi-main"]);
+    // A message while on feature (auto-tagged feature).
+    run_ok(
+        Command::new("git")
+            .args(["checkout", "-b", "feature"])
+            .current_dir(sender.path()),
+    );
+    sender.h5i_ok(&["msg", "send", "--from", "alice", "bob", "hi-feature"]);
+
+    sender.h5i_ok(&["push", "--remote", "origin", "--branch", "feature"]);
+
+    let raw = remote_msg_raw(remote.path());
+    assert!(
+        raw.contains("hi-feature"),
+        "feature's message should be on the remote:\n{raw}"
+    );
+    assert!(
+        !raw.contains("hi-main"),
+        "a main-tagged message must NOT leak under a feature-scoped push:\n{raw}"
+    );
+}
+
 // ─── h5i share setup-remote / migrate-remote ─────────────────────────────────
 //
 // These exercise the two remote-management verbs added to fix the
@@ -1878,8 +2308,8 @@ fn setup_remote_writes_all_fetch_refspecs() {
         "banner missing:\n{s}"
     );
     assert!(
-        s.contains("8 refspec(s) added"),
-        "should add 8 refspecs:\n{s}"
+        s.contains("7 refspec(s) added"),
+        "should add 7 refspecs:\n{s}"
     );
 
     let fetch = git_in(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
@@ -1888,7 +2318,6 @@ fn setup_remote_writes_all_fetch_refspecs() {
         "+refs/h5i/notes:refs/h5i/notes",
         "+refs/h5i/memory:refs/h5i/memory",
         "+refs/h5i/context/*:refs/h5i/context/*",
-        "+refs/h5i/ast:refs/h5i/ast",
         "+refs/h5i/msg:refs/h5i/msg",
         "+refs/h5i/objects:refs/h5i/objects",
         "+refs/h5i/env/meta:refs/h5i/env/meta",

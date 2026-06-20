@@ -694,6 +694,94 @@ pub fn union_merge_commits(
     Ok(oid)
 }
 
+/// Build the commit to push for a branch-scoped `h5i share push` of
+/// `refs/h5i/objects`: `base`'s manifests (the remote tip, or empty) unioned
+/// with the local manifests linked to `branch`.
+///
+/// A manifest is "linked to `branch`" when its `branch` field equals `branch`
+/// (an ordinary capture taken on that branch) **or** its `env_id` is in
+/// `also_env_ids` — the evidence captures of the envs forked from this branch.
+/// (Env captures run inside the env's worktree, so their `branch` field is the
+/// env's own code branch, not the human parent branch; carrying them by `env_id`
+/// keeps the cross-clone env review loop's evidence with its env.)
+///
+/// Non-destructive: every manifest already in `base` is preserved, so other
+/// branches' captures on the remote survive; only this branch's local manifests
+/// are added. Dedup is on the same `(raw_oid, timestamp)` key as
+/// [`union_merge_commits`]. The new commit descends from `base` (so the push
+/// fast-forwards), or is a root when there is no remote tip.
+///
+/// Returns `Ok(None)` when there is nothing to push — no local manifest linked to
+/// `branch` *and* no `base` to forward.
+pub fn build_branch_scoped_merge(
+    repo: &Repository,
+    branch: &str,
+    also_env_ids: &HashSet<String>,
+    base: Option<git2::Oid>,
+) -> Result<Option<git2::Oid>, H5iError> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut merged: Vec<Manifest> = Vec::new();
+
+    // 1. Everything already on the remote (keyed for dedup) — preserved wholesale.
+    if let Some(base_oid) = base {
+        let raw = read_file_from_commit(repo, base_oid, MANIFESTS_FILE).unwrap_or_default();
+        for line in raw.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(m) = serde_json::from_str::<Manifest>(line) {
+                let key = format!("{}|{}", m.raw_oid, m.timestamp);
+                if seen.insert(key) {
+                    merged.push(m);
+                }
+            }
+        }
+    }
+
+    // 2. Local manifests linked to this branch (its captures + its envs' evidence).
+    let mut added = 0usize;
+    for m in read_manifests(repo) {
+        let on_branch = m.branch.as_deref() == Some(branch);
+        let env_evidence = m
+            .env_id
+            .as_deref()
+            .is_some_and(|e| also_env_ids.contains(e));
+        if !on_branch && !env_evidence {
+            continue;
+        }
+        let key = format!("{}|{}", m.raw_oid, m.timestamp);
+        if seen.insert(key) {
+            merged.push(m);
+            added += 1;
+        }
+    }
+
+    // Nothing on this branch and no remote tip to forward → nothing to push.
+    if base.is_none() && added == 0 {
+        return Ok(None);
+    }
+
+    merged.sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then(a.id.cmp(&b.id)));
+    let mut log = String::new();
+    for m in &merged {
+        log.push_str(&serde_json::to_string(m)?);
+        log.push('\n');
+    }
+
+    let base_commit = match base {
+        Some(oid) => Some(repo.find_commit(oid)?),
+        None => None,
+    };
+    let base_tree = base_commit.as_ref().and_then(|c| c.tree().ok());
+    let tree_oid = build_tree(repo, base_tree.as_ref(), &[(MANIFESTS_FILE, &log)])?;
+    let tree = repo.find_tree(tree_oid)?;
+    let sig = signature(repo)?;
+    let message = format!("h5i push: branch-scoped objects ({branch})");
+    let parents: Vec<&git2::Commit> = base_commit.iter().collect();
+    let oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
+    Ok(Some(oid))
+}
+
 fn read_file_from_commit(repo: &Repository, oid: git2::Oid, path: &str) -> Option<String> {
     let commit = repo.find_commit(oid).ok()?;
     let tree = commit.tree().ok()?;
@@ -2606,5 +2694,94 @@ mod tests {
         assert_eq!(search_manifests(&ms, &SearchFilters { fingerprint: Some("fp-a".into()), ..Default::default() }).len(), 1);
         // Fingerprints are lowercase hex-ish tokens; matching is exact-prefix, not folded.
         assert!(search_manifests(&ms, &SearchFilters { fingerprint: Some("FP-A".into()), ..Default::default() }).is_empty());
+    }
+
+    // ── build_branch_scoped_merge (branch-scoped `h5i share push`) ──────────
+
+    fn manifest_on(fill: char, branch: Option<&str>) -> Manifest {
+        let mut m = manifest_with_oid(&hex64(fill));
+        m.branch = branch.map(str::to_string);
+        m
+    }
+
+    fn no_envs() -> HashSet<String> {
+        HashSet::new()
+    }
+
+    fn branches_in_commit(repo: &Repository, oid: git2::Oid) -> Vec<Option<String>> {
+        let raw = read_file_from_commit(repo, oid, MANIFESTS_FILE).unwrap();
+        raw.lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str::<Manifest>(l).unwrap().branch)
+            .collect()
+    }
+
+    #[test]
+    fn scoped_merge_keeps_only_branch_manifests_when_no_base() {
+        let (_d, repo, _h5i_root) = setup();
+        append_manifest(&repo, &manifest_on('a', Some("main"))).unwrap();
+        append_manifest(&repo, &manifest_on('b', Some("feature"))).unwrap();
+        append_manifest(&repo, &manifest_on('c', None)).unwrap();
+
+        let oid = build_branch_scoped_merge(&repo, "feature", &no_envs(), None)
+            .unwrap()
+            .expect("feature has a manifest, so something is pushed");
+        assert_eq!(branches_in_commit(&repo, oid), vec![Some("feature".to_string())]);
+    }
+
+    #[test]
+    fn scoped_merge_includes_env_evidence_by_env_id() {
+        let (_d, repo, _h5i_root) = setup();
+        // An env capture: tagged with the env's own branch, but carrying env_id.
+        let mut env_cap = manifest_on('a', Some("h5i/env/claude/fix"));
+        env_cap.env_id = Some("env/claude/fix".to_string());
+        append_manifest(&repo, &env_cap).unwrap();
+        // An unrelated env's capture.
+        let mut other = manifest_on('b', Some("h5i/env/claude/other"));
+        other.env_id = Some("env/claude/other".to_string());
+        append_manifest(&repo, &other).unwrap();
+
+        let mut envs = HashSet::new();
+        envs.insert("env/claude/fix".to_string());
+        let oid = build_branch_scoped_merge(&repo, "feature", &envs, None)
+            .unwrap()
+            .expect("the scoped env's evidence is included");
+        // Only the scoped env's capture travels (matched by env_id, not branch).
+        let ids: Vec<Option<String>> = branches_in_commit(&repo, oid);
+        assert_eq!(ids, vec![Some("h5i/env/claude/fix".to_string())]);
+    }
+
+    #[test]
+    fn scoped_merge_preserves_other_branches_already_on_base() {
+        let (_d, repo, _h5i_root) = setup();
+        // "remote" base already carries another branch's capture.
+        append_manifest(&repo, &manifest_on('a', Some("other"))).unwrap();
+        let base = repo.refname_to_id(OBJECTS_REF).unwrap();
+        // Local then captures something on `feature` (and unrelated `main`).
+        append_manifest(&repo, &manifest_on('b', Some("feature"))).unwrap();
+        append_manifest(&repo, &manifest_on('c', Some("main"))).unwrap();
+
+        let oid = build_branch_scoped_merge(&repo, "feature", &no_envs(), Some(base))
+            .unwrap()
+            .unwrap();
+        let mut got: Vec<String> = branches_in_commit(&repo, oid)
+            .into_iter()
+            .map(|b| b.unwrap())
+            .collect();
+        got.sort();
+        // base's "other" survives, "feature" is added, unrelated "main" is NOT.
+        assert_eq!(got, vec!["feature".to_string(), "other".to_string()]);
+        // Result descends from base → the push fast-forwards.
+        let commit = repo.find_commit(oid).unwrap();
+        assert_eq!(commit.parent_id(0).unwrap(), base);
+    }
+
+    #[test]
+    fn scoped_merge_none_when_branch_empty_and_no_base() {
+        let (_d, repo, _h5i_root) = setup();
+        append_manifest(&repo, &manifest_on('a', Some("main"))).unwrap();
+        assert!(build_branch_scoped_merge(&repo, "feature", &no_envs(), None)
+            .unwrap()
+            .is_none());
     }
 }

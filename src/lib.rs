@@ -6,7 +6,6 @@
 // Modules consumed by the `h5i` binary, the integration tests, or the MCP
 // surface. These form the crate's de-facto public API. (`error` stays public
 // because `H5iError` appears in the signatures of many of them.)
-pub mod ast;
 pub mod blame;
 pub mod claims;
 pub mod claude;

@@ -89,7 +89,7 @@ pub fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
     let candidates: &[&'static str] = match noun {
         "capture" => &["commit", "claim", "memory", "run"],
         "recall" => &[
-            "log", "blame", "diff", "context", "claims", "notes", "memory", "recap", "resume",
+            "log", "blame", "context", "claims", "notes", "memory", "recap", "resume",
             "vibe", "object", "objects", "search",
         ],
         "audit" => &["review", "scan", "compliance", "policy", "vibe"],
@@ -154,7 +154,6 @@ pub fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         // ── recall ──────────────────────────────────────────────────────
         ("recall", "log") => &["log"],
         ("recall", "blame") => &["blame"],
-        ("recall", "diff") => &["diff"],
         ("recall", "context") => &["context"],
         ("recall", "claims") => &["claims", "list"],
         ("recall", "claim") => &["claims", "list"],
@@ -203,6 +202,59 @@ pub fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
 
         _ => return None,
     })
+}
+
+// ── share push: context-ref scoping ─────────────────────────────────────────
+
+/// The context-ref refspec for `h5i share push`, optionally scoped to a single
+/// branch.
+///
+/// Context DAGs live one ref per branch at `refs/h5i/context/<branch>` (the name
+/// mirrors the code branch, via ctx auto-follow). By default `share push` ships
+/// *every* branch's DAG with a wildcard, so pushing one code branch leaks the
+/// reasoning of unrelated branches. Scoping narrows the push to a single ref.
+///
+/// - `None` → unscoped wildcard: every branch's context DAG travels.
+/// - `Some(branch)` → only `refs/h5i/context/<branch>` travels.
+///
+/// Forced (`+`) like every other h5i ref push — the pushing clone is
+/// authoritative for its context DAG. Callers must [`validate_ctx_branch_name`]
+/// any user-supplied `branch` first, so the interpolated value can't smuggle a
+/// second refspec component (`:`) or a wildcard (`*`) into the string.
+pub fn context_push_refspec(branch: Option<&str>) -> String {
+    match branch {
+        None => "+refs/h5i/context/*:refs/h5i/context/*".to_string(),
+        Some(b) => format!("+refs/h5i/context/{b}:refs/h5i/context/{b}"),
+    }
+}
+
+/// Reject branch names that would corrupt the scoped context refspec built by
+/// [`context_push_refspec`] (`refs/h5i/context/<branch>`).
+///
+/// Conservative on purpose: git itself does the authoritative ref-name
+/// validation at push time, this just turns the dangerous/common mistakes into a
+/// friendly up-front error and — crucially — blocks the refspec metacharacters
+/// (`:` separates src from dst, `*` makes it a wildcard) that would change what
+/// the push *targets* rather than merely naming a bad ref.
+pub fn validate_ctx_branch_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("branch name is empty".to_string());
+    }
+    // Refspec/glob metacharacters + whitespace + git-forbidden ref chars.
+    for bad in [' ', '\t', '\n', '\r', ':', '*', '?', '[', '\\', '~', '^'] {
+        if name.contains(bad) {
+            return Err(format!(
+                "branch name {name:?} contains invalid character {bad:?}"
+            ));
+        }
+    }
+    if name.contains("..") {
+        return Err(format!("branch name {name:?} contains \"..\""));
+    }
+    if name.starts_with('/') || name.ends_with('/') || name.ends_with(".lock") {
+        return Err(format!("branch name {name:?} is not a valid ref component"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -294,5 +346,50 @@ mod tests {
         assert_eq!(nearest_verb("capture", "comit"), Some("commit"));
         assert_eq!(nearest_verb("capture", "xyz"), None); // > 2 edits from all
         assert_eq!(nearest_verb("not-a-noun", "anything"), None);
+    }
+
+    #[test]
+    fn unscoped_context_push_uses_wildcard() {
+        assert_eq!(
+            context_push_refspec(None),
+            "+refs/h5i/context/*:refs/h5i/context/*"
+        );
+    }
+
+    #[test]
+    fn scoped_context_push_targets_single_ref() {
+        assert_eq!(
+            context_push_refspec(Some("feature-x")),
+            "+refs/h5i/context/feature-x:refs/h5i/context/feature-x"
+        );
+        // A slash-bearing branch (e.g. h5i/env/...) stays a single ref.
+        assert_eq!(
+            context_push_refspec(Some("agent/work")),
+            "+refs/h5i/context/agent/work:refs/h5i/context/agent/work"
+        );
+    }
+
+    #[test]
+    fn valid_branch_names_pass() {
+        for ok in ["main", "feature-x", "agent/work", "v1.2", "fix_bug"] {
+            assert!(
+                validate_ctx_branch_name(ok).is_ok(),
+                "{ok:?} should be a valid branch name"
+            );
+        }
+    }
+
+    #[test]
+    fn refspec_metacharacters_are_rejected() {
+        // `:` and `*` would change what the push targets — never allow them.
+        assert!(validate_ctx_branch_name("a:b").is_err());
+        assert!(validate_ctx_branch_name("a*").is_err());
+        assert!(validate_ctx_branch_name("").is_err());
+        assert!(validate_ctx_branch_name("has space").is_err());
+        assert!(validate_ctx_branch_name("a..b").is_err());
+        assert!(validate_ctx_branch_name("/leading").is_err());
+        assert!(validate_ctx_branch_name("trailing/").is_err());
+        assert!(validate_ctx_branch_name("foo.lock").is_err());
+        assert!(validate_ctx_branch_name("tilde~1").is_err());
     }
 }

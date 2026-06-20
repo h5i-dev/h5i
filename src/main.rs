@@ -3,7 +3,6 @@ use console::style;
 use git2::Oid;
 use std::path::{Path, PathBuf};
 
-use h5i_core::blame::BlameMode;
 use h5i_core::claims;
 use h5i_core::claude::{keyword_search, sanitize_human_prompt, AnthropicClient};
 use h5i_core::codex;
@@ -699,10 +698,6 @@ enum Commands {
         #[arg(long, value_name = "CMD")]
         test_cmd: Option<String>,
 
-        /// Enable AST-based structural tracking for the commit
-        #[arg(long)]
-        ast: bool,
-
         #[arg(long)]
         audit: bool,
 
@@ -742,15 +737,11 @@ enum Commands {
         ancestry: Option<String>,
     },
 
-    /// Analyze file ownership with optional structural (AST) logic
+    /// Analyze file ownership (line-based blame enriched with AI provenance)
     #[command(hide = true)]
     Blame {
         /// Path to the file to inspect
         file: PathBuf,
-
-        /// Mode of blame: 'line' (standard) or 'ast' (semantic)
-        #[arg(short, long, default_value = "line")]
-        mode: String,
 
         /// Annotate each commit boundary with the human prompt that triggered it.
         /// The prompt is printed once per unique commit, immediately after the
@@ -767,20 +758,6 @@ enum Commands {
         theirs: String,
         /// Relative path to the file to resolve
         file: String,
-    },
-
-    /// Show the AST-level structural diff for a file
-    Diff {
-        /// Path to the file to analyse (must be a supported language, e.g. .py)
-        file: PathBuf,
-
-        /// Compare from this commit OID (default: HEAD)
-        #[arg(long)]
-        from: Option<String>,
-
-        /// Compare to this commit OID (default: working-tree file)
-        #[arg(long)]
-        to: Option<String>,
     },
 
     /// Revert the AI-generated commit whose intent best matches a description
@@ -836,6 +813,20 @@ enum Commands {
         /// Remote to push to
         #[arg(short, long, default_value = "origin")]
         remote: String,
+
+        /// Branch whose h5i material to push. Defaults to the current git
+        /// branch — like `git push`, only the current branch's material travels:
+        /// its `refs/h5i/context/<branch>`, the notes for commits reachable from
+        /// it, and the objects manifests captured on it. Pass an explicit name to
+        /// scope to another branch. (ast/msg/env/memory always push in full.)
+        /// Use `--all-branches` to push every branch's material instead.
+        #[arg(short, long, value_name = "BRANCH", num_args = 0..=1, default_missing_value = "", conflicts_with = "all_branches")]
+        branch: Option<String>,
+
+        /// Push every branch's h5i material (the pre-scoping behavior), rather
+        /// than just the current branch. Useful for a first full sync or CI.
+        #[arg(long)]
+        all_branches: bool,
     },
 
     /// Fetch all h5i refs (notes + memory + context + ast) from a remote in one shot.
@@ -2571,7 +2562,7 @@ Monitor tool is experimental/host-dependent — don't rely on it.
 ### Sharing h5i Data
 
 ```bash
-h5i share push   # push all h5i refs (notes, context, memory, ast, msg) to origin
+h5i share push   # push all h5i refs (notes, context, memory, msg) to origin
 h5i share pull   # pull h5i refs from origin
 ```
 "#;
@@ -3344,7 +3335,6 @@ const H5I_REF_PATTERNS: &[&str] = &[
     "refs/h5i/notes",
     "refs/h5i/memory",
     "refs/h5i/context/*",
-    "refs/h5i/ast",
     "refs/h5i/msg",
     "refs/h5i/objects",
     h5i_core::env::ENV_REF, // refs/h5i/env/meta — the shareable env state
@@ -4107,15 +4097,9 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                 },
                 NounVerb {
                     verb: "blame",
-                    summary: "Line- or AST-level blame, annotated with AI prompts per commit boundary.",
+                    summary: "Line-based blame, annotated with AI prompts per commit boundary.",
                     legacy: "h5i blame",
-                    example: "h5i recall blame src/api/client.py --mode ast --show-prompt",
-                },
-                NounVerb {
-                    verb: "diff",
-                    summary: "Structural (AST) diff for a single file between two commits.",
-                    legacy: "h5i diff",
-                    example: "h5i recall diff src/model.py --from HEAD~3",
+                    example: "h5i recall blame src/api/client.py --show-prompt",
                 },
                 NounVerb {
                     verb: "context",
@@ -4221,7 +4205,7 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
             &[
                 NounVerb {
                     verb: "push",
-                    summary: "Push all refs/h5i/* (notes, context, memory, ast, msg, object manifests) to a remote. Raw blobs are NOT shared — use `h5i objects push`.",
+                    summary: "Push all refs/h5i/* (notes, context, memory, msg, object manifests) to a remote. Raw blobs are NOT shared — use `h5i objects push`.",
                     legacy: "h5i push",
                     example: "h5i share push",
                 },
@@ -5268,7 +5252,6 @@ fn main() -> anyhow::Result<()> {
             tests,
             test_results,
             test_cmd,
-            ast,
             audit,
             force,
             caused_by,
@@ -5514,11 +5497,6 @@ fn main() -> anyhow::Result<()> {
                 TestSource::None
             };
 
-            // Build a real language-aware AST parser closure.
-            let parser_box = repo.make_ast_parser();
-            type AstParser<'a> = &'a dyn Fn(&std::path::Path) -> Option<String>;
-            let ast_parser: Option<AstParser> = if ast { Some(parser_box.as_ref()) } else { None };
-
             let caused_by = caused_by.unwrap_or_default();
 
             // Load structured design decisions from JSON file if provided.
@@ -5556,7 +5534,6 @@ fn main() -> anyhow::Result<()> {
                 &sig,
                 ai_meta,
                 test_source,
-                ast_parser,
                 caused_by,
                 decisions,
                 note_spool.as_deref(),
@@ -5667,19 +5644,10 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Blame {
-            file,
-            mode,
-            show_prompt,
-        } => {
+        Commands::Blame { file, show_prompt } => {
             let repo = H5iRepository::open(".")?;
-            let blame_mode = if mode.to_lowercase() == "ast" {
-                BlameMode::Ast
-            } else {
-                BlameMode::Line
-            };
 
-            let results = repo.blame(&file, blame_mode)?;
+            let results = repo.blame(&file)?;
             println!(
                 "{}",
                 style(format!(
@@ -5700,7 +5668,6 @@ fn main() -> anyhow::Result<()> {
                     Some(false) => "❌",
                     None => "  ",
                 };
-                let semantic_indicator = if r.is_semantic_change { "✨" } else { "  " };
 
                 // Print prompt annotation when the commit changes (show_prompt mode).
                 if show_prompt {
@@ -5721,41 +5688,13 @@ fn main() -> anyhow::Result<()> {
                 }
 
                 println!(
-                    "{} {} {} {:<15} | {}",
+                    "{} {} {:<15} | {}",
                     test_indicator,
-                    semantic_indicator,
                     style(&r.commit_id[..8]).dim(),
                     style(&r.agent_info).blue(),
                     r.line_content
                 );
             }
-        }
-
-        Commands::Diff { file, from, to } => {
-            let repo = H5iRepository::open(".")?;
-
-            let from_oid = from.map(|s| Oid::from_str(&s)).transpose()?;
-            let to_oid = to.map(|s| Oid::from_str(&s)).transpose()?;
-
-            let label = match (&from_oid, &to_oid) {
-                (None, None) => "HEAD → working tree".to_string(),
-                (Some(f), None) => format!("{}… → working tree", &f.to_string()[..8]),
-                (None, Some(t)) => format!("HEAD → {}…", &t.to_string()[..8]),
-                (Some(f), Some(t)) => {
-                    format!("{}… → {}…", &f.to_string()[..8], &t.to_string()[..8])
-                }
-            };
-
-            println!(
-                "{} {} {} {}",
-                LOOKING,
-                style("Computing structural diff for").cyan().bold(),
-                style(file.display()).yellow(),
-                style(format!("({label})")).dim(),
-            );
-
-            let ast_diff = repo.diff_ast(&file, from_oid, to_oid)?;
-            ast_diff.print_stylish(&file.to_string_lossy());
         }
 
         Commands::Rollback {
@@ -7028,8 +6967,30 @@ fn main() -> anyhow::Result<()> {
             rt.block_on(h5i_core::server::serve(repo_path, port))?;
         }
 
-        Commands::Push { remote } => {
+        Commands::Push {
+            remote,
+            branch,
+            all_branches,
+        } => {
             let workdir = std::env::current_dir()?;
+
+            // Resolve which branch's material to push. Scoping to the current
+            // branch is the DEFAULT (like `git push`); `--all-branches` opts out.
+            //   --all-branches  → None (push every branch's material).
+            //   --branch <name> → that explicit branch.
+            //   --branch (bare) / omitted → the current git branch.
+            let ctx_scope: Option<String> = if all_branches {
+                None
+            } else {
+                let resolved = match branch {
+                    Some(name) if !name.is_empty() => name,
+                    _ => h5i_core::ctx::current_git_branch(&workdir),
+                };
+                if let Err(e) = h5i_core::cli_routing::validate_ctx_branch_name(&resolved) {
+                    anyhow::bail!("invalid --branch: {e}");
+                }
+                Some(resolved)
+            };
 
             println!(
                 "{} {} to {}",
@@ -7037,6 +6998,21 @@ fn main() -> anyhow::Result<()> {
                 style("Pushing all h5i refs").cyan().bold(),
                 style(&remote).yellow()
             );
+            if let Some(b) = &ctx_scope {
+                println!(
+                    "  {} scoped to branch {} — context + notes + objects + msg + env for this \
+                     branch only (ast/memory push in full; use {} for every branch)",
+                    style("•").dim(),
+                    style(b).cyan(),
+                    style("--all-branches").bold(),
+                );
+            } else {
+                println!(
+                    "  {} {} — every branch's material",
+                    style("•").dim(),
+                    style("--all-branches").bold(),
+                );
+            }
 
             use std::io::Write as _;
 
@@ -7090,12 +7066,158 @@ fn main() -> anyhow::Result<()> {
                 }
             };
 
-            // Push h5i notes (AI provenance, test metrics, causal links)
-            let notes_pushed = try_push(
-                "refs/h5i/notes",
-                style("h5i commit").bold(),
-                "no AI-provenance commits yet",
-            )?;
+            // Branch-scoped push of an aggregate ref (notes / objects). Unlike
+            // the one-ref-per-branch context layout, these refs are single
+            // aggregate object graphs shared by every branch, so we cannot just
+            // force-push a filtered subset — that would delete the remote's data
+            // for all other branches. Instead we fetch the remote's current ref
+            // into a temp ref and union *only this branch's* entries onto it,
+            // then push the result (a fast-forward). Mirrors git-push semantics:
+            // additive, scoped to the branch, never destructive to others.
+            let git_run = |args: &[&str]| -> std::io::Result<std::process::Output> {
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(&workdir)
+                    .output()
+            };
+
+            // Notes: union the remote's notes with the local notes for every
+            // commit reachable from the branch.
+            let scoped_push_notes = |branch: &str| -> anyhow::Result<bool> {
+                let temp = "refs/h5i/_scoped_push/notes";
+                let _ = git_run(&["update-ref", "-d", temp]);
+                print!(
+                    "  {} {} … ",
+                    style("→").dim(),
+                    style("refs/h5i/notes").yellow()
+                );
+                std::io::stdout().flush()?;
+                // Seed temp with the remote's notes (absent on first push: ok).
+                let _ = git_run(&[
+                    "fetch",
+                    "--no-write-fetch-head",
+                    &remote,
+                    &format!("+refs/h5i/notes:{temp}"),
+                ]);
+                // Commit set reachable from the branch. Prefer the branch ref;
+                // fall back to HEAD so a detached checkout (common in CI) still
+                // scopes to the checked-out history rather than pushing nothing.
+                let rev_list = |rev: &str| -> std::collections::HashSet<String> {
+                    match git_run(&["rev-list", rev]) {
+                        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                            .lines()
+                            .map(|l| l.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect(),
+                        _ => std::collections::HashSet::new(),
+                    }
+                };
+                let mut reachable = rev_list(&format!("refs/heads/{branch}"));
+                if reachable.is_empty() {
+                    reachable = rev_list("HEAD");
+                }
+                let g2 = git2::Repository::open(&workdir)
+                    .map_err(|e| anyhow::anyhow!("open git repo: {e}"))?;
+                let copied =
+                    h5i_core::repository::copy_scoped_notes_onto(&g2, &reachable, temp)
+                        .map_err(|e| anyhow::anyhow!("scope notes: {e}"))?;
+                let temp_exists = git_run(&["rev-parse", "--verify", "--quiet", temp])
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
+                if !temp_exists {
+                    println!(
+                        "{} (no provenance for branch {})",
+                        style("skipped").yellow(),
+                        style(branch).cyan()
+                    );
+                    return Ok(false);
+                }
+                let status = git_run(&["push", &remote, &format!("{temp}:refs/h5i/notes")])?;
+                let _ = git_run(&["update-ref", "-d", temp]);
+                if status.status.success() {
+                    println!(
+                        "{} ({} note{} for {})",
+                        style("ok").green(),
+                        copied,
+                        if copied == 1 { "" } else { "s" },
+                        style(branch).cyan()
+                    );
+                    Ok(true)
+                } else {
+                    println!("{}", style("failed").red());
+                    eprint!("{}", String::from_utf8_lossy(&status.stderr));
+                    Ok(false)
+                }
+            };
+
+            // Objects: union the remote's manifest log with the local manifests
+            // captured on the branch (the `branch` field of each record).
+            // Generic scoped non-destructive merge-push for an aggregate log ref
+            // (objects / msg / env-meta). `build` reads the local ref + the
+            // fetched remote `base` and returns the merged commit to push (remote
+            // ∪ this branch's records), or None when there is nothing for the
+            // branch. The push is a fast-forward off the remote tip — never a
+            // force of a filtered subset — so other branches' data survives.
+            type ScopedBuild = dyn Fn(
+                &git2::Repository,
+                &str,
+                Option<git2::Oid>,
+            ) -> Result<Option<git2::Oid>, h5i_core::error::H5iError>;
+            let scoped_merge_push = |branch: &str,
+                                     refname: &str,
+                                     no_data: &str,
+                                     build: &ScopedBuild|
+             -> anyhow::Result<bool> {
+                let leaf = refname.rsplit('/').next().unwrap_or("ref");
+                let temp = format!("refs/h5i/_scoped_push/{leaf}");
+                let _ = git_run(&["update-ref", "-d", &temp]);
+                print!("  {} {} … ", style("→").dim(), style(refname).yellow());
+                std::io::stdout().flush()?;
+                let _ = git_run(&[
+                    "fetch",
+                    "--no-write-fetch-head",
+                    &remote,
+                    &format!("+{refname}:{temp}"),
+                ]);
+                let base_oid = git_run(&["rev-parse", "--verify", "--quiet", &temp])
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .and_then(|o| {
+                        git2::Oid::from_str(String::from_utf8_lossy(&o.stdout).trim()).ok()
+                    });
+                let g2 = git2::Repository::open(&workdir)
+                    .map_err(|e| anyhow::anyhow!("open git repo: {e}"))?;
+                let merged = build(&g2, branch, base_oid)
+                    .map_err(|e| anyhow::anyhow!("scope {refname}: {e}"))?;
+                let Some(oid) = merged else {
+                    let _ = git_run(&["update-ref", "-d", &temp]);
+                    println!("{} ({no_data})", style("skipped").yellow());
+                    return Ok(false);
+                };
+                let _ = git_run(&["update-ref", &temp, &oid.to_string()]);
+                let status = git_run(&["push", &remote, &format!("{temp}:{refname}")])?;
+                let _ = git_run(&["update-ref", "-d", &temp]);
+                if status.status.success() {
+                    println!("{} (scoped to {})", style("ok").green(), style(branch).cyan());
+                    Ok(true)
+                } else {
+                    println!("{}", style("failed").red());
+                    eprint!("{}", String::from_utf8_lossy(&status.stderr));
+                    Ok(false)
+                }
+            };
+
+            // Push h5i notes (AI provenance, test metrics, causal links).
+            // Scoped to the branch when --branch is given; else the whole ref.
+            let notes_pushed = if let Some(b) = &ctx_scope {
+                scoped_push_notes(b)?
+            } else {
+                try_push(
+                    "refs/h5i/notes",
+                    style("h5i commit").bold(),
+                    "no AI-provenance commits yet",
+                )?
+            };
 
             // Push memory ref (Claude memory snapshots)
             try_push(
@@ -7107,103 +7229,179 @@ fn main() -> anyhow::Result<()> {
             // Push context workspace.
             //
             // Post-redesign: one ref per context branch under
-            // `refs/h5i/context/<name>`. Use a wildcard refspec so every
-            // branch syncs in a single git invocation. For backward compat,
-            // also push the legacy single ref (`refs/h5i/context`) if it
-            // still exists locally — older clients on the receiving side may
-            // still expect it. Migration aside-name (`refs/h5i/context-legacy`)
-            // is pushed too as a safety net for diagnosing rollbacks.
-            let any_per_branch_ctx = std::process::Command::new("git")
-                .args([
-                    "for-each-ref",
-                    "--count=1",
-                    "--format=%(refname)",
-                    "refs/h5i/context/",
-                ])
-                .current_dir(&workdir)
-                .output()
-                .map(|o| !o.stdout.is_empty())
-                .unwrap_or(false);
-            if any_per_branch_ctx {
-                print!(
-                    "  {} {} … ",
-                    style("→").dim(),
-                    style("refs/h5i/context/*").yellow()
-                );
+            // `refs/h5i/context/<name>`. Unscoped (the default) ships every
+            // branch's DAG with a single wildcard refspec, and also pushes the
+            // legacy single ref (`refs/h5i/context`) + migration backup
+            // (`refs/h5i/context-legacy`) for older receivers / rollback
+            // diagnosis. `--branch <b>` instead narrows the push to that
+            // branch's `refs/h5i/context/<b>` so pushing one code branch does
+            // not leak the reasoning DAGs of unrelated branches; the legacy
+            // whole-workspace refs are intentionally skipped when scoped.
+            if let Some(b) = &ctx_scope {
+                let scoped_ref = h5i_core::ctx::branch_ref(b);
+                print!("  {} {} … ", style("→").dim(), style(&scoped_ref).yellow());
                 std::io::stdout().flush()?;
-                let status = std::process::Command::new("git")
-                    .args(["push", &remote, "+refs/h5i/context/*:refs/h5i/context/*"])
-                    .current_dir(&workdir)
-                    .status()
-                    .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
-                println!(
-                    "{}",
-                    if status.success() {
-                        style("ok").green()
-                    } else {
-                        style("failed").red()
+                if !ref_exists(&scoped_ref) {
+                    println!(
+                        "{} (no context workspace for branch {} — run {})",
+                        style("skipped").yellow(),
+                        style(b).cyan(),
+                        style("h5i context init").bold(),
+                    );
+                } else {
+                    let refspec = h5i_core::cli_routing::context_push_refspec(Some(b));
+                    let status = std::process::Command::new("git")
+                        .args(["push", &remote, &refspec])
+                        .current_dir(&workdir)
+                        .status()
+                        .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+                    println!(
+                        "{}",
+                        if status.success() {
+                            style("ok").green()
+                        } else {
+                            style("failed").red()
+                        }
+                    );
+                    if !status.success() && remote_has_legacy_context_ref(&remote, &workdir) {
+                        print_legacy_context_remediation(&remote);
                     }
-                );
-                // The single most common cause of this failure is a remote that
-                // still hosts the pre-redesign single `refs/h5i/context` ref,
-                // which collides with the per-branch directory. Detect it and
-                // point at the one-shot fix instead of leaving a raw git error.
-                if !status.success() && remote_has_legacy_context_ref(&remote, &workdir) {
-                    print_legacy_context_remediation(&remote);
                 }
             } else {
-                println!(
-                    "  {} {} … {} (no context workspace yet — run {})",
-                    style("→").dim(),
-                    style("refs/h5i/context/*").yellow(),
-                    style("skipped").yellow(),
-                    style("h5i context init").bold(),
-                );
-            }
-            if ref_exists("refs/h5i/context") {
-                try_push(
-                    "refs/h5i/context",
-                    style("(legacy)").dim(),
-                    "(no legacy ref)",
-                )?;
-            }
-            if ref_exists("refs/h5i/context-legacy") {
-                try_push(
-                    "refs/h5i/context-legacy",
-                    style("(migration backup)").dim(),
-                    "(no migration backup)",
-                )?;
+                let any_per_branch_ctx = std::process::Command::new("git")
+                    .args([
+                        "for-each-ref",
+                        "--count=1",
+                        "--format=%(refname)",
+                        "refs/h5i/context/",
+                    ])
+                    .current_dir(&workdir)
+                    .output()
+                    .map(|o| !o.stdout.is_empty())
+                    .unwrap_or(false);
+                if any_per_branch_ctx {
+                    print!(
+                        "  {} {} … ",
+                        style("→").dim(),
+                        style("refs/h5i/context/*").yellow()
+                    );
+                    std::io::stdout().flush()?;
+                    let status = std::process::Command::new("git")
+                        .args([
+                            "push",
+                            &remote,
+                            &h5i_core::cli_routing::context_push_refspec(None),
+                        ])
+                        .current_dir(&workdir)
+                        .status()
+                        .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+                    println!(
+                        "{}",
+                        if status.success() {
+                            style("ok").green()
+                        } else {
+                            style("failed").red()
+                        }
+                    );
+                    // The single most common cause of this failure is a remote
+                    // that still hosts the pre-redesign single
+                    // `refs/h5i/context` ref, which collides with the per-branch
+                    // directory. Detect it and point at the one-shot fix instead
+                    // of leaving a raw git error.
+                    if !status.success() && remote_has_legacy_context_ref(&remote, &workdir) {
+                        print_legacy_context_remediation(&remote);
+                    }
+                } else {
+                    println!(
+                        "  {} {} … {} (no context workspace yet — run {})",
+                        style("→").dim(),
+                        style("refs/h5i/context/*").yellow(),
+                        style("skipped").yellow(),
+                        style("h5i context init").bold(),
+                    );
+                }
+                if ref_exists("refs/h5i/context") {
+                    try_push(
+                        "refs/h5i/context",
+                        style("(legacy)").dim(),
+                        "(no legacy ref)",
+                    )?;
+                }
+                if ref_exists("refs/h5i/context-legacy") {
+                    try_push(
+                        "refs/h5i/context-legacy",
+                        style("(migration backup)").dim(),
+                        "(no migration backup)",
+                    )?;
+                }
             }
 
-            // Push AST blobs (refs/h5i/ast)
-            try_push(
-                "refs/h5i/ast",
-                style("h5i commit --ast").bold(),
-                "no AST snapshots yet",
-            )?;
-
-            // Push the cross-agent message log (refs/h5i/msg)
-            try_push(
-                msg::MSG_REF,
-                style("h5i msg send").bold(),
-                "no messages yet",
-            )?;
+            // Push the cross-agent message log (refs/h5i/msg). Scoped to the
+            // branch's conversation (messages auto-tagged with the branch) when
+            // --branch is given; else the whole log. The roster always travels.
+            if let Some(b) = &ctx_scope {
+                scoped_merge_push(
+                    b,
+                    msg::MSG_REF,
+                    "no messages for this branch",
+                    &h5i_core::msg::build_branch_scoped_merge,
+                )?;
+            } else {
+                try_push(
+                    msg::MSG_REF,
+                    style("h5i msg send").bold(),
+                    "no messages yet",
+                )?;
+            }
 
             // Push the token-reduction manifest log (refs/h5i/objects).
             // Only the small pointer records travel; raw blobs stay local
-            // until a remote object backend exists (git-lfs style).
-            try_push(
-                h5i_core::objects::OBJECTS_REF,
-                style("h5i capture run").bold(),
-                "no captured objects yet",
-            )?;
+            // until a remote object backend exists (git-lfs style). Scoped to
+            // the branch's captures when --branch is given; else the whole ref.
+            if let Some(b) = &ctx_scope {
+                // Also carry the evidence captures of envs forked from this
+                // branch (their objects are tagged with the env's own branch, so
+                // a plain branch match would miss them).
+                let env_ids = git2::Repository::open(&workdir)
+                    .ok()
+                    .map(|r| h5i_core::env::local_env_ids_for_branch(&r, b))
+                    .unwrap_or_default();
+                let build_objects = move |repo: &git2::Repository,
+                                          branch: &str,
+                                          base: Option<git2::Oid>| {
+                    h5i_core::objects::build_branch_scoped_merge(repo, branch, &env_ids, base)
+                };
+                scoped_merge_push(
+                    b,
+                    h5i_core::objects::OBJECTS_REF,
+                    "no captures for this branch",
+                    &build_objects,
+                )?;
+            } else {
+                try_push(
+                    h5i_core::objects::OBJECTS_REF,
+                    style("h5i capture run").bold(),
+                    "no captured objects yet",
+                )?;
+            }
 
             // Push the shareable env state (manifests + policies + event log).
-            try_push(
-                h5i_core::env::ENV_REF,
-                style("h5i env create").bold(),
-                "no environments yet",
-            )?;
+            // Scoped to the envs forked from the branch (manifest parent_branch)
+            // when --branch is given; else the whole ref.
+            if let Some(b) = &ctx_scope {
+                scoped_merge_push(
+                    b,
+                    h5i_core::env::ENV_REF,
+                    "no environments for this branch",
+                    &h5i_core::env::build_branch_scoped_merge,
+                )?;
+            } else {
+                try_push(
+                    h5i_core::env::ENV_REF,
+                    style("h5i env create").bold(),
+                    "no environments yet",
+                )?;
+            }
             let git_out = |args: &[&str]| {
                 std::process::Command::new("git")
                     .args(args)
@@ -7228,19 +7426,45 @@ fn main() -> anyhow::Result<()> {
                     style("refs/h5i/env/code/*").yellow()
                 );
                 std::io::stdout().flush()?;
-                let status = std::process::Command::new("git")
-                    .args(["push", &remote, ENV_CODE_PUSH_REFSPEC])
-                    .current_dir(&workdir)
-                    .status()
-                    .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
-                println!(
-                    "{}",
-                    if status.success() {
-                        style("ok").green()
-                    } else {
-                        style("failed").red()
-                    }
-                );
+                // When scoped, push only the code branches of envs forked from
+                // this branch (remapped onto the hidden code namespace); else the
+                // wildcard carries every env branch.
+                let refspecs: Vec<String> = if let Some(b) = &ctx_scope {
+                    git2::Repository::open(&workdir)
+                        .ok()
+                        .map(|r| h5i_core::env::scoped_code_branch_refs(&r, b))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|full| {
+                            full.strip_prefix("refs/heads/h5i/env/")
+                                .map(|suffix| format!("+{full}:refs/h5i/env/code/{suffix}"))
+                        })
+                        .collect()
+                } else {
+                    vec![ENV_CODE_PUSH_REFSPEC.to_string()]
+                };
+                if refspecs.is_empty() {
+                    println!(
+                        "{} (no env code for this branch)",
+                        style("skipped").yellow()
+                    );
+                } else {
+                    let mut args: Vec<String> = vec!["push".into(), remote.clone()];
+                    args.extend(refspecs);
+                    let status = std::process::Command::new("git")
+                        .args(&args)
+                        .current_dir(&workdir)
+                        .status()
+                        .map_err(|e| anyhow::anyhow!("Failed to invoke git push: {e}"))?;
+                    println!(
+                        "{}",
+                        if status.success() {
+                            style("ok").green()
+                        } else {
+                            style("failed").red()
+                        }
+                    );
+                }
             }
 
             // Env code is published under refs/h5i/env/code/* (above); it must
@@ -7290,11 +7514,9 @@ fn main() -> anyhow::Result<()> {
                     \n    git fetch {} refs/h5i/notes:refs/h5i/notes\
                     \n    git fetch {} refs/h5i/memory:refs/h5i/memory\
                     \n    git fetch {} 'refs/h5i/context/*:refs/h5i/context/*'\
-                    \n    git fetch {} refs/h5i/ast:refs/h5i/ast\
                     \n    git fetch {} refs/h5i/msg:refs/h5i/msg\
                     \n\n  Or add fetch refspecs to .git/config (see README §9) so {} picks them up automatically.",
                     style("Tip:").bold(),
-                    style(&remote).yellow(),
                     style(&remote).yellow(),
                     style(&remote).yellow(),
                     style(&remote).yellow(),
@@ -7684,7 +7906,6 @@ fn main() -> anyhow::Result<()> {
                 let _ = sync_one("refs/h5i/context");
             }
 
-            sync_one("refs/h5i/ast")?;
             sync_one(msg::MSG_REF)?;
             sync_one(h5i_core::objects::OBJECTS_REF)?;
             // Shareable env state (manifests + policies + events). The

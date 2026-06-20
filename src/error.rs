@@ -7,11 +7,7 @@ pub enum H5iError {
     #[error("Git error: {0}")]
     Git(#[from] git2::Error),
 
-    /// 2. Structural Dimension (Syntax): AST processing
-    #[error("AST processing error: {0}")]
-    Ast(String),
-
-    /// 3. Intentional Dimension (Spirit): Metadata and AI provenance
+    /// Intentional Dimension (Spirit): Metadata and AI provenance
     #[error("Metadata error: {0}")]
     Metadata(String),
 

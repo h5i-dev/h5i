@@ -728,6 +728,211 @@ pub fn union_merge_commits(
     )?)
 }
 
+/// Ingest one meta tree (`events`/`manifests`/`policies`) into the accumulators,
+/// optionally restricting to a set of env ids. With `filter = None` everything is
+/// taken (used for the remote base — preserved wholesale); with `filter = Some`
+/// only records for the matching envs are taken (used for the local side).
+#[allow(clippy::too_many_arguments)]
+fn ingest_meta_tree(
+    repo: &Repository,
+    tree: Option<&git2::Tree>,
+    filter: Option<&HashSet<String>>,
+    seen_events: &mut HashSet<String>,
+    events: &mut Vec<EnvEvent>,
+    manifests: &mut HashMap<String, EnvManifest>,
+    policies: &mut std::collections::BTreeMap<String, String>,
+) {
+    let raw = objects::read_blob_from_tree(repo, tree, EVENTS_FILE).unwrap_or_default();
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(e) = serde_json::from_str::<EnvEvent>(line) {
+            if filter.is_some_and(|f| !f.contains(&e.env_id)) {
+                continue;
+            }
+            let key = format!("{}|{}|{}", e.env_id, e.ts, e.event);
+            if seen_events.insert(key) {
+                events.push(e);
+            }
+        }
+    }
+    let mraw = objects::read_blob_from_tree(repo, tree, MANIFESTS_FILE).unwrap_or_default();
+    for line in mraw.lines() {
+        if let Ok(m) = serde_json::from_str::<EnvManifest>(line) {
+            if filter.is_some_and(|f| !f.contains(&m.id)) {
+                continue;
+            }
+            match manifests.get(&m.id) {
+                Some(existing) if existing.updated_at >= m.updated_at => {}
+                _ => {
+                    manifests.insert(m.id.clone(), m);
+                }
+            }
+        }
+    }
+    let praw = objects::read_blob_from_tree(repo, tree, POLICIES_FILE).unwrap_or_default();
+    for line in praw.lines() {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+            if let (Some(id), Some(toml)) = (
+                v.get("id").and_then(|i| i.as_str()),
+                v.get("toml").and_then(|t| t.as_str()),
+            ) {
+                if filter.is_some_and(|f| !f.contains(id)) {
+                    continue;
+                }
+                policies
+                    .entry(id.to_string())
+                    .or_insert_with(|| toml.to_string());
+            }
+        }
+    }
+}
+
+/// Env ids (`env/<agent>/<slug>`) on this clone whose `parent_branch` is `branch`
+/// — the envs a user created while on that human branch. Public so a
+/// branch-scoped `h5i share push` can also carry these envs' evidence captures
+/// (which live in `refs/h5i/objects`, tagged with the env's own code branch).
+pub fn local_env_ids_for_branch(repo: &Repository, branch: &str) -> HashSet<String> {
+    let tree = repo
+        .find_reference(ENV_REF)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+        .and_then(|c| c.tree().ok());
+    let mut ids = HashSet::new();
+    if let Some(raw) = objects::read_blob_from_tree(repo, tree.as_ref(), MANIFESTS_FILE) {
+        for line in raw.lines() {
+            if let Ok(m) = serde_json::from_str::<EnvManifest>(line) {
+                if m.parent_branch == branch {
+                    ids.insert(m.id);
+                }
+            }
+        }
+    }
+    ids
+}
+
+/// The local code-branch refs (`refs/heads/h5i/env/<agent>/<slug>`) of the envs
+/// forked from `branch`. Used by a branch-scoped `h5i share push` to carry only
+/// those envs' code onto the hidden `refs/h5i/env/code/*` namespace.
+pub fn scoped_code_branch_refs(repo: &Repository, branch: &str) -> Vec<String> {
+    let ids = local_env_ids_for_branch(repo, branch);
+    let tree = repo
+        .find_reference(ENV_REF)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+        .and_then(|c| c.tree().ok());
+    let mut refs = Vec::new();
+    if let Some(raw) = objects::read_blob_from_tree(repo, tree.as_ref(), MANIFESTS_FILE) {
+        for line in raw.lines() {
+            if let Ok(m) = serde_json::from_str::<EnvManifest>(line) {
+                if ids.contains(&m.id) && !m.branch.is_empty() {
+                    refs.push(m.branch);
+                }
+            }
+        }
+    }
+    refs.sort();
+    refs.dedup();
+    refs
+}
+
+/// Build the commit to push for a branch-scoped `h5i share push` of the env meta
+/// ref (`refs/h5i/env/meta`): `base`'s state (the remote tip, or empty) unioned
+/// with the local events/manifests/policies for the envs forked from `branch`
+/// (their `parent_branch`).
+///
+/// Non-destructive: the full `base` is preserved (other branches' envs on the
+/// remote survive); only this branch's envs are added. The new commit descends
+/// from `base` (the push fast-forwards), or is a root with no remote tip.
+/// Returns `Ok(None)` when there is nothing to push — no env forked from
+/// `branch` and no `base`.
+pub fn build_branch_scoped_merge(
+    repo: &Repository,
+    branch: &str,
+    base: Option<git2::Oid>,
+) -> Result<Option<git2::Oid>, H5iError> {
+    let matching = local_env_ids_for_branch(repo, branch);
+    if base.is_none() && matching.is_empty() {
+        return Ok(None);
+    }
+
+    let mut seen_events: HashSet<String> = HashSet::new();
+    let mut events: Vec<EnvEvent> = Vec::new();
+    let mut manifests: HashMap<String, EnvManifest> = HashMap::new();
+    let mut policies: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+
+    // Base first, unfiltered — preserve everything already on the remote.
+    let base_commit = match base {
+        Some(oid) => Some(repo.find_commit(oid)?),
+        None => None,
+    };
+    let base_tree = base_commit.as_ref().and_then(|c| c.tree().ok());
+    ingest_meta_tree(
+        repo,
+        base_tree.as_ref(),
+        None,
+        &mut seen_events,
+        &mut events,
+        &mut manifests,
+        &mut policies,
+    );
+    // Local side, restricted to envs forked from this branch.
+    let local_tree = repo
+        .find_reference(ENV_REF)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+        .and_then(|c| c.tree().ok());
+    ingest_meta_tree(
+        repo,
+        local_tree.as_ref(),
+        Some(&matching),
+        &mut seen_events,
+        &mut events,
+        &mut manifests,
+        &mut policies,
+    );
+
+    events.sort_by(|a, b| a.ts.cmp(&b.ts).then(a.env_id.cmp(&b.env_id)));
+    let mut log = String::new();
+    for e in &events {
+        log.push_str(&serde_json::to_string(e)?);
+        log.push('\n');
+    }
+    let mut mlog = String::new();
+    {
+        let mut v: Vec<&EnvManifest> = manifests.values().collect();
+        v.sort_by(|a, b| a.id.cmp(&b.id));
+        for m in v {
+            mlog.push_str(&serde_json::to_string(m)?);
+            mlog.push('\n');
+        }
+    }
+    let mut plog = String::new();
+    for (id, toml) in &policies {
+        plog.push_str(&serde_json::to_string(
+            &serde_json::json!({"id": id, "toml": toml}),
+        )?);
+        plog.push('\n');
+    }
+
+    let mut files: Vec<(&str, &str)> = vec![(EVENTS_FILE, &log)];
+    if !mlog.is_empty() {
+        files.push((MANIFESTS_FILE, &mlog));
+    }
+    if !plog.is_empty() {
+        files.push((POLICIES_FILE, &plog));
+    }
+    let base_tree_for_build = base_commit.as_ref().and_then(|c| c.tree().ok());
+    let tree_oid = objects::build_tree(repo, base_tree_for_build.as_ref(), &files)?;
+    let tree = repo.find_tree(tree_oid)?;
+    let sig = objects::signature(repo)?;
+    let message = format!("h5i push: branch-scoped env ({branch})");
+    let parents: Vec<&git2::Commit> = base_commit.iter().collect();
+    Ok(Some(repo.commit(None, &sig, &sig, &message, &tree, &parents)?))
+}
+
 // ─── manifest persistence ───────────────────────────────────────────────────
 
 pub fn save_manifest(h5i_root: &Path, m: &EnvManifest) -> Result<(), H5iError> {
@@ -3432,7 +3637,6 @@ fn stamp_apply_provenance(repo: &Repository, m: &EnvManifest, applied: git2::Oid
         parent_oid,
         ai_metadata: None,
         test_metrics: None,
-        ast_hashes: None,
         timestamp: chrono::Utc::now(),
         caused_by: Vec::new(),
         decisions: Vec::new(),
@@ -5093,5 +5297,98 @@ mod tests {
         );
         // Unknown name errors.
         assert!(find(h5i_root, "ghost").is_err());
+    }
+
+    // ── build_branch_scoped_merge / scoped_code_branch_refs ─────────────────
+
+    fn manifest_on_branch(agent: &str, slug: &str, parent_branch: &str) -> EnvManifest {
+        let mut m = canonical_manifest(agent, slug);
+        m.parent_branch = parent_branch.into();
+        m
+    }
+
+    fn write_env(repo: &Repository, m: &EnvManifest) {
+        append_env_commit(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "create".into(),
+                detail: None,
+                capture: None,
+            },
+            Some(m),
+            Some("# policy\n"),
+        )
+        .unwrap();
+    }
+
+    fn manifest_ids_in(repo: &Repository, oid: git2::Oid) -> Vec<String> {
+        let tree = repo.find_commit(oid).unwrap().tree().unwrap();
+        let raw = objects::read_blob_from_tree(repo, Some(&tree), MANIFESTS_FILE).unwrap_or_default();
+        let mut ids: Vec<String> = raw
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str::<EnvManifest>(l).unwrap().id)
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn scoped_merge_keeps_only_envs_forked_from_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        write_env(&repo, &manifest_on_branch("claude", "feat-work", "feature"));
+        write_env(&repo, &manifest_on_branch("claude", "main-work", "main"));
+
+        let oid = build_branch_scoped_merge(&repo, "feature", None)
+            .unwrap()
+            .expect("feature has an env");
+        assert_eq!(manifest_ids_in(&repo, oid), vec!["env/claude/feat-work"]);
+    }
+
+    #[test]
+    fn scoped_merge_preserves_envs_already_on_base() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        // "remote" base has another branch's env.
+        write_env(&repo, &manifest_on_branch("codex", "other-work", "other"));
+        let base = repo.refname_to_id(ENV_REF).unwrap();
+        // Local adds a feature env (and an unrelated main env).
+        write_env(&repo, &manifest_on_branch("claude", "feat-work", "feature"));
+        write_env(&repo, &manifest_on_branch("claude", "main-work", "main"));
+
+        let oid = build_branch_scoped_merge(&repo, "feature", Some(base))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            manifest_ids_in(&repo, oid),
+            vec!["env/claude/feat-work", "env/codex/other-work"],
+            "base env preserved, feature added, unrelated main excluded"
+        );
+        assert_eq!(repo.find_commit(oid).unwrap().parent_id(0).unwrap(), base);
+    }
+
+    #[test]
+    fn scoped_code_branch_refs_lists_only_matching_envs() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        write_env(&repo, &manifest_on_branch("claude", "feat-work", "feature"));
+        write_env(&repo, &manifest_on_branch("claude", "main-work", "main"));
+
+        let refs = scoped_code_branch_refs(&repo, "feature");
+        assert_eq!(refs, vec!["refs/heads/h5i/env/claude/feat-work"]);
+    }
+
+    #[test]
+    fn scoped_merge_none_when_no_env_for_branch_and_no_base() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        write_env(&repo, &manifest_on_branch("claude", "main-work", "main"));
+        assert!(build_branch_scoped_merge(&repo, "feature", None)
+            .unwrap()
+            .is_none());
     }
 }

@@ -239,31 +239,6 @@
       moved, and what was on the prompt that moved it.
     </p>
 
-    <h2>AST-mode blame</h2>
-
-    <p>
-      Line-level blame breaks when code is reformatted, reflowed, or moved across files. Cosmetic
-      changes can rewrite blame for thousands of lines and obscure the meaningful authorship.
-    </p>
-
-    <p>
-      <code>h5i recall blame --mode ast</code> blames at the AST node level instead of the line level. A function
-      whose body wasn't semantically changed keeps its original blame even if its formatting was
-      rewritten. You get this for free wherever h5i has parsed the file's AST (Rust, Python, and
-      a growing list).
-    </p>
-
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/http_client.rs --mode ast</span>
-
-<span class="t-bold">NODE                              COMMIT   AUTHOR/AGENT</span>
-<span class="t-out">fn send_with_retry           ⤷ </span><span class="t-ai">a3f9c2b</span><span class="t-out">  claude-code (semantic body)</span>
-<span class="t-out">  └ for attempt in 0..MAX    ⤷ </span><span class="t-ai">a3f9c2b</span><span class="t-out">  claude-code</span>
-<span class="t-out">  └ tokio::time::sleep       ⤷ </span><span class="t-ai">7216039</span><span class="t-out">  claude-code (older)</span>
-<span class="t-out">fn parse_url                 ⤷ </span><span class="t-out">9eff001  Alice</span></pre></div>
-    </div>
-
     <h2>Practical usage patterns</h2>
 
     <p>
