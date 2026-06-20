@@ -3032,3 +3032,9 @@ _[Checkpoint: 6a3674b8 — edited src/env.rs; edited src/sandbox.rs; edited CLAU
 [11:09:32] THINK: Done. #1 is implemented, tested, and clean — not yet committed (I'll wait for your go-ahead).
 [11:09:32] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): -D warnings` clean on **both** feature configs. ## Notes / follow-ups - The egress lint already forces the agent profile to supervised (process refuse…
 [11:09:32] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): o in practice this fires at the **supervised** tier here. - Deferred (cleanly): **container-tier** home isolation (would need a `--mount` of the copy …
+
+
+---
+_[Checkpoint: 6a3674ec — edited src/env.rs; edited src/sandbox.rs; edited CLAUDE.md]_
+---
+
