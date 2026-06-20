@@ -2910,3 +2910,4 @@ _[Checkpoint: 6a366fa9 — session ended (auto-checkpoint)]_
 [10:48:44] OBSERVE: listed files under ../codex
 [10:48:44] OBSERVE: listed files under ../codex
 [10:48:44] OBSERVE: read src/env.rs
+[10:48:44] OBSERVE: read src/sandbox.rs
