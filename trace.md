@@ -3413,3 +3413,4 @@ _[Checkpoint: 6a36fa4c — edited docs/guides/ai-code-provenance/index.html; edi
 [20:42:47] OBSERVE: read MANUAL.md
 [20:43:26] ACT: edited MANUAL.md
 [20:43:30] ACT: edited MANUAL.md
+[20:44:35] THINK: When it completes I'll review the new structure and verification results, sanity-check the rendered manual myself, and commit.
