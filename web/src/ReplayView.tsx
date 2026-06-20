@@ -60,7 +60,13 @@ const LANE_LABEL: Record<string, string> = {
   msg: "MSG",
 };
 
-export function ReplayView({ focusOid }: { focusOid?: string | null }) {
+export function ReplayView({
+  focusOid,
+  branch,
+}: {
+  focusOid?: string | null;
+  branch?: string | null;
+}) {
   const [envs, setEnvs] = useState<EnvFleetItem[] | null>(null);
   const [commits, setCommits] = useState<Commit[] | null>(null);
   const [selected, setSelected] = useState<RunRef | null>(null);
@@ -68,8 +74,17 @@ export function ReplayView({ focusOid }: { focusOid?: string | null }) {
 
   useEffect(() => {
     api.envs().then(setEnvs).catch(() => setEnvs([]));
-    api.commits({ limit: 60 }).then(setCommits).catch((e) => setError(String(e)));
   }, []);
+
+  // Commit-fallback runs are scoped to the picked branch's own commits
+  // (base..branch), so the run list isn't flooded by the whole history.
+  useEffect(() => {
+    setCommits(null);
+    api
+      .commits({ limit: 60, branch, branchOnly: !!branch })
+      .then(setCommits)
+      .catch((e) => setError(String(e)));
+  }, [branch]);
 
   // Deep-link: when a focus commit is requested (e.g. from the cockpit), select
   // it as a commit-anchored run.
@@ -110,11 +125,16 @@ export function ReplayView({ focusOid }: { focusOid?: string | null }) {
     return [...envRuns, ...commitRuns];
   }, [envs, commits]);
 
-  // Auto-select the most pressing run once data lands.
+  // Auto-select the most pressing run once data lands. Keep the current pick
+  // when it's still valid (or is the focused commit), else fall to the top —
+  // this also re-picks correctly when the branch filter changes the run list.
   useEffect(() => {
-    if (selected || runs.length === 0) return;
-    setSelected(runs[0]);
-  }, [runs, selected]);
+    if (runs.length === 0) return;
+    setSelected((cur) => {
+      if (cur && (cur.id === focusOid || runs.some((r) => r.id === cur.id))) return cur;
+      return runs[0];
+    });
+  }, [runs, focusOid]);
 
   if (error && !commits) {
     return (

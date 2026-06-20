@@ -369,6 +369,41 @@ impl H5iRepository {
         Ok(records)
     }
 
+    /// Branch-own commit log (`base..branch`): the picked branch's commits with
+    /// the default branch's shared ancestry hidden (same scoping as the cockpit
+    /// review list, via [`Self::scope_base_oid`]). The default branch itself has
+    /// no base and degrades to a full branch walk.
+    pub fn get_log_branch_own(
+        &self,
+        branch: &str,
+        limit: usize,
+    ) -> Result<Vec<H5iCommitRecord>, H5iError> {
+        let mut revwalk = self.git_repo.revwalk()?;
+        let local = self.git_repo.find_branch(branch, git2::BranchType::Local).ok();
+        let remote = self.git_repo.find_branch(branch, git2::BranchType::Remote).ok();
+        let tip = if let Some(b) = local.or(remote) {
+            b.get().target().ok_or_else(|| {
+                H5iError::Git(git2::Error::from_str("branch has no target oid"))
+            })?
+        } else {
+            self.git_repo.revparse_single(branch)?.id()
+        };
+        revwalk.push(tip)?;
+        if let Some(base) = self.scope_base_oid(tip) {
+            let _ = revwalk.hide(base);
+        }
+
+        let mut records = Vec::new();
+        for oid in revwalk.take(limit) {
+            let oid = oid?;
+            let record = self
+                .load_h5i_record(oid)
+                .unwrap_or_else(|_| H5iCommitRecord::minimal_from_git(&self.git_repo, oid));
+            records.push(record);
+        }
+        Ok(records)
+    }
+
     /// Retrieves the extended `h5i` commit log including AI metadata.
     ///
     /// This method behaves similarly to `get_log`, but is intended as the

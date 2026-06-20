@@ -64,6 +64,9 @@ pub struct LogQuery {
     /// Optional branch (or any ref-ish: tag, "origin/x", abbrev). When omitted
     /// the walk starts at HEAD as before.
     pub branch: Option<String>,
+    /// When true (with `branch` set), scope to the branch's own commits
+    /// (`base..branch`) by hiding the default branch's shared history.
+    pub branch_only: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -260,9 +263,11 @@ async fn api_commits(
     let limit = params.limit.unwrap_or(100);
 
     let branch = params.branch.clone();
+    let branch_only = params.branch_only.unwrap_or(false);
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<EnrichedCommit>> {
         let repo = H5iRepository::open(&path)?;
         let records = match branch.as_deref() {
+            Some(b) if !b.is_empty() && branch_only => repo.get_log_branch_own(b, limit)?,
             Some(b) if !b.is_empty() => repo.get_log_at_branch(b, limit)?,
             _ => repo.get_log(limit)?,
         };

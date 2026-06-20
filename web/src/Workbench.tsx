@@ -200,7 +200,7 @@ export function Workbench() {
       />
 
       {mode === "replay" ? (
-        <ReplayView focusOid={replayFocusOid} />
+        <ReplayView focusOid={replayFocusOid} branch={branchInUI} />
       ) : mode === "cockpit" ? (
         <CockpitView
           branch={branchInUI}

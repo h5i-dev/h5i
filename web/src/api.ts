@@ -557,10 +557,13 @@ async function getJSON<T>(url: string): Promise<T> {
 export const api = {
   repo: () => getJSON<Repo>("/api/repo"),
   branches: () => getJSON<BranchInfo[]>("/api/branches"),
-  commits: (opts: { limit?: number; branch?: string | null } = {}) => {
+  commits: (
+    opts: { limit?: number; branch?: string | null; branchOnly?: boolean } = {},
+  ) => {
     const p = new URLSearchParams();
     if (opts.limit != null) p.set("limit", String(opts.limit));
     if (opts.branch) p.set("branch", opts.branch);
+    if (opts.branchOnly) p.set("branch_only", "true");
     return getJSON<Commit[]>(`/api/commits?${p.toString()}`);
   },
   commitFiles: (oid: string) =>
