@@ -3030,3 +3030,4 @@ _[Checkpoint: 6a3674b8 — edited src/env.rs; edited src/sandbox.rs; edited CLAU
 ---
 
 [11:09:32] THINK: Done. #1 is implemented, tested, and clean — not yet committed (I'll wait for your go-ahead).
+[11:09:32] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): -D warnings` clean on **both** feature configs. ## Notes / follow-ups - The egress lint already forces the agent profile to supervised (process refuse…
