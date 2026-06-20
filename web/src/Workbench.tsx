@@ -29,12 +29,14 @@ import { IntegrityTab } from "./IntegrityTab";
 import { ContextView } from "./ContextView";
 import { CommitContextTab } from "./CommitContextTab";
 import { MemoryView } from "./MemoryView";
-import { ReviewView } from "./ReviewView";
+import { ReplayView } from "./ReplayView";
+import { CockpitView } from "./CockpitView";
+import { RadioView } from "./RadioView";
 import { SandboxView } from "./SandboxView";
 import { ContextStrip } from "./ContextStrip";
 import { BranchPicker } from "./BranchPicker";
 
-type Mode = "explore" | "review" | "memory" | "context" | "sandbox";
+type Mode = "replay" | "cockpit" | "radio" | "explore" | "memory" | "context" | "sandbox";
 type RightTab = "refs" | "sessions" | "integrity" | "context";
 
 export function Workbench() {
@@ -42,10 +44,12 @@ export function Workbench() {
   const [commits, setCommits] = useState<Commit[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedOid, setSelectedOid] = useState<string | null>(null);
-  // Default landing is Context — h5i's killer feature. Users can still
-  // jump into commit exploration via the Explore button or the context strip.
-  const [mode, setMode] = useState<Mode>("context");
+  // Default landing is Replay — h5i's centerpiece: replay the agent run behind
+  // the diff. Users jump to other modes via the header nav.
+  const [mode, setMode] = useState<Mode>("replay");
   const [rightTab, setRightTab] = useState<RightTab>("refs");
+  // When the cockpit asks to replay a specific commit, focus the replay there.
+  const [replayFocusOid, setReplayFocusOid] = useState<string | null>(null);
   // null = follow HEAD (server default); a string = explicit branch override.
   const [activeBranch, setActiveBranch] = useState<string | null>(null);
 
@@ -58,7 +62,9 @@ export function Workbench() {
       setError(null);
       setCommits(null);
       api
-        .commits({ limit: 200, branch })
+        // Scope Explore to the branch's own commits (base..branch); the default
+        // branch has no base and falls back to a full walk.
+        .commits({ limit: 200, branch, branchOnly: !!branch })
         .then((cs) => {
           setCommits(cs);
           // When the branch changes, prefer the new tip; otherwise keep current
@@ -74,16 +80,21 @@ export function Workbench() {
     [],
   );
 
+  // Resolve the branch the whole workbench follows: an explicit picker override,
+  // else the repo's current branch. Commit logs (Explore) and the context
+  // dashboard both scope to this.
+  const branchInUI = activeBranch ?? repo?.branch ?? null;
+
   useEffect(() => {
     loadRepo();
   }, [loadRepo]);
   useEffect(() => {
-    loadCommits(activeBranch);
-  }, [activeBranch, loadCommits]);
+    loadCommits(branchInUI);
+  }, [branchInUI, loadCommits]);
 
   const refresh = () => {
     loadRepo();
-    loadCommits(activeBranch);
+    loadCommits(branchInUI);
   };
 
   const selected = useMemo(
@@ -95,8 +106,6 @@ export function Workbench() {
     setMode("explore");
     setSelectedOid(oid);
   };
-
-  const branchInUI = activeBranch ?? repo?.branch ?? null;
   const ghBranchUrl = repo?.github_url
     ? (b: string) => githubBranchUrl(repo.github_url, b)
     : null;
@@ -120,6 +129,30 @@ export function Workbench() {
         <nav className="wb-header-modes">
           <ButtonGroup minimal>
             <Button
+              icon="play"
+              text="Replay"
+              active={mode === "replay"}
+              onClick={() => setMode("replay")}
+            />
+            <Button
+              icon="endorsed"
+              text="Cockpit"
+              active={mode === "cockpit"}
+              onClick={() => setMode("cockpit")}
+            />
+            <Button
+              icon="feed"
+              text="Radio"
+              active={mode === "radio"}
+              onClick={() => setMode("radio")}
+            />
+            <Button
+              icon="shield"
+              text="Sandbox"
+              active={mode === "sandbox"}
+              onClick={() => setMode("sandbox")}
+            />
+            <Button
               icon="lightbulb"
               text="Context"
               active={mode === "context"}
@@ -132,22 +165,10 @@ export function Workbench() {
               onClick={() => setMode("explore")}
             />
             <Button
-              icon="endorsed"
-              text="Review"
-              active={mode === "review"}
-              onClick={() => setMode("review")}
-            />
-            <Button
               icon="database"
               text="Memory"
               active={mode === "memory"}
               onClick={() => setMode("memory")}
-            />
-            <Button
-              icon="shield"
-              text="Sandbox"
-              active={mode === "sandbox"}
-              onClick={() => setMode("sandbox")}
             />
           </ButtonGroup>
         </nav>
@@ -175,13 +196,6 @@ export function Workbench() {
             </a>
           ) : null}
           <Button minimal small icon="refresh" onClick={refresh} title="Refresh" />
-          <a
-            href="/legacy"
-            className="bp5-button bp5-minimal bp5-small"
-            title="Legacy UI"
-          >
-            Legacy
-          </a>
         </div>
       </header>
 
@@ -190,7 +204,23 @@ export function Workbench() {
         onOpen={() => setMode("context")}
       />
 
-      {mode === "explore" ? (
+      {mode === "replay" ? (
+        <ReplayView focusOid={replayFocusOid} branch={branchInUI} />
+      ) : mode === "cockpit" ? (
+        <CockpitView
+          branch={branchInUI}
+          onOpenReplay={(oid) => {
+            setReplayFocusOid(oid);
+            setMode("replay");
+          }}
+        />
+      ) : mode === "radio" ? (
+        <div className="wb-body wb-body-single">
+          <div className="wb-pane">
+            <RadioView branch={branchInUI} />
+          </div>
+        </div>
+      ) : mode === "explore" ? (
         <div className="wb-body">
           <CommitListPane
             commits={commits}
@@ -208,12 +238,6 @@ export function Workbench() {
             onSelect={jumpToCommit}
           />
         </div>
-      ) : mode === "review" ? (
-        <div className="wb-body wb-body-single">
-          <div className="wb-pane">
-            <ReviewView onSelect={jumpToCommit} />
-          </div>
-        </div>
       ) : mode === "memory" ? (
         <div className="wb-body wb-body-single">
           <div className="wb-pane">
@@ -227,7 +251,7 @@ export function Workbench() {
           <div className="wb-pane">
             <div className="wb-pane-header">Context workspace</div>
             <div className="wb-pane-body wb-context-body">
-              <ContextView />
+              <ContextView branch={branchInUI} />
             </div>
           </div>
         </div>

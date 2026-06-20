@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::{
     extract::{Path, Query, State},
     http::{header, StatusCode},
-    response::{Html, IntoResponse, Json, Response},
+    response::{IntoResponse, Json, Response},
     routing::get,
     Router,
 };
@@ -64,6 +64,9 @@ pub struct LogQuery {
     /// Optional branch (or any ref-ish: tag, "origin/x", abbrev). When omitted
     /// the walk starts at HEAD as before.
     pub branch: Option<String>,
+    /// When true (with `branch` set), scope to the branch's own commits
+    /// (`base..branch`) by hiding the default branch's shared history.
+    pub branch_only: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -87,6 +90,8 @@ pub struct IntentGraphQuery {
 pub struct ReviewQuery {
     pub limit: Option<usize>,
     pub min_score: Option<f32>,
+    /// When set, walk review points from this branch's tip instead of HEAD.
+    pub branch: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -159,10 +164,8 @@ fn fallback_report() -> IntegrityReport {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-// `/` now serves the React + Blueprint workbench (web/dist/) bundled into
-// the binary at compile time. The previous single-file dashboard is still
-// reachable at `/legacy` for tabs whose interactive visualizations haven't
-// been migrated yet (notably the Intent Graph SVG renderer).
+// `/` serves the React + Blueprint workbench (web/dist/) bundled into the
+// binary at compile time.
 //
 // In debug builds rust-embed reads from disk on each request, so editing
 // frontend files and re-running `npm run build` updates the served bundle
@@ -174,10 +177,6 @@ struct WebAsset;
 
 async fn index() -> Response {
     serve_embedded("index.html")
-}
-
-async fn legacy_index() -> Html<&'static str> {
-    Html(FRONTEND_HTML)
 }
 
 async fn workbench_asset(Path(path): Path<String>) -> Response {
@@ -264,9 +263,11 @@ async fn api_commits(
     let limit = params.limit.unwrap_or(100);
 
     let branch = params.branch.clone();
+    let branch_only = params.branch_only.unwrap_or(false);
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<EnrichedCommit>> {
         let repo = H5iRepository::open(&path)?;
         let records = match branch.as_deref() {
+            Some(b) if !b.is_empty() && branch_only => repo.get_log_branch_own(b, limit)?,
             Some(b) if !b.is_empty() => repo.get_log_at_branch(b, limit)?,
             _ => repo.get_log(limit)?,
         };
@@ -743,10 +744,11 @@ async fn api_review_points(
     let path = state.repo_path.clone();
     let limit = params.limit.unwrap_or(100);
     let min_score = params.min_score.unwrap_or(REVIEW_THRESHOLD);
+    let branch = params.branch.clone();
 
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<ReviewPoint>> {
         let repo = H5iRepository::open(&path)?;
-        Ok(repo.suggest_review_points(limit, min_score)?)
+        Ok(repo.suggest_review_points_at(branch.as_deref(), limit, min_score)?)
     })
     .await;
 
@@ -1887,6 +1889,1139 @@ async fn api_env_capture(
     }
 }
 
+// ── Replay (the flight recorder) ───────────────────────────────────────────────
+//
+// The roadmap's centerpiece: "Review the run, not just the diff." A Replay is a
+// single chronological timeline of what an agent did inside a workspace before
+// producing a diff — prompt → reads → commands → blocked accesses → tests →
+// edits → diff — plus a per-file "workspace heatmap" (read/edited/tested/
+// blocked/risky) and the evidence behind each event. Two anchors:
+//   • env run    — the cleanest "what the agent could and couldn't reach" story,
+//                  assembled from captures + egress + enforced policy + risk.
+//   • commit     — the fallback for ordinary history, assembled from the commit
+//                  record (prompt, tests) + the analyzed Claude Code session.
+// Both produce the same shape so the frontend renders one view.
+
+/// One event on the replay timeline. `kind` drives the icon/colour; `lane`
+/// groups it (intent / fs / net / proc / test / provenance / lifecycle / msg).
+#[derive(Serialize)]
+pub struct ReplayEvent {
+    pub seq: usize,
+    pub ts: String,
+    /// PROMPT | THINK | READ | RUN | TEST_PASS | TEST_FAIL | BLOCKED | EDIT |
+    /// NOTE | DIFF | CREATE | PROPOSE | APPLY | ABORT | MSG | EVENT
+    pub kind: String,
+    pub lane: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// info | good | warning | critical — the loud one is `critical` (blocked).
+    pub severity: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capture_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+}
+
+/// One file's status across the run — the center-pane heatmap cell.
+#[derive(Serialize, Clone)]
+pub struct FileHeat {
+    pub path: String,
+    pub read: bool,
+    pub edited: bool,
+    pub tested: bool,
+    pub blocked: bool,
+    /// Edited without first reading it — "changed without enough context".
+    pub risky: bool,
+}
+
+/// Run-level summary for the replay header / trust strip.
+#[derive(Serialize)]
+pub struct ReplayHeader {
+    /// "env" | "commit"
+    pub anchor: String,
+    pub id: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub isolation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_digest: Option<String>,
+    pub blocked_count: u64,
+    pub allowed_count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tests_passed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tests_failed: Option<u64>,
+    pub risk_score: u32,
+    pub risk_level: String,
+    pub run_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diffstat: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ReplayView {
+    pub header: ReplayHeader,
+    pub timeline: Vec<ReplayEvent>,
+    pub heatmap: Vec<FileHeat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<EnforcedPolicy>,
+    pub findings: Vec<crate::risk::Finding>,
+}
+
+/// Get-or-create a heatmap cell.
+fn heat_cell<'a>(
+    heat: &'a mut std::collections::BTreeMap<String, FileHeat>,
+    path: &str,
+) -> &'a mut FileHeat {
+    heat.entry(path.to_string()).or_insert_with(|| FileHeat {
+        path: path.to_string(),
+        read: false,
+        edited: false,
+        tested: false,
+        blocked: false,
+        risky: false,
+    })
+}
+
+/// Test pass/fail tallies from a capture's structured result, when it is a test
+/// run. `None` for non-test captures.
+fn capture_test_counts(cap: &crate::objects::Manifest) -> Option<(u64, u64)> {
+    let s = cap.structured.as_ref()?;
+    let is_test = matches!(s.kind, crate::structured::ResultKind::Test)
+        || s.counts.contains_key("passed")
+        || s.counts.contains_key("failed");
+    if !is_test {
+        return None;
+    }
+    let passed = s.counts.get("passed").copied().unwrap_or(0);
+    let failed = s.counts.get("failed").copied().unwrap_or(0);
+    Some((passed, failed))
+}
+
+/// Assemble a replay from an environment's runs (the primary anchor).
+#[allow(clippy::too_many_arguments)]
+fn build_env_replay(
+    git: &git2::Repository,
+    h5i_root: &std::path::Path,
+    m: &crate::env::EnvManifest,
+    events: &[crate::env::EnvEvent],
+    captures: &[crate::objects::Manifest],
+    policy: Option<&crate::sandbox::Profile>,
+    risk: &crate::risk::EnvRisk,
+) -> ReplayView {
+    use std::collections::BTreeMap;
+    let mut timeline: Vec<ReplayEvent> = Vec::new();
+    let mut heat: BTreeMap<String, FileHeat> = BTreeMap::new();
+    let mut seq = 0usize;
+    let mut push = |timeline: &mut Vec<ReplayEvent>, e: ReplayEvent| {
+        let mut e = e;
+        e.seq = seq;
+        seq += 1;
+        timeline.push(e);
+    };
+
+    let cap_by_id: HashMap<&str, &crate::objects::Manifest> =
+        captures.iter().map(|c| (c.id.as_str(), c)).collect();
+
+    let mut blocked_count: u64 = 0;
+    let mut allowed_count: u64 = 0;
+    let mut tests_passed: u64 = 0;
+    let mut tests_failed: u64 = 0;
+    let mut had_tests = false;
+    let mut run_count = 0usize;
+
+    for ev in events {
+        match ev.event.as_str() {
+            "created" => push(
+                &mut timeline,
+                ReplayEvent {
+                    seq: 0,
+                    ts: ev.ts.clone(),
+                    kind: "CREATE".into(),
+                    lane: "lifecycle".into(),
+                    title: format!("Environment created · {}", m.isolation_claim),
+                    detail: ev.detail.clone(),
+                    severity: "info".into(),
+                    files: vec![],
+                    capture_id: None,
+                    exit_code: None,
+                },
+            ),
+            "exec" => {
+                run_count += 1;
+                let cap = ev.capture.as_deref().and_then(|id| cap_by_id.get(id).copied());
+                let cmd = cap
+                    .and_then(|c| c.cmd.clone())
+                    .or_else(|| {
+                        ev.detail
+                            .as_ref()
+                            .and_then(|d| d.split("cmd=`").nth(1))
+                            .and_then(|s| s.split('`').next())
+                            .map(|s| s.to_string())
+                    })
+                    .unwrap_or_else(|| "command".into());
+                let exit = cap.and_then(|c| c.exit_code);
+                push(
+                    &mut timeline,
+                    ReplayEvent {
+                        seq: 0,
+                        ts: ev.ts.clone(),
+                        kind: "RUN".into(),
+                        lane: "proc".into(),
+                        title: cmd.clone(),
+                        detail: cap.map(|c| c.summary.clone()),
+                        severity: if exit.unwrap_or(0) != 0 { "warning" } else { "info" }.into(),
+                        files: vec![],
+                        capture_id: ev.capture.clone(),
+                        exit_code: exit,
+                    },
+                );
+                if let Some(cap) = cap {
+                    // reads (files mentioned, not edited)
+                    let edited: HashSet<&str> = cap.diff_files.iter().map(|s| s.as_str()).collect();
+                    let reads: Vec<String> = cap
+                        .files
+                        .iter()
+                        .filter(|f| !edited.contains(f.as_str()))
+                        .cloned()
+                        .collect();
+                    for f in &reads {
+                        heat_cell(&mut heat, f).read = true;
+                    }
+                    if !reads.is_empty() {
+                        push(
+                            &mut timeline,
+                            ReplayEvent {
+                                seq: 0,
+                                ts: ev.ts.clone(),
+                                kind: "READ".into(),
+                                lane: "fs".into(),
+                                title: format!("touched {} file(s)", reads.len()),
+                                detail: Some(reads.join("\n")),
+                                severity: "info".into(),
+                                files: reads.clone(),
+                                capture_id: ev.capture.clone(),
+                                exit_code: None,
+                            },
+                        );
+                    }
+                    // edits (working-tree diff at capture time)
+                    if !cap.diff_files.is_empty() {
+                        for f in &cap.diff_files {
+                            let c = heat_cell(&mut heat, f);
+                            c.edited = true;
+                        }
+                        push(
+                            &mut timeline,
+                            ReplayEvent {
+                                seq: 0,
+                                ts: ev.ts.clone(),
+                                kind: "EDIT".into(),
+                                lane: "fs".into(),
+                                title: format!("changed {} file(s)", cap.diff_files.len()),
+                                detail: Some(cap.diff_files.join("\n")),
+                                severity: "info".into(),
+                                files: cap.diff_files.clone(),
+                                capture_id: ev.capture.clone(),
+                                exit_code: None,
+                            },
+                        );
+                    }
+                    // tests
+                    if let Some((p, f)) = capture_test_counts(cap) {
+                        had_tests = true;
+                        tests_passed += p;
+                        tests_failed += f;
+                        for path in &cap.files {
+                            heat_cell(&mut heat, path).tested = true;
+                        }
+                        let failed = f > 0;
+                        push(
+                            &mut timeline,
+                            ReplayEvent {
+                                seq: 0,
+                                ts: ev.ts.clone(),
+                                kind: if failed { "TEST_FAIL" } else { "TEST_PASS" }.into(),
+                                lane: "test".into(),
+                                title: if failed {
+                                    format!("{f} failed · {p} passed")
+                                } else {
+                                    format!("{p} passed")
+                                },
+                                detail: cap.structured.as_ref().and_then(|s| s.body.clone()),
+                                severity: if failed { "critical" } else { "good" }.into(),
+                                files: vec![],
+                                capture_id: ev.capture.clone(),
+                                exit_code: cap.exit_code,
+                            },
+                        );
+                    }
+                    // egress — the hero signal: blocked accesses
+                    if let Some(eg) = &cap.egress {
+                        allowed_count += eg.allowed;
+                        blocked_count += eg.denied;
+                        for h in &eg.hosts {
+                            if h.denied > 0 {
+                                push(
+                                    &mut timeline,
+                                    ReplayEvent {
+                                        seq: 0,
+                                        ts: ev.ts.clone(),
+                                        kind: "BLOCKED".into(),
+                                        lane: "net".into(),
+                                        title: format!("blocked egress → {}:{}", h.host, h.port),
+                                        detail: Some(format!(
+                                            "{} request(s) refused by the egress allowlist (off-policy host)",
+                                            h.denied
+                                        )),
+                                        severity: "critical".into(),
+                                        files: vec![],
+                                        capture_id: ev.capture.clone(),
+                                        exit_code: None,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            "violation" => {
+                blocked_count += 1;
+                push(
+                    &mut timeline,
+                    ReplayEvent {
+                        seq: 0,
+                        ts: ev.ts.clone(),
+                        kind: "BLOCKED".into(),
+                        lane: "provenance".into(),
+                        title: "mediated commit refused".into(),
+                        detail: ev.detail.clone(),
+                        severity: "critical".into(),
+                        files: vec![],
+                        capture_id: ev.capture.clone(),
+                        exit_code: None,
+                    },
+                );
+            }
+            "proposed" | "applied" | "aborted" | "gc" | "status" => {
+                let kind = match ev.event.as_str() {
+                    "proposed" => "PROPOSE",
+                    "applied" => "APPLY",
+                    "aborted" => "ABORT",
+                    _ => "EVENT",
+                };
+                push(
+                    &mut timeline,
+                    ReplayEvent {
+                        seq: 0,
+                        ts: ev.ts.clone(),
+                        kind: kind.into(),
+                        lane: "lifecycle".into(),
+                        title: ev.event.clone(),
+                        detail: ev.detail.clone(),
+                        severity: "info".into(),
+                        files: vec![],
+                        capture_id: ev.capture.clone(),
+                        exit_code: None,
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+
+    // diffstat (the proposed state) as a closing DIFF event.
+    let diffstat = crate::env::diff(git, h5i_root, m, true).ok().filter(|s| !s.trim().is_empty());
+    if let Some(ds) = &diffstat {
+        let first = ds.lines().last().unwrap_or("").trim().to_string();
+        push(
+            &mut timeline,
+            ReplayEvent {
+                seq: 0,
+                ts: m.updated_at.clone(),
+                kind: "DIFF".into(),
+                lane: "fs".into(),
+                title: if first.is_empty() { "proposed diff".into() } else { first },
+                detail: Some(ds.clone()),
+                severity: "info".into(),
+                files: vec![],
+                capture_id: None,
+                exit_code: None,
+            },
+        );
+    }
+
+    // mark blocked/risky heat from risk findings + read-before-edit.
+    for f in &risk.findings {
+        if matches!(f.lane, crate::risk::Lane::Fs) && f.severity == crate::risk::Severity::Critical {
+            for c in heat.values_mut() {
+                if f.evidence.contains(&c.path) {
+                    c.blocked = true;
+                }
+            }
+        }
+    }
+    for c in heat.values_mut() {
+        if c.edited && !c.read {
+            c.risky = true;
+        }
+    }
+
+    let mut heatmap: Vec<FileHeat> = heat.into_values().collect();
+    heatmap.sort_by(|a, b| score_heat(b).cmp(&score_heat(a)).then(a.path.cmp(&b.path)));
+
+    ReplayView {
+        header: ReplayHeader {
+            anchor: "env".into(),
+            id: m.id.clone(),
+            title: m.slug.clone(),
+            subtitle: Some(format!("{} · {}", m.agent, m.status)),
+            agent: Some(m.agent.clone()),
+            model: None,
+            isolation: Some(m.isolation_claim.clone()),
+            prompt: None,
+            policy_digest: Some(m.policy_digest.clone()),
+            blocked_count,
+            allowed_count,
+            tests_passed: had_tests.then_some(tests_passed),
+            tests_failed: had_tests.then_some(tests_failed),
+            risk_score: risk.score,
+            risk_level: format!("{:?}", risk.level).to_lowercase(),
+            run_count,
+            created_at: Some(m.created_at.clone()),
+            diffstat,
+        },
+        timeline,
+        heatmap,
+        policy: policy.map(EnforcedPolicy::from),
+        findings: risk.findings.clone(),
+    }
+}
+
+/// Sort key so the loudest files float up: blocked > risky > edited > tested > read.
+fn score_heat(h: &FileHeat) -> u8 {
+    (h.blocked as u8) << 4
+        | (h.risky as u8) << 3
+        | (h.edited as u8) << 2
+        | (h.tested as u8) << 1
+        | (h.read as u8)
+}
+
+/// Paths changed by a commit (vs its first parent / the empty tree for a root).
+fn commit_changed_files(git: &git2::Repository, commit: &git2::Commit) -> Vec<String> {
+    let Ok(tree) = commit.tree() else {
+        return vec![];
+    };
+    let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+    let Ok(diff) = git.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None) else {
+        return vec![];
+    };
+    let mut files: Vec<String> = Vec::new();
+    let _ = diff.foreach(
+        &mut |delta, _| {
+            if files.len() >= 200 {
+                return false;
+            }
+            if let Some(p) = delta.new_file().path().or_else(|| delta.old_file().path()) {
+                if let Some(s) = p.to_str() {
+                    files.push(s.to_string());
+                }
+            }
+            true
+        },
+        None,
+        None,
+        None,
+    );
+    files.sort();
+    files.dedup();
+    files
+}
+
+/// Assemble a replay from a commit + its analyzed session (the fallback anchor).
+fn build_commit_replay(
+    repo: &H5iRepository,
+    oid: git2::Oid,
+) -> anyhow::Result<ReplayView> {
+    use std::collections::BTreeMap;
+    let git = repo.git();
+    let commit = git.find_commit(oid)?;
+    let message = commit.message().unwrap_or("").trim().to_string();
+    let subject = message.lines().next().unwrap_or("").to_string();
+    let author = commit.author().name().unwrap_or("Unknown").to_string();
+    let ts = repo
+        .load_h5i_record(oid)
+        .ok()
+        .map(|r| r.timestamp.to_rfc3339())
+        .unwrap_or_default();
+    let record = repo.load_h5i_record(oid).ok();
+    let analysis = session_log::load_analysis(&repo.h5i_root, &oid.to_string())
+        .ok()
+        .flatten();
+
+    let mut timeline: Vec<ReplayEvent> = Vec::new();
+    let mut heat: BTreeMap<String, FileHeat> = BTreeMap::new();
+    let mut seq = 0usize;
+    let mut emit = |timeline: &mut Vec<ReplayEvent>, kind: &str, lane: &str, title: String, detail: Option<String>, severity: &str, files: Vec<String>| {
+        timeline.push(ReplayEvent {
+            seq,
+            ts: ts.clone(),
+            kind: kind.into(),
+            lane: lane.into(),
+            title,
+            detail,
+            severity: severity.into(),
+            files,
+            capture_id: None,
+            exit_code: None,
+        });
+        seq += 1;
+    };
+
+    // PROMPT
+    let prompt = record
+        .as_ref()
+        .and_then(|r| r.ai_metadata.as_ref())
+        .map(|ai| ai.prompt.clone())
+        .filter(|p| !p.is_empty())
+        .or_else(|| analysis.as_ref().map(|a| a.causal_chain.user_trigger.clone()).filter(|s| !s.is_empty()));
+    if let Some(p) = &prompt {
+        emit(&mut timeline, "PROMPT", "intent", "Prompt".into(), Some(p.clone()), "info", vec![]);
+    }
+
+    if let Some(a) = &analysis {
+        for d in a.causal_chain.key_decisions.iter().take(8) {
+            emit(&mut timeline, "THINK", "intent", d.clone(), None, "info", vec![]);
+        }
+        let reads: Vec<String> = a.footprint.consulted.iter().map(|c| c.path.clone()).collect();
+        for r in &reads {
+            heat_cell(&mut heat, r).read = true;
+        }
+        if !reads.is_empty() {
+            emit(&mut timeline, "READ", "fs", format!("consulted {} file(s)", reads.len()), Some(reads.join("\n")), "info", reads.clone());
+        }
+        for cmd in a.footprint.bash_commands.iter().take(20) {
+            emit(&mut timeline, "RUN", "proc", cmd.clone(), None, "info", vec![]);
+        }
+        let mut edits = a.causal_chain.edit_sequence.clone();
+        edits.sort_by_key(|e| e.turn);
+        for e in &edits {
+            heat_cell(&mut heat, &e.file).edited = true;
+            emit(&mut timeline, "EDIT", "fs", format!("{} {}", e.operation, e.file), None, "info", vec![e.file.clone()]);
+        }
+        for u in a.uncertainty.iter().take(6) {
+            emit(&mut timeline, "NOTE", "intent", format!("uncertainty in {}", u.context_file), Some(u.snippet.clone()), "warning", vec![u.context_file.clone()]);
+        }
+        for o in a.omissions.iter().take(6) {
+            emit(&mut timeline, "NOTE", "intent", format!("{:?} near {}", o.kind, o.context_file), Some(o.snippet.clone()), "warning", vec![o.context_file.clone()]);
+        }
+        // coverage heat
+        for cov in &a.coverage {
+            let c = heat_cell(&mut heat, &cov.file);
+            if !cov.read_ranges.is_empty() {
+                c.read = true;
+            }
+            if !cov.edit_turns.is_empty() {
+                c.edited = true;
+            }
+            if cov.blind_edit_count > 0 {
+                c.risky = true;
+            }
+        }
+    }
+
+    // tests
+    if let Some(tm) = record.as_ref().and_then(|r| r.test_metrics.as_ref()) {
+        let failed = tm.failed > 0;
+        emit(
+            &mut timeline,
+            if failed { "TEST_FAIL" } else { "TEST_PASS" },
+            "test",
+            if failed { format!("{} failed · {} passed", tm.failed, tm.passed) } else { format!("{} passed", tm.passed) },
+            tm.summary.clone(),
+            if failed { "critical" } else { "good" },
+            vec![],
+        );
+    }
+
+    // diff (changed files in this commit)
+    let changed = commit_changed_files(git, &commit);
+    for f in &changed {
+        heat_cell(&mut heat, f).edited = true;
+    }
+    if !changed.is_empty() {
+        emit(&mut timeline, "DIFF", "fs", format!("{} file(s) changed", changed.len()), Some(changed.join("\n")), "info", changed.clone());
+    }
+
+    for c in heat.values_mut() {
+        if c.edited && !c.read && !c.risky {
+            c.risky = true;
+        }
+    }
+    let mut heatmap: Vec<FileHeat> = heat.into_values().collect();
+    heatmap.sort_by(|a, b| score_heat(b).cmp(&score_heat(a)).then(a.path.cmp(&b.path)));
+
+    let (agent, model) = record
+        .as_ref()
+        .and_then(|r| r.ai_metadata.as_ref())
+        .map(|ai| (Some(ai.agent_id.clone()).filter(|s| !s.is_empty()), Some(ai.model_name.clone()).filter(|s| !s.is_empty())))
+        .unwrap_or((None, None));
+    let (tp, tf) = record
+        .as_ref()
+        .and_then(|r| r.test_metrics.as_ref())
+        .map(|tm| (Some(tm.passed), Some(tm.failed)))
+        .unwrap_or((None, None));
+    let prov = record.as_ref().and_then(|r| r.env_provenance.as_ref());
+
+    Ok(ReplayView {
+        header: ReplayHeader {
+            anchor: "commit".into(),
+            id: oid.to_string(),
+            title: subject,
+            subtitle: Some(author),
+            agent,
+            model,
+            isolation: prov.map(|p| p.isolation_claim.clone()),
+            prompt,
+            policy_digest: prov.map(|p| p.policy_digest.clone()),
+            blocked_count: 0,
+            allowed_count: 0,
+            tests_passed: tp,
+            tests_failed: tf,
+            risk_score: 0,
+            risk_level: "info".into(),
+            run_count: analysis.as_ref().map(|a| a.footprint.bash_commands.len()).unwrap_or(0),
+            created_at: Some(ts),
+            diffstat: None,
+        },
+        timeline,
+        heatmap,
+        policy: None,
+        findings: vec![],
+    })
+}
+
+/// GET /api/env/:agent/:slug/replay — the env-anchored flight recorder.
+async fn api_env_replay(
+    State(state): State<Arc<AppState>>,
+    Path((agent, slug)): Path<(String, String)>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<ReplayView>> {
+        let repo = H5iRepository::open(&path)?;
+        let git = repo.git();
+        let h5i_root = &repo.h5i_root;
+        let id = format!("env/{agent}/{slug}");
+        let Some(m) = crate::env::list(h5i_root).into_iter().find(|m| m.id == id) else {
+            return Ok(None);
+        };
+        let events = crate::env::read_events(git, Some(&m.id));
+        let captures = resolve_env_captures(git, &m);
+        let policy = crate::env::load_policy(h5i_root, &m).ok().map(|rp| rp.profile);
+        let risk = crate::risk::classify_env(&m, policy.as_ref(), &events, &captures);
+        Ok(Some(build_env_replay(
+            git,
+            h5i_root,
+            &m,
+            &events,
+            &captures,
+            policy.as_ref(),
+            &risk,
+        )))
+    })
+    .await;
+    match result.ok().and_then(|r| r.ok()).flatten() {
+        Some(v) => Json(v).into_response(),
+        None => (StatusCode::NOT_FOUND, "environment not found").into_response(),
+    }
+}
+
+/// GET /api/commit/:oid/replay — the commit-anchored fallback replay.
+async fn api_commit_replay(
+    State(state): State<Arc<AppState>>,
+    Path(oid): Path<String>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<ReplayView> {
+        let repo = H5iRepository::open(&path)?;
+        let oid = git2::Oid::from_str(&oid)?;
+        build_commit_replay(&repo, oid)
+    })
+    .await;
+    match result.ok().and_then(|r| r.ok()) {
+        Some(v) => Json(v).into_response(),
+        None => (StatusCode::NOT_FOUND, "commit not found").into_response(),
+    }
+}
+
+// ── Reviewer cockpit + prompt coach + agent radio ──────────────────────────────
+
+/// A file the reviewer should look at first, with the reason it surfaced.
+#[derive(Serialize)]
+pub struct CockpitFile {
+    pub path: String,
+    pub reason: String,
+    pub severity: String,
+}
+
+/// One line of the merge-confidence breakdown — what was checked and how many
+/// points it cost. `delta` is `<= 0`; `status` is "penalty" | "ok" | "unmeasured".
+#[derive(Serialize)]
+pub struct ConfidenceFactor {
+    pub label: String,
+    pub delta: i32,
+    pub status: String,
+    pub detail: String,
+}
+
+/// The compact "should I trust this PR?" card (roadmap §4).
+#[derive(Serialize)]
+pub struct ReviewerCockpit {
+    pub oid: String,
+    pub short_oid: String,
+    pub message: String,
+    pub author: String,
+    pub timestamp: String,
+    /// 0..=100, higher = safer to merge.
+    pub merge_confidence: u32,
+    /// Per-factor deductions behind `merge_confidence` (auditable, sums to it).
+    pub confidence_breakdown: Vec<ConfidenceFactor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_maturity: Option<f64>,
+    pub provenance: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_digest: Option<String>,
+    pub net_blocked: u64,
+    pub net_allowed: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tests_passed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tests_failed: Option<u64>,
+    pub integrity_level: String,
+    pub integrity_score: f64,
+    pub risk: String,
+    pub review_first: Vec<CockpitFile>,
+    pub review_score: f32,
+}
+
+#[derive(Deserialize)]
+struct OidQuery {
+    oid: String,
+}
+
+/// GET /api/cockpit?oid=… — the reviewer cockpit card for one commit.
+async fn api_cockpit(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<OidQuery>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<ReviewerCockpit> {
+        let repo = H5iRepository::open(&path)?;
+        let oid = git2::Oid::from_str(&q.oid)?;
+        let commit = repo.git().find_commit(oid)?;
+        let message = commit.message().unwrap_or("").trim().lines().next().unwrap_or("").to_string();
+        let author = commit.author().name().unwrap_or("Unknown").to_string();
+        let record = repo.load_h5i_record(oid).ok();
+        let integrity = repo.verify_commit_integrity(oid).unwrap_or_else(|_| fallback_report());
+        let analysis = session_log::load_analysis(&repo.h5i_root, &oid.to_string()).ok().flatten();
+
+        let prompt_score = record
+            .as_ref()
+            .and_then(|r| r.ai_metadata.as_ref())
+            .map(|ai| crate::prompt_score::score_prompt(&ai.prompt))
+            .filter(|s| s.words > 0);
+
+        let model = record.as_ref().and_then(|r| r.ai_metadata.as_ref()).map(|ai| ai.model_name.clone()).filter(|s| !s.is_empty());
+        let prov = record.as_ref().and_then(|r| r.env_provenance.as_ref());
+        let (tp, tf) = record.as_ref().and_then(|r| r.test_metrics.as_ref()).map(|tm| (Some(tm.passed), Some(tm.failed))).unwrap_or((None, None));
+
+        // review point for this commit (deterministic triggers). Seed the walk
+        // at the commit itself so it resolves even when it is not on HEAD's
+        // history (revparse_single accepts a raw OID).
+        let oid_str = oid.to_string();
+        let rp = repo
+            .suggest_review_points_at(Some(&oid_str), 64, 0.0)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|p| p.commit_oid == oid_str);
+
+        // review-first files: integrity findings paths + session blind edits + edits.
+        let mut review_first: Vec<CockpitFile> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        if let Some(a) = &analysis {
+            for cov in &a.coverage {
+                if cov.blind_edit_count > 0 && seen.insert(cov.file.clone()) {
+                    review_first.push(CockpitFile {
+                        path: cov.file.clone(),
+                        reason: "edited without reading first".into(),
+                        severity: "warning".into(),
+                    });
+                }
+            }
+            for o in &a.omissions {
+                if seen.insert(o.context_file.clone()) {
+                    review_first.push(CockpitFile {
+                        path: o.context_file.clone(),
+                        reason: format!("{:?}", o.kind).to_lowercase(),
+                        severity: "warning".into(),
+                    });
+                }
+            }
+            for e in &a.causal_chain.edit_sequence {
+                if review_first.len() >= 8 {
+                    break;
+                }
+                if seen.insert(e.file.clone()) {
+                    review_first.push(CockpitFile {
+                        path: e.file.clone(),
+                        reason: "changed in this run".into(),
+                        severity: "info".into(),
+                    });
+                }
+            }
+        }
+        review_first.truncate(8);
+
+        // merge confidence: start at 100, dock for real risk signals. Every
+        // factor is recorded so the gauge can show *why* the score is what it
+        // is (penalty = docked, ok = checked & clean, unmeasured = no signal).
+        let mut conf: i32 = 100;
+        let mut breakdown: Vec<ConfidenceFactor> = Vec::new();
+        let mut factor = |label: &str, delta: i32, status: &str, detail: String| {
+            breakdown.push(ConfidenceFactor {
+                label: label.to_string(),
+                delta,
+                status: status.to_string(),
+                detail,
+            });
+        };
+
+        // Tests
+        match (tp, tf) {
+            (_, Some(f)) if f > 0 => {
+                conf -= 35;
+                factor("Tests", -35, "penalty", format!("{f} failing, {} passing", tp.unwrap_or(0)));
+            }
+            (Some(p), Some(_)) => factor("Tests", 0, "ok", format!("{p} passing, 0 failing")),
+            _ => factor("Tests", 0, "unmeasured", "no test metrics captured".into()),
+        }
+
+        // Integrity (intent ↔ action)
+        match integrity.level {
+            crate::metadata::IntegrityLevel::Violation => {
+                conf -= 30;
+                factor("Integrity", -30, "penalty", format!("Violation ({:.2})", integrity.score));
+            }
+            crate::metadata::IntegrityLevel::Warning => {
+                conf -= 12;
+                factor("Integrity", -12, "penalty", format!("Warning ({:.2})", integrity.score));
+            }
+            crate::metadata::IntegrityLevel::Valid => {
+                factor("Integrity", 0, "ok", format!("Valid ({:.2})", integrity.score));
+            }
+        }
+
+        // Prompt maturity
+        match &prompt_score {
+            Some(ps) if ps.score < 40.0 => {
+                conf -= 12;
+                factor("Prompt maturity", -12, "penalty", format!("weak ({:.0}/100)", ps.score));
+            }
+            Some(ps) if ps.score < 60.0 => {
+                conf -= 6;
+                factor("Prompt maturity", -6, "penalty", format!("moderate ({:.0}/100)", ps.score));
+            }
+            Some(ps) => factor("Prompt maturity", 0, "ok", format!("strong ({:.0}/100)", ps.score)),
+            None => factor("Prompt maturity", 0, "unmeasured", "no captured prompt".into()),
+        }
+
+        // Deterministic review triggers
+        match &rp {
+            Some(rp) if rp.quality_score > 0.0 => {
+                let d = (rp.quality_score * 25.0) as i32;
+                conf -= d;
+                let n = rp.quality_triggers().count();
+                factor("Review signals", -d, "penalty", format!("{n} quality trigger(s)"));
+            }
+            _ => factor("Review signals", 0, "ok", "no quality triggers".into()),
+        }
+
+        // Blind edits (edited without reading first)
+        let blind = analysis
+            .as_ref()
+            .map(|a| a.coverage.iter().map(|c| c.blind_edit_count).sum::<usize>())
+            .unwrap_or(0);
+        if blind > 0 {
+            let d = (blind.min(4) as i32) * 4;
+            conf -= d;
+            factor("Blind edits", -d, "penalty", format!("{blind} file(s) edited without reading"));
+        } else if analysis.is_some() {
+            factor("Blind edits", 0, "ok", "none".into());
+        } else {
+            factor("Blind edits", 0, "unmeasured", "no session analysis".into());
+        }
+
+        let merge_confidence = conf.clamp(0, 100) as u32;
+        let risk = if merge_confidence >= 75 {
+            "low"
+        } else if merge_confidence >= 50 {
+            "medium"
+        } else {
+            "high"
+        };
+
+        let provenance = match (&record.as_ref().and_then(|r| r.ai_metadata.as_ref()).map(|ai| ai.agent_id.clone()), prov) {
+            (Some(agent), Some(p)) if !agent.is_empty() => format!("{} · {}", agent, p.isolation_claim),
+            (Some(agent), None) if !agent.is_empty() => agent.clone(),
+            _ => "unknown".into(),
+        };
+
+        Ok(ReviewerCockpit {
+            oid: oid.to_string(),
+            short_oid: oid.to_string()[..8].to_string(),
+            message,
+            author,
+            timestamp: record.as_ref().map(|r| r.timestamp.to_rfc3339()).unwrap_or_default(),
+            merge_confidence,
+            confidence_breakdown: breakdown,
+            prompt_maturity: prompt_score.as_ref().map(|s| s.score),
+            provenance,
+            model,
+            sandbox: prov.map(|p| p.isolation_claim.clone()),
+            policy_digest: prov.map(|p| p.policy_digest.clone()),
+            net_blocked: 0,
+            net_allowed: 0,
+            tests_passed: tp,
+            tests_failed: tf,
+            integrity_level: format!("{:?}", integrity.level),
+            integrity_score: integrity.score as f64,
+            risk: risk.into(),
+            review_first,
+            review_score: rp.as_ref().map(|p| p.score).unwrap_or(0.0),
+        })
+    })
+    .await;
+    match result.ok().and_then(|r| r.ok()) {
+        Some(c) => Json(c).into_response(),
+        None => (StatusCode::NOT_FOUND, "commit not found").into_response(),
+    }
+}
+
+/// One sub-signal of the prompt score: how strong the dimension is (`signal`,
+/// 0..=100) and what it contributes to the 0..=100 score (`points` of `max`).
+#[derive(Serialize)]
+pub struct PromptDimension {
+    pub label: String,
+    pub signal: f64,
+    pub points: f64,
+    pub max_points: f64,
+}
+
+/// The prompt-maturity coach payload (roadmap §6): score + per-dimension
+/// breakdown + weak spots + a concrete suggested rewrite. Scores the task
+/// delegation, not the developer.
+#[derive(Serialize)]
+pub struct PromptMaturity {
+    pub prompt: String,
+    pub score: f64,
+    pub level: String,
+    pub words: usize,
+    pub flags: Vec<String>,
+    /// The seven weighted sub-signals behind `score` (composition before the
+    /// anti-gaming guards / length caps, which can lower the final number).
+    pub dimensions: Vec<PromptDimension>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_upgrade: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PromptQuery {
+    oid: Option<String>,
+    text: Option<String>,
+}
+
+/// Build a concrete "upgrade" scaffold from the diagnostic flags — never a
+/// keyword list, just the missing delegation structure.
+fn suggested_upgrade(prompt: &str, flags: &[crate::prompt_score::Flag]) -> Option<String> {
+    use crate::prompt_score::Flag;
+    let mut adds: Vec<&str> = Vec::new();
+    for f in flags {
+        match f {
+            Flag::WeakVerification => adds.push("Run <command> and confirm it passes before finishing."),
+            Flag::WeakContext => adds.push("Scope: change only <file/module>; do not touch <out-of-scope area>."),
+            Flag::Vague => adds.push("Acceptance criteria: <observable outcome that means done>."),
+            Flag::TooShort => adds.push("State the goal, the files in scope, and how to verify the result."),
+            _ => {}
+        }
+    }
+    if adds.is_empty() {
+        return None;
+    }
+    let base = prompt.trim();
+    let mut out = String::new();
+    if !base.is_empty() {
+        out.push_str(base);
+        out.push_str("\n\n");
+    }
+    for a in adds {
+        out.push_str("- ");
+        out.push_str(a);
+        out.push('\n');
+    }
+    Some(out.trim_end().to_string())
+}
+
+/// GET /api/prompt-score?oid=…  or  ?text=… — the prompt-maturity coach.
+async fn api_prompt_score(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<PromptQuery>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<PromptMaturity>> {
+        let prompt = if let Some(t) = q.text.filter(|s| !s.is_empty()) {
+            t
+        } else if let Some(oid_s) = q.oid {
+            let repo = H5iRepository::open(&path)?;
+            let oid = git2::Oid::from_str(&oid_s)?;
+            match repo.load_h5i_record(oid).ok().and_then(|r| r.ai_metadata).map(|ai| ai.prompt) {
+                Some(p) if !p.is_empty() => p,
+                _ => return Ok(None),
+            }
+        } else {
+            return Ok(None);
+        };
+        let s = crate::prompt_score::score_prompt(&prompt);
+        let upgrade = suggested_upgrade(&prompt, &s.flags);
+        let b = &s.breakdown;
+        let w = &crate::prompt_score::WEIGHTS;
+        let dim = |label: &str, signal: f64, weight: f64| PromptDimension {
+            label: label.to_string(),
+            signal: (signal * 100.0).clamp(0.0, 100.0),
+            points: 100.0 * signal * weight,
+            max_points: 100.0 * weight,
+        };
+        let dimensions = vec![
+            dim("Specificity", b.specificity, w.specificity),
+            dim("Control", b.control, w.control),
+            dim("Context", b.context, w.context),
+            dim("Structure", b.structure, w.structure),
+            dim("Diversity", b.diversity, w.diversity),
+            dim("Clarity", b.clarity, w.clarity),
+            dim("Adequacy", b.adequacy, w.adequacy),
+        ];
+        Ok(Some(PromptMaturity {
+            prompt,
+            score: s.score,
+            level: s.level.label().to_string(),
+            words: s.words,
+            flags: s.flags.iter().map(|f| f.label().to_string()).collect(),
+            dimensions,
+            suggested_upgrade: upgrade,
+        }))
+    })
+    .await;
+    match result.ok().and_then(|r| r.ok()).flatten() {
+        Some(p) => Json(p).into_response(),
+        None => Json(serde_json::Value::Null).into_response(),
+    }
+}
+
+/// One agent-radio message, sanitized for display.
+#[derive(Serialize)]
+pub struct RadioMessage {
+    pub id: String,
+    pub ts: String,
+    pub from: String,
+    pub to: String,
+    pub kind: String,
+    pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub focus: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk: Option<String>,
+}
+
+/// A review/risk-resolution thread (roadmap §7 — code review, not chat).
+#[derive(Serialize)]
+pub struct RadioThread {
+    pub thread_id: String,
+    pub latest_ts: String,
+    pub branch: Option<String>,
+    pub status: String,
+    pub messages: Vec<RadioMessage>,
+}
+
+/// GET /api/radio — agent messages grouped into review threads.
+async fn api_radio(State(state): State<Arc<AppState>>) -> Json<Vec<RadioThread>> {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<RadioThread>> {
+        let repo = H5iRepository::open(&path)?;
+        let msgs = crate::msg::history(repo.git(), None, None, 1000).unwrap_or_default();
+        let mut by_root: HashMap<String, Vec<crate::msg::Message>> = HashMap::new();
+        for m in msgs {
+            by_root.entry(m.thread_root()).or_default().push(m);
+        }
+        let mut threads: Vec<RadioThread> = by_root
+            .into_iter()
+            .map(|(thread_id, mut ms)| {
+                ms.sort_by(|a, b| (a.ts.as_str(), a.id.as_str()).cmp(&(b.ts.as_str(), b.id.as_str())));
+                let latest_ts = ms.last().map(|m| m.ts.clone()).unwrap_or_default();
+                let branch = ms.iter().find_map(|m| m.branch.clone());
+                // Resolution state: latest typed status in the thread.
+                let status = ms
+                    .iter()
+                    .rev()
+                    .find_map(|m| m.status.clone())
+                    .unwrap_or_else(|| "open".into());
+                let messages = ms
+                    .into_iter()
+                    .map(|m| RadioMessage {
+                        kind: m.effective_kind(),
+                        id: m.id,
+                        ts: m.ts,
+                        from: crate::msg::sanitize_display(&m.from),
+                        to: crate::msg::sanitize_display(&m.to),
+                        body: crate::msg::sanitize_display(&m.body),
+                        status: m.status,
+                        priority: m.priority,
+                        branch: m.branch,
+                        focus: m.focus.into_iter().map(|f| crate::msg::sanitize_display(&f)).collect(),
+                        risk: m.risk.map(|r| crate::msg::sanitize_display(&r)),
+                    })
+                    .collect();
+                RadioThread { thread_id, latest_ts, branch, status, messages }
+            })
+            .collect();
+        threads.sort_by(|a, b| b.latest_ts.cmp(&a.latest_ts));
+        Ok(threads)
+    })
+    .await;
+    Json(result.ok().and_then(|r| r.ok()).unwrap_or_default())
+}
+
 /// Host isolation readiness, for the dashboard's top-strip vitals.
 #[derive(Serialize)]
 pub struct ProbeResponse {
@@ -2057,7 +3192,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/", get(index))
         .route("/v2", get(index))
         .route("/v2/", get(index))
-        .route("/legacy", get(legacy_index))
         .route("/assets/*path", get(workbench_asset))
         .route("/api/repo", get(api_repo))
         .route("/api/branches", get(api_branches))
@@ -2086,3082 +3220,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/envs", get(api_envs))
         .route("/api/env/probe", get(api_env_probe))
         .route("/api/env/:agent/:slug", get(api_env_detail))
+        .route("/api/env/:agent/:slug/replay", get(api_env_replay))
         .route("/api/env/:agent/:slug/captures/:id", get(api_env_capture))
+        // Replay (commit fallback) + reviewer cockpit + prompt coach + radio
+        .route("/api/commit/:oid/replay", get(api_commit_replay))
+        .route("/api/cockpit", get(api_cockpit))
+        .route("/api/prompt-score", get(api_prompt_score))
+        .route("/api/radio", get(api_radio))
         .with_state(state)
-}
-
-// ── Embedded frontend ─────────────────────────────────────────────────────────
-
-pub const FRONTEND_HTML: &str = r##"<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>h5i — 5D Git Dashboard</title>
-<style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html{font-size:14px;scroll-behavior:smooth}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif;background:#0d1117;color:#e6edf3;min-height:100vh;line-height:1.5}
-
-/* Header */
-.header{background:#161b22;border-bottom:1px solid #30363d;padding:0 20px;display:flex;align-items:center;gap:10px;height:54px;position:sticky;top:0;z-index:100;backdrop-filter:blur(8px)}
-.logo{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700;color:#e6edf3;text-decoration:none;letter-spacing:-.02em}
-.logo-icon{width:28px;height:28px;background:linear-gradient(135deg,#bc8cff 0%,#58a6ff 100%);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff;box-shadow:0 0 10px #bc8cff44}
-.header-sep{color:#30363d;font-size:20px;margin:0 2px}
-.repo-name{color:#58a6ff;font-size:14px;font-weight:600}
-.branch-badge{background:#21262d;border:1px solid #30363d;border-radius:20px;padding:2px 10px;font-size:11px;color:#8b949e;font-family:monospace}
-.header-spacer{flex:1}
-.gh-repo-link{display:none;align-items:center;gap:5px;color:#8b949e;text-decoration:none;font-size:12px;padding:4px 10px;border:1px solid #30363d;border-radius:6px;transition:all .15s}
-.gh-repo-link:hover{color:#58a6ff;border-color:#58a6ff}
-.gh-repo-link.visible{display:flex}
-.refresh-btn{background:#21262d;border:1px solid #30363d;border-radius:6px;color:#8b949e;padding:5px 12px;cursor:pointer;font-size:12px;transition:all .15s}
-.refresh-btn:hover{color:#e6edf3;border-color:#8b949e}
-
-/* Stats bar */
-.stats-bar{background:#161b22;border-bottom:1px solid #30363d;padding:6px 20px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}
-.stat{display:flex;align-items:center;gap:5px;font-size:12px;color:#8b949e}
-.stat b{color:#e6edf3;font-size:13px}
-.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
-.dot-blue{background:#58a6ff}.dot-purple{background:#bc8cff}.dot-green{background:#3fb950}.dot-red{background:#f85149}.dot-orange{background:#d29922}.dot-gray{background:#484f58}
-
-/* Layout */
-.layout{display:flex;min-height:calc(100vh - 88px)}
-.sidebar{width:210px;flex-shrink:0;border-right:1px solid #30363d;padding:14px 12px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;position:sticky;top:88px;max-height:calc(100vh - 88px)}
-.content{flex:1;padding:16px 20px;min-width:0;overflow-y:auto}
-
-/* Sidebar cards */
-.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px}
-.card-title{font-size:11px;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
-.dim-row{display:flex;align-items:center;gap:7px;margin-bottom:6px;font-size:12px}
-.dim-icon{font-size:14px;width:20px;text-align:center}
-.dim-tag{padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600}
-.tag-blue{background:#1f3a5f;color:#58a6ff}.tag-green{background:#1a3a2a;color:#3fb950}
-.tag-purple{background:#2d1f4f;color:#bc8cff}.tag-orange{background:#3a2a1a;color:#d29922}
-.tag-yellow{background:#3a3a1a;color:#e3b341}
-.side-row{display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;color:#8b949e}
-.side-row b{color:#e6edf3}
-
-/* Sparkline */
-.sparkline-wrap{margin-top:6px}
-.sparkline-svg{width:100%;height:40px;overflow:visible}
-.sparkline-label{font-size:10px;color:#484f58;text-align:center;margin-top:3px}
-.health-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-.health-rate{font-size:18px;font-weight:700}
-.health-rate.good{color:#3fb950}.health-rate.warn{color:#d29922}.health-rate.bad{color:#f85149}
-
-/* Tabs */
-.tabs{display:flex;gap:2px;margin-bottom:16px;border-bottom:1px solid #30363d;padding-bottom:0}
-.tab{background:none;border:none;border-bottom:2px solid transparent;padding:8px 14px;color:#8b949e;cursor:pointer;font-size:13px;font-weight:500;margin-bottom:-1px;transition:all .15s}
-.tab:hover{color:#e6edf3}
-.tab.active{color:#e6edf3;border-bottom-color:#bc8cff}
-.tab-badge{background:#30363d;color:#8b949e;border-radius:10px;padding:0 7px;font-size:10px;margin-left:5px}
-.tab.active .tab-badge{background:#bc8cff33;color:#bc8cff}
-
-/* Search + filters */
-.search-row{display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap}
-.search-input{flex:1;min-width:180px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:6px 12px;font-size:13px;outline:none;transition:border .15s}
-.search-input:focus{border-color:#58a6ff}
-.pill{background:#21262d;border:1px solid #30363d;border-radius:20px;padding:4px 12px;font-size:12px;color:#8b949e;cursor:pointer;transition:all .15s;white-space:nowrap}
-.pill:hover{color:#e6edf3;border-color:#8b949e}
-.pill.active{background:#bc8cff22;border-color:#bc8cff;color:#bc8cff}
-.pill.active.red-pill{background:#f8514922;border-color:#f85149;color:#f85149}
-
-/* Timeline */
-.timeline{position:relative;padding-left:28px}
-.timeline::before{content:"";position:absolute;left:10px;top:8px;bottom:8px;width:2px;background:linear-gradient(to bottom,#bc8cff,#58a6ff44);border-radius:2px}
-.commit-entry{position:relative;margin-bottom:10px;animation:fadeIn .3s ease both}
-@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-.commit-dot{position:absolute;left:-22px;top:14px;width:16px;height:16px;border-radius:50%;border:2px solid #0d1117;display:flex;align-items:center;justify-content:center;font-size:8px;z-index:1}
-.ai-dot{background:linear-gradient(135deg,#bc8cff,#58a6ff);box-shadow:0 0 8px #bc8cff66}
-.human-dot{background:#21262d;border-color:#484f58}
-.commit-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:11px 13px;cursor:pointer;transition:all .15s;position:relative}
-.commit-card:hover{border-color:#484f58;background:#1c2128}
-.commit-card.expanded{border-color:#58a6ff44}
-.commit-card.failing{border-left:3px solid #f85149}
-.commit-card.passing{border-left:3px solid #3fb95055}
-.commit-head{display:flex;align-items:baseline;gap:8px;margin-bottom:5px;flex-wrap:wrap}
-.oid-chip{font-family:monospace;font-size:11px;padding:1px 7px;border-radius:4px;font-weight:600;white-space:nowrap}
-.oid-ai{background:#bc8cff22;color:#bc8cff}.oid-human{background:#58a6ff22;color:#58a6ff}
-.commit-msg{font-size:13px;font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.gh-commit-link{margin-left:auto;display:inline-flex;align-items:center;gap:4px;color:#58a6ff;text-decoration:none;font-size:11px;font-weight:600;padding:3px 9px;border:1px solid #58a6ff44;border-radius:4px;background:#58a6ff11;white-space:nowrap;transition:all .15s;flex-shrink:0}
-.gh-commit-link:hover{color:#fff;border-color:#58a6ff;background:#58a6ff33}
-.byline{font-size:12px;color:#8b949e;margin-bottom:7px}
-.byline .author{color:#58a6ff}
-.badges{display:flex;flex-wrap:wrap;gap:4px}
-.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:10px;font-size:11px;font-weight:500;white-space:nowrap}
-.b-model{background:#bc8cff22;color:#bc8cff}
-.b-agent{background:#d2992222;color:#d29922}
-.b-test-ok{background:#3fb95022;color:#3fb950}
-.b-test-fail{background:#f8514922;color:#f85149}
-.b-test-warn{background:#d2992222;color:#d29922}
-.b-tool{background:#21262d;color:#8b949e;border:1px solid #30363d}
-.b-dur{background:#21262d;color:#8b949e}
-.b-ast{background:#1a3a2a;color:#3fb950}
-.b-tok{background:#21262d;color:#8b949e}
-.b-cov{background:#2d1f4f;color:#bc8cff}
-.b-cause{background:#1f2d3d;color:#58a6ff;border:1px solid #1f4070}
-
-/* Commit detail (expanded) */
-.commit-detail{display:none;margin-top:12px;border-top:1px solid #30363d;padding-top:12px}
-.commit-detail.open{display:block}
-.detail-grid{display:grid;grid-template-columns:100px 1fr;gap:4px 12px;font-size:12px;margin-bottom:10px}
-.dk{color:#8b949e;padding-top:2px}
-.dv{color:#e6edf3;word-break:break-word}
-.dv.mono{font-family:monospace;font-size:11px}
-.dv.prompt-text{color:#bc8cff;font-style:italic;white-space:pre-wrap;line-height:1.5}
-.test-table{width:100%;border-collapse:collapse;margin:8px 0;font-size:12px}
-.test-table th{color:#8b949e;font-weight:500;text-align:left;padding:3px 8px;border-bottom:1px solid #30363d}
-.test-table td{padding:4px 8px;border-bottom:1px solid #21262d}
-.td-pass{color:#3fb950;font-weight:600}.td-fail{color:#f85149;font-weight:600}.td-skip{color:#d29922}.td-tot{color:#e6edf3}
-.audit-section{margin-top:8px;border-top:1px solid #21262d;padding-top:8px}
-.audit-btn{background:#21262d;border:1px solid #30363d;border-radius:6px;color:#8b949e;padding:5px 12px;cursor:pointer;font-size:12px;transition:all .15s;display:inline-flex;align-items:center;gap:5px}
-.audit-btn:hover{color:#bc8cff;border-color:#bc8cff44;background:#bc8cff11}
-.audit-btn:disabled{opacity:.5;cursor:not-allowed}
-.audit-result-box{margin-top:8px;border:1px solid #30363d;border-radius:6px;padding:10px;background:#0d1117}
-.rules-detail-toggle{background:none;border:none;color:#58a6ff;font-size:11px;cursor:pointer;padding:4px 0;display:inline-flex;align-items:center;gap:4px;margin-top:8px;text-decoration:underline;text-underline-offset:2px}
-.rules-detail-toggle:hover{color:#79c0ff}
-.rules-detail-panel{display:none;margin-top:8px;border:1px solid #21262d;border-radius:6px;padding:8px 10px;background:#0d1117}
-.rules-detail-panel.open{display:block}
-.rule-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px}
-.rule-pass{color:#3fb950}.rule-fail{color:#f85149}.rule-warn{color:#d29922}
-.rule-id-label{font-family:monospace;font-size:10px;color:#8b949e;flex:1}
-
-/* Integrity panel */
-.int-form{display:flex;flex-direction:column;gap:10px;max-width:680px}
-.int-label{font-size:12px;color:#8b949e;margin-bottom:4px;display:block}
-.int-input{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:8px 12px;font-size:13px;outline:none;width:100%;transition:border .15s}
-.int-input:focus{border-color:#58a6ff}
-.int-textarea{resize:vertical;min-height:72px;font-family:inherit}
-.run-btn{background:linear-gradient(90deg,#bc8cff,#58a6ff);border:none;border-radius:6px;color:#fff;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .15s;align-self:flex-start}
-.run-btn:hover{opacity:.88}
-.run-btn:disabled{opacity:.5;cursor:not-allowed}
-.int-result{margin-top:16px}
-.int-report{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px}
-.ir-header{display:flex;align-items:center;gap:12px;margin-bottom:14px}
-.lv-valid{background:#1a3a2a;color:#3fb950;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
-.lv-warning{background:#3a2a1a;color:#d29922;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
-.lv-violation{background:#3a1a1a;color:#f85149;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
-.ir-score{font-size:28px;font-weight:700}
-.ir-label{color:#8b949e;font-size:13px}
-.ir-findings{display:flex;flex-direction:column;gap:8px}
-.finding{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-radius:6px}
-.rv{background:#3a1a1a}.rw{background:#3a2a1a}.ri{background:#1f3a5f}
-.finding-icon{font-size:14px;flex-shrink:0;margin-top:1px}
-.finding-rule{font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;white-space:nowrap}
-.rv .finding-rule{background:#f8514922;color:#f85149}
-.rw .finding-rule{background:#d2992222;color:#d29922}
-.ri .finding-rule{background:#58a6ff22;color:#58a6ff}
-.finding-detail{font-size:12px;color:#8b949e;line-height:1.5}
-.success-msg{color:#3fb950;font-size:13px;display:flex;align-items:center;gap:6px}
-
-/* Summary tab */
-.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:20px}
-.sum-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}
-.sum-num{font-size:28px;font-weight:700;margin-bottom:2px}
-.sum-label{font-size:12px;color:#8b949e}
-.chart-section{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;margin-bottom:14px}
-.chart-title{font-size:12px;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px}
-.chart-svg{width:100%;overflow:visible}
-.agent-table{width:100%;border-collapse:collapse;font-size:12px}
-.agent-table th{color:#8b949e;font-weight:500;text-align:left;padding:4px 10px;border-bottom:1px solid #30363d}
-.agent-table td{padding:5px 10px;border-bottom:1px solid #21262d}
-.agent-bar-bg{background:#21262d;border-radius:10px;height:6px;width:100px;display:inline-block;vertical-align:middle}
-.agent-bar-fill{background:linear-gradient(90deg,#bc8cff,#58a6ff);border-radius:10px;height:6px;display:block}
-.fail-list{display:flex;flex-direction:column;gap:6px}
-.fail-item{display:flex;align-items:center;gap:8px;font-size:12px;padding:6px 10px;background:#3a1a1a22;border-radius:6px;border-left:3px solid #f85149}
-.fail-oid{font-family:monospace;color:#f85149;font-size:11px}
-.fail-msg{color:#e6edf3;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fail-counts{color:#f85149;font-weight:600;white-space:nowrap}
-.empty-state{color:#484f58;text-align:center;padding:40px 20px;font-size:14px}
-.spinner{display:inline-block;width:14px;height:14px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle}
-@keyframes spin{to{transform:rotate(360deg)}}
-.section-hdr{font-size:13px;font-weight:600;margin-bottom:8px;color:#e6edf3}
-
-/* Intent Graph tab */
-.ig-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
-.ig-select{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:5px 10px;font-size:12px;outline:none}
-.ig-btn{background:linear-gradient(90deg,#bc8cff,#58a6ff);border:none;border-radius:6px;color:#fff;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;transition:opacity .15s}
-.ig-btn:hover{opacity:.85}
-.ig-btn:disabled{opacity:.5;cursor:not-allowed}
-.ig-canvas-wrap{background:#0d1117;border:1px solid #30363d;border-radius:8px;overflow:auto;min-height:300px}
-.ig-svg{display:block;min-width:100%}
-.ig-node rect{rx:6;stroke-width:1.5;cursor:pointer;transition:filter .15s}
-.ig-node rect:hover{filter:brightness(1.3)}
-.ig-node text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;pointer-events:none;dominant-baseline:middle}
-.ig-edge{stroke-width:1.5;fill:none;marker-end:url(#arrow-parent)}
-.ig-edge-causal{stroke-width:2;fill:none;marker-end:url(#arrow-causal)}
-.ig-legend{display:flex;gap:16px;font-size:11px;color:#8b949e;margin-top:8px;padding:0 4px}
-.ig-legend-item{display:flex;align-items:center;gap:5px}
-.ig-legend-line{width:24px;height:2px;display:inline-block}
-
-/* Review Points tab */
-.rp-list{display:flex;flex-direction:column;gap:10px}
-.rp-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:13px 15px;animation:fadeIn .3s ease both}
-.rp-card.high{border-left:3px solid #f85149}
-.rp-card.medium{border-left:3px solid #d29922}
-.rp-card.low{border-left:3px solid #58a6ff}
-.rp-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap}
-.rp-rank{font-size:11px;color:#484f58;font-weight:600;min-width:22px}
-.rp-score-pill{padding:2px 9px;border-radius:10px;font-size:12px;font-weight:700;white-space:nowrap}
-.rp-score-high{background:#f8514922;color:#f85149}
-.rp-score-med{background:#d2992222;color:#d29922}
-.rp-score-low{background:#58a6ff22;color:#58a6ff}
-.rp-bar{font-family:monospace;font-size:11px;color:#484f58;letter-spacing:-1px}
-.rp-msg{font-size:13px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rp-meta{font-size:12px;color:#8b949e;margin-bottom:8px}
-.rp-triggers{display:flex;flex-direction:column;gap:3px}
-.rp-trigger{display:flex;align-items:baseline;gap:8px;font-size:12px}
-.rp-rule{font-family:monospace;font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;white-space:nowrap;flex-shrink:0}
-.rp-rule-red{background:#f8514922;color:#f85149}
-.rp-rule-yellow{background:#d2992222;color:#d29922}
-.rp-rule-blue{background:#58a6ff22;color:#58a6ff}
-.rp-rule-gray{background:#21262d;color:#8b949e}
-.rp-detail{color:#8b949e}
-.rp-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
-.rp-label{font-size:12px;color:#8b949e}
-.rp-select{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:5px 10px;font-size:12px;outline:none}
-.rp-btn{background:linear-gradient(90deg,#bc8cff,#58a6ff);border:none;border-radius:6px;color:#fff;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;transition:opacity .15s}
-.rp-btn:hover{opacity:.85}
-.rp-btn:disabled{opacity:.5;cursor:not-allowed}
-.rp-status{font-size:12px;color:#8b949e}
-
-/* Intent node detail modal */
-.ig-modal-overlay{display:none;position:fixed;inset:0;background:#00000088;z-index:200;align-items:center;justify-content:center}
-.ig-modal-overlay.open{display:flex}
-.ig-modal{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px 22px;min-width:340px;max-width:520px;width:90%;position:relative;box-shadow:0 8px 32px #000a}
-.ig-modal-close{position:absolute;top:10px;right:12px;background:none;border:none;color:#8b949e;font-size:18px;cursor:pointer;line-height:1;padding:2px 6px;border-radius:4px}
-.ig-modal-close:hover{color:#e6edf3;background:#30363d}
-.ig-modal-oid{font-family:monospace;font-size:13px;font-weight:700;margin-bottom:2px}
-.ig-modal-msg{font-size:13px;color:#8b949e;margin-bottom:14px;line-height:1.45}
-.ig-modal-section{margin-bottom:12px}
-.ig-modal-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#484f58;margin-bottom:4px}
-.ig-modal-intent{font-size:14px;color:#e6edf3;line-height:1.55;white-space:pre-wrap;word-break:break-word}
-.ig-modal-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-.ig-modal-badge{padding:2px 9px;border-radius:10px;font-size:11px;font-weight:500}
-
-/* ── Memory tab ────────────────────────────────────────────────────────────── */
-.mem-layout{display:grid;grid-template-columns:300px 1fr;gap:14px;align-items:start}
-.mem-snap-list{display:flex;flex-direction:column;gap:7px}
-.mem-snap-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:11px 13px;cursor:pointer;transition:all .15s;position:relative}
-.mem-snap-card:hover{border-color:#484f58;background:#1c2128}
-.mem-snap-card.sel-from{border-color:#58a6ff;box-shadow:0 0 0 1px #58a6ff33}
-.mem-snap-card.sel-to{border-color:#3fb950;box-shadow:0 0 0 1px #3fb95033}
-.mem-snap-head{display:flex;align-items:center;gap:7px;margin-bottom:4px}
-.mem-oid{font-family:monospace;font-size:11px;font-weight:700;background:#bc8cff22;color:#bc8cff;padding:1px 7px;border-radius:4px}
-.mem-ts{font-size:11px;color:#484f58}
-.mem-nfiles{font-size:12px;color:#8b949e}
-.mem-sel-badge{position:absolute;top:8px;right:8px;font-size:9px;font-weight:700;padding:1px 7px;border-radius:8px}
-.mem-sel-from-badge{background:#1f3a5f;color:#58a6ff}
-.mem-sel-to-badge{background:#1a3a2a;color:#3fb950}
-
-.mem-viewer{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;min-height:420px}
-.mem-viewer-empty{color:#484f58;text-align:center;padding:60px 20px;font-size:13px;line-height:1.8}
-
-.mem-file-tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px;border-bottom:1px solid #30363d;padding-bottom:8px}
-.mem-ftab{background:none;border:1px solid transparent;border-radius:4px;padding:3px 10px;font-size:11px;cursor:pointer;color:#8b949e;transition:all .15s}
-.mem-ftab:hover{color:#e6edf3;background:#21262d}
-.mem-ftab.active{background:#bc8cff22;border-color:#bc8cff44;color:#bc8cff}
-.mem-file-content{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:12px;font-size:12px;font-family:monospace;white-space:pre-wrap;color:#8b949e;max-height:480px;overflow-y:auto;line-height:1.6}
-
-.mem-frontmatter{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:10px 14px;margin-bottom:10px}
-.mem-fm-row{display:flex;gap:10px;font-size:12px;margin-bottom:5px;align-items:baseline}
-.mem-fm-key{color:#484f58;min-width:72px;font-family:monospace;font-size:11px}
-.mem-fm-val{color:#e6edf3}
-.mem-fm-desc{color:#8b949e;font-style:italic}
-.mem-type-user{background:#1f3a5f;color:#58a6ff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700}
-.mem-type-feedback{background:#2d1f4f;color:#bc8cff;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700}
-.mem-type-project{background:#1a3a2a;color:#3fb950;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700}
-.mem-type-reference{background:#3a2a1a;color:#d29922;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700}
-.mem-body{font-size:12px;color:#e6edf3;white-space:pre-wrap;line-height:1.7;font-family:inherit;padding:2px 0}
-
-.mem-diff-file{margin-bottom:18px}
-.mem-diff-hdr{display:flex;align-items:center;gap:7px;margin-bottom:6px;font-size:12px;font-weight:600;font-family:monospace}
-.mem-diff-hdr-add{color:#3fb950}.mem-diff-hdr-rm{color:#f85149}.mem-diff-hdr-mod{color:#d29922}
-.mem-diff-lines{background:#0d1117;border:1px solid #21262d;border-radius:6px;overflow:hidden;font-family:monospace;font-size:11px;max-height:320px;overflow-y:auto}
-.mem-dl{display:flex;line-height:1.55}
-.mem-dl-add{background:#12261e;color:#3fb950}
-.mem-dl-rm{background:#270d0d;color:#f85149}
-.mem-dl-ctx{color:#484f58}
-.mem-dl-sep{color:#30363d;font-style:italic;background:#0d1117;justify-content:center}
-.mem-gutter{width:18px;text-align:center;flex-shrink:0;padding:0 3px;font-size:10px;user-select:none;border-right:1px solid #21262d;color:inherit;opacity:.7}
-.mem-text{padding:1px 8px;white-space:pre-wrap;word-break:break-all;flex:1}
-
-.mem-diff-summary{display:flex;gap:14px;margin-bottom:14px;font-size:12px;flex-wrap:wrap}
-.mem-diff-stat-add{color:#3fb950;display:flex;align-items:center;gap:4px}
-.mem-diff-stat-rm{color:#f85149;display:flex;align-items:center;gap:4px}
-.mem-diff-stat-mod{color:#d29922;display:flex;align-items:center;gap:4px}
-
-.mem-controls{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
-.mem-btn{background:linear-gradient(90deg,#bc8cff,#58a6ff);border:none;border-radius:6px;color:#fff;padding:6px 16px;font-size:12px;font-weight:600;cursor:pointer;transition:opacity .15s}
-.mem-btn:hover{opacity:.85}
-.mem-btn:disabled{opacity:.4;cursor:not-allowed}
-.mem-btn-ghost{background:#21262d;border:1px solid #30363d;border-radius:6px;color:#8b949e;padding:6px 14px;font-size:12px;cursor:pointer;transition:all .15s}
-.mem-btn-ghost:hover{color:#e6edf3;border-color:#8b949e}
-.mem-hint{font-size:11px;color:#484f58}
-.mem-snap-count{font-size:11px;color:#484f58;margin-bottom:8px}
-.mem-insp-hdr{font-size:13px;font-weight:600;margin-bottom:12px;color:#e6edf3;display:flex;align-items:center;gap:10px}
-.mem-diff-hdr-row{font-size:13px;font-weight:600;margin-bottom:14px;color:#e6edf3;display:flex;align-items:center;gap:8px}
-/* ── Sessions tab ── */
-.sl-layout{display:grid;grid-template-columns:280px 1fr;gap:16px;height:calc(100vh - 160px)}
-.sl-list{overflow-y:auto;border-right:1px solid #21262d;padding-right:12px}
-.sl-card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s}
-.sl-card:hover,.sl-card.active{border-color:#58a6ff}
-.sl-card-oid{font-family:monospace;font-size:12px;color:#bc8cff;font-weight:700}
-.sl-card-meta{font-size:11px;color:#484f58;margin-top:4px}
-.sl-card-badges{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
-.sl-badge{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600}
-.sl-badge-edit{background:#1a3a1a;color:#3fb950}
-.sl-badge-read{background:#1a2a3a;color:#58a6ff}
-.sl-badge-warn{background:#3a2a10;color:#e3b341}
-.sl-detail{overflow-y:auto;padding:4px 0 4px 4px}
-.sl-section{margin-bottom:20px}
-.sl-section-title{font-size:12px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid #21262d}
-.sl-trigger{background:#161b22;border:1px solid #21262d;border-radius:6px;padding:10px 14px;font-style:italic;color:#58a6ff;font-size:13px;line-height:1.5}
-.sl-file-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px}
-.sl-file-name{color:#e6edf3;font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sl-file-count{color:#484f58;font-size:11px;min-width:28px;text-align:right}
-.sl-file-tools{color:#484f58;font-size:10px}
-.sl-edit-icon{color:#3fb950;width:14px;text-align:center}
-.sl-read-icon{color:#58a6ff;width:14px;text-align:center}
-.sl-dep-icon{color:#484f58;width:14px;text-align:center}
-.sl-decision{padding:5px 0;font-size:12px;color:#c9d1d9;line-height:1.5;border-bottom:1px solid #161b22}
-.sl-rejected{padding:5px 0;font-size:12px;color:#484f58;font-style:italic;line-height:1.5}
-.sl-rejected::before{content:"✗ ";color:#f85149}
-.sl-unc-row{margin-bottom:10px;padding:8px 10px;background:#161b22;border-radius:6px;border-left:3px solid #e3b341}
-.sl-unc-row.high{border-left-color:#f85149}
-.sl-unc-row.low{border-left-color:#3fb950}
-.sl-unc-phrase{font-size:11px;font-weight:700;color:#e3b341;margin-bottom:3px}
-.sl-unc-snippet{font-size:11px;color:#8b949e;font-style:italic;line-height:1.4}
-.sl-unc-meta{font-size:10px;color:#484f58;margin-top:3px}
-.sl-churn-bar{display:flex;align-items:center;gap:8px;padding:4px 0}
-.sl-churn-file{font-family:monospace;font-size:12px;color:#e6edf3;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sl-churn-track{width:80px;height:6px;background:#21262d;border-radius:3px;overflow:hidden}
-.sl-churn-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#3fb950,#f85149)}
-.sl-churn-pct{font-size:11px;color:#484f58;min-width:34px;text-align:right}
-.sl-replay-hash{font-family:monospace;font-size:11px;color:#484f58;background:#161b22;padding:6px 10px;border-radius:4px;word-break:break-all}
-.sl-empty{color:#484f58;font-size:13px;padding:20px 0}
-
-/* ── Context tab ── */
-.ctx-not-init{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:48px 32px;text-align:center;color:#484f58;font-size:13px;line-height:2}
-.ctx-not-init-icon{font-size:28px;margin-bottom:10px}
-.ctx-not-init code{background:#21262d;padding:3px 10px;border-radius:4px;font-size:12px;color:#8b949e}
-.ctx-not-init-cmd{margin-top:10px}
-.ctx-goal-bar{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 16px;margin-bottom:10px;display:flex;align-items:center;gap:10px}
-.ctx-goal-icon{font-size:13px;color:#bc8cff;flex-shrink:0}
-.ctx-goal-text{font-size:13px;color:#bc8cff;font-style:italic;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ctx-goal-branch{display:inline-flex;align-items:center;background:#1a3a2a;color:#3fb950;border-radius:10px;font-size:10px;font-weight:700;padding:2px 9px;white-space:nowrap;flex-shrink:0}
-.ctx-stats-bar{display:flex;gap:0;margin-bottom:14px;background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden}
-.ctx-stat-item{flex:1;padding:10px 14px;text-align:center;border-right:1px solid #30363d}
-.ctx-stat-item:last-child{border-right:none}
-.ctx-stat-val{font-size:18px;font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums;line-height:1.2}
-.ctx-stat-lbl{font-size:10px;color:#484f58;text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
-.ctx-branch-nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
-.ctx-branch-nav-label{font-size:10px;color:#484f58;text-transform:uppercase;letter-spacing:.06em;margin-right:4px;white-space:nowrap}
-.ctx-branch-pill{background:#21262d;border:1px solid #30363d;border-radius:20px;color:#8b949e;padding:4px 12px;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
-.ctx-branch-pill:hover{border-color:#484f58;color:#e6edf3}
-.ctx-branch-pill.active{background:#1a3a2a;border-color:#3fb950;color:#3fb950}
-.ctx-branch-pill.scope{border-color:#58a6ff44;color:#58a6ff99}
-.ctx-branch-pill.scope.active{background:#1f3a5f;border-color:#58a6ff;color:#58a6ff}
-.ctx-layout{display:grid;grid-template-columns:260px 1fr;gap:14px;align-items:start;margin-bottom:16px}
-.ctx-left-col{display:flex;flex-direction:column;gap:8px}
-.ctx-right-col{min-height:280px}
-.ctx-pane-header{display:flex;align-items:center;justify-content:space-between;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#484f58;padding:0 2px 7px;border-bottom:1px solid #21262d}
-.ctx-pane-header span:last-child{background:#21262d;border-radius:8px;padding:1px 8px;color:#8b949e;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400}
-.ctx-snap-list{display:flex;flex-direction:column;gap:5px;max-height:360px;overflow-y:auto}
-.ctx-snap-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:9px 11px;cursor:pointer;transition:all .15s;position:relative}
-.ctx-snap-card:hover{border-color:#484f58;background:#1c2128}
-.ctx-snap-card.sel-from{border-color:#58a6ff;box-shadow:0 0 0 1px #58a6ff33;background:#1c2940}
-.ctx-snap-card.sel-to{border-color:#bc8cff;box-shadow:0 0 0 1px #bc8cff33;background:#22192f}
-.ctx-snap-sha{font-family:monospace;font-size:11px;font-weight:700;background:#bc8cff22;color:#bc8cff;padding:1px 6px;border-radius:4px}
-.ctx-snap-ts{font-size:10px;color:#484f58;margin-left:5px}
-.ctx-snap-badge{font-size:10px;color:#8b949e;margin-top:3px}
-.ctx-snap-goal{font-size:11px;color:#8b949e;font-style:italic;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ctx-sel-badge{position:absolute;top:7px;right:8px;font-size:9px;font-weight:700;padding:1px 7px;border-radius:8px}
-.ctx-sel-from-badge{background:#1f3a5f;color:#58a6ff}
-.ctx-sel-to-badge{background:#2d1f4f;color:#bc8cff}
-.ctx-controls{display:flex;gap:6px;align-items:center}
-.ctx-btn{background:linear-gradient(90deg,#bc8cff,#58a6ff);border:none;border-radius:6px;color:#fff;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;transition:opacity .15s}
-.ctx-btn:hover{opacity:.85}
-.ctx-btn:disabled{opacity:.4;cursor:not-allowed}
-.ctx-btn-ghost{background:#21262d;border:1px solid #30363d;border-radius:6px;color:#8b949e;padding:5px 12px;font-size:12px;cursor:pointer;transition:all .15s}
-.ctx-btn-ghost:hover{color:#e6edf3;border-color:#8b949e}
-.ctx-hint{font-size:10px;color:#484f58;line-height:1.4}
-.ctx-viewer{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;min-height:280px}
-.ctx-viewer-empty{color:#484f58;text-align:center;padding:60px 20px;font-size:13px;line-height:1.8}
-.ctx-viewer-hdr{display:flex;align-items:center;gap:8px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #30363d}
-.ctx-viewer-sha{font-family:monospace;font-size:12px;font-weight:700;color:#bc8cff;background:#bc8cff22;padding:2px 8px;border-radius:4px}
-.ctx-viewer-ts{font-size:11px;color:#484f58}
-.ctx-viewer-goal{font-size:13px;color:#bc8cff;font-style:italic;margin:8px 0;padding:8px 12px;background:#2d1f4f44;border-radius:6px;border-left:3px solid #bc8cff44}
-.ctx-viewer-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#484f58;margin:12px 0 6px;padding-bottom:4px;border-bottom:1px solid #21262d}
-.ctx-milestone-entry{padding:5px 0;font-size:12px;color:#c9d1d9;border-bottom:1px solid #21262d11;display:flex;align-items:baseline;gap:8px}
-.ctx-milestone-entry::before{content:"◈";color:#bc8cff;flex-shrink:0}
-.ctx-section{margin-top:16px;border-top:1px solid #30363d;padding-top:14px}
-.ctx-section-header{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
-.ctx-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#484f58}
-.ctx-section-sub{font-size:11px;color:#58a6ff;background:#1f3a5f44;padding:1px 8px;border-radius:8px}
-.ctx-trace-filters{display:flex;gap:4px;flex:1;flex-wrap:wrap}
-.ctx-filter-btn{background:#21262d;border:1px solid #30363d;border-radius:12px;color:#8b949e;padding:3px 10px;font-size:10px;font-weight:600;cursor:pointer;transition:all .15s;text-transform:uppercase;letter-spacing:.04em}
-.ctx-filter-btn:hover{border-color:#484f58;color:#e6edf3}
-.ctx-filter-btn.active[data-kind=all]{background:#21262d;border-color:#484f58;color:#e6edf3}
-.ctx-filter-btn.active[data-kind=OBSERVE]{background:#1f3a5f44;border-color:#58a6ff;color:#58a6ff}
-.ctx-filter-btn.active[data-kind=THINK]{background:#2d1f4f44;border-color:#bc8cff;color:#bc8cff}
-.ctx-filter-btn.active[data-kind=ACT]{background:#1a3a2a44;border-color:#3fb950;color:#3fb950}
-.ctx-filter-btn.active[data-kind=NOTE]{background:#3b2e0044;border-color:#e3b341;color:#e3b341}
-.ctx-trace-timeline{background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:0;max-height:320px;overflow-y:auto;font-size:11px;font-family:monospace;line-height:1.6}
-.ctx-tl-checkpoint{padding:5px 14px;background:#21262d88;border-bottom:1px solid #30363d;color:#484f58;font-size:10px;display:flex;align-items:center;gap:6px;position:sticky;top:0}
-.ctx-tl-checkpoint::before{content:"● ";color:#bc8cff;font-size:9px}
-.ctx-tl-entry{display:flex;align-items:baseline;gap:8px;padding:3px 14px;border-bottom:1px solid #21262d11;transition:background .1s}
-.ctx-tl-entry:hover{background:#21262d44}
-.ctx-tl-entry.kind-OBSERVE{border-left:2px solid #58a6ff44}
-.ctx-tl-entry.kind-THINK{border-left:2px solid #bc8cff44}
-.ctx-tl-entry.kind-ACT{border-left:2px solid #3fb95044}
-.ctx-tl-entry.kind-NOTE{border-left:2px solid #e3b34144}
-.ctx-tl-time{font-size:9px;color:#484f58;flex-shrink:0;min-width:52px}
-.ctx-tl-kind{font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;flex-shrink:0;min-width:52px;text-align:center}
-.ctx-tl-kind-OBSERVE{background:#1f3a5f;color:#58a6ff}
-.ctx-tl-kind-THINK{background:#2d1f4f;color:#bc8cff}
-.ctx-tl-kind-ACT{background:#1a3a2a;color:#3fb950}
-.ctx-tl-kind-NOTE{background:#3b2e00;color:#e3b341}
-.ctx-tl-text{color:#c9d1d9;white-space:pre-wrap;word-break:break-word;flex:1}
-.ctx-trace-stat{display:flex;gap:10px;margin-top:6px;font-size:10px;color:#484f58;flex-wrap:wrap;align-items:center}
-.ctx-diff-hdr{display:flex;align-items:center;gap:6px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #30363d}
-.ctx-diff-goal-change{background:#2d1f4f44;border:1px solid #bc8cff44;border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px;line-height:1.7}
-.ctx-diff-from{color:#f85149;text-decoration:line-through;opacity:.7;margin-bottom:4px}
-.ctx-diff-to{color:#3fb950}
-.ctx-diff-section{margin-bottom:12px}
-.ctx-diff-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#484f58;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #21262d}
-.ctx-diff-added{color:#3fb950;padding:3px 0;font-size:12px;display:flex;gap:6px}
-.ctx-diff-added::before{content:"+";font-weight:700;flex-shrink:0}
-.ctx-relevant-search{display:flex;gap:8px;margin-bottom:12px}
-.ctx-relevant-input{flex:1;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:6px 12px;font-size:12px;font-family:monospace;outline:none;transition:border .15s}
-.ctx-relevant-input:focus{border-color:#58a6ff}
-.ctx-mention-tag{display:inline-flex;align-items:center;font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;margin-right:6px;flex-shrink:0}
-.ctx-tag-milestone{background:#2d1f4f;color:#bc8cff}
-.ctx-tag-trace{background:#1f3a5f;color:#58a6ff}
-.ctx-tag-branch{background:#1a3a2a;color:#3fb950}
-.ctx-mention-text{font-size:12px;color:#c9d1d9;line-height:1.5}
-.ctx-mention-row{padding:5px 0;border-bottom:1px solid #21262d;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
-.ctx-health-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 14px}
-.ctx-health-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 12px}
-.ctx-health-label{font-size:10px;color:#484f58;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
-.ctx-health-value{font-size:18px;font-weight:700;color:#e6edf3;line-height:1.2}
-.ctx-health-sub{font-size:11px;color:#8b949e;margin-top:4px}
-.ctx-branch-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
-.ctx-branch-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px}
-.ctx-branch-top{display:flex;align-items:center;gap:8px;justify-content:space-between;margin-bottom:8px}
-.ctx-branch-name{font-size:12px;font-weight:700;color:#e6edf3}
-.ctx-branch-purpose{font-size:11px;color:#8b949e;line-height:1.5;min-height:34px}
-.ctx-branch-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:10px;color:#484f58}
-.ctx-branch-kpi{display:inline-flex;align-items:center;gap:4px}
-.ctx-search-results{display:grid;gap:8px}
-.ctx-search-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px}
-.ctx-search-top{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap}
-.ctx-search-file{font-family:monospace;font-size:12px;color:#58a6ff}
-.ctx-search-score{font-size:10px;background:#1f3a5f44;color:#58a6ff;padding:2px 8px;border-radius:10px}
-.ctx-search-signal{font-size:10px;background:#21262d;color:#8b949e;padding:2px 8px;border-radius:10px}
-.ctx-search-snippet{font-size:11px;color:#c9d1d9;line-height:1.5;margin-top:6px}
-.ctx-dag-list{display:flex;flex-direction:column;gap:8px}
-.ctx-dag-node{background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:10px 12px}
-.ctx-dag-node-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
-.ctx-dag-id{font-family:monospace;font-size:10px;color:#8b949e}
-.ctx-dag-content{font-size:12px;color:#c9d1d9;line-height:1.6}
-.ctx-dag-parents{font-size:10px;color:#484f58;margin-top:5px}
-.ctx-kind-pill{font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px}
-.ctx-kind-OBSERVE{background:#1f3a5f;color:#58a6ff}
-.ctx-kind-THINK{background:#2d1f4f;color:#bc8cff}
-.ctx-kind-ACT{background:#1a3a2a;color:#3fb950}
-.ctx-kind-NOTE{background:#3b2e00;color:#e3b341}
-.ctx-kind-MERGE{background:#4b1d5f;color:#ff7bff}
-.ctx-promo-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
-.ctx-promo-step{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px;text-align:center}
-.ctx-promo-step strong{display:block;font-size:18px;color:#e6edf3}
-.ctx-promo-step span{display:block;font-size:10px;color:#484f58;text-transform:uppercase;letter-spacing:.06em;margin-top:3px}
-.ctx-promo-detail{margin-top:10px;font-size:11px;color:#8b949e;display:flex;gap:14px;flex-wrap:wrap}
-.ctx-warning{background:#3b2e0044;border:1px solid #e3b34144;color:#e3b341;border-radius:8px;padding:9px 11px;font-size:12px;line-height:1.6;margin-bottom:12px}
-.ctx-diff-removed{color:#f85149;padding:3px 0;font-size:12px;display:flex;gap:6px}
-.ctx-diff-removed::before{content:"-";font-weight:700;flex-shrink:0}
-@media (max-width: 900px){
-  .ctx-layout{grid-template-columns:1fr}
-  .ctx-health-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .ctx-promo-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-}
-
-/* ─────────────────────────────────────────────────────────────
-   Blueprint refresh — Palantir-style visual tokens (override).
-   Delete this block to revert to the original GitHub-dark look.
-   ───────────────────────────────────────────────────────────── */
-:root{
-  --bp-bg:#1c2127;
-  --bp-surface:#252a31;
-  --bp-surface-2:#2f343c;
-  --bp-elev:#383e47;
-  --bp-border:#404854;
-  --bp-border-strong:#5c7080;
-  --bp-text:#f6f7f9;
-  --bp-text-muted:#abb3bf;
-  --bp-text-dim:#8f99a8;
-  --bp-blue:#2d72d2;
-  --bp-blue-hi:#4c90f0;
-  --bp-blue-bg:#2d72d233;
-  --bp-green:#238551;
-  --bp-green-hi:#72ca9b;
-  --bp-green-bg:#23855133;
-  --bp-orange:#c87619;
-  --bp-orange-bg:#c8761933;
-  --bp-red:#cd4246;
-  --bp-red-bg:#cd424633;
-  --bp-violet:#8f5fbf;
-  --bp-violet-bg:#8f5fbf33;
-  --bp-radius:2px;
-  --bp-radius-lg:3px;
-}
-body{background:var(--bp-bg);color:var(--bp-text);font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI","Helvetica Neue",Arial,sans-serif}
-.header{background:var(--bp-surface);border-bottom:1px solid var(--bp-border);backdrop-filter:none;height:50px}
-.logo{font-weight:600;letter-spacing:0;color:var(--bp-text)}
-.logo-icon{background:var(--bp-blue);box-shadow:none;border-radius:var(--bp-radius);font-weight:700}
-.header-sep{color:var(--bp-border)}
-.repo-name{color:var(--bp-blue-hi);font-weight:500}
-.branch-badge{background:var(--bp-elev);border:1px solid var(--bp-border);border-radius:var(--bp-radius);color:var(--bp-text-muted);text-transform:uppercase;font-size:10px;letter-spacing:.04em;padding:2px 8px}
-.refresh-btn,.gh-repo-link{background:var(--bp-elev);border:1px solid var(--bp-border);border-radius:var(--bp-radius);color:var(--bp-text-muted)}
-.refresh-btn:hover,.gh-repo-link:hover{color:var(--bp-text);border-color:var(--bp-border-strong)}
-.stats-bar{background:var(--bp-surface);border-bottom:1px solid var(--bp-border)}
-.stat{color:var(--bp-text-muted)}
-.stat b{color:var(--bp-text)}
-.dot-blue{background:var(--bp-blue-hi)}.dot-purple{background:var(--bp-violet)}.dot-green{background:var(--bp-green-hi)}.dot-red{background:var(--bp-red)}.dot-orange{background:var(--bp-orange)}.dot-gray{background:var(--bp-border-strong)}
-.sidebar{border-right:1px solid var(--bp-border)}
-.card{background:var(--bp-surface);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
-.card-title,.chart-title{color:var(--bp-text-dim);font-weight:600;letter-spacing:.08em}
-.dim-tag{border-radius:var(--bp-radius);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
-.tag-blue{background:var(--bp-blue-bg);color:var(--bp-blue-hi)}
-.tag-green{background:var(--bp-green-bg);color:var(--bp-green-hi)}
-.tag-purple{background:var(--bp-violet-bg);color:var(--bp-violet)}
-.tag-orange{background:var(--bp-orange-bg);color:var(--bp-orange)}
-.tag-yellow{background:var(--bp-orange-bg);color:var(--bp-orange)}
-.side-row{color:var(--bp-text-muted)}
-.side-row b{color:var(--bp-text)}
-.health-rate.good{color:var(--bp-green-hi)}.health-rate.warn{color:var(--bp-orange)}.health-rate.bad{color:var(--bp-red)}
-.tabs{border-bottom:1px solid var(--bp-border)}
-.tab{color:var(--bp-text-muted);font-weight:500;border-radius:0;padding:9px 14px}
-.tab:hover{color:var(--bp-text);background:var(--bp-elev)}
-.tab.active{color:var(--bp-blue-hi);border-bottom-color:var(--bp-blue)}
-.tab-badge{background:var(--bp-elev);color:var(--bp-text-muted);border-radius:var(--bp-radius);font-weight:600}
-.tab.active .tab-badge{background:var(--bp-blue-bg);color:var(--bp-blue-hi)}
-.search-input,.int-input,.ig-select{background:var(--bp-bg);border:1px solid var(--bp-border);border-radius:var(--bp-radius);color:var(--bp-text)}
-.search-input:focus,.int-input:focus{border-color:var(--bp-blue);box-shadow:0 0 0 1px var(--bp-blue)}
-.pill{background:var(--bp-elev);border:1px solid var(--bp-border);border-radius:var(--bp-radius);color:var(--bp-text-muted);text-transform:uppercase;font-size:11px;font-weight:600;letter-spacing:.04em;padding:3px 10px}
-.pill:hover{color:var(--bp-text);border-color:var(--bp-border-strong)}
-.pill.active{background:var(--bp-blue-bg);border-color:var(--bp-blue);color:var(--bp-blue-hi)}
-.pill.active.red-pill{background:var(--bp-red-bg);border-color:var(--bp-red);color:var(--bp-red)}
-.timeline::before{background:var(--bp-border);border-radius:0;width:1px;left:11px}
-.commit-card{background:var(--bp-surface);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
-.commit-card:hover{border-color:var(--bp-border-strong);background:var(--bp-surface-2)}
-.commit-card.expanded{border-color:var(--bp-blue)}
-.commit-card.failing{border-left:3px solid var(--bp-red)}
-.commit-card.passing{border-left:3px solid var(--bp-green)}
-.commit-dot{border:2px solid var(--bp-bg);width:11px;height:11px}
-.ai-dot{background:var(--bp-violet);box-shadow:none}
-.human-dot{background:var(--bp-elev);border-color:var(--bp-border-strong)}
-.oid-chip{font-family:'SFMono-Regular','Consolas','Liberation Mono',monospace;border-radius:var(--bp-radius);font-weight:500;letter-spacing:.05em;padding:1px 6px}
-.oid-ai{background:var(--bp-violet-bg);color:var(--bp-violet)}
-.oid-human{background:var(--bp-blue-bg);color:var(--bp-blue-hi)}
-.commit-msg{font-weight:500}
-.byline{color:var(--bp-text-muted)}
-.byline .author{color:var(--bp-blue-hi)}
-.gh-commit-link{background:var(--bp-blue-bg);color:var(--bp-blue-hi);border:1px solid var(--bp-blue);border-radius:var(--bp-radius)}
-.gh-commit-link:hover{background:var(--bp-blue);color:#fff;border-color:var(--bp-blue-hi)}
-.badge{border-radius:var(--bp-radius);font-weight:500;text-transform:uppercase;font-size:10px;letter-spacing:.05em;padding:2px 7px}
-.b-model{background:var(--bp-violet-bg);color:var(--bp-violet)}
-.b-agent{background:var(--bp-orange-bg);color:var(--bp-orange)}
-.b-test-ok{background:var(--bp-green-bg);color:var(--bp-green-hi)}
-.b-test-fail{background:var(--bp-red-bg);color:var(--bp-red)}
-.b-test-warn{background:var(--bp-orange-bg);color:var(--bp-orange)}
-.b-tool,.b-dur,.b-tok{background:var(--bp-elev);color:var(--bp-text-muted);border:1px solid var(--bp-border)}
-.b-ast{background:var(--bp-green-bg);color:var(--bp-green-hi)}
-.b-cause{background:var(--bp-blue-bg);color:var(--bp-blue-hi);border:none}
-.b-cov{background:var(--bp-violet-bg);color:var(--bp-violet)}
-.commit-detail{border-top:1px solid var(--bp-border)}
-.dk{color:var(--bp-text-dim)}
-.dv{color:var(--bp-text)}
-.dv.prompt-text{color:var(--bp-violet);font-style:normal}
-.test-table th,.agent-table th{color:var(--bp-text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.05em;font-size:10px;border-bottom:1px solid var(--bp-border);padding:6px 8px}
-.test-table td,.agent-table td{padding:5px 8px;border-bottom:1px solid var(--bp-border)}
-.td-pass{color:var(--bp-green-hi)}.td-fail{color:var(--bp-red)}.td-skip{color:var(--bp-orange)}.td-tot{color:var(--bp-text)}
-.run-btn,.ig-btn{background:var(--bp-blue);border:1px solid var(--bp-blue);border-radius:var(--bp-radius);color:#fff;font-weight:500;letter-spacing:.02em;padding:7px 16px;box-shadow:none}
-.run-btn:hover,.ig-btn:hover{background:var(--bp-blue-hi);border-color:var(--bp-blue-hi);opacity:1}
-.audit-btn{background:var(--bp-elev);border:1px solid var(--bp-border);border-radius:var(--bp-radius);color:var(--bp-text-muted)}
-.audit-btn:hover{color:var(--bp-text);background:var(--bp-surface-2);border-color:var(--bp-border-strong)}
-.audit-result-box{background:var(--bp-bg);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
-.rules-detail-toggle{color:var(--bp-blue-hi)}
-.rules-detail-toggle:hover{color:var(--bp-blue)}
-.rules-detail-panel{background:var(--bp-bg);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
-.rule-pass{color:var(--bp-green-hi)}.rule-fail{color:var(--bp-red)}.rule-warn{color:var(--bp-orange)}
-.rule-id-label{color:var(--bp-text-dim)}
-.int-report{background:var(--bp-surface);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
-.lv-valid{background:var(--bp-green-bg);color:var(--bp-green-hi);border-radius:var(--bp-radius);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
-.lv-warning{background:var(--bp-orange-bg);color:var(--bp-orange);border-radius:var(--bp-radius);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
-.lv-violation{background:var(--bp-red-bg);color:var(--bp-red);border-radius:var(--bp-radius);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
-.finding{border-radius:var(--bp-radius);border-left:3px solid transparent}
-.rv{background:var(--bp-red-bg);border-left-color:var(--bp-red)}
-.rw{background:var(--bp-orange-bg);border-left-color:var(--bp-orange)}
-.ri{background:var(--bp-blue-bg);border-left-color:var(--bp-blue)}
-.finding-rule{border-radius:var(--bp-radius);font-weight:700;letter-spacing:.05em}
-.rv .finding-rule{background:var(--bp-red-bg);color:var(--bp-red)}
-.rw .finding-rule{background:var(--bp-orange-bg);color:var(--bp-orange)}
-.ri .finding-rule{background:var(--bp-blue-bg);color:var(--bp-blue-hi)}
-.success-msg{color:var(--bp-green-hi)}
-.sum-card,.chart-section{background:var(--bp-surface);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
-.agent-bar-bg{background:var(--bp-elev);border-radius:var(--bp-radius);height:4px}
-.agent-bar-fill{background:var(--bp-blue);border-radius:var(--bp-radius);height:4px}
-.fail-item{background:var(--bp-red-bg);border-radius:var(--bp-radius);border-left:3px solid var(--bp-red)}
-.fail-oid{color:var(--bp-red)}
-.fail-counts{color:var(--bp-red)}
-.empty-state{color:var(--bp-text-dim)}
-.spinner{border-color:var(--bp-border);border-top-color:var(--bp-blue)}
-.ig-canvas-wrap{background:var(--bp-bg);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
-.ctx-kind-pill{border-radius:var(--bp-radius);font-weight:700;letter-spacing:.05em}
-.ctx-kind-OBSERVE{background:var(--bp-blue-bg);color:var(--bp-blue-hi)}
-.ctx-kind-THINK{background:var(--bp-violet-bg);color:var(--bp-violet)}
-.ctx-kind-ACT{background:var(--bp-green-bg);color:var(--bp-green-hi)}
-.ctx-kind-NOTE{background:var(--bp-orange-bg);color:var(--bp-orange)}
-.ctx-kind-MERGE{background:var(--bp-violet-bg);color:var(--bp-violet)}
-.ctx-promo-step{background:var(--bp-surface);border:1px solid var(--bp-border);border-radius:var(--bp-radius-lg)}
-.ctx-warning{background:var(--bp-orange-bg);border:1px solid var(--bp-orange);color:var(--bp-orange);border-radius:var(--bp-radius)}
-
-/* ─────────────────────────────────────────────────────────────
-   Blueprint refresh — iteration 2
-   Typography, density, focus, scrollbars, callouts, sticky tables
-   ───────────────────────────────────────────────────────────── */
-html{font-size:13px}
-body{line-height:1.45;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;font-feature-settings:"ss01","cv01"}
-::selection{background:var(--bp-blue);color:#fff}
-::-moz-selection{background:var(--bp-blue);color:#fff}
-code,kbd,samp,pre,.mono,.dv.mono,.oid-chip,.fail-oid,.rule-id-label{font-family:'SFMono-Regular','Menlo','Consolas','Liberation Mono',monospace;font-feature-settings:"liga" 0,"calt" 0}
-*{scrollbar-width:thin;scrollbar-color:var(--bp-border) transparent}
-*::-webkit-scrollbar{width:10px;height:10px}
-*::-webkit-scrollbar-track{background:transparent}
-*::-webkit-scrollbar-thumb{background:var(--bp-border);border-radius:var(--bp-radius);border:2px solid var(--bp-bg)}
-*::-webkit-scrollbar-thumb:hover{background:var(--bp-border-strong)}
-:focus-visible{outline:2px solid var(--bp-blue-hi);outline-offset:1px;border-radius:var(--bp-radius)}
-button:focus,input:focus,select:focus,textarea:focus,a:focus{outline:none}
-input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none;border-color:var(--bp-blue);box-shadow:0 0 0 1px var(--bp-blue)}
-a{color:var(--bp-blue-hi)}a:hover{color:var(--bp-blue)}
-
-/* Header — flatter, tighter Blueprint navbar */
-.header{padding:0 16px;height:48px;box-shadow:0 1px 0 var(--bp-border);border-bottom-color:transparent}
-.logo{font-size:14px;gap:8px}
-.logo-icon{width:24px;height:24px;font-size:11px}
-.header-sep{font-size:14px;margin:0 4px;color:var(--bp-border-strong)}
-.repo-name{font-size:13px}
-.refresh-btn,.gh-repo-link{height:28px;display:inline-flex;align-items:center;gap:6px;padding:0 10px;font-size:12px;font-weight:500}
-
-/* Stats bar — Blueprint divided stat strip */
-.stats-bar{padding:8px 16px;gap:0}
-.stat{padding:0 14px;border-right:1px solid var(--bp-border);font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--bp-text-dim);font-weight:600}
-.stat:first-child{padding-left:0}
-.stat:last-child{border-right:none}
-.stat b{font-size:14px;color:var(--bp-text);font-weight:600;margin-left:6px;letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums;font-family:'SFMono-Regular','Menlo','Consolas',monospace}
-.dot{width:6px;height:6px}
-
-/* Sidebar — flat sections separated by divider lines, no card boxes */
-.sidebar{padding:6px 0;width:220px}
-.card{background:transparent;border:none;border-bottom:1px solid var(--bp-border);border-radius:0;padding:14px 16px;margin:0}
-.card:last-child{border-bottom:none}
-.card-title{font-size:10px;letter-spacing:.1em;color:var(--bp-text-dim);margin-bottom:10px;display:flex;align-items:center;gap:8px}
-.card-title::after{content:"";flex:1;height:1px;background:var(--bp-border)}
-.dim-row{font-size:12px;padding:5px 0;color:var(--bp-text);gap:9px}
-.dim-mark{display:inline-block;width:8px;height:8px;border-radius:1px;flex-shrink:0}
-.dim-mark-blue{background:var(--bp-blue-hi)}
-.dim-mark-green{background:var(--bp-green-hi)}
-.dim-mark-violet{background:var(--bp-violet)}
-.dim-mark-orange{background:var(--bp-orange)}
-.dim-mark-yellow{background:#e3b341}
-.side-row{padding:3px 0;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--bp-text-dim);font-weight:600}
-.side-row b{font-size:12px;letter-spacing:0;text-transform:none;color:var(--bp-text);font-family:'SFMono-Regular','Menlo','Consolas',monospace;font-variant-numeric:tabular-nums;font-weight:600}
-.health-rate{font-variant-numeric:tabular-nums;letter-spacing:-.02em;font-size:20px}
-
-/* Tabs — uppercase Blueprint nav strip */
-.tabs{margin:0 -20px 16px;padding:0 20px}
-.tab{padding:10px 14px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
-.tab.active{border-bottom-width:2px}
-.tab .tab-badge{margin-left:6px;padding:1px 6px;font-size:10px;letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums}
-
-/* Search row + inputs */
-.search-row{margin-bottom:14px;gap:6px}
-.search-input{height:30px;padding:5px 11px;font-size:12px}
-.pill{padding:4px 10px;font-size:10px;letter-spacing:.06em}
-.ig-select{height:26px;padding:0 8px;font-size:11px}
-
-/* Commit cards — tighter, stronger hover affordance */
-.commit-card{padding:10px 12px;transition:background .12s,border-color .12s,box-shadow .12s}
-.commit-card:hover{box-shadow:inset 0 0 0 1px var(--bp-border-strong)}
-.commit-msg{font-size:13px}
-.byline{font-size:11px;color:var(--bp-text-dim)}
-.oid-chip{font-size:11px;padding:2px 6px;letter-spacing:.04em}
-.badge{font-size:10px;padding:2px 6px;letter-spacing:.06em}
-.commit-detail{padding-top:10px;margin-top:10px}
-.detail-grid{font-size:11px;grid-template-columns:90px 1fr}
-.dk{font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;color:var(--bp-text-dim)}
-.dv.mono{font-size:11px}
-
-/* Tables — sticky headers, hoverable rows, tabular numbers */
-.test-table,.agent-table{font-size:11px}
-.test-table thead th,.agent-table thead th{position:sticky;top:0;background:var(--bp-surface);z-index:1}
-.test-table tbody tr,.agent-table tbody tr{transition:background .1s}
-.test-table tbody tr:hover,.agent-table tbody tr:hover{background:var(--bp-elev)}
-.test-table td,.agent-table td{font-variant-numeric:tabular-nums}
-
-/* Buttons */
-.run-btn{height:32px;padding:0 18px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
-.ig-btn{height:28px;padding:0 14px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
-.audit-btn{height:26px;padding:0 12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
-.audit-btn:hover{color:var(--bp-blue-hi);border-color:var(--bp-blue);background:var(--bp-blue-bg)}
-
-/* Empty state — Blueprint NonIdealState */
-.empty-state{padding:60px 24px;font-size:13px;color:var(--bp-text-dim);font-weight:400;display:flex;flex-direction:column;align-items:center;gap:8px}
-.spinner{width:16px;height:16px;border-width:2px}
-
-/* Section / chart headings */
-.section-hdr{font-size:11px;font-weight:600;color:var(--bp-text-dim);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--bp-border)}
-.chart-title{padding-bottom:8px;border-bottom:1px solid var(--bp-border);font-size:11px}
-.chart-section{padding:14px 16px}
-
-/* Summary cards — tabular numerics */
-.sum-card{padding:14px 16px}
-.sum-num{font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-.sum-label{font-size:10px;color:var(--bp-text-dim);text-transform:uppercase;letter-spacing:.07em;font-weight:600;margin-top:2px}
-
-/* Integrity report */
-.int-report{padding:14px 16px}
-.ir-score{font-size:24px;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-.ir-label{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--bp-text-dim);font-weight:600}
-.lv-valid,.lv-warning,.lv-violation{font-size:10px;padding:3px 8px;letter-spacing:.06em}
-
-/* Inline form labels */
-.int-label{font-size:10px;text-transform:uppercase;letter-spacing:.07em;font-weight:600;color:var(--bp-text-dim);margin-bottom:5px}
-
-/* Context promo numbers */
-.ctx-promo-step strong{font-variant-numeric:tabular-nums;letter-spacing:-.02em;font-size:18px;color:var(--bp-text)}
-.ctx-promo-step span{font-size:9px;letter-spacing:.07em}
-
-/* Misc — gradient swatch in IG legend → flat */
-.ig-legend-line{background:var(--bp-border)!important}
-</style>
-</head>
-<body>
-
-<!-- Header -->
-<header class="header">
-  <div class="logo">
-    <div class="logo-icon">h5</div>
-    h5i
-  </div>
-  <span class="header-sep">/</span>
-  <span class="repo-name" id="repo-name">loading…</span>
-  <span class="branch-badge" id="branch-badge">—</span>
-  <div class="header-spacer"></div>
-  <a class="gh-repo-link" id="gh-repo-link" href="#" target="_blank" rel="noopener">
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-    View on GitHub
-  </a>
-  <button class="refresh-btn" onclick="loadAll()">↻ Refresh</button>
-</header>
-
-<!-- Stats bar -->
-<div class="stats-bar">
-  <div class="stat"><span class="dot dot-blue"></span>Commits <b id="s-total">—</b></div>
-  <div class="stat"><span class="dot dot-purple"></span>AI-assisted <b id="s-ai">—</b></div>
-  <div class="stat"><span class="dot dot-orange"></span>With tests <b id="s-tested">—</b></div>
-  <div class="stat"><span class="dot dot-green"></span>Pass rate <b id="s-passrate">—</b></div>
-  <div class="stat"><span class="dot dot-gray"></span>Loaded <b id="s-loaded">—</b></div>
-</div>
-
-<!-- Main layout -->
-<div class="layout">
-
-  <!-- Sidebar -->
-  <aside class="sidebar">
-    <div class="card">
-      <div class="card-title">5 Dimensions</div>
-      <div class="dim-row"><span class="dim-mark dim-mark-blue"></span>Temporal<span class="dim-tag tag-blue" style="margin-left:auto">Git</span></div>
-      <div class="dim-row"><span class="dim-mark dim-mark-green"></span>Structural<span class="dim-tag tag-green" style="margin-left:auto">AST</span></div>
-      <div class="dim-row"><span class="dim-mark dim-mark-violet"></span>Intentional<span class="dim-tag tag-purple" style="margin-left:auto">AI</span></div>
-      <div class="dim-row"><span class="dim-mark dim-mark-orange"></span>Empirical<span class="dim-tag tag-orange" style="margin-left:auto">Tests</span></div>
-      <div class="dim-row"><span class="dim-mark dim-mark-yellow"></span>Associative<span class="dim-tag tag-yellow" style="margin-left:auto">CRDT</span></div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">Repository</div>
-      <div class="side-row">Total commits<b id="side-total">—</b></div>
-      <div class="side-row">AI commits<b id="side-ai">—</b></div>
-      <div class="side-row">Human commits<b id="side-human">—</b></div>
-      <div class="side-row">AI ratio<b id="side-ratio">—</b></div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">Test Health</div>
-      <div class="health-row">
-        <span style="font-size:12px;color:#8b949e">Pass rate</span>
-        <span class="health-rate" id="side-pass-rate">—</span>
-      </div>
-      <div class="sparkline-wrap">
-        <svg class="sparkline-svg" id="sparkline-svg" viewBox="0 0 180 40" preserveAspectRatio="none">
-          <text x="90" y="24" text-anchor="middle" fill="#484f58" font-size="10">no test data</text>
-        </svg>
-        <div class="sparkline-label" id="sparkline-label">last commits with tests</div>
-      </div>
-    </div>
-  </aside>
-
-  <!-- Content -->
-  <main class="content">
-    <!-- Tabs -->
-    <div class="tabs">
-      <button class="tab active" onclick="switchTab('timeline')">Timeline<span class="tab-badge" id="tab-count">0</span></button>
-      <button class="tab" onclick="switchTab('summary')">Summary</button>
-      <button class="tab" onclick="switchTab('integrity')">Integrity</button>
-      <button class="tab" onclick="switchTab('intentgraph')">Intent Graph</button>
-      <button class="tab" onclick="switchTab('review')">Review Points<span class="tab-badge" id="tab-review-count">—</span></button>
-      <button class="tab" onclick="switchTab('memory');loadMemorySnapshots()">Memory<span class="tab-badge" id="tab-mem-count">—</span></button>
-      <button class="tab" onclick="switchTab('sessions');loadSessionList()">Sessions<span class="tab-badge" id="tab-sl-count">—</span></button>
-      <button class="tab" onclick="switchTab('context');loadContextTab()">Context<span class="tab-badge" id="tab-ctx-count">—</span></button>
-    </div>
-
-    <!-- Timeline panel -->
-    <div id="panel-timeline">
-      <div class="search-row">
-        <input class="search-input" id="search" placeholder="Search commits, authors, models…" oninput="filter()">
-        <span class="pill" id="pill-ai" onclick="toggleFilter('ai')">AI only</span>
-        <span class="pill" id="pill-test" onclick="toggleFilter('test')">With tests</span>
-        <span class="pill" id="pill-fail" onclick="toggleFilter('fail')">Failing</span>
-      </div>
-      <div class="timeline" id="timeline-list">
-        <div class="empty-state"><span class="spinner"></span> Loading commits…</div>
-      </div>
-    </div>
-
-    <!-- Summary panel -->
-    <div id="panel-summary" style="display:none">
-      <div class="summary-grid" id="sum-cards"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;flex-wrap:wrap" id="sum-charts"></div>
-    </div>
-
-    <!-- Intent node detail modal -->
-    <div class="ig-modal-overlay" id="ig-modal-overlay" onclick="if(event.target===this)closeNodeModal()">
-      <div class="ig-modal">
-        <button class="ig-modal-close" onclick="closeNodeModal()">✕</button>
-        <div class="ig-modal-oid" id="ig-modal-oid"></div>
-        <div class="ig-modal-msg" id="ig-modal-msg"></div>
-        <div class="ig-modal-section">
-          <div class="ig-modal-label">Intent</div>
-          <div class="ig-modal-intent" id="ig-modal-intent"></div>
-        </div>
-        <div class="ig-modal-meta" id="ig-modal-meta"></div>
-      </div>
-    </div>
-
-    <!-- Intent Graph panel -->
-    <div id="panel-intentgraph" style="display:none">
-      <div class="ig-controls">
-        <label style="font-size:12px;color:#8b949e">Commits:
-          <select class="ig-select" id="ig-limit">
-            <option value="15">15</option>
-            <option value="30" selected>30</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-          </select>
-        </label>
-        <label style="font-size:12px;color:#8b949e">Mode:
-          <select class="ig-select" id="ig-mode">
-            <option value="prompt">prompt (stored)</option>
-            <option value="analyze">analyze (Claude)</option>
-          </select>
-        </label>
-        <button class="ig-btn" id="ig-load-btn" onclick="loadIntentGraph()">↻ Load Graph</button>
-        <span id="ig-status" style="font-size:12px;color:#8b949e"></span>
-      </div>
-      <div class="ig-canvas-wrap" id="ig-canvas-wrap">
-        <div class="empty-state" style="padding:60px 20px">Click "Load Graph" to visualise commit intents.</div>
-      </div>
-      <div class="ig-legend">
-        <span class="ig-legend-item"><span class="ig-legend-line" style="background:#484f58"></span>parent chain</span>
-        <span class="ig-legend-item"><span class="ig-legend-line" style="background:#bc8cff"></span>causal link</span>
-        <span class="ig-legend-item"><span style="width:10px;height:10px;border-radius:2px;background:linear-gradient(135deg,#bc8cff,#58a6ff);display:inline-block"></span>AI commit</span>
-        <span class="ig-legend-item"><span style="width:10px;height:10px;border-radius:2px;background:#21262d;border:1px solid #484f58;display:inline-block"></span>Human commit</span>
-      </div>
-    </div>
-
-    <!-- Integrity panel -->
-    <div id="panel-integrity" style="display:none">
-      <div class="int-form">
-        <div>
-          <label class="int-label" for="int-msg">Commit message</label>
-          <input class="int-input" id="int-msg" placeholder="feat: add login with OAuth2">
-        </div>
-        <div>
-          <label class="int-label" for="int-prompt">AI prompt (optional)</label>
-          <textarea class="int-input int-textarea" id="int-prompt" placeholder="Describe the AI prompt used to generate this commit…"></textarea>
-        </div>
-        <button class="run-btn" id="btn-run" onclick="runIntegrity()">Run Integrity Check</button>
-      </div>
-      <div class="int-result" id="int-result"></div>
-    </div>
-
-    <!-- Memory panel -->
-    <div id="panel-memory" style="display:none">
-      <div class="mem-controls">
-        <button class="mem-btn" id="mem-diff-btn" onclick="diffMemory()" disabled>⊕ Diff Selected</button>
-        <button class="mem-btn-ghost" onclick="clearMemSel()">Clear</button>
-        <span class="mem-hint" id="mem-hint">Click a snapshot to inspect · click two to diff</span>
-      </div>
-      <div class="mem-layout">
-        <div>
-          <div class="mem-snap-count" id="mem-snap-count"></div>
-          <div class="mem-snap-list" id="mem-snap-list">
-            <div class="empty-state"><span class="spinner"></span> Loading…</div>
-          </div>
-        </div>
-        <div class="mem-viewer" id="mem-viewer">
-          <div class="mem-viewer-empty">
-            Select a snapshot to inspect its files,<br>
-            or select two snapshots to compare them.
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Sessions panel -->
-    <div id="panel-sessions" style="display:none">
-      <div class="sl-layout">
-        <div class="sl-list" id="sl-list">
-          <div class="empty-state"><span class="spinner"></span> Loading…</div>
-        </div>
-        <div class="sl-detail" id="sl-detail">
-          <div class="sl-empty">Select a session to inspect its footprint, causal chain, uncertainty signals, and churn.</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Review Points panel -->
-    <div id="panel-review" style="display:none">
-      <div class="rp-controls">
-        <label class="rp-label">Scan last
-          <select class="rp-select" id="rp-limit">
-            <option value="50">50</option>
-            <option value="100" selected>100</option>
-            <option value="200">200</option>
-            <option value="500">500</option>
-          </select>
-          commits
-        </label>
-        <label class="rp-label">Min score
-          <select class="rp-select" id="rp-min-score">
-            <option value="0.15">0.15 (sensitive)</option>
-            <option value="0.25" selected>0.25 (default)</option>
-            <option value="0.40">0.40 (strict)</option>
-            <option value="0.60">0.60 (critical only)</option>
-          </select>
-        </label>
-        <button class="rp-btn" id="rp-load-btn" onclick="loadReviewPoints()">↻ Analyse</button>
-        <span class="rp-status" id="rp-status"></span>
-      </div>
-      <div id="rp-list-wrap">
-        <div class="empty-state" style="padding:60px 20px">Click "Analyse" to scan commits for review priorities.</div>
-      </div>
-    </div>
-
-    <!-- Context tab -->
-    <div id="panel-context" style="display:none">
-      <div id="ctx-status-bar"></div>
-
-      <div id="ctx-not-init" class="ctx-not-init" style="display:none">
-        <div class="ctx-not-init-icon">💡</div>
-        Context workspace not initialized.<br>
-        <div class="ctx-not-init-cmd">Run <code>h5i context init --goal "…"</code> to create it.</div>
-      </div>
-
-      <div id="ctx-main" style="display:none">
-        <!-- Branch navigator -->
-        <div class="ctx-branch-nav" id="ctx-branch-nav"></div>
-        <div class="ctx-health-grid" id="ctx-health-grid"></div>
-
-        <div class="ctx-section" style="margin-top:0;border-top:none;padding-top:0">
-          <div class="ctx-section-header">
-            <span class="ctx-section-title">Branch Workspace</span>
-          </div>
-          <div class="ctx-branch-grid" id="ctx-branch-grid"></div>
-        </div>
-
-        <!-- Snapshot list + viewer -->
-        <div class="ctx-layout">
-          <div class="ctx-left-col">
-            <div class="ctx-pane-header">
-              <span>Snapshots</span>
-              <span id="ctx-snap-count">—</span>
-            </div>
-            <div class="ctx-snap-list" id="ctx-snap-list">
-              <div class="ctx-viewer-empty">Loading…</div>
-            </div>
-            <div class="ctx-controls">
-              <button class="ctx-btn" id="ctx-diff-btn" onclick="runCtxDiff()" disabled>⊕ Diff</button>
-              <button class="ctx-btn-ghost" onclick="clearCtxSelection()">Clear</button>
-            </div>
-            <div class="ctx-hint" id="ctx-sel-hint">Click snapshot to inspect · click two to diff</div>
-          </div>
-          <div class="ctx-right-col">
-            <div class="ctx-viewer" id="ctx-viewer">
-              <div class="ctx-viewer-empty">Select a snapshot from the list to inspect its context state.</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Live OTA trace with filters -->
-        <div class="ctx-section">
-          <div class="ctx-section-header">
-            <span class="ctx-section-title">Live OTA Trace</span>
-            <span class="ctx-section-sub" id="ctx-trace-branch-label"></span>
-            <div class="ctx-trace-filters">
-              <button class="ctx-filter-btn active" data-kind="all" onclick="filterTrace('all')">All</button>
-              <button class="ctx-filter-btn" data-kind="OBSERVE" onclick="filterTrace('OBSERVE')">Observe <span id="tf-obs">0</span></button>
-              <button class="ctx-filter-btn" data-kind="THINK" onclick="filterTrace('THINK')">Think <span id="tf-think">0</span></button>
-              <button class="ctx-filter-btn" data-kind="ACT" onclick="filterTrace('ACT')">Act <span id="tf-act">0</span></button>
-              <button class="ctx-filter-btn" data-kind="NOTE" onclick="filterTrace('NOTE')">Note <span id="tf-note">0</span></button>
-            </div>
-            <button class="ctx-btn-ghost" style="font-size:11px;padding:3px 8px" onclick="loadCtxTrace()">↻</button>
-          </div>
-          <div class="ctx-trace-timeline" id="ctx-trace-box">Loading…</div>
-          <div class="ctx-trace-stat" id="ctx-trace-stat"></div>
-        </div>
-
-        <div class="ctx-section">
-          <div class="ctx-section-header">
-            <span class="ctx-section-title">Promotion Funnel</span>
-            <span class="ctx-section-sub" id="ctx-promo-branch-label"></span>
-            <button class="ctx-btn-ghost" style="font-size:11px;padding:3px 8px" onclick="loadCtxPromotion()">↻</button>
-          </div>
-          <div id="ctx-promo-box">
-            <div class="ctx-viewer-empty" style="padding:24px 0">Loading…</div>
-          </div>
-        </div>
-
-        <div class="ctx-section">
-          <div class="ctx-section-header">
-            <span class="ctx-section-title">Context Search</span>
-          </div>
-          <div class="ctx-relevant-search">
-            <input class="ctx-relevant-input" id="ctx-search-input" type="text"
-              placeholder="auth token validation race condition"
-              onkeydown="if(event.key==='Enter')runCtxSearch()">
-            <button class="ctx-btn" onclick="runCtxSearch()">Search</button>
-          </div>
-          <div class="ctx-search-results" id="ctx-search-results"></div>
-        </div>
-
-        <!-- Relevant-file search -->
-        <div class="ctx-section">
-          <div class="ctx-section-header">
-            <span class="ctx-section-title">Relevant to File</span>
-          </div>
-          <div class="ctx-relevant-search">
-            <input class="ctx-relevant-input" id="ctx-rel-input" type="text"
-              placeholder="src/repository.rs"
-              onkeydown="if(event.key==='Enter')runCtxRelevant()">
-            <button class="ctx-btn" onclick="runCtxRelevant()">Search</button>
-          </div>
-          <div id="ctx-rel-results"></div>
-        </div>
-
-        <div class="ctx-section">
-          <div class="ctx-section-header">
-            <span class="ctx-section-title">Reasoning DAG</span>
-            <span class="ctx-section-sub" id="ctx-dag-branch-label"></span>
-            <button class="ctx-btn-ghost" style="font-size:11px;padding:3px 8px" onclick="loadCtxDag()">↻</button>
-          </div>
-          <div class="ctx-trace-stat" id="ctx-dag-stat"></div>
-          <div class="ctx-dag-list" id="ctx-dag-box">
-            <div class="ctx-viewer-empty" style="padding:24px 0">Loading…</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-  </main>
-</div>
-
-<script>
-// ── State ──────────────────────────────────────────────────────────────────
-let allCommits = [];
-let activeFilters = new Set();
-let githubUrl = null;
-
-// ── Utilities ─────────────────────────────────────────────────────────────
-const id = s => document.getElementById(s);
-const setText = (s, v) => { const el = id(s); if (el) el.textContent = v; };
-const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-const escId = s => String(s).replace(/[^a-zA-Z0-9_-]/g, '_');
-
-function timeAgo(iso) {
-  const d = Math.floor((Date.now() - new Date(iso)) / 1000);
-  if (d < 60)  return d + 's ago';
-  if (d < 3600) return Math.floor(d/60) + 'm ago';
-  if (d < 86400) return Math.floor(d/3600) + 'h ago';
-  if (d < 2592000) return Math.floor(d/86400) + 'd ago';
-  if (d < 31536000) return Math.floor(d/2592000) + 'mo ago';
-  return Math.floor(d/31536000) + 'y ago';
-}
-
-function scoreColor(s) {
-  return s >= 0.8 ? '#3fb950' : s >= 0.5 ? '#d29922' : '#f85149';
-}
-
-function fmt(n) { return n == null ? '—' : Number(n).toLocaleString(); }
-function pct(n) { return n == null ? '—' : n.toFixed(1) + '%'; }
-
-// ── Load ──────────────────────────────────────────────────────────────────
-function loadAll() { loadRepo(); loadCommits(); }
-
-async function loadRepo() {
-  try {
-    const d = await fetch('/api/repo').then(r => r.json());
-    setText('repo-name', d.name || 'unknown');
-    setText('branch-badge', d.branch || 'HEAD');
-    setText('s-total',   d.total_commits ?? '—');
-    setText('s-ai',      d.ai_commits    ?? '—');
-    setText('s-tested',  d.tested_commits ?? '—');
-    setText('s-passrate', d.test_pass_rate != null ? pct(d.test_pass_rate) : '—');
-    setText('side-total', d.total_commits ?? '—');
-    setText('side-ai',    d.ai_commits    ?? '—');
-    setText('side-human', (d.total_commits - d.ai_commits) ?? '—');
-    const ratio = d.total_commits > 0 ? ((d.ai_commits / d.total_commits) * 100).toFixed(1) + '%' : '—';
-    setText('side-ratio', ratio);
-
-    // GitHub repo link in header
-    if (d.github_url) {
-      githubUrl = d.github_url;
-      const link = id('gh-repo-link');
-      link.href = d.github_url;
-      link.classList.add('visible');
-    }
-
-    // Sidebar pass rate
-    if (d.test_pass_rate != null) {
-      const el = id('side-pass-rate');
-      el.textContent = pct(d.test_pass_rate);
-      el.className = 'health-rate ' + (d.test_pass_rate >= 80 ? 'good' : d.test_pass_rate >= 50 ? 'warn' : 'bad');
-    }
-  } catch(e) { console.error('loadRepo', e); }
-}
-
-async function loadCommits() {
-  id('timeline-list').innerHTML = '<div class="empty-state"><span class="spinner"></span> Loading commits…</div>';
-  try {
-    allCommits = await fetch('/api/commits?limit=200').then(r => r.json());
-    setText('s-loaded', allCommits.length);
-    setText('tab-count', allCommits.length);
-    renderSparkline();
-    filter();
-    renderSummary();
-  } catch(e) {
-    id('timeline-list').innerHTML = '<div class="empty-state">⚠ Could not load commits. Is this a valid h5i repository?</div>';
-  }
-}
-
-// ── Filter ────────────────────────────────────────────────────────────────
-function filter() {
-  const q = id('search').value.toLowerCase();
-  let list = allCommits;
-
-  if (activeFilters.has('ai'))   list = list.filter(c => c.ai_model);
-  if (activeFilters.has('test')) list = list.filter(c => c.test_is_passing != null);
-  if (activeFilters.has('fail')) list = list.filter(c => c.test_is_passing === false);
-
-  if (q) {
-    list = list.filter(c =>
-      (c.message   || '').toLowerCase().includes(q) ||
-      (c.author    || '').toLowerCase().includes(q) ||
-      (c.short_oid || '').toLowerCase().includes(q) ||
-      (c.ai_model  || '').toLowerCase().includes(q) ||
-      (c.ai_agent  || '').toLowerCase().includes(q) ||
-      (c.ai_prompt || '').toLowerCase().includes(q)
-    );
-  }
-  render(list);
-  setText('tab-count', list.length);
-}
-
-function toggleFilter(key) {
-  activeFilters.has(key) ? activeFilters.delete(key) : activeFilters.add(key);
-  const el = id('pill-' + key);
-  el.classList.toggle('active', activeFilters.has(key));
-  if (key === 'fail') el.classList.toggle('red-pill', activeFilters.has('fail'));
-  filter();
-}
-
-// ── Render timeline ───────────────────────────────────────────────────────
-function render(commits) {
-  if (!commits.length) {
-    id('timeline-list').innerHTML = '<div class="empty-state">No commits match the current filter.</div>';
-    return;
-  }
-  id('timeline-list').innerHTML = commits.map((c, i) => commitHTML(c, i)).join('');
-}
-
-function badge(cls, icon, text) {
-  return `<span class="badge ${cls}">${icon} ${esc(text)}</span>`;
-}
-
-function testBadge(c) {
-  // Rich test badge: show counts when available, fall back to coverage
-  if (c.test_is_passing == null) return '';
-
-  const cls = c.test_is_passing ? 'b-test-ok' : 'b-test-fail';
-  const icon = c.test_is_passing ? '🧪' : '🧪';
-
-  if (c.test_total != null && c.test_total > 0) {
-    const parts = [];
-    if (c.test_passed != null)  parts.push(`<span style="color:#3fb950">✔${c.test_passed}</span>`);
-    if (c.test_failed != null && c.test_failed > 0) parts.push(`<span style="color:#f85149">✖${c.test_failed}</span>`);
-    if (c.test_skipped != null && c.test_skipped > 0) parts.push(`<span style="color:#d29922">⊘${c.test_skipped}</span>`);
-    return `<span class="badge ${cls}">${icon} ${parts.join(' ')}</span>`;
-  }
-  // Legacy: just show passing/failing
-  return badge(cls, icon, c.test_is_passing ? 'passing' : 'failing');
-}
-
-function commitHTML(c, i) {
-  const isAI = !!c.ai_model;
-  const dotCls = isAI ? 'ai-dot' : 'human-dot';
-  const oidCls = isAI ? 'oid-ai' : 'oid-human';
-  const dotInner = isAI ? '🤖' : '';
-  const cardCls = c.test_is_passing === false ? 'failing' : (c.test_is_passing === true ? 'passing' : '');
-
-  const delay = `animation-delay:${Math.min(i * 0.025, 0.4)}s`;
-
-  // GitHub commit link
-  const ghLink = githubUrl
-    ? `<a class="gh-commit-link" href="${esc(githubUrl)}/commit/${esc(c.git_oid)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">↗ GitHub</a>`
-    : '';
-
-  // Badges row
-  const badges = [
-    c.ai_model ? badge('b-model', '🤖', c.ai_model) : '',
-    c.ai_agent && c.ai_agent !== 'unknown' ? badge('b-agent', '⚡', c.ai_agent) : '',
-    testBadge(c),
-    c.test_tool ? badge('b-tool', '🔧', c.test_tool) : '',
-    c.test_duration_secs > 0 ? badge('b-dur', '⏱', c.test_duration_secs.toFixed(2) + 's') : '',
-    c.test_coverage > 0 ? badge('b-cov', '📊', pct(c.test_coverage) + ' cov') : '',
-    c.ai_tokens ? badge('b-tok', '◦', fmt(c.ai_tokens) + ' tok') : '',
-    c.caused_by && c.caused_by.length > 0 ? badge('b-cause', '⛓', c.caused_by.length === 1 ? 'caused by 1' : `caused by ${c.caused_by.length}`) : '',
-  ].filter(Boolean).join('');
-
-  // Detail rows
-  const detailId = 'detail-' + i;
-  const rows = [];
-  if (c.ai_prompt) rows.push(`<div class="dk">prompt</div><div class="dv prompt-text">${esc(c.ai_prompt)}</div>`);
-  if (c.ai_model)  rows.push(`<div class="dk">model</div><div class="dv">${esc(c.ai_model)}</div>`);
-  if (c.ai_agent && c.ai_agent !== 'unknown') rows.push(`<div class="dk">agent</div><div class="dv">${esc(c.ai_agent)}</div>`);
-  if (c.ai_tokens) rows.push(`<div class="dk">tokens</div><div class="dv">${fmt(c.ai_tokens)}</div>`);
-  rows.push(`<div class="dk">commit</div><div class="dv mono">${esc(c.git_oid)}</div>`);
-  if (c.caused_by && c.caused_by.length > 0) {
-    rows.push(`<div class="dk">caused by</div><div class="dv">${c.caused_by.map(o => `<span class="oid-chip oid-human" style="font-size:10px">${esc(o.slice(0,8))}</span>`).join(' ')}</div>`);
-  }
-
-  // Test breakdown table
-  let testTable = '';
-  if (c.test_total != null && c.test_total > 0) {
-    const summaryRow = c.test_summary ? `<tr><td colspan="2" style="color:#8b949e;font-style:italic;padding:4px 8px">${esc(c.test_summary)}</td></tr>` : '';
-    testTable = `
-      <div style="margin-top:8px">
-        <div class="section-hdr" style="font-size:11px;color:#8b949e;margin-bottom:4px">Test Results</div>
-        <table class="test-table">
-          <thead><tr><th>Metric</th><th>Value</th></tr></thead>
-          <tbody>
-            <tr><td style="color:#8b949e">Passed</td><td class="td-pass">${c.test_passed ?? 0}</td></tr>
-            <tr><td style="color:#8b949e">Failed</td><td class="td-fail">${c.test_failed ?? 0}</td></tr>
-            <tr><td style="color:#8b949e">Skipped</td><td class="td-skip">${c.test_skipped ?? 0}</td></tr>
-            <tr><td style="color:#8b949e">Total</td><td class="td-tot">${c.test_total}</td></tr>
-            ${c.test_duration_secs > 0 ? `<tr><td style="color:#8b949e">Duration</td><td>${c.test_duration_secs.toFixed(3)}s</td></tr>` : ''}
-            ${c.test_coverage > 0 ? `<tr><td style="color:#8b949e">Coverage</td><td>${pct(c.test_coverage)}</td></tr>` : ''}
-            ${c.test_tool ? `<tr><td style="color:#8b949e">Tool</td><td>${esc(c.test_tool)}</td></tr>` : ''}
-            ${summaryRow}
-          </tbody>
-        </table>
-      </div>`;
-  }
-
-  return `
-<div class="commit-entry" style="${delay}">
-  <div class="commit-dot ${dotCls}">${dotInner}</div>
-  <div class="commit-card ${cardCls}" id="card-${i}" onclick="toggleDetail(${i},'${detailId}')">
-    <div class="commit-head">
-      <span class="oid-chip ${oidCls}">${esc(c.short_oid)}</span>
-      <span class="commit-msg">${esc(c.message)}</span>
-      ${ghLink}
-    </div>
-    <div class="byline"><span class="author">${esc(c.author)}</span> · ${timeAgo(c.timestamp)} · <span style="color:#484f58">${new Date(c.timestamp).toLocaleDateString()}</span></div>
-    <div class="badges">${badges}</div>
-    <div class="audit-section" onclick="event.stopPropagation()">
-      <button class="audit-btn" id="audit-btn-${i}" onclick="runCommitAudit('${esc(c.git_oid)}', ${i})">
-        Audit
-      </button>
-      <div id="audit-result-${i}"></div>
-    </div>
-    <div class="commit-detail" id="${detailId}">
-      <div class="detail-grid">${rows.join('')}</div>
-      ${testTable}
-    </div>
-  </div>
-</div>`;
-}
-
-function toggleDetail(i, detailId) {
-  const el = id(detailId);
-  const card = id('card-' + i);
-  el.classList.toggle('open');
-  card.classList.toggle('expanded');
-}
-
-// ── Inline commit audit ────────────────────────────────────────────────────
-async function runCommitAudit(oid, idx) {
-  const btn = id('audit-btn-' + idx);
-  const out = id('audit-result-' + idx);
-  btn.disabled = true;
-  btn.textContent = 'Auditing…';
-  out.innerHTML = '<div style="margin-top:8px;color:#8b949e;font-size:12px"><span class="spinner"></span> Running integrity rules…</div>';
-
-  try {
-    const data = await fetch(`/api/integrity/commit?oid=${encodeURIComponent(oid)}`).then(r => r.json());
-    out.innerHTML = `<div class="audit-result-box">${renderIntegrityHTML(data, 'ar-' + idx)}</div>`;
-    btn.textContent = 'Re-audit';
-  } catch(e) {
-    out.innerHTML = `<div class="audit-result-box" style="color:#f85149;font-size:12px">⚠ Audit failed: ${esc(String(e))}</div>`;
-    btn.textContent = 'Retry';
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-function toggleRulesDetail(panelId, toggleId) {
-  const panel = id(panelId);
-  const toggle = id(toggleId);
-  const open = panel.classList.toggle('open');
-  toggle.textContent = open ? '▾ Hide rule details' : '▸ Show all rules checked';
-}
-
-// ── Integrity panel ────────────────────────────────────────────────────────
-async function runIntegrity() {
-  const msg  = id('int-msg').value.trim();
-  const prmt = id('int-prompt').value.trim();
-  if (!msg) { id('int-msg').focus(); return; }
-
-  const btn = id('btn-run');
-  const out = id('int-result');
-  btn.disabled = true;
-  btn.textContent = 'Checking…';
-  out.innerHTML = '<div style="color:#8b949e;font-size:12px"><span class="spinner"></span> Running rules…</div>';
-
-  try {
-    const p = new URLSearchParams({ message: msg });
-    if (prmt) p.set('prompt', prmt);
-    const data = await fetch('/api/integrity?' + p).then(r => r.json());
-    out.innerHTML = `<div class="int-report">${renderIntegrityHTML(data, 'int-panel')}</div>`;
-  } catch(e) {
-    out.innerHTML = `<div style="color:#f85149;font-size:12px">⚠ Request failed: ${esc(String(e))}</div>`;
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Run Integrity Check';
-  }
-}
-
-const ALL_RULES = [
-  { id: 'CREDENTIAL_LEAK',       sev: 'Violation', desc: 'Hardcoded secrets, API keys, or PEM private-key headers' },
-  { id: 'CODE_EXECUTION',        sev: 'Violation', desc: 'Shell exec, eval, subprocess, or dynamic code execution patterns' },
-  { id: 'CI_CD_MODIFIED',        sev: 'Warning',   desc: 'CI/CD pipeline or workflow file changed' },
-  { id: 'SENSITIVE_FILE_MODIFIED',sev: 'Warning',   desc: 'Security-sensitive file modified (.env, auth config, secrets)' },
-  { id: 'LOCKFILE_MODIFIED',     sev: 'Warning',   desc: 'Dependency lockfile changed (supply-chain risk)' },
-  { id: 'UNDECLARED_DELETION',   sev: 'Warning',   desc: 'Files deleted without mention in commit message' },
-  { id: 'SCOPE_EXPANSION',       sev: 'Warning',   desc: 'Diff touches many more files than message scope implies' },
-  { id: 'LARGE_DIFF',            sev: 'Warning',   desc: 'Diff is unusually large (>500 lines changed)' },
-  { id: 'REFACTOR_ANOMALY',      sev: 'Warning',   desc: 'High churn with no test changes detected' },
-  { id: 'PERMISSION_CHANGE',     sev: 'Warning',   desc: 'File permission or ownership changes detected' },
-  { id: 'BINARY_FILE_CHANGED',   sev: 'Warning',   desc: 'Binary file added or modified' },
-  { id: 'CONFIG_FILE_MODIFIED',  sev: 'Warning',   desc: 'Configuration file modified' },
-];
-
-function renderIntegrityHTML(data, uid) {
-  const lvClass = { Valid: 'lv-valid', Warning: 'lv-warning', Violation: 'lv-violation' }[data.level] || 'lv-valid';
-  const score = Math.round((data.score || 0) * 100);
-  const color = scoreColor(data.score || 0);
-  const findings = data.findings || [];
-
-  const findingsHTML = findings.map(f => {
-    const [cls, icon] = f.severity === 'Violation' ? ['rv','✖'] : f.severity === 'Warning' ? ['rw','⚠'] : ['ri','ℹ'];
-    return `<div class="finding ${cls}">
-      <span class="finding-icon">${icon}</span>
-      <span class="finding-rule">${esc(f.rule_id)}</span>
-      <span class="finding-detail">${esc(f.detail)}</span>
-    </div>`;
-  }).join('');
-
-  const body = findingsHTML
-    ? `<div class="ir-findings">${findingsHTML}</div>`
-    : `<div class="success-msg">✓ All rules passed — no issues detected.</div>`;
-
-  // Rules detail panel
-  const triggeredIds = new Set(findings.map(f => f.rule_id));
-  const panelId   = (uid || 'global') + '-rules-panel';
-  const toggleId  = (uid || 'global') + '-rules-toggle';
-  const rulesRows = ALL_RULES.map(r => {
-    const hit = triggeredIds.has(r.id);
-    const hitSev = hit ? findings.find(f => f.rule_id === r.id)?.severity : null;
-    const [icon, cls] = hitSev === 'Violation' ? ['✖','rule-fail'] : hitSev === 'Warning' ? ['⚠','rule-warn'] : ['✔','rule-pass'];
-    return `<div class="rule-row">
-      <span class="${cls}" style="font-size:12px;width:14px;text-align:center">${icon}</span>
-      <span class="rule-id-label">${esc(r.id)}</span>
-      <span style="font-size:10px;color:#484f58">${esc(r.desc)}</span>
-    </div>`;
-  }).join('');
-
-  return `
-    <div class="ir-header">
-      <span class="${lvClass}">${data.level}</span>
-      <span class="ir-score" style="color:${color}">${score}<span style="font-size:16px;color:#8b949e">%</span></span>
-      <span class="ir-label">Integrity score</span>
-    </div>
-    ${body}
-    <button class="rules-detail-toggle" id="${escId(toggleId)}" onclick="toggleRulesDetail('${escId(panelId)}','${escId(toggleId)}')">▸ Show all rules checked</button>
-    <div class="rules-detail-panel" id="${escId(panelId)}">${rulesRows}</div>`;
-}
-
-// ── Summary tab ────────────────────────────────────────────────────────────
-function renderSummary() {
-  const commits = allCommits;
-  if (!commits.length) return;
-
-  const withTests = commits.filter(c => c.test_is_passing != null);
-  const passing   = withTests.filter(c => c.test_is_passing).length;
-  const failing   = withTests.length - passing;
-  const aiCount   = commits.filter(c => c.ai_model).length;
-  const totalRan  = commits.reduce((s, c) => s + (c.test_total || 0), 0);
-
-  // Summary cards
-  id('sum-cards').innerHTML = [
-    sumCard(commits.length,    'Total commits',      '#58a6ff'),
-    sumCard(aiCount,           'AI-assisted',        '#bc8cff'),
-    sumCard(withTests.length,  'Commits with tests', '#d29922'),
-    sumCard(passing + '/' + withTests.length, 'Passing / tested', withTests.length && failing === 0 ? '#3fb950' : '#f85149'),
-    sumCard(fmt(totalRan),     'Total tests run',    '#8b949e'),
-  ].join('');
-
-  // Charts area
-  id('sum-charts').innerHTML = agentChartHTML(commits) + failureListHTML(commits);
-}
-
-function sumCard(val, label, color) {
-  return `<div class="sum-card"><div class="sum-num" style="color:${color}">${val}</div><div class="sum-label">${label}</div></div>`;
-}
-
-function agentChartHTML(commits) {
-  const counts = {};
-  commits.forEach(c => {
-    if (c.ai_agent && c.ai_agent !== 'unknown') {
-      counts[c.ai_agent] = (counts[c.ai_agent] || 0) + 1;
-    } else if (!c.ai_model) {
-      counts['Human'] = (counts['Human'] || 0) + 1;
-    }
-  });
-  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const max = sorted[0]?.[1] || 1;
-  const rows = sorted.map(([name, cnt]) => `
-    <tr>
-      <td style="color:${name === 'Human' ? '#58a6ff' : '#bc8cff'}">${esc(name)}</td>
-      <td><div class="agent-bar-bg"><div class="agent-bar-fill" style="width:${(cnt/max*100).toFixed(1)}%"></div></div></td>
-      <td style="color:#8b949e;text-align:right">${cnt}</td>
-    </tr>`).join('');
-  return `<div class="chart-section">
-    <div class="chart-title">Commits by Agent / Author</div>
-    <table class="agent-table"><thead><tr><th>Agent</th><th>Activity</th><th>Count</th></tr></thead><tbody>${rows}</tbody></table>
-  </div>`;
-}
-
-function failureListHTML(commits) {
-  const failures = commits.filter(c => c.test_is_passing === false).slice(0, 10);
-  const body = failures.length
-    ? failures.map(c => `<div class="fail-item">
-        <span class="fail-oid">${esc(c.short_oid)}</span>
-        <span class="fail-msg">${esc(c.message)}</span>
-        ${c.test_failed ? `<span class="fail-counts">✖${c.test_failed}</span>` : ''}
-      </div>`).join('')
-    : '<div style="color:#3fb950;font-size:12px;padding:8px 0">✓ No recent test failures.</div>';
-
-  return `<div class="chart-section">
-    <div class="chart-title">Recent Test Failures</div>
-    <div class="fail-list">${body}</div>
-  </div>`;
-}
-
-// ── Sparkline ──────────────────────────────────────────────────────────────
-function renderSparkline() {
-  const pts = allCommits
-    .filter(c => c.test_is_passing != null)
-    .slice(0, 30)
-    .reverse(); // oldest first
-
-  if (pts.length < 2) return;
-
-  const W = 180, H = 40, pad = 4;
-  const xStep = (W - 2 * pad) / (pts.length - 1);
-
-  // Compute y from pass rate per commit
-  const ys = pts.map(c => {
-    if (c.test_total > 0) {
-      return 1 - (c.test_passed || 0) / c.test_total;
-    }
-    return c.test_is_passing ? 0 : 1;
-  });
-
-  const points = pts.map((_, i) => {
-    const x = pad + i * xStep;
-    const y = pad + ys[i] * (H - 2 * pad);
-    return [x, y];
-  });
-
-  const polyline = points.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-
-  // Fill area
-  const fillPts = `${points[0][0]},${H} ` + polyline + ` ${points[points.length-1][0]},${H}`;
-
-  // Dots (colored by pass/fail)
-  const dots = pts.map((c, i) => {
-    const [x, y] = points[i];
-    const col = c.test_is_passing ? '#3fb950' : '#f85149';
-    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="${col}" opacity=".9"/>`;
-  }).join('');
-
-  const svg = `
-    <defs>
-      <linearGradient id="spk-grad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#3fb950" stop-opacity=".3"/>
-        <stop offset="100%" stop-color="#3fb950" stop-opacity="0"/>
-      </linearGradient>
-    </defs>
-    <polygon points="${fillPts}" fill="url(#spk-grad)"/>
-    <polyline points="${polyline}" fill="none" stroke="#3fb950" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
-    ${dots}`;
-
-  id('sparkline-svg').innerHTML = svg;
-  id('sparkline-label').textContent = `last ${pts.length} commits with tests`;
-}
-
-// ── Tab switching ──────────────────────────────────────────────────────────
-function switchTab(tab) {
-  ['timeline','summary','integrity','intentgraph','review','memory','sessions','context'].forEach(t => {
-    const btn = document.querySelector(`.tab[onclick="switchTab('${t}')"]`) ||
-                document.querySelector(`.tab[onclick="switchTab('${t}');loadContextTab()"]`);
-    const panel = id('panel-' + t);
-    const active = t === tab;
-    if (btn) btn.classList.toggle('active', active);
-    if (panel) panel.style.display = active ? '' : 'none';
-  });
-}
-
-// ── Review Points ──────────────────────────────────────────────────────────
-const RULE_COLORS = {
-  TEST_REGRESSION:     'rp-rule-red',
-  INTEGRITY_VIOLATION: 'rp-rule-red',
-  INTEGRITY_WARNING:   'rp-rule-yellow',
-  LARGE_DIFF:          'rp-rule-yellow',
-  WIDE_IMPACT:         'rp-rule-yellow',
-  CROSS_CUTTING:       'rp-rule-yellow',
-  UNTESTED_CHANGE:     'rp-rule-blue',
-  AI_NO_PROMPT:        'rp-rule-gray',
-  BURST_AFTER_GAP:     'rp-rule-blue',
-  POLYGLOT_CHANGE:     'rp-rule-gray',
-  BINARY_FILE:         'rp-rule-blue',
-  MASS_DELETION:       'rp-rule-yellow',
-};
-
-async function loadReviewPoints() {
-  const limit    = id('rp-limit').value;
-  const minScore = id('rp-min-score').value;
-  const btn      = id('rp-load-btn');
-  const wrap     = id('rp-list-wrap');
-  const status   = id('rp-status');
-
-  btn.disabled = true;
-  status.textContent = '⏳ Scanning…';
-  wrap.innerHTML = '<div class="empty-state"><span class="spinner"></span> Analysing commits…</div>';
-
-  try {
-    const pts = await fetch(`/api/review-points?limit=${limit}&min_score=${minScore}`).then(r => r.json());
-    setText('tab-review-count', pts.length);
-
-    if (!pts || pts.length === 0) {
-      wrap.innerHTML = '<div class="empty-state">No commits exceeded the review threshold in the scanned range.</div>';
-      status.textContent = `0 flagged in ${limit} commits`;
-      return;
-    }
-
-    const items = pts.map((rp, i) => {
-      const score = rp.score;
-      const scoreCls = score >= 0.7 ? 'rp-score-high' : score >= 0.45 ? 'rp-score-med' : 'rp-score-low';
-      const cardCls  = score >= 0.7 ? 'high' : score >= 0.45 ? 'medium' : 'low';
-      const filled   = Math.round(score * 10);
-      const bar      = '█'.repeat(filled) + '░'.repeat(10 - filled);
-      const ts       = new Date(rp.timestamp);
-      const dateStr  = isNaN(ts) ? '' : ts.toLocaleDateString(undefined, {year:'numeric',month:'short',day:'numeric'});
-
-      const triggers = rp.triggers.map(t => {
-        const cls = RULE_COLORS[t.rule_id] || 'rp-rule-gray';
-        return `<div class="rp-trigger">
-          <span class="rp-rule ${cls}">${esc(t.rule_id)}</span>
-          <span class="rp-detail">${esc(t.detail)}</span>
-        </div>`;
-      }).join('');
-
-      return `<div class="rp-card ${cardCls}">
-        <div class="rp-head">
-          <span class="rp-rank">#${i+1}</span>
-          <code class="oid-chip oid-human" style="font-size:11px">${esc(rp.short_oid)}</code>
-          <span class="rp-score-pill ${scoreCls}">${score.toFixed(2)}</span>
-          <span class="rp-bar">${bar}</span>
-          <span class="rp-msg" title="${esc(rp.message)}">${esc(rp.message)}</span>
-        </div>
-        <div class="rp-meta">
-          <span class="author" style="color:#58a6ff">${esc(rp.author)}</span>
-          ${dateStr ? `· <span>${esc(dateStr)}</span>` : ''}
-        </div>
-        <div class="rp-triggers">${triggers}</div>
-      </div>`;
-    }).join('');
-
-    wrap.innerHTML = `<div class="rp-list">${items}</div>`;
-    status.textContent = `${pts.length} flagged in ${limit} commits`;
-  } catch(e) {
-    wrap.innerHTML = `<div class="empty-state">Error: ${esc(e.message)}</div>`;
-    status.textContent = '';
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-// ── Intent Graph ──────────────────────────────────────────────────────────
-const NODE_W = 220, NODE_H = 56, COL_GAP = 280, ROW_GAP = 86;
-
-async function loadIntentGraph() {
-  const limit = id('ig-limit').value;
-  const mode  = id('ig-mode').value;
-  const btn   = id('ig-load-btn');
-  const wrap  = id('ig-canvas-wrap');
-  const status = id('ig-status');
-
-  btn.disabled = true;
-  status.textContent = mode === 'analyze' ? '⏳ Calling Claude…' : '⏳ Loading…';
-  wrap.innerHTML = '<div class="empty-state"><span class="spinner"></span> Building graph…</div>';
-
-  try {
-    const g = await fetch(`/api/intent-graph?limit=${limit}&mode=${mode}`).then(r => r.json());
-    if (!g.nodes || g.nodes.length === 0) {
-      wrap.innerHTML = '<div class="empty-state">No commits found.</div>';
-      status.textContent = '';
-      return;
-    }
-    renderIntentGraph(g, wrap);
-    const causal = (g.edges || []).filter(e => e.kind === 'causal').length;
-    status.textContent = `${g.nodes.length} nodes · ${causal} causal link${causal===1?'':'s'}`;
-  } catch(e) {
-    wrap.innerHTML = `<div class="empty-state">Error: ${esc(e.message)}</div>`;
-    status.textContent = '';
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-function renderIntentGraph(graph, container) {
-  const nodes = graph.nodes;    // newest first
-  const edges = graph.edges || [];
-
-  // ── Layout ──
-  // We use a simple layered layout:
-  // - Compute "depth" for each node via causal edges (BFS from roots).
-  // - Nodes with no causal parents are depth 0 (leftmost column).
-  // - Nodes within a column are stacked vertically.
-  const oidIdx = {};
-  nodes.forEach((n, i) => { oidIdx[n.oid] = i; });
-
-  const causalEdges = edges.filter(e => e.kind === 'causal');
-
-  // depth = column (left = oldest root, right = latest effect)
-  const depth = new Array(nodes.length).fill(0);
-  // BFS — edges go from → to, meaning from is parent, to is child
-  const adj = {};  // oid → array of child oids (causal children)
-  causalEdges.forEach(e => {
-    if (!adj[e.from]) adj[e.from] = [];
-    adj[e.from].push(e.to);
-  });
-
-  // For nodes with no causal parents, keep depth=0. Propagate forward.
-  const inDegree = {};
-  nodes.forEach(n => { inDegree[n.oid] = 0; });
-  causalEdges.forEach(e => { if (inDegree[e.to] !== undefined) inDegree[e.to]++; });
-
-  const queue = nodes.filter(n => inDegree[n.oid] === 0).map(n => n.oid);
-  while (queue.length) {
-    const cur = queue.shift();
-    const children = adj[cur] || [];
-    children.forEach(childOid => {
-      if (oidIdx[childOid] !== undefined) {
-        const curDepth = depth[oidIdx[cur]];
-        if (curDepth + 1 > depth[oidIdx[childOid]]) {
-          depth[oidIdx[childOid]] = curDepth + 1;
-        }
-        inDegree[childOid]--;
-        if (inDegree[childOid] === 0) queue.push(childOid);
-      }
-    });
-  }
-
-  // Assign row within each column
-  const colRows = {};
-  const pos = {};
-  nodes.forEach((n, i) => {
-    const col = depth[i];
-    if (colRows[col] === undefined) colRows[col] = 0;
-    pos[n.oid] = { x: col * COL_GAP + 20, y: colRows[col] * ROW_GAP + 20 };
-    colRows[col]++;
-  });
-
-  const maxX = Math.max(...Object.values(pos).map(p => p.x)) + NODE_W + 20;
-  const maxY = Math.max(...Object.values(pos).map(p => p.y)) + NODE_H + 20;
-  const svgW = Math.max(maxX, 600);
-  const svgH = Math.max(maxY, 300);
-
-  // ── SVG ──
-  const svgNS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('width', svgW);
-  svg.setAttribute('height', svgH);
-  svg.setAttribute('class', 'ig-svg');
-  svg.setAttribute('viewBox', `0 0 ${svgW} ${svgH}`);
-
-  // Defs: arrow markers
-  const defs = document.createElementNS(svgNS, 'defs');
-  ['parent','causal'].forEach(kind => {
-    const marker = document.createElementNS(svgNS, 'marker');
-    marker.setAttribute('id', `arrow-${kind}`);
-    marker.setAttribute('markerWidth', '8');
-    marker.setAttribute('markerHeight', '8');
-    marker.setAttribute('refX', '6');
-    marker.setAttribute('refY', '3');
-    marker.setAttribute('orient', 'auto');
-    const poly = document.createElementNS(svgNS, 'polygon');
-    poly.setAttribute('points', '0 0, 6 3, 0 6');
-    poly.setAttribute('fill', kind === 'causal' ? '#bc8cff' : '#484f58');
-    marker.appendChild(poly);
-    defs.appendChild(marker);
-  });
-  svg.appendChild(defs);
-
-  // Draw edges
-  edges.forEach(e => {
-    const from = pos[e.from];
-    const to   = pos[e.to];
-    if (!from || !to) return;
-
-    const isParent = e.kind === 'parent';
-    const x1 = from.x + NODE_W, y1 = from.y + NODE_H / 2;
-    const x2 = to.x,            y2 = to.y + NODE_H / 2;
-
-    const path = document.createElementNS(svgNS, 'path');
-    const cx1 = x1 + (x2 - x1) * 0.5, cy1 = y1;
-    const cx2 = x1 + (x2 - x1) * 0.5, cy2 = y2;
-    path.setAttribute('d', `M${x1},${y1} C${cx1},${cy1} ${cx2},${cy2} ${x2},${y2}`);
-    path.setAttribute('class', isParent ? 'ig-edge' : 'ig-edge-causal');
-    path.setAttribute('stroke', isParent ? '#2d333b' : '#bc8cff88');
-    path.setAttribute('stroke-dasharray', isParent ? '4,3' : 'none');
-    path.setAttribute('marker-end', `url(#arrow-${e.kind})`);
-    svg.appendChild(path);
-  });
-
-  // Draw nodes — rect MUST be appended first so text renders on top
-  nodes.forEach(n => {
-    const p = pos[n.oid];
-    if (!p) return;
-    const g = document.createElementNS(svgNS, 'g');
-    g.setAttribute('class', 'ig-node');
-    g.setAttribute('transform', `translate(${p.x},${p.y})`);
-
-    // 1. Background rect (drawn first so text sits on top)
-    const rect = document.createElementNS(svgNS, 'rect');
-    rect.setAttribute('width', NODE_W);
-    rect.setAttribute('height', NODE_H);
-    rect.setAttribute('rx', 6);
-    rect.setAttribute('fill', n.is_ai ? '#1a1f2e' : '#161b22');
-    rect.setAttribute('stroke', n.is_ai ? '#bc8cff66' : '#30363d');
-    g.appendChild(rect);
-
-    // 2. Tooltip (SVG <title> — not painted, but first for accessibility)
-    const title = document.createElementNS(svgNS, 'title');
-    title.textContent = `${n.short_oid}: ${n.message}\nIntent (${n.intent_source}): ${n.intent}\nAuthor: ${n.author}`;
-    g.appendChild(title);
-
-    // 3. OID + source tag
-    const srcColor = n.intent_source === 'analyzed' ? '#3fb950' : n.intent_source === 'prompt' ? '#bc8cff' : '#484f58';
-    const oidText = document.createElementNS(svgNS, 'text');
-    oidText.setAttribute('x', 10);
-    oidText.setAttribute('y', 14);
-    oidText.setAttribute('font-size', 10);
-    oidText.setAttribute('font-family', 'monospace');
-    oidText.setAttribute('fill', n.is_ai ? '#bc8cff' : '#58a6ff');
-    oidText.textContent = n.short_oid;
-    g.appendChild(oidText);
-
-    // Source badge (right side of OID row)
-    const srcTag = document.createElementNS(svgNS, 'text');
-    srcTag.setAttribute('x', NODE_W - 8);
-    srcTag.setAttribute('y', 14);
-    srcTag.setAttribute('font-size', 9);
-    srcTag.setAttribute('text-anchor', 'end');
-    srcTag.setAttribute('fill', srcColor);
-    srcTag.textContent = n.intent_source === 'analyzed' ? '[Claude]' : n.intent_source === 'prompt' ? '[prompt]' : '[msg]';
-    g.appendChild(srcTag);
-
-    // 4. Intent text wrapped to 2 lines
-    const intentWords = (n.intent || '').split(' ');
-    const maxChars = Math.floor((NODE_W - 20) / 6.2);
-    let lines = [], cur = '';
-    intentWords.forEach(w => {
-      const test = cur ? cur + ' ' + w : w;
-      if (test.length > maxChars && cur) { lines.push(cur); cur = w; }
-      else { cur = test; }
-    });
-    if (cur) lines.push(cur);
-    lines = lines.slice(0, 2);
-    if (lines.length === 2) {
-      const allWords = intentWords.length;
-      const shownWords = lines.join(' ').split(' ').length;
-      if (shownWords < allWords) lines[1] = lines[1].replace(/\s*\S+$/, '…');
-    }
-    lines.forEach((line, li) => {
-      const t = document.createElementNS(svgNS, 'text');
-      t.setAttribute('x', 10);
-      t.setAttribute('y', 30 + li * 14);
-      t.setAttribute('font-size', 11);
-      t.setAttribute('fill', '#c9d1d9');
-      t.textContent = line;
-      g.appendChild(t);
-    });
-
-    // Click → open detail modal
-    g.style.cursor = 'pointer';
-    g.addEventListener('click', () => openNodeModal(n, graph));
-
-    svg.appendChild(g);
-  });
-
-  container.innerHTML = '';
-  container.appendChild(svg);
-}
-
-// ── Node detail modal ─────────────────────────────────────────────────────
-function openNodeModal(n, graph) {
-  const srcColor = n.intent_source === 'analyzed' ? '#3fb950' : n.intent_source === 'prompt' ? '#bc8cff' : '#484f58';
-  const srcLabel = n.intent_source === 'analyzed' ? 'Claude-generated' : n.intent_source === 'prompt' ? 'stored prompt' : 'commit message';
-
-  id('ig-modal-oid').textContent = n.short_oid + ' — ' + n.oid;
-  id('ig-modal-oid').style.color = n.is_ai ? '#bc8cff' : '#58a6ff';
-  id('ig-modal-msg').textContent = n.message;
-  id('ig-modal-intent').textContent = n.intent;
-
-  // Meta badges
-  const meta = id('ig-modal-meta');
-  meta.innerHTML = '';
-  const addBadge = (text, bg, color) => {
-    const s = document.createElement('span');
-    s.className = 'ig-modal-badge';
-    s.style.background = bg;
-    s.style.color = color;
-    s.textContent = text;
-    meta.appendChild(s);
-  };
-  addBadge('source: ' + srcLabel, srcColor + '22', srcColor);
-  if (n.author) addBadge('author: ' + n.author, '#21262d', '#8b949e');
-  if (n.agent)  addBadge('agent: ' + n.agent,   '#d2992222', '#d29922');
-  if (n.model)  addBadge('model: ' + n.model,   '#bc8cff22', '#bc8cff');
-
-  // Causal links involving this node
-  const causes = (graph.edges || []).filter(e => e.kind === 'causal' && e.to === n.oid);
-  const effects = (graph.edges || []).filter(e => e.kind === 'causal' && e.from === n.oid);
-  causes.forEach(e => addBadge('caused by: ' + e.from.slice(0,8), '#1f3a5f', '#58a6ff'));
-  effects.forEach(e => addBadge('causes: ' + e.to.slice(0,8), '#1f3a5f', '#58a6ff'));
-
-  const ts = new Date(n.timestamp);
-  if (!isNaN(ts)) addBadge(ts.toLocaleString(), '#21262d', '#484f58');
-
-  id('ig-modal-overlay').classList.add('open');
-}
-
-function closeNodeModal() {
-  id('ig-modal-overlay').classList.remove('open');
-}
-
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeNodeModal(); });
-
-// ── Memory ────────────────────────────────────────────────────────────────
-let memSnapshots = [];
-let memSelFrom = null;
-let memSelTo = null;
-let _memFiles = [];
-
-async function loadMemorySnapshots() {
-  if (memSnapshots.length) return; // already loaded
-  id('mem-snap-list').innerHTML = '<div class="empty-state"><span class="spinner"></span> Loading…</div>';
-  try {
-    memSnapshots = await fetch('/api/memory/snapshots').then(r => r.json());
-    setText('tab-mem-count', memSnapshots.length);
-    setText('mem-snap-count', memSnapshots.length + ' snapshot' + (memSnapshots.length === 1 ? '' : 's'));
-    renderMemList();
-  } catch(e) {
-    id('mem-snap-list').innerHTML = '<div class="empty-state">Failed to load snapshots.</div>';
-  }
-}
-
-function renderMemList() {
-  if (!memSnapshots.length) {
-    id('mem-snap-list').innerHTML = `<div class="empty-state" style="padding:30px 0;text-align:center">
-      No memory snapshots yet.<br><code style="font-size:11px;color:#8b949e">h5i memory snapshot</code> to create one.
-    </div>`;
-    return;
-  }
-  id('mem-snap-list').innerHTML = memSnapshots.map((s, i) => {
-    let cls = 'mem-snap-card';
-    let badge = '';
-    if (i === memSelFrom) { cls += ' sel-from'; badge = '<span class="mem-sel-badge mem-sel-from-badge">FROM</span>'; }
-    else if (i === memSelTo) { cls += ' sel-to'; badge = '<span class="mem-sel-badge mem-sel-to-badge">TO</span>'; }
-    const ts = new Date(s.timestamp);
-    const tsStr = isNaN(ts) ? s.timestamp : ts.toLocaleString();
-    return `<div class="${cls}" onclick="selectMemSnap(${i})">${badge}
-      <div class="mem-snap-head">
-        <span class="mem-oid">${esc(s.short_oid)}</span>
-        <span class="mem-ts">${esc(tsStr)}</span>
-      </div>
-      <div class="mem-nfiles">${s.file_count} file${s.file_count === 1 ? '' : 's'}</div>
-    </div>`;
-  }).join('');
-}
-
-function selectMemSnap(i) {
-  if (memSelFrom === null) {
-    memSelFrom = i;
-  } else if (memSelTo === null && i !== memSelFrom) {
-    memSelTo = i;
-  } else {
-    memSelFrom = i; memSelTo = null;
-  }
-  renderMemList();
-  updateMemControls();
-  if (memSelTo === null && memSelFrom !== null) showMemInspect(memSnapshots[memSelFrom]);
-}
-
-function clearMemSel() {
-  memSelFrom = null; memSelTo = null;
-  renderMemList(); updateMemControls();
-  id('mem-viewer').innerHTML = '<div class="mem-viewer-empty">Select a snapshot to inspect its files,<br>or select two snapshots to compare them.</div>';
-}
-
-function updateMemControls() {
-  id('mem-diff-btn').disabled = !(memSelFrom !== null && memSelTo !== null);
-  const hint = memSelFrom === null
-    ? 'Click a snapshot to inspect · click two to diff'
-    : memSelTo === null
-    ? 'Click another snapshot to compare, or click again to reset'
-    : 'Ready — click ⊕ Diff Selected';
-  setText('mem-hint', hint);
-}
-
-function showMemInspect(snap) {
-  _memFiles = snap.files || [];
-  if (!_memFiles.length) {
-    id('mem-viewer').innerHTML = '<div class="mem-viewer-empty">No files in this snapshot.</div>';
-    return;
-  }
-  const ts = new Date(snap.timestamp);
-  const tsStr = isNaN(ts) ? snap.timestamp : ts.toLocaleString();
-  let html = `<div class="mem-insp-hdr">
-    <span>📸 Snapshot</span>
-    <span class="mem-oid">${esc(snap.short_oid)}</span>
-    <span style="font-size:11px;color:#484f58;font-weight:400">${esc(tsStr)}</span>
-  </div>`;
-  html += '<div class="mem-file-tabs">';
-  _memFiles.forEach((f, i) => {
-    html += `<button class="mem-ftab${i===0?' active':''}" onclick="showMemFile(${i},this)">${esc(f.name)}</button>`;
-  });
-  html += '</div><div id="mem-file-body">' + renderMemFile(_memFiles[0]) + '</div>';
-  id('mem-viewer').innerHTML = html;
-}
-
-function showMemFile(i, el) {
-  document.querySelectorAll('.mem-ftab').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-  id('mem-file-body').innerHTML = renderMemFile(_memFiles[i]);
-}
-
-function parseFrontmatter(content) {
-  const m = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-  if (!m) return null;
-  const fm = {};
-  m[1].split('\n').forEach(line => {
-    const idx = line.indexOf(':');
-    if (idx > 0) { fm[line.slice(0,idx).trim()] = line.slice(idx+1).trim(); }
-  });
-  fm.body = m[2].trim();
-  return fm;
-}
-
-function renderMemFile(f) {
-  const fm = parseFrontmatter(f.content);
-  if (!fm) return `<pre class="mem-file-content">${esc(f.content)}</pre>`;
-  const typeTag = fm.type
-    ? `<span class="mem-type-${esc(fm.type)}">${esc(fm.type)}</span>`
-    : '';
-  let html = '<div class="mem-frontmatter">';
-  if (fm.name) html += `<div class="mem-fm-row"><span class="mem-fm-key">name</span><span class="mem-fm-val">${esc(fm.name)}</span></div>`;
-  if (fm.description) html += `<div class="mem-fm-row"><span class="mem-fm-key">description</span><span class="mem-fm-val mem-fm-desc">${esc(fm.description)}</span></div>`;
-  if (fm.type) html += `<div class="mem-fm-row"><span class="mem-fm-key">type</span>${typeTag}</div>`;
-  html += '</div>';
-  if (fm.body) html += `<div class="mem-body">${esc(fm.body)}</div>`;
-  return html;
-}
-
-async function diffMemory() {
-  if (memSelFrom === null || memSelTo === null) return;
-  const from = memSnapshots[memSelFrom].commit_oid;
-  const to   = memSnapshots[memSelTo].commit_oid;
-  id('mem-viewer').innerHTML = '<div class="mem-viewer-empty"><span class="spinner"></span> Computing diff…</div>';
-  try {
-    const diff = await fetch(`/api/memory/diff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`).then(r => r.json());
-    renderMemDiff(diff);
-  } catch(e) {
-    id('mem-viewer').innerHTML = `<div class="mem-viewer-empty">Error: ${esc(String(e))}</div>`;
-  }
-}
-
-function renderMemDiff(diff) {
-  const total = diff.added_files.length + diff.removed_files.length + diff.modified_files.length;
-  let html = `<div class="mem-diff-hdr-row">
-    Diff&nbsp;<span class="mem-oid" style="color:#58a6ff">${esc(diff.from_label)}</span>
-    <span style="color:#484f58">→</span>
-    <span class="mem-oid" style="background:#1a3a2a22;color:#3fb950">${esc(diff.to_label)}</span>
-  </div>`;
-
-  if (total === 0) {
-    html += '<div class="mem-viewer-empty" style="padding:40px 0">No differences found between these two snapshots.</div>';
-    id('mem-viewer').innerHTML = html;
-    return;
-  }
-
-  html += '<div class="mem-diff-summary">';
-  if (diff.added_files.length)   html += `<span class="mem-diff-stat-add">+${diff.added_files.length} added</span>`;
-  if (diff.removed_files.length) html += `<span class="mem-diff-stat-rm">−${diff.removed_files.length} removed</span>`;
-  if (diff.modified_files.length) html += `<span class="mem-diff-stat-mod">~${diff.modified_files.length} modified</span>`;
-  html += '</div>';
-
-  diff.added_files.forEach(f => {
-    html += `<div class="mem-diff-file"><div class="mem-diff-hdr mem-diff-hdr-add">+&nbsp;${esc(f.name)}</div><div class="mem-diff-lines">`;
-    f.content.split('\n').forEach(ln => {
-      html += `<div class="mem-dl mem-dl-add"><span class="mem-gutter">+</span><span class="mem-text">${esc(ln)}</span></div>`;
-    });
-    html += '</div></div>';
-  });
-
-  diff.removed_files.forEach(name => {
-    html += `<div class="mem-diff-file"><div class="mem-diff-hdr mem-diff-hdr-rm">−&nbsp;${esc(name)}</div>
-      <div class="mem-diff-lines"><div class="mem-dl mem-dl-rm"><span class="mem-gutter">−</span><span class="mem-text" style="opacity:.6;font-style:italic">(file removed)</span></div></div></div>`;
-  });
-
-  diff.modified_files.forEach(f => {
-    html += `<div class="mem-diff-file"><div class="mem-diff-hdr mem-diff-hdr-mod">~&nbsp;${esc(f.name)}</div><div class="mem-diff-lines">`;
-    f.hunks.forEach(line => {
-      const isSep = line.kind === 'context' && line.text === '···';
-      const cls   = line.kind === 'added' ? 'mem-dl-add' : line.kind === 'removed' ? 'mem-dl-rm' : isSep ? 'mem-dl-sep' : 'mem-dl-ctx';
-      const glyph = line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : ' ';
-      html += `<div class="mem-dl ${cls}"><span class="mem-gutter">${isSep?'':glyph}</span><span class="mem-text">${esc(line.text)}</span></div>`;
-    });
-    html += '</div></div>';
-  });
-
-  id('mem-viewer').innerHTML = html;
-}
-
-// ── Sessions tab ──────────────────────────────────────────────────────────
-let slSessions = [];
-let slChurn = [];
-
-async function loadSessionList() {
-  if (slSessions.length) { renderSlList(); return; }
-  const [list, churn] = await Promise.all([
-    fetch('/api/session-log/list').then(r => r.json()),
-    fetch('/api/session-log/churn').then(r => r.json()),
-  ]);
-  slSessions = list || [];
-  slChurn = churn || [];
-  id('tab-sl-count').textContent = slSessions.length || '0';
-  renderSlList();
-}
-
-function renderSlList() {
-  const el = id('sl-list');
-  if (!slSessions.length) {
-    el.innerHTML = '<div class="sl-empty">No sessions analyzed yet.<br>Run <code>h5i analyze</code> after a Claude Code session.</div>';
-    return;
-  }
-  el.innerHTML = slSessions.map((s, i) => `
-    <div class="sl-card" id="sl-card-${i}" onclick="selectSession('${s.commit_oid}', ${i})">
-      <div class="sl-card-oid">${s.commit_oid.slice(0,8)}</div>
-      <div class="sl-card-meta">${s.analyzed_at} · ${s.message_count} msgs · ${s.tool_call_count} tools</div>
-      <div class="sl-card-badges">
-        <span class="sl-badge sl-badge-edit">✏ ${s.edited_count} edited</span>
-        <span class="sl-badge sl-badge-read">📖 ${s.consulted_count} read</span>
-        ${s.uncertainty_count > 0 ? `<span class="sl-badge sl-badge-warn">⚠ ${s.uncertainty_count} uncertain</span>` : ''}
-      </div>
-    </div>`).join('');
-}
-
-async function selectSession(oid, idx) {
-  document.querySelectorAll('.sl-card').forEach(c => c.classList.remove('active'));
-  const card = id('sl-card-' + idx);
-  if (card) card.classList.add('active');
-  id('sl-detail').innerHTML = '<div class="sl-empty"><span class="spinner"></span> Loading…</div>';
-  const data = await fetch(`/api/session-log?commit=${oid}`).then(r => r.json());
-  if (!data) {
-    id('sl-detail').innerHTML = '<div class="sl-empty">No analysis data found.</div>';
-    return;
-  }
-  renderSlDetail(data);
-}
-
-function renderSlDetail(d) {
-  let html = '';
-
-  // Trigger
-  html += `<div class="sl-section">
-    <div class="sl-section-title">Trigger</div>
-    <div class="sl-trigger">"${esc(d.causal_chain.user_trigger.slice(0,300))}"</div>
-  </div>`;
-
-  // Footprint — two columns
-  const edited = d.footprint.edited || [];
-  const consulted = d.footprint.consulted || [];
-  const implicitDeps = d.footprint.implicit_deps || [];
-  html += `<div class="sl-section">
-    <div class="sl-section-title">Exploration Footprint</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-      <div>
-        <div style="font-size:11px;color:#3fb950;font-weight:700;margin-bottom:6px">✏ EDITED (${edited.length})</div>
-        ${edited.map(f => {
-          const editCount = (d.causal_chain.edit_sequence || []).filter(s => s.file === f).length;
-          return `<div class="sl-file-row"><span class="sl-edit-icon">✏</span><span class="sl-file-name" title="${esc(f)}">${esc(shortPath(f, 30))}</span><span class="sl-file-count">×${editCount}</span></div>`;
-        }).join('') || '<div class="sl-empty" style="font-size:11px">none</div>'}
-      </div>
-      <div>
-        <div style="font-size:11px;color:#58a6ff;font-weight:700;margin-bottom:6px">📖 CONSULTED (${consulted.length})</div>
-        ${consulted.slice(0,15).map(f => `
-          <div class="sl-file-row">
-            <span class="sl-read-icon">📖</span>
-            <span class="sl-file-name" title="${esc(f.path)}">${esc(shortPath(f.path, 28))}</span>
-            <span class="sl-file-count">×${f.count}</span>
-            <span class="sl-file-tools">[${esc((f.tools||[]).join(','))}]</span>
-          </div>`).join('') || '<div class="sl-empty" style="font-size:11px">none</div>'}
-      </div>
-    </div>
-    ${implicitDeps.length ? `
-    <div style="margin-top:10px">
-      <div style="font-size:11px;color:#484f58;font-weight:700;margin-bottom:4px">→ IMPLICIT DEPS (read, never edited)</div>
-      ${implicitDeps.slice(0,8).map(f => `<div class="sl-file-row"><span class="sl-dep-icon">→</span><span class="sl-file-name" style="color:#484f58">${esc(shortPath(f,38))}</span></div>`).join('')}
-    </div>` : ''}
-  </div>`;
-
-  // Causal chain
-  const decisions = d.causal_chain.key_decisions || [];
-  const rejected = d.causal_chain.rejected_approaches || [];
-  if (decisions.length || rejected.length) {
-    html += `<div class="sl-section">
-      <div class="sl-section-title">Causal Chain</div>`;
-    if (decisions.length) {
-      html += `<div style="font-size:11px;color:#8b949e;margin-bottom:6px">KEY DECISIONS</div>`;
-      html += decisions.map((d, i) => `<div class="sl-decision"><span style="color:#484f58">${i+1}.</span> ${esc(d.slice(0,140))}</div>`).join('');
-    }
-    if (rejected.length) {
-      html += `<div style="font-size:11px;color:#8b949e;margin:10px 0 6px">CONSIDERED / REJECTED</div>`;
-      html += rejected.map(r => `<div class="sl-rejected">${esc(r.slice(0,130))}</div>`).join('');
-    }
-    html += '</div>';
-  }
-
-  // Uncertainty heatmap
-  const unc = d.uncertainty || [];
-  if (unc.length) {
-    html += `<div class="sl-section">
-      <div class="sl-section-title">Uncertainty Heatmap (${unc.length})</div>`;
-    html += unc.slice(0,12).map(a => {
-      const cls = a.confidence < 0.35 ? 'high' : (a.confidence > 0.55 ? 'low' : '');
-      const confColor = a.confidence < 0.35 ? '#f85149' : (a.confidence > 0.55 ? '#3fb950' : '#e3b341');
-      return `<div class="sl-unc-row ${cls}">
-        <div class="sl-unc-phrase">
-          <span style="color:${confColor}">${Math.round(a.confidence*100)}% conf</span>
-          &nbsp;·&nbsp; "${esc(a.phrase)}"
-          ${a.context_file ? `&nbsp;·&nbsp; <span style="color:#484f58;font-style:normal">${esc(shortPath(a.context_file,30))}</span>` : ''}
-        </div>
-        <div class="sl-unc-snippet">"${esc(a.snippet.slice(0,180))}"</div>
-        <div class="sl-unc-meta">turn ${a.turn}</div>
-      </div>`;
-    }).join('');
-    html += '</div>';
-  }
-
-  // File churn (session-local)
-  const churn = d.churn || [];
-  if (churn.length) {
-    html += `<div class="sl-section">
-      <div class="sl-section-title">File Churn (this session)</div>`;
-    html += churn.slice(0,10).map(c => `
-      <div class="sl-churn-bar">
-        <span class="sl-churn-file" title="${esc(c.file)}">${esc(shortPath(c.file,36))}</span>
-        <span style="font-size:11px;color:#3fb950">✏${c.edit_count}</span>
-        <span style="font-size:11px;color:#58a6ff;margin-left:4px">📖${c.read_count}</span>
-        <div class="sl-churn-track"><div class="sl-churn-fill" style="width:${Math.round(c.churn_score*100)}%"></div></div>
-        <span class="sl-churn-pct">${Math.round(c.churn_score*100)}%</span>
-      </div>`).join('');
-    html += '</div>';
-  }
-
-  // Bash commands sample
-  const cmds = (d.footprint.bash_commands || []).slice(0, 8);
-  if (cmds.length) {
-    html += `<div class="sl-section">
-      <div class="sl-section-title">Bash Commands (${cmds.length} shown)</div>
-      <div style="display:flex;flex-direction:column;gap:4px">
-        ${cmds.map(c => `<code style="font-size:11px;color:#8b949e;background:#0d1117;padding:3px 8px;border-radius:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c)}">${esc(c.slice(0,100))}</code>`).join('')}
-      </div>
-    </div>`;
-  }
-
-  // Replay hash
-  html += `<div class="sl-section">
-    <div class="sl-section-title">Replay Hash</div>
-    <div class="sl-replay-hash">${esc(d.replay_hash)}</div>
-    <div style="font-size:11px;color:#484f58;margin-top:6px">SHA-256 of the raw session JSONL — use to verify session replay reproducibility.</div>
-  </div>`;
-
-  id('sl-detail').innerHTML = html;
-}
-
-// Global churn tab (aggregated across all sessions)
-// Accessible via the churn sub-section inside any session or as standalone from session list header.
-
-function shortPath(p, max) {
-  if (!p || p.length <= max) return p || '';
-  return '…' + p.slice(-(max-1));
-}
-
-// ── Context tab ───────────────────────────────────────────────────────────
-let ctxSnapshots = [];
-let ctxSelFrom = null;
-let ctxSelTo = null;
-let ctxActiveBranch = 'main';
-let ctxAllTraceLines = [];
-let ctxTraceFilter = 'all';
-let ctxStatus = null;
-let ctxDag = null;
-let ctxPromotion = null;
-
-async function loadContextTab() {
-  try {
-    const [status, snaps] = await Promise.all([
-      fetch('/api/context/status').then(r => r.json()),
-      fetch('/api/context/snapshots').then(r => r.json()),
-    ]);
-
-    ctxStatus = status || null;
-    const sb = id('ctx-status-bar');
-    if (status.initialized) {
-      ctxActiveBranch = status.current_branch || 'main';
-      sb.innerHTML = `
-        <div class="ctx-goal-bar">
-          <span class="ctx-goal-icon">◎</span>
-          <span class="ctx-goal-text">${esc(status.goal || 'No goal set')}</span>
-          <span class="ctx-goal-branch">${esc(ctxActiveBranch)}</span>
-        </div>
-        <div class="ctx-stats-bar">
-          <div class="ctx-stat-item"><div class="ctx-stat-val">${status.commit_count ?? 0}</div><div class="ctx-stat-lbl">Milestones</div></div>
-          <div class="ctx-stat-item"><div class="ctx-stat-val">${status.trace_lines ?? 0}</div><div class="ctx-stat-lbl">Trace Lines</div></div>
-          <div class="ctx-stat-item"><div class="ctx-stat-val">${status.snapshot_count ?? 0}</div><div class="ctx-stat-lbl">Snapshots</div></div>
-          <div class="ctx-stat-item"><div class="ctx-stat-val">${status.branch_count ?? 1}</div><div class="ctx-stat-lbl">Branches</div></div>
-        </div>`;
-      renderCtxBranchNav(Array.isArray(status.branches) ? status.branches : [], ctxActiveBranch);
-      renderCtxHealth(status);
-      renderCtxBranchGrid(Array.isArray(status.branch_summaries) ? status.branch_summaries : []);
-    } else {
-      sb.innerHTML = '';
-      id('ctx-health-grid').innerHTML = '';
-      id('ctx-branch-grid').innerHTML = '';
-    }
-
-    const notInit = id('ctx-not-init');
-    const main = id('ctx-main');
-    if (!status.initialized) {
-      notInit.style.display = '';
-      main.style.display = 'none';
-      setText('tab-ctx-count', '—');
-      return;
-    }
-    notInit.style.display = 'none';
-    main.style.display = '';
-
-    ctxSnapshots = Array.isArray(snaps) ? snaps : [];
-    setText('tab-ctx-count', ctxSnapshots.length);
-    renderCtxSnapshots();
-    loadCtxTrace(ctxActiveBranch);
-    loadCtxDag(ctxActiveBranch);
-    loadCtxPromotion(ctxActiveBranch);
-  } catch(e) {
-    console.error('loadContextTab', e);
-    id('ctx-snap-list').innerHTML = '<div class="empty-state">Failed to load context data.</div>';
-  }
-}
-
-function renderCtxHealth(status) {
-  const el = id('ctx-health-grid');
-  if (!el) return;
-  const latestSnapshot = status.latest_snapshot_timestamp || 'No snapshots yet';
-  const stable = status.stable_line_count ?? 0;
-  const dynamic = status.dynamic_line_count ?? 0;
-  const total = stable + dynamic;
-  const ratio = total ? `${stable}/${dynamic}` : '0/0';
-  el.innerHTML = `
-    <div class="ctx-health-card">
-      <div class="ctx-health-label">Open TODOs</div>
-      <div class="ctx-health-value">${status.todo_count ?? 0}</div>
-      <div class="ctx-health-sub">THINK / NOTE follow-ups</div>
-    </div>
-    <div class="ctx-health-card">
-      <div class="ctx-health-label">Stable vs Live</div>
-      <div class="ctx-health-value">${esc(ratio)}</div>
-      <div class="ctx-health-sub">${total} trace lines in current branch</div>
-    </div>
-    <div class="ctx-health-card">
-      <div class="ctx-health-label">Latest Snapshot</div>
-      <div class="ctx-health-value" style="font-size:14px">${esc(latestSnapshot)}</div>
-      <div class="ctx-health-sub">${status.snapshot_count ?? 0} snapshots captured</div>
-    </div>
-    <div class="ctx-health-card">
-      <div class="ctx-health-label">Stale Branches</div>
-      <div class="ctx-health-value">${status.stale_branch_count ?? 0}</div>
-      <div class="ctx-health-sub">No exclusive milestones or trace</div>
-    </div>`;
-}
-
-function renderCtxBranchNav(branches, activeBranch) {
-  const el = id('ctx-branch-nav');
-  if (!el) return;
-  if (!branches.length) { el.innerHTML = ''; return; }
-  const pills = branches.map(b => {
-    const isScope = b.startsWith('scope/');
-    const isActive = b === activeBranch;
-    const cls = ['ctx-branch-pill', isScope ? 'scope' : '', isActive ? 'active' : ''].filter(Boolean).join(' ');
-    const label = isScope ? ('⊙ ' + b.slice(6)) : b;
-    return `<span class="${cls}" data-branch="${esc(b)}" onclick="switchCtxBranch('${esc(b)}')">${esc(label)}</span>`;
-  }).join('');
-  el.innerHTML = `<span class="ctx-branch-nav-label">Branch</span>${pills}`;
-}
-
-function switchCtxBranch(branch) {
-  ctxActiveBranch = branch;
-  document.querySelectorAll('.ctx-branch-pill').forEach(el => {
-    el.classList.toggle('active', el.dataset.branch === branch);
-  });
-  const lbl = id('ctx-trace-branch-label');
-  if (lbl) lbl.textContent = branch;
-  const dagLbl = id('ctx-dag-branch-label');
-  if (dagLbl) dagLbl.textContent = branch;
-  const promoLbl = id('ctx-promo-branch-label');
-  if (promoLbl) promoLbl.textContent = branch;
-  loadCtxTrace(branch);
-  loadCtxDag(branch);
-  loadCtxPromotion(branch);
-}
-
-async function loadCtxTrace(branch) {
-  const traceEl = id('ctx-trace-box');
-  if (!traceEl) return;
-  traceEl.innerHTML = '<div class="ctx-viewer-empty" style="padding:20px">Loading…</div>';
-  const b = branch || ctxActiveBranch || 'main';
-  const lbl = id('ctx-trace-branch-label');
-  if (lbl) lbl.textContent = b;
-  try {
-    const data = await fetch(`/api/context/show?branch=${encodeURIComponent(b)}&trace=true&window=20`).then(r => r.json());
-    ctxAllTraceLines = (data && data.recent_log_lines) || [];
-    renderCtxTrace();
-  } catch(e) {
-    traceEl.innerHTML = '<div class="ctx-viewer-empty" style="padding:20px">Failed to load trace.</div>';
-  }
-}
-
-function renderCtxBranchGrid(summaries) {
-  const el = id('ctx-branch-grid');
-  if (!el) return;
-  if (!summaries.length) {
-    el.innerHTML = '<div class="ctx-viewer-empty" style="padding:24px 0">No branches found.</div>';
-    return;
-  }
-  el.innerHTML = summaries.map(s => `
-    <div class="ctx-branch-card" onclick="switchCtxBranch('${esc(s.branch)}')">
-      <div class="ctx-branch-top">
-        <span class="ctx-branch-name">${esc(s.branch)}</span>
-        <span class="ctx-search-score">${s.is_scope ? 'scope' : 'branch'}</span>
-      </div>
-      <div class="ctx-branch-purpose">${esc(s.purpose || 'No purpose recorded')}</div>
-      <div class="ctx-branch-meta">
-        <span class="ctx-branch-kpi">◈ ${s.milestone_count ?? 0}</span>
-        <span class="ctx-branch-kpi">● ${s.trace_lines ?? 0}</span>
-        <span class="ctx-branch-kpi">☑ ${s.todo_count ?? 0}</span>
-        <span class="ctx-branch-kpi">⇡ ${s.exclusive_milestones ?? 0}/${s.exclusive_trace_lines ?? 0}</span>
-      </div>
-      <div class="ctx-health-sub" style="margin-top:8px">${esc(s.last_milestone || s.last_activity || 'No recent milestone')}</div>
-    </div>
-  `).join('');
-}
-
-function renderCtxTrace() {
-  const traceEl = id('ctx-trace-box');
-  if (!traceEl) return;
-  if (!ctxAllTraceLines.length) {
-    traceEl.innerHTML = '<div class="ctx-viewer-empty" style="padding:20px">No trace entries yet.</div>';
-    updateTraceStats({});
-    return;
-  }
-  const counts = { OBSERVE: 0, THINK: 0, ACT: 0, NOTE: 0 };
-  const parsed = ctxAllTraceLines.map(l => {
-    if (l.startsWith('---') || l.startsWith('_[Checkpoint')) {
-      return { type: 'checkpoint', text: l.replace(/^_\[Checkpoint:\s*/, '').replace(/\]_$/, '').replace(/^-+\s*/, '').trim() };
-    }
-    const m = l.match(/^\[(\d{2}:\d{2}:\d{2})\]\s*(OBSERVE|THINK|ACT|NOTE):\s*(.*)/s);
-    if (m) { counts[m[2]]++; return { type: 'entry', time: m[1], kind: m[2], text: m[3] }; }
-    const m2 = l.match(/^\[(OBSERVE|THINK|ACT|NOTE)\]\s*(.*)/s);
-    if (m2) { counts[m2[1]]++; return { type: 'entry', time: '', kind: m2[1], text: m2[2] }; }
-    return { type: 'raw', text: l };
-  });
-  setText('tf-obs', counts.OBSERVE);
-  setText('tf-think', counts.THINK);
-  setText('tf-act', counts.ACT);
-  setText('tf-note', counts.NOTE);
-  const filter = ctxTraceFilter;
-  const visible = parsed.filter(p => filter === 'all' || (p.type === 'entry' && p.kind === filter));
-  if (!visible.length) {
-    traceEl.innerHTML = `<div class="ctx-viewer-empty" style="padding:20px">No ${filter} entries.</div>`;
-    updateTraceStats(counts);
-    return;
-  }
-  traceEl.innerHTML = visible.map(p => {
-    if (p.type === 'checkpoint') return `<div class="ctx-tl-checkpoint">${esc(p.text)}</div>`;
-    if (p.type === 'raw') return `<div class="ctx-tl-entry kind-NOTE"><span class="ctx-tl-time"></span><span class="ctx-tl-kind ctx-tl-kind-NOTE">NOTE</span><span class="ctx-tl-text">${esc(p.text)}</span></div>`;
-    return `<div class="ctx-tl-entry kind-${p.kind}"><span class="ctx-tl-time">${esc(p.time)}</span><span class="ctx-tl-kind ctx-tl-kind-${p.kind}">${p.kind}</span><span class="ctx-tl-text">${esc(p.text)}</span></div>`;
-  }).join('');
-  traceEl.scrollTop = traceEl.scrollHeight;
-  updateTraceStats(counts);
-}
-
-function updateTraceStats(counts) {
-  const el = id('ctx-trace-stat');
-  if (!el) return;
-  const total = (counts.OBSERVE || 0) + (counts.THINK || 0) + (counts.ACT || 0) + (counts.NOTE || 0);
-  if (!total) { el.innerHTML = ''; return; }
-  el.innerHTML = `<span style="color:#58a6ff">● ${counts.OBSERVE || 0} observe</span><span style="color:#bc8cff">● ${counts.THINK || 0} think</span><span style="color:#3fb950">● ${counts.ACT || 0} act</span><span style="color:#e3b341">● ${counts.NOTE || 0} note</span><span>— ${total} total</span>`;
-}
-
-function filterTrace(kind) {
-  ctxTraceFilter = kind;
-  document.querySelectorAll('.ctx-filter-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.kind === kind);
-  });
-  renderCtxTrace();
-}
-
-function renderCtxSnapshots() {
-  const el = id('ctx-snap-list');
-  const countEl = id('ctx-snap-count');
-  if (countEl) countEl.textContent = ctxSnapshots.length;
-  if (!ctxSnapshots.length) {
-    el.innerHTML = `<div class="ctx-viewer-empty" style="padding:30px 0;text-align:center">No context snapshots yet.<br><code style="font-size:11px;color:#8b949e">h5i commit</code> creates one automatically.</div>`;
-    return;
-  }
-  el.innerHTML = ctxSnapshots.map((s, i) => {
-    let cls = 'ctx-snap-card';
-    let badge = '';
-    if (i === ctxSelFrom) { cls += ' sel-from'; badge = '<span class="ctx-sel-badge ctx-sel-from-badge">FROM</span>'; }
-    else if (i === ctxSelTo) { cls += ' sel-to'; badge = '<span class="ctx-sel-badge ctx-sel-to-badge">TO</span>'; }
-    const ts = new Date(s.timestamp);
-    const tsStr = isNaN(ts) ? (s.timestamp || '') : ts.toLocaleString();
-    const sha = s.sha_short || (s.sha ? s.sha.slice(0,8) : s.git_sha ? s.git_sha.slice(0,8) : '?');
-    const branch = s.branch || 'main';
-    const mc = s.recent_milestones ? s.recent_milestones.length : 0;
-    return `<div class="${cls}" onclick="selectCtxSnap(${i})">${badge}
-      <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap"><span class="ctx-snap-sha">${esc(sha)}</span><span class="ctx-snap-ts">${esc(tsStr)}</span></div>
-      <div class="ctx-snap-badge">${esc(branch)}${mc ? ' · ' + mc + ' milestone' + (mc === 1 ? '' : 's') : ''}</div>
-      ${s.goal ? `<div class="ctx-snap-goal">${esc(s.goal.slice(0,70))}${s.goal.length > 70 ? '…' : ''}</div>` : ''}
-    </div>`;
-  }).join('');
-}
-
-function selectCtxSnap(i) {
-  if (ctxSelFrom === null) {
-    ctxSelFrom = i;
-  } else if (ctxSelTo === null && i !== ctxSelFrom) {
-    ctxSelTo = i;
-  } else {
-    ctxSelFrom = i; ctxSelTo = null;
-  }
-  renderCtxSnapshots();
-  updateCtxControls();
-  if (ctxSelTo === null && ctxSelFrom !== null) showCtxViewer(ctxSnapshots[ctxSelFrom]);
-}
-
-function clearCtxSelection() {
-  ctxSelFrom = null; ctxSelTo = null;
-  renderCtxSnapshots(); updateCtxControls();
-  id('ctx-viewer').innerHTML = '<div class="ctx-viewer-empty">Select a snapshot to inspect it,<br>or select two snapshots to compare them.</div>';
-}
-
-function updateCtxControls() {
-  id('ctx-diff-btn').disabled = !(ctxSelFrom !== null && ctxSelTo !== null);
-  const hint = ctxSelFrom === null
-    ? 'Click snapshot to inspect · click two to diff'
-    : ctxSelTo === null
-    ? 'Click another snapshot to compare, or click again to reset'
-    : 'Click Diff to compare the two selected snapshots';
-  setText('ctx-sel-hint', hint);
-}
-
-function showCtxViewer(s) {
-  const sha = s.sha_short || (s.sha ? s.sha.slice(0,8) : s.git_sha ? s.git_sha.slice(0,8) : '?');
-  const ts = new Date(s.timestamp);
-  const tsStr = isNaN(ts) ? (s.timestamp || '') : ts.toLocaleString();
-  const milestones = s.recent_milestones || [];
-  let html = `<div class="ctx-viewer-hdr">
-    <span class="ctx-viewer-sha">${esc(sha)}</span>
-    <span class="ctx-viewer-ts">${esc(tsStr)}</span>
-    ${s.branch ? `<span class="ctx-goal-branch" style="margin-left:auto">${esc(s.branch)}</span>` : ''}
-  </div>`;
-  if (s.goal) html += `<div class="ctx-viewer-goal">${esc(s.goal)}</div>`;
-  html += `<div class="ctx-viewer-section-title">Milestones (${milestones.length})</div>`;
-  if (milestones.length) {
-    html += milestones.map(m => `<div class="ctx-milestone-entry">${esc(m)}</div>`).join('');
-  } else {
-    html += `<div class="ctx-viewer-empty" style="padding:16px 0">No milestones recorded at this snapshot.</div>`;
-  }
-  if (s.context_oid) {
-    html += `<div class="ctx-viewer-section-title">Context Ref</div><div class="ctx-mention-row"><span class="ctx-mention-tag ctx-tag-branch">OID</span><span class="ctx-mention-text">${esc(s.context_oid)}</span></div>`;
-  }
-  id('ctx-viewer').innerHTML = html;
-}
-
-async function runCtxDiff() {
-  if (ctxSelFrom === null || ctxSelTo === null) return;
-  const s1 = ctxSnapshots[ctxSelFrom];
-  const s2 = ctxSnapshots[ctxSelTo];
-  const sha1 = s1.sha || s1.git_sha;
-  const sha2 = s2.sha || s2.git_sha;
-  if (!sha1 || !sha2) return;
-  const viewer = id('ctx-viewer');
-  viewer.innerHTML = '<div class="ctx-viewer-empty"><span class="spinner"></span> Computing diff…</div>';
-  try {
-    const d = await fetch(`/api/context/diff?from=${encodeURIComponent(sha1)}&to=${encodeURIComponent(sha2)}`).then(r => r.json());
-    let html = `<div class="ctx-diff-hdr">
-      <span style="color:#58a6ff;font-weight:700;font-size:12px">Context Diff</span>
-      <span class="ctx-snap-sha">${esc(d.from.slice(0,8))}</span>
-      <span style="color:#484f58;font-size:12px">→</span>
-      <span class="ctx-snap-sha" style="background:#58a6ff22;color:#58a6ff">${esc(d.to.slice(0,8))}</span>
-    </div>`;
-    if (d.cross_branch) {
-      html += `<div class="ctx-warning">Comparing snapshots across branches: <strong>${esc(d.from_branch || '?')}</strong> → <strong>${esc(d.to_branch || '?')}</strong>. Divergence counts and removed items may reflect branch-specific context, not just forward progress.</div>`;
-    }
-    if (d.goal_changed) {
-      html += `<div class="ctx-diff-goal-change"><div class="ctx-diff-from">${esc(d.from_goal)}</div><div class="ctx-diff-to">${esc(d.to_goal)}</div></div>`;
-    }
-    if (d.added_milestones && d.added_milestones.length) {
-      html += `<div class="ctx-diff-section"><div class="ctx-diff-section-title">New Milestones</div>${d.added_milestones.map(m => `<div class="ctx-diff-added">${esc(m)}</div>`).join('')}</div>`;
-    }
-    if (d.removed_milestones && d.removed_milestones.length) {
-      html += `<div class="ctx-diff-section"><div class="ctx-diff-section-title">Removed Milestones</div>${d.removed_milestones.map(m => `<div class="ctx-diff-removed">${esc(m)}</div>`).join('')}</div>`;
-    }
-    if (d.added_trace_lines && d.added_trace_lines.length) {
-      const shown = d.added_trace_lines.slice(0, 40);
-      const more = d.added_trace_lines.length > 40 ? `<div style="color:#484f58;font-size:11px;padding:4px 0">…and ${d.added_trace_lines.length - 40} more</div>` : '';
-      html += `<div class="ctx-diff-section"><div class="ctx-diff-section-title">New Trace Lines</div>${shown.map(l => `<div class="ctx-diff-added" style="font-family:monospace">${esc(l)}</div>`).join('')}${more}</div>`;
-    }
-    if (d.removed_trace_lines && d.removed_trace_lines.length) {
-      const shown = d.removed_trace_lines.slice(0, 40);
-      const more = d.removed_trace_lines.length > 40 ? `<div style="color:#484f58;font-size:11px;padding:4px 0">…and ${d.removed_trace_lines.length - 40} more</div>` : '';
-      html += `<div class="ctx-diff-section"><div class="ctx-diff-section-title">Removed Trace Lines</div>${shown.map(l => `<div class="ctx-diff-removed" style="font-family:monospace">${esc(l)}</div>`).join('')}${more}</div>`;
-    }
-    if (!d.goal_changed && !(d.added_milestones||[]).length && !(d.removed_milestones||[]).length && !(d.added_trace_lines||[]).length && !(d.removed_trace_lines||[]).length) {
-      html += '<div class="ctx-viewer-empty" style="padding:20px 0">No differences found.</div>';
-    }
-    viewer.innerHTML = html;
-  } catch(e) {
-    viewer.innerHTML = `<div class="ctx-viewer-empty">Diff failed: ${esc(String(e))}</div>`;
-  }
-}
-
-async function runCtxRelevant() {
-  const filePath = id('ctx-rel-input').value.trim();
-  if (!filePath) return;
-  const resultsEl = id('ctx-rel-results');
-  resultsEl.innerHTML = '<div class="empty-state"><span class="spinner"></span> Searching…</div>';
-  try {
-    const d = await fetch(`/api/context/relevant?file=${encodeURIComponent(filePath)}`).then(r => r.json());
-    let html = '';
-    const section = (title, items, tagCls, tagLabel) => {
-      if (!items || !items.length) return '';
-      return `<div class="ctx-viewer-section-title">${esc(title)} (${items.length})</div>` +
-        items.map(s => `<div class="ctx-mention-row"><span class="ctx-mention-tag ${tagCls}">${tagLabel}</span><span class="ctx-mention-text">${esc(s)}</span></div>`).join('');
-    };
-    html += section('Milestone Mentions', d.milestone_mentions, 'ctx-tag-milestone', 'MILESTONE');
-    html += section('Trace Mentions', d.trace_mentions, 'ctx-tag-trace', 'TRACE');
-    html += section('Cross-Branch Mentions', d.cross_branch_mentions, 'ctx-tag-branch', 'BRANCH');
-    resultsEl.innerHTML = html || '<div class="ctx-viewer-empty" style="padding:12px 0">No context mentions found for this file.</div>';
-  } catch(e) {
-    resultsEl.innerHTML = `<div class="empty-state">Search failed: ${esc(String(e))}</div>`;
-  }
-}
-
-async function runCtxSearch() {
-  const query = id('ctx-search-input').value.trim();
-  const resultsEl = id('ctx-search-results');
-  if (!query) {
-    resultsEl.innerHTML = '<div class="ctx-viewer-empty" style="padding:12px 0">Enter a query to search context by intent.</div>';
-    return;
-  }
-  resultsEl.innerHTML = '<div class="empty-state"><span class="spinner"></span> Searching context…</div>';
-  try {
-    const rows = await fetch(`/api/context/search?q=${encodeURIComponent(query)}&limit=8`).then(r => r.json());
-    if (!Array.isArray(rows) || !rows.length) {
-      resultsEl.innerHTML = '<div class="ctx-viewer-empty" style="padding:12px 0">No ranked context hits found for this query.</div>';
-      return;
-    }
-    resultsEl.innerHTML = rows.map(r => `
-      <div class="ctx-search-card" onclick="id('ctx-rel-input').value='${esc(r.file)}';runCtxRelevant()">
-        <div class="ctx-search-top">
-          <span class="ctx-search-file">${esc(r.file)}</span>
-          <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <span class="ctx-search-signal">${esc(r.signal || 'trace')}</span>
-            <span class="ctx-search-score">score ${(r.score || 0).toFixed(2)}</span>
-          </span>
-        </div>
-        ${(r.snippets || []).slice(0, 3).map(s => `<div class="ctx-search-snippet">${esc(s)}</div>`).join('')}
-      </div>
-    `).join('');
-  } catch(e) {
-    resultsEl.innerHTML = `<div class="empty-state">Search failed: ${esc(String(e))}</div>`;
-  }
-}
-
-async function loadCtxDag(branch) {
-  const b = branch || ctxActiveBranch || 'main';
-  const el = id('ctx-dag-box');
-  if (!el) return;
-  setText('ctx-dag-branch-label', b);
-  el.innerHTML = '<div class="ctx-viewer-empty" style="padding:24px 0">Loading…</div>';
-  try {
-    ctxDag = await fetch(`/api/context/dag?branch=${encodeURIComponent(b)}`).then(r => r.json());
-    renderCtxDag(ctxDag);
-  } catch(e) {
-    el.innerHTML = `<div class="ctx-viewer-empty" style="padding:24px 0">Failed to load DAG: ${esc(String(e))}</div>`;
-  }
-}
-
-function renderCtxDag(data) {
-  const el = id('ctx-dag-box');
-  const stat = id('ctx-dag-stat');
-  if (!el || !stat) return;
-  if (!data || !Array.isArray(data.nodes) || !data.nodes.length) {
-    stat.innerHTML = '';
-    el.innerHTML = '<div class="ctx-viewer-empty" style="padding:24px 0">No DAG nodes yet for this branch.</div>';
-    return;
-  }
-  stat.innerHTML = `<span style="color:#58a6ff">● ${data.observe_count || 0} observe</span><span style="color:#bc8cff">◆ ${data.think_count || 0} think</span><span style="color:#3fb950">■ ${data.act_count || 0} act</span><span style="color:#e3b341">○ ${data.note_count || 0} note</span><span style="color:#ff7bff">⊕ ${data.merge_count || 0} merge</span><span>— ${data.node_count || 0} total</span>`;
-  el.innerHTML = data.nodes.slice(-14).reverse().map(n => `
-    <div class="ctx-dag-node">
-      <div class="ctx-dag-node-top">
-        <span class="ctx-kind-pill ctx-kind-${esc(n.kind)}">${esc(n.kind)}</span>
-        <span class="ctx-dag-id">${esc((n.id || '').slice(0, 8))}</span>
-        <span class="ctx-snap-ts">${esc(n.timestamp || '')}</span>
-      </div>
-      <div class="ctx-dag-content">${esc(n.content || '')}</div>
-      ${(n.parent_ids || []).length ? `<div class="ctx-dag-parents">parents: ${esc((n.parent_ids || []).map(p => p.slice(0, 8)).join(', '))}</div>` : ''}
-    </div>
-  `).join('');
-}
-
-async function loadCtxPromotion(branch) {
-  const b = branch || ctxActiveBranch || 'main';
-  const el = id('ctx-promo-box');
-  if (!el) return;
-  setText('ctx-promo-branch-label', b);
-  el.innerHTML = '<div class="ctx-viewer-empty" style="padding:24px 0">Loading…</div>';
-  try {
-    ctxPromotion = await fetch(`/api/context/promotion?branch=${encodeURIComponent(b)}`).then(r => r.json());
-    renderCtxPromotion(ctxPromotion);
-  } catch(e) {
-    el.innerHTML = `<div class="ctx-viewer-empty" style="padding:24px 0">Failed to load promotion state: ${esc(String(e))}</div>`;
-  }
-}
-
-function renderCtxPromotion(data) {
-  const el = id('ctx-promo-box');
-  if (!el || !data) return;
-  const milestones = Array.isArray(data.recent_milestones) ? data.recent_milestones : [];
-  el.innerHTML = `
-    <div class="ctx-promo-grid">
-      <div class="ctx-promo-step"><strong>${data.ephemeral_count ?? 0}</strong><span>Ephemeral</span></div>
-      <div class="ctx-promo-step"><strong>${data.durable_trace_count ?? 0}</strong><span>Durable Trace</span></div>
-      <div class="ctx-promo-step"><strong>${data.milestone_count ?? 0}</strong><span>Milestones</span></div>
-      <div class="ctx-promo-step"><strong>${data.snapshot_count ?? 0}</strong><span>Snapshots</span></div>
-      <div class="ctx-promo-step"><strong>${data.todo_count ?? 0}</strong><span>Open TODOs</span></div>
-    </div>
-    <div class="ctx-promo-detail">
-      <span>purpose: ${esc(data.purpose || 'No purpose recorded')}</span>
-      <span>stable/live: ${data.stable_line_count ?? 0}/${data.dynamic_line_count ?? 0}</span>
-      <span>last snapshot: ${esc(data.last_snapshot_timestamp || 'none')}</span>
-    </div>
-    <div class="ctx-viewer-section-title">Recent Promoted Milestones</div>
-    ${milestones.length ? milestones.map(m => `<div class="ctx-milestone-entry">${esc(m)}</div>`).join('') : '<div class="ctx-viewer-empty" style="padding:12px 0">Nothing promoted to milestone yet.</div>'}
-  `;
-}
-
-// ── Boot ──────────────────────────────────────────────────────────────────
-loadAll();
-</script>
-</body>
-</html>
-"##;
-
-// ── Frontend tests ────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod frontend_tests {
-    use super::FRONTEND_HTML;
-    use std::collections::{HashMap, HashSet};
-
-    // ── helpers ───────────────────────────────────────────────────────────────
-
-    /// Extract the single inline `<script>…</script>` block.
-    fn extract_js(html: &str) -> &str {
-        let tag = "<script>";
-        let start = html.find(tag).expect("no <script> tag") + tag.len();
-        let end = html.rfind("</script>").expect("no </script> tag");
-        &html[start..end]
-    }
-
-    /// Map every top-level `const NAME`, `let NAME`, `function NAME(`, or
-    /// `async function NAME(` to the line numbers (1-based, relative to the
-    /// script block) where it is declared.
-    /// Only lines with no leading whitespace are considered top-level.
-    fn top_level_declarations(js: &str) -> HashMap<String, Vec<usize>> {
-        let mut map: HashMap<String, Vec<usize>> = HashMap::new();
-        for (i, line) in js.lines().enumerate() {
-            let lineno = i + 1;
-            let name: Option<String> =
-                if let Some(rest) = line.strip_prefix("const ").or_else(|| line.strip_prefix("let ")) {
-                    let n: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
-                    if n.is_empty() { None } else { Some(n) }
-                } else if let Some(rest) = line
-                    .strip_prefix("async function ")
-                    .or_else(|| line.strip_prefix("function "))
-                {
-                    let n: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
-                    if n.is_empty() { None } else { Some(n) }
-                } else {
-                    None
-                };
-            if let Some(name) = name {
-                map.entry(name).or_default().push(lineno);
-            }
-        }
-        map
-    }
-
-    /// Collect all static string arguments to `id('...')` and `setText('...',` calls.
-    /// Skips dynamic IDs that contain `+`, whitespace, or end with `-` (partial prefixes
-    /// used in concatenations like `id('card-' + idx)`).
-    fn collect_static_id_refs(js: &str) -> HashSet<String> {
-        let mut ids = HashSet::new();
-        for call in &["id('", "setText('"] {
-            let mut rest = js;
-            while let Some(pos) = rest.find(call) {
-                rest = &rest[pos + call.len()..];
-                if let Some(end) = rest.find('\'') {
-                    let name = &rest[..end];
-                    if !name.contains('+')
-                        && !name.contains(' ')
-                        && !name.ends_with('-')
-                        && !name.is_empty()
-                    {
-                        ids.insert(name.to_string());
-                    }
-                    rest = &rest[end..];
-                }
-            }
-        }
-        ids
-    }
-
-    /// Collect all `id="..."` attribute values present in the HTML.
-    fn collect_html_ids(html: &str) -> HashSet<String> {
-        let mut ids = HashSet::new();
-        let needle = "id=\"";
-        let mut rest = html;
-        while let Some(pos) = rest.find(needle) {
-            rest = &rest[pos + needle.len()..];
-            if let Some(end) = rest.find('"') {
-                ids.insert(rest[..end].to_string());
-                rest = &rest[end..];
-            }
-        }
-        ids
-    }
-
-    /// Collect all `fetch('/api/...')` path strings (without query params).
-    fn collect_fetch_paths(js: &str) -> Vec<String> {
-        let mut paths = Vec::new();
-        let needle = "fetch('/api/";
-        let mut rest = js;
-        while let Some(pos) = rest.find(needle) {
-            rest = &rest[pos + "fetch('".len()..];
-            let end = rest.find(['\'', '?']).unwrap_or(rest.len());
-            paths.push(rest[..end].to_string());
-            rest = &rest[end..];
-        }
-        paths
-    }
-
-    // ── structure ─────────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_html_has_exactly_one_script_block() {
-        let count = FRONTEND_HTML.matches("<script>").count();
-        assert_eq!(count, 1, "Expected exactly 1 <script> block, found {}", count);
-    }
-
-    #[test]
-    fn test_html_has_doctype_and_charset() {
-        assert!(FRONTEND_HTML.starts_with("<!DOCTYPE html>"), "Missing DOCTYPE");
-        assert!(FRONTEND_HTML.contains("charset=\"UTF-8\""), "Missing charset meta tag");
-    }
-
-    // ── JavaScript declarations ───────────────────────────────────────────────
-
-    #[test]
-    fn test_no_duplicate_top_level_js_declarations() {
-        let js = extract_js(FRONTEND_HTML);
-        let decls = top_level_declarations(js);
-        let mut dups: Vec<(String, Vec<usize>)> = decls
-            .into_iter()
-            .filter(|(_, lines)| lines.len() > 1)
-            .collect();
-        dups.sort_by_key(|(n, _)| n.clone());
-        assert!(
-            dups.is_empty(),
-            "Duplicate top-level JS declarations found:\n{}",
-            dups.iter()
-                .map(|(n, lns)| format!("  '{}' declared at script lines {:?}", n, lns))
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-    }
-
-    #[test]
-    fn test_required_js_functions_defined() {
-        let js = extract_js(FRONTEND_HTML);
-        let decls = top_level_declarations(js);
-        let required = [
-            "loadAll", "loadCommits", "loadRepo",
-            "filter", "render", "renderSummary", "renderSparkline",
-            "switchTab", "commitHTML", "testBadge", "agentChartHTML",
-            "toggleFilter", "loadSessionList", "loadMemorySnapshots",
-            "id", "setText", "esc",
-        ];
-        let missing: Vec<&str> = required.iter().filter(|&&f| !decls.contains_key(f)).copied().collect();
-        assert!(
-            missing.is_empty(),
-            "Required JS functions/variables not declared: {:?}",
-            missing
-        );
-    }
-
-    #[test]
-    fn test_boot_call_present() {
-        let js = extract_js(FRONTEND_HTML);
-        let last_non_empty = js.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
-        assert_eq!(
-            last_non_empty.trim(), "loadAll();",
-            "Expected last JS statement to be 'loadAll();', got: {:?}",
-            last_non_empty.trim()
-        );
-    }
-
-    // ── DOM elements ──────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_required_html_ids_exist() {
-        let ids = collect_html_ids(FRONTEND_HTML);
-        let required = [
-            // Timeline panel
-            "timeline-list", "search",
-            "tab-count", "pill-ai", "pill-test", "pill-fail",
-            // Stats bar
-            "s-loaded", "s-total", "s-ai", "s-tested", "s-passrate",
-            // Sidebar stats
-            "side-total", "side-ai", "side-human", "side-ratio",
-            // Header
-            "repo-name", "branch-badge",
-            // Sparkline
-            "sparkline-svg", "sparkline-label",
-            // Panels
-            "panel-timeline", "panel-summary", "panel-integrity",
-            "panel-intentgraph", "panel-review", "panel-memory", "panel-sessions",
-            // Summary panel
-            "sum-cards", "sum-charts",
-            // Sessions panel
-            "sl-list", "sl-detail",
-            // Memory panel
-            "mem-snap-list", "mem-snap-count", "mem-viewer",
-        ];
-        let missing: Vec<&str> = required.iter().filter(|&&id| !ids.contains(id)).copied().collect();
-        assert!(
-            missing.is_empty(),
-            "Required HTML id=\"...\" elements are missing: {:?}",
-            missing
-        );
-    }
-
-    #[test]
-    fn test_js_static_id_refs_exist_in_html() {
-        let js = extract_js(FRONTEND_HTML);
-        let html_ids = collect_html_ids(FRONTEND_HTML);
-        let js_refs = collect_static_id_refs(js);
-        // IDs that are created dynamically via innerHTML and won't be in the initial HTML.
-        let dynamic_ids: HashSet<&str> = [
-            "int-result", "audit-result",  // injected by integrity handlers
-        ]
-        .into_iter()
-        .collect();
-        let mut missing: Vec<String> = js_refs
-            .into_iter()
-            .filter(|id| !html_ids.contains(id.as_str()) && !dynamic_ids.contains(id.as_str()))
-            .collect();
-        missing.sort();
-        assert!(
-            missing.is_empty(),
-            "JS calls id('...') or setText('...') for IDs not present in the HTML:\n{}",
-            missing.iter().map(|s| format!("  '{}'", s)).collect::<Vec<_>>().join("\n")
-        );
-    }
-
-    #[test]
-    fn test_tab_panel_ids_match_switchtab_calls() {
-        let html_ids = collect_html_ids(FRONTEND_HTML);
-        let needle = "switchTab('";
-        let mut rest = FRONTEND_HTML;
-        let mut checked = 0usize;
-        while let Some(pos) = rest.find(needle) {
-            rest = &rest[pos + needle.len()..];
-            if let Some(end) = rest.find('\'') {
-                let tab = &rest[..end];
-                // Skip template-literal substitutions like switchTab('${t}')
-                // that appear inside the switchTab() function body itself.
-                if !tab.contains('$') && !tab.contains('{') {
-                    let panel_id = format!("panel-{}", tab);
-                    assert!(
-                        html_ids.contains(panel_id.as_str()),
-                        "switchTab('{}') referenced but id=\"{}\" not found in HTML",
-                        tab, panel_id
-                    );
-                    checked += 1;
-                }
-                rest = &rest[end..];
-            }
-        }
-        assert!(checked > 0, "No switchTab() calls found — test helper may be broken");
-    }
-
-    // ── API routes ────────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_fetch_paths_are_registered_routes() {
-        let js = extract_js(FRONTEND_HTML);
-        let paths = collect_fetch_paths(js);
-        // Keep in sync with the .route() calls in build_router() above.
-        let routes: HashSet<&str> = [
-            "/api/repo",
-            "/api/commits",
-            "/api/integrity",
-            "/api/integrity/commit",
-            "/api/intent-graph",
-            "/api/review-points",
-            "/api/memory/snapshots",
-            "/api/memory/diff",
-            "/api/session-log",
-            "/api/session-log/list",
-            "/api/session-log/churn",
-            "/api/context/status",
-            "/api/context/snapshots",
-            "/api/context/show",
-            "/api/context/diff",
-            "/api/context/relevant",
-            "/api/context/search",
-            "/api/context/dag",
-            "/api/context/promotion",
-        ]
-        .into_iter()
-        .collect();
-        for path in &paths {
-            assert!(
-                routes.contains(path.as_str()),
-                "JS calls fetch('{}') but that path is not a registered route. \
-                 Registered routes: {:?}",
-                path,
-                {
-                    let mut v: Vec<&&str> = routes.iter().collect();
-                    v.sort();
-                    v
-                }
-            );
-        }
-        assert!(!paths.is_empty(), "No fetch('/api/...') calls found — test helper may be broken");
-    }
-
-    // ── Node.js syntax check ─────────────────────────────────────────────────
-
-    #[test]
-    fn test_js_syntax_via_node() {
-        use std::io::Write;
-        let js = extract_js(FRONTEND_HTML);
-        let Ok(mut child) = std::process::Command::new("node")
-            .arg("--check")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-        else {
-            eprintln!("node binary not found — skipping JS syntax check");
-            return;
-        };
-        child.stdin.as_mut().unwrap().write_all(js.as_bytes()).unwrap();
-        let out = child.wait_with_output().unwrap();
-        assert!(
-            out.status.success(),
-            "node --check reported a JS syntax error:\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
 }

@@ -369,6 +369,41 @@ impl H5iRepository {
         Ok(records)
     }
 
+    /// Branch-own commit log (`base..branch`): the picked branch's commits with
+    /// the default branch's shared ancestry hidden (same scoping as the cockpit
+    /// review list, via [`Self::scope_base_oid`]). The default branch itself has
+    /// no base and degrades to a full branch walk.
+    pub fn get_log_branch_own(
+        &self,
+        branch: &str,
+        limit: usize,
+    ) -> Result<Vec<H5iCommitRecord>, H5iError> {
+        let mut revwalk = self.git_repo.revwalk()?;
+        let local = self.git_repo.find_branch(branch, git2::BranchType::Local).ok();
+        let remote = self.git_repo.find_branch(branch, git2::BranchType::Remote).ok();
+        let tip = if let Some(b) = local.or(remote) {
+            b.get().target().ok_or_else(|| {
+                H5iError::Git(git2::Error::from_str("branch has no target oid"))
+            })?
+        } else {
+            self.git_repo.revparse_single(branch)?.id()
+        };
+        revwalk.push(tip)?;
+        if let Some(base) = self.scope_base_oid(tip) {
+            let _ = revwalk.hide(base);
+        }
+
+        let mut records = Vec::new();
+        for oid in revwalk.take(limit) {
+            let oid = oid?;
+            let record = self
+                .load_h5i_record(oid)
+                .unwrap_or_else(|_| H5iCommitRecord::minimal_from_git(&self.git_repo, oid));
+            records.push(record);
+        }
+        Ok(records)
+    }
+
     /// Retrieves the extended `h5i` commit log including AI metadata.
     ///
     /// This method behaves similarly to `get_log`, but is intended as the
@@ -2162,6 +2197,68 @@ impl H5iRepository {
         limit: usize,
         min_score: f32,
     ) -> Result<Vec<crate::review::ReviewPoint>, H5iError> {
+        self.suggest_review_points_impl(None, limit, min_score)
+    }
+
+    /// Branch-scoped variant: walk review points from `branch`'s tip instead of
+    /// HEAD. `None` (or an empty string) falls back to HEAD.
+    pub fn suggest_review_points_at(
+        &self,
+        branch: Option<&str>,
+        limit: usize,
+        min_score: f32,
+    ) -> Result<Vec<crate::review::ReviewPoint>, H5iError> {
+        self.suggest_review_points_impl(branch, limit, min_score)
+    }
+
+    /// The default branch's tip OID, used to scope a branch walk to its own
+    /// commits (`base..branch`). Candidate bases, most-accurate first:
+    /// `origin/HEAD`'s target, then `main`, then `master`, each resolved as
+    /// `origin/<name>` then local `<name>`. Returns `None` when no base resolves,
+    /// when `tip` *is* the base branch, or when `tip` has not diverged from it —
+    /// so the caller degrades to a full walk.
+    fn scope_base_oid(&self, tip: git2::Oid) -> Option<git2::Oid> {
+        let repo = &self.git_repo;
+        let mut names: Vec<String> = Vec::new();
+        if let Some(d) = repo
+            .find_reference("refs/remotes/origin/HEAD")
+            .ok()
+            .and_then(|r| r.symbolic_target().map(str::to_string))
+            .and_then(|t| t.rsplit('/').next().map(str::to_string))
+        {
+            names.push(d);
+        }
+        names.push("main".to_string());
+        names.push("master".to_string());
+
+        for name in names {
+            let base = ["refs/remotes/origin/", "refs/heads/"].iter().find_map(|p| {
+                repo.find_reference(&format!("{p}{name}"))
+                    .ok()
+                    .and_then(|r| r.peel_to_commit().ok())
+                    .map(|c| c.id())
+            });
+            let Some(base) = base else { continue };
+            if base == tip {
+                continue; // tip IS this base branch → nothing to scope to.
+            }
+            // Only scope when the branch has commits the base doesn't (i.e. the
+            // merge-base isn't the tip itself — that'd mean the branch is behind).
+            if let Ok(mb) = repo.merge_base(tip, base) {
+                if mb != tip {
+                    return Some(base);
+                }
+            }
+        }
+        None
+    }
+
+    fn suggest_review_points_impl(
+        &self,
+        branch: Option<&str>,
+        limit: usize,
+        min_score: f32,
+    ) -> Result<Vec<crate::review::ReviewPoint>, H5iError> {
         use crate::review::{ReviewPoint, ReviewTrigger, Tier};
         use std::collections::HashSet;
 
@@ -2180,7 +2277,28 @@ impl H5iRepository {
         };
 
         let mut revwalk = self.git_repo.revwalk()?;
-        revwalk.push_head()?;
+        match branch {
+            Some(b) if !b.is_empty() => {
+                // Resolve like get_log_at_branch: local → remote-tracking → revparse.
+                let local = self.git_repo.find_branch(b, git2::BranchType::Local).ok();
+                let remote = self.git_repo.find_branch(b, git2::BranchType::Remote).ok();
+                let tip = if let Some(br) = local.or(remote) {
+                    br.get().target().ok_or_else(|| {
+                        H5iError::Git(git2::Error::from_str("branch has no target oid"))
+                    })?
+                } else {
+                    self.git_repo.revparse_single(b)?.id()
+                };
+                revwalk.push(tip)?;
+                // Scope to the branch's *own* commits (base..branch): hide the
+                // default branch so the shared ancestry doesn't flood the list.
+                // For the default branch itself there is no base → full walk.
+                if let Some(base) = self.scope_base_oid(tip) {
+                    let _ = revwalk.hide(base);
+                }
+            }
+            _ => revwalk.push_head()?,
+        }
 
         let mut results: Vec<ReviewPoint> = Vec::new();
 
