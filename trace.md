@@ -3020,3 +3020,4 @@ The fix has a clean home in the existing code: I'll mirror the `PrivateBind`/`pr
 [11:08:40] THINK: All 5 pass. Now clippy with `-D warnings` (CI gate), and I'll check both feature configs per the web-feature-gate note:
 [11:08:40] THINK: Let me find an existing functional run test there to mirror its gating:
 [11:08:40] THINK: I'll add a functional test in `src/sandbox.
+[11:08:40] THINK: Now let me run the full `env::` and `sandbox::` module suites to confirm nothing regressed (especially policy-digest stability, since `home_binds` is `serde(skip)`):
