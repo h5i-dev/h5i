@@ -2634,3 +2634,4 @@ _[Checkpoint: 6a35f56e — edited docs/guides/git-blame-for-ai-code/index.html; 
 Rather than a from-scratch rewrite (the theme and data layer are good), I'll **re-center the app on Replay** as the default experience, reusing the flight-recorder data:
 
 1.
+[02:48:06] THINK: Let me set up task tracking and pull the exact Rust structs I'll need to build the server endpoints.
