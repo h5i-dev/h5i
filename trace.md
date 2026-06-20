@@ -2925,3 +2925,4 @@ _[Checkpoint: 6a366fa9 — session ended (auto-checkpoint)]_
 [10:48:44] OBSERVE: read ../codex/docs/execpolicy.md
 [10:48:44] OBSERVE: read ../codex/docs/exec.md
 [10:48:44] OBSERVE: listed files under ../codex/codex-rs/execpolicy/src
+[10:48:44] OBSERVE: listed files under ../codex/codex-rs/sandboxing/src
