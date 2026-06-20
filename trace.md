@@ -2749,3 +2749,4 @@ _[Checkpoint: 6a360880 — edited web/src/ReplayView.tsx; edited web/src/ReplayV
 _[Checkpoint: 6a3609ae — edited web/src/CockpitView.tsx; edited web/src/CockpitView.tsx; edited web/src/CockpitView.tsx]_
 ---
 
+[03:39:42] OBSERVE: read src/prompt_score.rs
