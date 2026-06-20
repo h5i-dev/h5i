@@ -259,6 +259,22 @@ pub struct PrivateBind {
     pub rel: String,
 }
 
+/// A resolved HOME-state redirect bind (runtime only — never serialized/digested):
+/// a per-env *copy* of the agent runtime's credential/session state (`~/.claude`,
+/// `~/.claude.json`, `~/.codex`) bound over the real absolute HOME path inside the
+/// box. Seeded once from the real HOME (copy-in) and persisted per-env, so every
+/// in-box write — token refresh, session history — stays in the env's own copy and
+/// the real `~/.claude.json` is never raced by concurrent boxes. Unlike
+/// [`PrivateBind`] the target is an absolute host path (the real `$HOME/…`), not a
+/// workspace-relative one. Computed at run time in `env::prepare_home_state`.
+#[derive(Debug, Clone)]
+pub struct HomeBind {
+    /// Host backing copy under the env's `home/` tree (distinct inode per env).
+    pub backing: PathBuf,
+    /// Absolute real HOME path the backing copy shadows (e.g. `/home/u/.claude`).
+    pub target: PathBuf,
+}
+
 // ─── policy profile (§7) ────────────────────────────────────────────────────
 
 /// A fully-resolved policy profile — every field explicit, suitable for
@@ -532,6 +548,14 @@ pub struct ResolvedPolicy {
     /// kernel tiers (`build_confined_command`) and `--mount`s on container.
     #[serde(skip)]
     pub private_binds: Vec<PrivateBind>,
+    /// Runtime-only per-env HOME-state redirect binds — never serialized. Each
+    /// shadows the agent runtime's real `~/.claude`/`~/.codex` with a per-env copy
+    /// so concurrent agent boxes don't race on the shared real credential/session
+    /// files. Populated by `env::prepare_home_state`; applied as bind mounts on the
+    /// kernel tiers (`build_confined_command`). Kernel-tier only (container's
+    /// read-only rootfs never mounts host HOME, so there is no race to close there).
+    #[serde(skip)]
+    pub home_binds: Vec<HomeBind>,
 }
 
 impl ResolvedPolicy {
@@ -543,6 +567,7 @@ impl ResolvedPolicy {
             box_git: Vec::new(),
             env_capture_spool: None,
             private_binds: Vec::new(),
+            home_binds: Vec::new(),
         }
     }
 

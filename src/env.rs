@@ -1553,6 +1553,101 @@ fn prepare_private_paths(
     Ok(())
 }
 
+/// Recursively copy a regular file or directory tree, preserving file modes
+/// (`std::fs::copy` carries permissions — important for a `0600`
+/// `.credentials.json`). Symlinks are skipped (a credential store is regular
+/// files; we never follow a link out of the source tree). Fail-closed on I/O.
+fn copy_tree(src: &Path, dst: &Path) -> Result<(), H5iError> {
+    let meta = std::fs::symlink_metadata(src).map_err(|e| H5iError::with_path(e, src))?;
+    let ft = meta.file_type();
+    if ft.is_symlink() {
+        return Ok(());
+    }
+    if ft.is_dir() {
+        std::fs::create_dir_all(dst).map_err(|e| H5iError::with_path(e, dst))?;
+        for entry in std::fs::read_dir(src).map_err(|e| H5iError::with_path(e, src))? {
+            let entry = entry.map_err(|e| H5iError::with_path(e, src))?;
+            let name = entry.file_name();
+            copy_tree(&src.join(&name), &dst.join(&name))?;
+        }
+    } else if ft.is_file() {
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+        }
+        std::fs::copy(src, dst).map_err(|e| H5iError::with_path(e, dst))?;
+    }
+    Ok(())
+}
+
+/// Per-env credential/session isolation (#1). The built-in agent profiles grant
+/// the box rw to the *real* `~/.claude`/`~/.claude.json` (Claude) or `~/.codex`
+/// (Codex), so two concurrent agent boxes of the same runtime race on those
+/// shared files — corrupting `~/.claude.json` session history, fighting over a
+/// refreshed token. This redirects each such grant to a per-env *copy*: seed it
+/// once from the real HOME (copy-in), persist it across this env's runs, grant the
+/// copy rw, and bind it over the real absolute path inside the box's mount
+/// namespace (`sandbox::build_confined_command`). The real HOME is only ever READ
+/// (to seed) — never written — so an env can never clobber it (the chosen
+/// reconciliation: copy-in only, persist per-env).
+///
+/// Kernel tiers only: the container backend's read-only rootfs never mounts host
+/// HOME, so there is no shared inode to race there. A no-op at the workspace tier
+/// (no mount namespace to bind in) and for non-agent profiles. A state path that
+/// does not exist on the host is left as today's direct grant — we never create it
+/// in the real HOME merely to have a mountpoint to bind over, so the common
+/// logged-in case is fully isolated and the rare fresh-user case is no worse than
+/// before. Fail-closed on I/O.
+fn prepare_home_state(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    policy: &mut ResolvedPolicy,
+    home: Option<&Path>,
+) -> Result<(), H5iError> {
+    if !matches!(
+        policy.claim,
+        IsolationClaim::Process | IsolationClaim::Supervised
+    ) {
+        return Ok(());
+    }
+    let Some(runtime) = sandbox::AgentRuntime::from_profile_name(&policy.profile.name) else {
+        return Ok(());
+    };
+    let Some(home) = home else {
+        return Ok(());
+    };
+    let home_root = m.dir(h5i_root).join("home");
+
+    for state in runtime.state_write() {
+        // Each grant is a `~/…` HOME path (`~/.claude`, `~/.claude.json`, `~/.codex`).
+        let Some(rel) = state.strip_prefix("~/") else {
+            continue;
+        };
+        let real = home.join(rel);
+        // Only redirect paths that already exist: we never touch the real HOME, so
+        // a missing one has no inode to bind over and keeps today's direct grant.
+        if !real.exists() {
+            continue;
+        }
+        // Backing copy keyed by the leaf path so `.claude` and `.claude.json` stay
+        // distinct (`<env>/home/.claude`, `<env>/home/.claude.json`).
+        let backing = home_root.join(rel);
+        // Seed once (copy-in) and persist: only when absent, so a token refreshed
+        // by a prior run of THIS env survives into the next.
+        if !backing.exists() {
+            copy_tree(&real, &backing)?;
+        }
+        // Drop the real-HOME grant, grant the per-env copy instead (defence in
+        // depth: even if the bind were bypassed the box can't reach the real file).
+        policy.profile.fs_write.retain(|w| w.as_str() != *state);
+        policy.profile.fs_write.push(backing.display().to_string());
+        policy.home_binds.push(sandbox::HomeBind {
+            backing,
+            target: real,
+        });
+    }
+    Ok(())
+}
+
 fn prepare_env_capture_spool(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -1818,6 +1913,12 @@ pub fn run(
     // functional git checkout inside the box.
     grant_box_git(repo, m, &work, &mut policy)?;
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
+    prepare_home_state(
+        h5i_root,
+        m,
+        &mut policy,
+        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+    )?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
 
@@ -2043,6 +2144,12 @@ pub fn shell(
     // this worktree and must be able to use git / h5i context inside it.
     grant_box_git(repo, m, &work, &mut policy)?;
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
+    prepare_home_state(
+        h5i_root,
+        m,
+        &mut policy,
+        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+    )?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
     let secret_dir = m.dir(h5i_root).join("secrets");
@@ -3228,6 +3335,12 @@ pub fn service_start(
     let mut policy = load_policy(h5i_root, m)?;
     grant_box_git(repo, m, &work, &mut policy)?;
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
+    prepare_home_state(
+        h5i_root,
+        m,
+        &mut policy,
+        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+    )?;
 
     let mut injected: Vec<(String, String)> = Vec::new();
     let dynamic_port = if def.port.is_some() {
@@ -5098,6 +5211,163 @@ mod tests {
             env.iter().all(|(k, _)| k != "CARGO_INSTALL_ROOT"),
             "cargo install is not part of the default sandbox workflow: {env:?}"
         );
+    }
+
+    // ─── per-env credential/session isolation (#1) ──────────────────────────
+
+    /// Build a fake host HOME with the Claude runtime's state: a `.claude` dir
+    /// (with a 0600 credentials file) and a `.claude.json` session file.
+    #[cfg(unix)]
+    fn fake_claude_home(root: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let home = root.join("home");
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        let cred = home.join(".claude/.credentials.json");
+        std::fs::write(&cred, "{\"token\":\"real-secret\"}").unwrap();
+        std::fs::set_permissions(&cred, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(home.join(".claude.json"), "{\"session\":1}").unwrap();
+        home
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_home_state_redirects_agent_creds_to_per_env_copy() {
+        use crate::sandbox::{AgentRuntime, Profile};
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let home = fake_claude_home(h5i_root);
+        let m = canonical_manifest("claude", "auth");
+        std::fs::create_dir_all(m.dir(h5i_root)).unwrap();
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude),
+        );
+
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
+
+        // Both state paths redirected to per-env backing copies under <env>/home.
+        assert_eq!(pol.home_binds.len(), 2, "{:?}", pol.home_binds);
+        let backing_root = m.dir(h5i_root).join("home");
+        for b in &pol.home_binds {
+            assert!(b.backing.starts_with(&backing_root), "{:?}", b.backing);
+        }
+        let claude = pol.home_binds.iter().find(|b| b.target == home.join(".claude")).unwrap();
+        // Copy-in actually happened, content + mode preserved.
+        let copied = claude.backing.join(".credentials.json");
+        assert_eq!(std::fs::read_to_string(&copied).unwrap(), "{\"token\":\"real-secret\"}");
+        assert_eq!(
+            std::fs::metadata(&copied).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "credential mode must survive the copy-in"
+        );
+
+        // The real-HOME grants are dropped; the backing copies are granted instead.
+        assert!(!pol.profile.fs_write.iter().any(|w| w == "~/.claude"));
+        assert!(!pol.profile.fs_write.iter().any(|w| w == "~/.claude.json"));
+        assert!(pol
+            .profile
+            .fs_write
+            .iter()
+            .any(|w| w == &claude.backing.display().to_string()));
+
+        // The real HOME is never written — its files are exactly as seeded.
+        assert_eq!(
+            std::fs::read_to_string(home.join(".claude.json")).unwrap(),
+            "{\"session\":1}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_home_state_persists_and_does_not_reseed() {
+        use crate::sandbox::{AgentRuntime, Profile};
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let home = fake_claude_home(h5i_root);
+        let m = canonical_manifest("claude", "auth");
+        // Pre-seed the backing with in-box state (a token refreshed by a prior run
+        // of this env) — prepare must NOT clobber it from the real HOME.
+        let backing = m.dir(h5i_root).join("home/.claude.json");
+        std::fs::create_dir_all(backing.parent().unwrap()).unwrap();
+        std::fs::write(&backing, "{\"session\":99}").unwrap();
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude),
+        );
+
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&backing).unwrap(),
+            "{\"session\":99}",
+            "an existing per-env copy must persist, not be re-seeded from real HOME"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_home_state_skips_missing_paths_and_keeps_direct_grant() {
+        use crate::sandbox::{AgentRuntime, Profile};
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        // HOME has .claude but NO .claude.json — the missing one keeps its grant.
+        let home = h5i_root.join("home");
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        let m = canonical_manifest("claude", "auth");
+        std::fs::create_dir_all(m.dir(h5i_root)).unwrap();
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude),
+        );
+
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
+
+        assert_eq!(pol.home_binds.len(), 1, "only the existing path is redirected");
+        // The missing path is left as today's direct grant (never created in HOME).
+        assert!(pol.profile.fs_write.iter().any(|w| w == "~/.claude.json"));
+        assert!(!home.join(".claude.json").exists());
+    }
+
+    #[test]
+    fn prepare_home_state_is_noop_for_non_agent_profiles() {
+        use crate::sandbox::Profile;
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        let m = canonical_manifest("claude", "build");
+        std::fs::create_dir_all(m.dir(h5i_root)).unwrap();
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            Profile::builtin("default", IsolationClaim::Supervised),
+        );
+        let before = pol.profile.fs_write.clone();
+
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
+
+        assert!(pol.home_binds.is_empty());
+        assert_eq!(pol.profile.fs_write, before, "non-agent fs_write must be untouched");
+    }
+
+    #[test]
+    fn prepare_home_state_is_noop_at_workspace_tier() {
+        use crate::sandbox::{AgentRuntime, Profile};
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        let m = canonical_manifest("claude", "auth");
+        std::fs::create_dir_all(m.dir(h5i_root)).unwrap();
+        // Workspace tier has no mount namespace to bind in — must stay a no-op.
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Workspace,
+            Profile::builtin_agent(IsolationClaim::Workspace, AgentRuntime::Claude),
+        );
+
+        prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
+
+        assert!(pol.home_binds.is_empty());
     }
 
     // Fix for the propose/rebase-vs-run race: every worktree/manifest-mutating
