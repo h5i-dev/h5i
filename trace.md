@@ -3605,3 +3605,4 @@ _[Checkpoint: 6a370eda — Applied Codex persona constraints to team design]_
 _[Checkpoint: 6a370f2a — edited roadmap/team-design.md; edited roadmap/team-design.md; edited roadmap/team-design.md]_
 ---
 
+[22:09:42] NOTE: PLACEHOLDER (~/Dev/h5i/roadmap/team-design.md): rs`/`objects.rs`), and the `serve` handler + `TeamView.tsx` stubs. Want me to draft that now? I haven't committed anything to git — say the word if …
