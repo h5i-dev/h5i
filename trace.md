@@ -52,3 +52,4 @@ _[Checkpoint: 6a384ac0 — session ended (auto-checkpoint)]_
 [21:04:53] OBSERVE: read docs/pitch/index.html
 [21:05:07] OBSERVE: read MANUAL.md
 [21:06:26] ACT: edited src/team.rs
+[21:06:55] NOTE: Rebranding pitch deck (docs/pitch/index.html) around 'From model ensembles to agent teams'; h5i team becomes the centerpiece. Tagline: 'Run many coding agents. Merge one auditable result.'
