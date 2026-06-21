@@ -589,6 +589,12 @@ pub fn add_env(
         serde_json::to_value(agent)?,
     );
     append_event(repo, &ev)?;
+    // Bind the env to this team persona so the in-box agent identifies as it —
+    // a task from `h5i team dispatch` (addressed to the persona id) then lands in
+    // the right inbox. env run/shell reads this file and injects H5I_AGENT.
+    let identity_path = m.dir(h5i_root).join("team-identity");
+    std::fs::write(&identity_path, format!("{agent_id}\n"))
+        .map_err(|e| H5iError::with_path(e, &identity_path))?;
     Ok(status(repo, run_id)?.run)
 }
 
@@ -1793,6 +1799,22 @@ mod tests {
         .unwrap();
         let err = freeze(&repo, "run2", false, "human").unwrap_err();
         assert!(format!("{err}").contains("missing submissions"));
+    }
+
+    #[test]
+    fn add_env_writes_team_identity_for_inbox_routing() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hi\n");
+        let h5i_root = dir.path();
+        let m = manifest(&repo, h5i_root, "codex", "fix");
+        create(&repo, "run-i", "run-i", "HEAD", 1, "human").unwrap();
+        add_env(
+            &repo, h5i_root, "run-i", "env/codex/fix", "codex-impl", None, None, None, "human",
+        )
+        .unwrap();
+        let id = std::fs::read_to_string(m.dir(h5i_root).join("team-identity")).unwrap();
+        assert_eq!(id.trim(), "codex-impl");
     }
 
     #[test]

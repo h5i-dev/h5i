@@ -1719,6 +1719,26 @@ fn merged_env(a: &[(String, String)], b: &[(String, String)]) -> Vec<(String, St
     out
 }
 
+/// If this env is bound to a team persona (a `team-identity` file written by
+/// `h5i team add-env`), inject `H5I_AGENT=<persona>` so the in-box agent
+/// identifies as its persona — a task dispatched by `h5i team dispatch` (which
+/// addresses persona ids) then lands in the right inbox. Returns empty for a
+/// solo env, leaving the in-box identity untouched.
+fn team_identity_env(m: &EnvManifest, h5i_root: &Path) -> Vec<(String, String)> {
+    let path = m.dir(h5i_root).join("team-identity");
+    match std::fs::read_to_string(&path) {
+        Ok(s) => {
+            let id = s.trim();
+            if id.is_empty() {
+                Vec::new()
+            } else {
+                vec![("H5I_AGENT".to_string(), id.to_string())]
+            }
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
 /// Stage an in-box `h5i commit` note for host ingest. The notes ref
 /// (`refs/h5i/notes`) is sealed in the box, so the commit lands on the env
 /// branch but its `H5iCommitRecord` JSON is written here; the host applies it
@@ -1936,7 +1956,10 @@ pub fn run(
             policy.profile.allow_command_extractors,
         )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
-    let injected_env = merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env);
+    let injected_env = merged_env(
+        &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
+        &team_identity_env(m, h5i_root),
+    );
 
     set_status(
         repo,
@@ -2162,7 +2185,10 @@ pub fn shell(
             policy.profile.allow_command_extractors,
         )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
-    let injected_env = merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env);
+    let injected_env = merged_env(
+        &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
+        &team_identity_env(m, h5i_root),
+    );
 
     set_status(
         repo,

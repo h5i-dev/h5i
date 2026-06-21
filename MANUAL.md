@@ -2655,7 +2655,7 @@ stamped `independent=false` with its influence edges recorded.
 | Command | Description |
 |---------|-------------|
 | `h5i team create <name> [--base REV] [--rounds N] [--title T] [--json]` | Create a run over existing envs. `--base` (default `HEAD`) is the shared base all candidates are compared against. |
-| `h5i team add-env <team> <env> --as <agent-id> [--runtime R] [--model M] [--role ROLE] [--json]` | Add an already-created env to the roster as a persona-bound member. `--as` is the ref-safe actor key; distinct personas on the same runtime need distinct ids. Draft phase only. |
+| `h5i team add-env <team> <env> --as <agent-id> [--runtime R] [--model M] [--role ROLE] [--json]` | Add an already-created env to the roster as a persona-bound member. `--as` is the ref-safe actor key; distinct personas on the same runtime need distinct ids. Draft phase only. **Also binds the env's in-box identity to this persona** (writes a `team-identity` file), so `env run`/`env shell` inject `H5I_AGENT=<persona>` and a dispatched task lands in the right inbox. |
 | `h5i team status [<team>] [--json]` | Folded run state: phase, roster, per-agent submission state. |
 | `h5i team list [--json]` | All runs on this clone. |
 | `h5i team use [<name>] [--clear]` | Pin a **current team** (like git's current branch) so other subcommands can drop `<team>`. No arg prints the current; `--clear` unsets. `create` auto-pins the new run. |
@@ -2666,7 +2666,7 @@ stamped `independent=false` with its influence edges recorded.
 | `h5i team finalize <team> [--json]` | Apply the finalization rule over **verifier** evidence → a verdict event. Hard gates (tests pass, applies cleanly) first; `smallest diff` only breaks ties among gate-passers. Records method + the verifier command + losers' reasons. No gate-passer → `no_verdict` (never applies a loser). |
 | `h5i team apply <team> [--winner <submission-id>] [--force] [--json]` | Replay the winning submission's recorded patch (`base..commit`) into the current branch and commit; records source + target commit oids; on conflict records an event, never mutates the artifact. Gated on the verdict's `can_auto_apply` unless `--force`. |
 | `h5i team worker --once \| --watch [--interval N] [--id ID] [--lease-ttl S] [--json]` | Optional automation: one lease-and-finalize pass (`--once`) or an opt-in in-process loop (`--watch`). **Finalize-only — never auto-applies.** Leases are idempotent + TTL'd; for production prefer an external scheduler driving `--once`. |
-| `h5i team dispatch <team> --prompt-file F [--json]` | Send the task prompt to every roster agent over [`h5i msg`](#h5i-msg). Receipt/progress count only when the agent replies ACK/DONE threaded to the dispatch. |
+| `h5i team dispatch <team> --prompt-file F [--json]` | Send the task to **every roster agent in one command** over [`h5i msg`](#h5i-msg) (an `ASK` per persona, tagged with the team + round) — no per-env pasting. It **notifies, it does not launch**: each agent must be running in its env to pick the task out of its inbox. Receipt/progress count only when the agent replies ACK/DONE threaded to the dispatch. |
 | `h5i team grant-review <team> --reviewer A --target B [--artifacts diff,summary,tests] [--json]` | Open a permissioned review: grant reviewer A scoped access to target B's round artifacts (never raw logs or persona bodies by default) + send a `REVIEW_REQUEST`. |
 | `h5i team review submit <team> --reviewer A --target B --file F [--json]` | Record a review body for a target candidate. |
 | `h5i team discuss <team> --from S --to A,B --file F [--artifacts ids] [--json]` | Send a logged, influence-tracked discussion message (post-freeze only). |
@@ -2681,6 +2681,24 @@ use <name>` (or let `create` set it). `add-env`/`verify` keep `<team>` required
 changes scripting/cron/agent behavior (always pass `<team>` there). For fast
 typing, generate shell completion: `h5i completion <bash|zsh|fish|powershell> >
 …` (e.g. `h5i completion bash | sudo tee /etc/bash_completion.d/h5i`).
+
+**Dispatching the task to the whole ensemble.** `h5i team dispatch` sends the
+task to every roster agent at once (you never paste the prompt per env). It is a
+**notification, not a launcher** — each agent still runs in its own box, where it
+picks the task out of its inbox. Because `add-env` bound each env's in-box
+`H5I_AGENT` to its persona, a running agent automatically sees the message
+addressed to it:
+
+```bash
+h5i team dispatch fix-auth --prompt-file task.md   # one broadcast → all agents
+# bring each agent up in its box; it identifies as its persona and reads the task
+h5i env shell env/claude-architect/fix-auth        # in-box H5I_AGENT=claude-architect
+h5i env shell env/codex/fix-auth                   # in-box H5I_AGENT=codex
+```
+
+Inside the box the agent consumes its task with `h5i msg inbox` (the Stop hook
+also surfaces it between turns), works, then `h5i team submit`s its candidate.
+(Auto-*launching* the agents in one command is a deliberate non-goal — see P4.)
 
 ### The neutral verifier (why finalization is trustworthy)
 

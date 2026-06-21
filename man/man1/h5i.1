@@ -585,6 +585,9 @@ Create a run over existing envs;
 Add an existing env to the roster as a persona-bound member (draft phase only).
 .B \-\-as
 is the ref-safe actor key; distinct personas on one runtime need distinct ids.
+Also binds the env's in-box \fBH5I_AGENT\fR to this persona, so a task from
+.B dispatch
+(addressed to the persona) lands in the right inbox.
 .TP
 .BI "submit " "TEAM " "\-\-agent ID [\-\-commit OID] [\-\-summary-file F]"
 Freeze the agent's env-branch tip (or
@@ -630,8 +633,12 @@ production prefer an external scheduler driving
 .BR \-\-once .
 .TP
 .BI "dispatch " "TEAM " "\-\-prompt-file F"
-Send the task prompt to every roster agent over
-.BR "h5i msg" .
+Send the task to every roster agent at once over
+.BR "h5i msg" " (no per-env pasting)."
+Notifies, does not launch: each agent picks the task out of its inbox while
+running in its own box (where
+.B add-env
+bound its identity to the persona).
 .TP
 .BI "grant-review " "TEAM " "\-\-reviewer A \-\-target B [\-\-artifacts KINDS]"
 Permissioned review: grant A scoped access to B's round artifacts (never raw logs
