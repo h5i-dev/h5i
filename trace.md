@@ -4098,3 +4098,9 @@ _[Checkpoint: 6a37cee7 — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 [11:51:05] OBSERVE: read MANUAL.md
 [11:51:14] ACT: edited MANUAL.md
 [11:51:33] NOTE: DEFERRAL (~/Dev/h5i/man/man1/h5i.1): art onboarding hook or the `pin-verifier-command-at-create` follow-up
+
+
+---
+_[Checkpoint: 6a37d045 — edited man/man1/h5i.1; edited scripts/team-launch.sh; edited MANUAL.md]_
+---
+
