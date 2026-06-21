@@ -4391,3 +4391,4 @@ _[Checkpoint: 6a383b87 — edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited 
 [19:52:59] ACT: edited src/main.rs
 [19:54:49] OBSERVE: read src/sandbox.rs
 [19:55:01] ACT: edited src/sandbox.rs
+[19:55:21] OBSERVE: read src/env.rs
