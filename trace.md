@@ -108,3 +108,4 @@ _[Checkpoint: 6a38549b — edited docs/pitch/index.html; edited docs/pitch/index
 [21:16:24] THINK: Let me confirm the explorer found nothing else using `role` (e.
 [21:16:24] THINK: Let me gather the few implementation specifics I need (env id/dir layout, agent-id validation rules, whether `rand` is available, and the team dispatch structure):
 [21:16:24] THINK: I'll create `examples/personas/` with the three example files (cargo ignores non-`.
+[21:16:24] THINK: Cleaned up. Let me run clippy on all targets (to lint my new test code) and confirm only the pre-existing warning remains:
