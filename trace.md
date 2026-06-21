@@ -4203,3 +4203,4 @@ _[Checkpoint: 6a3808e3 — edited src/env.rs; edited src/env.rs; edited scripts/
 [16:11:25] OBSERVE: read src/team.rs
 [16:11:25] OBSERVE: read src/msg.rs
 [16:11:25] OBSERVE: read src/team.rs
+[16:11:25] OBSERVE: searched dispatch|fn for "fn"
