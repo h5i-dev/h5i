@@ -106,3 +106,4 @@ _[Checkpoint: 6a38549b — edited docs/pitch/index.html; edited docs/pitch/index
 [21:16:24] THINK: All three pass. Let me run the broader sandbox/profile/env test suites to confirm no regressions (especially digest stability):
 [21:16:24] THINK: That `docs/index.html` edit (a hero-title copy change) isn't mine — I'll leave it unstaged and commit only my files.
 [21:16:24] THINK: Let me confirm the explorer found nothing else using `role` (e.
+[21:16:24] THINK: Let me gather the few implementation specifics I need (env id/dir layout, agent-id validation rules, whether `rand` is available, and the team dispatch structure):
