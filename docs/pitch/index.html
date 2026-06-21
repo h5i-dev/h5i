@@ -633,6 +633,10 @@
   .rung.h5i { border-color: var(--border-red); background: rgba(224,36,27,0.05); }
   .rung.h5i .rk { color: var(--red-text); font-weight: 700; }
   .rung.h5i .rv { color: var(--text); }
+
+  /* ── Inline paper citation link ────────────────────────────── */
+  .cite { display: inline-block; margin-top: 8px; font-family: var(--mono); font-size: 0.72rem; color: var(--text-faint); text-decoration: underline; text-decoration-color: var(--border-hi); text-underline-offset: 3px; transition: color 0.18s, text-decoration-color 0.18s; }
+  .cite:hover { color: var(--red-text); text-decoration-color: var(--red-text); }
 </style>
   <script type="application/ld+json">
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Pitch Deck", "item": "https://h5i.dev/pitch/"}]}
@@ -694,9 +698,9 @@
     </div>
 
     <div class="g3" style="margin-top:18px;">
-      <div class="card-sm"><span class="mono red">bagging</span><p style="margin-top:6px;font-size:0.95rem;">Average independent learners to cut variance.</p><span class="faint mono" style="font-size:0.72rem;">Breiman, 1996</span></div>
-      <div class="card-sm"><span class="mono red">boosting</span><p style="margin-top:6px;font-size:0.95rem;">Stage learners so each fixes the last one's misses.</p><span class="faint mono" style="font-size:0.72rem;">Freund &amp; Schapire, 1997</span></div>
-      <div class="card-sm"><span class="mono red">stacking</span><p style="margin-top:6px;font-size:0.95rem;">A meta-judge selects and blends the best outputs.</p><span class="faint mono" style="font-size:0.72rem;">Wolpert, 1992</span></div>
+      <div class="card-sm"><span class="mono red">bagging</span><p style="margin-top:6px;font-size:0.95rem;">Average independent learners to cut variance.</p><a class="cite" href="https://doi.org/10.1007/BF00058655" target="_blank" rel="noopener" title="Bagging Predictors — Breiman, 1996">Breiman, 1996 ↗</a></div>
+      <div class="card-sm"><span class="mono red">boosting</span><p style="margin-top:6px;font-size:0.95rem;">Stage learners so each fixes the last one's misses.</p><a class="cite" href="https://doi.org/10.1006/jcss.1997.1504" target="_blank" rel="noopener" title="A Decision-Theoretic Generalization of On-Line Learning and an Application to Boosting — Freund &amp; Schapire, 1997">Freund &amp; Schapire, 1997 ↗</a></div>
+      <div class="card-sm"><span class="mono red">stacking</span><p style="margin-top:6px;font-size:0.95rem;">A meta-judge selects and blends the best outputs.</p><a class="cite" href="https://doi.org/10.1016/S0893-6080(05)80023-1" target="_blank" rel="noopener" title="Stacked Generalization — Wolpert, 1992">Wolpert, 1992 ↗</a></div>
     </div>
   </div>
 </div>
