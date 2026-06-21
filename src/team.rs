@@ -9,6 +9,7 @@ use crate::env;
 use crate::error::H5iError;
 use crate::msg;
 use crate::objects;
+use crate::sandbox;
 use crate::token_filter::{FilterConfig, OutputKind};
 use git2::Repository;
 use serde::{Deserialize, Serialize};
@@ -94,10 +95,19 @@ pub struct TeamVerification {
     pub command: Vec<String>,
     pub applies_cleanly: bool,
     pub tests_passed: bool,
+    /// The isolation tier the verifier command actually ran under
+    /// (`workspace`/`process`/`supervised`/`container`) — audit of how
+    /// sandboxed the neutral re-execution really was.
+    #[serde(default = "isolation_unknown")]
+    pub isolation: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
+}
+
+fn isolation_unknown() -> String {
+    "unknown".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1001,12 +1011,49 @@ fn run_git(repo_workdir: &Path, args: &[&str]) -> Result<std::process::Output, H
         .map_err(H5iError::from)
 }
 
+/// Resolve the confinement the neutral verifier runs the candidate command under:
+/// the fail-closed `default` build/test profile at the requested tier (or, when
+/// `requested` is None/`auto`, the strongest tier this host can actually enforce).
+/// If the chosen kernel tier isn't runnable here (e.g. AppArmor-restricted userns
+/// on CI), fall back to the unconfined `workspace` tier rather than failing the
+/// whole verification — the returned tier name records what really happened.
+fn verifier_policy(
+    repo_workdir: &Path,
+    requested: Option<&str>,
+) -> Result<(sandbox::ResolvedPolicy, String), H5iError> {
+    let caps = sandbox::probe_host();
+    let claim = match requested {
+        Some(s) if !s.is_empty() && !s.eq_ignore_ascii_case("auto") => {
+            sandbox::IsolationClaim::parse(s)?
+        }
+        _ => sandbox::effective_auto(repo_workdir, "default", false)
+            .unwrap_or(sandbox::IsolationClaim::Workspace),
+    };
+    let profile = sandbox::load_profile(repo_workdir, "default", Some(claim))?;
+    let policy = sandbox::resolve(&profile, &caps)?;
+    // Bits present != confinement can exec. If the kernel tier can't actually run
+    // here, drop to workspace so verification still completes (and is labeled so).
+    if policy.claim != sandbox::IsolationClaim::Workspace && sandbox::verify_exec(&policy).is_err() {
+        let profile = sandbox::load_profile(
+            repo_workdir,
+            "default",
+            Some(sandbox::IsolationClaim::Workspace),
+        )?;
+        let policy = sandbox::resolve(&profile, &caps)?;
+        let claim = policy.claim.as_str().to_string();
+        return Ok((policy, claim));
+    }
+    let claim = policy.claim.as_str().to_string();
+    Ok((policy, claim))
+}
+
 pub fn verify(
     repo: &Repository,
     h5i_root: &Path,
     run_id: &str,
     agent_id: &str,
     command: Vec<String>,
+    isolation: Option<&str>,
     actor: &str,
 ) -> Result<TeamVerification, H5iError> {
     if command.is_empty() {
@@ -1079,21 +1126,30 @@ pub fn verify(
 
     let mut tests_passed = false;
     let mut capture_id = None;
+    // The tier the verifier actually ran under (recorded for audit). When the
+    // candidate doesn't apply we never execute, so it stays "skipped".
+    let mut isolation_used = "skipped".to_string();
     if applies_cleanly {
-        let output = Command::new(&command[0])
-            .args(&command[1..])
-            .current_dir(&verify_dir)
-            .output()
-            .map_err(H5iError::from)?;
-        tests_passed = output.status.success();
-        let mut raw = Vec::with_capacity(output.stdout.len() + output.stderr.len() + 32);
-        raw.extend_from_slice(&output.stdout);
-        if !output.stderr.is_empty() {
+        // Run the verifier under fail-closed build/test confinement (the `default`
+        // profile) scoped to the throwaway verify worktree — never on the bare
+        // host. The tier is the requested one (or the strongest the host can
+        // enforce), with a graceful fall-back to the unconfined workspace tier so
+        // a verifier still runs on a host without kernel confinement (CI/macOS).
+        let (policy, claim) = verifier_policy(repo_workdir, isolation)?;
+        isolation_used = claim;
+        let exec = sandbox::run(&policy, &verify_dir, &command)?;
+        tests_passed = exec.exit_code == Some(0) && !exec.timed_out;
+        if exec.timed_out {
+            failure = Some("verifier command exceeded the policy wall-clock limit".into());
+        }
+        let mut raw = Vec::with_capacity(exec.stdout.len() + exec.stderr.len() + 32);
+        raw.extend_from_slice(&exec.stdout);
+        if !exec.stderr.is_empty() {
             if !raw.is_empty() && !raw.ends_with(b"\n") {
                 raw.push(b'\n');
             }
             raw.extend_from_slice(b"\n--- stderr ---\n");
-            raw.extend_from_slice(&output.stderr);
+            raw.extend_from_slice(&exec.stderr);
         }
         let cmd_string = command.join(" ");
         let outcome = objects::capture(
@@ -1104,7 +1160,7 @@ pub fn verify(
                 kind: OutputKind::Auto,
                 cmd: Some(cmd_string),
                 cwd: Some(verify_dir.to_string_lossy().to_string()),
-                exit_code: output.status.code(),
+                exit_code: exec.exit_code,
                 git_tree: Some(submission.tree_oid.clone()),
                 files: Vec::new(),
                 cmd_argv: command.clone(),
@@ -1114,8 +1170,8 @@ pub fn verify(
                 },
                 env_id: Some(format!("team/{run_id}/{}", submission.id)),
                 policy_digest: None,
-                evidence_source: Some("team-verifier".into()),
-                egress: None,
+                evidence_source: Some(format!("team-verifier:{isolation_used}")),
+                egress: exec.egress.clone(),
                 redact: false,
             },
         )?;
@@ -1143,6 +1199,7 @@ pub fn verify(
         command,
         applies_cleanly,
         tests_passed,
+        isolation: isolation_used,
         capture_id,
         failure,
     };
@@ -1790,6 +1847,7 @@ mod tests {
             "run4",
             "codex-fix",
             vec!["sh".into(), "-c".into(), "test -f feature.txt".into()],
+            Some("workspace"),
             "human",
         )
         .unwrap();
@@ -1797,6 +1855,8 @@ mod tests {
         assert!(verification.applies_cleanly);
         assert!(verification.tests_passed);
         assert!(verification.capture_id.is_some());
+        // The verifier ran sandboxed under the requested tier and recorded it.
+        assert_eq!(verification.isolation, "workspace");
 
         let verdict = finalize(&repo, "run4", "human").unwrap();
         assert_eq!(
@@ -1838,6 +1898,7 @@ mod tests {
             "run5",
             "codex-fix",
             vec!["sh".into(), "-c".into(), "test -f feature.txt".into()],
+            Some("workspace"),
             "human",
         )
         .unwrap();
@@ -2018,6 +2079,7 @@ mod tests {
                 command,
                 applies_cleanly: true,
                 tests_passed: true,
+                isolation: "workspace".into(),
                 capture_id: None,
                 failure: None,
             };
@@ -2071,6 +2133,7 @@ mod tests {
             "run7",
             "codex-fix",
             vec!["sh".into(), "-c".into(), "test -f feature.txt".into()],
+            Some("workspace"),
             "human",
         )
         .unwrap();

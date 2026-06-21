@@ -1965,8 +1965,13 @@ enum TeamCommands {
         /// Team agent id whose latest submission should be verified
         #[arg(long)]
         agent: String,
-        /// Verifier command and args, after `--cmd`
-        #[arg(long = "cmd", trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
+        /// Isolation tier for the sandboxed verifier (workspace|process|
+        /// supervised|container); default auto-picks the strongest the host can
+        /// enforce, falling back to workspace
+        #[arg(long)]
+        isolation: Option<String>,
+        /// Verifier command and args (everything after `--`), e.g. `-- cargo test`
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
         cmd: Vec<String>,
         /// Emit JSON
         #[arg(long)]
@@ -9115,17 +9120,25 @@ fn main() -> anyhow::Result<()> {
                         print!("{}", h5i_core::team::render_compare(&rows));
                     }
                 }
-                TeamCommands::Verify { team, agent, cmd, json } => {
-                    let verification =
-                        h5i_core::team::verify(git, &h5i_root, &team, &agent, cmd, &actor)?;
+                TeamCommands::Verify { team, agent, isolation, cmd, json } => {
+                    let verification = h5i_core::team::verify(
+                        git,
+                        &h5i_root,
+                        &team,
+                        &agent,
+                        cmd,
+                        isolation.as_deref(),
+                        &actor,
+                    )?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&verification)?);
                     } else {
                         println!(
-                            "{} verifier {} for {}: applies_cleanly={} tests_passed={}",
+                            "{} verifier {} for {} [tier: {}]: applies_cleanly={} tests_passed={}",
                             SUCCESS,
                             verification.id,
                             verification.owner_agent,
+                            verification.isolation,
                             verification.applies_cleanly,
                             verification.tests_passed
                         );
