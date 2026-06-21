@@ -575,8 +575,10 @@ roster member is a
 .I persona
 not a backend \(em the
 .I agent_id
-is the actor, while runtime/model/role are attributes, so a team may be three
-Claudes with different prompts/skills or a Claude+Codex mix. Run state is an
+is the actor, while runtime/model/persona are attributes, so a team may be three
+Claudes with different personas or a Claude+Codex mix. Roles are not enforced:
+every member is an independent peer that implements and peer-reviews; an optional
+persona file shapes one member's working style. Run state is an
 append-only event log in
 .I refs/h5i/team/<run-id>
 (phase/roster/verdict are folded from events), travelling with
@@ -597,13 +599,21 @@ Create a run over existing envs;
 .B \-\-base
 (default HEAD) is the shared base every candidate is compared against.
 .TP
-.BI "add-env " "TEAM ENV " "\-\-as AGENT-ID [\-\-runtime R] [\-\-model M] [\-\-role ROLE]"
+.BI "add-env " "TEAM ENV " "[\-\-as AGENT-ID] [\-\-runtime R] [\-\-model M] [\-\-persona FILE]"
 Add an existing env to the roster as a persona-bound member (draft phase only).
 .B \-\-as
-is the ref-safe actor key; distinct personas on one runtime need distinct ids.
-Also binds the env's in-box \fBH5I_AGENT\fR and \fBH5I_TEAM\fR to this persona
-and run for scoped team-agent commands. The message store and team refs remain
-host-owned.
+is the ref-safe actor key; omit it and h5i assigns a generated name (distinct
+members need distinct ids).
+.B \-\-persona
+is an optional markdown file (its sha256 is recorded; the body is stored
+host-side and injected into the agent's launch prompt as its standing working
+style \(em see \fIexamples/personas/\fR). Also binds the env's in-box
+\fBH5I_AGENT\fR and \fBH5I_TEAM\fR to this persona and run for scoped team-agent
+commands. The message store and team refs remain host-owned.
+.TP
+.BI "persona " "AGENT " "[\-\-team T]"
+Print an agent's persona markdown (what the launcher injects), or nothing if it
+has none.
 .TP
 .BI "submit " "TEAM " "\-\-agent ID [\-\-commit OID] [\-\-summary-file F]"
 Freeze the agent's env-branch tip (or

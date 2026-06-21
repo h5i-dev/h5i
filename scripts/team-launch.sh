@@ -116,6 +116,15 @@ launch_for() {
   runtime="$1"
   agent="$2"
   prompt="$BOOTSTRAP"
+  # The agent's persona (optional `--persona` markdown at add-env) is its standing
+  # working style — inject it right after the bootstrap, ahead of the task.
+  persona="$("$H5I" team persona --team "$TEAM" "$agent" 2>/dev/null || true)"
+  if [ -n "$persona" ]; then
+    prompt="$prompt
+
+Your persona (standing working style):
+$persona"
+  fi
   if [ -n "$TASK_TEXT" ]; then
     prompt="$prompt
 

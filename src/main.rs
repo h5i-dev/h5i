@@ -1914,18 +1914,19 @@ enum TeamCommands {
         team: String,
         /// Env name (`slug`, `agent/slug`, or `env/agent/slug`)
         env: String,
-        /// Ref-safe persona/agent key for this team
+        /// Ref-safe agent key for this team (default: a generated name)
         #[arg(long = "as")]
-        as_agent: String,
+        as_agent: Option<String>,
         /// Runtime adapter (`claude`, `codex`, etc.)
         #[arg(long)]
         runtime: Option<String>,
         /// Model label
         #[arg(long)]
         model: Option<String>,
-        /// Persona role label
+        /// Persona markdown file injected into this agent's launch prompt
+        /// (its standing working style — see examples/personas/)
         #[arg(long)]
-        role: Option<String>,
+        persona: Option<std::path::PathBuf>,
         /// Emit JSON
         #[arg(long)]
         json: bool,
@@ -1937,6 +1938,14 @@ enum TeamCommands {
         /// Emit JSON
         #[arg(long)]
         json: bool,
+    },
+    /// Print an agent's persona markdown (the launcher uses this to inject it)
+    Persona {
+        /// Team agent key (the `--as` name)
+        agent: String,
+        /// Team id (defaults to the current team — see `team use`)
+        #[arg(long)]
+        team: Option<String>,
     },
     /// Freeze one agent's candidate as an immutable submission
     Submit {
@@ -9162,17 +9171,66 @@ fn main() -> anyhow::Result<()> {
                     as_agent,
                     runtime,
                     model,
-                    role,
+                    persona,
                     json,
                 } => {
+                    // Default the agent key to a generated name so the user
+                    // doesn't have to invent a ref-safe key; `--as` overrides.
+                    let (agent_id, generated) = match as_agent {
+                        Some(a) => (a, false),
+                        None => {
+                            let existing: Vec<String> = h5i_core::team::status(git, &team)?
+                                .run
+                                .agents
+                                .into_iter()
+                                .map(|a| a.agent_id)
+                                .collect();
+                            (h5i_core::team::gen_agent_id(&existing), true)
+                        }
+                    };
+                    // Read the persona markdown (cap the size — it is injected
+                    // into a prompt, not meant to be a whole codebase).
+                    const PERSONA_MAX: u64 = 64 * 1024;
+                    let persona_text = match persona {
+                        Some(path) => {
+                            let meta = std::fs::metadata(&path).map_err(|e| {
+                                anyhow::anyhow!("persona file {}: {e}", path.display())
+                            })?;
+                            if meta.len() > PERSONA_MAX {
+                                anyhow::bail!(
+                                    "persona file {} is {} bytes (max {PERSONA_MAX})",
+                                    path.display(),
+                                    meta.len()
+                                );
+                            }
+                            Some(std::fs::read_to_string(&path).map_err(|e| {
+                                anyhow::anyhow!("persona file {}: {e}", path.display())
+                            })?)
+                        }
+                        None => None,
+                    };
                     let run = h5i_core::team::add_env(
-                        git, &h5i_root, &team, &env, &as_agent, runtime, model, role, &actor,
+                        git, &h5i_root, &team, &env, &agent_id, runtime, model, persona_text,
+                        &actor,
                     )?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&run)?);
                     } else {
+                        if generated {
+                            eprintln!(
+                                "{} assigned agent key {} (override with --as)",
+                                STEP,
+                                style(&agent_id).green().bold()
+                            );
+                        }
                         let status = h5i_core::team::status(git, &team)?;
                         print!("{}", h5i_core::team::render_status(&status));
+                    }
+                }
+                TeamCommands::Persona { agent, team } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    if let Some(text) = h5i_core::team::persona(git, &h5i_root, &team, &agent)? {
+                        print!("{text}");
                     }
                 }
                 TeamCommands::Status { team, json } => {

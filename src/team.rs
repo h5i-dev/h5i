@@ -53,8 +53,12 @@ pub struct TeamAgent {
     pub runtime: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// sha256 of this agent's persona markdown (`--persona <file>`), if any —
+    /// provenance for the standing instructions injected into its launch prompt.
+    /// The content itself lives host-side at `<env-dir>/team-persona` (never in
+    /// the shared event log). `None` for a plain independent peer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>,
+    pub persona_digest: Option<String>,
     pub isolation_claim: String,
     pub policy_digest: String,
     pub branch_ref: String,
@@ -234,6 +238,61 @@ pub fn validate_slug(slug: &str) -> Result<(), H5iError> {
 
 pub fn validate_agent_id(agent_id: &str) -> Result<(), H5iError> {
     env::validate_agent(agent_id)
+}
+
+/// A small pool of short, neutral, ref-safe given names used to auto-assign a
+/// team agent key when `--as` is omitted — so users don't have to invent a
+/// "ref-safe persona key" just to add an env. All are valid `agent_id`s.
+const AGENT_NAMES: &[&str] = &[
+    "mira", "kade", "iris", "nova", "rohan", "lena", "theo", "yuki", "amara",
+    "soren", "noor", "kai", "elsa", "dario", "wren", "tariq", "juno", "felix",
+    "anya", "milo", "sage", "ravi", "nina", "otto", "luca", "ada", "boris",
+    "cleo", "enzo", "hana", "ilan", "remy", "vera", "zane",
+];
+
+/// Pick a random ref-safe agent name not already taken in `existing`. Falls back
+/// to a numeric suffix if the small pool is exhausted (many members), so it
+/// always returns a unique, valid id.
+pub fn gen_agent_id(existing: &[String]) -> String {
+    let taken = |c: &str| existing.iter().any(|e| e == c);
+    for _ in 0..64 {
+        let name = AGENT_NAMES[fastrand::usize(..AGENT_NAMES.len())];
+        if !taken(name) {
+            return name.to_string();
+        }
+    }
+    // Pool likely exhausted — suffix a base name until unique.
+    let base = AGENT_NAMES[fastrand::usize(..AGENT_NAMES.len())];
+    loop {
+        let cand = format!("{base}-{}", fastrand::u16(..));
+        if !taken(&cand) {
+            return cand;
+        }
+    }
+}
+
+/// Read an agent's persona markdown (the standing working style set with
+/// `--persona`), host-side, from its env dir. `Ok(None)` when the agent has no
+/// persona. Used by the launcher to inject it into the box's first prompt.
+pub fn persona(
+    repo: &Repository,
+    h5i_root: &Path,
+    run_id: &str,
+    agent_id: &str,
+) -> Result<Option<String>, H5iError> {
+    let run = status(repo, run_id)?.run;
+    let Some(agent) = run.agents.iter().find(|a| a.agent_id == agent_id) else {
+        return Err(H5iError::Metadata(format!(
+            "team '{run_id}' has no agent '{agent_id}'"
+        )));
+    };
+    let m = env::find(h5i_root, &agent.env_id)?;
+    let path = m.dir(h5i_root).join("team-persona");
+    match std::fs::read_to_string(&path) {
+        Ok(s) => Ok(Some(s)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(H5iError::with_path(e, &path)),
+    }
 }
 
 // ── Current-team context (a local, per-clone convenience like git's HEAD) ─────
@@ -547,7 +606,7 @@ pub fn add_env(
     agent_id: &str,
     runtime: Option<String>,
     model: Option<String>,
-    role: Option<String>,
+    persona: Option<String>,
     actor: &str,
 ) -> Result<TeamRun, H5iError> {
     validate_agent_id(agent_id)?;
@@ -564,13 +623,32 @@ pub fn add_env(
         )));
     }
     let m = env::find(h5i_root, env_name)?;
+    // A persona is the agent's standing working style (an optional markdown file,
+    // like a Dockerfile for behavior). Store the content host-side next to the
+    // identity binding; the launcher injects it into the box's first prompt. We
+    // keep only its digest in the shared event log.
+    let env_dir = m.dir(h5i_root);
+    let persona_digest = match &persona {
+        Some(text) => {
+            let persona_path = env_dir.join("team-persona");
+            std::fs::write(&persona_path, text)
+                .map_err(|e| H5iError::with_path(e, &persona_path))?;
+            Some(crate::objects::sha256_hex(text.as_bytes()))
+        }
+        None => {
+            // Adding an env without a persona must clear any stale one from a
+            // prior add (envs are reused across teams).
+            let _ = std::fs::remove_file(env_dir.join("team-persona"));
+            None
+        }
+    };
     let agent = TeamAgent {
         agent_id: agent_id.to_string(),
-        display_label: role.clone().unwrap_or_else(|| agent_id.to_string()),
+        display_label: agent_id.to_string(),
         env_id: m.id.clone(),
         runtime,
         model,
-        role,
+        persona_digest,
         isolation_claim: m.isolation_claim.clone(),
         policy_digest: m.policy_digest.clone(),
         branch_ref: m.branch.clone(),
@@ -591,7 +669,6 @@ pub fn add_env(
     append_event(repo, &ev)?;
     // Bind the env to this team persona. env run/shell reads these host-owned
     // files and injects H5I_AGENT/H5I_TEAM for scoped in-box requests.
-    let env_dir = m.dir(h5i_root);
     let identity_path = env_dir.join("team-identity");
     std::fs::write(&identity_path, format!("{agent_id}\n"))
         .map_err(|e| H5iError::with_path(e, &identity_path))?;
@@ -1755,7 +1832,7 @@ mod tests {
             "codex-fix",
             Some("codex".into()),
             None,
-            Some("implementer".into()),
+            Some("# Implementer\nWrite the code; keep the diff minimal.\n".into()),
             "human",
         )
         .unwrap();
@@ -1770,6 +1847,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(sub.owner_agent, "codex-fix");
+        // The persona was recorded: digest on the agent, content readable host-side.
+        assert!(run_has_persona_digest(&repo, "run1", "codex-fix"));
+        let p = persona(&repo, h5i_root, "run1", "codex-fix").unwrap();
+        assert_eq!(p.as_deref(), Some("# Implementer\nWrite the code; keep the diff minimal.\n"));
         let run = freeze(&repo, "run1", false, "human").unwrap();
         assert_eq!(run.phase, PHASE_SEALED_SUBMIT);
         assert_eq!(run.submissions.len(), 1);
@@ -1777,6 +1858,51 @@ mod tests {
             run.agents[0].latest_submission_id.as_deref(),
             Some(sub.id.as_str())
         );
+    }
+
+    fn run_has_persona_digest(repo: &Repository, run_id: &str, agent_id: &str) -> bool {
+        status(repo, run_id)
+            .unwrap()
+            .run
+            .agents
+            .iter()
+            .find(|a| a.agent_id == agent_id)
+            .and_then(|a| a.persona_digest.clone())
+            .is_some()
+    }
+
+    #[test]
+    fn gen_agent_id_avoids_collisions() {
+        let taken: Vec<String> = AGENT_NAMES.iter().map(|s| s.to_string()).collect();
+        // Pool fully taken → must fall back to a unique suffixed name.
+        let extra = gen_agent_id(&taken);
+        assert!(!taken.contains(&extra), "must not reuse an existing id: {extra}");
+        validate_agent_id(&extra).expect("generated id must be ref-safe");
+        // Some free → returns a free one (not in the taken subset).
+        let subset: Vec<String> = vec![AGENT_NAMES[0].into(), AGENT_NAMES[1].into()];
+        let pick = gen_agent_id(&subset);
+        assert!(!subset.contains(&pick));
+        validate_agent_id(&pick).unwrap();
+    }
+
+    #[test]
+    fn add_env_without_persona_clears_a_stale_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        manifest(&repo, h5i_root, "codex", "fix");
+
+        // First team pins a persona on the env.
+        create(&repo, "runa", "runa", "HEAD", 1, "human").unwrap();
+        add_env(&repo, h5i_root, "runa", "fix", "a", None, None, Some("be careful".into()), "human").unwrap();
+        assert_eq!(persona(&repo, h5i_root, "runa", "a").unwrap().as_deref(), Some("be careful"));
+
+        // Reusing the same env in a new team WITHOUT a persona must not inherit
+        // the old file (envs are reused across teams).
+        create(&repo, "runb", "runb", "HEAD", 1, "human").unwrap();
+        add_env(&repo, h5i_root, "runb", "fix", "b", None, None, None, "human").unwrap();
+        assert_eq!(persona(&repo, h5i_root, "runb", "b").unwrap(), None);
     }
 
     #[test]
