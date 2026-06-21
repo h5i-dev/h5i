@@ -3942,3 +3942,4 @@ _[Checkpoint: 6a3749fb — edited src/team.rs; edited src/team.rs; edited roadma
 [02:41:07] OBSERVE: read src/team.rs
 [02:42:03] OBSERVE: read src/team.rs
 [02:43:24] ACT: edited src/team.rs
+[02:46:45] NOTE: LIMITATION: team verify runs the candidate command on the HOST process (Command::new in a throwaway worktree at base_oid), not under env sandbox isolation — fine for trusted code, but untrusted candidate code runs unsandboxed. Follow-ups: (1) run the verifier under the env isolation tier (VerificationPolicy.isolation); (2) pin the verifier command at create time so it's identical for every candidate (currently per-call, mitigated by finalize refusing divergent commands).
