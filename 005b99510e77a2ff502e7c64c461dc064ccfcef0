@@ -1,0 +1,1 @@
+{"git_oid":"005b99510e77a2ff502e7c64c461dc064ccfcef0","parent_oid":"15e1e6bd5dfd473bd4d69fc9d12453aa9b74e2f2","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"hmm, why do we need --keep-shell option?","agent_id":"claude-code","usage":null},"test_metrics":null,"timestamp":"2026-06-21T11:45:30.192713388Z"}
