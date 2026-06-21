@@ -3952,3 +3952,4 @@ _[Checkpoint: 6a3750b3 — edited src/team.rs; edited src/team.rs; edited src/te
 
 [02:57:25] OBSERVE: read roadmap/team-design.md
 [02:57:42] ACT: edited roadmap/team-design.md
+[02:58:30] NOTE: DEFERRAL (~/Dev/h5i/src/team.rs): rgent_verifier_commands`. **Documented limitations / sound follow-ups (recorded as a context NOTE):** - **Verifier runs host-side**, not under env san…
