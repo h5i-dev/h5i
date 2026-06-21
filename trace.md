@@ -217,3 +217,9 @@ _[Checkpoint: 6a38588b — edited docs/pitch/index.html; edited docs/pitch/index
 [21:39:01] ACT: edited index.html
 [21:41:36] THINK: I'll look at the docs site structure to understand what's there and what SEO/meta tags exist.
 [21:41:36] THINK: Let me confirm one detail — whether the blog `TechArticle` schema includes `datePublished`/`author`/`headline` (needed for article rich results).
+
+
+---
+_[Checkpoint: 6a385a90 — edited index.html; edited index.html; edited index.html]_
+---
+
