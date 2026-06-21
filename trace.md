@@ -229,3 +229,4 @@ _[Checkpoint: 6a385a90 — edited index.html; edited index.html; edited index.ht
 [21:44:56] ACT: edited index.html
 [21:45:00] ACT: edited index.html
 [21:46:12] THINK: Let me add the Team-section CSS (phase pipeline, failure-mode table, verdict card):
+[21:46:12] THINK: I'll add two team Q&As to the structured data, then update the visible FAQ.
