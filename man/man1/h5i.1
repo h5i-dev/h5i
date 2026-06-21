@@ -382,7 +382,8 @@ Open an interactive confined session inside the env (the "agent-in-box"): stdio
 is inherited, so every command the session spawns is confined by the box. With
 .B \-\- COMMAND
 that command becomes the session (e.g. \fB\-\- claude \(dq<task>\(dq\fR launches
-the agent; on exit you return to the host, where \fBh5i team submit\fR runs).
+the agent; boxed agents use staged commands such as \fBh5i team agent submit\fR,
+which the host ingests when the shell exits).
 Defaults to a login shell; exit code passes through. The session is observed (a
 .B shell
 event is logged and per-command evidence is staged + ingested where the tier
@@ -588,14 +589,23 @@ Create a run over existing envs;
 Add an existing env to the roster as a persona-bound member (draft phase only).
 .B \-\-as
 is the ref-safe actor key; distinct personas on one runtime need distinct ids.
-Also binds the env's in-box \fBH5I_AGENT\fR to this persona, so a task from
-.B dispatch
-(addressed to the persona) lands in the right inbox.
+Also binds the env's in-box \fBH5I_AGENT\fR and \fBH5I_TEAM\fR to this persona
+and run for scoped team-agent commands. The message store and team refs remain
+host-owned.
 .TP
 .BI "submit " "TEAM " "\-\-agent ID [\-\-commit OID] [\-\-summary-file F]"
 Freeze the agent's env-branch tip (or
 .BR \-\-commit )
 as an immutable submission \(em frozen commit/tree oids + diffstat + capture ids.
+.TP
+.BI "agent submit " "[\-\-commit OID] [\-\-summary-file F]"
+Submit as the bound env persona. In sealed envs this writes a scoped request to
+the env spool; the host applies it to \fIrefs/h5i/team/*\fR when the env shell
+exits.
+.TP
+.BI "agent inbox " "[TEAM] [\-\-peek] [\-\-json]"
+Host-side scoped inbox for the current team persona. Sealed boxes should receive
+task text through the launcher rather than reading \fI.git/.h5i/msg\fR directly.
 .TP
 .BI "freeze " "TEAM " "[\-\-allow-missing]"
 Transition draft \(-> sealed_submit; refuses if any member lacks a submission
@@ -638,10 +648,11 @@ production prefer an external scheduler driving
 .BI "dispatch " "TEAM " "\-\-prompt-file F"
 Send the task to every roster agent at once over
 .BR "h5i msg" " (no per-env pasting)."
-Notifies, does not launch: each agent picks the task out of its inbox while
-running in its own box (where
-.B add-env
-bound its identity to the persona).
+Notifies, does not launch: the shared message log and cursors are host-owned
+coordination state. For normal interactive runs use
+.B scripts/team-launch.sh --task
+to dispatch for the host log and embed the task text in each boxed agent's
+startup prompt.
 .TP
 .BI "grant-review " "TEAM " "\-\-reviewer A \-\-target B [\-\-artifacts KINDS]"
 Permissioned review: grant A scoped access to B's round artifacts (never raw logs

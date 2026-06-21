@@ -61,6 +61,7 @@ pub const H5I_ENV_ID_VAR: &str = "H5I_ENV_ID";
 pub const H5I_ENV_POLICY_DIGEST_VAR: &str = "H5I_ENV_POLICY_DIGEST";
 pub const H5I_ENV_CAPTURE_SPOOL_VAR: &str = "H5I_ENV_CAPTURE_SPOOL";
 pub const H5I_ENV_AUDIT_CAPTURE_VAR: &str = "H5I_ENV_AUDIT_CAPTURE";
+pub const H5I_TEAM_VAR: &str = "H5I_TEAM";
 const CONTAINER_CAPTURE_SPOOL: &str = "/.h5i/spool";
 #[cfg(unix)] // only the unix-gated RunLock references this
 const RUN_LOCK_FILE: &str = "run.lock";
@@ -1743,23 +1744,29 @@ fn merged_env(a: &[(String, String)], b: &[(String, String)]) -> Vec<(String, St
     out
 }
 
-/// If this env is bound to a team persona (a `team-identity` file written by
-/// `h5i team add-env`), inject `H5I_AGENT=<persona>` so the in-box agent
-/// identifies as its persona — a task dispatched by `h5i team dispatch` (which
-/// addresses persona ids) then lands in the right inbox. Returns empty for a
-/// solo env, leaving the in-box identity untouched.
+/// If this env is bound to a team persona (files written by `h5i team add-env`),
+/// inject `H5I_AGENT=<persona>` and `H5I_TEAM=<run>` for scoped in-box requests.
+/// The coordination refs and cursors remain host-only.
 fn team_identity_env(m: &EnvManifest, h5i_root: &Path) -> Vec<(String, String)> {
-    let path = m.dir(h5i_root).join("team-identity");
-    match std::fs::read_to_string(&path) {
-        Ok(s) => {
-            let id = s.trim();
-            if id.is_empty() {
-                Vec::new()
-            } else {
-                vec![("H5I_AGENT".to_string(), id.to_string())]
-            }
-        }
-        Err(_) => Vec::new(),
+    let Some((team, agent)) = team_binding(h5i_root, m) else {
+        return Vec::new();
+    };
+    vec![
+        ("H5I_AGENT".to_string(), agent),
+        (H5I_TEAM_VAR.to_string(), team),
+    ]
+}
+
+pub fn team_binding(h5i_root: &Path, m: &EnvManifest) -> Option<(String, String)> {
+    let dir = m.dir(h5i_root);
+    let agent = std::fs::read_to_string(dir.join("team-identity")).ok()?;
+    let team = std::fs::read_to_string(dir.join("team-run")).ok()?;
+    let agent = agent.trim();
+    let team = team.trim();
+    if agent.is_empty() || team.is_empty() {
+        None
+    } else {
+        Some((team.to_string(), agent.to_string()))
     }
 }
 
@@ -1782,6 +1789,30 @@ pub fn write_note_spool(spool: &Path, oid: &str, record_json: &str) -> Result<()
     let path = spool.join(format!("note-{safe}.json"));
     std::fs::write(&path, record_json).map_err(|e| H5iError::with_path(e, &path))?;
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamSubmitSpool {
+    #[serde(default)]
+    pub commit: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+pub fn write_team_submit_spool(
+    spool: &Path,
+    request: &TeamSubmitSpool,
+) -> Result<String, H5iError> {
+    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = format!("team-submit-{}-{nanos}", std::process::id());
+    let path = spool.join(format!("{base}.json"));
+    let json = serde_json::to_vec(request)?;
+    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(base)
 }
 
 const PROTECTED_HOOK_CONFIGS: &[&str] = &[".claude/settings.json", ".codex/config.toml"];
@@ -2683,6 +2714,119 @@ fn ingest_shell_spool(
                 capture: None,
             },
         )?;
+    }
+
+    // In-box `h5i team agent submit`. Team refs are host-only, so the box can
+    // only stage a request. Authority comes from the host-owned env binding,
+    // never from fields the boxed process can write.
+    if let Some((team_id, agent_id)) = team_binding(h5i_root, m) {
+        let mut submit_bases: Vec<String> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&spool) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if let Some(base) = name.strip_suffix(".json") {
+                    let ok = base.starts_with("team-submit-")
+                        && base.len() <= 128
+                        && base.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+                    if ok {
+                        submit_bases.push(base.to_string());
+                    }
+                }
+            }
+        }
+        submit_bases.sort();
+        let submit_dropped = submit_bases.len().saturating_sub(SPOOL_MAX_ENTRIES);
+        for base in submit_bases.iter().take(SPOOL_MAX_ENTRIES) {
+            let path = spool.join(format!("{base}.json"));
+            let bytes = match read_spool_capped(&path, SPOOL_MAX_CMD_BYTES) {
+                Some(b) => b,
+                None => continue,
+            };
+            let request: TeamSubmitSpool = match serde_json::from_slice(&bytes) {
+                Ok(r) => r,
+                Err(_) => {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+            };
+            if let Some(commit) = request.commit.as_deref().filter(|s| !s.trim().is_empty()) {
+                let allowed = repo
+                    .revparse_single(commit)
+                    .ok()
+                    .and_then(|o| o.peel_to_commit().ok())
+                    .map(|c| {
+                        env_tip
+                            .map(|tip| {
+                                tip == c.id()
+                                    || repo.graph_descendant_of(tip, c.id()).unwrap_or(false)
+                            })
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false);
+                if !allowed {
+                    append_event(
+                        repo,
+                        &EnvEvent {
+                            ts: now_ts(),
+                            env_id: m.id.clone(),
+                            agent: m.agent.clone(),
+                            event: "exec-log".into(),
+                            detail: Some(format!(
+                                "rejected in-box team submit for {agent_id} — commit is not reachable from env branch"
+                            )),
+                            capture: None,
+                        },
+                    )?;
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+            }
+            match crate::team::submit(
+                repo,
+                h5i_root,
+                &team_id,
+                &agent_id,
+                request.commit.as_deref(),
+                request.summary,
+                &agent_id,
+            ) {
+                Ok(artifact) => {
+                    append_event(
+                        repo,
+                        &EnvEvent {
+                            ts: now_ts(),
+                            env_id: m.id.clone(),
+                            agent: m.agent.clone(),
+                            event: "team-submit".into(),
+                            detail: Some(format!(
+                                "in-box team submit applied: {} at {}",
+                                artifact.id,
+                                &artifact.commit_oid[..12.min(artifact.commit_oid.len())]
+                            )),
+                            capture: None,
+                        },
+                    )?;
+                    count += 1;
+                }
+                Err(e) => eprintln!("warning: applying in-box team submit failed: {e}"),
+            }
+            let _ = std::fs::remove_file(&path);
+        }
+        if submit_dropped > 0 {
+            append_event(
+                repo,
+                &EnvEvent {
+                    ts: now_ts(),
+                    env_id: m.id.clone(),
+                    agent: m.agent.clone(),
+                    event: "exec-log".into(),
+                    detail: Some(format!(
+                        "in-box team submit spool capped at {SPOOL_MAX_ENTRIES}: {submit_dropped} dropped"
+                    )),
+                    capture: None,
+                },
+            )?;
+        }
     }
     Ok(count)
 }
@@ -4969,6 +5113,25 @@ mod tests {
         assert!(!names.iter().any(|n| n.contains("..") || n.contains('/') || n.contains('#')));
         // An all-non-alnum oid leaves nothing to name → error, no file written.
         assert!(write_note_spool(&spool, "../", "{}").is_err());
+    }
+
+    #[test]
+    fn write_team_submit_spool_records_scoped_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path().join("spool");
+        let base = write_team_submit_spool(
+            &spool,
+            &TeamSubmitSpool {
+                commit: Some("HEAD".into()),
+                summary: Some("ready".into()),
+            },
+        )
+        .unwrap();
+        assert!(base.starts_with("team-submit-"));
+        let raw = std::fs::read(spool.join(format!("{base}.json"))).unwrap();
+        let request: TeamSubmitSpool = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(request.commit.as_deref(), Some("HEAD"));
+        assert_eq!(request.summary.as_deref(), Some("ready"));
     }
 
     #[test]

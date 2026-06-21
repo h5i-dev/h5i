@@ -2361,7 +2361,7 @@ another reviews and applies). See `docs/environments-design.md` and the live
 |---------|-------------|
 | `h5i env create <name> [--from REV] [--profile P] [--isolation TIER] [--audit signal\|all]` | Create an env: code branch + worktree + reasoning branch + pinned policy. Base frozen at creation. With no `--isolation` (or `--isolation auto`) it **auto-picks the strongest tier the host can run**; an explicit tier fails closed if the host can't satisfy it. `--audit all` pins `[audit] capture = "all"` in the resolved policy so wrapped in-env commands are recorded even when they succeed with small output. |
 | `h5i env run <name> -- <cmd> [args…]` | Run a command inside the env, policy-enforced + capture-wrapped. Exit code passes through; evidence is captured. |
-| `h5i env shell <name> [-- <cmd>]` | Open an **interactive** confined session *inside* the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. With `-- <cmd>` that command becomes the session (e.g. `-- claude "<task>"` launches the agent; on exit you return to the host, where `h5i team submit` and the other team commands run). Defaults to a login shell. Exit code passes through. The session is **observed**: a `shell` event is logged, and per-command evidence is staged + ingested where the tier supports it (see [In-box git, capture & commit](#in-box-git-capture--commit)). |
+| `h5i env shell <name> [-- <cmd>]` | Open an **interactive** confined session *inside* the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. With `-- <cmd>` that command becomes the session (e.g. `-- claude "<task>"` launches the agent). Boxed agents use staged in-box commands such as `h5i capture run` and `h5i team agent submit`; host-owned refs are ingested when the shell exits. Defaults to a login shell. Exit code passes through. The session is **observed**: a `shell` event is logged, and per-command evidence is staged + ingested where the tier supports it (see [In-box git, capture & commit](#in-box-git-capture--commit)). |
 | `h5i env probe` | Show what isolation this host can actually provide (Landlock ABI, user namespaces, seccomp, seccomp-notif, cgroup v2 delegation, rootless Podman) and which claims are satisfiable. |
 | `h5i env list [--json]` | List environments on this clone (the fleet view). `--json` emits an array of manifests, each enriched with base `drift`. |
 | `h5i env status <name> [--json]` | Lifecycle state + enforced policy + evidence + base drift. `--json` emits the raw manifest. |
@@ -2655,11 +2655,13 @@ stamped `independent=false` with its influence edges recorded.
 | Command | Description |
 |---------|-------------|
 | `h5i team create <name> [--base REV] [--rounds N] [--title T] [--json]` | Create a run over existing envs. `--base` (default `HEAD`) is the shared base all candidates are compared against. |
-| `h5i team add-env <team> <env> --as <agent-id> [--runtime R] [--model M] [--role ROLE] [--json]` | Add an already-created env to the roster as a persona-bound member. `--as` is the ref-safe actor key; distinct personas on the same runtime need distinct ids. Draft phase only. **Also binds the env's in-box identity to this persona** (writes a `team-identity` file), so `env run`/`env shell` inject `H5I_AGENT=<persona>` and a dispatched task lands in the right inbox. |
+| `h5i team add-env <team> <env> --as <agent-id> [--runtime R] [--model M] [--role ROLE] [--json]` | Add an already-created env to the roster as a persona-bound member. `--as` is the ref-safe actor key; distinct personas on the same runtime need distinct ids. Draft phase only. **Also binds the env's in-box identity to this persona** (writes host-owned `team-identity` / `team-run` files), so `env run`/`env shell` inject `H5I_AGENT=<persona>` and `H5I_TEAM=<team>` for scoped team-agent commands. |
 | `h5i team status [<team>] [--json]` | Folded run state: phase, roster, per-agent submission state. |
 | `h5i team list [--json]` | All runs on this clone. |
 | `h5i team use [<name>] [--clear]` | Pin a **current team** (like git's current branch) so other subcommands can drop `<team>`. No arg prints the current; `--clear` unsets. `create` auto-pins the new run. |
 | `h5i team submit <team> --agent <id> [--commit OID] [--summary-file F] [--json]` | Freeze the agent's env-branch tip (or `--commit`) as an **immutable** submission — frozen commit/tree oids + diffstat + capture ids, reviewable even if the env later changes. |
+| `h5i team agent submit [--commit OID] [--summary-file F] [--json]` | In-box submit for a bound team env. In sealed envs it writes a scoped request to the env spool; the host applies it to `refs/h5i/team/*` when the env shell exits. Host-side it submits as `$H5I_AGENT` / `$H5I_TEAM`. |
+| `h5i team agent inbox [<team>] [--peek] [--json]` | Host-side scoped inbox for the current team persona. Raw message cursors are host-owned; sealed boxes should receive task text through the launcher rather than reading `.git/.h5i/msg` directly. |
 | `h5i team freeze <team> [--allow-missing] [--json]` | Transition draft → `sealed_submit`. Refuses if any roster member has no submission unless `--allow-missing` (records abstentions). |
 | `h5i team compare <team> [--json]` | Side-by-side candidates + verifier metrics (advisory only — does not pick a winner). |
 | `h5i team verify <team> --agent <id> [--isolation TIER] -- <cmd>` | **Neutral, sandboxed verifier**: replays the frozen candidate into a throwaway worktree at the run base and runs `<cmd>` under the fail-closed `default` build/test profile. `--isolation` (`workspace`/`process`/`supervised`/`container`) defaults to the strongest tier the host can enforce (falls back to `workspace`); the tier is recorded on the verification. |
@@ -2684,34 +2686,39 @@ typing, generate shell completion: `h5i completion <bash|zsh|fish|powershell> >
 
 **Dispatching the task to the whole ensemble.** `h5i team dispatch` sends the
 task to every roster agent at once (you never paste the prompt per env). It is a
-**notification, not a launcher** — each agent still runs in its own box, where it
-picks the task out of its inbox. Because `add-env` bound each env's in-box
-`H5I_AGENT` to its persona, a running agent automatically sees the message
-addressed to it:
+**notification, not a launcher**: the shared message log and cursors are
+host-owned coordination state, not writable from sealed boxes. Use
+`scripts/team-launch.sh --task` for normal interactive runs; it dispatches for
+the host-visible log and embeds the task text directly in each boxed agent's
+startup prompt.
 
 ```bash
-h5i team dispatch fix-auth --prompt-file task.md   # one broadcast → all agents
-# bring each agent up in its box; it identifies as its persona and reads the task
+h5i team dispatch fix-auth --prompt-file task.md   # one host-side broadcast → all agents
+# bring each agent up in its box; the launcher normally embeds the task text
 h5i env shell env/claude-architect/fix-auth        # in-box H5I_AGENT=claude-architect
 h5i env shell env/codex/fix-auth                   # in-box H5I_AGENT=codex
 ```
 
-Inside the box the agent consumes its task with `h5i msg inbox` (the Stop hook
-also surfaces it between turns), works, then `h5i team submit`s its candidate.
+Inside a sealed box the agent must not run raw `h5i msg inbox` or top-level
+`h5i team submit`: `.git/.h5i/msg` and `refs/h5i/team/*` are host-only by
+design. The boxed agent works normally, uses `h5i capture run -- <cmd>` for
+evidence, then runs `h5i team agent submit`; that stages a submit request for
+host ingest on env-shell exit.
 
 **One-command bring-up.** `scripts/team-launch.sh <team> [--task <file>]` automates
-the grid: it reads the roster, optionally `dispatch`es the task, and opens one
-interactive agent per env — launching `claude` or `codex` per the member's
-runtime via `h5i env shell <env> -- <agent> …`. **By default each env gets its
+the grid: it reads the roster, optionally `dispatch`es the task for the host log,
+embeds the task text in each agent's startup prompt, and opens one interactive
+agent per env — launching `claude` or `codex` per the member's runtime via
+`h5i env shell <env> -- <agent> …`. **By default each env gets its
 own terminal window** — Windows Terminal (`wt.exe`) on WSL, a desktop terminal
 emulator on Linux-with-a-display, else a tmux window per env (Ctrl-b n/p to
 switch). `--panes` tiles them all in one tmux window; `--gui`/`--windows` force a
 backend. Re-running never collides — an existing `h5i-team-<team>` session falls
-through to `…-2`, `…-3`. Each box auto-identifies as its persona, so every agent
-lands on its own dispatched task.
+through to `…-2`, `…-3`. Each box auto-identifies as its persona and team, and
+submissions are staged through `h5i team agent submit`.
 
 ```bash
-scripts/team-launch.sh fix-auth --task task.md   # dispatch + a tmux window per agent
+scripts/team-launch.sh fix-auth --task task.md   # dispatch + embedded task + a tmux window per agent
 tmux attach -t h5i-team-fix-auth                  # supervise; watch the board in `h5i serve`
 ```
 
@@ -2756,9 +2763,9 @@ the one place a human is pinged, by choice.
 h5i team create fix-auth --base HEAD
 h5i team add-env fix-auth env/claude-architect/fix-auth --as claude-architect --runtime claude --role architect
 h5i team add-env fix-auth env/codex/fix-auth          --as codex --runtime codex --role implementer
-# each agent works in its own env, then freezes an immutable candidate
-h5i team submit fix-auth --agent claude-architect
-h5i team submit fix-auth --agent codex
+# each boxed agent works in its own env, then runs:
+h5i team agent submit
+# the host ingests those staged submits when each env shell exits
 h5i team freeze fix-auth                              # seals both independent attempts
 # neutral, sandboxed verifier re-runs each candidate at the shared base
 h5i team verify fix-auth --agent claude-architect -- cargo test

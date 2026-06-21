@@ -2092,6 +2092,11 @@ enum TeamCommands {
         #[command(subcommand)]
         action: TeamReviewCommands,
     },
+    /// Scoped commands for a team agent running from a bound env
+    Agent {
+        #[command(subcommand)]
+        action: TeamAgentCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2109,6 +2114,33 @@ enum TeamReviewCommands {
         /// Review text file
         #[arg(long)]
         file: std::path::PathBuf,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TeamAgentCommands {
+    /// Read this team persona's inbox when running host-side
+    Inbox {
+        /// Team id; defaults to $H5I_TEAM or the current team
+        team: Option<String>,
+        /// Show without advancing the cursor
+        #[arg(long)]
+        peek: bool,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Submit this env persona's candidate; boxed envs stage for host ingest
+    Submit {
+        /// Commit to submit; defaults to the env branch tip
+        #[arg(long)]
+        commit: Option<String>,
+        /// Summary text file
+        #[arg(long = "summary-file")]
+        summary_file: Option<std::path::PathBuf>,
         /// Emit JSON
         #[arg(long)]
         json: bool,
@@ -9025,6 +9057,53 @@ fn main() -> anyhow::Result<()> {
         }
 
         Commands::Team { action } => {
+            if let TeamCommands::Agent {
+                action:
+                    TeamAgentCommands::Submit {
+                        commit,
+                        summary_file,
+                        json,
+                    },
+            } = &action
+            {
+                let env_spool =
+                    std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR).map(PathBuf::from);
+                let in_box = env_spool.is_some()
+                    && std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok()
+                    && std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
+                if let (true, Some(spool)) = (in_box, env_spool) {
+                    let summary = match summary_file {
+                        Some(path) => Some(std::fs::read_to_string(path).map_err(|e| {
+                            anyhow::anyhow!(
+                                "failed to read summary file {}: {e}",
+                                path.display()
+                            )
+                        })?),
+                        None => None,
+                    };
+                    let request = h5i_core::env::TeamSubmitSpool {
+                        commit: commit.clone(),
+                        summary,
+                    };
+                    let staged = h5i_core::env::write_team_submit_spool(&spool, &request)?;
+                    if *json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "staged": staged,
+                                "host_ingest": "env-shell-exit"
+                            }))?
+                        );
+                    } else {
+                        println!(
+                            "{} team submit staged for host ingest ({})",
+                            style("▢").cyan().dim(),
+                            staged
+                        );
+                    }
+                    return Ok(());
+                }
+            }
             let repo = H5iRepository::open(".")?;
             let h5i_root = repo.h5i_root.clone();
             let git = repo.git();
@@ -9371,6 +9450,120 @@ fn main() -> anyhow::Result<()> {
                                 "{} recorded review {} -> {}",
                                 SUCCESS, review.reviewer, review.target
                             );
+                        }
+                    }
+                },
+                TeamCommands::Agent { action } => match action {
+                    TeamAgentCommands::Inbox { team, peek, json } => {
+                        let agent = msg::resolve_identity(&h5i_root, None)?;
+                        let team = match team {
+                            Some(t) => t,
+                            None => std::env::var(h5i_core::env::H5I_TEAM_VAR)
+                                .ok()
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or_else(|| {
+                                    h5i_core::team::resolve_run(&h5i_root, None)
+                                        .unwrap_or_default()
+                                }),
+                        };
+                        if team.is_empty() {
+                            anyhow::bail!(
+                                "no team set — run from `h5i env shell` for a team env, pass TEAM, or run `h5i team use <name>`"
+                            );
+                        }
+                        let status = h5i_core::team::status(git, &team)?;
+                        if !status.run.agents.iter().any(|a| a.agent_id == agent) {
+                            anyhow::bail!("team '{team}' has no agent '{agent}'");
+                        }
+                        let unread = msg::inbox(git, &h5i_root, &agent, !peek)?;
+                        let ids: Vec<String> = unread.iter().map(|m| m.id.clone()).collect();
+                        msg::write_last_view(&h5i_root, &agent, &ids)?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&unread)?);
+                        } else if unread.is_empty() {
+                            println!(
+                                "{} No new team messages for {}.",
+                                SUCCESS,
+                                style(&agent).green().bold()
+                            );
+                        } else {
+                            println!(
+                                "{} {} new team message{} for {}{}\n",
+                                STEP,
+                                style(unread.len()).cyan().bold(),
+                                if unread.len() == 1 { "" } else { "s" },
+                                style(&agent).green().bold(),
+                                if peek {
+                                    style(" (peek)").dim().to_string()
+                                } else {
+                                    String::new()
+                                },
+                            );
+                            print_messages_numbered(&unread, &agent, false);
+                        }
+                    }
+                    TeamAgentCommands::Submit { commit, summary_file, json } => {
+                        let summary = match summary_file {
+                            Some(path) => Some(std::fs::read_to_string(&path).map_err(|e| {
+                                anyhow::anyhow!(
+                                    "failed to read summary file {}: {e}",
+                                    path.display()
+                                )
+                            })?),
+                            None => None,
+                        };
+                        let in_env_spool =
+                            std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR)
+                                .map(PathBuf::from);
+                        let in_box = in_env_spool.is_some()
+                            && std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok()
+                            && std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
+                        if let (true, Some(spool)) = (in_box, in_env_spool) {
+                            let request = h5i_core::env::TeamSubmitSpool { commit, summary };
+                            let staged =
+                                h5i_core::env::write_team_submit_spool(&spool, &request)?;
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "staged": staged,
+                                        "host_ingest": "env-shell-exit"
+                                    }))?
+                                );
+                            } else {
+                                println!(
+                                    "{} team submit staged for host ingest ({})",
+                                    style("▢").cyan().dim(),
+                                    staged
+                                );
+                            }
+                        } else {
+                            let team = std::env::var(h5i_core::env::H5I_TEAM_VAR)
+                                .ok()
+                                .filter(|s| !s.trim().is_empty())
+                                .map(Ok)
+                                .unwrap_or_else(|| h5i_core::team::resolve_run(&h5i_root, None))?;
+                            let agent = msg::resolve_identity(&h5i_root, None)?;
+                            let artifact = h5i_core::team::submit(
+                                git,
+                                &h5i_root,
+                                &team,
+                                &agent,
+                                commit.as_deref(),
+                                summary,
+                                &agent,
+                            )?;
+                            if json {
+                                println!("{}", serde_json::to_string_pretty(&artifact)?);
+                            } else {
+                                println!(
+                                    "{} submitted {} for {} at {}",
+                                    SUCCESS,
+                                    artifact.id,
+                                    artifact.owner_agent,
+                                    &artifact.commit_oid[..12.min(artifact.commit_oid.len())]
+                                );
+                            }
                         }
                     }
                 },
