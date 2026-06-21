@@ -3922,3 +3922,4 @@ _[Checkpoint: 6a374929 — edited src/team.rs; edited src/team.rs]_
 ---
 
 [02:16:35] OBSERVE: read src/team.rs
+[02:17:27] OBSERVE: read roadmap/team-design.md
