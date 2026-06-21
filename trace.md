@@ -4412,3 +4412,4 @@ _[Checkpoint: 6a383b87 — edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited 
 _[Checkpoint: 6a384569 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited CLAUDE.md]_
 ---
 
+[20:12:54] THINK: That `docs/index.html` edit (a hero-title copy change) isn't mine — I'll leave it unstaged and commit only my files.
