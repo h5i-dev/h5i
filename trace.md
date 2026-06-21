@@ -4287,3 +4287,9 @@ _[Checkpoint: 6a3808e3 — edited src/env.rs; edited src/env.rs; edited scripts/
 _[Checkpoint: 6a380d38 — Implemented host-mediated h5i team agent submit path: boxed agents stage submits to env spool; host ingests into team refs on env shell exit; launcher/docs now avoid raw msg/team refs inside sealed boxes.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a380d43 — edited /home/koukyosyumei/Dev/h5i/src/team.rs; edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyumei/D…]_
+---
+
