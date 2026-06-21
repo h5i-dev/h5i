@@ -2702,11 +2702,12 @@ also surfaces it between turns), works, then `h5i team submit`s its candidate.
 **One-command bring-up.** `scripts/team-launch.sh <team> [--task <file>]` automates
 the grid: it reads the roster, optionally `dispatch`es the task, and opens one
 interactive agent per env — launching `claude` or `codex` per the member's
-runtime via `h5i env shell <env> -- <agent> …`. By default it lays all agents out
-as **tiled tmux panes in one window** (the control-room view — every agent
-visible at once, panes labeled by persona); `--windows` gives one window per
-agent for large rosters, and `--gui` spawns separate terminal windows. Each box
-auto-identifies as its persona, so every agent lands on its own dispatched task.
+runtime via `h5i env shell <env> -- <agent> …`. **By default each env gets its
+own terminal window** (a desktop window when a display is available, else a tmux
+window — Ctrl-b n/p to switch); `--panes` tiles them all in one tmux window, and
+`--gui`/`--windows` force a backend. Re-running never collides — an existing
+`h5i-team-<team>` session falls through to `…-2`, `…-3`. Each box auto-identifies
+as its persona, so every agent lands on its own dispatched task.
 
 ```bash
 scripts/team-launch.sh fix-auth --task task.md   # dispatch + a tmux window per agent

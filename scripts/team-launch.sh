@@ -8,8 +8,9 @@
 # `team-identity` wired by `h5i team add-env`), so a task sent with
 # `h5i team dispatch` lands in the right inbox and the agent picks it up.
 #
-# Default backend is tmux (one window per agent) — robust, works over SSH and
-# without a display. `--gui` instead spawns separate terminal windows.
+# Default: a separate terminal window per env when a desktop display is
+# available, otherwise a tmux session (one window per env). Use --panes for a
+# single tiled tmux window, or --gui / --windows to force a backend.
 #
 # Usage:
 #   scripts/team-launch.sh [options] <team>
@@ -17,14 +18,12 @@
 # Options:
 #   --task <file>     Dispatch <file> to every agent first (h5i team dispatch),
 #                     then launch each agent pointed at its inbox.
-#   --gui             Open GUI terminal windows instead of a tmux session.
-#   --windows         One tmux window per agent (default: tiled panes, all
-#                     visible at once in a single window).
+#   --gui             Force separate OS terminal windows (one per env).
+#   --windows         Force tmux, one window per env (Ctrl-b n/p to switch).
+#   --panes           Force tmux, all envs as tiled panes in one window.
 #   --session <name>  tmux session name (default: h5i-team-<team>).
 #   -n, --dry-run     Print what would run; don't launch anything.
 #   -h, --help        This help.
-#
-# Requires: h5i, jq; tmux (unless --gui).
 #
 # Install (optional — you can also just run it in place: ./scripts/team-launch.sh):
 #   # symlink onto your PATH so it tracks the repo:
@@ -32,11 +31,12 @@
 #   # (ensure ~/.local/bin is on $PATH), then from any h5i repo:
 #   h5i-team-launch <team> --task task.md
 #   # if `h5i` is not on $PATH, point to it:  H5I=/path/to/h5i h5i-team-launch <team>
+#
+# Requires: h5i, jq; tmux for the tmux backends.
 set -euo pipefail
 
 H5I="${H5I:-h5i}"
-GUI=0
-WINDOWS=0
+MODE=""            # gui | windows | panes ; empty = auto
 DRY=0
 TASK=""
 SESSION=""
@@ -51,11 +51,12 @@ die() { echo "team-launch: $*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --task) TASK="${2:-}"; shift 2 ;;
-    --gui) GUI=1; shift ;;
-    --windows) WINDOWS=1; shift ;;
+    --gui) MODE=gui; shift ;;
+    --windows) MODE=windows; shift ;;
+    --panes) MODE=panes; shift ;;
     --session) SESSION="${2:-}"; shift 2 ;;
     -n|--dry-run) DRY=1; shift ;;
-    -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1{exit}' "$0"; exit 0 ;;
     -*) die "unknown option: $1" ;;
     *) [ -z "$TEAM" ] && TEAM="$1" || die "unexpected argument: $1"; shift ;;
   esac
@@ -66,6 +67,20 @@ command -v "$H5I" >/dev/null 2>&1 || die "h5i not found (set \$H5I)"
 command -v jq >/dev/null 2>&1 || die "jq is required"
 [ -z "$TASK" ] || [ -f "$TASK" ] || die "task file not found: $TASK"
 SESSION="${SESSION:-h5i-team-$TEAM}"
+
+# First available GUI terminal emulator (echo its name, or fail).
+term_bin() {
+  for t in x-terminal-emulator gnome-terminal konsole alacritty kitty wezterm xterm; do
+    command -v "$t" >/dev/null 2>&1 && { echo "$t"; return 0; }
+  done
+  return 1
+}
+have_display() { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }
+
+# Auto-pick a backend: separate OS windows on a desktop, else tmux windows.
+if [ -z "$MODE" ]; then
+  if have_display && term_bin >/dev/null 2>&1; then MODE=gui; else MODE=windows; fi
+fi
 
 # Roster: agent_id <tab> env_id <tab> runtime, one per line.
 ROSTER="$("$H5I" team status "$TEAM" --json | jq -r \
@@ -88,16 +103,11 @@ if [ -n "$TASK" ]; then
                  || "$H5I" team dispatch "$TEAM" --prompt-file "$TASK"
 fi
 
-if [ "$GUI" = 1 ]; then
-  # Pick the first available terminal emulator.
-  TERM_BIN=""
-  for t in x-terminal-emulator gnome-terminal konsole alacritty kitty wezterm xterm; do
-    command -v "$t" >/dev/null 2>&1 && { TERM_BIN="$t"; break; }
-  done
-  [ -n "$TERM_BIN" ] || die "no terminal emulator found (try without --gui for tmux)"
+if [ "$MODE" = gui ]; then
+  TERM_BIN="$(term_bin)" || die "no terminal emulator found; use --windows/--panes for tmux"
   while IFS=$'\t' read -r agent env runtime; do
     cmd="$H5I env shell $env -- $(launch_for "$runtime")"
-    echo "[$agent] $TERM_BIN -e $cmd"
+    echo "[$agent] $TERM_BIN: $cmd"
     [ "$DRY" = 1 ] && continue
     case "$TERM_BIN" in
       gnome-terminal) "$TERM_BIN" --title "$agent" -- bash -lc "$cmd" & ;;
@@ -105,34 +115,36 @@ if [ "$GUI" = 1 ]; then
       *)              "$TERM_BIN" -e bash -lc "$cmd" & ;;
     esac
   done <<< "$ROSTER"
-  echo "launched GUI terminals for team $TEAM."
+  echo "launched a terminal window per env for team $TEAM."
   exit 0
 fi
 
-# tmux backend. Default: all agents as tiled panes in ONE window (visible at
-# once — the control-room view). --windows: one window per agent (Ctrl-b n/p to
-# switch), better for large rosters.
+# tmux backend (windows = one per env, default; panes = tiled in one window).
 command -v tmux >/dev/null 2>&1 || die "tmux is required (or use --gui)"
+# Never collide with an existing session — pick the next free name.
+if [ "$DRY" != 1 ]; then
+  base="$SESSION"; n=2
+  while tmux has-session -t "$SESSION" 2>/dev/null; do SESSION="$base-$n"; n=$((n + 1)); done
+  [ "$SESSION" = "$base" ] || echo "note: session '$base' exists — using '$SESSION'"
+fi
+
 first=1
 while IFS=$'\t' read -r agent env runtime; do
   cmd="$H5I env shell $env -- $(launch_for "$runtime")"
   echo "[$agent] $cmd"
   [ "$DRY" = 1 ] && continue
   if [ "$first" = 1 ]; then
-    wname="team"; [ "$WINDOWS" = 1 ] && wname="$agent"
+    wname="$agent"; [ "$MODE" = panes ] && wname="team"
     tmux new-session -d -s "$SESSION" -n "$wname" "$cmd"
-    # keep a dead agent's pane/window visible for inspection; label panes
-    tmux set-option -t "$SESSION" remain-on-exit on >/dev/null 2>&1 || true
     tmux set-option -t "$SESSION" pane-border-status top >/dev/null 2>&1 || true
     tmux select-pane -t "$SESSION" -T "$agent" >/dev/null 2>&1 || true
     first=0
-  elif [ "$WINDOWS" = 1 ]; then
-    tmux new-window -t "$SESSION" -n "$agent" "$cmd"
-  else
-    # add a tiled pane in the same window so every agent is visible together
+  elif [ "$MODE" = panes ]; then
     tmux split-window -t "$SESSION" "$cmd"
     tmux select-pane -t "$SESSION" -T "$agent" >/dev/null 2>&1 || true
     tmux select-layout -t "$SESSION" tiled >/dev/null 2>&1 || true
+  else
+    tmux new-window -t "$SESSION" -n "$agent" "$cmd"
   fi
 done <<< "$ROSTER"
 
@@ -140,6 +152,6 @@ if [ "$DRY" = 1 ]; then
   echo "(dry run) would attach to tmux session: $SESSION"
   exit 0
 fi
-[ "$WINDOWS" = 1 ] || tmux select-layout -t "$SESSION" tiled >/dev/null 2>&1 || true
-echo "team $TEAM is up in tmux session '$SESSION'. Attach: tmux attach -t $SESSION"
+[ "$MODE" = panes ] && { tmux select-layout -t "$SESSION" tiled >/dev/null 2>&1 || true; }
+echo "team $TEAM is up in tmux session '$SESSION' (Ctrl-b n/p to switch, Ctrl-b w to list)."
 [ -n "${TMUX:-}" ] && tmux switch-client -t "$SESSION" || tmux attach -t "$SESSION"
