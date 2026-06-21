@@ -4063,3 +4063,4 @@ _[Checkpoint: 6a37c49e — edited MANUAL.md; edited man/man1/h5i.1; edited man/m
 _[Checkpoint: 6a37c52e — edited MANUAL.md; edited man/man1/h5i.1; edited man/man1/h5i.1]_
 ---
 
+[11:07:17] NOTE: DEFERRAL (~/Dev/h5i/man/man1/h5i.1): command*, not an agent. It should be non-interactive. - The deferred **`team dispatch --run`** executor I scoped would use `claude -p`/`codex exec` …
