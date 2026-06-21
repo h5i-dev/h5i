@@ -918,6 +918,17 @@ pub fn discuss(
         validate_agent_id(r)?;
     }
     let current = status(repo, run_id)?.run;
+    // Independence-first (invariant 1): discussion may only happen AFTER the run
+    // is frozen, so every agent's first attempt is sealed and independent before
+    // any cross-agent influence is possible. A discuss in `draft` would let
+    // agents contaminate each other before any independent submission exists.
+    if current.phase != PHASE_SEALED_SUBMIT && current.phase != "discuss" {
+        return Err(H5iError::Metadata(format!(
+            "team '{run_id}' is in phase '{}' — discussion is only allowed after `h5i team freeze` \
+             (sealed_submit), so the first attempt stays independent",
+            current.phase
+        )));
+    }
     if !current.agents.iter().any(|a| a.agent_id == sender) {
         return Err(H5iError::Metadata(format!(
             "team '{run_id}' has no sender '{sender}'"
@@ -1168,25 +1179,53 @@ pub fn finalize(repo: &Repository, run_id: &str, actor: &str) -> Result<TeamVerd
             .then(a.deletions.cmp(&b.deletions))
             .then(a.id.cmp(&b.id))
     });
-    let verdict = if let Some((winner, verification)) = eligible.first() {
+    const METHOD: &str = "rule:VerifierTestsPass,AppliesCleanly,SmallestDiff";
+    // Anti-gaming: a verdict is only apples-to-apples if every eligible candidate
+    // was judged by the SAME verifier command. Otherwise one candidate could be
+    // waved through with a weaker command (e.g. `true`) than its rivals. Refuse to
+    // pick a winner across divergent commands rather than crown a gamed candidate.
+    let divergent_command = eligible
+        .iter()
+        .any(|(_, v)| v.command != eligible[0].1.command);
+    let verdict = if eligible.is_empty() {
+        TeamVerdict {
+            selected_submission: None,
+            method: METHOD.into(),
+            decided_by: "team-policy".into(),
+            can_auto_apply: false,
+            reasons: vec!["no candidate has passing verifier evidence".into()],
+        }
+    } else if divergent_command {
+        let commands: BTreeSet<String> =
+            eligible.iter().map(|(_, v)| v.command.join(" ")).collect();
+        TeamVerdict {
+            selected_submission: None,
+            method: METHOD.into(),
+            decided_by: "team-policy".into(),
+            can_auto_apply: false,
+            reasons: vec![format!(
+                "candidates were verified with different commands ({}) — not comparable; \
+                 re-verify every candidate with one command",
+                commands.into_iter().collect::<Vec<_>>().join(" | ")
+            )],
+        }
+    } else {
+        let (winner, verification) = eligible[0];
         TeamVerdict {
             selected_submission: Some(winner.id.clone()),
-            method: "rule:VerifierTestsPass,AppliesCleanly,SmallestDiff".into(),
+            method: METHOD.into(),
             decided_by: "team-policy".into(),
             can_auto_apply: true,
             reasons: vec![
                 format!("{} applies cleanly", winner.id),
-                format!("{} verifier tests passed ({})", winner.id, verification.id),
+                format!(
+                    "{} verifier tests passed via `{}` ({})",
+                    winner.id,
+                    verification.command.join(" "),
+                    verification.id
+                ),
                 "smallest diff among verifier-passing candidates".into(),
             ],
-        }
-    } else {
-        TeamVerdict {
-            selected_submission: None,
-            method: "rule:VerifierTestsPass,AppliesCleanly,SmallestDiff".into(),
-            decided_by: "team-policy".into(),
-            can_auto_apply: false,
-            reasons: vec!["no candidate has passing verifier evidence".into()],
         }
     };
     let kind = if verdict.selected_submission.is_some() {
@@ -1859,6 +1898,10 @@ mod tests {
         )
         .unwrap();
         let codex_sub = submit(&repo, h5i_root, "run6", "codex-fix", None, None, "codex").unwrap();
+        // Both agents submit their INDEPENDENT first attempts, then the run is
+        // sealed before any discussion is permitted (independence-first).
+        submit(&repo, h5i_root, "run6", "claude-fix", None, None, "claude").unwrap();
+        freeze(&repo, "run6", false, "human").unwrap();
         discuss(
             &repo,
             h5i_root,
@@ -1870,11 +1913,130 @@ mod tests {
             "human",
         )
         .unwrap();
+        // claude revises AFTER the discussion → influenced, no longer independent.
         let claude_sub =
             submit(&repo, h5i_root, "run6", "claude-fix", None, None, "claude").unwrap();
         assert!(!claude_sub.independent);
         assert!(!claude_sub.influence_event_ids.is_empty());
         assert!(!claude_sub.influence_artifact_ids.is_empty());
+    }
+
+    #[test]
+    fn discuss_refused_before_freeze() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        manifest(&repo, h5i_root, "codex", "fix");
+        manifest(&repo, h5i_root, "claude", "fix");
+        create(&repo, "run-d", "run-d", "HEAD", 1, "human").unwrap();
+        add_env(&repo, h5i_root, "run-d", "env/codex/fix", "codex-fix", None, None, None, "human")
+            .unwrap();
+        add_env(&repo, h5i_root, "run-d", "env/claude/fix", "claude-fix", None, None, None, "human")
+            .unwrap();
+        // draft → discussion forbidden (first attempts not yet sealed).
+        let err = discuss(
+            &repo,
+            h5i_root,
+            "run-d",
+            "codex-fix",
+            vec!["claude-fix".into()],
+            "hi".into(),
+            vec![],
+            "codex-fix",
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("only allowed after"));
+        // after freeze → permitted.
+        freeze(&repo, "run-d", true, "human").unwrap();
+        let d = discuss(
+            &repo,
+            h5i_root,
+            "run-d",
+            "codex-fix",
+            vec!["claude-fix".into()],
+            "hi".into(),
+            vec![],
+            "codex-fix",
+        )
+        .unwrap();
+        assert_eq!(d.sender, "codex-fix");
+    }
+
+    #[test]
+    fn finalize_refuses_divergent_verifier_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        manifest(&repo, h5i_root, "a1", "fix");
+        manifest(&repo, h5i_root, "a2", "fix");
+        create(&repo, "run-v", "run-v", "HEAD", 1, "human").unwrap();
+        add_env(&repo, h5i_root, "run-v", "env/a1/fix", "a1", None, None, None, "human").unwrap();
+        add_env(&repo, h5i_root, "run-v", "env/a2/fix", "a2", None, None, None, "human").unwrap();
+
+        // Hand-craft two passing submissions + verifications with DIFFERENT commands.
+        for (agent, sid) in [("a1", "sub-a1"), ("a2", "sub-a2")] {
+            let art = TeamArtifact {
+                id: sid.into(),
+                owner_agent: agent.into(),
+                round: 1,
+                env_id: format!("env/{agent}/fix"),
+                commit_oid: "0".repeat(40),
+                tree_oid: "0".repeat(40),
+                capture_ids: vec![],
+                files_changed: 1,
+                insertions: 1,
+                deletions: 0,
+                summary: None,
+                independent: true,
+                influence_event_ids: vec![],
+                influence_artifact_ids: vec![],
+            };
+            let ev = event(
+                "run-v",
+                "human",
+                "submitted",
+                1,
+                None,
+                None,
+                format!("submitted:run-v:{agent}"),
+                serde_json::to_value(&art).unwrap(),
+            );
+            append_event(&repo, &ev).unwrap();
+        }
+        let verifs = [
+            ("ver-a1", "sub-a1", "a1", vec!["cargo".to_string(), "test".to_string()]),
+            ("ver-a2", "sub-a2", "a2", vec!["true".to_string()]),
+        ];
+        for (vid, sid, agent, command) in verifs {
+            let v = TeamVerification {
+                id: vid.into(),
+                submission_id: sid.into(),
+                owner_agent: agent.into(),
+                round: 1,
+                command,
+                applies_cleanly: true,
+                tests_passed: true,
+                capture_id: None,
+                failure: None,
+            };
+            let ev = event(
+                "run-v",
+                "human",
+                "verified",
+                1,
+                None,
+                Some("verified".into()),
+                format!("verified:run-v:{vid}"),
+                serde_json::to_value(&v).unwrap(),
+            );
+            append_event(&repo, &ev).unwrap();
+        }
+        let verdict = finalize(&repo, "run-v", "human").unwrap();
+        assert!(verdict.selected_submission.is_none());
+        assert!(!verdict.can_auto_apply);
+        assert!(verdict.reasons.iter().any(|r| r.contains("different commands")));
     }
 
     #[test]
