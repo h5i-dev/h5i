@@ -18,8 +18,6 @@
 #   --task <file>     Dispatch <file> to every agent first (h5i team dispatch),
 #                     then launch each agent pointed at its inbox.
 #   --gui             Open GUI terminal windows instead of a tmux session.
-#   --no-keep-shell   Close the box when the agent exits (default: keep a shell
-#                     open so you can `h5i team submit` / inspect afterwards).
 #   --session <name>  tmux session name (default: h5i-team-<team>).
 #   -n, --dry-run     Print what would run; don't launch anything.
 #   -h, --help        This help.
@@ -28,7 +26,6 @@
 set -euo pipefail
 
 H5I="${H5I:-h5i}"
-KEEP_SHELL=1
 GUI=0
 DRY=0
 TASK=""
@@ -45,7 +42,6 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --task) TASK="${2:-}"; shift 2 ;;
     --gui) GUI=1; shift ;;
-    --no-keep-shell) KEEP_SHELL=0; shift ;;
     --session) SESSION="${2:-}"; shift 2 ;;
     -n|--dry-run) DRY=1; shift ;;
     -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -74,8 +70,6 @@ launch_for() {
   esac
 }
 
-KEEP_FLAG=""; [ "$KEEP_SHELL" = 1 ] && KEEP_FLAG="--keep-shell"
-
 # Optionally dispatch the task to every agent's inbox before launching.
 if [ -n "$TASK" ]; then
   echo "dispatching $TASK to team $TEAM ..."
@@ -91,7 +85,7 @@ if [ "$GUI" = 1 ]; then
   done
   [ -n "$TERM_BIN" ] || die "no terminal emulator found (try without --gui for tmux)"
   while IFS=$'\t' read -r agent env runtime; do
-    cmd="$H5I env shell $env $KEEP_FLAG -- $(launch_for "$runtime")"
+    cmd="$H5I env shell $env -- $(launch_for "$runtime")"
     echo "[$agent] $TERM_BIN -e $cmd"
     [ "$DRY" = 1 ] && continue
     case "$TERM_BIN" in
@@ -108,11 +102,13 @@ fi
 command -v tmux >/dev/null 2>&1 || die "tmux is required (or use --gui)"
 first=1
 while IFS=$'\t' read -r agent env runtime; do
-  cmd="$H5I env shell $env $KEEP_FLAG -- $(launch_for "$runtime")"
+  cmd="$H5I env shell $env -- $(launch_for "$runtime")"
   echo "[$agent] $cmd"
   [ "$DRY" = 1 ] && continue
   if [ "$first" = 1 ]; then
     tmux new-session -d -s "$SESSION" -n "$agent" "$cmd"
+    # keep a window visible if its agent exits/crashes (inspect, then close)
+    tmux set-option -t "$SESSION" remain-on-exit on >/dev/null 2>&1 || true
     first=0
   else
     tmux new-window -t "$SESSION" -n "$agent" "$cmd"
