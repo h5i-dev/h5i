@@ -4360,3 +4360,4 @@ _[Checkpoint: 6a3810a3 — edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited 
 _[Checkpoint: 6a383b87 — edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyumei/Dev/h5i/src/sandbox_policy.rs; edited /home/kouk…]_
 ---
 
+[19:42:58] OBSERVE: read src/env.rs
