@@ -4050,3 +4050,4 @@ _[Checkpoint: 6a37aa2e — edited MANUAL.md; edited man/man1/h5i.1; edited man/m
 [10:58:41] ACT: edited MANUAL.md
 [10:59:10] ACT: edited man/man1/h5i.1
 [10:59:38] ACT: edited man/man1/h5i.1
+[11:01:50] NOTE: DEFERRAL (~/Dev/h5i/man/man1/h5i.1): R, or tackle the remaining `pin-verifier-command-at-create` follow-up
