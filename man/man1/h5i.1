@@ -505,7 +505,7 @@ tier's nftables egress is the airtight L3/L4 equivalent).
 Policy is defined per profile in
 .IR .h5i/env.toml " (" "isolation, fs.read/write/deny, net.mode/egress, "
 resources.mem/procs/wall/fsize/cpu, tools, env.pass, container.image, secrets,
-private_paths).
+private_paths, shell.rcfile).
 .B private_paths
 give each env its own backing store for build-cache/lock dirs (kind
 .IR cache / scratch / private ),
@@ -522,6 +522,18 @@ fail-closed; a
 extractor runs host-side code and is refused unless the profile sets
 .B allow_command_extractors
 (pinned in the digest), and is then bounded by a wall timeout + output cap.
+.B shell.rcfile
+points
+.B env shell
+at a custom bash rcfile (path relative to the worktree, e.g.
+.IR .h5i/box.bashrc );
+unset, an interactive bash gets a generated \fIplain\fR rc instead of the host
+.IR ~/.bashrc ,
+which under confinement routinely references blocked tools (e.g.\&
+.IR powerline-shell ).
+The plain rc sets a clear prompt and sources
+.I ~/.h5i_envrc
+if present.
 Long-lived
 .B [service.<name>]
 declarations are pinned at create. The fully-resolved policy's sha256 digest is

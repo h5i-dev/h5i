@@ -336,6 +336,15 @@ pub struct Profile {
     /// Serialized only when `true`, so existing digests are unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_command_extractors: bool,
+    /// Custom bash rcfile for interactive `env shell` sessions, as a path
+    /// **relative to `$WORK`** (the env worktree) — e.g. `.h5i/box.bashrc`. When
+    /// unset, `env shell` launches bash with a generated *plain* rcfile instead
+    /// of the host `~/.bashrc` (which, under confinement, often references tools
+    /// the sandbox blocks — e.g. `~/.local/bin/powerline-shell`). Set this to
+    /// opt a specific env back into a richer, version-controlled rc. Serialized
+    /// only when set, so existing policy digests are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_rcfile: Option<String>,
 }
 
 /// Read-only system paths granted by default at the `process` tier — enough to
@@ -391,6 +400,7 @@ impl Profile {
             ],
             private_paths: Vec::new(),
             allow_command_extractors: false,
+            shell_rcfile: None,
         }
     }
 

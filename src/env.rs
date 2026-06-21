@@ -2240,7 +2240,7 @@ pub fn shell(
     repo: &Repository,
     h5i_root: &Path,
     m: &mut EnvManifest,
-    argv: &[String],
+    command: &[String],
 ) -> Result<i32, H5iError> {
     match m.status.as_str() {
         ST_CREATED | ST_RUNNING | ST_IDLE => {}
@@ -2288,6 +2288,17 @@ pub fn shell(
         &team_identity_env(m, h5i_root),
     );
 
+    // No command given → launch an interactive shell. Rather than inherit the
+    // host `~/.bashrc` (which, under confinement, routinely references tools the
+    // sandbox blocks — e.g. `~/.local/bin/powerline-shell`), bash is launched
+    // with a generated *plain* rcfile by default; a profile may pin a custom one
+    // via `[profile.X.shell] rcfile = "…"`. May Landlock-grant the generated rc.
+    let argv: Vec<String> = if command.is_empty() {
+        default_shell_argv(h5i_root, m, &mut policy, &work)?
+    } else {
+        command.to_vec()
+    };
+
     set_status(
         repo,
         h5i_root,
@@ -2297,7 +2308,7 @@ pub fn shell(
         Some("running (shell)".into()),
         None,
     )?;
-    let exit_code = match sandbox::run_interactive(&policy, &work, argv, &injected_env) {
+    let exit_code = match sandbox::run_interactive(&policy, &work, &argv, &injected_env) {
         Ok(code) => code,
         Err(e) => {
             let _ = protected_hook_configs.finish();
@@ -2371,6 +2382,131 @@ pub fn shell(
         )?;
     }
     Ok(exit_code)
+}
+
+// ─── interactive shell rc ────────────────────────────────────────────────────
+
+/// Build the argv for a default (no-command) interactive `env shell` session.
+///
+/// The host `$SHELL` is used, but for **bash** the host `~/.bashrc` is *not*
+/// sourced by default — under confinement it routinely calls tools the sandbox
+/// blocks (e.g. `~/.local/bin/powerline-shell`), spraying `Permission denied`
+/// noise. Instead bash is pointed at:
+///   - a **custom** rcfile when the profile sets `[shell] rcfile` — resolved
+///     relative to `$WORK` (the worktree), so it is version-controlled and
+///     reachable in the box on every tier without an extra grant; or
+///   - a generated **plain** rcfile (clear prompt, a couple of aliases, and an
+///     optional `~/.h5i_envrc` hook), written under the env's private dir and
+///     Landlock-granted read on the kernel tiers.
+///
+/// Non-bash shells and the container tier (whose rc comes from the image, not
+/// the host) fall through to a bare `[$SHELL, "-i"]`.
+fn default_shell_argv(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    policy: &mut ResolvedPolicy,
+    work: &Path,
+) -> Result<Vec<String>, H5iError> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    let is_bash = Path::new(&shell)
+        .file_name()
+        .map(|n| n == "bash")
+        .unwrap_or(false);
+    let bare = vec![shell.clone(), "-i".to_string()];
+
+    // The container shell + its rc come from the image, not the host — the host
+    // `~/.bashrc` is never sourced there, so there is nothing to neutralize and
+    // a host-path rcfile would not resolve in-box. Honor neither default here.
+    if policy.claim == IsolationClaim::Container {
+        if policy.profile.shell_rcfile.is_some() {
+            eprintln!(
+                "   note: [shell] rcfile is ignored at isolation=container \
+                 (the shell rc comes from the image)"
+            );
+        }
+        return Ok(bare);
+    }
+
+    if let Some(rc) = policy.profile.shell_rcfile.clone() {
+        if !is_bash {
+            eprintln!(
+                "   note: [shell] rcfile only applies to bash; $SHELL is '{shell}' — ignoring"
+            );
+            return Ok(bare);
+        }
+        let rcpath = resolve_work_rcfile(work, &rc)?;
+        return Ok(vec![shell, "--rcfile".into(), rcpath, "-i".into()]);
+    }
+
+    if !is_bash {
+        // We only know how to inject a plain rc for bash; other shells keep
+        // their normal startup (zsh/sh source their own host files).
+        return Ok(bare);
+    }
+
+    let rcpath = write_plain_bashrc(h5i_root, m)?;
+    // Kernel tiers enforce a Landlock read allowlist: grant the generated rc so
+    // bash can read it. (Workspace is unconfined; container returned above.)
+    if matches!(
+        policy.claim,
+        IsolationClaim::Process | IsolationClaim::Supervised
+    ) {
+        policy.profile.fs_read.push(rcpath.clone());
+    }
+    Ok(vec![shell, "--rcfile".into(), rcpath, "-i".into()])
+}
+
+/// Resolve a profile `[shell] rcfile` (relative to `$WORK`) to an absolute path,
+/// fail-closed: it must stay inside the worktree (no absolute paths, no `..`
+/// escape) and must exist. Keeps the rc inside the one always-mounted, granted
+/// subtree so it resolves in the box on every tier.
+fn resolve_work_rcfile(work: &Path, rel: &str) -> Result<String, H5iError> {
+    let p = Path::new(rel);
+    if p.is_absolute() {
+        return Err(H5iError::Metadata(format!(
+            "[shell] rcfile '{rel}' must be relative to the worktree, not an absolute path"
+        )));
+    }
+    if p.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(H5iError::Metadata(format!(
+            "[shell] rcfile '{rel}' must not escape the worktree with '..'"
+        )));
+    }
+    let full = work.join(p);
+    if !full.is_file() {
+        return Err(H5iError::Metadata(format!(
+            "[shell] rcfile '{rel}' not found in the worktree (expected at {})",
+            full.display()
+        )));
+    }
+    Ok(full.display().to_string())
+}
+
+/// Write the generated plain bash rcfile into the env's private dir and return
+/// its absolute path. Idempotent (rewritten each session so a re-`create` or an
+/// edited env id stays in sync).
+fn write_plain_bashrc(h5i_root: &Path, m: &EnvManifest) -> Result<String, H5iError> {
+    let dir = m.dir(h5i_root).join("shell");
+    std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+    let path = dir.join("rc.bash");
+    // The env id can contain '/' (agent/slug); harmless inside single quotes.
+    let body = format!(
+        "# Generated by `h5i env shell` — a plain default rc.\n\
+         # The host ~/.bashrc is intentionally NOT sourced inside the confined box\n\
+         # (it tends to reference tools the sandbox blocks, e.g. powerline-shell).\n\
+         # To customize: set `[shell] rcfile = \"…\"` (relative to the worktree) in\n\
+         # .h5i/env.toml, or drop extra shell config in ~/.h5i_envrc (sourced below).\n\
+         PS1='h5i:{id} \\w \\$ '\n\
+         alias ll='ls -alF'\n\
+         alias la='ls -A'\n\
+         alias ls='ls --color=auto' 2>/dev/null\n\
+         [ -f \"$HOME/.h5i_envrc\" ] && . \"$HOME/.h5i_envrc\"\n",
+        id = m.id,
+    );
+    std::fs::write(&path, body).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(path.display().to_string())
 }
 
 // ─── shell-spool ingest (in-box observation evidence) ────────────────────────
@@ -5042,6 +5178,39 @@ pub fn rm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_work_rcfile_accepts_in_tree_and_rejects_escapes() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path();
+        std::fs::create_dir_all(work.join(".h5i")).unwrap();
+        std::fs::write(work.join(".h5i/box.bashrc"), "PS1='x '\n").unwrap();
+
+        // A real file inside the worktree resolves to its absolute path.
+        let got = resolve_work_rcfile(work, ".h5i/box.bashrc").unwrap();
+        assert_eq!(got, work.join(".h5i/box.bashrc").display().to_string());
+
+        // Absolute, `..`-escaping, and missing all fail closed.
+        assert!(resolve_work_rcfile(work, "/etc/passwd").is_err());
+        assert!(resolve_work_rcfile(work, "../outside.bashrc").is_err());
+        assert!(resolve_work_rcfile(work, ".h5i/../../etc/x").is_err());
+        assert!(resolve_work_rcfile(work, "does-not-exist.bashrc").is_err());
+    }
+
+    #[test]
+    fn write_plain_bashrc_is_self_contained_and_skips_host_bashrc() {
+        let h5i_root = tempfile::tempdir().unwrap();
+        let m = canonical_manifest("claude", "demo");
+
+        let path = write_plain_bashrc(h5i_root.path(), &m).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        // Carries the env id in the prompt, an optional ~/.h5i_envrc hook, and
+        // never sources the host ~/.bashrc.
+        assert!(body.contains(&format!("h5i:{}", m.id)));
+        assert!(body.contains("$HOME/.h5i_envrc"));
+        assert!(!body.contains(".bashrc\""));
+        assert!(path.ends_with("shell/rc.bash"));
+    }
 
     #[test]
     fn upsert_jsonl_replaces_by_id_and_keeps_others_sorted() {
