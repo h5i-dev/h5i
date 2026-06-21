@@ -65,6 +65,12 @@ done
 
 [ -n "$TEAM" ] || die "usage: team-launch.sh [options] <team>"
 command -v "$H5I" >/dev/null 2>&1 || die "h5i not found (set \$H5I)"
+# Resolve h5i to an ABSOLUTE path now, so the windows/panes we spawn run the
+# exact same binary as this launcher — not whatever a fresh login shell's $PATH
+# resolves inside a Windows Terminal / tmux pane. PATH skew between the shell
+# that created the envs and the shell that runs `env shell` is a common cause of
+# policy-digest ("tampered policy") mismatches.
+H5I="$(command -v "$H5I")"
 command -v jq >/dev/null 2>&1 || die "jq is required"
 [ -z "$TASK" ] || [ -f "$TASK" ] || die "task file not found: $TASK"
 SESSION="${SESSION:-h5i-team-$TEAM}"
