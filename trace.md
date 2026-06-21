@@ -4221,3 +4221,4 @@ _[Checkpoint: 6a3808e3 — edited src/env.rs; edited src/env.rs; edited scripts/
 [16:11:26] OBSERVE: read src/msg.rs
 [16:11:26] OBSERVE: read src/msg.rs
 [16:11:26] OBSERVE: read src/env.rs
+[16:11:26] OBSERVE: read src/env.rs
