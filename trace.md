@@ -4277,3 +4277,4 @@ _[Checkpoint: 6a3808e3 — edited src/env.rs; edited src/env.rs; edited scripts/
 [16:11:27] OBSERVE: read src/team.rs
 [16:11:27] OBSERVE: read src/env.rs
 [16:11:27] ACT: edited /home/koukyosyumei/Dev/h5i/src/team.rs
+[16:11:27] OBSERVE: searched src/env.rs for "tests|write_note_spool_sanitizes|write_inbox_capture""
