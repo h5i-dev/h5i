@@ -3,7 +3,9 @@
 > Status: design overview (v3). Supersedes `ensemble_v1.md` (CLI/refs sketch) and
 > `ensemble_v2.md` (TUI-first). Consolidates a survey of the existing `env`,
 > `serve`, `msg`, and `objects` code paths with four rounds of i5h review from
-> Codex (#37f12392, #65897b5d, #80c46ba6, #3033bc37 — persona model).
+> Codex (#37f12392, #65897b5d, #80c46ba6, #3033bc37 — persona model). The §4a
+> communication + finalization policy layer is self-reviewed; a 5th Codex pass
+> (#ed97ae41) is pending its availability.
 >
 > One sentence: **`h5i team` is a deterministic, Git-backed evidence-publication
 > workflow over existing envs — not an agent-orchestration daemon, and not a chat
@@ -20,15 +22,27 @@ them. ("Sealed" is reserved for the *sealed submission* and for envs whose
 `probe` actually supports a hard sandbox seal — see §6; at workspace tier the
 isolation is workflow/interface isolation, not a kernel seal.)
 
+**Design stance: auditable convergence, minimal human labor.** The default flow
+keeps agents independent and produces an explained verdict *without requiring a
+human to review anything*. Two run-level policies (§4a) let the user dial this:
+a **communication policy** (sealed by default; opt-in agent discussion) and a
+**finalization policy** (who/what picks the winner — a rule, a vote, a judge
+agent, or a human). Whatever is chosen, the convergence stays **auditable**:
+every message, metric, and decision is a recorded, explainable event.
+
 **Non-goals (explicit):**
 
-- Not "agents chatting." It is *phased publication of evidence from isolated
-  envs*. Group chat destroys independent exploration and audit clarity.
+- Not *uncontrolled* agent chat. Group chat is **off by default** (it erodes
+  independent exploration); when a user turns on discussion it is an explicit,
+  fully-logged mode, and candidates produced under it are marked non-independent.
+- Not *opaque* judging. Automated finalization is supported and is the point
+  (humans shouldn't have to review) — but every verdict, human or machine,
+  records its method + evidence + rationale. The non-goal is an *unexplained*
+  decision, not an *automated* one.
 - Not a new sandbox, runner, message bus, or artifact store. It orchestrates
   the ones we have (`env`, `msg`, `objects/capture`, `serve`).
 - Not a required daemon. Coordination state is in Git refs, discovered by
   polling. Workers/leases are P4, optional.
-- Not opaque judging. Compare exposes evidence; a human approves by default.
 - Not a TUI. The rich UX lives in `h5i serve` (browser); CLI is the automation
   surface with a small `status --watch` for live monitoring.
 
@@ -87,9 +101,14 @@ input, never an execution authority.** Implications:
 
 **Invariants (non-negotiable):**
 
-1. **Independence.** Before the `review` phase, an agent cannot read another
+1. **Independence (default; policy-relaxable).** Under the default sealed
+   communication policy, before the `review` phase an agent cannot read another
    agent's diff, summary, logs, worktree path, private instructions, or branch
-   tip *through the team interface*. (Envs already don't read each other.)
+   tip *through the team interface*. (Envs already don't read each other.) If the
+   user enables a discussion policy (§4a), this is relaxed **only** within the
+   declared discussion scope, every exchange is logged, and affected candidates
+   are stamped `independent=false` so the audit never mistakes a discussed patch
+   for an independent attempt.
 2. **Publication.** A peer artifact becomes visible only via an explicit phase
    transition or grant **event recorded in the team log** — never implicitly.
 3. **Host-mediated evidence.** Boxed agents must not mutate team coordination
@@ -105,14 +124,22 @@ input, never an execution authority.** Implications:
 6. **Audit.** Every transition records actor, timestamp, phase-before,
    phase-after, reason, and affected artifacts. Human overrides are first-class
    events, not prose comments.
+7. **Explainable verdict.** Whether the winner is chosen by a human, a rule, a
+   vote, or a judge agent, the `verdict` event records the **method, the inputs
+   it consumed (metric values / ballots / judge rationale), and the losers'
+   reasons**. An automated decision is allowed; an unexplained one is not. The
+   `actor` of an auto-verdict is the policy/agent that decided, never a human who
+   didn't.
 
 ## 3. State machine
 
 ```
 draft ─► dispatched ─► independent_work ─► sealed_submit ─► review ─┐
-                                                                   │
-   applied | closed ◄─ verdict ◄─ compare ◄────── improve ◄────────┘
-                                              (loop ≤ max_rounds)
+                                              │ (discuss policy)    │
+                                              ▼                     │
+   applied | closed ◄─ verdict ◄─ compare ◄─ discuss? ◄─ improve ◄──┘
+                          ▲                              (loop ≤ max_rounds)
+                          └─ finalization policy: rule | vote | judge | human
 ```
 
 - Transitions are **monotonic** except a documented `reopen` event; reopen must
@@ -121,6 +148,11 @@ draft ─► dispatched ─► independent_work ─► sealed_submit ─► revi
   an explicit event (per invariant 6).
 - A phase transition is what *freezes and publishes* the relevant artifacts.
   Until `sealed_submit` completes, each env is private.
+- `discuss` is **optional**, gated by the communication policy (§4a). It only
+  ever runs *after* `sealed_submit` (so the first attempt is always independent),
+  is fully logged, and stamps any subsequent candidate `independent=false`.
+- `verdict` may be reached **without a human** per the finalization policy (§4a);
+  the transition still records method + evidence (invariant 7).
 
 | Phase | What happens | Backed by |
 |---|---|---|
@@ -129,9 +161,10 @@ draft ─► dispatched ─► independent_work ─► sealed_submit ─► revi
 | independent_work | agents edit in their own env | `env run` / `env shell` (captures accrue) |
 | sealed_submit | each agent **freezes** an immutable candidate | `team submit` (snapshot oids + captures) |
 | review | reviewers see *granted* artifacts only | grants + i5h `REVIEW_REQUEST` |
+| discuss *(opt-in)* | agents exchange messages within declared scope | i5h thread scoped to run; every msg logged |
 | improve | feedback routed back; agents revise; new round | i5h replies → new `env run` cycle |
-| compare | candidates shown side by side (advisory score optional, no auto-rank) | `team compare` → `env::compare` + findings |
-| verdict | human (default) selects winner | recorded verdict event |
+| compare | candidates shown side by side + metrics gathered | `team compare` → `env::compare` + findings |
+| verdict | winner chosen by policy (rule/vote/judge/human) | `team finalize` → recorded verdict event |
 | applied | winner *replayed* into target, provenance stamped | `team apply` → fresh merge of submission |
 
 ## 4. Ref & storage model
@@ -218,6 +251,8 @@ struct TeamArtifact {           // immutable candidate bundle
                                 // content equality; this anchors it across reopen/override/update)
     commit_oid: String, tree_oid: String,
     capture_ids: Vec<String>, diff_stat: DiffStat,
+    metrics: Map<String, f64>,  // finalization inputs gathered at compare (tests/loc/risk/bench)
+    independent: bool,          // false if produced after a discuss phase (provenance honesty)
     visibility: String, digest: String,
 }
 struct Grant {                  // unit of cross-agent visibility
@@ -229,8 +264,15 @@ struct Grant {                  // unit of cross-agent visibility
 struct Review { reviewer: String, target: String, round: u32,
     findings: Vec<String>, risks: Vec<String>, suggested_changes: Vec<String>,
     referenced_artifacts: Vec<String> }
-struct Verdict { selected_submission: String, method: String,
-    evidence: Vec<String>, rejected_candidates: Vec<String>, human_approved_by: String }
+struct Verdict {                // explains itself whether human OR machine decided (invariant 7)
+    selected_submission: Option<String>, // None == no_verdict (no candidate cleared the rule)
+    method: String,             // "rule:tests,smallest-diff" | "vote" | "judge:<id>" | "human"
+    decided_by: String,         // the policy/judge/human actor that decided
+    metric_values: Map<String, Map<String, f64>>, // per-candidate inputs the decision used
+    ballots: Vec<Ballot>,       // for vote/judge: voter, choice, rationale
+    rejected: Vec<(String, String)>, // (submission, reason) for every loser
+    human_approved_by: Option<String>, // only set under FinalizationPolicy::Human
+}
 ```
 
 **Ordering & merge determinism.** Events sort by `parent_event_id` causal chain
@@ -249,6 +291,74 @@ same class of problem already solved for `msg` and `objects`. `h5i share
 push/pull` then carries a whole run to another clone (enables the
 propose-on-clone-A / review-on-clone-B loop).
 
+## 4a. Run policy: communication & finalization
+
+`TeamPolicy` is fixed at `create` and is what makes a run hands-off. Two knobs
+matter most; both default safe and both keep the audit complete.
+
+```rust
+struct TeamPolicy {
+    grantable_artifacts: Vec<String>,   // diff,summary,tests (never raw bodies); §6
+    communication: CommunicationPolicy,
+    finalization: FinalizationPolicy,
+}
+
+enum CommunicationPolicy {
+    Sealed,                              // DEFAULT: no agent↔agent until review grants
+    Discuss {                           // opt-in: agents may talk, AFTER sealed_submit
+        scope: DiscussScope,            // FreeForAll | Pairs(reviewer→target) | Moderated(judge)
+        max_messages: u32,              // bounded so it can't loop forever (hands-off)
+        share_artifacts: Vec<String>,   // what discussion may reference (diff/summary/tests)
+    },
+}
+
+enum FinalizationPolicy {               // who/what picks the winner — minimize human labor
+    Human,                              // explicit approval (opt-in now, not the default)
+    Rule(Vec<Metric>),                  // deterministic ordering, e.g. [TestsPass, FewestLoc]
+    Vote { electorate: Electorate, tie_break: Box<FinalizationPolicy> },
+    Judge { agent_id: String, rubric: Option<String>, tie_break: Box<FinalizationPolicy> },
+}
+
+enum Metric {                           // rule inputs, all from EXISTING evidence
+    TestsPass,                          // from a tests capture (pass/fail, count)
+    FewestLoc,                          // from diff_stat
+    SmallestDiff,                       // files + churn from diff_stat
+    LowestRisk,                         // from risk.rs classification of the env captures
+    FastestBench(String),               // a named benchmark capture's metric
+    Custom(String),                     // a user expression over the above
+}
+enum Electorate { AllAgents, AllExcept(String), Named(Vec<String>) }
+```
+
+**Recommended hands-off default:** `communication = Sealed`,
+`finalization = Rule([TestsPass, SmallestDiff])` — candidates that pass tests
+win, ties broken by the smallest change, **no human in the loop**, and the
+verdict event still spells out the metric values. The user overrides per run
+(`--finalize vote`, `--finalize judge:claude-skeptic`, `--finalize human`,
+`--discuss pairs --max-messages 8`).
+
+**Guards that keep automation honest** (so "minimal labor" ≠ "ungoverned"):
+
+- **Metrics come only from recorded evidence** (captures / diff_stat / risk), so
+  a verdict is reproducible from the audit trail, not from live state.
+- **Gaming defense:** rule metrics are adversarial-aware — `FewestLoc`/`SmallestDiff`
+  alone are gameable (delete tests, stub features), so they are only ever
+  *tie-breakers after* `TestsPass` (and optionally a risk-floor). A judge rubric
+  should be published in the verdict for inspection.
+- **Vote integrity:** under a `Discuss` policy, votes can collude — a voter may
+  not vote for a candidate it co-authored or discussed into; record each ballot
+  + rationale; a tie falls through to the declared `tie_break`.
+- **Judge conflict of interest:** a `Judge` finalizer must **not** be a roster
+  contender. If the desired judge persona is also competing, either run it as a
+  separate non-contending roster member (its own `agent_id`) or exclude its own
+  candidate from its decision; the verdict records the judge's runtime/model so a
+  same-runtime bias (judge favoring fellow Claude candidates) is auditable.
+- **No-winner is a valid outcome:** if no candidate clears the rule (e.g. none
+  pass tests), the run records `no_verdict` and notifies — it does **not** apply
+  a loser. This is the one place a human may be pinged, by choice.
+- **Bounded discussion:** `max_messages` and a per-run discussion deadline keep a
+  hands-off run from looping; exhaustion advances to `compare` automatically.
+
 ## 5. CLI MVP & serve views
 
 CLI is the boring, scriptable automation layer — **the headline UX is serve.**
@@ -257,6 +367,9 @@ Each command maps onto an existing primitive; team adds no new execution.
 ```bash
 # P0 — manual ensemble over EXISTING envs (no agent automation)
 h5i team create <name> --base HEAD [--rounds 1]
+      [--finalize rule:tests,smallest-diff | vote | judge:<agent-id> | human]
+      [--discuss off | pairs | free | moderated:<judge>] [--max-messages N]
+      # default: --finalize rule:tests,smallest-diff --discuss off  (hands-off, no human)
 h5i team add-env <team> <env> --as <agent-id>     # group already-created envs; agent-id is the
       [--runtime claude|codex] [--model M]        # ref-safe persona key (claude-architect, ...)
       [--role architect] [--skill code-review,...] # persona recorded as provenance (persona_digest)
@@ -266,8 +379,12 @@ h5i team submit <team> --agent <id> [--commit OID] [--tests-capture ID] [--summa
 h5i team freeze <team> [--allow-missing]          # → sealed_submit; REFUSES if any roster
                                                   # member lacks a submission, unless
                                                   # --allow-missing records abstentions/timeouts
-h5i team compare <team> [--json]                  # candidates side by side; advisory score optional,
-                                                  # NEVER an automatic rank (human judging is core)
+h5i team compare <team> [--json]                  # candidates side by side + gathered metrics;
+                                                  # advisory only — does NOT pick the winner
+h5i team finalize <team> [--dry-run]              # apply the run's finalization policy → verdict
+                                                  # event (method + metric values/ballots/rationale +
+                                                  # losers' reasons). --dry-run shows what would win.
+                                                  # no candidate clears the rule → records no_verdict
 
 # P1 — dispatch + grants
 h5i team dispatch <team> --prompt-file F          # i5h sends; receipt/progress counts ONLY via
@@ -285,6 +402,11 @@ h5i team dispatch <team> --prompt-file F          # i5h sends; receipt/progress 
 h5i team grant-review <team> --reviewer A --target B --artifacts diff,summary,tests
 h5i team review submit <team> --reviewer A --target B --file F
 
+# P2 — opt-in discussion + automated finalization
+h5i team discuss <team> [--scope pairs|free|moderated] [--max-messages N]
+                                                  # open the logged discussion phase (post-submit);
+                                                  # routes i5h within the run; stamps later
+                                                  # candidates independent=false; bounded by N
 # P2 — rounds + state-machine enforcement (serve permission/verdict views)
 # P3 — apply winner
 h5i team apply <team> --winner <submission-id>    # replay recorded patch into fresh target;
@@ -299,7 +421,9 @@ h5i team apply <team> --winner <submission-id>    # replay recorded patch into f
 | submit / freeze | snapshot env commit/tree/diff + capture ids → immutable `TeamArtifact` |
 | dispatch | `msg::send` (kind ASK/handoff) + `dispatched` event |
 | grant-review | `Grant` event + scoped `msg::send` (REVIEW_REQUEST) referencing artifact ids only |
-| compare | `env::compare(run.env_ids)` arena + join review findings/risk |
+| compare | `env::compare(run.env_ids)` arena + join review findings/risk + gather `Metric`s |
+| discuss | `msg::send` within a run-scoped i5h thread; every msg → `TeamEvent` + capture |
+| finalize | evaluate `FinalizationPolicy` over recorded metrics/ballots → `verdict` event |
 | apply | replay submission into fresh target (3-way), then `env`-style provenance note |
 
 **serve** is already axum JSON API + React SPA (`web/`) with a `Mode` switcher
@@ -326,11 +450,23 @@ candidate back to its `persona_digest`.
 
 ```
 human -> agent : allow        agent -> human : allow
-agent -> agent : deny (no group chat)
+agent -> agent : deny by DEFAULT — allowed only under a Discuss policy, post-submit,
+                 within declared scope, fully logged (candidates → independent=false)
 peer artifacts : deny until an explicit, logged Grant exists
 raw logs / private human msgs / peer worktree / peer branch tip : deny (no MVP grant path)
 ```
 
+- **Discussion is opt-in and bounded.** When `communication = Discuss`, agent↔agent
+  routes through a run-scoped i5h thread *after* `sealed_submit` (so the first
+  attempt is always independent), every message is a logged `TeamEvent` + capture,
+  it is capped by `max_messages`/deadline, and any candidate revised afterward is
+  stamped `independent=false`. Discussion may reference only the policy's
+  `share_artifacts` — never raw bodies or peer worktrees.
+- **Automation is governed, not blind.** A machine `verdict` consumes only
+  recorded metrics/ballots and writes its full reasoning (invariant 7); a tie or
+  no-clear-winner falls through to the declared tie-break or `no_verdict` rather
+  than applying a loser. Gameable metrics (`FewestLoc`/`SmallestDiff`) are only
+  tie-breakers behind `TestsPass`.
 - **Default grant = diff + summary + test *status*** — never raw capture bodies
   (captures may carry secrets). Raw-log sharing has no MVP path.
 - **Every lane shows its env's *actual* isolation tier** from `env probe`. A
@@ -381,14 +517,22 @@ raw logs / private human msgs / peer worktree / peer branch tip : deny (no MVP g
   env arena and powers a serve Team board + compare view. First strong demo.
 - **P1 — dispatch + grants + board.** `dispatch` (i5h), `grant-review` /
   `review submit`, serve board + timeline + permission view.
-- **P2 — rounds.** Improvement loop, state-machine enforcement, convergence/stop
-  conditions (`max_rounds`, no-material-diff, tests-pass), serve verdict view.
+- **P2 — rounds + hands-off finalization.** Improvement loop, state-machine
+  enforcement, convergence/stop conditions (`max_rounds`, no-material-diff,
+  tests-pass); `team finalize` with `Rule` metrics (the no-human default) + the
+  opt-in `team discuss` phase; serve verdict + permission views. **This is the
+  slice that delivers "minimal human labor."**
 - **P3 — apply + audit.** `team apply` (replay submission, conflict runbook) +
-  exported PR/audit brief — the "merged with proof" headline.
+  exported PR/audit brief — the "merged with proof" headline. Adds `vote` /
+  `judge` finalization on top of `Rule`.
 - **P4 — optional automation.** Only on real demand: `h5i worker` with
-  leases/idempotent task ids polling refs. No leases in P0; no required daemon.
+  leases/idempotent task ids polling refs, so a run can go
+  dispatch→submit→finalize→apply end-to-end untouched. No leases in P0; no
+  required daemon.
 
 ## 9. Headline
 
 > **`h5i team` runs isolated agent workspaces through phased evidence exchange,
-> then compares the candidates in `h5i serve` so a human can merge with proof.**
+> then converges on a winner by a user-chosen, fully-auditable policy — a rule, a
+> vote, a judge agent, or a human — so the team ships with proof and the human
+> barely lifts a finger.**
