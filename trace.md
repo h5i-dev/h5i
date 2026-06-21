@@ -3984,3 +3984,4 @@ _[Checkpoint: 6a3757ce — edited src/team.rs; edited src/team.rs; edited src/te
 ---
 
 [03:26:36] OBSERVE: read MANUAL.md
+[03:29:53] OBSERVE: read docs/blog/auditable-workspaces-for-ai-agents/index.html
