@@ -8,9 +8,10 @@
 # `team-identity` wired by `h5i team add-env`), so a task sent with
 # `h5i team dispatch` lands in the right inbox and the agent picks it up.
 #
-# Default: a separate terminal window per env when a desktop display is
-# available, otherwise a tmux session (one window per env). Use --panes for a
-# single tiled tmux window, or --gui / --windows to force a backend.
+# Default: a separate window per env — Windows Terminal (wt.exe) on WSL, a
+# desktop terminal emulator on Linux-with-a-display, else a tmux session (one
+# window per env; works headless/SSH). Use --panes for one tiled tmux window, or
+# --gui / --windows to force a backend.
 #
 # Usage:
 #   scripts/team-launch.sh [options] <team>
@@ -68,18 +69,28 @@ command -v jq >/dev/null 2>&1 || die "jq is required"
 [ -z "$TASK" ] || [ -f "$TASK" ] || die "task file not found: $TASK"
 SESSION="${SESSION:-h5i-team-$TEAM}"
 
-# First available GUI terminal emulator (echo its name, or fail).
+# First available GUI terminal emulator (echo its name, or fail). Specific
+# emulators first; xterm last (it's the one most likely to be broken, e.g. on
+# WSLg where it can't find its bitmap font).
 term_bin() {
-  for t in x-terminal-emulator gnome-terminal konsole alacritty kitty wezterm xterm; do
+  for t in gnome-terminal konsole alacritty kitty wezterm x-terminal-emulator xterm; do
     command -v "$t" >/dev/null 2>&1 && { echo "$t"; return 0; }
   done
   return 1
 }
 have_display() { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }
+is_wsl() { grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ]; }
+have_wt() { is_wsl && command -v wt.exe >/dev/null 2>&1; }
 
-# Auto-pick a backend: separate OS windows on a desktop, else tmux windows.
+# Auto-pick a backend that actually works on this host:
+#  - WSL: Windows Terminal (wt.exe) for real windows; else tmux. (X emulators on
+#    WSLg are frequently broken — don't auto-launch a crashing xterm.)
+#  - desktop Linux: a separate window per env via the detected emulator.
+#  - otherwise: tmux (one window per env; works headless / over SSH).
 if [ -z "$MODE" ]; then
-  if have_display && term_bin >/dev/null 2>&1; then MODE=gui; else MODE=windows; fi
+  if have_wt; then MODE=gui
+  elif ! is_wsl && have_display && term_bin >/dev/null 2>&1; then MODE=gui
+  else MODE=windows; fi
 fi
 
 # Roster: agent_id <tab> env_id <tab> runtime, one per line.
@@ -101,6 +112,30 @@ if [ -n "$TASK" ]; then
   echo "dispatching $TASK to team $TEAM ..."
   [ "$DRY" = 1 ] && echo "  + $H5I team dispatch $TEAM --prompt-file $TASK" \
                  || "$H5I" team dispatch "$TEAM" --prompt-file "$TASK"
+fi
+
+if [ "$MODE" = gui ] && have_wt; then
+  # WSL: open a real Windows Terminal window per env. The command goes into a
+  # tiny launcher file so nothing has to survive wt.exe → wsl.exe → bash quoting.
+  spool="$(mktemp -d "${TMPDIR:-/tmp}/h5i-team-XXXXXX")"
+  while IFS=$'\t' read -r agent env runtime; do
+    cmd="$H5I env shell $env -- $(launch_for "$runtime")"
+    echo "[$agent] wt.exe (new window): $cmd"
+    [ "$DRY" = 1 ] && continue
+    f="$spool/$agent.sh"
+    printf '#!/usr/bin/env bash\ncd %q || exit 1\n%s\n' "$PWD" "$cmd" > "$f"
+    chmod +x "$f"
+    # The launcher script handles cd; keep the wt/wsl arg surface minimal.
+    if [ -n "${WSL_DISTRO_NAME:-}" ]; then
+      wt.exe -w new new-tab --title "$agent" \
+        wsl.exe -d "$WSL_DISTRO_NAME" -- bash "$f" >/dev/null 2>&1 &
+    else
+      wt.exe -w new new-tab --title "$agent" wsl.exe -- bash "$f" >/dev/null 2>&1 &
+    fi
+  done <<< "$ROSTER"
+  echo "launched a Windows Terminal window per env for team $TEAM."
+  echo "(launcher scripts in $spool — safe to delete once the agents are up)"
+  exit 0
 fi
 
 if [ "$MODE" = gui ]; then
