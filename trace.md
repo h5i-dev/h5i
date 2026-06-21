@@ -3977,3 +3977,9 @@ _[Checkpoint: 6a375356 — edited src/team.rs; edited src/team.rs; edited roadma
 [03:10:45] ACT: edited src/team.rs
 [03:17:13] NOTE: RESOLVED: team verifier now runs the candidate command SANDBOXED — routed through sandbox::run under the fail-closed 'default' build/test profile in the throwaway base_oid worktree, not the bare host. Tier is configurable (team verify --isolation), auto-picks the strongest the host can enforce, falls back to workspace when a kernel tier isn't runnable (CI). Tier recorded on TeamVerification.isolation + capture evidence_source. Smoke-tested end-to-end at process AND supervised tiers (pass+fail correct), finalize consumes it. Also fixed a pre-existing clap panic: 'team verify' used long="cmd" with trailing_var_arg (cmd is now a '-- <cmd>' trailing positional). Remaining follow-up: pin verifier command at create (still per-call, mitigated by finalize refusing divergent commands).
 [03:17:34] NOTE: DEFERRAL (~/Dev/h5i/roadmap/team-design.md): (robust) or `--watch` (convenient). The two earlier-noted follow-ups remain open if you want them: **sandboxed verifier** (run candidate code under en…
+
+
+---
+_[Checkpoint: 6a3757ce — edited src/team.rs; edited src/team.rs; edited src/team.rs]_
+---
+
