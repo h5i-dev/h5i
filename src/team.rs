@@ -47,7 +47,6 @@ pub struct TeamEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TeamAgent {
     pub agent_id: String,
-    pub display_label: String,
     pub env_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<String>,
@@ -644,7 +643,6 @@ pub fn add_env(
     };
     let agent = TeamAgent {
         agent_id: agent_id.to_string(),
-        display_label: agent_id.to_string(),
         env_id: m.id.clone(),
         runtime,
         model,
