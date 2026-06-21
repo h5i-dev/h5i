@@ -3802,3 +3802,4 @@ _[Checkpoint: 6a373ea1 — edited roadmap/team-design.md; edited roadmap/team-de
 [02:00:12] OBSERVE: read src/objects.rs
 [02:00:12] OBSERVE: searched FilterConfig|impl for "OutputKind|struct"
 [02:00:12] OBSERVE: read src/token_filter.rs
+[02:00:12] OBSERVE: read src/objects.rs
