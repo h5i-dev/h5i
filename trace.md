@@ -4281,3 +4281,9 @@ _[Checkpoint: 6a3808e3 — edited src/env.rs; edited src/env.rs; edited scripts/
 [16:11:27] OBSERVE: read src/env.rs
 [16:11:27] ACT: edited /home/koukyosyumei/Dev/h5i/src/env.rs
 [16:11:27] ACT: edited /home/koukyosyumei/Dev/h5i/src/main.rs
+
+
+---
+_[Checkpoint: 6a380d38 — Implemented host-mediated h5i team agent submit path: boxed agents stage submits to env spool; host ingests into team refs on env shell exit; launcher/docs now avoid raw msg/team refs inside sealed boxes.]_
+---
+
