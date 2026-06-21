@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: env/human/codex-1
+# Ephemeral traces — Branch: prompt-score
 
