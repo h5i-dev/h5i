@@ -158,3 +158,4 @@ _[Checkpoint: 6a38572e — edited docs/pitch/index.html; edited docs/pitch/index
 [21:28:10] OBSERVE: read src/lfs.rs
 [21:28:13] OBSERVE: read src/memory.rs
 [21:28:15] OBSERVE: read src/team.rs
+[21:28:17] OBSERVE: read src/repository.rs
