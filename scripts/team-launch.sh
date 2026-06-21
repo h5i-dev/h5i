@@ -18,6 +18,8 @@
 #   --task <file>     Dispatch <file> to every agent first (h5i team dispatch),
 #                     then launch each agent pointed at its inbox.
 #   --gui             Open GUI terminal windows instead of a tmux session.
+#   --windows         One tmux window per agent (default: tiled panes, all
+#                     visible at once in a single window).
 #   --session <name>  tmux session name (default: h5i-team-<team>).
 #   -n, --dry-run     Print what would run; don't launch anything.
 #   -h, --help        This help.
@@ -34,6 +36,7 @@ set -euo pipefail
 
 H5I="${H5I:-h5i}"
 GUI=0
+WINDOWS=0
 DRY=0
 TASK=""
 SESSION=""
@@ -49,6 +52,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --task) TASK="${2:-}"; shift 2 ;;
     --gui) GUI=1; shift ;;
+    --windows) WINDOWS=1; shift ;;
     --session) SESSION="${2:-}"; shift 2 ;;
     -n|--dry-run) DRY=1; shift ;;
     -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -105,7 +109,9 @@ if [ "$GUI" = 1 ]; then
   exit 0
 fi
 
-# tmux backend: one window per agent in a single session.
+# tmux backend. Default: all agents as tiled panes in ONE window (visible at
+# once — the control-room view). --windows: one window per agent (Ctrl-b n/p to
+# switch), better for large rosters.
 command -v tmux >/dev/null 2>&1 || die "tmux is required (or use --gui)"
 first=1
 while IFS=$'\t' read -r agent env runtime; do
@@ -113,12 +119,20 @@ while IFS=$'\t' read -r agent env runtime; do
   echo "[$agent] $cmd"
   [ "$DRY" = 1 ] && continue
   if [ "$first" = 1 ]; then
-    tmux new-session -d -s "$SESSION" -n "$agent" "$cmd"
-    # keep a window visible if its agent exits/crashes (inspect, then close)
+    wname="team"; [ "$WINDOWS" = 1 ] && wname="$agent"
+    tmux new-session -d -s "$SESSION" -n "$wname" "$cmd"
+    # keep a dead agent's pane/window visible for inspection; label panes
     tmux set-option -t "$SESSION" remain-on-exit on >/dev/null 2>&1 || true
+    tmux set-option -t "$SESSION" pane-border-status top >/dev/null 2>&1 || true
+    tmux select-pane -t "$SESSION" -T "$agent" >/dev/null 2>&1 || true
     first=0
-  else
+  elif [ "$WINDOWS" = 1 ]; then
     tmux new-window -t "$SESSION" -n "$agent" "$cmd"
+  else
+    # add a tiled pane in the same window so every agent is visible together
+    tmux split-window -t "$SESSION" "$cmd"
+    tmux select-pane -t "$SESSION" -T "$agent" >/dev/null 2>&1 || true
+    tmux select-layout -t "$SESSION" tiled >/dev/null 2>&1 || true
   fi
 done <<< "$ROSTER"
 
@@ -126,6 +140,6 @@ if [ "$DRY" = 1 ]; then
   echo "(dry run) would attach to tmux session: $SESSION"
   exit 0
 fi
-tmux select-layout -t "$SESSION" tiled >/dev/null 2>&1 || true
+[ "$WINDOWS" = 1 ] || tmux select-layout -t "$SESSION" tiled >/dev/null 2>&1 || true
 echo "team $TEAM is up in tmux session '$SESSION'. Attach: tmux attach -t $SESSION"
 [ -n "${TMUX:-}" ] && tmux switch-client -t "$SESSION" || tmux attach -t "$SESSION"
