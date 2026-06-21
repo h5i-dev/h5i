@@ -585,10 +585,32 @@ pub fn materialize_from_ref(repo: &Repository, h5i_root: &Path) -> Result<usize,
         if local_newer {
             continue;
         }
-        save_manifest(h5i_root, &m)?;
         if let Some(toml) = policies.get(&m.id) {
+            // Guard against a ref whose manifest and policy blob were written by
+            // different h5i versions/operations (e.g. an env id recreated after a
+            // version bump): writing both would land an env whose
+            // policy.resolved.toml doesn't match its pinned digest — surfacing
+            // later as a confusing "tampered policy" failure. Verify first, with
+            // the SAME check load_policy runs, and skip (don't write a broken env).
+            let consistent = ResolvedPolicy::from_toml(toml)
+                .and_then(|p| p.digest())
+                .map(|d| d == m.policy_digest)
+                .unwrap_or(false);
+            if !consistent {
+                eprintln!(
+                    "warning: skipping shared env '{}' — its stored policy does not match the \
+                     pinned digest (likely created by a different h5i version); recreate it: \
+                     `h5i env rm {} --force` then `h5i env create`",
+                    crate::msg::sanitize_display(&m.id),
+                    crate::msg::sanitize_display(&m.slug)
+                );
+                continue;
+            }
+            save_manifest(h5i_root, &m)?;
             let path = dir.join(POLICY_RESOLVED_FILE);
             std::fs::write(&path, toml).map_err(|e| H5iError::with_path(e, &path))?;
+        } else {
+            save_manifest(h5i_root, &m)?;
         }
         written += 1;
     }
@@ -1008,8 +1030,10 @@ pub fn load_policy(h5i_root: &Path, m: &EnvManifest) -> Result<ResolvedPolicy, H
     if digest != m.policy_digest {
         return Err(H5iError::Metadata(format!(
             "policy.resolved.toml for {} does not match the digest pinned in its manifest \
-             (expected {}, found {digest}) — refusing to run under a tampered policy",
-            m.id, m.policy_digest
+             (expected {}, found {digest}) — refusing to run under a tampered policy. \
+             If you did not edit it, the env was most likely created by a different h5i \
+             version; recreate it: `h5i env rm {} --force` then `h5i env create …`",
+            m.id, m.policy_digest, m.slug
         )));
     }
     Ok(policy)
