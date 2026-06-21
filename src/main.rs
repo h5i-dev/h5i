@@ -1996,9 +1996,18 @@ enum TeamCommands {
     },
     /// Optional automation worker: lease runs and finalize verifier-ready teams
     Worker {
-        /// Run one polling pass and exit
+        /// Run one finalize pass and exit (mutually exclusive with --watch)
         #[arg(long)]
         once: bool,
+        /// Opt-in convenience loop: repeat the one-shot pass every --interval
+        /// seconds until interrupted. Still finalize-only; never auto-applies.
+        /// For production prefer an external scheduler (cron/systemd/CI) driving
+        /// `--once` — crash-resilient and needs no long-lived process.
+        #[arg(long, conflicts_with = "once")]
+        watch: bool,
+        /// Seconds to sleep between passes in --watch mode
+        #[arg(long, default_value_t = 30)]
+        interval: u64,
         /// Worker id (ref-safe)
         #[arg(long, default_value = "team-worker")]
         id: String,
@@ -9161,25 +9170,40 @@ fn main() -> anyhow::Result<()> {
                         );
                     }
                 }
-                TeamCommands::Worker { once, id, lease_ttl, json } => {
-                    if !once {
-                        anyhow::bail!("team worker currently requires --once");
+                TeamCommands::Worker { once, watch, interval, id, lease_ttl, json } => {
+                    if !once && !watch {
+                        anyhow::bail!("team worker needs --once (single pass) or --watch (loop)");
                     }
-                    let report = h5i_core::team::worker_once(git, &id, lease_ttl, &actor)?;
-                    if json {
-                        println!("{}", serde_json::to_string_pretty(&report)?);
-                    } else {
-                        println!(
-                            "{} worker {} inspected {} team{}; finalized {}",
-                            SUCCESS,
-                            report.worker_id,
-                            report.inspected,
-                            if report.inspected == 1 { "" } else { "s" },
-                            report.finalized.len()
-                        );
-                        for s in &report.skipped {
-                            println!("  - {s}");
+                    let do_pass = || -> anyhow::Result<()> {
+                        let report = h5i_core::team::worker_once(git, &id, lease_ttl, &actor)?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&report)?);
+                        } else {
+                            println!(
+                                "{} worker {} inspected {} team{}; finalized {}",
+                                SUCCESS,
+                                report.worker_id,
+                                report.inspected,
+                                if report.inspected == 1 { "" } else { "s" },
+                                report.finalized.len()
+                            );
+                            for s in &report.skipped {
+                                println!("  - {s}");
+                            }
                         }
+                        Ok(())
+                    };
+                    if watch {
+                        eprintln!(
+                            "{} team worker watching every {interval}s (finalize-only, never auto-applies); Ctrl-C to stop",
+                            LOOKING
+                        );
+                        loop {
+                            do_pass()?;
+                            std::thread::sleep(std::time::Duration::from_secs(interval));
+                        }
+                    } else {
+                        do_pass()?;
                     }
                 }
                 TeamCommands::Dispatch { team, prompt_file, json } => {

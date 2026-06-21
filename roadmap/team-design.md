@@ -647,14 +647,30 @@ raw logs / private human msgs / peer worktree / peer branch tip : deny (no MVP g
   submission, conflict runbook) + exported PR/audit brief — the "merged with
   proof" headline. Adds `vote` / `judge` (hardened: non-contender, evidence-only,
   parsed scores) finalization on top of `Rule`.
-- **P4 — optional automation (deliberately conservative).** `h5i team worker
-  --once`: a **single-shot** pass that leases each unfinalized run (idempotent,
-  TTL'd) and, for runs whose every submission already has verifier evidence,
-  records the `finalize` verdict — then returns a report. **No daemon loop**
-  (the CLI refuses without `--once`) and **no auto-apply** — the worker stops at
-  the verdict; `apply` stays a separate, human-or-explicit step gated on
-  `verdict.can_auto_apply`. A polling loop, if ever wanted, is an *outer* cron/
-  shell concern, not built in. No leases in P0; no required daemon.
+- **P4 — optional automation (deliberately conservative).** The **primitive** is
+  `h5i team worker --once`: a single lease-and-finalize pass — it leases each
+  unfinalized run (idempotent, TTL'd, so a crashed worker's lease just expires),
+  and for runs whose every submission already has verifier evidence records the
+  `finalize` verdict, then returns a report. It **never auto-applies** — the
+  worker stops at the verdict; `apply` is a separate human-or-explicit step gated
+  on `verdict.can_auto_apply`.
+
+  Repeating that pass (true hands-off) is a **driver on top of the primitive**,
+  two supported ways, neither a *required* daemon:
+  1. **External scheduler (recommended for production)** — a cron entry / systemd
+     timer / CI step running `h5i team worker --once` every N seconds. Crash-
+     resilient (the OS restarts it), observable, no long-lived process. The
+     lease + idempotency machinery exists precisely for this.
+     ```cron
+     * * * * * cd /repo && h5i team worker --once >> /var/log/h5i-team.log 2>&1
+     ```
+  2. **Opt-in in-process loop** — `h5i team worker --watch --interval N`: a thin
+     loop over the one-shot pass. Convenient for dev/demo; still finalize-only,
+     never auto-applies, and **never the default** (the CLI requires exactly one
+     of `--once` / `--watch`). It is a long-lived process, so the external
+     scheduler is preferred where robustness matters.
+
+  No leases in P0; no required daemon; auto-apply is never part of the worker.
 
 ## 9. Headline
 
