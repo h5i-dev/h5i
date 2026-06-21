@@ -538,6 +538,110 @@ a capture/commit that fails with \fI"h5i data store not writable"\fR means
 .BR "sudo chown \-R \(dq$(id \-u):$(id \-g)\(dq .git/.h5i" .
 .RE
 .
+.\" ─── team ───────────────────────────────────────────────────────────────────
+.SS h5i team \fISUBCOMMAND\fR
+Auditable agent ensembles: run several agents on the same task in their own
+isolated
+.B h5i env
+workspaces, driven through a phased, permissioned evidence-publication protocol
+\(em sealed workspaces, permissioned reviews, auditable convergence. A thin
+orchestration layer (\fBenv\fR keeps owning isolation/capture/apply; \fBteam\fR
+owns roster, phases, submissions, verdict); not a group chat and not a daemon. A
+roster member is a
+.I persona
+not a backend \(em the
+.I agent_id
+is the actor, while runtime/model/role are attributes, so a team may be three
+Claudes with different prompts/skills or a Claude+Codex mix. Run state is an
+append-only event log in
+.I refs/h5i/team/<run-id>
+(phase/roster/verdict are folded from events), travelling with
+.BR "h5i share push" /pull .
+.PP
+.B Phases:
+.BR draft " \(-> " sealed_submit " \(-> " review " \(-> " discuss " (opt-in) \(-> " verify " \(-> " compare " \(-> " verdict " \(-> " applied .
+Independence-first: no agent sees a peer's work before
+.BR freeze ;
+discussion is opt-in and post-freeze only, and a candidate revised after it is
+stamped \fIindependent=false\fR with its influence edges recorded.
+.PP
+.B Subcommands
+.RS 4
+.TP
+.BI "create " "NAME " "[\-\-base REV] [\-\-rounds N] [\-\-title T]"
+Create a run over existing envs;
+.B \-\-base
+(default HEAD) is the shared base every candidate is compared against.
+.TP
+.BI "add-env " "TEAM ENV " "\-\-as AGENT-ID [\-\-runtime R] [\-\-model M] [\-\-role ROLE]"
+Add an existing env to the roster as a persona-bound member (draft phase only).
+.B \-\-as
+is the ref-safe actor key; distinct personas on one runtime need distinct ids.
+.TP
+.BI "submit " "TEAM " "\-\-agent ID [\-\-commit OID] [\-\-summary-file F]"
+Freeze the agent's env-branch tip (or
+.BR \-\-commit )
+as an immutable submission \(em frozen commit/tree oids + diffstat + capture ids.
+.TP
+.BI "freeze " "TEAM " "[\-\-allow-missing]"
+Transition draft \(-> sealed_submit; refuses if any member lacks a submission
+unless
+.BR \-\-allow-missing .
+.TP
+.BI "verify " "TEAM " "\-\-agent ID [\-\-isolation TIER] \-\- COMMAND..."
+Neutral, sandboxed verifier: replays the frozen candidate at the run base in a
+throwaway worktree and runs COMMAND under the fail-closed
+.B default
+build/test profile.
+.B \-\-isolation
+(workspace/process/supervised/container) defaults to the strongest tier the host
+can enforce (falls back to workspace); the tier is recorded on the verification.
+.TP
+.BI "compare " "TEAM " "[\-\-json]"
+Side-by-side candidates + verifier metrics (advisory; does not pick a winner).
+.TP
+.BI "finalize " "TEAM " "[\-\-json]"
+Apply the finalization rule over verifier evidence \(-> a verdict event. Hard
+gates (tests pass, applies cleanly) first; smallest-diff only breaks ties among
+gate-passers. No gate-passer \(-> \fIno_verdict\fR (never applies a loser).
+.TP
+.BI "apply " "TEAM " "[\-\-winner SUBMISSION-ID] [\-\-force]"
+Replay the winning submission's recorded patch into the current branch and
+commit; records source + target oids. Gated on the verdict's
+.I can_auto_apply
+unless
+.BR \-\-force .
+.TP
+.BI "worker " "\-\-once | \-\-watch " "[\-\-interval N] [\-\-id ID] [\-\-lease-ttl S]"
+Optional automation: one lease-and-finalize pass
+.RB ( \-\-once )
+or an opt-in in-process loop
+.RB ( \-\-watch ).
+Finalize-only \(em never auto-applies. Leases are idempotent + TTL'd; for
+production prefer an external scheduler driving
+.BR \-\-once .
+.TP
+.BI "dispatch " "TEAM " "\-\-prompt-file F"
+Send the task prompt to every roster agent over
+.BR "h5i msg" .
+.TP
+.BI "grant-review " "TEAM " "\-\-reviewer A \-\-target B [\-\-artifacts KINDS]"
+Permissioned review: grant A scoped access to B's round artifacts (never raw logs
+or persona bodies by default) + send a REVIEW_REQUEST.
+.TP
+.BI "review submit " "TEAM " "\-\-reviewer A \-\-target B \-\-file F"
+Record a review body for a target candidate.
+.TP
+.BI "discuss " "TEAM " "\-\-from S \-\-to A,B \-\-file F [\-\-artifacts IDS]"
+Send a logged, influence-tracked discussion message (post-freeze only).
+.TP
+.BI "status " "TEAM " "[\-\-json]"
+Folded run state: phase, roster, per-agent submission state.
+.TP
+.BI "list " "[\-\-json]"
+All runs on this clone.
+.RE
+.
 .\" ─── share push ─────────────────────────────────────────────────────────────
 .SS h5i share push [\fIOPTIONS\fR] (alias: h5i push)
 Push the h5i refs (everything under

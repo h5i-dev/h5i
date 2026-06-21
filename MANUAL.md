@@ -58,6 +58,12 @@ Command reference for all h5i subcommands and flags.
   - [Secrets broker](#secrets-broker)
   - [Services and dynamic ports](#services-and-dynamic-ports)
   - [Resource limits](#resource-limits)
+- [h5i team (auditable agent ensembles)](#h5i-team-auditable-agent-ensembles)
+  - [Phase model](#phase-model)
+  - [Lifecycle commands](#lifecycle-commands-1)
+  - [The neutral verifier](#the-neutral-verifier-why-finalization-is-trustworthy)
+  - [Minimal-human-labor finalization](#minimal-human-labor-finalization)
+  - [Worked example](#worked-example)
 - [h5i hook](#h5i-hook)
   - [h5i hook setup](#h5i-hook-setup)
   - [h5i hook session-start](#h5i-hook-session-start)
@@ -2606,6 +2612,111 @@ delegated `user@<uid>.service` subtree, no root needed). Where delegation is
 unavailable, it falls back to rlimits (`RLIMIT_AS`/`NPROC`/`FSIZE`/`CPU`).
 `h5i env probe` reports whether cgroups are usable. A wall-clock timeout kills
 the whole process tree (`exit 124`).
+
+---
+
+## h5i team (auditable agent ensembles)
+
+A **team** runs several agents on the *same* task in their own isolated
+[`h5i env`](#h5i-env-isolated-agent-sandboxes) workspaces and drives them through
+a phased, permissioned **evidence-publication** protocol — *sealed workspaces,
+permissioned reviews, auditable convergence*. It is a thin orchestration layer:
+`env` keeps owning isolation, capture, and propose/apply; `team` owns only the
+coordination (roster, phases, submissions, verdict). It is **not** a group chat
+and **not** a daemon.
+
+A roster member is a **persona, not a backend**: the `agent_id` (e.g.
+`claude-architect`) is the durable actor, while `runtime`/`model`/`role` are
+attributes — so a team can be three Claudes with different system prompts/skills
+(architect / implementer / skeptic), a Claude+Codex mix, or one model under two
+roles. The audit records *which configuration produced which candidate*.
+
+Run state lives in one ref per run, `refs/h5i/team/<run-id>`, as an
+**append-only event log** that is the single source of truth — phase, roster, and
+verdict are *folded* from events (deduped by id, union-merged), never stored as
+mutable fields. It travels with `h5i share push` / `h5i share pull` for a
+cross-clone review loop, and the **Team** views in [`h5i serve`](#h5i-serve)
+render the board, timeline, compare, and verdict.
+
+### Phase model
+
+```
+draft → dispatched → independent_work → sealed_submit → review
+      → discuss (opt-in) → improve → verify → compare → verdict → applied
+```
+
+**Independence-first:** before `freeze` (`sealed_submit`) no agent can see a
+peer's work through the team interface. Discussion is **opt-in and only allowed
+after freeze**, every message is logged, and any candidate revised afterward is
+stamped `independent=false` with its influence edges recorded.
+
+### Lifecycle commands
+
+| Command | Description |
+|---------|-------------|
+| `h5i team create <name> [--base REV] [--rounds N] [--title T] [--json]` | Create a run over existing envs. `--base` (default `HEAD`) is the shared base all candidates are compared against. |
+| `h5i team add-env <team> <env> --as <agent-id> [--runtime R] [--model M] [--role ROLE] [--json]` | Add an already-created env to the roster as a persona-bound member. `--as` is the ref-safe actor key; distinct personas on the same runtime need distinct ids. Draft phase only. |
+| `h5i team status <team> [--json]` | Folded run state: phase, roster, per-agent submission state. |
+| `h5i team list [--json]` | All runs on this clone. |
+| `h5i team submit <team> --agent <id> [--commit OID] [--summary-file F] [--json]` | Freeze the agent's env-branch tip (or `--commit`) as an **immutable** submission — frozen commit/tree oids + diffstat + capture ids, reviewable even if the env later changes. |
+| `h5i team freeze <team> [--allow-missing] [--json]` | Transition draft → `sealed_submit`. Refuses if any roster member has no submission unless `--allow-missing` (records abstentions). |
+| `h5i team compare <team> [--json]` | Side-by-side candidates + verifier metrics (advisory only — does not pick a winner). |
+| `h5i team verify <team> --agent <id> [--isolation TIER] -- <cmd>` | **Neutral, sandboxed verifier**: replays the frozen candidate into a throwaway worktree at the run base and runs `<cmd>` under the fail-closed `default` build/test profile. `--isolation` (`workspace`/`process`/`supervised`/`container`) defaults to the strongest tier the host can enforce (falls back to `workspace`); the tier is recorded on the verification. |
+| `h5i team finalize <team> [--json]` | Apply the finalization rule over **verifier** evidence → a verdict event. Hard gates (tests pass, applies cleanly) first; `smallest diff` only breaks ties among gate-passers. Records method + the verifier command + losers' reasons. No gate-passer → `no_verdict` (never applies a loser). |
+| `h5i team apply <team> [--winner <submission-id>] [--force] [--json]` | Replay the winning submission's recorded patch (`base..commit`) into the current branch and commit; records source + target commit oids; on conflict records an event, never mutates the artifact. Gated on the verdict's `can_auto_apply` unless `--force`. |
+| `h5i team worker --once \| --watch [--interval N] [--id ID] [--lease-ttl S] [--json]` | Optional automation: one lease-and-finalize pass (`--once`) or an opt-in in-process loop (`--watch`). **Finalize-only — never auto-applies.** Leases are idempotent + TTL'd; for production prefer an external scheduler driving `--once`. |
+| `h5i team dispatch <team> --prompt-file F [--json]` | Send the task prompt to every roster agent over [`h5i msg`](#h5i-msg). Receipt/progress count only when the agent replies ACK/DONE threaded to the dispatch. |
+| `h5i team grant-review <team> --reviewer A --target B [--artifacts diff,summary,tests] [--json]` | Open a permissioned review: grant reviewer A scoped access to target B's round artifacts (never raw logs or persona bodies by default) + send a `REVIEW_REQUEST`. |
+| `h5i team review submit <team> --reviewer A --target B --file F [--json]` | Record a review body for a target candidate. |
+| `h5i team discuss <team> --from S --to A,B --file F [--artifacts ids] [--json]` | Send a logged, influence-tracked discussion message (post-freeze only). |
+
+`<env>` accepts a bare slug, `agent/slug`, or the full `env/agent/slug`.
+
+### The neutral verifier (why finalization is trustworthy)
+
+Finalization must not trust an agent's *own* captures — an agent can run weak
+tests, omit failures, or report the wrong result. `h5i team verify` is the
+authority: for each frozen submission it replays the candidate at the **shared
+base** in a fresh worktree and runs the declared command **sandboxed** under
+h5i's confinement (the same machinery as `h5i env`). The hard gates
+(`VerifierTestsPass`, `AppliesCleanly`) come only from this run; the recorded
+diffstat tie-breaker (`SmallestDiff`) is consulted **only among candidates that
+pass every gate** — so a candidate can't win by deleting tests or stubbing
+features. If candidates were verified with *different* commands, `finalize`
+refuses (`no_verdict`) — the comparison isn't apples-to-apples.
+
+### Minimal-human-labor finalization
+
+The default rule is `VerifierTestsPass, AppliesCleanly, SmallestDiff` and runs
+with no human in the loop, yet every verdict is **explainable** (method + which
+verifier command + the losers' reasons). `apply` will only auto-apply a verdict
+that passed the gates (`can_auto_apply`); `--force` is an explicit, logged
+override. A run where nothing clears the gates records `no_verdict` and stops —
+the one place a human is pinged, by choice.
+
+### Worked example
+
+```bash
+h5i team create fix-auth --base HEAD
+h5i team add-env fix-auth env/claude-architect/fix-auth --as claude-architect --runtime claude --role architect
+h5i team add-env fix-auth env/codex/fix-auth          --as codex --runtime codex --role implementer
+# each agent works in its own env, then freezes an immutable candidate
+h5i team submit fix-auth --agent claude-architect
+h5i team submit fix-auth --agent codex
+h5i team freeze fix-auth                              # seals both independent attempts
+# neutral, sandboxed verifier re-runs each candidate at the shared base
+h5i team verify fix-auth --agent claude-architect -- cargo test
+h5i team verify fix-auth --agent codex          -- cargo test
+h5i team compare  fix-auth                            # side-by-side + verifier metrics
+h5i team finalize fix-auth                            # explainable verdict over verifier evidence
+h5i team apply    fix-auth                            # replays the winning patch (gated)
+```
+
+Hands-off via an external scheduler (recommended — crash-resilient, no daemon):
+
+```cron
+* * * * * cd /repo && h5i team worker --once >> /var/log/h5i-team.log 2>&1
+```
 
 ---
 
