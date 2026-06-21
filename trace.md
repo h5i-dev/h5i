@@ -4078,3 +4078,9 @@ _[Checkpoint: 6a37c5e5 — edited MANUAL.md; edited man/man1/h5i.1; edited man/m
 [11:35:03] OBSERVE: read man/man1/h5i.1
 [11:35:12] ACT: edited man/man1/h5i.1
 [11:35:57] NOTE: DEFERRAL (~/Dev/h5i/man/man1/h5i.1): codex exec` — the task *is* the initial turn (this is the deferred `team dispatch --run` executor); or - the agent running the **`h5i msg wait` back…
+
+
+---
+_[Checkpoint: 6a37cc9d — edited MANUAL.md; edited MANUAL.md; edited man/man1/h5i.1]_
+---
+
