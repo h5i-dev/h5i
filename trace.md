@@ -4116,3 +4116,4 @@ _[Checkpoint: 6a37d045 — edited man/man1/h5i.1; edited scripts/team-launch.sh;
 _[Checkpoint: 6a37d3d8 — edited scripts/team-launch.sh; edited scripts/team-launch.sh; edited MANUAL.md]_
 ---
 
+[12:22:06] OBSERVE: read scripts/team-launch.sh
