@@ -694,9 +694,9 @@
     </div>
 
     <div class="g3" style="margin-top:18px;">
-      <div class="card-sm"><span class="mono red">bagging</span><p style="margin-top:6px;font-size:0.95rem;">Average independent learners to cut variance.</p></div>
-      <div class="card-sm"><span class="mono red">boosting</span><p style="margin-top:6px;font-size:0.95rem;">Stage learners so each fixes the last one's misses.</p></div>
-      <div class="card-sm"><span class="mono red">stacking</span><p style="margin-top:6px;font-size:0.95rem;">A meta-judge selects and blends the best outputs.</p></div>
+      <div class="card-sm"><span class="mono red">bagging</span><p style="margin-top:6px;font-size:0.95rem;">Average independent learners to cut variance.</p><span class="faint mono" style="font-size:0.72rem;">Breiman, 1996</span></div>
+      <div class="card-sm"><span class="mono red">boosting</span><p style="margin-top:6px;font-size:0.95rem;">Stage learners so each fixes the last one's misses.</p><span class="faint mono" style="font-size:0.72rem;">Freund &amp; Schapire, 1997</span></div>
+      <div class="card-sm"><span class="mono red">stacking</span><p style="margin-top:6px;font-size:0.95rem;">A meta-judge selects and blends the best outputs.</p><span class="faint mono" style="font-size:0.72rem;">Wolpert, 1992</span></div>
     </div>
   </div>
 </div>
@@ -807,12 +807,9 @@
 
     <div class="g3" style="margin-top:20px;">
       <div class="feat-card"><span class="feat-cmd">isolated worktree</span><p class="feat-desc" style="margin-top:6px;">A confined sandbox per agent — no file, port, or branch collisions.</p></div>
-      <div class="feat-card"><span class="feat-cmd">sealed submissions</span><p class="feat-desc" style="margin-top:6px;">Independent attempts frozen as immutable candidates before anyone peeks.</p></div>
       <div class="feat-card"><span class="feat-cmd">controlled peer review</span><p class="feat-desc" style="margin-top:6px;">Permissioned, post-freeze review of another agent's scoped artifacts.</p></div>
       <div class="feat-card"><span class="feat-cmd">compressed tool logs</span><p class="feat-desc" style="margin-top:6px;">Raw output kept out of context, recoverable — up to <span class="green">95% less</span> token waste.</p></div>
-      <div class="feat-card"><span class="feat-cmd">append-only messages</span><p class="feat-desc" style="margin-top:6px;">Cross-agent asks, reviews, risk, handoff — logged, never a lossy chat.</p></div>
       <div class="feat-card"><span class="feat-cmd">prompt / model provenance</span><p class="feat-desc" style="margin-top:6px;">Which configuration produced which candidate, attached to each commit.</p></div>
-      <div class="feat-card"><span class="feat-cmd">context DAG</span><p class="feat-desc" style="margin-top:6px;">Versioned, branchable reasoning trace — OBSERVE / THINK / ACT.</p></div>
       <div class="feat-card"><span class="feat-cmd">deterministic audit</span><p class="feat-desc" style="margin-top:6px;">Policy, blocked accesses, and secrets findings recorded with the change.</p></div>
       <div class="feat-card"><span class="feat-cmd">verify · compare · apply</span><p class="feat-desc" style="margin-top:6px;">Neutral verification, side-by-side compare, then merge only the winner.</p></div>
     </div>
@@ -1010,7 +1007,7 @@
   <div class="hero-glow"></div>
   <div style="width:100%;max-width:840px;text-align:center;display:flex;flex-direction:column;align-items:center;">
     <div class="hero-badge">Infrastructure for AI agent teams</div>
-    <h1>Run many coding agents.<br><span class="shine-text">Merge one auditable result</span></h1>
+    <h1 style="font-size:clamp(2.3rem,4.8vw,4.2rem);"><span style="white-space:nowrap;">Run many coding agents.</span><br><span class="shine-text" style="white-space:nowrap;">Merge one auditable result</span></h1>
     <p class="mono" style="margin:14px auto 0;font-size:1rem;color:var(--text-dim);letter-spacing:0.01em;">Orchestrators launch agents. <span class="red">h5i manages convergence.</span></p>
     <p class="lede" style="margin:16px auto 0;text-align:center;">An isolated workspace per agent, sealed independent attempts, a neutral verifier, and one auditable verdict — versioned in your repo. No SaaS required. No lock-in. Works offline.</p>
 
