@@ -231,6 +231,7 @@ fn refname(run_id: &str) -> Result<String, H5iError> {
     Ok(format!("{TEAM_REF_PREFIX}{run_id}"))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn event(
     run_id: &str,
     actor: &str,
@@ -896,6 +897,7 @@ pub fn submit_review(
     Ok(review)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn discuss(
     repo: &Repository,
     h5i_root: &Path,
