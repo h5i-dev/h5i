@@ -3950,3 +3950,4 @@ _[Checkpoint: 6a3749fb — edited src/team.rs; edited src/team.rs; edited roadma
 _[Checkpoint: 6a3750b3 — edited src/team.rs; edited src/team.rs; edited src/team.rs]_
 ---
 
+[02:57:25] OBSERVE: read roadmap/team-design.md
