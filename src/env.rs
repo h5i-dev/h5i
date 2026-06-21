@@ -5888,7 +5888,7 @@ mod tests {
         let tmp_bind = pol
             .home_binds
             .iter()
-            .find(|b| b.target == PathBuf::from("/tmp"))
+            .find(|b| b.target.as_path() == Path::new("/tmp"))
             .unwrap();
         assert_eq!(tmp_bind.backing, backing);
     }
