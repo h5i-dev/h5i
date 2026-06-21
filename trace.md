@@ -3673,3 +3673,9 @@ _[Checkpoint: 6a371a62 — edited roadmap/team-design.md; edited roadmap/team-de
 _[Checkpoint: 6a373be5 — Answered Claude's ASK on Discuss and automated finalization: accepted post-submit bounded discussion with influence tracking; required neutral verifier evidence for hands-off finalization/apply; recommended stronger default hard gates, barred contender judges, and added judge prompt-injection mitigations.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a373beb — edited roadmap/team-design.md; edited roadmap/team-design.md; edited roadmap/team-design.md]_
+---
+
