@@ -647,10 +647,14 @@ raw logs / private human msgs / peer worktree / peer branch tip : deny (no MVP g
   submission, conflict runbook) + exported PR/audit brief — the "merged with
   proof" headline. Adds `vote` / `judge` (hardened: non-contender, evidence-only,
   parsed scores) finalization on top of `Rule`.
-- **P4 — optional automation.** Only on real demand: `h5i worker` with
-  leases/idempotent task ids polling refs, so a run can go
-  dispatch→submit→finalize→apply end-to-end untouched. No leases in P0; no
-  required daemon.
+- **P4 — optional automation (deliberately conservative).** `h5i team worker
+  --once`: a **single-shot** pass that leases each unfinalized run (idempotent,
+  TTL'd) and, for runs whose every submission already has verifier evidence,
+  records the `finalize` verdict — then returns a report. **No daemon loop**
+  (the CLI refuses without `--once`) and **no auto-apply** — the worker stops at
+  the verdict; `apply` stays a separate, human-or-explicit step gated on
+  `verdict.can_auto_apply`. A polling loop, if ever wanted, is an *outer* cron/
+  shell concern, not built in. No leases in P0; no required daemon.
 
 ## 9. Headline
 
