@@ -110,3 +110,9 @@ _[Checkpoint: 6a38549b — edited docs/pitch/index.html; edited docs/pitch/index
 [21:16:24] THINK: I'll create `examples/personas/` with the three example files (cargo ignores non-`.
 [21:16:24] THINK: Cleaned up. Let me run clippy on all targets (to lint my new test code) and confirm only the pre-existing warning remains:
 [21:16:24] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): /index.html` edit (a hero-title copy change) isn't mine — I'll leave it unstaged and commit only my files. Per the project rules, I'll stage explici…
+
+
+---
+_[Checkpoint: 6a3854a8 — edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html]_
+---
+
