@@ -102,3 +102,4 @@ _[Checkpoint: 6a38549b — edited docs/pitch/index.html; edited docs/pitch/index
 [21:16:24] THINK: Let me view the end of `shell()` to find the insertion point:
 [21:16:24] THINK: Builds clean. Now let me run clippy (CI gate) and check that the existing sandbox tests still pass with the new field:
 [21:16:24] THINK: Let me confirm it's pre-existing (not introduced by me):
+[21:16:24] THINK: Let me use it instead of `EnvManifest::default()`:
