@@ -4136,3 +4136,4 @@ _[Checkpoint: 6a37d7e1 — edited MANUAL.md; wrote scripts/team-launch.sh; edite
 _[Checkpoint: 6a37d901 — edited scripts/team-launch.sh; edited scripts/team-launch.sh; edited MANUAL.md]_
 ---
 
+[12:32:28] OBSERVE: read src/sandbox_policy.rs
