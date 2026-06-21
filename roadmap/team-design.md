@@ -2,10 +2,9 @@
 
 > Status: design overview (v3). Supersedes `ensemble_v1.md` (CLI/refs sketch) and
 > `ensemble_v2.md` (TUI-first). Consolidates a survey of the existing `env`,
-> `serve`, `msg`, and `objects` code paths with four rounds of i5h review from
-> Codex (#37f12392, #65897b5d, #80c46ba6, #3033bc37 — persona model). The §4a
-> communication + finalization policy layer is self-reviewed; a 5th Codex pass
-> (#ed97ae41) is pending its availability.
+> `serve`, `msg`, and `objects` code paths with five rounds of i5h review from
+> Codex (#37f12392, #65897b5d, #80c46ba6, #3033bc37 — persona model, #2edd77c1 —
+> neutral verifier + discussion-as-contamination + judge hardening).
 >
 > One sentence: **`h5i team` is a deterministic, Git-backed evidence-publication
 > workflow over existing envs — not an agent-orchestration daemon, and not a chat
@@ -101,14 +100,13 @@ input, never an execution authority.** Implications:
 
 **Invariants (non-negotiable):**
 
-1. **Independence (default; policy-relaxable).** Under the default sealed
-   communication policy, before the `review` phase an agent cannot read another
-   agent's diff, summary, logs, worktree path, private instructions, or branch
-   tip *through the team interface*. (Envs already don't read each other.) If the
-   user enables a discussion policy (§4a), this is relaxed **only** within the
-   declared discussion scope, every exchange is logged, and affected candidates
-   are stamped `independent=false` so the audit never mistakes a discussed patch
-   for an independent attempt.
+1. **Independence (two regimes).** Independence holds until `sealed_submit`:
+   before then an agent cannot read another agent's diff, summary, logs, worktree
+   path, private instructions, or branch tip *through the team interface* (envs
+   already don't read each other). After an opt-in `Discuss` phase (§4a),
+   `independent=false` and **influence edges are recorded** — discussion is
+   modeled as *contamination*, not preserved independence, so the audit shows the
+   independent first attempt and, separately, what influenced each later one.
 2. **Publication.** A peer artifact becomes visible only via an explicit phase
    transition or grant **event recorded in the team log** — never implicitly.
 3. **Host-mediated evidence.** Boxed agents must not mutate team coordination
@@ -130,6 +128,12 @@ input, never an execution authority.** Implications:
    reasons**. An automated decision is allowed; an unexplained one is not. The
    `actor` of an auto-verdict is the policy/agent that decided, never a human who
    didn't.
+8. **Neutral verifier authority.** Any metric that *gates an apply* is computed by
+   an h5i-controlled verifier that re-runs the frozen candidate at `base_oid`
+   under a fixed policy — never from the agent's own captures. Agent captures are
+   provenance; verifier artifacts are authority. A candidate the verifier cannot
+   evaluate is ineligible, not a pass. Without a configured verifier, an automated
+   `verdict` is recommendation-only and **may not auto-apply** (§4a).
 
 ## 3. State machine
 
@@ -137,9 +141,10 @@ input, never an execution authority.** Implications:
 draft ─► dispatched ─► independent_work ─► sealed_submit ─► review ─┐
                                               │ (discuss policy)    │
                                               ▼                     │
-   applied | closed ◄─ verdict ◄─ compare ◄─ discuss? ◄─ improve ◄──┘
-                          ▲                              (loop ≤ max_rounds)
-                          └─ finalization policy: rule | vote | judge | human
+ applied|closed ◄─ verdict ◄─ compare ◄─ verify ◄─ discuss? ◄─ improve ◄─┘
+                      ▲                                       (loop ≤ max_rounds)
+                      └─ finalization policy: rule | vote | judge | human
+                         (apply gated on verifier hard gates)
 ```
 
 - Transitions are **monotonic** except a documented `reopen` event; reopen must
@@ -151,8 +156,12 @@ draft ─► dispatched ─► independent_work ─► sealed_submit ─► revi
 - `discuss` is **optional**, gated by the communication policy (§4a). It only
   ever runs *after* `sealed_submit` (so the first attempt is always independent),
   is fully logged, and stamps any subsequent candidate `independent=false`.
+- `verify` re-runs each frozen candidate at `base_oid` under the fixed
+  `VerificationPolicy` and produces the neutral evidence finalization gates on
+  (invariant 8). Skipped only if no verifier is configured — then the verdict is
+  recommendation-only and can't auto-apply.
 - `verdict` may be reached **without a human** per the finalization policy (§4a);
-  the transition still records method + evidence (invariant 7).
+  the transition still records method + evidence (invariants 7, 8).
 
 | Phase | What happens | Backed by |
 |---|---|---|
@@ -161,10 +170,11 @@ draft ─► dispatched ─► independent_work ─► sealed_submit ─► revi
 | independent_work | agents edit in their own env | `env run` / `env shell` (captures accrue) |
 | sealed_submit | each agent **freezes** an immutable candidate | `team submit` (snapshot oids + captures) |
 | review | reviewers see *granted* artifacts only | grants + i5h `REVIEW_REQUEST` |
-| discuss *(opt-in)* | agents exchange messages within declared scope | i5h thread scoped to run; every msg logged |
+| discuss *(opt-in)* | agents exchange messages within declared scope | i5h thread scoped to run; every msg logged; candidates → `independent=false` |
 | improve | feedback routed back; agents revise; new round | i5h replies → new `env run` cycle |
-| compare | candidates shown side by side + metrics gathered | `team compare` → `env::compare` + findings |
-| verdict | winner chosen by policy (rule/vote/judge/human) | `team finalize` → recorded verdict event |
+| verify | h5i re-runs each candidate at `base_oid` (fixed cmds) | `team verify` → `VerificationArtifact` per candidate |
+| compare | candidates shown side by side + verifier metrics | `team compare` → `env::compare` + verifier results |
+| verdict | winner chosen by policy over verifier evidence | `team finalize` → recorded verdict event |
 | applied | winner *replayed* into target, provenance stamped | `team apply` → fresh merge of submission |
 
 ## 4. Ref & storage model
@@ -250,10 +260,27 @@ struct TeamArtifact {           // immutable candidate bundle
     persona_event_id: String,   // WHERE in the timeline that config entered (digest proves
                                 // content equality; this anchors it across reopen/override/update)
     commit_oid: String, tree_oid: String,
-    capture_ids: Vec<String>, diff_stat: DiffStat,
-    metrics: Map<String, f64>,  // finalization inputs gathered at compare (tests/loc/risk/bench)
+    capture_ids: Vec<String>, diff_stat: DiffStat, // agent-side; PROVENANCE only, not authority
     independent: bool,          // false if produced after a discuss phase (provenance honesty)
+    influence_event_ids: Vec<String>,   // discussion msgs that influenced this candidate
+    influence_artifact_ids: Vec<String>,// peer artifacts it was exposed to (transitive)
     visibility: String, digest: String,
+}
+struct VerificationArtifact {   // h5i-run, the finalization AUTHORITY (invariant 8)
+    submission_id: String, run_id: String, round: u32,
+    commands: Vec<String>,      // exact policy commands re-run at base_oid (identity recorded)
+    applied_cleanly: bool, exit_codes: Vec<i32>,
+    tests_pass: bool, test_count: u32, baseline: Option<u32>,
+    tests_deleted: u32, ci_changed: bool, coverage_changed: Option<f64>,
+    risk: String,               // critical|high|... from risk.rs over verifier output
+    diff_stat: DiffStat, bench: Map<String, f64>,
+    eligible: bool,             // false ⇒ verifier couldn't evaluate (NOT a pass)
+    capture_ids: Vec<String>, digest: String,
+}
+struct DiscussionMsg {          // logged contamination edge (every discussion message)
+    id: String, run_id: String, round: u32, thread_id: String,
+    sender: String, recipients: Vec<String>,
+    referenced_artifact_ids: Vec<String>, parent_event_id: Option<String>,
 }
 struct Grant {                  // unit of cross-agent visibility
     reviewer: String, target: String, round: u32,
@@ -264,13 +291,17 @@ struct Grant {                  // unit of cross-agent visibility
 struct Review { reviewer: String, target: String, round: u32,
     findings: Vec<String>, risks: Vec<String>, suggested_changes: Vec<String>,
     referenced_artifacts: Vec<String> }
-struct Verdict {                // explains itself whether human OR machine decided (invariant 7)
-    selected_submission: Option<String>, // None == no_verdict (no candidate cleared the rule)
-    method: String,             // "rule:tests,smallest-diff" | "vote" | "judge:<id>" | "human"
+struct Verdict {                // explains itself whether human OR machine decided (inv. 7, 8)
+    selected_submission: Option<String>, // None == no_verdict (nothing cleared the hard gates)
+    method: String,             // "rule:..." | "vote" | "judge:<id>" | "human"
     decided_by: String,         // the policy/judge/human actor that decided
-    metric_values: Map<String, Map<String, f64>>, // per-candidate inputs the decision used
-    ballots: Vec<Ballot>,       // for vote/judge: voter, choice, rationale
+    verifier_artifact_ids: Vec<String>, // the NEUTRAL evidence the decision stood on
+    gate_results: Map<String, Map<String, bool>>, // per-candidate hard-gate pass/fail
+    metric_values: Map<String, Map<String, f64>>, // tie-breaker inputs (only for gate-passers)
+    ballots: Vec<Ballot>,       // for vote/judge: voter, per-criterion score, rationale
     rejected: Vec<(String, String)>, // (submission, reason) for every loser
+    conflict_of_interest: bool, // true ⇒ insecure override (judge=contender); blocks auto-apply
+    can_auto_apply: bool,       // false if no verifier OR conflict_of_interest OR no_verdict
     human_approved_by: Option<String>, // only set under FinalizationPolicy::Human
 }
 ```
@@ -300,6 +331,7 @@ matter most; both default safe and both keep the audit complete.
 struct TeamPolicy {
     grantable_artifacts: Vec<String>,   // diff,summary,tests (never raw bodies); §6
     communication: CommunicationPolicy,
+    verification: Option<VerificationPolicy>, // the NEUTRAL evidence source for finalization
     finalization: FinalizationPolicy,
 }
 
@@ -308,56 +340,124 @@ enum CommunicationPolicy {
     Discuss {                           // opt-in: agents may talk, AFTER sealed_submit
         scope: DiscussScope,            // FreeForAll | Pairs(reviewer→target) | Moderated(judge)
         max_messages: u32,              // bounded so it can't loop forever (hands-off)
-        share_artifacts: Vec<String>,   // what discussion may reference (diff/summary/tests)
+        share_artifacts: Vec<String>,   // RESOLVED to per-round artifact ids (not a broad kind list)
     },
+}
+
+// h5i-controlled re-execution — NOT the agent's own captures. This is what makes
+// hands-off apply trustworthy: an agent cannot fake/omit/run-the-wrong tests here.
+struct VerificationPolicy {
+    commands: Vec<String>,              // FIXED in policy, identical for every candidate
+    isolation: String,                  // env tier the verifier runs under
+    baseline_tests: Option<u32>,        // floor; a candidate may not regress below it
+    forbid: Vec<String>,                // e.g. test/CI deletion, coverage drop, skip-markers
 }
 
 enum FinalizationPolicy {               // who/what picks the winner — minimize human labor
     Human,                              // explicit approval (opt-in now, not the default)
-    Rule(Vec<Metric>),                  // deterministic ordering, e.g. [TestsPass, FewestLoc]
+    Rule(Vec<Metric>),                  // hard gates first, then ordered tie-breakers
     Vote { electorate: Electorate, tie_break: Box<FinalizationPolicy> },
     Judge { agent_id: String, rubric: Option<String>, tie_break: Box<FinalizationPolicy> },
 }
 
-enum Metric {                           // rule inputs, all from EXISTING evidence
-    TestsPass,                          // from a tests capture (pass/fail, count)
-    FewestLoc,                          // from diff_stat
-    SmallestDiff,                       // files + churn from diff_stat
-    LowestRisk,                         // from risk.rs classification of the env captures
-    FastestBench(String),               // a named benchmark capture's metric
-    Custom(String),                     // a user expression over the above
+enum Metric {
+    // HARD GATES — sourced from the VERIFIER, must all pass before any ranking:
+    VerifierTestsPass,                  // verifier exit 0 + no test-count regression vs baseline
+    NoCriticalRisk,                     // risk.rs over verifier output, no critical findings
+    AppliesCleanly,                     // candidate replays onto base_oid without conflict
+    NoForbiddenChange,                  // no test/CI deletion etc. per VerificationPolicy.forbid
+    // TIE-BREAKERS — only consulted once ALL hard gates pass:
+    SmallestDiff,                       // verifier-computed diff_stat
+    FewestLoc,
+    LowestRisk,                         // ordinal risk score
+    FastestBench(String),               // a verifier-run benchmark metric
+    Custom(String),
 }
 enum Electorate { AllAgents, AllExcept(String), Named(Vec<String>) }
 ```
 
+**Hard gates before metrics.** Finalization is two-stage. First every candidate
+must clear the **hard gates** — all computed from a **neutral verifier** (§ below),
+never from the agent's own captures: verifier tests pass (no regression below
+`baseline_tests`), no critical risk, applies cleanly onto `base_oid`, no forbidden
+test/CI deletion. Output-reducing metrics (`SmallestDiff`/`FewestLoc`) are
+consulted **only among candidates that already passed all gates** — so you can
+never win by deleting tests or stubbing features. A candidate the verifier can't
+evaluate is **ineligible / `unknown`**, never treated as a pass.
+
+**Neutral verifier (the finalization authority).** For each frozen submission,
+h5i replays the candidate into a *fresh* workspace at `base_oid` and runs the
+policy's fixed `commands` under the declared isolation. `VerifierTestsPass`,
+benchmarks, risk, and the finalization `diff_stat` come from these **verifier
+artifacts**; agent captures remain *provenance*, not finalization authority. The
+verdict records `verifier_artifact_ids` + the exact command identities.
+
 **Recommended hands-off default:** `communication = Sealed`,
-`finalization = Rule([TestsPass, SmallestDiff])` — candidates that pass tests
-win, ties broken by the smallest change, **no human in the loop**, and the
-verdict event still spells out the metric values. The user overrides per run
-(`--finalize vote`, `--finalize judge:claude-skeptic`, `--finalize human`,
-`--discuss pairs --max-messages 8`).
+`finalization = Rule([VerifierTestsPass, NoCriticalRisk, AppliesCleanly,
+NoForbiddenChange, SmallestDiff])` (SmallestDiff is the *final* tie-break) — **no
+human in the loop**, and the verdict spells out every gate result + metric value.
+**If no `VerificationPolicy` is configured, `Rule` is recommendation-only: it
+produces an auto-`verdict` but may NOT auto-apply** — apply then needs `Human` (or
+a configured verifier). The user overrides per run (`--finalize vote`, `--finalize
+judge:claude-judge`, `--finalize human`, `--discuss pairs --max-messages 8`).
 
-**Guards that keep automation honest** (so "minimal labor" ≠ "ungoverned"):
+**Discussion is contamination, not preserved independence.** The honest model is
+*two regimes*: an independent first attempt, then a contaminated/improved one.
+Invariant 1 reads "independence holds until `sealed_submit`; after `Discuss`,
+`independent=false` and influence edges are recorded." Concretely:
 
-- **Metrics come only from recorded evidence** (captures / diff_stat / risk), so
-  a verdict is reproducible from the audit trail, not from live state.
-- **Gaming defense:** rule metrics are adversarial-aware — `FewestLoc`/`SmallestDiff`
-  alone are gameable (delete tests, stub features), so they are only ever
-  *tie-breakers after* `TestsPass` (and optionally a risk-floor). A judge rubric
-  should be published in the verdict for inspection.
-- **Vote integrity:** under a `Discuss` policy, votes can collude — a voter may
-  not vote for a candidate it co-authored or discussed into; record each ballot
-  + rationale; a tie falls through to the declared `tie_break`.
-- **Judge conflict of interest:** a `Judge` finalizer must **not** be a roster
-  contender. If the desired judge persona is also competing, either run it as a
-  separate non-contending roster member (its own `agent_id`) or exclude its own
-  candidate from its decision; the verdict records the judge's runtime/model so a
-  same-runtime bias (judge favoring fellow Claude candidates) is auditable.
-- **No-winner is a valid outcome:** if no candidate clears the rule (e.g. none
-  pass tests), the run records `no_verdict` and notifies — it does **not** apply
-  a loser. This is the one place a human may be pinged, by choice.
-- **Bounded discussion:** `max_messages` and a per-run discussion deadline keep a
-  hands-off run from looping; exhaustion advances to `compare` automatically.
+- Every discussion message carries `run_id, round, thread_id, sender, recipients,
+  referenced_artifact_ids, parent_event_id`.
+- `share_artifacts` is **compiled into explicit grants** — resolved to the
+  specific artifact ids for that round, not left as a broad kind list.
+- Any candidate submitted after receiving a discussion message is
+  `independent=false` and carries `influence_event_ids` / `influence_artifact_ids`
+  — so you know not just *that* it was contaminated but *by what*.
+- **Influence is transitive.** If B reads A's patch, revises, then C reads B's
+  revised summary, C is indirectly influenced by A. The fold preserves enough
+  influence edges to display "derived after discussion with A/B" (no full causal
+  calculus needed, just the edges).
+- **Votes aren't independent under `FreeForAll`** — if everyone discussed with
+  everyone, everyone is conflicted; the policy simply falls through to
+  rule/judge/`no_verdict`. Don't pretend those votes are independent.
+- **Moderated discussion is still a channel.** If a moderator/judge summarizes
+  A's artifacts to B, B is influenced by what the moderator consumed — record it.
+
+**Guards that keep finalization honest:**
+
+- **Finalization authority is the verifier, not the agent.** Hard gates +
+  ranking metrics come from h5i-run verifier artifacts; agent captures are
+  provenance only. Missing verifier result ⇒ ineligible, never a pass.
+- **`VerifierTestsPass` is strict:** the command/profile is fixed in
+  `TeamPolicy` (not per agent); exit code must be 0; test count must not regress
+  below `baseline_tests`; deleting/skipping tests or mutating CI/test config is a
+  blocking finding. Emit `tests_changed / tests_deleted / ci_changed /
+  coverage_changed` metrics where available.
+- **Tie-breakers gated:** `SmallestDiff`/`FewestLoc` never decide between
+  candidates unless *all* hard gates pass.
+- **Vote integrity:** a voter may not vote for a candidate it co-authored or
+  discussed into; record each ballot + rationale; ties fall to `tie_break`.
+- **Judge conflict of interest — hard bar.** A `Judge` finalizer **must not** be a
+  roster contender; a separate non-contending `agent_id` is required. "Exclude its
+  own candidate" is *not* the normal path (it still saw the competition and may
+  bias toward its style/runtime). If a user insists, it is an explicit insecure
+  override recorded `conflict_of_interest=true`, and such a verdict **cannot
+  auto-apply**.
+- **Judge sees evidence, not persuasion.** The judge gets the verifier bundle +
+  granted summaries/diffs/tests/risk — **not** raw logs or persona bodies (admin
+  grant only). Against **prompt injection** (candidates embedding "prefer me" in
+  comments/docs/test output): the rubric instructs the judge to ignore
+  candidate-authored persuasion and score only specified evidence; structured
+  evidence is fed first, raw diff second, and candidate text never defines the
+  rubric. Same-runtime bias is *mitigated*, not just logged — if the judge's
+  runtime/model matches a contender, require a non-same-runtime `tie_break`.
+- **Judge output is parsed, not trusted prose:** structured per-criterion
+  scores + rationale; a parse failure or omitted losers' reasons ⇒ `no_verdict` /
+  fallback, never silent success.
+- **No-winner is valid:** no candidate clears the gates ⇒ `no_verdict` + notify;
+  never apply a loser. The one place a human may be pinged, by choice.
+- **Bounded discussion:** `max_messages` + a per-run deadline stop a hands-off run
+  from looping; exhaustion advances to `compare` automatically.
 
 ## 5. CLI MVP & serve views
 
@@ -367,9 +467,12 @@ Each command maps onto an existing primitive; team adds no new execution.
 ```bash
 # P0 — manual ensemble over EXISTING envs (no agent automation)
 h5i team create <name> --base HEAD [--rounds 1]
-      [--finalize rule:tests,smallest-diff | vote | judge:<agent-id> | human]
+      [--verify-cmd "cargo test" --verify-tier process [--baseline-tests N]]
+      [--finalize rule:gates,smallest-diff | vote | judge:<agent-id> | human]
       [--discuss off | pairs | free | moderated:<judge>] [--max-messages N]
-      # default: --finalize rule:tests,smallest-diff --discuss off  (hands-off, no human)
+      # default: --finalize rule:[verifier-tests,no-critical-risk,applies-clean,smallest-diff]
+      #          --discuss off  (hands-off, no human). Without --verify-cmd, a rule verdict is
+      #          recommendation-only and apply still needs --finalize human.
 h5i team add-env <team> <env> --as <agent-id>     # group already-created envs; agent-id is the
       [--runtime claude|codex] [--model M]        # ref-safe persona key (claude-architect, ...)
       [--role architect] [--skill code-review,...] # persona recorded as provenance (persona_digest)
@@ -379,12 +482,17 @@ h5i team submit <team> --agent <id> [--commit OID] [--tests-capture ID] [--summa
 h5i team freeze <team> [--allow-missing]          # → sealed_submit; REFUSES if any roster
                                                   # member lacks a submission, unless
                                                   # --allow-missing records abstentions/timeouts
-h5i team compare <team> [--json]                  # candidates side by side + gathered metrics;
+h5i team verify <team> [--agent <id>]             # h5i re-runs each frozen candidate at base_oid
+                                                  # under the fixed VerificationPolicy → one
+                                                  # VerificationArtifact per candidate (the NEUTRAL
+                                                  # finalization evidence). Can't run → ineligible.
+h5i team compare <team> [--json]                  # candidates side by side + VERIFIER metrics;
                                                   # advisory only — does NOT pick the winner
-h5i team finalize <team> [--dry-run]              # apply the run's finalization policy → verdict
-                                                  # event (method + metric values/ballots/rationale +
-                                                  # losers' reasons). --dry-run shows what would win.
-                                                  # no candidate clears the rule → records no_verdict
+h5i team finalize <team> [--dry-run]              # apply finalization policy over verifier evidence →
+                                                  # verdict event (gate results + tie-break metrics +
+                                                  # ballots/rationale + losers' reasons). --dry-run
+                                                  # previews. Nothing clears the gates → no_verdict.
+                                                  # Sets can_auto_apply=false if no verifier / CoI.
 
 # P1 — dispatch + grants
 h5i team dispatch <team> --prompt-file F          # i5h sends; receipt/progress counts ONLY via
@@ -409,9 +517,12 @@ h5i team discuss <team> [--scope pairs|free|moderated] [--max-messages N]
                                                   # candidates independent=false; bounded by N
 # P2 — rounds + state-machine enforcement (serve permission/verdict views)
 # P3 — apply winner
-h5i team apply <team> --winner <submission-id>    # replay recorded patch into fresh target;
-                                                  # records submission id + resulting target commit oid;
-                                                  # on conflict records a conflict event, never mutates
+h5i team apply <team> [--winner <submission-id>]  # defaults to the verdict's winner; REFUSES unless
+                                                  # verdict.can_auto_apply (verifier gates passed, no
+                                                  # conflict_of_interest) or an explicit human approval;
+                                                  # replays recorded patch into fresh target; records
+                                                  # submission id + resulting target commit oid; on
+                                                  # conflict records a conflict event, never mutates
                                                   # the winning artifact + audit report
 ```
 
@@ -422,9 +533,10 @@ h5i team apply <team> --winner <submission-id>    # replay recorded patch into f
 | dispatch | `msg::send` (kind ASK/handoff) + `dispatched` event |
 | grant-review | `Grant` event + scoped `msg::send` (REVIEW_REQUEST) referencing artifact ids only |
 | compare | `env::compare(run.env_ids)` arena + join review findings/risk + gather `Metric`s |
-| discuss | `msg::send` within a run-scoped i5h thread; every msg → `TeamEvent` + capture |
-| finalize | evaluate `FinalizationPolicy` over recorded metrics/ballots → `verdict` event |
-| apply | replay submission into fresh target (3-way), then `env`-style provenance note |
+| discuss | `msg::send` within a run-scoped i5h thread; every msg → `DiscussionMsg` event |
+| verify | fresh `env` at `base_oid` + fixed cmds (reuses env isolation/capture) → `VerificationArtifact` |
+| finalize | evaluate `FinalizationPolicy` over **verifier** evidence/ballots → `verdict` event |
+| apply | gate on `verdict.can_auto_apply`; replay submission into fresh target (3-way) + provenance note |
 
 **serve** is already axum JSON API + React SPA (`web/`) with a `Mode` switcher
 in `Workbench.tsx`. Add a **Team** mode + handlers in `server.rs` /
@@ -443,8 +555,13 @@ with team artifacts. Client: `web/src/TeamView.tsx`, a `Mode = "team"` branch,
 Web views (not TUI clones): **Board, Compare, Timeline, Permissions, Verdict.**
 Each board lane is labeled by **persona** (role + runtime/model badge, e.g.
 "architect · claude-opus-4-8"), not just the backend — so a roster of three
-Claudes reads as three distinct contenders; Compare/Verdict link the winning
-candidate back to its `persona_digest`.
+Claudes reads as three distinct contenders. **Compare** shows the verifier
+hard-gate matrix (tests/risk/applies-clean/forbidden-change) per candidate with
+tie-break metrics, and visibly separates *agent-claimed* from *verifier-measured*
+results. **Timeline** overlays discussion **influence edges** (who derived from
+whom) and marks `independent=false` candidates. **Verdict** links the winner to
+its `persona_digest`, the `verifier_artifact_ids` it stood on, and (for
+vote/judge) the per-criterion ballots.
 
 ## 6. Security & privacy model
 
@@ -462,11 +579,13 @@ raw logs / private human msgs / peer worktree / peer branch tip : deny (no MVP g
   it is capped by `max_messages`/deadline, and any candidate revised afterward is
   stamped `independent=false`. Discussion may reference only the policy's
   `share_artifacts` — never raw bodies or peer worktrees.
-- **Automation is governed, not blind.** A machine `verdict` consumes only
-  recorded metrics/ballots and writes its full reasoning (invariant 7); a tie or
-  no-clear-winner falls through to the declared tie-break or `no_verdict` rather
-  than applying a loser. Gameable metrics (`FewestLoc`/`SmallestDiff`) are only
-  tie-breakers behind `TestsPass`.
+- **Automation is governed, not blind.** A machine `verdict` consumes only the
+  **neutral verifier** evidence (not agent captures) and writes its full reasoning
+  (invariants 7, 8); a tie or no gate-passer falls through to the declared
+  tie-break or `no_verdict` rather than applying a loser. Output-reducing metrics
+  (`FewestLoc`/`SmallestDiff`) are tie-breakers only behind the verifier hard
+  gates. Auto-apply requires `verdict.can_auto_apply` (verifier configured + gates
+  passed + no conflict-of-interest).
 - **Default grant = diff + summary + test *status*** — never raw capture bodies
   (captures may carry secrets). Raw-log sharing has no MVP path.
 - **Every lane shows its env's *actual* isolation tier** from `env probe`. A
@@ -517,14 +636,17 @@ raw logs / private human msgs / peer worktree / peer branch tip : deny (no MVP g
   env arena and powers a serve Team board + compare view. First strong demo.
 - **P1 — dispatch + grants + board.** `dispatch` (i5h), `grant-review` /
   `review submit`, serve board + timeline + permission view.
-- **P2 — rounds + hands-off finalization.** Improvement loop, state-machine
-  enforcement, convergence/stop conditions (`max_rounds`, no-material-diff,
-  tests-pass); `team finalize` with `Rule` metrics (the no-human default) + the
-  opt-in `team discuss` phase; serve verdict + permission views. **This is the
-  slice that delivers "minimal human labor."**
-- **P3 — apply + audit.** `team apply` (replay submission, conflict runbook) +
-  exported PR/audit brief — the "merged with proof" headline. Adds `vote` /
-  `judge` finalization on top of `Rule`.
+- **P2 — verifier + hands-off finalization.** `team verify` (the neutral
+  re-execution that gates everything), improvement loop, state-machine
+  enforcement, convergence/stop conditions; `team finalize` with `Rule` over
+  verifier hard gates (the no-human default) + the opt-in `team discuss` phase
+  with influence tracking; serve verdict + permission views. **This is the slice
+  that delivers "minimal human labor" — and the verifier is its prerequisite, so
+  it lands first within P2.**
+- **P3 — apply + audit.** `team apply` (gated on `can_auto_apply`, replay
+  submission, conflict runbook) + exported PR/audit brief — the "merged with
+  proof" headline. Adds `vote` / `judge` (hardened: non-contender, evidence-only,
+  parsed scores) finalization on top of `Rule`.
 - **P4 — optional automation.** Only on real demand: `h5i worker` with
   leases/idempotent task ids polling refs, so a run can go
   dispatch→submit→finalize→apply end-to-end untouched. No leases in P0; no
