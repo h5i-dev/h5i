@@ -3680,3 +3680,9 @@ _[Checkpoint: 6a373beb — edited roadmap/team-design.md; edited roadmap/team-de
 ---
 
 [01:23:43] THINK: - **Commit now** (I'll stage `roadmap/team-design.
+
+
+---
+_[Checkpoint: 6a373d1f — edited roadmap/team-design.md; edited roadmap/team-design.md]_
+---
+
