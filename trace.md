@@ -97,3 +97,4 @@ _[Checkpoint: 6a385497 — Rewrote pitch deck around agent-teams narrative]_
 _[Checkpoint: 6a38549b — edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html]_
 ---
 
+[21:16:24] THINK: .. }` struct literals I'll need to update when adding a field.
