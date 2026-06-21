@@ -4405,3 +4405,4 @@ _[Checkpoint: 6a383b87 — edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited 
 [20:11:21] THINK: Builds clean. Now let me run clippy (CI gate) and check that the existing sandbox tests still pass with the new field:
 [20:11:21] THINK: Let me confirm it's pre-existing (not introduced by me):
 [20:11:21] THINK: Let me use it instead of `EnvManifest::default()`:
+[20:11:21] THINK: All three pass. Let me run the broader sandbox/profile/env test suites to confirm no regressions (especially digest stability):
