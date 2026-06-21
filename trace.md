@@ -3716,3 +3716,9 @@ _[Checkpoint: 6a373d1f — edited roadmap/team-design.md; edited roadmap/team-de
 [01:28:48] OBSERVE: read roadmap/team-design.md
 [01:28:58] ACT: edited roadmap/team-design.md
 [01:29:05] ACT: edited roadmap/team-design.md
+
+
+---
+_[Checkpoint: 6a373e80 — Added neutral verifier + contamination model + judge hardening (Codex 5th pass)]_
+---
+
