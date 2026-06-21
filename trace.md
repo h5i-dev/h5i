@@ -4403,3 +4403,4 @@ _[Checkpoint: 6a383b87 — edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited 
 [20:11:20] THINK: rs`. Let me update `shell()` to build the default argv internally and add the helper functions.
 [20:11:21] THINK: Let me view the end of `shell()` to find the insertion point:
 [20:11:21] THINK: Builds clean. Now let me run clippy (CI gate) and check that the existing sandbox tests still pass with the new field:
+[20:11:21] THINK: Let me confirm it's pre-existing (not introduced by me):
