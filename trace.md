@@ -91,3 +91,9 @@ _[Checkpoint: 6a38545d — edited docs/pitch/index.html; edited docs/pitch/index
 _[Checkpoint: 6a385497 — Rewrote pitch deck around agent-teams narrative]_
 ---
 
+
+
+---
+_[Checkpoint: 6a38549b — edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html]_
+---
+
