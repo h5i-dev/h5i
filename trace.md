@@ -3780,3 +3780,4 @@ _[Checkpoint: 6a373ea1 — edited roadmap/team-design.md; edited roadmap/team-de
 [02:00:11] OBSERVE: searched isolated|action: for "\{|Manage"
 [02:00:11] OBSERVE: searched build_tree|pub\(crate\) for "fn"
 [02:00:11] OBSERVE: searched src/main.rs for "Cargo.toml"
+[02:00:11] OBSERVE: read src/error.rs
