@@ -3872,3 +3872,9 @@ _[Checkpoint: 6a3745b9 — Implemented h5i team P0-P4: Git-backed team event log
 _[Checkpoint: 6a3745c6 — edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/Dev/h5i/src/main.rs; edited /home/koukyosyumei/…]_
 ---
 
+
+
+---
+_[Checkpoint: 6a37468b — Committed h5i team workflows as 2cd8e538: P0-P4 CLI/storage/verifier/apply/worker plus serve Team view.]_
+---
+
