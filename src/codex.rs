@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::ctx;
+use crate::env::{
+    CodexHookSpoolRecord, CodexHookTraceEvent, H5I_ENV_CAPTURE_SPOOL_VAR, H5I_ENV_ID_VAR,
+    H5I_ENV_POLICY_DIGEST_VAR,
+};
 use crate::error::H5iError;
 use crate::repository::H5iRepository;
 
@@ -73,22 +77,23 @@ pub fn sync_context(workdir: &Path) -> Result<Option<CodexSyncResult>, H5iError>
 
     let mut observed = 0usize;
     let mut acted = 0usize;
-    let h5i_repo = H5iRepository::open(workdir)?;
+    let mut prompts = Vec::new();
+    let mut events = Vec::new();
 
     for line in raw.lines().skip(start_line) {
         let Ok(value) = serde_json::from_str::<Value>(line) else {
             continue;
         };
         if let Some(prompt) = extract_human_prompt(&value) {
-            h5i_repo.record_human_prompt(prompt, Some(&session_id))?;
+            prompts.push(prompt.to_string());
         }
         for event in extract_events(&value, workdir) {
-            ctx::append_log(workdir, event.kind, &event.message, false)?;
             match event.kind {
                 "OBSERVE" => observed += 1,
                 "ACT" => acted += 1,
                 _ => {}
             }
+            events.push(event);
         }
     }
 
@@ -96,6 +101,37 @@ pub fn sync_context(workdir: &Path) -> Result<Option<CodexSyncResult>, H5iError>
         session_id: session_id.clone(),
         processed_lines: total_lines,
     };
+    if let Some(spool) = env_capture_spool() {
+        if !prompts.is_empty() || !events.is_empty() {
+            let record = CodexHookSpoolRecord {
+                session_id: session_id.clone(),
+                prompts,
+                events: events
+                    .into_iter()
+                    .map(|e| CodexHookTraceEvent {
+                        kind: e.kind.to_string(),
+                        message: e.message,
+                    })
+                    .collect(),
+            };
+            crate::env::write_codex_hook_spool(&spool, &record)?;
+        }
+        fs::write(&state_path, serde_json::to_string_pretty(&next_state)?)?;
+        return Ok(Some(CodexSyncResult {
+            session_id,
+            observed,
+            acted,
+            processed_lines: total_lines.saturating_sub(start_line),
+        }));
+    }
+
+    let h5i_repo = H5iRepository::open(workdir)?;
+    for prompt in prompts {
+        h5i_repo.record_human_prompt(&prompt, Some(&session_id))?;
+    }
+    for event in events {
+        ctx::append_log(workdir, event.kind, &event.message, false)?;
+    }
     fs::write(&state_path, serde_json::to_string_pretty(&next_state)?)?;
 
     Ok(Some(CodexSyncResult {
@@ -104,6 +140,13 @@ pub fn sync_context(workdir: &Path) -> Result<Option<CodexSyncResult>, H5iError>
         acted,
         processed_lines: total_lines.saturating_sub(start_line),
     }))
+}
+
+fn env_capture_spool() -> Option<PathBuf> {
+    let spool = std::env::var_os(H5I_ENV_CAPTURE_SPOOL_VAR).map(PathBuf::from)?;
+    std::env::var_os(H5I_ENV_ID_VAR)?;
+    std::env::var_os(H5I_ENV_POLICY_DIGEST_VAR)?;
+    Some(spool)
 }
 
 fn sync_state_path(workdir: &Path) -> Result<PathBuf, H5iError> {
@@ -154,7 +197,11 @@ fn session_cwd_matches(session_path: &Path, workdir: &Path) -> bool {
         let cwd = value
             .pointer("/payload/cwd")
             .and_then(Value::as_str)
-            .or_else(|| value.pointer("/payload/metadata/cwd").and_then(Value::as_str));
+            .or_else(|| {
+                value
+                    .pointer("/payload/metadata/cwd")
+                    .and_then(Value::as_str)
+            });
         match cwd {
             Some(cwd) => normalize_display_path(workdir, Path::new(cwd)) == target,
             None => false,
@@ -176,7 +223,10 @@ fn extract_human_prompt(value: &Value) -> Option<&str> {
 }
 
 fn extract_events(value: &Value, workdir: &Path) -> Vec<TraceEvent> {
-    let item_type = value.get("type").and_then(Value::as_str).unwrap_or_default();
+    let item_type = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     match item_type {
         // Older Codex format: structured exec_command_end with parsed_cmd array.
         "event_msg" => extract_exec_command_events(value, workdir),
@@ -367,11 +417,7 @@ fn extract_shell_cmd_events(cmd: &str, workdir: &Path) -> Vec<TraceEvent> {
                 }],
                 [query, path, ..] => vec![TraceEvent {
                     kind: "OBSERVE",
-                    message: format!(
-                        "searched {} for \"{}\"",
-                        render_path(workdir, path),
-                        query
-                    ),
+                    message: format!("searched {} for \"{}\"", render_path(workdir, path), query),
                 }],
             }
         }
@@ -545,8 +591,20 @@ mod tests {
         });
         let events = extract_events(&event, dir.path());
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0], TraceEvent { kind: "ACT", message: "edited main.py".into() });
-        assert_eq!(events[1], TraceEvent { kind: "ACT", message: "added helper.py".into() });
+        assert_eq!(
+            events[0],
+            TraceEvent {
+                kind: "ACT",
+                message: "edited main.py".into()
+            }
+        );
+        assert_eq!(
+            events[1],
+            TraceEvent {
+                kind: "ACT",
+                message: "added helper.py".into()
+            }
+        );
     }
 
     // top-level custom_tool_call (forward-compat / older Codex format)
@@ -561,7 +619,13 @@ mod tests {
         });
         let events = extract_events(&event, dir.path());
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0], TraceEvent { kind: "ACT", message: "edited src/lib.rs".into() });
+        assert_eq!(
+            events[0],
+            TraceEvent {
+                kind: "ACT",
+                message: "edited src/lib.rs".into()
+            }
+        );
     }
 
     #[test]
@@ -622,7 +686,13 @@ mod tests {
     fn shell_cmd_sed_extracts_filename() {
         let dir = tempdir().unwrap();
         let events = extract_shell_cmd_events("sed -n '1,50p' main.py", dir.path());
-        assert_eq!(events, vec![TraceEvent { kind: "OBSERVE", message: "read main.py".into() }]);
+        assert_eq!(
+            events,
+            vec![TraceEvent {
+                kind: "OBSERVE",
+                message: "read main.py".into()
+            }]
+        );
     }
 
     #[test]
@@ -638,7 +708,13 @@ mod tests {
     fn shell_cmd_rg_files_flag() {
         let dir = tempdir().unwrap();
         let events = extract_shell_cmd_events("rg --files", dir.path());
-        assert_eq!(events, vec![TraceEvent { kind: "OBSERVE", message: "listed files under .".into() }]);
+        assert_eq!(
+            events,
+            vec![TraceEvent {
+                kind: "OBSERVE",
+                message: "listed files under .".into()
+            }]
+        );
     }
 
     #[test]

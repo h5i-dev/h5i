@@ -953,7 +953,9 @@ pub fn build_branch_scoped_merge(
     let sig = objects::signature(repo)?;
     let message = format!("h5i push: branch-scoped env ({branch})");
     let parents: Vec<&git2::Commit> = base_commit.iter().collect();
-    Ok(Some(repo.commit(None, &sig, &sig, &message, &tree, &parents)?))
+    Ok(Some(
+        repo.commit(None, &sig, &sig, &message, &tree, &parents)?,
+    ))
 }
 
 // ─── manifest persistence ───────────────────────────────────────────────────
@@ -1509,7 +1511,10 @@ fn grant_box_git(
     Ok(())
 }
 
-fn prepare_cargo_env(work: &Path, policy: &ResolvedPolicy) -> Result<Vec<(String, String)>, H5iError> {
+fn prepare_cargo_env(
+    work: &Path,
+    policy: &ResolvedPolicy,
+) -> Result<Vec<(String, String)>, H5iError> {
     if policy.claim < IsolationClaim::Process {
         return Ok(Vec::new());
     }
@@ -1560,7 +1565,8 @@ fn prepare_private_paths(
         // Container tier carries the backing dir as a Podman `--mount` whose
         // syntax can't include a comma — fail closed if the env's host path has
         // one, rather than silently dropping the (policy-required) isolation.
-        if policy.claim == IsolationClaim::Container && backing.display().to_string().contains(',') {
+        if policy.claim == IsolationClaim::Container && backing.display().to_string().contains(',')
+        {
             return Err(H5iError::Metadata(format!(
                 "private_paths '{rel}': the env's backing path '{}' contains a ',' which the \
                  container mount syntax cannot carry — move the repo out of a comma'd path \
@@ -1760,6 +1766,21 @@ pub struct InboxCaptureMeta {
     pub cmd_argv: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexHookTraceEvent {
+    pub kind: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexHookSpoolRecord {
+    pub session_id: String,
+    #[serde(default)]
+    pub prompts: Vec<String>,
+    #[serde(default)]
+    pub events: Vec<CodexHookTraceEvent>,
+}
+
 pub fn write_inbox_capture_spool(
     spool: &Path,
     meta: &InboxCaptureMeta,
@@ -1776,6 +1797,22 @@ pub fn write_inbox_capture_spool(
     std::fs::write(&raw_path, raw).map_err(|e| H5iError::with_path(e, &raw_path))?;
     let meta_json = serde_json::to_vec(meta)?;
     std::fs::write(&meta_path, meta_json).map_err(|e| H5iError::with_path(e, &meta_path))?;
+    Ok(base)
+}
+
+pub fn write_codex_hook_spool(
+    spool: &Path,
+    record: &CodexHookSpoolRecord,
+) -> Result<String, H5iError> {
+    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = format!("codex-hook-{}-{nanos}", std::process::id());
+    let path = spool.join(format!("{base}.json"));
+    let json = serde_json::to_vec(record)?;
+    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
     Ok(base)
 }
 
@@ -2045,13 +2082,12 @@ pub fn run(
     // its Drop guard unlinks any file-injected secrets on every exit path.
     let secret_dir = m.dir(h5i_root).join("secrets");
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
-    let brokered =
-        crate::secrets_broker::broker(
-            &policy.profile.secret_grants,
-            &secret_dir,
-            is_workspace,
-            policy.profile.allow_command_extractors,
-        )?;
+    let brokered = crate::secrets_broker::broker(
+        &policy.profile.secret_grants,
+        &secret_dir,
+        is_workspace,
+        policy.profile.allow_command_extractors,
+    )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
     let injected_env = merged_env(
         &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
@@ -2275,13 +2311,12 @@ pub fn shell(
     let cargo_env = prepare_cargo_env(&work, &policy)?;
     let secret_dir = m.dir(h5i_root).join("secrets");
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
-    let brokered =
-        crate::secrets_broker::broker(
-            &policy.profile.secret_grants,
-            &secret_dir,
-            is_workspace,
-            policy.profile.allow_command_extractors,
-        )?;
+    let brokered = crate::secrets_broker::broker(
+        &policy.profile.secret_grants,
+        &secret_dir,
+        is_workspace,
+        policy.profile.allow_command_extractors,
+    )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
     let injected_env = merged_env(
         &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
@@ -2537,6 +2572,109 @@ fn read_spool_capped(p: &Path, cap: u64) -> Option<Vec<u8>> {
     Some(buf)
 }
 
+fn ingest_codex_hook_spool(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+    spool: &Path,
+) -> Result<usize, H5iError> {
+    let mut bases: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(spool) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(base) = name.strip_suffix(".json") {
+                let ok = base.starts_with("codex-hook-")
+                    && base.len() <= 128
+                    && base.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+                if ok {
+                    bases.push(base.to_string());
+                }
+            }
+        }
+    }
+    bases.sort();
+    let dropped = bases.len().saturating_sub(SPOOL_MAX_ENTRIES);
+    if bases.is_empty() {
+        return Ok(0);
+    }
+    let work = m.work_dir(h5i_root);
+    let h5i_repo = crate::repository::H5iRepository::open(&work)?;
+    let mut replayed = 0usize;
+
+    for base in bases.iter().take(SPOOL_MAX_ENTRIES) {
+        let path = spool.join(format!("{base}.json"));
+        let bytes = match read_spool_capped(&path, SPOOL_MAX_CMD_BYTES) {
+            Some(b) => b,
+            None => continue,
+        };
+        let record: CodexHookSpoolRecord = match serde_json::from_slice(&bytes) {
+            Ok(r) => r,
+            Err(_) => {
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+        };
+        let session_id = record.session_id.chars().take(160).collect::<String>();
+        for prompt in record.prompts.into_iter().take(32) {
+            let prompt = prompt.trim();
+            if !prompt.is_empty() {
+                h5i_repo.record_human_prompt(prompt, Some(&session_id))?;
+            }
+        }
+        let mut event_count = 0usize;
+        for event in record.events.into_iter().take(SPOOL_MAX_ENTRIES) {
+            let kind = match event.kind.as_str() {
+                "OBSERVE" => "OBSERVE",
+                "ACT" => "ACT",
+                _ => continue,
+            };
+            let message: String = event
+                .message
+                .replace(['\n', '\r'], " ")
+                .chars()
+                .take(1000)
+                .collect();
+            if message.trim().is_empty() {
+                continue;
+            }
+            crate::ctx::append_log(&work, kind, &message, false)?;
+            event_count += 1;
+        }
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "exec-log".into(),
+                detail: Some(format!(
+                    "codex hook inbox: session={} events={} source=inbox-capture",
+                    session_id, event_count
+                )),
+                capture: None,
+            },
+        )?;
+        let _ = std::fs::remove_file(&path);
+        replayed += event_count;
+    }
+    if dropped > 0 {
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "exec-log".into(),
+                detail: Some(format!(
+                    "codex hook spool capped at {SPOOL_MAX_ENTRIES}: {dropped} record(s) dropped"
+                )),
+                capture: None,
+            },
+        )?;
+    }
+    Ok(replayed)
+}
+
 /// Ingest the env's observation spool (`<env>/spool/`) into tagged captures —
 /// the evidence an interactive **container** session leaves behind:
 /// `cmd-<pid>-<n>.{cmd,out,err,exit}`, the container tee-shim's records (one per
@@ -2769,6 +2907,9 @@ fn ingest_shell_spool(
             },
         )?;
     }
+
+    let codex_observed = ingest_codex_hook_spool(repo, h5i_root, m, &spool)?;
+    count += codex_observed;
 
     // In-box `h5i commit` notes. The box can land a commit on its own env
     // branch but can't write `refs/h5i/notes`; the note is staged here and
@@ -3322,8 +3463,7 @@ pub fn doctor(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> DoctorRepo
                 // kernel still denies exec — functional self-test is authoritative.
                 _ => {
                     let probe = sandbox::Profile::builtin("doctor", claim);
-                    match sandbox::resolve(&probe, &caps)
-                        .and_then(|pol| sandbox::verify_exec(&pol))
+                    match sandbox::resolve(&probe, &caps).and_then(|pol| sandbox::verify_exec(&pol))
                     {
                         Ok(()) => chk!(
                             "enforcement",
@@ -3341,7 +3481,12 @@ pub fn doctor(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> DoctorRepo
                 }
             }
         }
-        Err(e) => chk!("enforcement", false, false, format!("unknown isolation claim: {e}")),
+        Err(e) => chk!(
+            "enforcement",
+            false,
+            false,
+            format!("unknown isolation claim: {e}")
+        ),
     }
 
     // 3. Workspace — present for live envs, advisory-absent for pulled/gc'd ones.
@@ -3441,7 +3586,10 @@ pub fn secrets_status(policy: &ResolvedPolicy) -> Vec<SecretStatus> {
                 // Dry-run resolution: read-only, value used only for a
                 // fingerprint and immediately dropped, never surfaced.
                 match crate::secrets_broker::resolve_value(g, false) {
-                    Ok(v) => ("ok".to_string(), Some(crate::secrets_broker::fingerprint(&v))),
+                    Ok(v) => (
+                        "ok".to_string(),
+                        Some(crate::secrets_broker::fingerprint(&v)),
+                    ),
                     Err(e) => (format!("error: {e}"), None),
                 }
             };
@@ -3466,7 +3614,11 @@ pub fn render_secrets(env_id: &str, rows: &[SecretStatus]) -> String {
         return out;
     }
     for s in rows {
-        let ttl = s.ttl.as_deref().map(|t| format!(" ttl={t}")).unwrap_or_default();
+        let ttl = s
+            .ttl
+            .as_deref()
+            .map(|t| format!(" ttl={t}"))
+            .unwrap_or_default();
         let fp = s
             .fingerprint
             .as_deref()
@@ -3562,7 +3714,13 @@ fn alloc_free_port() -> Option<u16> {
 /// `web-test` → `WEB_TEST` (an env-var-safe upper-case key).
 fn env_key(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -3763,7 +3921,9 @@ pub fn service_start(
             env_id: m.id.clone(),
             agent: m.agent.clone(),
             event: "service".into(),
-            detail: Some(format!("start {name} pid={pid}{port_note} cmd=`{safe_cmd}`")),
+            detail: Some(format!(
+                "start {name} pid={pid}{port_note} cmd=`{safe_cmd}`"
+            )),
             capture: None,
         },
     )?;
@@ -3891,7 +4051,12 @@ pub fn service_status(h5i_root: &Path, m: &EnvManifest) -> Vec<ServiceStatus> {
 }
 
 /// Tail of a running service's log file.
-pub fn service_logs(h5i_root: &Path, m: &EnvManifest, name: &str, tail: usize) -> Result<String, H5iError> {
+pub fn service_logs(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    name: &str,
+    tail: usize,
+) -> Result<String, H5iError> {
     validate_service_name(name)?;
     let svc_dir = services_dir(h5i_root, m);
     let rec = read_service_record(&svc_dir, name)
@@ -3955,7 +4120,10 @@ pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
         out.push_str(&format!(
             "  {:<16} {:<10} {:<10} http://127.0.0.1:{}\n",
             s.record.name,
-            s.record.port.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
+            s.record
+                .port
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "-".into()),
             injected,
             injected
         ));
@@ -3999,11 +4167,13 @@ struct SpoolPending {
     notes: Vec<String>,
     /// Count of tee-shim observation records (`cmd-*.cmd`).
     shim: usize,
+    /// Count of staged Codex hook sync records (`codex-hook-*.json`).
+    codex: usize,
 }
 
 impl SpoolPending {
     fn total(&self) -> usize {
-        self.captures.len() + self.notes.len() + self.shim
+        self.captures.len() + self.notes.len() + self.shim + self.codex
     }
     /// "2 capture, 1 note, 3 shim" — omitting zero lanes.
     fn breakdown(&self) -> String {
@@ -4016,6 +4186,9 @@ impl SpoolPending {
         }
         if self.shim > 0 {
             parts.push(format!("{} shim", self.shim));
+        }
+        if self.codex > 0 {
+            parts.push(format!("{} codex", self.codex));
         }
         parts.join(", ")
     }
@@ -4048,10 +4221,14 @@ fn scan_spool_pending(h5i_root: &Path, m: &EnvManifest) -> SpoolPending {
             } else if base.starts_with("note-") {
                 let oid = std::fs::read(e.path())
                     .ok()
-                    .and_then(|b| serde_json::from_slice::<crate::metadata::H5iCommitRecord>(&b).ok())
+                    .and_then(|b| {
+                        serde_json::from_slice::<crate::metadata::H5iCommitRecord>(&b).ok()
+                    })
                     .map(|r| r.git_oid)
                     .unwrap_or_default();
                 p.notes.push(oid);
+            } else if base.starts_with("codex-hook-") {
+                p.codex += 1;
             }
         } else if name.starts_with("cmd-") && name.ends_with(".cmd") {
             p.shim += 1;
@@ -4137,7 +4314,14 @@ fn stamp_apply_provenance(repo: &Repository, m: &EnvManifest, applied: git2::Oid
         Ok(j) => j,
         Err(e) => return format!("WARNING: apply note skipped (serialize: {e})"),
     };
-    match repo.note(&sig, &sig, Some(crate::repository::H5I_NOTES_REF), applied, &json, true) {
+    match repo.note(
+        &sig,
+        &sig,
+        Some(crate::repository::H5I_NOTES_REF),
+        applied,
+        &json,
+        true,
+    ) {
         Ok(_) => {
             let lanes = prov
                 .evidence_sources
@@ -4145,8 +4329,17 @@ fn stamp_apply_provenance(repo: &Repository, m: &EnvManifest, applied: git2::Oid
                 .map(|(s, n)| format!("{s}={n}"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let lanes = if lanes.is_empty() { "none".into() } else { lanes };
-            format!("provenance note on {}: {} capture(s) [{}]", &applied.to_string()[..12], prov.captures_total, lanes)
+            let lanes = if lanes.is_empty() {
+                "none".into()
+            } else {
+                lanes
+            };
+            format!(
+                "provenance note on {}: {} capture(s) [{}]",
+                &applied.to_string()[..12],
+                prov.captures_total,
+                lanes
+            )
         }
         Err(e) => format!("WARNING: apply provenance note failed ({e})"),
     }
@@ -5303,9 +5496,18 @@ mod tests {
         // env to shell into, the parent to merge, and the apply to finish with.
         let m = canonical_manifest("claude", "auth-fix");
         let rb = conflict_runbook(&m);
-        assert!(rb.contains("h5i env shell auth-fix"), "names the env shell: {rb}");
-        assert!(rb.contains("git merge main"), "names the parent merge: {rb}");
-        assert!(rb.contains("h5i env apply auth-fix"), "names the finishing apply: {rb}");
+        assert!(
+            rb.contains("h5i env shell auth-fix"),
+            "names the env shell: {rb}"
+        );
+        assert!(
+            rb.contains("git merge main"),
+            "names the parent merge: {rb}"
+        );
+        assert!(
+            rb.contains("h5i env apply auth-fix"),
+            "names the finishing apply: {rb}"
+        );
     }
 
     #[test]
@@ -5322,8 +5524,12 @@ mod tests {
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert!(names.iter().all(|n| n.starts_with("note-") && n.ends_with(".json")));
-        assert!(!names.iter().any(|n| n.contains("..") || n.contains('/') || n.contains('#')));
+        assert!(names
+            .iter()
+            .all(|n| n.starts_with("note-") && n.ends_with(".json")));
+        assert!(!names
+            .iter()
+            .any(|n| n.contains("..") || n.contains('/') || n.contains('#')));
         // An all-non-alnum oid leaves nothing to name → error, no file written.
         assert!(write_note_spool(&spool, "../", "{}").is_err());
     }
@@ -5514,8 +5720,15 @@ mod tests {
         let codex = root.join(".codex").display().to_string();
         let claude = root.join(".claude").display().to_string();
         // Existing project-config dirs are READ-granted, never write-granted.
-        assert!(pol.profile.fs_read.contains(&codex), "main-repo .codex read: {:?}", pol.profile.fs_read);
-        assert!(pol.profile.fs_read.contains(&claude), "main-repo .claude read");
+        assert!(
+            pol.profile.fs_read.contains(&codex),
+            "main-repo .codex read: {:?}",
+            pol.profile.fs_read
+        );
+        assert!(
+            pol.profile.fs_read.contains(&claude),
+            "main-repo .claude read"
+        );
         assert!(!pol.profile.fs_write.contains(&codex), "stays immutable");
         assert!(!pol.profile.fs_write.contains(&claude), "stays immutable");
 
@@ -5527,7 +5740,10 @@ mod tests {
             Profile::builtin("default", IsolationClaim::Process),
         );
         grant_box_git(&repo, &m, &work, &mut pol2).unwrap();
-        assert!(!pol2.profile.fs_read.contains(&claude), "absent dir not granted");
+        assert!(
+            !pol2.profile.fs_read.contains(&claude),
+            "absent dir not granted"
+        );
     }
 
     // The same plumbing is applied per backend: Landlock grants (+ global
@@ -5658,11 +5874,22 @@ mod tests {
 
         let backing = m.dir(h5i_root).join("tmp");
         assert!(backing.is_dir(), "{backing:?}");
-        assert_eq!(std::fs::metadata(&backing).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            std::fs::metadata(&backing).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
         assert!(!pol.profile.fs_read.iter().any(|w| w == "/tmp"));
         assert!(!pol.profile.fs_write.iter().any(|w| w == "/tmp"));
-        assert!(pol.profile.fs_write.iter().any(|w| w == &backing.display().to_string()));
-        let tmp_bind = pol.home_binds.iter().find(|b| b.target == PathBuf::from("/tmp")).unwrap();
+        assert!(pol
+            .profile
+            .fs_write
+            .iter()
+            .any(|w| w == &backing.display().to_string()));
+        let tmp_bind = pol
+            .home_binds
+            .iter()
+            .find(|b| b.target == PathBuf::from("/tmp"))
+            .unwrap();
         assert_eq!(tmp_bind.backing, backing);
     }
 
@@ -5705,10 +5932,17 @@ mod tests {
         for b in &pol.home_binds {
             assert!(b.backing.starts_with(&backing_root), "{:?}", b.backing);
         }
-        let claude = pol.home_binds.iter().find(|b| b.target == home.join(".claude")).unwrap();
+        let claude = pol
+            .home_binds
+            .iter()
+            .find(|b| b.target == home.join(".claude"))
+            .unwrap();
         // Copy-in actually happened, content + mode preserved.
         let copied = claude.backing.join(".credentials.json");
-        assert_eq!(std::fs::read_to_string(&copied).unwrap(), "{\"token\":\"real-secret\"}");
+        assert_eq!(
+            std::fs::read_to_string(&copied).unwrap(),
+            "{\"token\":\"real-secret\"}"
+        );
         assert_eq!(
             std::fs::metadata(&copied).unwrap().permissions().mode() & 0o777,
             0o600,
@@ -5776,7 +6010,11 @@ mod tests {
 
         prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
 
-        assert_eq!(pol.home_binds.len(), 1, "only the existing path is redirected");
+        assert_eq!(
+            pol.home_binds.len(),
+            1,
+            "only the existing path is redirected"
+        );
         // The missing path is left as today's direct grant (never created in HOME).
         assert!(pol.profile.fs_write.iter().any(|w| w == "~/.claude.json"));
         assert!(!home.join(".claude.json").exists());
@@ -5800,7 +6038,10 @@ mod tests {
         prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
 
         assert!(pol.home_binds.is_empty());
-        assert_eq!(pol.profile.fs_write, before, "non-agent fs_write must be untouched");
+        assert_eq!(
+            pol.profile.fs_write, before,
+            "non-agent fs_write must be untouched"
+        );
     }
 
     #[test]
@@ -5964,7 +6205,11 @@ mod tests {
         // other is an embedded repo the agent dropped in.
         std::fs::create_dir_all(work.join("examples/sub")).unwrap();
         std::fs::create_dir_all(work.join("vendor/dep")).unwrap();
-        std::fs::write(work.join("examples/sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
+        std::fs::write(
+            work.join("examples/sub/.git"),
+            "gitdir: ../.git/modules/sub\n",
+        )
+        .unwrap();
         std::fs::write(work.join("vendor/dep/.git"), "gitdir: elsewhere\n").unwrap();
         let canon = work.canonicalize().unwrap();
 
@@ -5977,7 +6222,11 @@ mod tests {
         let mut base = HashMap::new();
         base.insert("examples/sub".to_string(), git2::Oid::zero());
         let v = scan_nested_git(&canon, &base);
-        assert_eq!(v.len(), 1, "only the unregistered nested repo flagged: {v:?}");
+        assert_eq!(
+            v.len(),
+            1,
+            "only the unregistered nested repo flagged: {v:?}"
+        );
         assert!(v[0].contains("vendor/dep"), "{v:?}");
     }
 
@@ -6049,7 +6298,8 @@ mod tests {
 
     fn manifest_ids_in(repo: &Repository, oid: git2::Oid) -> Vec<String> {
         let tree = repo.find_commit(oid).unwrap().tree().unwrap();
-        let raw = objects::read_blob_from_tree(repo, Some(&tree), MANIFESTS_FILE).unwrap_or_default();
+        let raw =
+            objects::read_blob_from_tree(repo, Some(&tree), MANIFESTS_FILE).unwrap_or_default();
         let mut ids: Vec<String> = raw
             .lines()
             .filter(|l| !l.trim().is_empty())

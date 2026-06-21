@@ -67,7 +67,10 @@ impl Repo {
     }
 
     fn h5i(&self, args: &[&str]) -> Output {
-        self.h5i_cmd().args(args).output().expect("failed to run h5i")
+        self.h5i_cmd()
+            .args(args)
+            .output()
+            .expect("failed to run h5i")
     }
 
     fn h5i_with_home(&self, home: &Path, args: &[&str]) -> Output {
@@ -1184,6 +1187,63 @@ fn codex_sync_replays_session_activity_into_context() {
 }
 
 #[test]
+fn codex_sync_stages_to_env_spool_when_running_in_box() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+    repo.h5i_ok(&["context", "init", "--goal", "codex env sync test"]);
+
+    let home = TempDir::new().unwrap();
+    let session_dir = home
+        .path()
+        .join(".codex")
+        .join("sessions")
+        .join("2026")
+        .join("04")
+        .join("22");
+    fs::create_dir_all(&session_dir).unwrap();
+    let session_path = session_dir.join("rollout-env-test.jsonl");
+    let session = format!(
+        concat!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"cwd\":\"{}\"}}}}\n",
+            "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"please inspect main\"}}}}\n",
+            "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"exec_command_end\",\"parsed_cmd\":[{{\"type\":\"read\",\"path\":\"{}/src/main.rs\"}}]}}}}\n",
+            "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"apply_patch\",\"arguments\":\"*** Begin Patch\\n*** Update File: src/main.rs\\n*** End Patch\\n\"}}}}\n"
+        ),
+        repo.path().display(),
+        repo.path().display(),
+    );
+    fs::write(&session_path, session).unwrap();
+    let spool = repo.path().join("spool");
+    fs::create_dir_all(&spool).unwrap();
+
+    let sync = repo
+        .h5i_cmd()
+        .args(["hook", "codex", "sync"])
+        .env("HOME", home.path())
+        .env("H5I_ENV_ID", "env/human/test")
+        .env("H5I_ENV_POLICY_DIGEST", "sha256:test")
+        .env("H5I_ENV_CAPTURE_SPOOL", &spool)
+        .output()
+        .expect("run h5i");
+    assert!(
+        sync.status.success(),
+        "hook codex sync failed: {}",
+        stderr(&sync)
+    );
+
+    let mut records = fs::read_dir(&spool)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("codex-hook-"))
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 1, "expected one codex hook spool record");
+    let raw = fs::read_to_string(records.pop().unwrap().path()).unwrap();
+    assert!(raw.contains("please inspect main"), "{raw}");
+    assert!(raw.contains("read src/main.rs"), "{raw}");
+    assert!(raw.contains("edited src/main.rs"), "{raw}");
+}
+
+#[test]
 fn codex_finish_quiet_emits_no_stdout_for_stop_hook() {
     let repo = Repo::new();
     repo.h5i_ok(&["init"]);
@@ -1965,7 +2025,13 @@ fn push_branch_skips_when_branch_has_no_context() {
 fn push_branch_rejects_invalid_name() {
     let (_remote, sender) = sender_with_two_context_branches();
 
-    let out = sender.h5i(&["push", "--remote", "origin", "--branch", "evil:refs/heads/main"]);
+    let out = sender.h5i(&[
+        "push",
+        "--remote",
+        "origin",
+        "--branch",
+        "evil:refs/heads/main",
+    ]);
     assert!(
         !out.status.success(),
         "an invalid --branch must fail the command"
@@ -2029,7 +2095,7 @@ fn remote_objects_raw(remote: &Path) -> String {
 }
 
 struct ProvIds {
-    c0: String,    // shared seed (ancestor of both main and feature)
+    c0: String,     // shared seed (ancestor of both main and feature)
     c_feat: String, // unique to feature
     c_main: String, // unique to main
 }
