@@ -3722,3 +3722,5 @@ _[Checkpoint: 6a373d1f — edited roadmap/team-design.md; edited roadmap/team-de
 _[Checkpoint: 6a373e80 — Added neutral verifier + contamination model + judge hardening (Codex 5th pass)]_
 ---
 
+[01:30:09] THINK: Two open threads, for whenever you want them:
+- **Codex's 5th-round review** (#ed97ae41) on the policy layer is still pending its availability — ping me when Codex is back and I'll fold in any notes.
