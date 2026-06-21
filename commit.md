@@ -2773,3 +2773,16 @@ team-design.md: VerificationPolicy + VerificationArtifact (h5i re-runs each froz
 
 ---
 
+## Commit 6a373ea1 — 2026-06-21 01:30 UTC
+
+### Branch Purpose
+design+implement prompt maturity score (classical offline NLP), surface in share pr post body
+
+### Previous Progress Summary
+team-design.md: VerificationPolicy + VerificationArtifact (h5i re-runs each frozen candidate at base_oid; finalization metrics from verifier not agent captures); invariant 8 neutral-verifier-authority; hard-gates-before-metrics (VerifierTestsPass/NoCriticalRisk/AppliesCleanly/NoForbiddenChange then SmallestDiff tie-break); new conservative default; discussion=contamination (invariant 1 two-regimes, DiscussionMsg edges, transitive influence_event_ids on TeamArtifact); judge hardening (hard non-contender bar, evidence-only no persona/raw, prompt-injection rubric, parsed scores, conflict_of_interest blocks auto-apply); verify phase + team verify cmd; verdict.can_auto_apply gates apply; serve compare shows verifier gate matrix + agent-vs-verifier split.
+
+### This Commit's Contribution
+
+
+---
+

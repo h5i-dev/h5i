@@ -3726,3 +3726,9 @@ _[Checkpoint: 6a373e80 — Added neutral verifier + contamination model + judge 
 - **Codex's 5th-round review** (#ed97ae41) on the policy layer is still pending its availability — ping me when Codex is back and I'll fold in any notes.
 [01:30:09] THINK: Now I'll rewrite the §4a struct block, default, and guards to incorporate the verifier primitive, hard gates, contamination model, and judge hardening:
 [01:30:09] NOTE: PLACEHOLDER (~/Dev/h5i/roadmap/team-design.md): nt-log + deterministic fold, serve handler + `TeamView.tsx` stubs). Reminder: these are local commits — `h5i share push` if you want the design + th…
+
+
+---
+_[Checkpoint: 6a373ea1 — edited roadmap/team-design.md; edited roadmap/team-design.md; edited roadmap/team-design.md]_
+---
+
