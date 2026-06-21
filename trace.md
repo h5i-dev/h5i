@@ -4381,3 +4381,4 @@ _[Checkpoint: 6a383b87 — edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited 
 [19:51:37] ACT: edited src/sandbox_policy.rs
 [19:51:41] ACT: edited src/sandbox_policy.rs
 [19:51:47] ACT: edited src/sandbox.rs
+[19:51:52] ACT: edited src/sandbox.rs
