@@ -105,3 +105,4 @@ _[Checkpoint: 6a38549b — edited docs/pitch/index.html; edited docs/pitch/index
 [21:16:24] THINK: Let me use it instead of `EnvManifest::default()`:
 [21:16:24] THINK: All three pass. Let me run the broader sandbox/profile/env test suites to confirm no regressions (especially digest stability):
 [21:16:24] THINK: That `docs/index.html` edit (a hero-title copy change) isn't mine — I'll leave it unstaged and commit only my files.
+[21:16:24] THINK: Let me confirm the explorer found nothing else using `role` (e.
