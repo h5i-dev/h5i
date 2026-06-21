@@ -377,10 +377,16 @@ it auto-picks the strongest tier the host can run; an explicit tier refuses
 .BI "run " "NAME " "\-\- COMMAND [ARGS...]"
 Run a command inside the env, policy-enforced + capture-wrapped.
 .TP
-.BI "shell " "NAME " "[\-\- COMMAND]"
+.BI "shell " "NAME " "[\-\-keep-shell] [\-\- COMMAND]"
 Open an interactive confined session inside the env (the "agent-in-box"): stdio
-is inherited, so every command the session spawns is confined by the box.
-Defaults to a login shell; exit code passes through. The session is observed (a
+is inherited, so every command the session spawns is confined by the box. With
+.B \-\- COMMAND
+that command becomes the session (e.g. \fB\-\- claude \(dq<task>\(dq\fR launches
+the agent);
+.B \-\-keep-shell
+runs COMMAND and then drops into an interactive shell in the same box (launch an
+agent, then \fBh5i team submit\fR/inspect after it exits). Defaults to a login
+shell; exit code passes through. The session is observed (a
 .B shell
 event is logged and per-command evidence is staged + ingested where the tier
 supports it) and the agent's config is locked read-only. See

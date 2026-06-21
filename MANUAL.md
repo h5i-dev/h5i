@@ -2361,7 +2361,7 @@ another reviews and applies). See `docs/environments-design.md` and the live
 |---------|-------------|
 | `h5i env create <name> [--from REV] [--profile P] [--isolation TIER] [--audit signal\|all]` | Create an env: code branch + worktree + reasoning branch + pinned policy. Base frozen at creation. With no `--isolation` (or `--isolation auto`) it **auto-picks the strongest tier the host can run**; an explicit tier fails closed if the host can't satisfy it. `--audit all` pins `[audit] capture = "all"` in the resolved policy so wrapped in-env commands are recorded even when they succeed with small output. |
 | `h5i env run <name> -- <cmd> [args…]` | Run a command inside the env, policy-enforced + capture-wrapped. Exit code passes through; evidence is captured. |
-| `h5i env shell <name> [-- <cmd>]` | Open an **interactive** confined session *inside* the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. Defaults to a login shell. Exit code passes through. The session is **observed**: a `shell` event is logged, and per-command evidence is staged + ingested where the tier supports it (see [In-box git, capture & commit](#in-box-git-capture--commit)). |
+| `h5i env shell <name> [--keep-shell] [-- <cmd>]` | Open an **interactive** confined session *inside* the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. With `-- <cmd>` that command becomes the session (e.g. `-- claude "<task>"` launches the agent); `--keep-shell` runs `<cmd>` and then drops into an interactive shell in the *same* box (handy to launch an agent, then `h5i team submit`/inspect after it exits). Defaults to a login shell. Exit code passes through. The session is **observed**: a `shell` event is logged, and per-command evidence is staged + ingested where the tier supports it (see [In-box git, capture & commit](#in-box-git-capture--commit)). |
 | `h5i env probe` | Show what isolation this host can actually provide (Landlock ABI, user namespaces, seccomp, seccomp-notif, cgroup v2 delegation, rootless Podman) and which claims are satisfiable. |
 | `h5i env list [--json]` | List environments on this clone (the fleet view). `--json` emits an array of manifests, each enriched with base `drift`. |
 | `h5i env status <name> [--json]` | Lifecycle state + enforced policy + evidence + base drift. `--json` emits the raw manifest. |
@@ -2698,7 +2698,18 @@ h5i env shell env/codex/fix-auth                   # in-box H5I_AGENT=codex
 
 Inside the box the agent consumes its task with `h5i msg inbox` (the Stop hook
 also surfaces it between turns), works, then `h5i team submit`s its candidate.
-(Auto-*launching* the agents in one command is a deliberate non-goal — see P4.)
+
+**One-command bring-up.** `scripts/team-launch.sh <team> [--task <file>]` automates
+the grid: it reads the roster, optionally `dispatch`es the task, and opens one
+interactive agent per env in a **tmux** session — launching `claude` or `codex`
+per the member's runtime via `h5i env shell <env> --keep-shell -- <agent> …`
+(`--gui` spawns separate terminal windows instead). Each box auto-identifies as
+its persona, so every agent lands on its own dispatched task.
+
+```bash
+scripts/team-launch.sh fix-auth --task task.md   # dispatch + a tmux window per agent
+tmux attach -t h5i-team-fix-auth                  # supervise; watch the board in `h5i serve`
+```
 
 ### The neutral verifier (why finalization is trustworthy)
 

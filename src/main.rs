@@ -1733,6 +1733,11 @@ enum EnvCommands {
     Shell {
         /// Environment name (slug, `agent/slug`, or full `env/agent/slug`)
         name: String,
+        /// After the first command exits, drop into an interactive shell in the
+        /// same box instead of closing it (e.g. launch an agent, then keep the
+        /// box open to `h5i team submit` / inspect).
+        #[arg(long)]
+        keep_shell: bool,
         /// Command to run inside the box (after `--`); default: an interactive shell.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
@@ -4495,6 +4500,26 @@ fn init_tracing() {
         .with_target(false)
         .without_time()
         .try_init();
+}
+
+/// Single-quote a token for safe inclusion in a `sh -c` string.
+fn shell_quote(a: &str) -> String {
+    if !a.is_empty()
+        && a.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_./=:@%+,".contains(&b))
+    {
+        a.to_string()
+    } else {
+        format!("'{}'", a.replace('\'', "'\\''"))
+    }
+}
+
+/// Join an argv into a safely-quoted `sh -c` command string.
+fn shell_join(args: &[String]) -> String {
+    args.iter()
+        .map(|a| shell_quote(a))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn main() -> anyhow::Result<()> {
@@ -9518,12 +9543,16 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                EnvCommands::Shell { name, command } => {
+                EnvCommands::Shell { name, keep_shell, command } => {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    let sh = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
                     // Default to an interactive shell when no command is given.
                     let argv: Vec<String> = if command.is_empty() {
-                        let sh = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
                         vec![sh, "-i".into()]
+                    } else if keep_shell {
+                        // Run the command, then hand the same box to an interactive shell.
+                        let joined = shell_join(&command);
+                        vec![sh.clone(), "-lc".into(), format!("{joined}; exec {sh} -i")]
                     } else {
                         command
                     };
