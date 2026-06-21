@@ -166,3 +166,4 @@ _[Checkpoint: 6a38577a — edited docs/pitch/index.html; edited docs/pitch/index
 ---
 
 [21:28:47] OBSERVE: read src/lfs.rs
+[21:29:18] THINK: Good idea — I'll turn each citation into a link to the paper (stable DOI links, opening in a new tab).
