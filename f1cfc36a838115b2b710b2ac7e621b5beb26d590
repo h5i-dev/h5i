@@ -1,0 +1,1 @@
+{"git_oid":"f1cfc36a838115b2b710b2ac7e621b5beb26d590","parent_oid":"005b99510e77a2ff502e7c64c461dc064ccfcef0","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"can you also write the instruction to install this team-launch.sh?","agent_id":"claude-code","usage":null},"test_metrics":null,"timestamp":"2026-06-21T11:51:23.459291294Z"}
