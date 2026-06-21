@@ -3724,3 +3724,4 @@ _[Checkpoint: 6a373e80 — Added neutral verifier + contamination model + judge 
 
 [01:30:09] THINK: Two open threads, for whenever you want them:
 - **Codex's 5th-round review** (#ed97ae41) on the policy layer is still pending its availability — ping me when Codex is back and I'll fold in any notes.
+[01:30:09] THINK: Now I'll rewrite the §4a struct block, default, and guards to incorporate the verifier primitive, hard gates, contamination model, and judge hardening:
