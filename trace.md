@@ -233,3 +233,4 @@ _[Checkpoint: 6a385a90 — edited index.html; edited index.html; edited index.ht
 [21:46:13] THINK: I'll shrink the hero title to a size where each sentence fits, force a break between the two sentences, and keep each sentence un-wrapped on desktop (with a natural-wrap fallback on phones).
 [21:46:13] THINK: I'll also fix a latent double-period (the literal `.
 [21:46:13] NOTE: DEFERRAL (~/Dev/h5i/docs/pitch/index.html): "Evidence travels with the branch."** This is uncommitted for now. Want me to commit it (on its own or folded into the next deck tweak), or leave it s…
+[21:46:13] NOTE: UNFULFILLED (~/Dev/h5i/docs/index.html): rapped on desktop (with a natural-wrap fallback on phones). I'll also fix a latent double-period (the literal `.` after "Result" plus the `::after` red period)
