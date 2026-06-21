@@ -4406,3 +4406,9 @@ _[Checkpoint: 6a383b87 — edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited 
 [20:11:21] THINK: Let me confirm it's pre-existing (not introduced by me):
 [20:11:21] THINK: Let me use it instead of `EnvManifest::default()`:
 [20:11:21] THINK: All three pass. Let me run the broader sandbox/profile/env test suites to confirm no regressions (especially digest stability):
+
+
+---
+_[Checkpoint: 6a384569 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited CLAUDE.md]_
+---
+
