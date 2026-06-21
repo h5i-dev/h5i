@@ -4038,3 +4038,4 @@ _[Checkpoint: 6a375d2a — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 _[Checkpoint: 6a37aa2e — edited MANUAL.md; edited man/man1/h5i.1; edited man/man1/h5i.1]_
 ---
 
+[10:49:40] OBSERVE: read src/env.rs
