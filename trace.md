@@ -85,3 +85,9 @@ _[Checkpoint: 6a384ac0 — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a38545d — edited docs/pitch/index.html; edited docs/pitch/index.html; edited docs/pitch/index.html]_
 ---
 
+
+
+---
+_[Checkpoint: 6a385497 — Rewrote pitch deck around agent-teams narrative]_
+---
+

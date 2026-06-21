@@ -62,3 +62,16 @@ Combined reasoning and outcomes from both branches.
 
 ---
 
+## Commit 6a385497 — 2026-06-21 21:16 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+docs/pitch/index.html rebranded to 'Infrastructure for AI agent teams' / 'Run many coding agents. Merge one auditable result.' 15 slides: ML-ensembles analogy → new pattern (roles) → single-agent fragility → naive-team failure modes → market proof → product → h5i team centerpiece (phase model) → control-room workflow → neutral verifier → failures-closed → positioning ladder → git-native → vision → CTA. Added CSS: fm table, role/pipe/lanes/verdict/ladder components. Left: homepage + guides rebrand (not yet done).
+
+---
+
