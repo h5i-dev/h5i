@@ -1749,6 +1749,52 @@ async fn api_envs(State(state): State<Arc<AppState>>) -> Json<Vec<EnvFleetItem>>
     Json(result.ok().and_then(|r| r.ok()).unwrap_or_default())
 }
 
+async fn api_teams(State(state): State<Arc<AppState>>) -> Json<Vec<crate::team::TeamRun>> {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<crate::team::TeamRun>> {
+        let repo = H5iRepository::open(&path)?;
+        Ok(crate::team::list(repo.git())?)
+    })
+    .await;
+    Json(result.ok().and_then(|r| r.ok()).unwrap_or_default())
+}
+
+async fn api_team_detail(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<crate::team::TeamStatus> {
+        let repo = H5iRepository::open(&path)?;
+        Ok(crate::team::status(repo.git(), &id)?)
+    })
+    .await
+    .unwrap_or_else(|e| Err(anyhow::anyhow!("team detail task failed: {e}")));
+    match result {
+        Ok(status) => Json(status).into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, e.to_string()).into_response(),
+    }
+}
+
+async fn api_team_compare(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let result = tokio::task::spawn_blocking(
+        move || -> anyhow::Result<Vec<crate::team::TeamCompareRow>> {
+            let repo = H5iRepository::open(&path)?;
+            Ok(crate::team::compare(repo.git(), &repo.h5i_root, &id)?)
+        },
+    )
+    .await
+    .unwrap_or_else(|e| Err(anyhow::anyhow!("team compare task failed: {e}")));
+    match result {
+        Ok(rows) => Json(rows).into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, e.to_string()).into_response(),
+    }
+}
+
 /// Full per-env detail: manifest + enforced policy + events + capture summaries
 /// + diffstat. The five-lane timeline is assembled client-side from these.
 #[derive(Serialize)]
@@ -3222,6 +3268,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/env/:agent/:slug", get(api_env_detail))
         .route("/api/env/:agent/:slug/replay", get(api_env_replay))
         .route("/api/env/:agent/:slug/captures/:id", get(api_env_capture))
+        .route("/api/teams", get(api_teams))
+        .route("/api/team/:id", get(api_team_detail))
+        .route("/api/team/:id/compare", get(api_team_compare))
         // Replay (commit fallback) + reviewer cockpit + prompt coach + radio
         .route("/api/commit/:oid/replay", get(api_commit_replay))
         .route("/api/cockpit", get(api_cockpit))

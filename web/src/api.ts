@@ -562,6 +562,68 @@ export interface RadioThread {
   messages: RadioMessage[];
 }
 
+export interface TeamAgent {
+  agent_id: string;
+  display_label: string;
+  env_id: string;
+  runtime?: string | null;
+  model?: string | null;
+  role?: string | null;
+  isolation_claim: string;
+  state: string;
+  latest_submission_id?: string | null;
+}
+export interface TeamSubmission {
+  id: string;
+  owner_agent: string;
+  commit_oid: string;
+  files_changed: number;
+  insertions: number;
+  deletions: number;
+  independent: boolean;
+}
+export interface TeamVerification {
+  id: string;
+  submission_id: string;
+  owner_agent: string;
+  applies_cleanly: boolean;
+  tests_passed: boolean;
+  capture_id?: string | null;
+  failure?: string | null;
+}
+export interface TeamVerdict {
+  selected_submission?: string | null;
+  method: string;
+  can_auto_apply: boolean;
+  reasons: string[];
+}
+export interface TeamRun {
+  id: string;
+  name: string;
+  base_oid: string;
+  phase: string;
+  agents: TeamAgent[];
+  submissions: TeamSubmission[];
+  verifications: TeamVerification[];
+  verdict?: TeamVerdict | null;
+}
+export interface TeamStatus {
+  run: TeamRun;
+  events: Array<{ id: string; ts: string; actor: string; kind: string; payload: unknown }>;
+}
+export interface TeamCompareRow {
+  agent_id: string;
+  env_id: string;
+  submitted: boolean;
+  submission_id?: string | null;
+  files_changed: number;
+  insertions: number;
+  deletions: number;
+  last_exit?: number | null;
+  last_tool?: string | null;
+  last_result?: string | null;
+}
+
 async function getJSON<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${url}`);
@@ -660,6 +722,10 @@ export const api = {
     return getJSON<PromptMaturity | null>(`/api/prompt-score?${p.toString()}`);
   },
   radio: () => getJSON<RadioThread[]>("/api/radio"),
+  teams: () => getJSON<TeamRun[]>("/api/teams"),
+  team: (id: string) => getJSON<TeamStatus>(`/api/team/${encodeURIComponent(id)}`),
+  teamCompare: (id: string) =>
+    getJSON<TeamCompareRow[]>(`/api/team/${encodeURIComponent(id)}/compare`),
 };
 
 // ── GitHub URL helpers ─────────────────────────────────────────────────────────

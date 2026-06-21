@@ -2547,3 +2547,47 @@ body { line-height: 1.5; }
 /* Context: fallback note when picked git branch has no context shadow */
 .ctx-scope-note { margin-bottom: 4px; }
 .ctx-scope-note code { font-size: 11px; }
+
+/* Team board */
+.team-view {
+  display: grid; grid-template-columns: 260px minmax(0, 1fr);
+  min-height: 100%; background: var(--bp-bg);
+}
+.team-sidebar {
+  border-right: 1px solid var(--bp-border); padding: 10px;
+  display: flex; flex-direction: column; gap: 6px; background: var(--bp-bg-subtle);
+}
+.team-run-btn {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; border: 1px solid transparent; background: transparent;
+  color: var(--bp-text); padding: 7px 8px; border-radius: 4px; text-align: left;
+  font-size: 12px; cursor: pointer;
+}
+.team-run-btn.active { border-color: var(--bp-border-strong); background: var(--bp-bg); }
+.team-main { padding: 14px; overflow: auto; }
+.team-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  margin-bottom: 12px;
+}
+.team-head h2 { margin: 0; font-size: 18px; font-weight: 700; }
+.team-muted { color: var(--bp-text-muted); font-size: 12px; }
+.team-lanes {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px; margin-bottom: 14px;
+}
+.team-lane {
+  border: 1px solid var(--bp-border); border-radius: 4px; padding: 10px;
+  background: var(--bp-bg-subtle);
+}
+.team-lane-top, .team-lane-stats, .team-gates {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.team-lane-stats, .team-gates { margin-top: 8px; font-size: 12px; }
+.team-section { margin-top: 14px; }
+.team-section h3 { margin: 0 0 7px; font-size: 13px; font-weight: 700; }
+.team-table { width: 100%; }
+.team-verdict {
+  font-family: "SFMono-Regular", monospace; font-size: 13px; color: var(--bp-text);
+  margin-bottom: 4px;
+}
+.team-loading { padding: 24px; display: flex; justify-content: center; }

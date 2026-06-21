@@ -38,6 +38,7 @@ pub mod sandbox;
 pub mod session_log;
 pub mod storage;
 pub mod structured;
+pub mod team;
 pub mod token_filter;
 pub mod ui;
 pub mod vibe;

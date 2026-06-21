@@ -33,10 +33,11 @@ import { ReplayView } from "./ReplayView";
 import { CockpitView } from "./CockpitView";
 import { RadioView } from "./RadioView";
 import { SandboxView } from "./SandboxView";
+import { TeamView } from "./TeamView";
 import { ContextStrip } from "./ContextStrip";
 import { BranchPicker } from "./BranchPicker";
 
-type Mode = "replay" | "cockpit" | "radio" | "explore" | "memory" | "context" | "sandbox";
+type Mode = "replay" | "cockpit" | "radio" | "team" | "explore" | "memory" | "context" | "sandbox";
 type RightTab = "refs" | "sessions" | "integrity" | "context";
 
 export function Workbench() {
@@ -147,6 +148,12 @@ export function Workbench() {
               onClick={() => setMode("radio")}
             />
             <Button
+              icon="people"
+              text="Team"
+              active={mode === "team"}
+              onClick={() => setMode("team")}
+            />
+            <Button
               icon="shield"
               text="Sandbox"
               active={mode === "sandbox"}
@@ -218,6 +225,12 @@ export function Workbench() {
         <div className="wb-body wb-body-single">
           <div className="wb-pane">
             <RadioView branch={branchInUI} />
+          </div>
+        </div>
+      ) : mode === "team" ? (
+        <div className="wb-body wb-body-single">
+          <div className="wb-pane">
+            <TeamView />
           </div>
         </div>
       ) : mode === "explore" ? (

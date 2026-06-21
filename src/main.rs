@@ -652,6 +652,12 @@ enum Commands {
         action: EnvCommands,
     },
 
+    /// Agent teams — phased evidence publication over existing h5i envs.
+    Team {
+        #[command(subcommand)]
+        action: TeamCommands,
+    },
+
     /// Commit staged changes with AI provenance and quality tracking
     #[command(hide = true)]
     Commit {
@@ -1859,6 +1865,224 @@ enum EnvCommands {
     /// Reclaim workspaces of applied/aborted environments (worktree prune).
     /// Manifests, branches, and captures are retained.
     Gc,
+}
+
+#[derive(Subcommand)]
+enum TeamCommands {
+    /// Create a team run over existing h5i environments
+    Create {
+        /// Team id (ref-safe slug)
+        name: String,
+        /// Base revision shared by all candidates
+        #[arg(long, default_value = "HEAD")]
+        base: String,
+        /// Maximum improvement rounds planned for this run
+        #[arg(long, default_value_t = 1)]
+        rounds: u32,
+        /// Human-readable label; defaults to the team id
+        #[arg(long)]
+        title: Option<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List team runs
+    List {
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Add an existing env to a team roster
+    AddEnv {
+        /// Team id
+        team: String,
+        /// Env name (`slug`, `agent/slug`, or `env/agent/slug`)
+        env: String,
+        /// Ref-safe persona/agent key for this team
+        #[arg(long = "as")]
+        as_agent: String,
+        /// Runtime adapter (`claude`, `codex`, etc.)
+        #[arg(long)]
+        runtime: Option<String>,
+        /// Model label
+        #[arg(long)]
+        model: Option<String>,
+        /// Persona role label
+        #[arg(long)]
+        role: Option<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show a team run
+    Status {
+        /// Team id
+        team: String,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Freeze one agent's candidate as an immutable submission
+    Submit {
+        /// Team id
+        team: String,
+        /// Team agent id
+        #[arg(long)]
+        agent: String,
+        /// Commit to submit; defaults to the env branch tip
+        #[arg(long)]
+        commit: Option<String>,
+        /// Summary text file
+        #[arg(long = "summary-file")]
+        summary_file: Option<std::path::PathBuf>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Move a draft team into sealed_submit after required submissions exist
+    Freeze {
+        /// Team id
+        team: String,
+        /// Permit a partial freeze and record missing submissions
+        #[arg(long)]
+        allow_missing: bool,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compare team candidates side by side
+    Compare {
+        /// Team id
+        team: String,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run neutral verifier evidence for one submitted candidate
+    Verify {
+        /// Team id
+        team: String,
+        /// Team agent id whose latest submission should be verified
+        #[arg(long)]
+        agent: String,
+        /// Verifier command and args, after `--cmd`
+        #[arg(long = "cmd", trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
+        cmd: Vec<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Evaluate the conservative verifier-based finalization policy
+    Finalize {
+        /// Team id
+        team: String,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Apply the selected winner into the current branch
+    Apply {
+        /// Team id
+        team: String,
+        /// Submission id; defaults to the finalized winner
+        #[arg(long)]
+        winner: Option<String>,
+        /// Override verifier verdict / auto-apply gate
+        #[arg(long)]
+        force: bool,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Optional automation worker: lease runs and finalize verifier-ready teams
+    Worker {
+        /// Run one polling pass and exit
+        #[arg(long)]
+        once: bool,
+        /// Worker id (ref-safe)
+        #[arg(long, default_value = "team-worker")]
+        id: String,
+        /// Lease TTL in seconds
+        #[arg(long, default_value_t = 300)]
+        lease_ttl: i64,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Dispatch a prompt to every team agent through h5i msg
+    Dispatch {
+        /// Team id
+        team: String,
+        /// Prompt text file
+        #[arg(long = "prompt-file")]
+        prompt_file: std::path::PathBuf,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Send a logged, influence-tracked post-submit discussion message
+    Discuss {
+        /// Team id
+        team: String,
+        /// Sender team agent id
+        #[arg(long)]
+        from: String,
+        /// Comma-separated recipient team agent ids
+        #[arg(long)]
+        to: String,
+        /// Message body file
+        #[arg(long)]
+        file: std::path::PathBuf,
+        /// Comma-separated artifact ids referenced by this message
+        #[arg(long, default_value = "")]
+        artifacts: String,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Grant one team agent review access to another agent's submitted artifacts
+    GrantReview {
+        /// Team id
+        team: String,
+        /// Reviewing team agent id
+        #[arg(long)]
+        reviewer: String,
+        /// Target team agent id
+        #[arg(long)]
+        target: String,
+        /// Comma-separated artifact kinds (diff,summary,tests,test-status)
+        #[arg(long, default_value = "diff,summary,tests")]
+        artifacts: String,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record a review body for a target candidate
+    Review {
+        #[command(subcommand)]
+        action: TeamReviewCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum TeamReviewCommands {
+    /// Submit a review body
+    Submit {
+        /// Team id
+        team: String,
+        /// Reviewing team agent id
+        #[arg(long)]
+        reviewer: String,
+        /// Target team agent id
+        #[arg(long)]
+        target: String,
+        /// Review text file
+        #[arg(long)]
+        file: std::path::PathBuf,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -8764,6 +8988,310 @@ fn main() -> anyhow::Result<()> {
                         .bold()
                     );
                 }
+            }
+        }
+
+        Commands::Team { action } => {
+            let repo = H5iRepository::open(".")?;
+            let h5i_root = repo.h5i_root.clone();
+            let git = repo.git();
+            if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
+                eprintln!(
+                    "{} could not sync shared env manifests: {e}",
+                    style("warning:").yellow()
+                );
+            }
+            let actor = std::env::var("H5I_AGENT").unwrap_or_else(|_| "human".to_string());
+
+            match action {
+                TeamCommands::Create { name, base, rounds, title, json } => {
+                    let run = h5i_core::team::create(
+                        git,
+                        &name,
+                        title.as_deref().unwrap_or(&name),
+                        &base,
+                        rounds,
+                        &actor,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&run)?);
+                    } else {
+                        let status = h5i_core::team::status(git, &run.id)?;
+                        print!("{}", h5i_core::team::render_status(&status));
+                    }
+                }
+                TeamCommands::List { json } => {
+                    let runs = h5i_core::team::list(git)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&runs)?);
+                    } else {
+                        print!("{}", h5i_core::team::render_list(&runs));
+                    }
+                }
+                TeamCommands::AddEnv {
+                    team,
+                    env,
+                    as_agent,
+                    runtime,
+                    model,
+                    role,
+                    json,
+                } => {
+                    let run = h5i_core::team::add_env(
+                        git, &h5i_root, &team, &env, &as_agent, runtime, model, role, &actor,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&run)?);
+                    } else {
+                        let status = h5i_core::team::status(git, &team)?;
+                        print!("{}", h5i_core::team::render_status(&status));
+                    }
+                }
+                TeamCommands::Status { team, json } => {
+                    let status = h5i_core::team::status(git, &team)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&status)?);
+                    } else {
+                        print!("{}", h5i_core::team::render_status(&status));
+                    }
+                }
+                TeamCommands::Submit {
+                    team,
+                    agent,
+                    commit,
+                    summary_file,
+                    json,
+                } => {
+                    let summary = match summary_file {
+                        Some(path) => Some(std::fs::read_to_string(&path).map_err(|e| {
+                            anyhow::anyhow!("failed to read summary file {}: {e}", path.display())
+                        })?),
+                        None => None,
+                    };
+                    let artifact = h5i_core::team::submit(
+                        git,
+                        &h5i_root,
+                        &team,
+                        &agent,
+                        commit.as_deref(),
+                        summary,
+                        &actor,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&artifact)?);
+                    } else {
+                        println!(
+                            "{} submitted {} for {} at {}",
+                            SUCCESS,
+                            artifact.id,
+                            artifact.owner_agent,
+                            &artifact.commit_oid[..12.min(artifact.commit_oid.len())]
+                        );
+                    }
+                }
+                TeamCommands::Freeze { team, allow_missing, json } => {
+                    let run = h5i_core::team::freeze(git, &team, allow_missing, &actor)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&run)?);
+                    } else {
+                        let status = h5i_core::team::status(git, &team)?;
+                        print!("{}", h5i_core::team::render_status(&status));
+                    }
+                }
+                TeamCommands::Compare { team, json } => {
+                    let rows = h5i_core::team::compare(git, &h5i_root, &team)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&rows)?);
+                    } else {
+                        print!("{}", h5i_core::team::render_compare(&rows));
+                    }
+                }
+                TeamCommands::Verify { team, agent, cmd, json } => {
+                    let verification =
+                        h5i_core::team::verify(git, &h5i_root, &team, &agent, cmd, &actor)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&verification)?);
+                    } else {
+                        println!(
+                            "{} verifier {} for {}: applies_cleanly={} tests_passed={}",
+                            SUCCESS,
+                            verification.id,
+                            verification.owner_agent,
+                            verification.applies_cleanly,
+                            verification.tests_passed
+                        );
+                    }
+                }
+                TeamCommands::Finalize { team, json } => {
+                    let verdict = h5i_core::team::finalize(git, &team, &actor)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&verdict)?);
+                    } else if let Some(winner) = &verdict.selected_submission {
+                        println!(
+                            "{} verdict selected {} (auto_apply={})",
+                            SUCCESS, winner, verdict.can_auto_apply
+                        );
+                        for r in &verdict.reasons {
+                            println!("  - {r}");
+                        }
+                    } else {
+                        println!("{} no verdict", style("NOTE").yellow().bold());
+                        for r in &verdict.reasons {
+                            println!("  - {r}");
+                        }
+                    }
+                }
+                TeamCommands::Apply { team, winner, force, json } => {
+                    let result = h5i_core::team::apply_winner(
+                        git,
+                        &h5i_root,
+                        &team,
+                        winner.as_deref(),
+                        force,
+                        &actor,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&result)?);
+                    } else {
+                        println!(
+                            "{} applied {} as commit {}",
+                            SUCCESS,
+                            result.submission_id,
+                            &result.target_commit_oid[..12.min(result.target_commit_oid.len())]
+                        );
+                    }
+                }
+                TeamCommands::Worker { once, id, lease_ttl, json } => {
+                    if !once {
+                        anyhow::bail!("team worker currently requires --once");
+                    }
+                    let report = h5i_core::team::worker_once(git, &id, lease_ttl, &actor)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        println!(
+                            "{} worker {} inspected {} team{}; finalized {}",
+                            SUCCESS,
+                            report.worker_id,
+                            report.inspected,
+                            if report.inspected == 1 { "" } else { "s" },
+                            report.finalized.len()
+                        );
+                        for s in &report.skipped {
+                            println!("  - {s}");
+                        }
+                    }
+                }
+                TeamCommands::Dispatch { team, prompt_file, json } => {
+                    let prompt = std::fs::read_to_string(&prompt_file).map_err(|e| {
+                        anyhow::anyhow!(
+                            "failed to read prompt file {}: {e}",
+                            prompt_file.display()
+                        )
+                    })?;
+                    let messages =
+                        h5i_core::team::dispatch(git, &h5i_root, &team, &prompt, &actor)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&messages)?);
+                    } else {
+                        println!(
+                            "{} dispatched to {} agent{}",
+                            SUCCESS,
+                            messages.len(),
+                            if messages.len() == 1 { "" } else { "s" }
+                        );
+                    }
+                }
+                TeamCommands::Discuss {
+                    team,
+                    from,
+                    to,
+                    file,
+                    artifacts,
+                    json,
+                } => {
+                    let body = std::fs::read_to_string(&file).map_err(|e| {
+                        anyhow::anyhow!("failed to read discussion file {}: {e}", file.display())
+                    })?;
+                    let recipients: Vec<String> = to
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    let artifact_ids: Vec<String> = artifacts
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    let discussion = h5i_core::team::discuss(
+                        git,
+                        &h5i_root,
+                        &team,
+                        &from,
+                        recipients,
+                        body,
+                        artifact_ids,
+                        &actor,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&discussion)?);
+                    } else {
+                        println!(
+                            "{} discussion {} -> {}",
+                            SUCCESS,
+                            discussion.sender,
+                            discussion.recipients.join(", ")
+                        );
+                    }
+                }
+                TeamCommands::GrantReview {
+                    team,
+                    reviewer,
+                    target,
+                    artifacts,
+                    json,
+                } => {
+                    let kinds: Vec<String> = artifacts
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    let grant = h5i_core::team::grant_review(
+                        git, &h5i_root, &team, &reviewer, &target, kinds, &actor,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&grant)?);
+                    } else {
+                        println!(
+                            "{} granted {} review access to {} ({})",
+                            SUCCESS,
+                            reviewer,
+                            target,
+                            grant.artifact_ids.join(", ")
+                        );
+                    }
+                }
+                TeamCommands::Review { action } => match action {
+                    TeamReviewCommands::Submit { team, reviewer, target, file, json } => {
+                        let body = std::fs::read_to_string(&file).map_err(|e| {
+                            anyhow::anyhow!("failed to read review file {}: {e}", file.display())
+                        })?;
+                        let review = h5i_core::team::submit_review(
+                            git, &team, &reviewer, &target, body, &actor,
+                        )?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&review)?);
+                        } else {
+                            println!(
+                                "{} recorded review {} -> {}",
+                                SUCCESS, review.reviewer, review.target
+                            );
+                        }
+                    }
+                },
             }
         }
 
