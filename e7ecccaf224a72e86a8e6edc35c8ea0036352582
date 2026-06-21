@@ -1,0 +1,1 @@
+{"git_oid":"e7ecccaf224a72e86a8e6edc35c8ea0036352582","parent_oid":"1eb6c754d726e23ea1b94c047680e1b7b8dc4f6c","ai_metadata":{"model_name":"claude-opus-4-8","prompt":"rewrite MANUAL.md, man, and adda detailed blog to show the usage in ./docs","agent_id":"claude-code","usage":null},"test_metrics":null,"timestamp":"2026-06-21T03:39:38.749351163Z"}
