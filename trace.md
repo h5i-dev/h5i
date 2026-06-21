@@ -78,3 +78,4 @@ _[Checkpoint: 6a384ac0 — session ended (auto-checkpoint)]_
 [21:13:36] ACT: edited docs/pitch/index.html
 [21:14:03] ACT: edited docs/pitch/index.html
 [21:14:19] ACT: edited docs/pitch/index.html
+[21:15:09] THINK: Let me record the task intent in the context workspace first (per project rules), then start editing.
