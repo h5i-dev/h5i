@@ -4348,3 +4348,9 @@ _[Checkpoint: 6a380f3e — edited /home/koukyosyumei/Dev/h5i/src/team.rs; edited
 _[Checkpoint: 6a381096 — Hardened env sandboxes with per-env private /tmp for process/supervised tiers; env run/shell/service now bind env-owned scratch over /tmp and remove real host /tmp grants.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3810a3 — edited /home/koukyosyumei/Dev/h5i/src/env.rs; edited /home/koukyosyumei/Dev/h5i/src/sandbox_policy.rs; edited /home/kouk…]_
+---
+
