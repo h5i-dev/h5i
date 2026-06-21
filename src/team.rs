@@ -14,7 +14,7 @@ use crate::token_filter::{FilterConfig, OutputKind};
 use git2::Repository;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const TEAM_REF_PREFIX: &str = "refs/h5i/team/";
@@ -234,6 +234,56 @@ pub fn validate_slug(slug: &str) -> Result<(), H5iError> {
 
 pub fn validate_agent_id(agent_id: &str) -> Result<(), H5iError> {
     env::validate_agent(agent_id)
+}
+
+// ── Current-team context (a local, per-clone convenience like git's HEAD) ─────
+// Lets `h5i team <verb>` omit the run id; the flat CLI stays canonical and
+// scriptable. Stored as a plain file under the on-disk h5i root — NOT in a ref
+// (it is a local pointer, never shared).
+
+/// Path of the per-clone "current team" pointer.
+pub fn current_path(h5i_root: &Path) -> PathBuf {
+    h5i_root.join("team").join("current")
+}
+
+/// The current team id, if one is set (and non-empty).
+pub fn get_current(h5i_root: &Path) -> Option<String> {
+    std::fs::read_to_string(current_path(h5i_root))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Pin `run_id` as the current team.
+pub fn set_current(h5i_root: &Path, run_id: &str) -> Result<(), H5iError> {
+    let p = current_path(h5i_root);
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+    }
+    std::fs::write(&p, format!("{run_id}\n")).map_err(|e| H5iError::with_path(e, &p))
+}
+
+/// Clear the current-team pointer (no-op if unset).
+pub fn clear_current(h5i_root: &Path) -> Result<(), H5iError> {
+    let p = current_path(h5i_root);
+    if p.exists() {
+        std::fs::remove_file(&p).map_err(|e| H5iError::with_path(e, &p))?;
+    }
+    Ok(())
+}
+
+/// Resolve a team id from an explicit arg, falling back to the current team.
+/// Errors if neither is available.
+pub fn resolve_run(h5i_root: &Path, arg: Option<String>) -> Result<String, H5iError> {
+    match arg {
+        Some(t) if !t.trim().is_empty() => Ok(t),
+        _ => get_current(h5i_root).ok_or_else(|| {
+            H5iError::Metadata(
+                "no team given and no current team set — pass the team or run `h5i team use <name>`"
+                    .into(),
+            )
+        }),
+    }
 }
 
 fn refname(run_id: &str) -> Result<String, H5iError> {
@@ -1743,6 +1793,26 @@ mod tests {
         .unwrap();
         let err = freeze(&repo, "run2", false, "human").unwrap_err();
         assert!(format!("{err}").contains("missing submissions"));
+    }
+
+    #[test]
+    fn current_team_pointer_roundtrips() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert!(get_current(root).is_none());
+        // No arg + no current → error; an explicit arg always wins.
+        assert!(resolve_run(root, None).is_err());
+        assert_eq!(resolve_run(root, Some("x".into())).unwrap(), "x");
+        // Set → get/resolve fall back to it; explicit still overrides.
+        set_current(root, "demo").unwrap();
+        assert_eq!(get_current(root).as_deref(), Some("demo"));
+        assert_eq!(resolve_run(root, None).unwrap(), "demo");
+        assert_eq!(resolve_run(root, Some("other".into())).unwrap(), "other");
+        // Empty arg is treated as absent → falls back to current.
+        assert_eq!(resolve_run(root, Some("  ".into())).unwrap(), "demo");
+        clear_current(root).unwrap();
+        assert!(get_current(root).is_none());
+        clear_current(root).unwrap(); // idempotent
     }
 
     #[test]

@@ -145,6 +145,14 @@ with subdirectories
 and
 .BR session_log/ .
 .
+.\" ─── completion ─────────────────────────────────────────────────────────────
+.SS h5i completion \fISHELL\fR
+Print a shell completion script for
+.I SHELL
+.RB ( bash ", " zsh ", " fish ", " powershell ", " elvish )
+to standard output, e.g.
+.BR "h5i completion bash | sudo tee /etc/bash_completion.d/h5i" .
+.
 .\" ─── commit ─────────────────────────────────────────────────────────────────
 .SS h5i capture commit \-m \fIMESSAGE\fR [\fIOPTIONS\fR]
 Commit staged changes with optional AI provenance, test metrics,
@@ -640,6 +648,15 @@ Folded run state: phase, roster, per-agent submission state.
 .TP
 .BI "list " "[\-\-json]"
 All runs on this clone.
+.TP
+.BI "use " "[NAME] " "[\-\-clear]"
+Pin a current team (like git's current branch) so other single-\fITEAM\fR
+subcommands may omit it. No arg prints the current;
+.B \-\-clear
+unsets;
+.B create
+auto-pins the new run. The flat CLI stays canonical \(em always pass \fITEAM\fR in
+scripts/cron.
 .RE
 .
 .\" ─── share push ─────────────────────────────────────────────────────────────

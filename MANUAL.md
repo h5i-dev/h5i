@@ -2656,8 +2656,9 @@ stamped `independent=false` with its influence edges recorded.
 |---------|-------------|
 | `h5i team create <name> [--base REV] [--rounds N] [--title T] [--json]` | Create a run over existing envs. `--base` (default `HEAD`) is the shared base all candidates are compared against. |
 | `h5i team add-env <team> <env> --as <agent-id> [--runtime R] [--model M] [--role ROLE] [--json]` | Add an already-created env to the roster as a persona-bound member. `--as` is the ref-safe actor key; distinct personas on the same runtime need distinct ids. Draft phase only. |
-| `h5i team status <team> [--json]` | Folded run state: phase, roster, per-agent submission state. |
+| `h5i team status [<team>] [--json]` | Folded run state: phase, roster, per-agent submission state. |
 | `h5i team list [--json]` | All runs on this clone. |
+| `h5i team use [<name>] [--clear]` | Pin a **current team** (like git's current branch) so other subcommands can drop `<team>`. No arg prints the current; `--clear` unsets. `create` auto-pins the new run. |
 | `h5i team submit <team> --agent <id> [--commit OID] [--summary-file F] [--json]` | Freeze the agent's env-branch tip (or `--commit`) as an **immutable** submission — frozen commit/tree oids + diffstat + capture ids, reviewable even if the env later changes. |
 | `h5i team freeze <team> [--allow-missing] [--json]` | Transition draft → `sealed_submit`. Refuses if any roster member has no submission unless `--allow-missing` (records abstentions). |
 | `h5i team compare <team> [--json]` | Side-by-side candidates + verifier metrics (advisory only — does not pick a winner). |
@@ -2671,6 +2672,15 @@ stamped `independent=false` with its influence edges recorded.
 | `h5i team discuss <team> --from S --to A,B --file F [--artifacts ids] [--json]` | Send a logged, influence-tracked discussion message (post-freeze only). |
 
 `<env>` accepts a bare slug, `agent/slug`, or the full `env/agent/slug`.
+
+**Current team.** The single-`<team>` subcommands (`status`, `submit`, `freeze`,
+`compare`, `finalize`, `apply`, `dispatch`, `grant-review`, `discuss`, `review
+submit`) default to the **current team** when you omit it — set it with `h5i team
+use <name>` (or let `create` set it). `add-env`/`verify` keep `<team>` required
+(they take a second positional). The flat CLI stays canonical, so this never
+changes scripting/cron/agent behavior (always pass `<team>` there). For fast
+typing, generate shell completion: `h5i completion <bash|zsh|fish|powershell> >
+…` (e.g. `h5i completion bash | sudo tee /etc/bash_completion.d/h5i`).
 
 ### The neutral verifier (why finalization is trustworthy)
 

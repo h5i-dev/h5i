@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use console::style;
 use git2::Oid;
 use std::path::{Path, PathBuf};
@@ -616,6 +616,14 @@ fn resolve_memory_agent(agent: Option<AgentRuntime>) -> memory::MemoryAgent {
 enum Commands {
     /// Initialize the h5i sidecar in the current repository
     Init,
+
+    /// Generate a shell completion script (bash, zsh, fish, …); e.g.
+    /// `h5i completion bash > /etc/bash_completion.d/h5i`
+    Completion {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 
     /// Record provenance — commit, memory snapshot.
     /// Run `h5i capture --help` for the verb table with runnable examples.
@@ -1892,6 +1900,14 @@ enum TeamCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Show or set the current team (omit NAME to show; --clear to unset)
+    Use {
+        /// Team id to make current; omit to print the current team
+        name: Option<String>,
+        /// Clear the current-team pointer
+        #[arg(long)]
+        clear: bool,
+    },
     /// Add an existing env to a team roster
     AddEnv {
         /// Team id
@@ -1916,16 +1932,16 @@ enum TeamCommands {
     },
     /// Show a team run
     Status {
-        /// Team id
-        team: String,
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
         /// Emit JSON
         #[arg(long)]
         json: bool,
     },
     /// Freeze one agent's candidate as an immutable submission
     Submit {
-        /// Team id
-        team: String,
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
         /// Team agent id
         #[arg(long)]
         agent: String,
@@ -1941,8 +1957,8 @@ enum TeamCommands {
     },
     /// Move a draft team into sealed_submit after required submissions exist
     Freeze {
-        /// Team id
-        team: String,
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
         /// Permit a partial freeze and record missing submissions
         #[arg(long)]
         allow_missing: bool,
@@ -1952,8 +1968,8 @@ enum TeamCommands {
     },
     /// Compare team candidates side by side
     Compare {
-        /// Team id
-        team: String,
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
         /// Emit JSON
         #[arg(long)]
         json: bool,
@@ -1979,16 +1995,16 @@ enum TeamCommands {
     },
     /// Evaluate the conservative verifier-based finalization policy
     Finalize {
-        /// Team id
-        team: String,
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
         /// Emit JSON
         #[arg(long)]
         json: bool,
     },
     /// Apply the selected winner into the current branch
     Apply {
-        /// Team id
-        team: String,
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
         /// Submission id; defaults to the finalized winner
         #[arg(long)]
         winner: Option<String>,
@@ -2025,8 +2041,8 @@ enum TeamCommands {
     },
     /// Dispatch a prompt to every team agent through h5i msg
     Dispatch {
-        /// Team id
-        team: String,
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
         /// Prompt text file
         #[arg(long = "prompt-file")]
         prompt_file: std::path::PathBuf,
@@ -2036,8 +2052,8 @@ enum TeamCommands {
     },
     /// Send a logged, influence-tracked post-submit discussion message
     Discuss {
-        /// Team id
-        team: String,
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
         /// Sender team agent id
         #[arg(long)]
         from: String,
@@ -2056,8 +2072,8 @@ enum TeamCommands {
     },
     /// Grant one team agent review access to another agent's submitted artifacts
     GrantReview {
-        /// Team id
-        team: String,
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
         /// Reviewing team agent id
         #[arg(long)]
         reviewer: String,
@@ -2082,8 +2098,8 @@ enum TeamCommands {
 enum TeamReviewCommands {
     /// Submit a review body
     Submit {
-        /// Team id
-        team: String,
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
         /// Reviewing team agent id
         #[arg(long)]
         reviewer: String,
@@ -5211,6 +5227,9 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
+        Commands::Completion { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "h5i", &mut std::io::stdout());
+        }
         Commands::Init => {
             let repo = H5iRepository::open(".")?;
             println!(
@@ -9027,6 +9046,7 @@ fn main() -> anyhow::Result<()> {
                         rounds,
                         &actor,
                     )?;
+                    let _ = h5i_core::team::set_current(&h5i_root, &run.id);
                     if json {
                         println!("{}", serde_json::to_string_pretty(&run)?);
                     } else {
@@ -9040,6 +9060,21 @@ fn main() -> anyhow::Result<()> {
                         println!("{}", serde_json::to_string_pretty(&runs)?);
                     } else {
                         print!("{}", h5i_core::team::render_list(&runs));
+                    }
+                }
+                TeamCommands::Use { name, clear } => {
+                    if clear {
+                        h5i_core::team::clear_current(&h5i_root)?;
+                        println!("cleared current team");
+                    } else if let Some(name) = name {
+                        h5i_core::team::status(git, &name)?; // validate it exists before pinning
+                        h5i_core::team::set_current(&h5i_root, &name)?;
+                        println!("current team \u{2192} {name}");
+                    } else {
+                        match h5i_core::team::get_current(&h5i_root) {
+                            Some(c) => println!("{c}"),
+                            None => println!("(no current team — set one: h5i team use <name>)"),
+                        }
                     }
                 }
                 TeamCommands::AddEnv {
@@ -9062,6 +9097,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 TeamCommands::Status { team, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                     let status = h5i_core::team::status(git, &team)?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&status)?);
@@ -9076,6 +9112,7 @@ fn main() -> anyhow::Result<()> {
                     summary_file,
                     json,
                 } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                     let summary = match summary_file {
                         Some(path) => Some(std::fs::read_to_string(&path).map_err(|e| {
                             anyhow::anyhow!("failed to read summary file {}: {e}", path.display())
@@ -9104,6 +9141,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 TeamCommands::Freeze { team, allow_missing, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                     let run = h5i_core::team::freeze(git, &team, allow_missing, &actor)?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&run)?);
@@ -9113,6 +9151,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 TeamCommands::Compare { team, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                     let rows = h5i_core::team::compare(git, &h5i_root, &team)?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&rows)?);
@@ -9145,6 +9184,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 TeamCommands::Finalize { team, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                     let verdict = h5i_core::team::finalize(git, &team, &actor)?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&verdict)?);
@@ -9164,6 +9204,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 TeamCommands::Apply { team, winner, force, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                     let result = h5i_core::team::apply_winner(
                         git,
                         &h5i_root,
@@ -9220,6 +9261,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 TeamCommands::Dispatch { team, prompt_file, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                     let prompt = std::fs::read_to_string(&prompt_file).map_err(|e| {
                         anyhow::anyhow!(
                             "failed to read prompt file {}: {e}",
@@ -9247,6 +9289,7 @@ fn main() -> anyhow::Result<()> {
                     artifacts,
                     json,
                 } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                     let body = std::fs::read_to_string(&file).map_err(|e| {
                         anyhow::anyhow!("failed to read discussion file {}: {e}", file.display())
                     })?;
@@ -9290,6 +9333,7 @@ fn main() -> anyhow::Result<()> {
                     artifacts,
                     json,
                 } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                     let kinds: Vec<String> = artifacts
                         .split(',')
                         .map(str::trim)
@@ -9313,6 +9357,7 @@ fn main() -> anyhow::Result<()> {
                 }
                 TeamCommands::Review { action } => match action {
                     TeamReviewCommands::Submit { team, reviewer, target, file, json } => {
+                        let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                         let body = std::fs::read_to_string(&file).map_err(|e| {
                             anyhow::anyhow!("failed to read review file {}: {e}", file.display())
                         })?;
