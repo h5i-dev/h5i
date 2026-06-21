@@ -174,3 +174,9 @@ _[Checkpoint: 6a3857ae — edited docs/pitch/index.html; edited docs/pitch/index
 ---
 
 [21:29:56] NOTE: DEFERRAL (~/Dev/h5i/src/team.rs): library — but its push support is still maturing, so it's not worth a switch today.) Want me to do that `git()`-helper refactor across the `share`/`…
+
+
+---
+_[Checkpoint: 6a3857d4 — edited docs/pitch/index.html; edited docs/pitch/index.html]_
+---
+
