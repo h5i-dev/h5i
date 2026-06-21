@@ -407,8 +407,8 @@ impl Profile {
     ///   identity), and the runtime's own `~/.local/share/<runtime>` binary;
     /// - read-write: **only this runtime's** state (Claude →
     ///   `~/.claude`/`~/.claude.json`, Codex → `~/.codex`), shared caches
-    ///   (`~/.cache`, `~/.npm`), and `/tmp` (host-shared at this tier; the
-    ///   container tier gives a private one);
+    ///   (`~/.cache`, `~/.npm`), and `/tmp` (redirected to per-env scratch by
+    ///   env launch on kernel tiers; private in containers);
     /// - `net.egress`: **only this runtime's** API endpoints, DNS-pinned +
     ///   nftables-enforced at the supervised tier (the lint refuses egress at
     ///   tiers that cannot enforce it — `agent` is a supervised/container

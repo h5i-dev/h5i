@@ -1578,6 +1578,47 @@ fn prepare_private_paths(
     Ok(())
 }
 
+/// Give kernel-tier envs a private `/tmp` by binding an env-owned scratch dir
+/// over the host path before Landlock is applied. Agent profiles used to grant
+/// host-shared `/tmp` at process/supervised tiers; that creates an unnecessary
+/// cross-agent rendezvous point. This replaces any real `/tmp` grant with the
+/// backing dir, then reuses the absolute bind machinery to make `/tmp` resolve
+/// to that backing inside the box.
+fn prepare_private_tmp(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    policy: &mut ResolvedPolicy,
+) -> Result<(), H5iError> {
+    if !matches!(
+        policy.claim,
+        IsolationClaim::Process | IsolationClaim::Supervised
+    ) {
+        return Ok(());
+    }
+    let had_tmp = policy.profile.fs_read.iter().any(|p| p == "/tmp")
+        || policy.profile.fs_write.iter().any(|p| p == "/tmp");
+    if !had_tmp {
+        return Ok(());
+    }
+    let backing = m.dir(h5i_root).join("tmp");
+    let _ = std::fs::remove_dir_all(&backing);
+    std::fs::create_dir_all(&backing).map_err(|e| H5iError::with_path(e, &backing))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&backing, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| H5iError::with_path(e, &backing))?;
+    }
+    policy.profile.fs_read.retain(|p| p != "/tmp");
+    policy.profile.fs_write.retain(|p| p != "/tmp");
+    policy.profile.fs_write.push(backing.display().to_string());
+    policy.home_binds.push(sandbox::HomeBind {
+        backing,
+        target: PathBuf::from("/tmp"),
+    });
+    Ok(())
+}
+
 /// Recursively copy a regular file or directory tree, preserving file modes
 /// (`std::fs::copy` carries permissions — important for a `0600`
 /// `.credentials.json`). Symlinks are skipped (a credential store is regular
@@ -1988,6 +2029,7 @@ pub fn run(
     // functional git checkout inside the box.
     grant_box_git(repo, m, &work, &mut policy)?;
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
+    prepare_private_tmp(h5i_root, m, &mut policy)?;
     prepare_home_state(
         h5i_root,
         m,
@@ -2222,6 +2264,7 @@ pub fn shell(
     // this worktree and must be able to use git / h5i context inside it.
     grant_box_git(repo, m, &work, &mut policy)?;
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
+    prepare_private_tmp(h5i_root, m, &mut policy)?;
     prepare_home_state(
         h5i_root,
         m,
@@ -3529,6 +3572,7 @@ pub fn service_start(
     let mut policy = load_policy(h5i_root, m)?;
     grant_box_git(repo, m, &work, &mut policy)?;
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
+    prepare_private_tmp(h5i_root, m, &mut policy)?;
     prepare_home_state(
         h5i_root,
         m,
@@ -5424,6 +5468,33 @@ mod tests {
             env.iter().all(|(k, _)| k != "CARGO_INSTALL_ROOT"),
             "cargo install is not part of the default sandbox workflow: {env:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_private_tmp_redirects_shared_tmp_to_env_backing() {
+        use crate::sandbox::{AgentRuntime, Profile};
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let m = canonical_manifest("claude", "tmp");
+        std::fs::create_dir_all(m.dir(h5i_root)).unwrap();
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude),
+        );
+        assert!(pol.profile.fs_write.iter().any(|w| w == "/tmp"));
+
+        prepare_private_tmp(h5i_root, &m, &mut pol).unwrap();
+
+        let backing = m.dir(h5i_root).join("tmp");
+        assert!(backing.is_dir(), "{backing:?}");
+        assert_eq!(std::fs::metadata(&backing).unwrap().permissions().mode() & 0o777, 0o700);
+        assert!(!pol.profile.fs_read.iter().any(|w| w == "/tmp"));
+        assert!(!pol.profile.fs_write.iter().any(|w| w == "/tmp"));
+        assert!(pol.profile.fs_write.iter().any(|w| w == &backing.display().to_string()));
+        let tmp_bind = pol.home_binds.iter().find(|b| b.target == PathBuf::from("/tmp")).unwrap();
+        assert_eq!(tmp_bind.backing, backing);
     }
 
     // ─── per-env credential/session isolation (#1) ──────────────────────────
