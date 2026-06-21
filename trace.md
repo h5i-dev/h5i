@@ -3737,3 +3737,4 @@ _[Checkpoint: 6a373ea1 — edited roadmap/team-design.md; edited roadmap/team-de
 [01:32:30] OBSERVE: read src/lib.rs
 [01:32:30] OBSERVE: read src/msg.rs
 [01:32:31] OBSERVE: read src/main.rs
+[01:32:31] OBSERVE: read src/cli_routing.rs
