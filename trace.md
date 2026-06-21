@@ -4031,3 +4031,4 @@ _[Checkpoint: 6a375d2a — edited MANUAL.md; edited MANUAL.md; edited man/man1/h
 [09:06:47] ACT: edited man/man1/h5i.1
 [09:07:09] OBSERVE: read man/man1/h5i.1
 [09:07:29] ACT: edited man/man1/h5i.1
+[09:09:02] NOTE: DEFERRAL (~/Dev/h5i/man/man1/h5i.1): t them: **pin-verifier-command-at-create** (the last review follow-up), **MCP `h5i_team_*` tools**, or pushing the branch / opening a PR
