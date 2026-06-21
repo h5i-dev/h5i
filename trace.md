@@ -4414,3 +4414,9 @@ _[Checkpoint: 6a384569 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited 
 
 [20:12:54] THINK: That `docs/index.html` edit (a hero-title copy change) isn't mine — I'll leave it unstaged and commit only my files.
 [20:12:54] NOTE: DEFERRAL (~/Dev/h5i/CLAUDE.md): /index.html` edit (a hero-title copy change) isn't mine — I'll leave it unstaged and commit only my files. Per the project rules, I'll stage explici…
+
+
+---
+_[Checkpoint: 6a3845c6 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited CLAUDE.md]_
+---
+
