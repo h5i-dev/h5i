@@ -4007,3 +4007,4 @@ _[Checkpoint: 6a3757ce — edited src/team.rs; edited src/team.rs; edited src/te
 [03:36:08] ACT: edited MANUAL.md
 [03:37:02] OBSERVE: read man/man1/h5i.1
 [03:37:41] ACT: edited man/man1/h5i.1
+[03:40:26] NOTE: DEFERRAL (~/Dev/h5i/src/team.rs): y_arguments 2cd8e538 Implement h5i team workflows ``` One follow-up remains from the review: **pin the verifier command at `create`** (it's still per-…
