@@ -98,3 +98,4 @@ _[Checkpoint: 6a38549b — edited docs/pitch/index.html; edited docs/pitch/index
 ---
 
 [21:16:24] THINK: .. }` struct literals I'll need to update when adding a field.
+[21:16:24] THINK: rs`. Let me update `shell()` to build the default argv internally and add the helper functions.
