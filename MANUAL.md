@@ -2712,6 +2712,19 @@ scripts/team-launch.sh fix-auth --task task.md   # dispatch + a tmux window per 
 tmux attach -t h5i-team-fix-auth                  # supervise; watch the board in `h5i serve`
 ```
 
+*Install (optional).* The script needs `jq` and `tmux` (or `--gui`) on top of
+`h5i`. Run it in place from a clone, or symlink it onto your `PATH` so it works
+from any repo:
+
+```bash
+# from a clone of the h5i repo:
+ln -s "$(pwd)/scripts/team-launch.sh" ~/.local/bin/h5i-team-launch
+# ensure ~/.local/bin is on $PATH, then anywhere:
+h5i-team-launch fix-auth --task task.md
+# if the `h5i` binary isn't on $PATH, point to it:
+H5I=/path/to/h5i h5i-team-launch fix-auth
+```
+
 ### The neutral verifier (why finalization is trustworthy)
 
 Finalization must not trust an agent's *own* captures — an agent can run weak

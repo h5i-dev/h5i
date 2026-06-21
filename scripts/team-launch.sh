@@ -23,6 +23,13 @@
 #   -h, --help        This help.
 #
 # Requires: h5i, jq; tmux (unless --gui).
+#
+# Install (optional — you can also just run it in place: ./scripts/team-launch.sh):
+#   # symlink onto your PATH so it tracks the repo:
+#   ln -s "$(pwd)/scripts/team-launch.sh" ~/.local/bin/h5i-team-launch
+#   # (ensure ~/.local/bin is on $PATH), then from any h5i repo:
+#   h5i-team-launch <team> --task task.md
+#   # if `h5i` is not on $PATH, point to it:  H5I=/path/to/h5i h5i-team-launch <team>
 set -euo pipefail
 
 H5I="${H5I:-h5i}"
