@@ -34,6 +34,11 @@ const CODEX_STOP_HOOK: &str = "h5i hook codex finish --quiet";
 const TEAM_HOOK_CLAUDE: (&str, Option<&str>, &str) =
     ("Stop", None, "h5i team agent hook --block");
 const TEAM_HOOK_CODEX: (&str, Option<&str>, &str) = ("Stop", None, "h5i team agent hook --quiet");
+/// Per-hook timeout (seconds) for the Claude team Stop hook. The hook blocks on
+/// stop while it waits for the next review (default 30 min internal); Claude
+/// Code would otherwise kill it at the ~60s default, so we pin a longer ceiling
+/// with a small buffer above the hook's own wait.
+const TEAM_HOOK_TIMEOUT_SECS: u64 = 1830;
 
 /// Pre-rename command paths (`h5i claude …` / `h5i codex …`), superseded by the
 /// `h5i hook …` forms. They still resolve via hidden CLI aliases, but the merge
@@ -80,7 +85,7 @@ pub fn merge_hook_settings_json(existing: &str, wrap_bash: bool) -> Result<Strin
         .ok_or_else(|| H5iError::Metadata("settings 'hooks' is not an object".into()))?;
 
     for &(event, matcher, command) in CORE_HOOKS {
-        ensure_hook_entry(hooks_obj, event, matcher, command)?;
+        ensure_hook_entry(hooks_obj, event, matcher, command, None)?;
     }
     if let Some(arr) = hooks_obj
         .get_mut("PostToolUse")
@@ -99,7 +104,7 @@ pub fn merge_hook_settings_json(existing: &str, wrap_bash: bool) -> Result<Strin
     }
     if wrap_bash {
         let (event, matcher, command) = WRAP_BASH_HOOK;
-        ensure_hook_entry(hooks_obj, event, matcher, command)?;
+        ensure_hook_entry(hooks_obj, event, matcher, command, None)?;
     }
 
     Ok(serde_json::to_string_pretty(&root)?)
@@ -124,7 +129,7 @@ pub fn managed_settings_wrap_bash_json() -> String {
     let (event, matcher, command) = WRAP_BASH_HOOK;
     // ensure_hook_entry only errors if an existing entry has the wrong shape;
     // on a fresh map it cannot fail.
-    let _ = ensure_hook_entry(&mut hooks_obj, event, matcher, command);
+    let _ = ensure_hook_entry(&mut hooks_obj, event, matcher, command, None);
     let mut root = Map::new();
     root.insert("hooks".to_string(), Value::Object(hooks_obj));
     serde_json::to_string_pretty(&Value::Object(root)).unwrap_or_default()
@@ -208,7 +213,7 @@ pub fn merge_team_hook_settings_json(existing: &str) -> Result<String, H5iError>
         .as_object_mut()
         .ok_or_else(|| H5iError::Metadata("settings 'hooks' is not an object".into()))?;
     let (event, matcher, command) = TEAM_HOOK_CLAUDE;
-    ensure_hook_entry(hooks_obj, event, matcher, command)?;
+    ensure_hook_entry(hooks_obj, event, matcher, command, Some(TEAM_HOOK_TIMEOUT_SECS))?;
     Ok(serde_json::to_string_pretty(&root)?)
 }
 
@@ -313,6 +318,7 @@ fn ensure_hook_entry(
     event: &str,
     matcher: Option<&str>,
     command: &str,
+    timeout: Option<u64>,
 ) -> Result<(), H5iError> {
     let arr = hooks_obj
         .entry(event)
@@ -324,10 +330,13 @@ fn ensure_hook_entry(
     if let Some(m) = matcher {
         entry.insert("matcher".to_string(), Value::String(m.to_string()));
     }
-    entry.insert(
-        "hooks".to_string(),
-        serde_json::json!([ { "type": "command", "command": command } ]),
-    );
+    let mut hook = Map::new();
+    hook.insert("type".to_string(), Value::String("command".to_string()));
+    hook.insert("command".to_string(), Value::String(command.to_string()));
+    if let Some(t) = timeout {
+        hook.insert("timeout".to_string(), Value::from(t));
+    }
+    entry.insert("hooks".to_string(), Value::Array(vec![Value::Object(hook)]));
     arr.push(Value::Object(entry));
     Ok(())
 }
@@ -481,6 +490,19 @@ mod tests {
         // Additive: the core finish hook stays; the team hook joins it.
         assert!(stop.contains(&"h5i hook claude finish".to_string()));
         assert!(stop.contains(&"h5i team agent hook --block".to_string()));
+        // The team hook carries a long per-hook timeout so Claude Code doesn't
+        // kill it while it waits for the next review.
+        let team_hook = v
+            .pointer("/hooks/Stop")
+            .and_then(|s| s.as_array())
+            .unwrap()
+            .iter()
+            .flat_map(|e| e.get("hooks").and_then(|h| h.as_array()).cloned().unwrap_or_default())
+            .find(|h| {
+                h.get("command").and_then(|c| c.as_str()) == Some("h5i team agent hook --block")
+            })
+            .unwrap();
+        assert!(team_hook.get("timeout").and_then(|t| t.as_u64()).unwrap() >= 1800);
         // Idempotent: re-applying does not duplicate the entry.
         let twice = merge_team_hook_settings_json(&out).unwrap();
         let v2: Value = serde_json::from_str(&twice).unwrap();

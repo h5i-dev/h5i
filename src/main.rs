@@ -252,6 +252,30 @@ fn box_team_inbox(consume: bool) -> Option<Vec<msg::Message>> {
     Some(unread)
 }
 
+/// Fan a TEAM_DONE "round complete" signal into every team agent's inbox (and
+/// the shared store) so the waiting team Stop hook releases the agent and lets
+/// it stop. Best-effort: called after finalize/apply, errors are swallowed.
+fn fan_out_team_done(git: &git2::Repository, h5i_root: &std::path::Path, team: &str, actor: &str) {
+    let Ok(status) = h5i_core::team::status(git, team) else {
+        return;
+    };
+    for a in &status.run.agents {
+        if let Ok(m) = msg::send_msg(
+            git,
+            h5i_root,
+            actor,
+            &a.agent_id,
+            "team round complete — you may stop",
+            msg::SendOpts {
+                kind: Some(h5i_core::team::TEAM_DONE_KIND.into()),
+                ..Default::default()
+            },
+        ) {
+            h5i_core::env::fan_out_to_env_inbox(h5i_root, &a.agent_id, Some(team), &m);
+        }
+    }
+}
+
 /// One sanitised line per message for `h5i msg watch --plain` — the format the
 /// Monitor tool streams into an agent's context: `<ts> | <from> → <to> | <KIND> | <body>`.
 fn stream_line(m: &msg::Message) -> String {
@@ -2196,6 +2220,15 @@ enum TeamAgentCommands {
         /// Print plain text with no JSON wrapper (Codex Stop hook / manual).
         #[arg(long)]
         quiet: bool,
+        /// While --block, wait up to this many seconds for the next message
+        /// before allowing the stop (0 = check once, don't wait). Lets a team
+        /// agent stay alive between turns until a review arrives or the round
+        /// ends, instead of relying on it to run `inbox --wait` itself.
+        #[arg(long, default_value_t = 1800)]
+        timeout: u64,
+        /// Poll interval in seconds while waiting.
+        #[arg(long, default_value_t = 10)]
+        interval: u64,
     },
     /// Submit this env persona's candidate; boxed envs stage for host ingest
     Submit {
@@ -9409,6 +9442,8 @@ fn main() -> anyhow::Result<()> {
                 TeamCommands::Finalize { team, json } => {
                     let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                     let verdict = h5i_core::team::finalize(git, &team, &actor)?;
+                    // Round decided → release any agents waiting in the team hook.
+                    fan_out_team_done(git, &h5i_root, &team, &actor);
                     if json {
                         println!("{}", serde_json::to_string_pretty(&verdict)?);
                     } else if let Some(winner) = &verdict.selected_submission {
@@ -9436,6 +9471,8 @@ fn main() -> anyhow::Result<()> {
                         force,
                         &actor,
                     )?;
+                    // Round applied → release any agents waiting in the team hook.
+                    fan_out_team_done(git, &h5i_root, &team, &actor);
                     if json {
                         println!("{}", serde_json::to_string_pretty(&result)?);
                     } else {
@@ -9764,41 +9801,73 @@ fn main() -> anyhow::Result<()> {
                             print_messages_numbered(&unread, &agent, false);
                         }
                     }
-                    TeamAgentCommands::Hook { team, block, quiet } => {
-                        // In --block mode, bail if this stop was itself caused by a
-                        // hook continuation — otherwise we'd loop forever.
-                        if block && stdin_stop_hook_active() {
-                            return Ok(());
-                        }
+                    TeamAgentCommands::Hook {
+                        team,
+                        block,
+                        quiet,
+                        timeout,
+                        interval,
+                    } => {
+                        let interval = interval.max(1);
+                        // The framed messages plus a standing instruction; the hook
+                        // keeps waiting between turns, so the agent need not run
+                        // `inbox --wait` itself.
+                        let block_reason = |text: &str| -> String {
+                            format!(
+                                "{text}\n\n[h5i team] Handle the request(s) above — post a review \
+                                 with `h5i team review submit` and/or improve and re-submit with \
+                                 `h5i team agent submit`. This hook keeps waiting between turns; \
+                                 you're released when the round is applied."
+                            )
+                        };
+                        let is_done =
+                            |m: &msg::Message| m.kind.as_deref() == Some(h5i_core::team::TEAM_DONE_KIND);
+
                         // Confined box: deliver from the host-fanned per-env inbox
                         // (the shared store and team refs are sealed here). Consume
-                        // so the same message isn't re-blocked on the next stop.
+                        // so a message isn't re-delivered on the next stop.
                         if std::env::var_os(h5i_core::env::H5I_ENV_INBOX_VAR).is_some() {
                             let agent = std::env::var("H5I_AGENT").unwrap_or_default();
-                            let unread = box_team_inbox(true).unwrap_or_default();
-                            if unread.is_empty() {
+                            if !block {
+                                // Codex / one-shot: surface pending mail, never wait.
+                                let unread = box_team_inbox(true).unwrap_or_default();
+                                if !unread.is_empty() {
+                                    let text = frame_unread(&agent, &unread);
+                                    if quiet {
+                                        println!("{text}");
+                                    } else {
+                                        let out = serde_json::json!({ "systemMessage": text });
+                                        println!("{}", serde_json::to_string(&out)?);
+                                    }
+                                }
                                 return Ok(());
                             }
-                            let text = frame_unread(&agent, &unread);
-                            if block {
-                                let reason = format!(
-                                    "{text}\n\n[h5i team] Handle the request(s) above — post a \
-                                     review with `h5i team review submit` and/or improve and \
-                                     re-submit with `h5i team agent submit`. To wait for the next \
-                                     step without stopping, run `h5i team agent inbox --wait`."
-                                );
-                                let out = serde_json::json!({ "decision": "block", "reason": reason });
-                                println!("{}", serde_json::to_string(&out)?);
-                            } else if quiet {
-                                println!("{text}");
-                            } else {
-                                let out = serde_json::json!({ "systemMessage": text });
-                                println!("{}", serde_json::to_string(&out)?);
+                            // Claude / --block: wait for the next message, then block
+                            // the stop and feed it back. A round-done signal or the
+                            // wait elapsing releases the agent so it can stop.
+                            let mut waited = 0u64;
+                            loop {
+                                let unread = box_team_inbox(true).unwrap_or_default();
+                                if unread.iter().any(&is_done) {
+                                    return Ok(());
+                                }
+                                if !unread.is_empty() {
+                                    let reason = block_reason(&frame_unread(&agent, &unread));
+                                    let out =
+                                        serde_json::json!({ "decision": "block", "reason": reason });
+                                    println!("{}", serde_json::to_string(&out)?);
+                                    return Ok(());
+                                }
+                                if timeout == 0 || waited >= timeout {
+                                    return Ok(());
+                                }
+                                std::thread::sleep(std::time::Duration::from_secs(interval));
+                                waited += interval;
                             }
-                            return Ok(());
                         }
-                        // Resolve identity + team quietly; nothing configured →
-                        // nothing to deliver, so let the agent stop.
+
+                        // Host-side (or unconfined workspace tier): read the shared
+                        // store directly; the run phase tells us when to release.
                         let Ok(agent) = msg::resolve_identity(&h5i_root, None) else {
                             return Ok(());
                         };
@@ -9815,44 +9884,46 @@ fn main() -> anyhow::Result<()> {
                         if team.is_empty() {
                             return Ok(());
                         }
-                        let Ok(status) = h5i_core::team::status(git, &team) else {
-                            return Ok(());
-                        };
-                        // Not on this team, or the run is already decided → stop.
-                        if !status.run.agents.iter().any(|a| a.agent_id == agent) {
-                            return Ok(());
+                        let mut waited = 0u64;
+                        loop {
+                            let repo = H5iRepository::open(".")?;
+                            let Ok(status) = h5i_core::team::status(repo.git(), &team) else {
+                                return Ok(());
+                            };
+                            // Not on this team, or the run is decided → let it stop.
+                            if !status.run.agents.iter().any(|a| a.agent_id == agent) {
+                                return Ok(());
+                            }
+                            if matches!(status.run.phase.as_str(), "applied" | "no_verdict") {
+                                return Ok(());
+                            }
+                            let unread = msg::inbox(repo.git(), &repo.h5i_root, &agent, false)?;
+                            if !unread.is_empty() {
+                                let ids: Vec<String> =
+                                    unread.iter().map(|m| m.id.clone()).collect();
+                                msg::write_last_view(&repo.h5i_root, &agent, &ids)?;
+                                let text = frame_unread(&agent, &unread);
+                                if block {
+                                    let reason = block_reason(&text);
+                                    let out = serde_json::json!({ "decision": "block", "reason": reason });
+                                    println!("{}", serde_json::to_string(&out)?);
+                                } else if quiet {
+                                    println!("{text}");
+                                } else {
+                                    let out = serde_json::json!({ "systemMessage": text });
+                                    println!("{}", serde_json::to_string(&out)?);
+                                }
+                                msg::mark_seen(&repo.h5i_root, &agent, &ids)?;
+                                return Ok(());
+                            }
+                            // Nothing pending. One-shot (non-block) → stop now;
+                            // --block → wait until a message arrives or the timeout.
+                            if !block || timeout == 0 || waited >= timeout {
+                                return Ok(());
+                            }
+                            std::thread::sleep(std::time::Duration::from_secs(interval));
+                            waited += interval;
                         }
-                        if matches!(status.run.phase.as_str(), "applied" | "no_verdict") {
-                            return Ok(());
-                        }
-                        // Deliver any pending team messages for this agent (peek,
-                        // then ack after a successful emit — deliver-then-ack).
-                        let unread = msg::inbox(git, &h5i_root, &agent, false)?;
-                        if unread.is_empty() {
-                            return Ok(());
-                        }
-                        let ids: Vec<String> = unread.iter().map(|m| m.id.clone()).collect();
-                        msg::write_last_view(&h5i_root, &agent, &ids)?;
-                        let text = frame_unread(&agent, &unread);
-                        if block {
-                            let reason = format!(
-                                "{text}\n\n[h5i team] Your round (phase: {}) is not finished. \
-                                 Handle the request(s) above — post a review with \
-                                 `h5i team review submit` and/or improve and re-submit with \
-                                 `h5i team agent submit`. To wait for the next step without \
-                                 stopping, run `h5i team agent inbox --wait`. Only stop once the \
-                                 run is applied or has no verdict.",
-                                status.run.phase
-                            );
-                            let out = serde_json::json!({ "decision": "block", "reason": reason });
-                            println!("{}", serde_json::to_string(&out)?);
-                        } else if quiet {
-                            println!("{text}");
-                        } else {
-                            let out = serde_json::json!({ "systemMessage": text });
-                            println!("{}", serde_json::to_string(&out)?);
-                        }
-                        msg::mark_seen(&h5i_root, &agent, &ids)?;
                     }
                     TeamAgentCommands::Submit { commit, summary_file, json } => {
                         let summary = match summary_file {

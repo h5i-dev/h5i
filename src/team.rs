@@ -25,6 +25,11 @@ pub const PHASE_DRAFT: &str = "draft";
 pub const PHASE_DISPATCHED: &str = "dispatched";
 pub const PHASE_SEALED_SUBMIT: &str = "sealed_submit";
 
+/// Message kind for the "round is over" signal the host fans into agent inboxes
+/// on `finalize`/`apply`. A boxed agent can't read team phase, so the team Stop
+/// hook treats a message of this kind as "release — let the agent stop".
+pub const TEAM_DONE_KIND: &str = "TEAM_DONE";
+
 /// `draft` and `dispatched` are the same lifecycle stage for gating: the round
 /// is open and submissions are still being collected. `dispatch` only messages
 /// the agents' inboxes, so it must not block add-env / submit / freeze — those
