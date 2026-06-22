@@ -637,12 +637,13 @@ submitting to await a review request without ending the session.
 Stop-hook delivery: keeps an agent in an unfinished round from stopping and feeds
 in review requests.
 .B \-\-block
-(Claude) waits up to
+(Claude and Codex \(em both honor the same block-decision continuation contract)
+waits up to
 .B \-\-timeout
 for the next message, then blocks the stop and hands it back;
 .B \-\-quiet
-(Codex) prints one-shot. Released by a TEAM_DONE signal (sent on finalize/apply)
-or the timeout. Registered via
+prints one-shot (manual use). Released by a TEAM_DONE signal (sent on
+finalize/apply) or the timeout. Registered via
 .BR "h5i hook setup \-\-team" ;
 no-ops outside a team.
 .TP
@@ -1153,9 +1154,12 @@ also registers the team peer-review Stop hook
 in a live
 .B h5i team
 round it keeps the agent from stopping while it owes work and surfaces review
-requests between turns; the Claude entry waits for the next message and carries a
-long per-hook timeout, and a TEAM_DONE signal (finalize/apply) releases it. It
-no-ops outside a team. The MCP server is no longer wired by setup \(em register
+requests between turns. Both Claude and Codex use the same blocking
+.RB ( \-\-block )
+hook \(em their Stop hooks honor the same block-decision continuation contract
+\(em waiting for the next review and carrying a long per-hook timeout so the
+runtime doesn't kill it mid-wait; a TEAM_DONE signal (finalize/apply) releases
+it. It no-ops outside a team. The MCP server is no longer wired by setup \(em register
 it by hand (see
 .BR "h5i mcp" ).
 .TP

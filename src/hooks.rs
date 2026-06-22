@@ -26,14 +26,15 @@ const WRAP_BASH_HOOK: (&str, Option<&str>, &str) =
 
 const CODEX_STOP_HOOK: &str = "h5i hook codex finish --quiet";
 
-/// The team peer-review Stop hooks, opt-in via `h5i hook setup --team`
-/// (additive to the core set). They keep an agent in a running team from
-/// stopping while it still owes work and surface review requests between
-/// turns. Claude blocks the stop (`--block`); Codex emits plain text
-/// (`--quiet`) since it has no block-decision contract.
+/// The team peer-review Stop hook command, opt-in via `h5i hook setup --team`
+/// (additive to the core set). It keeps an agent in a running team from
+/// stopping while it still owes work and surfaces review requests between
+/// turns. Both Claude Code and Codex Stop hooks honor the same
+/// `{"decision":"block","reason":…}` continuation contract, so both wait-and-block
+/// with `--block` (and both get the long per-hook timeout below).
 const TEAM_HOOK_CLAUDE: (&str, Option<&str>, &str) =
     ("Stop", None, "h5i team agent hook --block");
-const TEAM_HOOK_CODEX: (&str, Option<&str>, &str) = ("Stop", None, "h5i team agent hook --quiet");
+const TEAM_HOOK_CODEX: (&str, Option<&str>, &str) = ("Stop", None, "h5i team agent hook --block");
 /// Per-hook timeout (seconds) for the Claude team Stop hook. The hook blocks on
 /// stop while it waits for the next review (default 30 min internal); Claude
 /// Code would otherwise kill it at the ~60s default, so we pin a longer ceiling
@@ -274,6 +275,13 @@ pub fn merge_team_hook_codex_toml(existing: &str) -> Result<String, H5iError> {
     let mut hook = Table::new();
     hook.insert("type".to_string(), toml::Value::String("command".to_string()));
     hook.insert("command".to_string(), toml::Value::String(command.to_string()));
+    // The hook waits (up to ~30 min) for the next review; Codex would kill it at
+    // its 600s default, so pin a longer per-handler timeout (it only matters for
+    // this waiting handler, not the one-shot `codex finish`).
+    hook.insert(
+        "timeout".to_string(),
+        toml::Value::Integer(TEAM_HOOK_TIMEOUT_SECS as i64),
+    );
 
     // Append to the existing matcher-less Stop group (where `codex finish`
     // lives), else create one. Both handlers then fire from a single group.
@@ -580,12 +588,14 @@ mod tests {
     fn team_flag_adds_team_stop_hook_codex() {
         let core = merge_codex_config_toml("", false).unwrap();
         let out = merge_team_hook_codex_toml(&core).unwrap();
-        assert!(out.contains("h5i team agent hook --quiet"));
+        // Codex blocks the stop just like Claude (same continuation contract).
+        assert!(out.contains("h5i team agent hook --block"));
         // The core codex finish hook is preserved alongside it.
         assert!(out.contains("h5i hook codex finish --quiet"));
 
         // Consolidated into ONE Stop group with two handlers (the shape Codex's
-        // docs demonstrate), not two separate `[[hooks.Stop]]` groups.
+        // docs demonstrate), not two separate `[[hooks.Stop]]` groups; the
+        // waiting team handler carries a long per-handler timeout.
         let v: toml::Value = toml::from_str(&out).unwrap();
         let stop = v
             .get("hooks")
@@ -593,24 +603,29 @@ mod tests {
             .and_then(|s| s.as_array())
             .unwrap();
         assert_eq!(stop.len(), 1, "exactly one Stop matcher group");
-        let cmds: Vec<&str> = stop[0]
-            .get("hooks")
-            .and_then(|h| h.as_array())
-            .unwrap()
+        let handlers = stop[0].get("hooks").and_then(|h| h.as_array()).unwrap();
+        assert!(handlers.iter().any(|h| {
+            h.get("command").and_then(|c| c.as_str()) == Some("h5i hook codex finish --quiet")
+        }));
+        let team = handlers
             .iter()
-            .filter_map(|h| h.get("command").and_then(|c| c.as_str()))
-            .collect();
-        assert!(cmds.contains(&"h5i hook codex finish --quiet"));
-        assert!(cmds.contains(&"h5i team agent hook --quiet"));
+            .find(|h| {
+                h.get("command").and_then(|c| c.as_str()) == Some("h5i team agent hook --block")
+            })
+            .unwrap();
+        assert!(team.get("timeout").and_then(|t| t.as_integer()).unwrap() >= 1800);
 
-        // Idempotent, and migrates a prior split layout (a separate group).
+        // Idempotent.
         let twice = merge_team_hook_codex_toml(&out).unwrap();
-        assert_eq!(twice.matches("h5i team agent hook --quiet").count(), 1);
+        assert_eq!(twice.matches("h5i team agent hook").count(), 1);
+
+        // Migrates a prior split layout — even an old standalone `--quiet` group.
         let split = format!(
             "{out}\n[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"h5i team agent hook --quiet\"\n"
         );
         let migrated = merge_team_hook_codex_toml(&split).unwrap();
-        assert_eq!(migrated.matches("h5i team agent hook --quiet").count(), 1);
+        assert_eq!(migrated.matches("h5i team agent hook").count(), 1);
+        assert!(migrated.contains("h5i team agent hook --block"));
         let mv: toml::Value = toml::from_str(&migrated).unwrap();
         assert_eq!(
             mv.get("hooks").and_then(|h| h.get("Stop")).and_then(|s| s.as_array()).unwrap().len(),
