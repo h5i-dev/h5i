@@ -744,3 +744,4 @@ _[Checkpoint: 6a38cc78 — edited src/main.rs; wrote scripts/team-run.sh; edited
 _[Checkpoint: 6a38cd9a — Simplified docs/index.html homepage by replacing separate Isolation and Auditability sections with one Tricks section covering conflict avoidance via isolated environments, review overload via auditability, and token pressure via compact tool output; validated HTML parse.]_
 ---
 
+[05:52:29] ACT: edited MANUAL.md
