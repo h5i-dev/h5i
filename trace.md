@@ -730,3 +730,4 @@ _[Checkpoint: 6a38cc78 — edited src/main.rs; wrote scripts/team-run.sh; edited
 [05:51:40] ACT: edited MANUAL.md
 [05:51:50] ACT: edited MANUAL.md
 [05:52:12] ACT: edited MANUAL.md
+[05:52:13] OBSERVE: searched Reduction\|Tricks" for "──\|section-tag\|Isolation\|Auditability\|Token"
