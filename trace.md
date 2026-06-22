@@ -285,3 +285,9 @@ _[Checkpoint: 6a3899d6 — Redesign h5i serve dashboard around the agent ensembl
 [02:11:47] THINK: Let me gather the last structural facts I need — how `theme.
 [02:11:47] THINK: css`. I'll add font + signature tokens to `:root`, set the global type, and route Blueprint components through the brand faces.
 [02:11:47] THINK: To honor the "full overhaul" I'll verify a representative *secondary* view cascades correctly — the Explore three-pane (commit table, pane eyebrows, status bar) exercises the shared primitives I just changed.
+
+
+---
+_[Checkpoint: 6a3899e3 — edited web/src/TeamView.tsx; edited web/src/theme.css; edited web/src/theme.css]_
+---
+
