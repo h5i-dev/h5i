@@ -410,3 +410,9 @@ _[Checkpoint: 6a38b9b8 — edited src/team.rs; edited src/team.rs; edited src/te
 _[Checkpoint: 6a38bcd8 — Improved docs/_static/h5i-team.svg with a clearer agent-team overview: task fan-out, isolated agents, peer review, neutral verification, and one applied winner; validated XML and rendered PNG dimensions.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a38bce0 — deleted docs/_static/h5i-team.svg; added docs/_static/h5i-team.svg; edited docs/_static/h5i-team.svg]_
+---
+
