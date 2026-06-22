@@ -537,3 +537,9 @@ _[Checkpoint: 6a38c177 — edited src/container.rs; edited src/container.rs; edi
 [05:01:49] OBSERVE: read src/main.rs
 [05:02:23] ACT: edited src/main.rs
 [05:02:58] ACT: edited docs/_static/h5i-team.svg
+
+
+---
+_[Checkpoint: 6a38c207 — Adjusted docs/_static/h5i-team.svg layout: moved agent stack and peer review box further left and lengthened the peer-review-to-neutral-judge connector; validated XML and PNG render.]_
+---
+
