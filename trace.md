@@ -455,3 +455,4 @@ _[Checkpoint: 6a38be06 — wrote scripts/team-review.sh; edited src/hooks.rs; ed
 _[Checkpoint: 6a38bf3a — edited docs/_static/h5i-team.svg; edited docs/_static/h5i-team.svg; edited docs/_static/h5i-team.svg]_
 ---
 
+[04:54:28] OBSERVE: read src/sandbox_policy.rs
