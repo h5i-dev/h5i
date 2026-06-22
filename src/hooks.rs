@@ -26,6 +26,15 @@ const WRAP_BASH_HOOK: (&str, Option<&str>, &str) =
 
 const CODEX_STOP_HOOK: &str = "h5i hook codex finish --quiet";
 
+/// The team peer-review Stop hooks, opt-in via `h5i hook setup --team`
+/// (additive to the core set). They keep an agent in a running team from
+/// stopping while it still owes work and surface review requests between
+/// turns. Claude blocks the stop (`--block`); Codex emits plain text
+/// (`--quiet`) since it has no block-decision contract.
+const TEAM_HOOK_CLAUDE: (&str, Option<&str>, &str) =
+    ("Stop", None, "h5i team agent hook --block");
+const TEAM_HOOK_CODEX: (&str, Option<&str>, &str) = ("Stop", None, "h5i team agent hook --quiet");
+
 /// Pre-rename command paths (`h5i claude …` / `h5i codex …`), superseded by the
 /// `h5i hook …` forms. They still resolve via hidden CLI aliases, but the merge
 /// strips any surviving managed entry so re-running `setup --write` migrates an
@@ -176,6 +185,52 @@ pub fn merge_codex_config_toml(existing: &str, wrap_bash: bool) -> Result<String
         ensure_toml_hook_entry(hooks_table, event, matcher, command)?;
     }
 
+    Ok(toml::to_string_pretty(&root)?)
+}
+
+/// Idempotently add the team peer-review Stop hook to a Claude `settings.json`
+/// document, on top of whatever core hooks are already present. Additive: the
+/// existing Stop entries (e.g. `h5i hook claude finish`) are preserved — a Stop
+/// array may carry several entries that all fire. Pure; the caller does I/O.
+pub fn merge_team_hook_settings_json(existing: &str) -> Result<String, H5iError> {
+    let mut root: Value = if existing.trim().is_empty() {
+        Value::Object(Map::new())
+    } else {
+        serde_json::from_str(existing)?
+    };
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| H5iError::Metadata("settings.json is not a JSON object".into()))?;
+    let hooks = obj
+        .entry("hooks")
+        .or_insert_with(|| Value::Object(Map::new()));
+    let hooks_obj = hooks
+        .as_object_mut()
+        .ok_or_else(|| H5iError::Metadata("settings 'hooks' is not an object".into()))?;
+    let (event, matcher, command) = TEAM_HOOK_CLAUDE;
+    ensure_hook_entry(hooks_obj, event, matcher, command)?;
+    Ok(serde_json::to_string_pretty(&root)?)
+}
+
+/// Idempotently add the team peer-review Stop hook to a Codex `config.toml`
+/// document. Mirrors [`merge_team_hook_settings_json`] for Codex's TOML shape.
+pub fn merge_team_hook_codex_toml(existing: &str) -> Result<String, H5iError> {
+    let mut root: toml::Value = if existing.trim().is_empty() {
+        toml::Value::Table(Table::new())
+    } else {
+        toml::from_str(existing)?
+    };
+    let root_table = root
+        .as_table_mut()
+        .ok_or_else(|| H5iError::Metadata("config.toml is not a TOML table".into()))?;
+    let hooks = root_table
+        .entry("hooks".to_string())
+        .or_insert_with(|| toml::Value::Table(Table::new()));
+    let hooks_table = hooks
+        .as_table_mut()
+        .ok_or_else(|| H5iError::Metadata("config 'hooks' is not a table".into()))?;
+    let (event, matcher, command) = TEAM_HOOK_CODEX;
+    ensure_toml_hook_entry(hooks_table, event, matcher, command)?;
     Ok(toml::to_string_pretty(&root)?)
 }
 
@@ -415,6 +470,39 @@ mod tests {
             bash_entry.get("matcher").and_then(|m| m.as_str()),
             Some("Bash")
         );
+    }
+
+    #[test]
+    fn team_flag_adds_team_stop_hook_claude() {
+        let core = merge_hook_settings_json("", false).unwrap();
+        let out = merge_team_hook_settings_json(&core).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let stop = commands_under(&v, "Stop");
+        // Additive: the core finish hook stays; the team hook joins it.
+        assert!(stop.contains(&"h5i hook claude finish".to_string()));
+        assert!(stop.contains(&"h5i team agent hook --block".to_string()));
+        // Idempotent: re-applying does not duplicate the entry.
+        let twice = merge_team_hook_settings_json(&out).unwrap();
+        let v2: Value = serde_json::from_str(&twice).unwrap();
+        assert_eq!(
+            commands_under(&v2, "Stop")
+                .iter()
+                .filter(|c| c.as_str() == "h5i team agent hook --block")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn team_flag_adds_team_stop_hook_codex() {
+        let core = merge_codex_config_toml("", false).unwrap();
+        let out = merge_team_hook_codex_toml(&core).unwrap();
+        assert!(out.contains("h5i team agent hook --quiet"));
+        // The core codex finish hook is preserved alongside it.
+        assert!(out.contains("h5i hook codex finish --quiet"));
+        // Idempotent.
+        let twice = merge_team_hook_codex_toml(&out).unwrap();
+        assert_eq!(twice.matches("h5i team agent hook --quiet").count(), 1);
     }
 
     #[test]
