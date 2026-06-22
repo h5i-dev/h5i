@@ -218,7 +218,13 @@ pub fn merge_team_hook_settings_json(existing: &str) -> Result<String, H5iError>
 }
 
 /// Idempotently add the team peer-review Stop hook to a Codex `config.toml`
-/// document. Mirrors [`merge_team_hook_settings_json`] for Codex's TOML shape.
+/// document. Codex's hook schema is `hooks.<event>` → an array of matcher
+/// groups, each with a `hooks` array of `{type, command}` handlers. Rather than
+/// push a *second* matcher-less `[[hooks.Stop]]` group beside the core
+/// `h5i hook codex finish` one (valid, but Codex's docs only demonstrate one
+/// group per event), append the team handler to the existing matcher-less Stop
+/// group — and migrate any prior split layout by stripping the team command
+/// from every group first. Mirrors [`merge_team_hook_settings_json`].
 pub fn merge_team_hook_codex_toml(existing: &str) -> Result<String, H5iError> {
     let mut root: toml::Value = if existing.trim().is_empty() {
         toml::Value::Table(Table::new())
@@ -228,14 +234,69 @@ pub fn merge_team_hook_codex_toml(existing: &str) -> Result<String, H5iError> {
     let root_table = root
         .as_table_mut()
         .ok_or_else(|| H5iError::Metadata("config.toml is not a TOML table".into()))?;
-    let hooks = root_table
+    let hooks_table = root_table
         .entry("hooks".to_string())
-        .or_insert_with(|| toml::Value::Table(Table::new()));
-    let hooks_table = hooks
+        .or_insert_with(|| toml::Value::Table(Table::new()))
         .as_table_mut()
         .ok_or_else(|| H5iError::Metadata("config 'hooks' is not a table".into()))?;
-    let (event, matcher, command) = TEAM_HOOK_CODEX;
-    ensure_toml_hook_entry(hooks_table, event, matcher, command)?;
+    let (event, _matcher, command) = TEAM_HOOK_CODEX;
+    let arr = hooks_table
+        .entry(event.to_string())
+        .or_insert_with(|| toml::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| H5iError::Metadata(format!("config hooks.{event} is not an array")))?;
+
+    // Migrate/dedup: drop any prior team handler from every group (matching the
+    // stable command prefix, so an arg change still migrates), then drop a group
+    // left with no handlers.
+    let is_team = |h: &toml::Value| {
+        h.get("command")
+            .and_then(|c| c.as_str())
+            .map(|s| s.trim_start().starts_with("h5i team agent hook"))
+            .unwrap_or(false)
+    };
+    for group in arr.iter_mut() {
+        if let Some(hs) = group
+            .as_table_mut()
+            .and_then(|t| t.get_mut("hooks"))
+            .and_then(|h| h.as_array_mut())
+        {
+            hs.retain(|h| !is_team(h));
+        }
+    }
+    arr.retain(|g| {
+        g.get("hooks")
+            .and_then(|h| h.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+    });
+
+    let mut hook = Table::new();
+    hook.insert("type".to_string(), toml::Value::String("command".to_string()));
+    hook.insert("command".to_string(), toml::Value::String(command.to_string()));
+
+    // Append to the existing matcher-less Stop group (where `codex finish`
+    // lives), else create one. Both handlers then fire from a single group.
+    if let Some(group) = arr
+        .iter_mut()
+        .find(|g| g.as_table().map(|t| !t.contains_key("matcher")).unwrap_or(false))
+    {
+        group
+            .as_table_mut()
+            .unwrap()
+            .entry("hooks".to_string())
+            .or_insert_with(|| toml::Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or_else(|| H5iError::Metadata("config hooks.Stop.hooks is not an array".into()))?
+            .push(toml::Value::Table(hook));
+    } else {
+        let mut group = Table::new();
+        group.insert(
+            "hooks".to_string(),
+            toml::Value::Array(vec![toml::Value::Table(hook)]),
+        );
+        arr.push(toml::Value::Table(group));
+    }
     Ok(toml::to_string_pretty(&root)?)
 }
 
@@ -522,9 +583,39 @@ mod tests {
         assert!(out.contains("h5i team agent hook --quiet"));
         // The core codex finish hook is preserved alongside it.
         assert!(out.contains("h5i hook codex finish --quiet"));
-        // Idempotent.
+
+        // Consolidated into ONE Stop group with two handlers (the shape Codex's
+        // docs demonstrate), not two separate `[[hooks.Stop]]` groups.
+        let v: toml::Value = toml::from_str(&out).unwrap();
+        let stop = v
+            .get("hooks")
+            .and_then(|h| h.get("Stop"))
+            .and_then(|s| s.as_array())
+            .unwrap();
+        assert_eq!(stop.len(), 1, "exactly one Stop matcher group");
+        let cmds: Vec<&str> = stop[0]
+            .get("hooks")
+            .and_then(|h| h.as_array())
+            .unwrap()
+            .iter()
+            .filter_map(|h| h.get("command").and_then(|c| c.as_str()))
+            .collect();
+        assert!(cmds.contains(&"h5i hook codex finish --quiet"));
+        assert!(cmds.contains(&"h5i team agent hook --quiet"));
+
+        // Idempotent, and migrates a prior split layout (a separate group).
         let twice = merge_team_hook_codex_toml(&out).unwrap();
         assert_eq!(twice.matches("h5i team agent hook --quiet").count(), 1);
+        let split = format!(
+            "{out}\n[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"h5i team agent hook --quiet\"\n"
+        );
+        let migrated = merge_team_hook_codex_toml(&split).unwrap();
+        assert_eq!(migrated.matches("h5i team agent hook --quiet").count(), 1);
+        let mv: toml::Value = toml::from_str(&migrated).unwrap();
+        assert_eq!(
+            mv.get("hooks").and_then(|h| h.get("Stop")).and_then(|s| s.as_array()).unwrap().len(),
+            1
+        );
     }
 
     #[test]
