@@ -445,3 +445,4 @@ _[Checkpoint: 6a38bde6 — wrote scripts/team-review.sh; edited src/hooks.rs; ed
 _[Checkpoint: 6a38be06 — wrote scripts/team-review.sh; edited src/hooks.rs; edited docs/_static/h5i-team.svg]_
 ---
 
+[04:49:47] OBSERVE: read src/env.rs
