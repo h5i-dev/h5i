@@ -959,3 +959,4 @@ _[Checkpoint: 6a392932 — edited docs/pitch/index.html; edited docs/blog/agent-
 _[Checkpoint: 6a392c86 — edited docs/pitch/index.html; edited docs/blog/agent-ensembles-with-h5i-team/index.html; edited docs/blog/agent-ensemble…]_
 ---
 
+[12:39:10] THINK: I'll make two commits — the code fix (with `--tests`) and the docs.
