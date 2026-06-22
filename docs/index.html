@@ -547,7 +547,7 @@
     .t-bold   { font-weight: 700; color: var(--ink); }
 
     /* ── Deck-derived sections: even spacing + separator line ── */
-    #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #explore-more {
+    #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with, #explore-more {
       padding: 120px 0; border-top: 1px solid var(--border);
     }
 
@@ -722,7 +722,7 @@
       .hero-stat:last-child { border-bottom: none; }
       .usecase-header { flex-direction: column; gap: 1rem; }
       .works-inner { gap: 0.8rem 1.6rem; }
-      #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #explore-more,
+      #problem, #solution, #commit, #msg, #objects, #sharepr, #audit, #tricks, #built-with, #explore-more,
       #install, #faq, #cta { padding: 80px 0; }
     }
     @media (max-width: 460px) {
@@ -1052,76 +1052,30 @@
   </div>
 </section>
 
-<!-- ── Isolation ─────────────────────────────────────────────── -->
-<section id="sandbox">
+<!-- ── Tricks ────────────────────────────────────────────────── -->
+<section id="tricks">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">Isolation</span>
-      <h2 class="section-title">Each agent gets a separate workspace</h2>
-      <p class="section-sub">An ensemble only helps if the attempts stay independent. h5i gives every team member a disposable, confined worktree with its own files, policy, logs, and branch boundary. Nothing reaches your branch until a reviewer applies the chosen result.</p>
+      <span class="section-tag">Tricks</span>
+      <h2 class="section-title">How h5i keeps agent ensembles practical</h2>
+      <p class="section-sub">Running many agents is only useful if the coordination overhead stays low. h5i's core tricks are small and concrete: isolate work, summarize evidence, and keep raw noise out of context.</p>
       <div class="divider"></div>
     </div>
-    <div class="split2 reveal">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">~/my-project</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create fix-auth</span>
-  <span class="t-out">created env · isolation: </span><span class="t-ai">supervised</span>
-  <span class="t-cmt"># net.egress = ["example.com"]  — allowlist</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i env shell fix-auth</span>
-<span class="t-ai">box$</span> <span class="t-cmd">curl https://example.com</span>
-  <span class="t-pass">200 OK</span><span class="t-out">          — on the allowlist</span>
-<span class="t-ai">box$</span> <span class="t-cmd">curl https://evil.example</span>
-  <span class="t-red">could not resolve host — blocked</span>
-<span class="t-ai">box$</span> <span class="t-cmd">nft flush ruleset</span>
-  <span class="t-red">Operation not permitted — can't undo it</span></pre></div>
+    <div class="cards3 reveal">
+      <div class="feat-card">
+        <span class="feat-cmd">conflict avoidance</span>
+        <div class="feat-name">How do we stop agents from overwriting each other?</div>
+        <div class="feat-desc"><strong>Isolated environments.</strong> Each agent works in a separate confined worktree, so files, ports, caches, and branches do not collide before the verifier picks one result.</div>
       </div>
-      <div class="stack">
-        <div class="feat-card reveal"><span class="feat-cmd">isolated worktrees</span><div class="feat-name">No shared files or branches</div><div class="feat-desc">Agents can explore, test, and fail without trampling each other's output or your working tree.</div></div>
-        <div class="feat-card reveal"><span class="feat-cmd">policy-backed runs</span><div class="feat-name">Containment becomes evidence</div><div class="feat-desc">Allowed reads, writes, network access, commands, and blocked attempts are recorded beside the code.</div></div>
+      <div class="feat-card">
+        <span class="feat-cmd">review overload</span>
+        <div class="feat-name">How do we quickly review many agents' activities?</div>
+        <div class="feat-desc"><strong>Auditability.</strong> h5i records prompts, commands, tests, blocked accesses, messages, and verdicts as Git sidecar evidence so reviewers inspect a concise trail instead of reconstructing chat history.</div>
       </div>
-    </div>
-  </div>
-</section>
-
-<!-- ── Auditability ──────────────────────────────────────────── -->
-<section id="commit">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">Auditability</span>
-      <h2 class="section-title">Every AI change has a receipt</h2>
-      <p class="section-sub">The reviewer should see more than a diff. h5i records the prompt, model, agent, commands, tests, decisions, risk signals, and verdict as Git sidecar evidence, so AI-assisted work stays explainable after the chat window is gone.</p>
-      <div class="divider"></div>
-    </div>
-    <div class="split2 reveal">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">~/my-project</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">git add src/auth/token.rs</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "fix token refresh" \
-    --agent claude --tests --audit</span>
-
-<span class="t-pass">✔</span> <span class="t-out">commit 1a2b3c4 · notes → refs/h5i/notes</span>
-<span class="t-pass">✔</span> <span class="t-out">tests: 142 passed, 0 failed (3.1s)</span>
-<span class="t-pass">✔</span> <span class="t-out">integrity audit: 12 rules · clean</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --limit 1</span>
-<span class="t-out"># the diff — now with the </span><span class="t-ai">why</span><span class="t-out"> attached</span></pre></div>
-      </div>
-      <div class="rec-card">
-        <div class="rec">
-          <div class="rec-row"><span class="rec-k">prompt</span><span class="rec-v">"harden refresh window"</span></div>
-          <div class="rec-row"><span class="rec-k">model</span><span class="rec-v">claude-sonnet-4-6 · 8.4k tokens</span></div>
-          <div class="rec-row"><span class="rec-k">agent</span><span class="rec-v">claude-code</span></div>
-          <div class="rec-row"><span class="rec-k">read</span><span class="rec-v">token.rs, session.rs, 2 more</span></div>
-          <div class="rec-row"><span class="rec-k">tests</span><span class="rec-v"><span class="t-pass">142 passed</span> · 0 failed</span></div>
-          <div class="rec-row"><span class="rec-k">audit</span><span class="rec-v"><span class="t-pass">clean</span> · 12 deterministic rules</span></div>
-        </div>
+      <div class="feat-card">
+        <span class="feat-cmd">token pressure</span>
+        <div class="feat-name">Is token consumption too huge?</div>
+        <div class="feat-desc"><strong>Compact tool output.</strong> Long test and build logs are stored out-of-band while agents see structured summaries: failures, counts, paths, and next actions.</div>
       </div>
     </div>
   </div>
