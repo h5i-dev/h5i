@@ -1044,3 +1044,4 @@ _[Checkpoint: 6a3940f0 — edited src/env.rs; edited src/env.rs; edited src/main
 _[Checkpoint: 6a394526 — edited src/main.rs; edited AGENTS.md; edited .claude/h5i.md]_
 ---
 
+[14:51:54] NOTE: DEFERRAL (~/Dev/h5i/.claude/h5i.md): m-submit-*.json` is kept by the no-drop fix, and there's a `deferred (kept for retry)` event — both only exist in the new code). - **codex left its …
