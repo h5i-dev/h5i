@@ -299,3 +299,4 @@ _[Checkpoint: 6a389ba9 — edited web/src/TeamView.tsx; edited web/src/theme.css
 ---
 
 [03:04:15] ACT: wrote docs/_static/h5i-team.svg
+[03:04:25] OBSERVE: read svg-preview.png
