@@ -22,7 +22,16 @@ const EVENTS_FILE: &str = "events.jsonl";
 const MAX_ATTEMPTS: usize = 64;
 
 pub const PHASE_DRAFT: &str = "draft";
+pub const PHASE_DISPATCHED: &str = "dispatched";
 pub const PHASE_SEALED_SUBMIT: &str = "sealed_submit";
+
+/// `draft` and `dispatched` are the same lifecycle stage for gating: the round
+/// is open and submissions are still being collected. `dispatch` only messages
+/// the agents' inboxes, so it must not block add-env / submit / freeze — those
+/// all operate on an open round regardless of whether the prompt was pushed.
+fn is_open_round(phase: &str) -> bool {
+    phase == PHASE_DRAFT || phase == PHASE_DISPATCHED
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TeamEvent {
@@ -610,9 +619,9 @@ pub fn add_env(
 ) -> Result<TeamRun, H5iError> {
     validate_agent_id(agent_id)?;
     let current = status(repo, run_id)?.run;
-    if current.phase != PHASE_DRAFT {
+    if !is_open_round(&current.phase) {
         return Err(H5iError::Metadata(format!(
-            "team '{run_id}' is in phase '{}' — add-env is only allowed in draft",
+            "team '{run_id}' is in phase '{}' — add-env is only allowed while the round is open (draft/dispatched)",
             current.phase
         )));
     }
@@ -686,7 +695,7 @@ pub fn submit(
     actor: &str,
 ) -> Result<TeamArtifact, H5iError> {
     let current = status(repo, run_id)?.run;
-    if current.phase != PHASE_DRAFT
+    if !is_open_round(&current.phase)
         && current.phase != PHASE_SEALED_SUBMIT
         && current.phase != "discuss"
     {
@@ -782,9 +791,9 @@ pub fn freeze(
     actor: &str,
 ) -> Result<TeamRun, H5iError> {
     let current = status(repo, run_id)?.run;
-    if current.phase != PHASE_DRAFT {
+    if !is_open_round(&current.phase) {
         return Err(H5iError::Metadata(format!(
-            "team '{run_id}' is in phase '{}' — freeze is only allowed in draft",
+            "team '{run_id}' is in phase '{}' — freeze is only allowed while the round is open (draft/dispatched)",
             current.phase
         )));
     }
@@ -893,7 +902,7 @@ pub fn dispatch(
         "dispatched",
         current.current_round,
         Some(current.phase),
-        Some("dispatched".into()),
+        Some(PHASE_DISPATCHED.into()),
         format!("dispatched:{run_id}:{}:{}", current.current_round, prompt),
         serde_json::json!({
             "message_ids": sent.iter().map(|m| m.id.clone()).collect::<Vec<_>>(),
@@ -2085,6 +2094,48 @@ mod tests {
             Some(sub.id.as_str())
         );
         assert!(verdict.can_auto_apply);
+    }
+
+    #[test]
+    fn dispatch_does_not_block_add_env_submit_or_freeze() {
+        // Regression: `dispatch` advances the phase to `dispatched`. That must
+        // not wedge the open round — add-env, submit, and freeze all still apply
+        // (previously they hard-required `draft`, so the launcher's auto-dispatch
+        // left the run stuck and submissions un-ingestable).
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let codex = manifest(&repo, h5i_root, "codex", "fix");
+        let cand_c = commit_file(&repo, "feature.txt", "ok\n");
+        repo.reference(&codex.branch, cand_c, true, "candidate")
+            .unwrap();
+        let claude = manifest(&repo, h5i_root, "claude", "impl");
+        let cand_a = commit_file(&repo, "other.txt", "ok\n");
+        repo.reference(&claude.branch, cand_a, true, "candidate")
+            .unwrap();
+
+        create(&repo, "run-d", "run-d", "HEAD~2", 1, "human").unwrap();
+        add_env(
+            &repo, h5i_root, "run-d", "env/codex/fix", "codex-fix", None, None, None, "human",
+        )
+        .unwrap();
+
+        // dispatch moves the open round to `dispatched`...
+        dispatch(&repo, h5i_root, "run-d", "do the task", "human").unwrap();
+        assert_eq!(status(&repo, "run-d").unwrap().run.phase, PHASE_DISPATCHED);
+
+        // ...but the round is still open: add-env, submit, and freeze all work.
+        add_env(
+            &repo, h5i_root, "run-d", "env/claude/impl", "claude-impl", None, None, None, "human",
+        )
+        .unwrap();
+        let sub = submit(&repo, h5i_root, "run-d", "codex-fix", None, None, "codex").unwrap();
+        assert!(sub.independent);
+        submit(&repo, h5i_root, "run-d", "claude-impl", None, None, "claude").unwrap();
+
+        let run = freeze(&repo, "run-d", false, "human").unwrap();
+        assert_eq!(run.phase, PHASE_SEALED_SUBMIT);
     }
 
     #[test]
