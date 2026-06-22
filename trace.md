@@ -327,3 +327,4 @@ _[Checkpoint: 6a38a897 — edited docs/_static/h5i-team.svg; edited docs/_static
 _[Checkpoint: 6a38a8ff — edited docs/_static/h5i-team.svg; edited docs/_static/h5i-team.svg; edited docs/_static/h5i-team.svg]_
 ---
 
+[03:18:08] OBSERVE: read scripts/team-launch.sh
