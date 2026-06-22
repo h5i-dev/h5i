@@ -140,8 +140,11 @@ No task text was embedded by the launcher. If you need messages, ask the host su
   fi
   quoted="$(shell_quote "$prompt")"
   case "$runtime" in
-    claude) printf "claude %s" "$quoted" ;;
-    codex)  printf "codex %s"  "$quoted" ;;
+    # The agent already runs inside h5i's sealed env (sandbox + policy), so the
+    # in-agent permission prompts are redundant friction — skip them so the box
+    # runs unattended. Confinement still comes from the h5i env, not the agent.
+    claude) printf "claude --dangerously-skip-permissions %s" "$quoted" ;;
+    codex)  printf "codex --sandbox danger-full-access %s"    "$quoted" ;;
     *)      printf '%s' "${SHELL:-/bin/sh}" ;;   # unknown runtime → just a shell
   esac
 }
