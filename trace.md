@@ -431,3 +431,9 @@ _[Checkpoint: 6a38bce0 — deleted docs/_static/h5i-team.svg; added docs/_static
 _[Checkpoint: 6a38bde2 — Revised docs/_static/h5i-team.svg per feedback: changed headline to Agent Ensemble, replaced custom with cursor, moved peer review into its own non-overlapping stage, and changed fan out to send to all; validated XML and PNG render.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a38bde6 — wrote scripts/team-review.sh; edited src/hooks.rs; edited docs/_static/h5i-team.svg]_
+---
+
