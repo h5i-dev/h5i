@@ -18,7 +18,7 @@
 
 <h1 align="center">Run many coding agents. Merge one auditable result.</h1>
 
-Agent ensembles work because **independent attempts beat isolated guesses**. h5i runs several coding agents on the *same* task, each in its own sandbox, **sealed** so they can't copy one another. It lets them peer-review, then a **neutral verifier** replays every candidate, runs the tests itself, and merges the one that actually passes. The whole run (prompts, models, commands, logs, policies, messages, and the verdict) is versioned in your repo under `refs/h5i/*`. No SaaS, no lock-in.
+Agent ensembles work because **independent attempts beat isolated guesses**. h5i runs several coding agents on the *same* task, each in its own sandbox, **sealed** so they can't copy one another. It lets them peer-review, then a **neutral verifier** replays every candidate, runs the tests itself, and merges the one that actually passes. The whole run (prompts, models, commands, logs, policies, messages, and the verdict) is versioned in your repo under `refs/h5i/*`.
 
 > **h5i is a Git sidecar.** Git tracks the *diff*; h5i tracks the *run*.
 
@@ -35,7 +35,7 @@ Agent ensembles work because **independent attempts beat isolated guesses**. h5i
   </tr>
 </table>
 
-**Who it's for:** platform, security, and DevEx leads rolling out Claude Code and Codex who want to run *teams* of agents and keep review and audit defensible as agents write more of the diff. **Works with** Claude Code · Codex · Git · GitHub · MCP.
+**Who it's for:** platform, security, and DevEx leads rolling out Claude Code and Codex who want to run *teams* of agents and keep review and audit defensible as agents write more of the diff.
 
 ### Why naive agent teams break
 
