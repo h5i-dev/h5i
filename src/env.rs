@@ -4994,6 +4994,54 @@ pub fn snapshot_for_submit(
     mediated_commit(repo, h5i_root, m)
 }
 
+/// Commit the current worktree onto its checked-out branch from *inside* an env
+/// box — the in-box analogue of [`snapshot_for_submit`]. `team agent submit`
+/// calls this so the agent's edits are frozen even when they were never
+/// `git add`/committed (the common case: an agent writes files and submits
+/// without committing). The host **cannot** do this for a live box: the box
+/// holds the env run lock for its whole session and writing its index from the
+/// host would race the agent's own git use — so the box, which has a functional
+/// checkout (rw on its own env branch + objects via `box_git_plumbing`) and runs
+/// with the worktree as its CWD, snapshots itself here.
+///
+/// Returns the new commit oid, or `Ok(None)` when the worktree already matches
+/// the branch tip (a well-behaved agent that already committed in-box) or when
+/// there is no git checkout to commit. Best-effort: any git error degrades to
+/// `Ok(None)` so a submit is never blocked by it — the host ingest then freezes
+/// whatever the branch tip already is.
+pub fn commit_box_worktree() -> Option<git2::Oid> {
+    commit_worktree_at(Path::new("."))
+}
+
+fn commit_worktree_at(path: &Path) -> Option<git2::Oid> {
+    let repo = Repository::discover(path).ok()?;
+    if repo.is_bare() {
+        return None;
+    }
+    let head = repo.head().ok()?.peel_to_commit().ok()?;
+    let mut index = repo.index().ok()?;
+    index
+        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        .ok()?;
+    index.update_all(["*"].iter(), None).ok()?;
+    let tree_oid = index.write_tree().ok()?;
+    if head.tree_id() == tree_oid {
+        return None; // worktree already committed — nothing to snapshot
+    }
+    index.write().ok()?;
+    let tree = repo.find_tree(tree_oid).ok()?;
+    let sig = objects::signature(&repo).ok()?;
+    repo.commit(
+        Some("HEAD"),
+        &sig,
+        &sig,
+        "h5i team: in-box submit snapshot",
+        &tree,
+        &[&head],
+    )
+    .ok()
+}
+
 /// Record a mediated-commit boundary trip as a `violation` event, then build the
 /// fail-closed error to return. A boundary trip is the highest-confidence
 /// sandbox-probe signal (enforcement actually fired), so it is persisted to
@@ -5840,6 +5888,48 @@ mod tests {
         let got = snapshot_for_submit(&repo, h5i_root, &m)
             .expect("submit snapshot must not fail when the box holds the lock");
         assert!(got.is_none(), "contended snapshot falls back to the branch tip");
+    }
+
+    #[test]
+    fn commit_box_worktree_snapshots_untracked_edits() {
+        // The in-box submit path: an agent writes files but never commits, so
+        // the worktree is dirty/untracked. commit_box_worktree must fold those
+        // onto the branch tip so the host freezes real work — not the base.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let base = commit_file(&repo, "README.md", "hello\n");
+
+        // Untracked file, exactly like codex's `?? quick_sort.py`.
+        std::fs::write(dir.path().join("quick_sort.py"), "def quick_sort():\n    pass\n")
+            .unwrap();
+
+        let oid = commit_worktree_at(dir.path()).expect("dirty worktree must commit");
+        assert_ne!(oid, base, "branch must advance off base");
+        let tree = repo.find_commit(oid).unwrap().tree().unwrap();
+        assert!(tree.get_path(Path::new("quick_sort.py")).is_ok());
+        assert_eq!(repo.head().unwrap().peel_to_commit().unwrap().id(), oid);
+
+        // Idempotent: a clean worktree is a no-op (well-behaved already-committed agent).
+        assert!(commit_worktree_at(dir.path()).is_none());
+    }
+
+    fn commit_file(repo: &git2::Repository, name: &str, body: &str) -> git2::Oid {
+        let work = repo.workdir().unwrap();
+        std::fs::write(work.join(name), body).unwrap();
+        let mut idx = repo.index().unwrap();
+        idx.add_path(Path::new(name)).unwrap();
+        idx.write().unwrap();
+        let tree = repo.find_tree(idx.write_tree().unwrap()).unwrap();
+        let sig = git2::Signature::now("t", "t@e.com").unwrap();
+        let parents: Vec<git2::Commit> = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .into_iter()
+            .collect();
+        let prefs: Vec<&git2::Commit> = parents.iter().collect();
+        repo.commit(Some("HEAD"), &sig, &sig, "c", &tree, &prefs)
+            .unwrap()
     }
 
     #[test]

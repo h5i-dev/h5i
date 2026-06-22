@@ -9982,6 +9982,22 @@ fn main() -> anyhow::Result<()> {
                             && std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok()
                             && std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
                         if let (true, Some(spool)) = (in_box, in_env_spool) {
+                            // Snapshot the worktree onto the env branch *in-box*,
+                            // before staging, unless the caller pinned an explicit
+                            // commit. The host can't snapshot a live box (it holds
+                            // the run lock all session), so the box commits its own
+                            // edits here — otherwise an agent that wrote files but
+                            // never `git commit`ed would stage a no-op that the
+                            // host refuses ("identical to the team base").
+                            if commit.is_none() {
+                                if let Some(oid) = h5i_core::env::commit_box_worktree() {
+                                    eprintln!(
+                                        "{} snapshotted worktree in-box at {}",
+                                        style("▢").cyan().dim(),
+                                        &oid.to_string()[..12]
+                                    );
+                                }
+                            }
                             let request = h5i_core::env::TeamSubmitSpool { commit, summary };
                             let staged =
                                 h5i_core::env::write_team_submit_spool(&spool, &request)?;
