@@ -794,3 +794,4 @@ _[Checkpoint: 6a38ce98 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited 
 _[Checkpoint: 6a38ced4 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/index.html]_
 ---
 
+[06:13:04] OBSERVE: read src/hooks.rs
