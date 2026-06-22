@@ -788,3 +788,9 @@ _[Checkpoint: 6a38ce91 — Updated docs/index.html section border styling so Tri
 _[Checkpoint: 6a38ce98 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/index.html]_
 ---
 
+
+
+---
+_[Checkpoint: 6a38ced4 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/index.html]_
+---
+
