@@ -283,3 +283,4 @@ _[Checkpoint: 6a3899d6 — Redesign h5i serve dashboard around the agent ensembl
 [02:11:47] THINK: html` (~100KB). Let me understand its current structure and theme before redesigning.
 [02:11:47] THINK: Now let me understand the current theme and the Team view (the new centerpiece), plus how it's built/served.
 [02:11:47] THINK: Let me gather the last structural facts I need — how `theme.
+[02:11:47] THINK: css`. I'll add font + signature tokens to `:root`, set the global type, and route Blueprint components through the brand faces.
