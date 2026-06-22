@@ -77,6 +77,13 @@ mapfile -t AGENTS < <(printf '%s' "$status_json" | jq -r '.run.agents[].agent_id
 
 echo "team '$TEAM' — phase: $phase — agents: ${AGENTS[*]}"
 
+# 0. Live-ingest any staged in-box submissions first. Agents that submitted but
+#    are still alive (the team Stop hook keeps boxes open) have their work staged
+#    in the env spool, not yet in the team log — without this, freeze would fail
+#    with "missing submissions". Harmless if nothing is staged.
+echo "ingesting staged submissions (h5i team sync) ..."
+run "$H5I" team sync "$TEAM"
+
 # 1. Freeze, unless the run is already past the open round.
 case "$phase" in
   draft|dispatched)
