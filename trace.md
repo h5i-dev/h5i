@@ -309,3 +309,4 @@ _[Checkpoint: 6a38a66d — edited web/src/theme.css; edited web/src/theme.css; w
 ---
 
 [03:12:14] ACT: wrote docs/_static/h5i-team.svg
+[03:12:27] OBSERVE: read svg-preview3.png
