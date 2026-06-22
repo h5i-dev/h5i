@@ -368,3 +368,9 @@ _[Checkpoint: 6a38b6e2 — edited docs/_static/h5i-team.svg; edited docs/_static
 [04:20:39] THINK: Now let me confirm clippy is clean (CI runs `-D warnings`).
 [04:20:39] THINK: Clippy is clean. Let me confirm the full binary still builds (the lib change is consumed by `main.
 [04:20:39] NOTE: PLACEHOLDER (~/Dev/h5i/scripts/team-launch.sh): makes the launcher's auto-dispatch harmless. **Immediate workaround without a code change:** start a fresh team and launch it **without** `--task` (so…
+
+
+---
+_[Checkpoint: 6a38b817 — edited src/team.rs; edited src/team.rs; edited src/team.rs]_
+---
+
