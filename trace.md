@@ -782,3 +782,9 @@ _[Checkpoint: 6a38ce58 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited 
 _[Checkpoint: 6a38ce91 — Updated docs/index.html section border styling so Tricks and Built with h5i use the same top border/padding treatment as other major homepage sections, creating visible dividers between The Solution/Tricks and Tricks/Built with h5i; validated HTML parse.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a38ce98 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited docs/index.html]_
+---
+
