@@ -982,6 +982,9 @@ pub fn grant_review(
             ..Default::default()
         },
     )?;
+    // Reach a confined reviewer too: the box can't read the shared msg store,
+    // so also drop the request into its per-env read-only inbox.
+    crate::env::fan_out_to_env_inbox(h5i_root, reviewer, Some(run_id), &message);
     let grant = TeamGrant {
         reviewer: reviewer.into(),
         target: target.into(),
@@ -1116,6 +1119,8 @@ pub fn discuss(
                 ..Default::default()
             },
         )?;
+        // Also reach a confined recipient via its per-env read-only inbox.
+        crate::env::fan_out_to_env_inbox(h5i_root, recipient, Some(run_id), &message);
         message_ids.push(message.id);
     }
     let discussion = TeamDiscussion {
@@ -2028,6 +2033,15 @@ mod tests {
         assert_eq!(grant.reviewer, "claude-fix");
         assert_eq!(grant.artifact_ids.len(), 1);
         assert!(grant.message_id.is_some());
+
+        // Send-time fan-out: the request also lands in the reviewer's per-env
+        // read-only inbox, so a *confined* reviewer receives it without ever
+        // reading the shared store.
+        let inbox = crate::env::env_inbox_for_agent(h5i_root, "claude-fix", Some("run3"))
+            .expect("reviewer env inbox should resolve");
+        let queued = crate::env::read_env_inbox(&inbox);
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].to, "claude-fix");
 
         let review = submit_review(
             &repo,

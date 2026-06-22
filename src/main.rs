@@ -222,6 +222,36 @@ fn stdin_stop_hook_active() -> bool {
         .unwrap_or(false)
 }
 
+/// Box-side team inbox read. A confined agent can't reach the shared msg store,
+/// so it reads the host-fanned per-env read-only mailbox (`$H5I_ENV_INBOX`),
+/// deduped against a box-writable "seen" cursor in the capture spool
+/// (`$H5I_ENV_CAPTURE_SPOOL`). `consume` advances the cursor. Returns `None`
+/// when not running in a box with an inbox (so the caller falls back to the
+/// host-side path).
+fn box_team_inbox(consume: bool) -> Option<Vec<msg::Message>> {
+    let inbox = std::path::PathBuf::from(std::env::var_os(h5i_core::env::H5I_ENV_INBOX_VAR)?);
+    let spool = std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR)
+        .map(std::path::PathBuf::from);
+    let seen = spool
+        .as_deref()
+        .map(h5i_core::env::read_inbox_cursor)
+        .unwrap_or_default();
+    let unread: Vec<msg::Message> = h5i_core::env::read_env_inbox(&inbox)
+        .into_iter()
+        .filter(|m| !seen.contains(&m.id))
+        .collect();
+    if consume && !unread.is_empty() {
+        if let Some(spool) = spool.as_deref() {
+            let mut seen = seen;
+            for m in &unread {
+                seen.insert(m.id.clone());
+            }
+            let _ = h5i_core::env::write_inbox_cursor(spool, &seen);
+        }
+    }
+    Some(unread)
+}
+
 /// One sanitised line per message for `h5i msg watch --plain` — the format the
 /// Monitor tool streams into an agent's context: `<ts> | <from> → <to> | <KIND> | <body>`.
 fn stream_line(m: &msg::Message) -> String {
@@ -4705,14 +4735,13 @@ fn main() -> anyhow::Result<()> {
                         branch,
                         ..Default::default()
                     };
-                    report_sent(&msg::send_msg(
-                        git,
-                        &h5i_root,
-                        &me,
-                        &to,
-                        &body.join(" "),
-                        opts,
-                    )?);
+                    let sent =
+                        msg::send_msg(git, &h5i_root, &me, &to, &body.join(" "), opts)?;
+                    // Mirror to a confined recipient's per-env read-only inbox so a
+                    // boxed team agent receives it (team id unknown here → match on
+                    // the recipient agent). No-op if the recipient isn't boxed.
+                    h5i_core::env::fan_out_to_env_inbox(&h5i_root, &to, None, &sent);
+                    report_sent(&sent);
                 }
 
                 Some(MsgCommands::Ask {
@@ -9551,20 +9580,56 @@ fn main() -> anyhow::Result<()> {
                 }
                 TeamCommands::Review { action } => match action {
                     TeamReviewCommands::Submit { team, reviewer, target, file, json } => {
-                        let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                         let body = std::fs::read_to_string(&file).map_err(|e| {
                             anyhow::anyhow!("failed to read review file {}: {e}", file.display())
                         })?;
-                        let review = h5i_core::team::submit_review(
-                            git, &team, &reviewer, &target, body, &actor,
-                        )?;
-                        if json {
-                            println!("{}", serde_json::to_string_pretty(&review)?);
+                        // In a confined box the team store is host-only: stage the
+                        // review for ingest at session end (the host records it under
+                        // the identity-validated env binding, so the box-supplied
+                        // `--reviewer` is advisory only).
+                        let in_env_spool = std::env::var_os(
+                            h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR,
+                        )
+                        .map(PathBuf::from);
+                        let in_box = in_env_spool.is_some()
+                            && std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok()
+                            && std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
+                        if let (true, Some(spool)) = (in_box, in_env_spool) {
+                            let staged = h5i_core::env::write_team_review_spool(
+                                &spool,
+                                &h5i_core::env::TeamReviewSpool {
+                                    target: target.clone(),
+                                    body,
+                                },
+                            )?;
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "staged": staged,
+                                        "host_ingest": "env-shell-exit"
+                                    }))?
+                                );
+                            } else {
+                                println!(
+                                    "{} team review staged for host ingest ({})",
+                                    style("▢").cyan().dim(),
+                                    staged
+                                );
+                            }
                         } else {
-                            println!(
-                                "{} recorded review {} -> {}",
-                                SUCCESS, review.reviewer, review.target
-                            );
+                            let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                            let review = h5i_core::team::submit_review(
+                                git, &team, &reviewer, &target, body, &actor,
+                            )?;
+                            if json {
+                                println!("{}", serde_json::to_string_pretty(&review)?);
+                            } else {
+                                println!(
+                                    "{} recorded review {} -> {}",
+                                    SUCCESS, review.reviewer, review.target
+                                );
+                            }
                         }
                     }
                 },
@@ -9577,6 +9642,50 @@ fn main() -> anyhow::Result<()> {
                         timeout,
                         json,
                     } => {
+                        // Confined box: read the host-fanned per-env read-only inbox
+                        // ($H5I_ENV_INBOX); the shared msg store and team refs are
+                        // sealed here. (Workspace tier has no inbox and falls through
+                        // to the host path, which it can reach unconfined.)
+                        if std::env::var_os(h5i_core::env::H5I_ENV_INBOX_VAR).is_some() {
+                            use std::io::Write as _;
+                            let agent = std::env::var("H5I_AGENT").unwrap_or_default();
+                            let render = |unread: &[msg::Message]| -> anyhow::Result<()> {
+                                if json {
+                                    println!("{}", serde_json::to_string_pretty(unread)?);
+                                } else if unread.is_empty() {
+                                    println!(
+                                        "{} No new team messages for {}.",
+                                        SUCCESS,
+                                        style(&agent).green().bold()
+                                    );
+                                } else {
+                                    print_messages_numbered(unread, &agent, false);
+                                }
+                                Ok(())
+                            };
+                            if wait {
+                                let interval = interval.max(1);
+                                let mut waited = 0u64;
+                                loop {
+                                    let unread = box_team_inbox(false).unwrap_or_default();
+                                    if !unread.is_empty() {
+                                        render(&unread)?;
+                                        let _ = std::io::stdout().flush();
+                                        break;
+                                    }
+                                    if timeout != 0 && waited >= timeout {
+                                        break;
+                                    }
+                                    std::thread::sleep(std::time::Duration::from_secs(interval));
+                                    waited += interval;
+                                }
+                                return Ok(());
+                            }
+                            // Non-wait: consume unless --peek (advances the cursor).
+                            let unread = box_team_inbox(!peek).unwrap_or_default();
+                            render(&unread)?;
+                            return Ok(());
+                        }
                         let agent = msg::resolve_identity(&h5i_root, None)?;
                         let team = match team {
                             Some(t) => t,
@@ -9599,13 +9708,9 @@ fn main() -> anyhow::Result<()> {
                         }
                         if wait {
                             use std::io::Write as _;
-                            // Inside a sealed box the msg store is host-mediated and
-                            // read-state can't advance, so a waiter would block
-                            // uselessly — no-op and let the host relaunch with the
-                            // review. Mirrors `h5i msg hook`'s in-box guard.
-                            if std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok() {
-                                return Ok(());
-                            }
+                            // Host-side (or unconfined workspace tier): poll the
+                            // shared store directly. Confined boxes were handled by
+                            // the env-inbox branch above.
                             let interval = interval.max(1);
                             let mut waited = 0u64;
                             loop {
@@ -9660,15 +9765,36 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                     TeamAgentCommands::Hook { team, block, quiet } => {
-                        // Sealed box: team coordination is host-mediated and the
-                        // box can't advance read-state, so no-op cleanly (the host
-                        // relaunches with the review). Mirrors `h5i msg hook`.
-                        if std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok() {
-                            return Ok(());
-                        }
                         // In --block mode, bail if this stop was itself caused by a
                         // hook continuation — otherwise we'd loop forever.
                         if block && stdin_stop_hook_active() {
+                            return Ok(());
+                        }
+                        // Confined box: deliver from the host-fanned per-env inbox
+                        // (the shared store and team refs are sealed here). Consume
+                        // so the same message isn't re-blocked on the next stop.
+                        if std::env::var_os(h5i_core::env::H5I_ENV_INBOX_VAR).is_some() {
+                            let agent = std::env::var("H5I_AGENT").unwrap_or_default();
+                            let unread = box_team_inbox(true).unwrap_or_default();
+                            if unread.is_empty() {
+                                return Ok(());
+                            }
+                            let text = frame_unread(&agent, &unread);
+                            if block {
+                                let reason = format!(
+                                    "{text}\n\n[h5i team] Handle the request(s) above — post a \
+                                     review with `h5i team review submit` and/or improve and \
+                                     re-submit with `h5i team agent submit`. To wait for the next \
+                                     step without stopping, run `h5i team agent inbox --wait`."
+                                );
+                                let out = serde_json::json!({ "decision": "block", "reason": reason });
+                                println!("{}", serde_json::to_string(&out)?);
+                            } else if quiet {
+                                println!("{text}");
+                            } else {
+                                let out = serde_json::json!({ "systemMessage": text });
+                                println!("{}", serde_json::to_string(&out)?);
+                            }
                             return Ok(());
                         }
                         // Resolve identity + team quietly; nothing configured →

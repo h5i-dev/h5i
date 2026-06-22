@@ -62,7 +62,13 @@ pub const H5I_ENV_POLICY_DIGEST_VAR: &str = "H5I_ENV_POLICY_DIGEST";
 pub const H5I_ENV_CAPTURE_SPOOL_VAR: &str = "H5I_ENV_CAPTURE_SPOOL";
 pub const H5I_ENV_AUDIT_CAPTURE_VAR: &str = "H5I_ENV_AUDIT_CAPTURE";
 pub const H5I_TEAM_VAR: &str = "H5I_TEAM";
+/// In-box path to the per-env read-only inbound mailbox (host fans messages in;
+/// the box reads via `h5i team agent inbox`/`--wait`/the team Stop hook).
+pub const H5I_ENV_INBOX_VAR: &str = "H5I_ENV_INBOX";
 const CONTAINER_CAPTURE_SPOOL: &str = "/.h5i/spool";
+const CONTAINER_INBOX_MOUNT: &str = "/.h5i/inbox";
+/// Inbox subdir under the env admin dir; mounted read-only into the box.
+const ENV_INBOX_DIR: &str = "inbox";
 #[cfg(unix)] // only the unix-gated RunLock references this
 const RUN_LOCK_FILE: &str = "run.lock";
 
@@ -1720,6 +1726,148 @@ fn prepare_home_state(
     Ok(())
 }
 
+/// The host-owned per-env inbound mailbox. Lives at `<env>/inbox/` and is
+/// exposed to the box READ-ONLY (a Landlock read-grant on the kernel tiers, a
+/// read-only bind mount on container). The host writes cross-agent messages
+/// here at send time ([`fan_out_to_env_inbox`]); the box reads them but cannot
+/// write — so a confined agent receives messages without any write access to
+/// the shared coordination store (which stays sealed). Returns the env vars to
+/// inject (`H5I_ENV_INBOX` → the in-box path).
+fn prepare_env_inbox(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    policy: &mut ResolvedPolicy,
+) -> Result<Vec<(String, String)>, H5iError> {
+    if policy.claim < IsolationClaim::Process {
+        return Ok(Vec::new());
+    }
+    let inbox = env_inbox_dir(h5i_root, m);
+    std::fs::create_dir_all(&inbox).map_err(|e| H5iError::with_path(e, &inbox))?;
+    let inside = match policy.claim {
+        IsolationClaim::Container => {
+            policy.env_inbox = Some(inbox);
+            CONTAINER_INBOX_MOUNT.to_string()
+        }
+        IsolationClaim::Process | IsolationClaim::Supervised => {
+            // Read-only: the box may read its inbox, never write it.
+            policy.profile.fs_read.push(inbox.display().to_string());
+            inbox.display().to_string()
+        }
+        _ => return Ok(Vec::new()),
+    };
+    Ok(vec![(H5I_ENV_INBOX_VAR.to_string(), inside)])
+}
+
+/// Host path of an env's inbound mailbox dir (`<env>/inbox/`).
+pub fn env_inbox_dir(h5i_root: &Path, m: &EnvManifest) -> PathBuf {
+    m.dir(h5i_root).join(ENV_INBOX_DIR)
+}
+
+/// Locate the inbound mailbox dir for a team agent, by matching the env bound
+/// to (`team`, `agent`). When `team` is `None`, match on `agent` alone (first
+/// hit). Returns `None` if no bound env exists — delivery is then a no-op and
+/// the shared store stays the source of truth.
+pub fn env_inbox_for_agent(h5i_root: &Path, agent: &str, team: Option<&str>) -> Option<PathBuf> {
+    for m in list(h5i_root) {
+        if let Some((t, a)) = team_binding(h5i_root, &m) {
+            if a == agent && team.map(|want| want == t).unwrap_or(true) {
+                return Some(env_inbox_dir(h5i_root, &m));
+            }
+        }
+    }
+    None
+}
+
+/// Drop a message into an env's inbound mailbox as `<id>.json`. The dir is
+/// host-owned and mounted read-only in the box, so this host-side write is the
+/// only way a message reaches a confined agent. Keyed by message id, so
+/// re-delivering the same message overwrites rather than duplicates.
+pub fn write_env_inbox_message(
+    inbox: &Path,
+    message: &crate::msg::Message,
+) -> Result<String, H5iError> {
+    std::fs::create_dir_all(inbox).map_err(|e| H5iError::with_path(e, inbox))?;
+    let safe: String = message
+        .id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(64)
+        .collect();
+    let name = if safe.is_empty() { "msg" } else { &safe };
+    let path = inbox.join(format!("{name}.json"));
+    let bytes = serde_json::to_vec(message)?;
+    std::fs::write(&path, &bytes).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(path.display().to_string())
+}
+
+/// Read every message queued in an env's inbound mailbox (box side), oldest
+/// first by file mtime. Unparseable or oversized files are skipped; the same
+/// per-entry and per-file caps as the capture spool apply (the mailbox is
+/// host-written but still treated as bounded, untrusted input on read).
+pub fn read_env_inbox(inbox: &Path) -> Vec<crate::msg::Message> {
+    let Ok(rd) = std::fs::read_dir(inbox) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(std::time::SystemTime, crate::msg::Message)> = Vec::new();
+    for entry in rd.flatten().take(SPOOL_MAX_ENTRIES) {
+        let path = entry.path();
+        if path.extension().and_then(|x| x.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(bytes) = read_spool_capped(&path, SPOOL_MAX_CMD_BYTES) else {
+            continue;
+        };
+        if let Ok(m) = serde_json::from_slice::<crate::msg::Message>(&bytes) {
+            let mtime = entry
+                .metadata()
+                .and_then(|md| md.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            out.push((mtime, m));
+        }
+    }
+    out.sort_by_key(|(t, _)| *t);
+    out.into_iter().map(|(_, m)| m).collect()
+}
+
+/// Box-writable "seen" cursor for the inbox, stored in the capture spool (the
+/// inbox itself is read-only, so read-state can't live there). Ignored by the
+/// spool ingest, whose record names use different prefixes.
+pub fn read_inbox_cursor(spool: &Path) -> std::collections::BTreeSet<String> {
+    let path = spool.join("team-inbox-seen.json");
+    std::fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+/// Persist the inbox "seen" cursor (best-effort; box-writable spool path).
+pub fn write_inbox_cursor(
+    spool: &Path,
+    seen: &std::collections::BTreeSet<String>,
+) -> Result<(), H5iError> {
+    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
+    let path = spool.join("team-inbox-seen.json");
+    let bytes = serde_json::to_vec(seen)?;
+    std::fs::write(&path, bytes).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(())
+}
+
+/// Fan a just-sent message out to a recipient's per-env inbox, if that
+/// recipient is a team agent bound to an env. Best-effort and additive: the
+/// shared msg store stays the source of truth, but this is the only path that
+/// reaches a *confined* recipient — the box can't read the shared store, only
+/// its own read-only inbox.
+pub fn fan_out_to_env_inbox(
+    h5i_root: &Path,
+    recipient: &str,
+    team: Option<&str>,
+    message: &crate::msg::Message,
+) {
+    if let Some(inbox) = env_inbox_for_agent(h5i_root, recipient, team) {
+        let _ = write_env_inbox_message(&inbox, message);
+    }
+}
+
 fn prepare_env_capture_spool(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -1887,6 +2035,34 @@ pub fn write_team_submit_spool(
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let base = format!("team-submit-{}-{nanos}", std::process::id());
+    let path = spool.join(format!("{base}.json"));
+    let json = serde_json::to_vec(request)?;
+    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(base)
+}
+
+/// A boxed agent's staged peer-review (the outbound mirror of the inbound
+/// inbox). The box can't write the host-only team store, so `h5i team review
+/// submit` stages this; the host ingests it after the session, recording the
+/// review under the box's identity-validated team binding (the box-written
+/// `reviewer` is ignored — authority comes from the env binding, never a field
+/// the box controls).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamReviewSpool {
+    pub target: String,
+    pub body: String,
+}
+
+pub fn write_team_review_spool(
+    spool: &Path,
+    request: &TeamReviewSpool,
+) -> Result<String, H5iError> {
+    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = format!("team-review-{}-{nanos}", std::process::id());
     let path = spool.join(format!("{base}.json"));
     let json = serde_json::to_vec(request)?;
     std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
@@ -2074,6 +2250,7 @@ pub fn run(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
     )?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
+    let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
 
     // Broker any declared secrets BEFORE marking the env running, so a
@@ -2090,7 +2267,10 @@ pub fn run(
     )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
     let injected_env = merged_env(
-        &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
+        &merged_env(
+            &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
+            &env_inbox_env,
+        ),
         &team_identity_env(m, h5i_root),
     );
 
@@ -2308,6 +2488,7 @@ pub fn shell(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
     )?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
+    let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
     let secret_dir = m.dir(h5i_root).join("secrets");
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
@@ -2319,7 +2500,10 @@ pub fn shell(
     )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
     let injected_env = merged_env(
-        &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
+        &merged_env(
+            &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
+            &env_inbox_env,
+        ),
         &team_identity_env(m, h5i_root),
     );
 
@@ -3146,6 +3330,66 @@ fn ingest_shell_spool(
                     capture: None,
                 },
             )?;
+        }
+        // Outbound peer reviews staged by the boxed agent (`team review submit`).
+        // Authority is the identity-validated env binding (`agent_id`); the box
+        // only chooses the target + body, never who it reviews *as*.
+        let mut review_bases: Vec<String> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&spool) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if let Some(base) = name.strip_suffix(".json") {
+                    if base.starts_with("team-review-")
+                        && base.len() <= 128
+                        && base.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    {
+                        review_bases.push(base.to_string());
+                    }
+                }
+            }
+        }
+        review_bases.sort();
+        for base in review_bases.iter().take(SPOOL_MAX_ENTRIES) {
+            let path = spool.join(format!("{base}.json"));
+            let bytes = match read_spool_capped(&path, SPOOL_MAX_CMD_BYTES) {
+                Some(b) => b,
+                None => continue,
+            };
+            let request: TeamReviewSpool = match serde_json::from_slice(&bytes) {
+                Ok(r) => r,
+                Err(_) => {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+            };
+            match crate::team::submit_review(
+                repo,
+                &team_id,
+                &agent_id,
+                &request.target,
+                request.body,
+                &agent_id,
+            ) {
+                Ok(review) => {
+                    append_event(
+                        repo,
+                        &EnvEvent {
+                            ts: now_ts(),
+                            env_id: m.id.clone(),
+                            agent: m.agent.clone(),
+                            event: "team-review".into(),
+                            detail: Some(format!(
+                                "in-box team review applied: {} -> {}",
+                                review.reviewer, review.target
+                            )),
+                            capture: None,
+                        },
+                    )?;
+                    count += 1;
+                }
+                Err(e) => eprintln!("warning: applying in-box team review failed: {e}"),
+            }
+            let _ = std::fs::remove_file(&path);
         }
     }
     Ok(count)
@@ -5551,6 +5795,52 @@ mod tests {
         let request: TeamSubmitSpool = serde_json::from_slice(&raw).unwrap();
         assert_eq!(request.commit.as_deref(), Some("HEAD"));
         assert_eq!(request.summary.as_deref(), Some("ready"));
+    }
+
+    #[test]
+    fn write_team_review_spool_records_scoped_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path().join("spool");
+        let base = write_team_review_spool(
+            &spool,
+            &TeamReviewSpool {
+                target: "codex-fix".into(),
+                body: "looks good".into(),
+            },
+        )
+        .unwrap();
+        assert!(base.starts_with("team-review-"));
+        let raw = std::fs::read(spool.join(format!("{base}.json"))).unwrap();
+        let request: TeamReviewSpool = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(request.target, "codex-fix");
+        assert_eq!(request.body, "looks good");
+    }
+
+    #[test]
+    fn env_inbox_write_read_and_cursor_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = dir.path().join("inbox");
+        let m1 = crate::msg::Message {
+            id: "m1".into(),
+            to: "elsa".into(),
+            body: "review please".into(),
+            ..Default::default()
+        };
+        write_env_inbox_message(&inbox, &m1).unwrap();
+        // Keyed by id, so re-delivering the same message overwrites (no dup).
+        write_env_inbox_message(&inbox, &m1).unwrap();
+        let got = read_env_inbox(&inbox);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, "m1");
+        assert_eq!(got[0].to, "elsa");
+
+        // Box-writable seen-cursor (lives in the capture spool).
+        let spool = dir.path().join("spool");
+        assert!(read_inbox_cursor(&spool).is_empty());
+        let mut seen = std::collections::BTreeSet::new();
+        seen.insert("m1".to_string());
+        write_inbox_cursor(&spool, &seen).unwrap();
+        assert!(read_inbox_cursor(&spool).contains("m1"));
     }
 
     #[test]

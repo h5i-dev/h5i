@@ -552,6 +552,12 @@ pub struct ResolvedPolicy {
     /// the host ingests records into the real object store after the run/shell.
     #[serde(skip)]
     pub env_capture_spool: Option<PathBuf>,
+    /// Runtime-only per-env inbound mailbox, mounted READ-ONLY in the box. The
+    /// host fans cross-agent messages (team review requests, etc.) into it at
+    /// send time; the box reads them but cannot write — so it can receive
+    /// securely without write access to the shared coordination store.
+    #[serde(skip)]
+    pub env_inbox: Option<PathBuf>,
     /// Runtime-only per-env private-path binds (Idea 3) — never serialized; the
     /// declarative intent lives in `profile.private_paths` (which *is* digested).
     /// Populated by `env::prepare_private_paths`; applied as bind mounts on the
@@ -576,6 +582,7 @@ impl ResolvedPolicy {
             audit: AuditPolicy::default(),
             box_git: Vec::new(),
             env_capture_spool: None,
+            env_inbox: None,
             private_binds: Vec::new(),
             home_binds: Vec::new(),
         }

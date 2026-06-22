@@ -13,10 +13,11 @@
 # Independence is preserved by construction: h5i only allows review AFTER the
 # freeze, so the first attempts can never have influenced each other.
 #
-# Boxed agents (team-launch in a sandbox) can't read the host-owned msg/team
-# store, so for them pass --relaunch to re-open each box pointed at the review
-# task. Host-side agents instead pick the request up via
-# `h5i team agent inbox --wait` / the team Stop hook (`h5i hook setup --team`).
+# Delivery reaches confined boxes too: grant-review / msg-send fan the request
+# into each agent's per-env read-only inbox, so a *running* box receives it live
+# via `h5i team agent inbox --wait` / the team Stop hook (`h5i hook setup --team`)
+# — no relaunch needed. Use --relaunch only to re-engage an agent whose box has
+# already exited (it re-opens each box pointed at the review task).
 #
 # Usage:
 #   scripts/team-review.sh [options] <team>
