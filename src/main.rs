@@ -2721,11 +2721,6 @@ h5i recall context checkout main                   # return to main reasoning br
 h5i recall context merge experiment/sync-retry     # merge findings back if useful
 ```
 
-**Before editing a non-trivial file**, surface prior reasoning that mentions it:
-```bash
-h5i recall context relevant src/repository.rs
-```
-
 ---
 
 ### Capturing large command output (token reduction)
@@ -2869,7 +2864,6 @@ h5i recall context init --goal "<one-line task summary>"
 
 **While working:**
 ```bash
-h5i recall context relevant <file>   # before editing — surfaces prior reasoning that mentions this file
 h5i hook codex sync           # after a burst of reads/edits — auto-traces OBSERVE/ACT and mines THINK/NOTE from your transcript
 ```
 

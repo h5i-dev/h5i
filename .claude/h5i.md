@@ -49,11 +49,6 @@ h5i recall context checkout main                   # return to main reasoning br
 h5i recall context merge experiment/sync-retry     # merge findings back if useful
 ```
 
-**Before editing a non-trivial file**, surface prior reasoning that mentions it:
-```bash
-h5i recall context relevant src/repository.rs
-```
-
 ---
 
 ### Capturing large command output (token reduction)

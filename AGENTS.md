@@ -16,7 +16,6 @@ h5i recall context init --goal "<one-line task summary>"
 
 **While working:**
 ```bash
-h5i recall context relevant <file>   # before editing — surfaces prior reasoning that mentions this file
 h5i hook codex sync           # after a burst of reads/edits — auto-traces OBSERVE/ACT and mines THINK/NOTE from your transcript
 ```
 
