@@ -1038,3 +1038,9 @@ _[Checkpoint: 6a3940f0 — edited src/env.rs; edited src/env.rs; edited src/main
 [14:22:30] THINK: md ("always commit before submit") — I'll do that after this repro confirms the fix.
 [14:22:30] NOTE: DEFERRAL (~/Dev/h5i/src/main.rs): m-submit-*.json` is kept by the no-drop fix, and there's a `deferred (kept for retry)` event). codex's worktree still has untracked work (`?? quick_so…
 [14:22:30] NOTE: PLACEHOLDER (~/Dev/h5i/src/env.rs): My repro profile was incomplete — the box can't open `/dev/null`, so git is broken there (not a faithful repro). Let me
+
+
+---
+_[Checkpoint: 6a394526 — edited src/main.rs; edited AGENTS.md; edited .claude/h5i.md]_
+---
+
