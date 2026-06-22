@@ -439,3 +439,9 @@ _[Checkpoint: 6a38bde6 — wrote scripts/team-review.sh; edited src/hooks.rs; ed
 
 [04:45:57] NOTE: DEFERRAL (~/Dev/h5i/src/main.rs): The SVG was reworked externally — I'll leave it. Back to wiring the handler. Let me update the `Setup` match arm to consume and apply `te
 [04:45:58] NOTE: DEFERRAL (~/Dev/h5i/src/hooks.rs): 's own in-progress edit (intentional, separate concern) — I'll leave it unstaged and commit only the three feature files
+
+
+---
+_[Checkpoint: 6a38be06 — wrote scripts/team-review.sh; edited src/hooks.rs; edited docs/_static/h5i-team.svg]_
+---
+
