@@ -333,6 +333,17 @@
       font-weight: 400; line-height: 1.7;
     }
     .hero-sub strong { color: var(--text); font-weight: 600; }
+    .hero-proverbs {
+      display: flex; flex-wrap: wrap; justify-content: center; gap: 0.55rem;
+      margin: -1.2rem auto 2.35rem; max-width: 900px;
+    }
+    .hero-proverbs span {
+      display: inline-flex; align-items: center;
+      min-height: 34px; padding: 0.42rem 0.75rem;
+      border: 1px solid var(--border); border-radius: 999px;
+      background: rgba(255,255,255,0.035); color: var(--text-dim);
+      font-size: 0.86rem; line-height: 1.2;
+    }
     .hero-actions { display: flex; gap: 0.9rem; justify-content: center; flex-wrap: wrap; margin-bottom: 2.8rem; }
     .btn {
       display: inline-flex; align-items: center; gap: 0.5rem;
@@ -924,8 +935,16 @@
       <span class="shine-text"><span class="hl">Run Many Coding Agents.</span><br><span class="hl">Merge One Auditable Result</span></span>
     </h1>
     <p class="hero-sub">
-      <strong>The winning unit isn't the best single agent — it's the best managed agent team.</strong> h5i is the Git-native workspace layer for AI agent teams: each agent works in its own isolated sandbox, submits a sealed independent attempt, and a neutral verifier picks one winner — every prompt, command, message, and verdict versioned in your repo.
+      <strong>Agent ensembles work because independent attempts beat isolated guesses.</strong> h5i gives coding agents separate sandboxes, sealed submissions, and a neutral verifier that picks one winner — all versioned in your repo.
     </p>
+    <div class="hero-proverbs" aria-label="Ensemble sayings">
+      <span>Two heads are better than one.</span>
+      <span>Dos cabezas piensan mejor que una.</span>
+      <span>三个臭皮匠，胜过一个诸葛亮。</span>
+      <span>एक से भले दो।</span>
+      <span>三人寄れば文殊の知恵。</span>
+      <span>Deux avis valent mieux qu'un.</span>
+    </div>
     <div class="hero-actions">
       <a href="#install" class="btn btn-primary">Get Started</a>
       <a href="/workflows/" class="btn btn-ghost">See Workflows</a>
@@ -979,37 +998,11 @@
   </div>
 </section>
 
-<!-- ── Solution ──────────────────────────────────────────────── -->
-<section id="solution">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">The Solution</span>
-      <h2 class="section-title">The Git-native workspace layer for agent teams</h2>
-      <p class="section-sub">Orchestrators launch agents. Sandboxes contain agents. Logging tools observe agents. <strong>h5i manages convergence — many agents, one auditable result.</strong> Every failure mode of a naive team maps to a primitive h5i already ships, and it all lives in your repo, carried by <code>git</code>: not a Git replacement, not a hosted SaaS, versioned beside your code in <code>refs/h5i/*</code>.</p>
-      <div class="divider"></div>
-      <p class="section-sub" style="margin-top:.5rem"><strong>Isolated worktree per agent + sealed submissions + permissioned review + neutral verifier → one merged winner.</strong></p>
-    </div>
-    <!-- <div class="refstack reveal">
-      <div class="ref-layer"><span class="ref-name">refs/h5i/env</span><span class="ref-desc">sandbox environments — confined agent runs, Git-based auditable logs</span></div>
-      <div class="ref-layer"><span class="ref-name">refs/h5i/notes</span><span class="ref-desc">provenance per commit — prompt, model, agent, tests, decisions, risk</span></div>
-      <div class="ref-layer"><span class="ref-name">refs/h5i/context</span><span class="ref-desc">versioned reasoning trace — OBSERVE / THINK / ACT, branched like Git</span></div>
-      <div class="ref-layer"><span class="ref-name">refs/h5i/msg</span><span class="ref-desc">cross-agent messages — typed asks, reviews, handoffs</span></div>
-      <div class="ref-layer"><span class="ref-name">refs/h5i/objects</span><span class="ref-desc">token-saving object store — raw tool output, kept out of context</span></div>
-      <div class="ref-join">▲&nbsp;&nbsp;h5i sidecar&nbsp;&nbsp;·&nbsp;&nbsp;carried by <code>h5i share push / pull</code>&nbsp;&nbsp;▲</div>
-      <div class="ref-git"><span class="ref-name">your Git repo</span><span class="ref-desc">commits, branches, any remote — unchanged. No SaaS, no new VCS, no lock-in.</span></div>
-      </div> --!>
-    <div class="hero-shot">
-      <img src="/_static/h5i-concept.svg" width="1240" height="380" alt="h5i concept diagram showing Codex and Claude sharing versioned context through refs/h5i">
-      <div class="hero-shot-caption">Agents share one workspace through <code>refs/h5i/*</code>; audits, dashboards, and PR comments are views over that recorded, provable evidence.</div>
-    </div>
-  </div>
-</section>
-
 <!-- ── Agent Teams (centerpiece) ─────────────────────────────── -->
 <section id="team">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">h5i team</span>
+      <span class="section-tag">The Solution</span>
       <h2 class="section-title">Many attempts in. One verified verdict out.</h2>
       <p class="section-sub">A team runs several agents on the <em>same</em> task, each in its own isolated <code>h5i env</code>, then drives them through a phased, permissioned protocol. A roster member is a <strong>persona, not a backend</strong> — three Claudes with different skills, a Claude+Codex mix, or one model under two roles. The audit records which configuration produced which candidate.</p>
       <div class="divider"></div>
@@ -1017,7 +1010,7 @@
 
     <div class="pipe reveal">
       <div class="pipe-step"><span class="pn">01 · create</span><span class="pt">Roster</span><span class="pd">N envs, each a persona: runtime · model · role</span></div>
-      <div class="pipe-step"><span class="pn">02 · dispatch</span><span class="pt">One task → all</span><span class="pd">single broadcast over h5i msg</span></div>
+      <div class="pipe-step"><span class="pn">02 · dispatch</span><span class="pt">One task → all</span><span class="pd">same task delivered to every agent</span></div>
       <div class="pipe-step key"><span class="pn">03 · independent</span><span class="pt">Sealed work</span><span class="pd">no agent sees a peer's attempt</span></div>
       <div class="pipe-step key"><span class="pn">04 · freeze</span><span class="pt">Submissions</span><span class="pd">immutable frozen candidates</span></div>
       <div class="pipe-step"><span class="pn">05 · review</span><span class="pt">Permissioned</span><span class="pd">scoped peer review + opt-in discuss</span></div>
@@ -1059,13 +1052,13 @@
   </div>
 </section>
 
-<!-- ── Agent Sandbox ─────────────────────────────────────────── -->
+<!-- ── Isolation ─────────────────────────────────────────────── -->
 <section id="sandbox">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">h5i env</span>
-      <h2 class="section-title">One isolated workspace per agent</h2>
-      <p class="section-sub">Each team member runs in its own <code>h5i env</code> — the foundation that keeps a team from becoming a pileup. A disposable, confined worktree that limits what code can read, write, and reach over the network, with no shared files, ports, or branches, and applies to your branch only when you choose. <strong>The agent physically could not exfiltrate, the policy digest in Git proves it.</strong></p>
+      <span class="section-tag">Isolation</span>
+      <h2 class="section-title">Each agent gets a separate workspace</h2>
+      <p class="section-sub">An ensemble only helps if the attempts stay independent. h5i gives every team member a disposable, confined worktree with its own files, policy, logs, and branch boundary. Nothing reaches your branch until a reviewer applies the chosen result.</p>
       <div class="divider"></div>
     </div>
     <div class="split2 reveal">
@@ -1087,20 +1080,20 @@
   <span class="t-red">Operation not permitted — can't undo it</span></pre></div>
       </div>
       <div class="stack">
-        <div class="feat-card reveal"><span class="feat-cmd">h5i env create · shell</span><div class="feat-name">Work in a box</div><div class="feat-desc">Make a confined environment, then work in it, or hand it to an agent. Every command inside is confined by construction.</div></div>
-        <div class="feat-card reveal"><span class="feat-cmd">h5i env diff · log · apply</span><div class="feat-name">Audit, then merge</div><div class="feat-desc">See what changed and every blocked access, then merge onto your branch, reviewer-selected, never automatic.</div></div>
+        <div class="feat-card reveal"><span class="feat-cmd">isolated worktrees</span><div class="feat-name">No shared files or branches</div><div class="feat-desc">Agents can explore, test, and fail without trampling each other's output or your working tree.</div></div>
+        <div class="feat-card reveal"><span class="feat-cmd">policy-backed runs</span><div class="feat-name">Containment becomes evidence</div><div class="feat-desc">Allowed reads, writes, network access, commands, and blocked attempts are recorded beside the code.</div></div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ── Commit ────────────────────────────────────────────────── -->
+<!-- ── Auditability ──────────────────────────────────────────── -->
 <section id="commit">
   <div class="container">
     <div class="section-head reveal">
-      <span class="section-tag">h5i capture commit</span>
-      <h2 class="section-title">Every AI commit ships with its provenance</h2>
-      <p class="section-sub">One command turns an agent's edit into a reviewable record, written to <code>refs/h5i/notes</code>, never touching your source tree.</p>
+      <span class="section-tag">Auditability</span>
+      <h2 class="section-title">Every AI change has a receipt</h2>
+      <p class="section-sub">The reviewer should see more than a diff. h5i records the prompt, model, agent, commands, tests, decisions, risk signals, and verdict as Git sidecar evidence, so AI-assisted work stays explainable after the chat window is gone.</p>
       <div class="divider"></div>
     </div>
     <div class="split2 reveal">
@@ -1134,195 +1127,20 @@
   </div>
 </section>
 
-<!-- ── Prompt Maturity ───────────────────────────────────────── -->
-<section id="prompt-maturity">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">Prompt Maturity Score</span>
-      <h2 class="section-title">Prompt quality, scored and trended</h2>
-      <p class="section-sub">h5i already records the prompt behind every AI commit. Now it gives each one a deterministic <strong>0&ndash;100</strong> score for <em>how well the work was delegated</em>, then rolls it up across the branch, right at the top of the PR brief. Fully offline: no LLM, no network, no API key.</p>
-      <div class="divider"></div>
-    </div>
-    <div class="split2 reveal">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">PR brief</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i share pr post</span>
+<!-- ── Review Evidence (commented out) ───────────────────────── -->
+<!-- Review Evidence section intentionally hidden from the front page. -->
 
-<span class="t-bold">🌳 Prompt maturity: 81/100</span> <span class="t-out">·</span> <span class="t-ai">advanced</span>
-   <span class="t-out">7 prompts scored (100% of AI commits)</span>
-   <span class="t-cmt">Heuristic signal of prompt craft, not a developer rating.</span>
+<!-- ── Token Reduction (commented out) ───────────────────────── -->
+<!-- Token Reduction section intentionally hidden from the front page. -->
 
-  <span class="t-out">Specificity                 </span><span class="t-pass">████████░░</span><span class="t-out">  0.82</span>
-  <span class="t-out">Control / acceptance        </span><span class="t-pass">████████░░</span><span class="t-out">  0.79</span>
-  <span class="t-out">Context grounding           </span><span class="t-warn">████░░░░░░</span><span class="t-out">  0.41</span>
-  <span class="t-out">Structure                   </span><span class="t-pass">███████░░░</span><span class="t-out">  0.68</span>
-  <span class="t-out">Lexical diversity           </span><span class="t-pass">███████░░░</span><span class="t-out">  0.71</span>
-  <span class="t-out">Clarity (readability band)  </span><span class="t-pass">████████░░</span><span class="t-out">  0.80</span>
-  <span class="t-out">Length adequacy             </span><span class="t-pass">██████████</span><span class="t-out">  1.00</span></pre></div>
-      </div>
-      <div class="stack">
-        <div class="feat-card reveal"><span class="feat-cmd">scores the ask, not the output</span><div class="feat-name">Free, deterministic, explainable</div><div class="feat-desc">Readability indices, lexical diversity, and curated lexicons only. The same prompt always scores the same, so it's reproducible in CI and won't drift when a model is deprecated. Every point traces to a feature you can name.</div></div>
-        <div class="feat-card reveal"><span class="feat-cmd">seven weighted signals</span><div class="feat-name">Specificity &amp; control dominate</div><div class="feat-desc">Rewards prompts that name the goal, set constraints, reference real files, and ask for verification. Readability is the quietest voice (8%) because it misleads on terse technical text.</div></div>
-      </div>
-    </div>
-    <!-- <p class="section-sub reveal" style="margin-top:28px;">Prompt quality becomes <strong>inspectable, trendable, and reviewable</strong> across commits: a simple way for a team to see and improve how it delegates work to agents. It's a heuristic signal of prompt craft, <strong>not a developer rating</strong>. <a href="/blog/prompt-maturity-score/">Read how it works →</a></p> --!>
-  </div>
-</section>
+<!-- ── Coordination (commented out) ──────────────────────────── -->
+<!-- Coordination section intentionally hidden from the front page. -->
 
-<!-- ── Objects ───────────────────────────────────────────────── -->
-<section id="objects">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">h5i capture run</span>
-      <h2 class="section-title">Tool output stops eating the context window</h2>
-      <p class="section-sub">A test or build log can be megabytes. The agent needs the two failures and the count, not the noise. h5i stores raw output out-of-band and surfaces a tiny structured summary.</p>
-      <div class="divider"></div>
-    </div>
-    <figure class="reveal" style="margin:0;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--bg-term);padding:1.6rem;">
-      <img src="/_static/token-reduction-unified.svg" width="1060" height="500" alt="h5i object store: raw pytest and cargo output (1,424 and 1,397 tokens) normalized into one ToolResult schema at 47 and 73 tokens, 97% and 95% fewer; raw bytes kept out-of-band and recoverable with h5i recall object" loading="lazy" style="width:100%;height:auto;display:block;">
-    </figure>
-    <div class="cards3 reveal" style="margin-top:1.5rem;">
-      <div class="feat-card"><span class="feat-cmd">h5i capture run -- cargo test</span><div class="feat-desc" style="margin-top:0.5rem;">Wrap any command. Failures always captured &amp; searchable.</div></div>
-      <div class="feat-card"><span class="feat-cmd">h5i recall objects --status failed</span><div class="feat-desc" style="margin-top:0.5rem;">Query findings across every capture, "did this fail before?"</div></div>
-      <div class="feat-card"><span class="feat-cmd">h5i recall object 82bf…</span><div class="feat-desc" style="margin-top:0.5rem;">Rehydrate full bytes on demand, never sits in context unless asked.</div></div>
-    </div>
-  </div>
-</section>
+<!-- ── Risk Triage (commented out) ───────────────────────────── -->
+<!-- Risk Triage section intentionally hidden from the front page. -->
 
-<!-- ── Msg ───────────────────────────────────────────────────── -->
-<section id="msg">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">h5i msg</span>
-      <h2 class="section-title">Claude and Codex coordinate through Git</h2>
-      <p class="section-sub">Multiple agents share one repo. h5i gives them a typed message channel, ask, review, risk, handoff, stored append-only in <code>refs/h5i/msg</code>.</p>
-      <div class="divider"></div>
-    </div>
-    <div class="split2 reveal">
-      <div class="thread">
-        <div class="bubble left">
-          <div class="meta"><span class="who">claude</span> → codex <span class="kind-tag kind-review">REVIEW_REQUEST</span></div>
-          <div class="body">review token refresh on <code>feat/auth</code>, focus <code>token.rs</code>, risk: expiry edges</div>
-        </div>
-        <div class="bubble right">
-          <div class="meta">codex → <span class="who">claude</span> <span class="kind-tag kind-risk">RISK</span></div>
-          <div class="body">cache crosses requests under load, flagged <code>session.rs:88</code></div>
-        </div>
-        <div class="bubble left">
-          <div class="meta"><span class="who">claude</span> → codex <span class="kind-tag kind-ask">ACK</span></div>
-          <div class="body">good catch, scoping the cache per-request now</div>
-        </div>
-        <div class="bubble right">
-          <div class="meta">codex → <span class="who">claude</span> <span class="kind-tag kind-done">DONE</span></div>
-          <div class="body">re-reviewed 1a2b3c4, ships. see PR #42</div>
-        </div>
-      </div>
-      <div class="stack">
-        <div class="feat-card reveal">
-          <span class="feat-cmd">h5i msg review --focus token.rs codex "…"</span>
-          <div class="feat-name">Typed work handoffs</div>
-          <div class="feat-desc">The i5h protocol: ASK, REVIEW, RISK, HANDOFF, ACK, DONE, threaded by reply, union-merged across clones.</div>
-        </div>
-        <div class="feat-card reveal">
-          <span class="feat-cmd">h5i msg wait · h5i share push</span>
-          <div class="feat-name">No server, no daemon</div>
-          <div class="feat-desc">The whole conversation travels with the repo. An idle agent is woken when a reply lands.</div>
-        </div>
-      </div>
-    </div>
-    <figure class="reveal" style="margin:3.5rem 0 0;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:#090909;">
-      <video width="1280" height="720" autoplay muted loop playsinline preload="metadata" poster="/_static/claude-codex-chess-poster.jpg" aria-label="h5i msg watch, a live Claude ↔ Codex code review streaming in real time over refs/h5i/msg" style="width:100%;height:auto;display:block;">
-        <source src="/_static/claude-codex-chess.webm" type="video/webm">
-        <source src="/_static/claude-codex-chess.mp4" type="video/mp4">
-      </video>
-      <figcaption style="padding:0.85rem 1rem;font-size:0.82rem;color:var(--text-dim);border-top:1px solid var(--border);">A live Claude ↔ Codex exchange over <code>refs/h5i/msg</code>, every message a durable Git object, replayable later with <code>h5i msg replay</code>. <a href="/blog/i5h-agent-to-agent-messaging/" style="color:var(--red-text)">How it works →</a></figcaption>
-    </figure>
-  </div>
-</section>
-
-<!-- ── Audit ─────────────────────────────────────────────────── -->
-<section id="audit">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">h5i audit</span>
-      <h2 class="section-title">Deterministic risk triage: no model in the loop</h2>
-      <p class="section-sub">Every signal is rule-based and reproducible, blind edits, scope creep, secrets, prompt injection. Riskiest commits surface first; bad ones blocked at commit time.</p>
-      <div class="divider"></div>
-    </div>
-    <div class="split2 reveal">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">~/my-project</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i audit policy check</span>
-  <span class="t-pass">✔</span> <span class="t-out">model declared (claude-sonnet-4-6)</span>
-  <span class="t-pass">✔</span> <span class="t-out">audit flag present</span>
-  <span class="t-red">✗</span> <span class="t-red">test metrics missing          [error]</span>
-  <span class="t-red">1 error — commit blocked</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i audit compliance --since 2026-04-01</span>
-<span class="t-bold">── Compliance Report ──────────────────────</span>
-  <span class="t-out">AI-generated:    </span><span class="t-pass">74%</span><span class="t-out"> of commits (30d)</span>
-  <span class="t-out">Audit coverage:  </span><span class="t-pass">91%</span>
-  <span class="t-out">Policy errors:   </span><span class="t-red">3</span>  <span class="t-out">warnings: </span><span class="t-warn">8</span>
-  <span class="t-out">Top risk file:   </span><span class="t-ai">src/billing/token.rs</span></pre></div>
-      </div>
-      <div class="stack">
-        <div class="feat-card reveal"><span class="feat-cmd">h5i audit review --limit 50</span><div class="feat-name">Triage funnel</div><div class="feat-desc">Riskiest AI commits first, before humans spend review cycles.</div></div>
-        <div class="feat-card reveal"><span class="feat-cmd">h5i audit scan</span><div class="feat-name">Injection scan</div><div class="feat-desc">Scan reasoning traces for prompt-injection and exfiltration patterns.</div></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ── Share PR ──────────────────────────────────────────────── -->
-<section id="sharepr">
-  <div class="container">
-    <div class="section-head reveal">
-      <span class="section-tag">h5i share pr</span>
-      <h2 class="section-title">The PR becomes the reviewer's cockpit</h2>
-      <p class="section-sub">One command renders everything h5i knows about the branch into a sticky, idempotent GitHub PR comment, so a human reviewer sees the context, not just the diff.</p>
-      <div class="divider"></div>
-    </div>
-    <div class="split2 reveal">
-      <div class="rec-card pr-receipt">
-        <div class="hrcpt-head">
-          <span class="hrcpt-gh">PR #42 · fix token refresh</span>
-          <span class="hrcpt-mark">h5i ✓ sticky</span>
-        </div>
-        <div class="hrcpt-score">
-          <span class="hrcpt-tree">🌳</span>
-          <span class="hrcpt-num">81<span class="hrcpt-den">/100</span></span>
-          <span class="hrcpt-tier">advanced</span>
-          <span class="hrcpt-cov">prompt maturity · 7 prompts</span>
-        </div>
-        <div class="rec">
-          <div class="rec-row"><span class="rec-k">intent</span><span class="rec-v">ship OAuth token refresh safely</span></div>
-          <div class="rec-row"><span class="rec-k">focus</span><span class="rec-v"><code>token.rs</code> refresh window · cache scope in <code>session.rs</code></span></div>
-          <div class="rec-row"><span class="rec-k">provenance</span><span class="rec-v">3 AI commits · claude-code, codex · all tested</span></div>
-          <div class="rec-row"><span class="rec-k">audit</span><span class="rec-v"><span class="t-pass">no secrets · no injection</span> · 1 blind edit reviewed</span></div>
-          <div class="rec-row"><span class="rec-k">threads</span><span class="rec-v">codex flagged cache scope → resolved</span></div>
-        </div>
-      </div>
-      <div class="stack">
-        <div class="feat-card reveal">
-          <span class="feat-cmd">h5i share pr post --style review</span>
-          <div class="feat-name">Sticky &amp; idempotent</div>
-          <div class="feat-desc">Upserts in place via an HTML marker, re-run after every push, no comment spam. Uses the <code>gh</code> CLI you already have.</div>
-        </div>
-        <div class="feat-card reveal">
-          <span class="feat-cmd">h5i share pr body --style review</span>
-          <div class="feat-name">Render anywhere</div>
-          <div class="feat-desc">Print the markdown to stdout, pipe into CI or any review tool, no <code>gh</code> required.</div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
+<!-- ── Reviewer Brief (commented out) ────────────────────────── -->
+<!-- Reviewer Brief section intentionally hidden from the front page. -->
 
 <!-- ── Built with h5i (dogfood proof) ────────────────────────── -->
 <section id="built-with">
@@ -1368,54 +1186,40 @@
       <div class="install-card reveal">
         <h3>INSTALL</h3>
         <div class="code-block">
-<span class="cm"># Install the prebuilt binary</span>
+<span class="cm"># Install h5i</span>
 <span class="hl">curl -fsSL <span class="st">https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh</span> | sh</span>
 
 <span class="cm"># …or build from source</span>
 <span class="hl">cargo install --git \</span>
 <span class="hl">  https://github.com/h5i-dev/h5i h5i-core</span>
-
-<span class="cm"># Init in your project</span>
-<span class="hl">cd your-project &amp;&amp; h5i init</span>
         </div>
       </div>
       <div class="install-card reveal">
-        <h3>CLAUDE CODE</h3>
+        <h3>60-SECOND FLOW</h3>
         <div class="code-block">
-<span class="cm"># Print the full hooks config</span>
-<span class="hl">h5i hook setup</span>
+<span class="cm"># Initialize h5i in an existing Git repo</span>
+<span class="hl">h5i init</span>
 
-<span class="cm"># Init reasoning workspace if needed</span>
-<span class="hl">h5i recall context init \</span>
-<span class="hl">  --goal <span class="st">"your project goal"</span></span>
-
-<span class="cm"># MCP tools + hooks keep context fresh</span>
+<span class="cm"># Install Claude Code or Codex hooks</span>
+<span class="hl">h5i hook setup --write --wrap-bash</span>
         </div>
       </div>
       <div class="install-card reveal">
-        <h3>CODEX</h3>
+        <h3>REVIEW</h3>
         <div class="code-block">
-<span class="cm"># Start with shared memory</span>
-<span class="hl">h5i hook codex prelude</span>
+<span class="cm"># Post a sticky GitHub PR review brief</span>
+<span class="hl">h5i share pr post</span>
 
-<span class="cm"># Backfill reads/edits</span>
-<span class="hl">h5i hook codex sync</span>
-
-<span class="cm"># End with a checkpoint</span>
-<span class="hl">h5i hook codex finish \</span>
-<span class="hl">  --summary <span class="st">"what changed"</span></span>
+<span class="cm"># Or render markdown for CI / another tool</span>
+<span class="hl">h5i share pr body</span>
         </div>
       </div>
       <div class="install-card reveal">
-        <h3>REVIEW + SHARE</h3>
+        <h3>SHARE</h3>
         <div class="code-block">
-<span class="cm"># Commit with provenance</span>
-<span class="hl">h5i capture commit -m <span class="st">"ship feature"</span> \</span>
-<span class="hl">  --agent codex --prompt <span class="st">"..."</span></span>
-
-<span class="cm"># Publish a PR view of context</span>
-<span class="hl">h5i share pr post \</span>
-<span class="hl">  --style review</span>
+<span class="cm"># Sync h5i sidecar refs with teammates</span>
+<span class="hl">h5i share push</span>
+<span class="hl">h5i share pull</span>
 
 <span class="cm"># Browse locally</span>
 <span class="hl">h5i serve</span>
@@ -1454,10 +1258,6 @@
       <details class="faq-item">
         <summary>How is h5i different from plain Git?</summary>
         <div class="faq-answer">Git versions code. h5i versions the <em>workspace</em> around it, the sandboxed worktree the agent ran in, the prompt and model behind each commit, the compressed command logs, the cross-agent handoffs, and the audit signals, stored in dedicated <code>refs/h5i/*</code> refs that travel with the repo without touching your commit history.</div>
-      </details>
-      <details class="faq-item">
-        <summary>What is the Prompt Maturity Score?</summary>
-        <div class="faq-answer">A deterministic <strong>0–100</strong> score for the prompt behind a commit, rolled up across a branch and rendered at the top of the PR brief. It rewards prompts that name the goal, set constraints, reference real files, and ask for verification, computed <strong>fully offline</strong> from text features (no LLM, no API key), so it's free on every commit, reproducible in CI, and explainable point-by-point. It scores the engineer's <em>input</em>, not the model's output, and is a heuristic signal of prompt craft, not a developer rating.</div>
       </details>
       <details class="faq-item">
         <summary>Who is h5i for?</summary>
