@@ -876,3 +876,4 @@ _[Checkpoint: 6a38e472 — edited src/team.rs; edited src/team.rs; wrote README.
 
 [10:04:59] OBSERVE: read README.md
 [10:06:46] ACT: wrote README.md
+[10:07:11] NOTE: DEFERRAL (~/Dev/h5i/README.md): -run.sh` walkthrough to a guide, or is the README the scope for now
