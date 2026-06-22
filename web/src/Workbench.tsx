@@ -45,9 +45,10 @@ export function Workbench() {
   const [commits, setCommits] = useState<Commit[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedOid, setSelectedOid] = useState<string | null>(null);
-  // Default landing is Replay — h5i's centerpiece: replay the agent run behind
-  // the diff. Users jump to other modes via the header nav.
-  const [mode, setMode] = useState<Mode>("replay");
+  // Default landing is Ensemble — the workspace's centerpiece: many agents
+  // attempt the same task in sealed lanes, one verified verdict comes out.
+  // Users jump to the supporting views via the header nav.
+  const [mode, setMode] = useState<Mode>("team");
   const [rightTab, setRightTab] = useState<RightTab>("refs");
   // When the cockpit asks to replay a specific commit, focus the replay there.
   const [replayFocusOid, setReplayFocusOid] = useState<string | null>(null);
@@ -115,7 +116,10 @@ export function Workbench() {
     <div className="wb-shell">
       <header className="wb-header">
         <div className="wb-header-left">
-          <span className="wb-brand">h5i</span>
+          <div className="wb-brand-lockup">
+            <span className="wb-brand">h5i</span>
+            <span className="wb-brand-eyebrow">agent ensemble</span>
+          </div>
           <span className="wb-header-sep">/</span>
           <span className="wb-repo">{repo?.name ?? "—"}</span>
           {branchInUI ? (
@@ -129,6 +133,13 @@ export function Workbench() {
 
         <nav className="wb-header-modes">
           <ButtonGroup minimal>
+            <Button
+              className="wb-mode-lead"
+              icon="people"
+              text="Ensemble"
+              active={mode === "team"}
+              onClick={() => setMode("team")}
+            />
             <Button
               icon="play"
               text="Replay"
@@ -146,12 +157,6 @@ export function Workbench() {
               text="Radio"
               active={mode === "radio"}
               onClick={() => setMode("radio")}
-            />
-            <Button
-              icon="people"
-              text="Team"
-              active={mode === "team"}
-              onClick={() => setMode("team")}
             />
             <Button
               icon="shield"
