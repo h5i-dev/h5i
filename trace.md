@@ -724,3 +724,4 @@ _[Checkpoint: 6a38cb4b — edited docs/index.html; edited src/team.rs; edited sr
 _[Checkpoint: 6a38cc78 — edited src/main.rs; wrote scripts/team-run.sh; edited src/team.rs]_
 ---
 
+[05:50:41] OBSERVE: read MANUAL.md
