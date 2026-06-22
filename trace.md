@@ -660,3 +660,9 @@ _[Checkpoint: 6a38c73d — Improved docs/index.html homepage narrative: shortene
 _[Checkpoint: 6a38c744 — edited docs/index.html; edited docs/index.html; edited docs/index.html]_
 ---
 
+
+
+---
+_[Checkpoint: 6a38c774 — edited docs/index.html; edited docs/index.html; edited docs/index.html]_
+---
+
