@@ -517,3 +517,9 @@ _[Checkpoint: 6a38c0db — edited src/container.rs; edited src/container.rs; edi
 [04:58:49] ACT: edited src/container.rs
 [05:00:23] OBSERVE: read src/msg.rs
 [05:00:30] ACT: edited docs/_static/h5i-team.svg
+
+
+---
+_[Checkpoint: 6a38c173 — Adjusted docs/_static/h5i-team.svg layout by moving the three agent cards left and retargeting connectors for better visual balance; validated XML and PNG render.]_
+---
+
