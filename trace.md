@@ -1046,3 +1046,9 @@ _[Checkpoint: 6a394526 — edited src/main.rs; edited AGENTS.md; edited .claude/
 
 [14:51:54] NOTE: DEFERRAL (~/Dev/h5i/.claude/h5i.md): m-submit-*.json` is kept by the no-drop fix, and there's a `deferred (kept for retry)` event — both only exist in the new code). - **codex left its …
 [14:51:54] NOTE: PLACEHOLDER (~/Dev/h5i/.claude/h5i.md): boxes can't spawn inside this harness, and my process-tier workaround kept hitting custom-profile gaps (`/dev/null`, worktree recreate) that aren't fa…
+
+
+---
+_[Checkpoint: 6a394c0a — edited src/main.rs; edited AGENTS.md; edited .claude/h5i.md]_
+---
+
