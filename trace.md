@@ -804,3 +804,4 @@ _[Checkpoint: 6a38ced4 — edited man/man1/h5i.1; edited man/man1/h5i.1; edited 
 _[Checkpoint: 6a38d30c — edited docs/index.html; edited src/hooks.rs; edited src/hooks.rs]_
 ---
 
+[06:30:56] OBSERVE: read scripts/team-review.sh
