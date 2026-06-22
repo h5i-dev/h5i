@@ -576,3 +576,4 @@ _[Checkpoint: 6a38c262 — edited src/main.rs; edited docs/_static/h5i-team.svg;
 [05:09:54] OBSERVE: read src/container.rs
 [05:09:58] ACT: edited src/container.rs
 [05:12:24] ACT: edited scripts/team-review.sh
+[05:13:34] NOTE: PLACEHOLDER (~/Dev/h5i/src/hooks.rs): host-ingested) but nothing delivers *in*. Relaunching is a workaround for that missing half. Good news: the fix mirrors a mechanism that already works…
