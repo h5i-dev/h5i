@@ -978,3 +978,4 @@ _[Checkpoint: 6a392cee — edited docs/pitch/index.html; edited docs/blog/agent-
 [13:18:14] ACT: edited src/env.rs
 [13:22:55] THINK: Let me know if you want me to `git push` and/or `h5i share push` (to carry the h5i refs), or open a PR.
 [13:22:55] THINK: Let me pin down the version situation and whether `team::submit` would fail in the installed binary:
+[13:22:55] THINK: Clippy clean. Let me confirm the experiment's recovered state (I submitted both agents host-side while diagnosing):
