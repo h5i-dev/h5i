@@ -991,3 +991,4 @@ _[Checkpoint: 6a39372f — edited src/env.rs; edited src/env.rs; edited src/env.
 [13:37:38] ACT: edited src/main.rs
 [13:37:49] ACT: edited src/env.rs
 [13:38:02] ACT: edited src/env.rs
+[13:41:47] THINK: Let me confirm the env var the box uses to locate its worktree:
