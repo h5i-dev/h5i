@@ -1010,3 +1010,4 @@ _[Checkpoint: 6a393e97 — edited src/main.rs; edited src/env.rs; edited src/env
 [14:02:23] ACT: edited src/env.rs
 [14:02:30] ACT: edited src/env.rs
 [14:02:38] ACT: edited src/main.rs
+[14:04:32] THINK: Let me retry on the `process` tier (which runs for real on this host):
