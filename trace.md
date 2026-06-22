@@ -745,3 +745,9 @@ _[Checkpoint: 6a38cd9a — Simplified docs/index.html homepage by replacing sepa
 ---
 
 [05:52:29] ACT: edited MANUAL.md
+
+
+---
+_[Checkpoint: 6a38cd9e — edited MANUAL.md; edited docs/index.html; edited MANUAL.md]_
+---
+
