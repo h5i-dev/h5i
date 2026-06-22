@@ -471,3 +471,4 @@ _[Checkpoint: 6a38c01a — Refined docs/_static/h5i-team.svg peer review stage: 
 _[Checkpoint: 6a38c01e — edited docs/_static/h5i-team.svg; edited docs/_static/h5i-team.svg; edited docs/_static/h5i-team.svg]_
 ---
 
+[04:55:08] ACT: edited src/sandbox_policy.rs
