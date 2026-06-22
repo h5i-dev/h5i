@@ -888,3 +888,9 @@ _[Checkpoint: 6a39094f — edited src/team.rs; wrote README.md; wrote README.md]
 [12:03:43] OBSERVE: read src/env.rs
 [12:03:57] OBSERVE: read src/team.rs
 [12:04:21] OBSERVE: read src/main.rs
+
+
+---
+_[Checkpoint: 6a3924ef — edited src/team.rs; wrote README.md; wrote README.md]_
+---
+
