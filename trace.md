@@ -364,3 +364,4 @@ _[Checkpoint: 6a38b6e2 — edited docs/_static/h5i-team.svg; edited docs/_static
 [04:18:31] OBSERVE: read src/team.rs
 [04:18:44] ACT: edited src/team.rs
 [04:20:38] THINK: Let me use the new const for the phase value in `dispatch()` (leaving the event *kind* literal), for consistency.
+[04:20:39] THINK: I'll keep jobs low and debuginfo off (this box OOMs on parallel test-binary compiles), and wrap with capture to keep output compact.
