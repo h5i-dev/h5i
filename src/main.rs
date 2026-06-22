@@ -9990,12 +9990,22 @@ fn main() -> anyhow::Result<()> {
                             // never `git commit`ed would stage a no-op that the
                             // host refuses ("identical to the team base").
                             if commit.is_none() {
-                                if let Some(oid) = h5i_core::env::commit_box_worktree() {
-                                    eprintln!(
+                                match h5i_core::env::commit_box_worktree() {
+                                    Ok(Some(oid)) => eprintln!(
                                         "{} snapshotted worktree in-box at {}",
                                         style("▢").cyan().dim(),
                                         &oid.to_string()[..12]
-                                    );
+                                    ),
+                                    Ok(None) => {}
+                                    // Surface the failure but don't block the
+                                    // submit — the host freezes the branch tip.
+                                    // A silent failure here is what makes work
+                                    // vanish into a "no changes to review" no-op.
+                                    Err(e) => eprintln!(
+                                        "warning: in-box worktree snapshot failed \
+                                         (submit will use the branch tip — commit \
+                                         your work in-box if this persists): {e}"
+                                    ),
                                 }
                             }
                             let request = h5i_core::env::TeamSubmitSpool { commit, summary };

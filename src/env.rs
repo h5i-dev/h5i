@@ -5004,42 +5004,43 @@ pub fn snapshot_for_submit(
 /// checkout (rw on its own env branch + objects via `box_git_plumbing`) and runs
 /// with the worktree as its CWD, snapshots itself here.
 ///
-/// Returns the new commit oid, or `Ok(None)` when the worktree already matches
-/// the branch tip (a well-behaved agent that already committed in-box) or when
-/// there is no git checkout to commit. Best-effort: any git error degrades to
-/// `Ok(None)` so a submit is never blocked by it — the host ingest then freezes
-/// whatever the branch tip already is.
-pub fn commit_box_worktree() -> Option<git2::Oid> {
+/// Returns `Ok(Some(oid))` for a fresh snapshot, `Ok(None)` when the worktree
+/// already matches the branch tip (a well-behaved agent that committed in-box)
+/// or there is no git checkout to commit. An `Err` means the box tried but
+/// *couldn't* commit — e.g. a `box_git_plumbing` grant is too narrow. The caller
+/// must surface that error (and continue: a failed snapshot must never block the
+/// submit), because a silently-swallowed failure here is exactly what makes an
+/// agent's work vanish into a "no changes to review" no-op.
+pub fn commit_box_worktree() -> Result<Option<git2::Oid>, H5iError> {
     commit_worktree_at(Path::new("."))
 }
 
-fn commit_worktree_at(path: &Path) -> Option<git2::Oid> {
-    let repo = Repository::discover(path).ok()?;
-    if repo.is_bare() {
-        return None;
-    }
-    let head = repo.head().ok()?.peel_to_commit().ok()?;
-    let mut index = repo.index().ok()?;
-    index
-        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
-        .ok()?;
-    index.update_all(["*"].iter(), None).ok()?;
-    let tree_oid = index.write_tree().ok()?;
+fn commit_worktree_at(path: &Path) -> Result<Option<git2::Oid>, H5iError> {
+    let repo = match Repository::discover(path) {
+        Ok(r) if !r.is_bare() => r,
+        // No checkout to snapshot (not an error worth surfacing).
+        _ => return Ok(None),
+    };
+    let head = repo.head()?.peel_to_commit()?;
+    let mut index = repo.index()?;
+    index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
+    index.update_all(["*"].iter(), None)?;
+    let tree_oid = index.write_tree()?;
     if head.tree_id() == tree_oid {
-        return None; // worktree already committed — nothing to snapshot
+        return Ok(None); // worktree already committed — nothing to snapshot
     }
-    index.write().ok()?;
-    let tree = repo.find_tree(tree_oid).ok()?;
-    let sig = objects::signature(&repo).ok()?;
-    repo.commit(
+    index.write()?;
+    let tree = repo.find_tree(tree_oid)?;
+    let sig = objects::signature(&repo)?;
+    let oid = repo.commit(
         Some("HEAD"),
         &sig,
         &sig,
         "h5i team: in-box submit snapshot",
         &tree,
         &[&head],
-    )
-    .ok()
+    )?;
+    Ok(Some(oid))
 }
 
 /// Record a mediated-commit boundary trip as a `violation` event, then build the
@@ -5903,14 +5904,16 @@ mod tests {
         std::fs::write(dir.path().join("quick_sort.py"), "def quick_sort():\n    pass\n")
             .unwrap();
 
-        let oid = commit_worktree_at(dir.path()).expect("dirty worktree must commit");
+        let oid = commit_worktree_at(dir.path())
+            .expect("commit must not error")
+            .expect("dirty worktree must commit");
         assert_ne!(oid, base, "branch must advance off base");
         let tree = repo.find_commit(oid).unwrap().tree().unwrap();
         assert!(tree.get_path(Path::new("quick_sort.py")).is_ok());
         assert_eq!(repo.head().unwrap().peel_to_commit().unwrap().id(), oid);
 
         // Idempotent: a clean worktree is a no-op (well-behaved already-committed agent).
-        assert!(commit_worktree_at(dir.path()).is_none());
+        assert!(commit_worktree_at(dir.path()).unwrap().is_none());
     }
 
     fn commit_file(repo: &git2::Repository, name: &str, body: &str) -> git2::Oid {
