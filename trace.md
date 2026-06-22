@@ -366,3 +366,4 @@ _[Checkpoint: 6a38b6e2 — edited docs/_static/h5i-team.svg; edited docs/_static
 [04:20:38] THINK: Let me use the new const for the phase value in `dispatch()` (leaving the event *kind* literal), for consistency.
 [04:20:39] THINK: I'll keep jobs low and debuginfo off (this box OOMs on parallel test-binary compiles), and wrap with capture to keep output compact.
 [04:20:39] THINK: Now let me confirm clippy is clean (CI runs `-D warnings`).
+[04:20:39] THINK: Clippy is clean. Let me confirm the full binary still builds (the lib change is consumed by `main.
