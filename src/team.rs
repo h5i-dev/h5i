@@ -1287,17 +1287,34 @@ pub fn verify(
     }
 
     if applies_cleanly {
-        let pick = run_git(
-            &verify_dir,
-            &["cherry-pick", "--no-commit", &submission.commit_oid],
+        // Replay the cumulative base..commit diff — exactly what `apply_winner`
+        // does — rather than cherry-picking the tip commit. A revised (multi-
+        // commit) submission's tip diff is against its own parent, not the run
+        // base, so a cherry-pick onto the base spuriously conflicts.
+        let diff = run_git(
+            repo_workdir,
+            &["diff", &current.base_oid, &submission.commit_oid],
         )?;
-        applies_cleanly = pick.status.success();
-        if !applies_cleanly {
-            let mut msg = String::from_utf8_lossy(&pick.stderr).trim().to_string();
-            if msg.is_empty() {
-                msg = String::from_utf8_lossy(&pick.stdout).trim().to_string();
+        if !diff.status.success() {
+            applies_cleanly = false;
+            failure = Some(String::from_utf8_lossy(&diff.stderr).trim().to_string());
+        } else if !diff.stdout.is_empty() {
+            let patch_path = verify_root.join(format!("{}.patch", submission.id));
+            std::fs::write(&patch_path, &diff.stdout)
+                .map_err(|e| H5iError::with_path(e, &patch_path))?;
+            let apply = run_git(
+                &verify_dir,
+                &["apply", "--index", patch_path.to_string_lossy().as_ref()],
+            )?;
+            applies_cleanly = apply.status.success();
+            if !applies_cleanly {
+                let mut msg = String::from_utf8_lossy(&apply.stderr).trim().to_string();
+                if msg.is_empty() {
+                    msg = String::from_utf8_lossy(&apply.stdout).trim().to_string();
+                }
+                failure = Some(msg);
             }
-            failure = Some(msg);
+            let _ = std::fs::remove_file(&patch_path);
         }
     }
 
@@ -1314,7 +1331,24 @@ pub fn verify(
         // a verifier still runs on a host without kernel confinement (CI/macOS).
         let (policy, claim) = verifier_policy(repo_workdir, isolation)?;
         isolation_used = claim;
-        let exec = sandbox::run(&policy, &verify_dir, &command)?;
+        let exec = match sandbox::run(&policy, &verify_dir, &command) {
+            Ok(e) => e,
+            Err(_) if policy.claim != sandbox::IsolationClaim::Workspace => {
+                // The kernel tier passed its exec self-test but failed to spawn
+                // for real on this host (e.g. supervised seccomp-notify EACCES).
+                // Fall back to the unconfined workspace tier so verification
+                // still completes, labeled with the tier that actually ran.
+                let ws_profile = sandbox::load_profile(
+                    repo_workdir,
+                    "default",
+                    Some(sandbox::IsolationClaim::Workspace),
+                )?;
+                let ws_policy = sandbox::resolve(&ws_profile, &sandbox::probe_host())?;
+                isolation_used = ws_policy.claim.as_str().to_string();
+                sandbox::run(&ws_policy, &verify_dir, &command)?
+            }
+            Err(e) => return Err(e),
+        };
         tests_passed = exec.exit_code == Some(0) && !exec.timed_out;
         if exec.timed_out {
             failure = Some("verifier command exceeded the policy wall-clock limit".into());
@@ -2215,6 +2249,44 @@ mod tests {
 
         let run = freeze(&repo, "run-d", false, "human").unwrap();
         assert_eq!(run.phase, PHASE_SEALED_SUBMIT);
+    }
+
+    #[test]
+    fn verify_applies_revised_multi_commit_submission() {
+        // Regression: a revised submission has >1 commit on its env branch, so
+        // the tip's own diff is against its parent, not the run base. verify must
+        // replay the cumulative base..tip diff (like apply), not cherry-pick the
+        // tip — otherwise applies_cleanly is spuriously false ("tier: skipped").
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let base = commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let m = manifest(&repo, h5i_root, "codex", "fix");
+        // Two commits on the env branch: an initial attempt, then a revision.
+        commit_file(&repo, "feature.txt", "v1\n");
+        let c2 = commit_file(&repo, "feature.txt", "v2\n");
+        repo.reference(&m.branch, c2, true, "revised").unwrap();
+
+        create(&repo, "run-rev", "run-rev", &base.to_string(), 1, "human").unwrap();
+        add_env(
+            &repo, h5i_root, "run-rev", "env/codex/fix", "codex-fix", None, None, None, "human",
+        )
+        .unwrap();
+        let sub = submit(&repo, h5i_root, "run-rev", "codex-fix", None, None, "codex").unwrap();
+        assert_eq!(sub.commit_oid, c2.to_string());
+
+        let v = verify(
+            &repo,
+            h5i_root,
+            "run-rev",
+            "codex-fix",
+            vec!["sh".into(), "-c".into(), "grep -q v2 feature.txt".into()],
+            Some("workspace"),
+            "human",
+        )
+        .unwrap();
+        assert!(v.applies_cleanly, "revised multi-commit submission must apply cleanly");
+        assert!(v.tests_passed);
     }
 
     #[test]
