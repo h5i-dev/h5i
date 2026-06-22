@@ -1525,7 +1525,10 @@ fn ensure_clean_worktree(repo: &Repository) -> Result<(), H5iError> {
         Ok(())
     } else {
         Err(H5iError::Metadata(
-            "team apply requires a clean working tree".into(),
+            "team apply requires a clean working tree — commit or stash your changes first \
+             (apply commits the winning patch onto the current branch). The verdict is \
+             unchanged; re-run `h5i team apply` once the tree is clean."
+                .into(),
         ))
     }
 }
