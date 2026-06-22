@@ -654,3 +654,9 @@ _[Checkpoint: 6a38c575 — edited src/env.rs; edited src/container.rs; edited sc
 _[Checkpoint: 6a38c73d — Improved docs/index.html homepage narrative: shortened hero copy, added ensemble proverbs, reframed command-heavy sections as isolation/auditability/review evidence/token reduction/risk triage, and updated Get Started with README 60-second flow; validated HTML parse.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a38c744 — edited docs/index.html; edited docs/index.html; edited docs/index.html]_
+---
+
