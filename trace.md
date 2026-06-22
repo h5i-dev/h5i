@@ -868,3 +868,9 @@ _[Checkpoint: 6a38e1dc — edited src/team.rs; edited src/team.rs; edited src/te
 [07:26:02] OBSERVE: read README.md
 [07:28:43] ACT: wrote README.md
 [07:29:54] NOTE: DEFERRAL (~/Dev/h5i/src/team.rs): ge now says exactly that, so it won't read like a phase bug next time (rebuild to get it). If after cleaning the tree `apply` still refuses with *"not…
+
+
+---
+_[Checkpoint: 6a38e472 — edited src/team.rs; edited src/team.rs; wrote README.md]_
+---
+
