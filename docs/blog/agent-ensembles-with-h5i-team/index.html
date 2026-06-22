@@ -197,19 +197,17 @@
       <div class="terminal-body"><pre><span class="t-cmt"># group existing envs as a team</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team create fix-auth --base HEAD</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/claude-architect/fix-auth \
-    --as claude-architect --runtime claude --role architect</span>
+    --runtime claude --persona examples/personas/architect.md</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/codex/fix-auth \
-    --as codex --runtime codex --role implementer</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team status fix-auth</span>
+    --runtime codex --persona examples/personas/implementer.md</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i team status fix-auth</span>   <span class="t-cmt"># note the auto-generated agent ids</span>
 
 <span class="t-cmt"># each agent works in its own env, then freezes an immutable candidate</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team submit fix-auth --agent claude-architect</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team submit fix-auth --agent codex</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i team submit fix-auth --agent &lt;agent-id&gt;</span>   <span class="t-cmt"># ids from `team status`</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team freeze fix-auth</span>                  <span class="t-cmt"># seals both independent attempts</span>
 
 <span class="t-cmt"># neutral, SANDBOXED verifier re-runs each candidate at the shared base</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team verify fix-auth --agent claude-architect -- cargo test</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team verify fix-auth --agent codex -- cargo test</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i team verify fix-auth --agent &lt;agent-id&gt; -- cargo test</span>   <span class="t-cmt"># repeat per candidate</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team compare fix-auth</span>                <span class="t-cmt"># side-by-side + verifier metrics</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team finalize fix-auth</span>               <span class="t-cmt"># rule: tests pass + applies clean + smallest diff</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team apply fix-auth</span>                  <span class="t-cmt"># replays the winning patch (gated on the verdict)</span></pre></div>
@@ -217,8 +215,10 @@
 
     <p>
       <code>add-env</code> takes the env (as a <code>slug</code>, <code>agent/slug</code>, or
-      <code>env/agent/slug</code>), a ref-safe persona key via <code>--as</code>, and optional
-      <code>--runtime</code> / <code>--model</code> / <code>--role</code> labels. Roster changes are
+      <code>env/agent/slug</code>) and optional <code>--runtime</code> / <code>--model</code>
+      attributes plus a <code>--persona &lt;file&gt;</code> working-style brief. Each agent
+      gets an auto-generated id (shown by <code>h5i team status</code>; pin your own with
+      <code>--as</code> if you prefer). Roster changes are
       only allowed while the run is still in <code>draft</code> — once frozen, the contestant list is
       part of the record.
     </p>

@@ -1027,15 +1027,16 @@
         </div>
         <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i team create fix-auth --base HEAD</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/claude-arch/fix-auth \
-    --as claude-arch --role architect</span>
+    --persona examples/personas/architect.md</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/codex/fix-auth \
-    --as codex --role implementer</span>
+    --persona examples/personas/implementer.md</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i team status fix-auth</span>   <span class="t-cmt"># note the generated agent ids</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team dispatch fix-auth --prompt-file task.md</span>
   <span class="t-out">…each agent works sealed in its own box…</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team freeze fix-auth</span>   <span class="t-cmt"># seals attempts</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team verify fix-auth --agent codex -- cargo test</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i team verify fix-auth --agent &lt;agent-id&gt; -- cargo test</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team finalize fix-auth</span>
-  <span class="t-pass">→ verdict: claude-arch (gates pass, smallest diff)</span>
+  <span class="t-pass">→ verdict: milo (gates pass, smallest diff)</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team apply fix-auth</span>   <span class="t-out">replays the winner · gated</span></pre></div>
       </div>
       <div class="stack">

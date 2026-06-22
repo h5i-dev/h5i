@@ -82,13 +82,16 @@ h5i init
 h5i hook setup --write --wrap-bash --team
 ```
 
-Run the same task across several agents and merge the verified winner. A roster member is a **persona, not a backend**: `runtime` · `model` · `role` are attributes, so a team can be three Claudes with different skills, a Claude + Codex mix, or one model under two roles:
+Run the same task across several agents and merge the verified winner. A roster member is a **persona, not a backend**: `runtime` · `model` · `persona` are attributes, so a team can be three Claudes with different skills, a Claude + Codex mix, or one model under two personas:
 
 ```bash
 # 1. create a run, then add one confined env per agent persona
+#    (--persona injects a standing working style; each agent gets an
+#     auto-generated id — `h5i team status` shows them)
 h5i team create fix-auth --base HEAD
-h5i team add-env fix-auth env/claude-arch/fix-auth --as claude-arch --runtime claude --role architect
-h5i team add-env fix-auth env/codex/fix-auth        --as codex       --runtime codex  --role implementer
+h5i team add-env fix-auth env/claude-arch/fix-auth --runtime claude --persona examples/personas/architect.md
+h5i team add-env fix-auth env/codex/fix-auth        --runtime codex  --persona examples/personas/implementer.md
+h5i team status fix-auth                          # note the generated agent ids
 
 # 2. launch every agent in its own sealed box (a terminal per env)
 scripts/team-launch.sh fix-auth --task task.md
@@ -98,7 +101,7 @@ scripts/team-launch.sh fix-auth --task task.md
 # 3. the neutral verdict: replay each candidate, run the tests, merge the winner
 h5i team sync     fix-auth                       # ingest agents' staged work (no relaunch)
 h5i team freeze   fix-auth                       # seal the independent attempts
-h5i team verify   fix-auth --agent codex -- cargo test
+h5i team verify   fix-auth --agent <agent-id> -- cargo test   # id from `team status`
 h5i team finalize fix-auth                       # explainable verdict (gates + smallest diff)
 h5i team apply    fix-auth                       # merge the winner, gated on the verdict
 ```
