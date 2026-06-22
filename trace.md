@@ -374,3 +374,4 @@ _[Checkpoint: 6a38b6e2 — edited docs/_static/h5i-team.svg; edited docs/_static
 _[Checkpoint: 6a38b817 — edited src/team.rs; edited src/team.rs; edited src/team.rs]_
 ---
 
+[04:27:36] THINK: Let me confirm how the existing waiter works (poll vs event-driven) so my recommendation is accurate.
