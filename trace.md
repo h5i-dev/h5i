@@ -648,3 +648,9 @@ _[Checkpoint: 6a38c575 — edited src/env.rs; edited src/container.rs; edited sc
 [05:24:52] ACT: edited docs/index.html
 [05:24:52] OBSERVE: searched maturity|h5i for "Maturity|Prompt"
 [05:24:53] OBSERVE: read docs/index.html
+
+
+---
+_[Checkpoint: 6a38c73d — Improved docs/index.html homepage narrative: shortened hero copy, added ensemble proverbs, reframed command-heavy sections as isolation/auditability/review evidence/token reduction/risk triage, and updated Get Started with README 60-second flow; validated HTML parse.]_
+---
+
