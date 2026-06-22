@@ -3336,10 +3336,33 @@ pub fn ingest_team_outbound(
                         },
                     )?;
                     count += 1;
+                    let _ = std::fs::remove_file(&path);
                 }
-                Err(e) => eprintln!("warning: applying in-box team submit failed: {e}"),
+                Err(e) => {
+                    // Do NOT drop the staged request on failure. The common cause
+                    // is a live box: the agent hasn't committed its worktree yet,
+                    // so freezing the tip would be a no-op (refused). Keeping the
+                    // spool lets the at-exit ingest — which runs with the run lock
+                    // free — snapshot the worktree and submit for real. Record the
+                    // failure durably so it is visible in `h5i env log` rather than
+                    // lost to a stderr warning a script-polled `team sync` swallows.
+                    eprintln!("warning: applying in-box team submit failed (kept for retry): {e}");
+                    append_event(
+                        repo,
+                        &EnvEvent {
+                            ts: now_ts(),
+                            env_id: m.id.clone(),
+                            agent: m.agent.clone(),
+                            event: "exec-log".into(),
+                            detail: Some(format!(
+                                "in-box team submit for {agent_id} deferred (kept for retry): {}",
+                                crate::secrets::redact_text(&e.to_string())
+                            )),
+                            capture: None,
+                        },
+                    )?;
+                }
             }
-            let _ = std::fs::remove_file(&path);
         }
         if submit_dropped > 0 {
             append_event(
@@ -4938,12 +4961,20 @@ pub fn mediated_commit(
 /// mediated-commit counterpart to `propose`, so `team agent submit` freezes the
 /// agent's working-tree edits instead of the (often unadvanced) branch tip.
 ///
-/// Holds the per-env run lock for the commit (mirrors `propose`, which guards
-/// against a concurrent `run`/`shell` mutating the same worktree). Returns
-/// `Ok(None)` — a no-op — when the env has no local worktree, which is the
-/// normal case for a *pulled* reviewer clone (nothing local to commit; the
-/// submission rides the already-shared branch tip) and for the legacy
-/// host-pins-an-explicit-commit path.
+/// **Best-effort, unlike `propose`.** A team submit is ingested *while the
+/// agent's box is still alive* — the team Stop hook keeps boxes running and
+/// `team sync` drains the spool mid-round — so the box holds the env run lock
+/// for its whole session. `propose` fails on a contended lock (it is a
+/// deliberate state transition that must not race a live run); a team submit
+/// must NOT. A well-behaved agent has already committed its work in-box (the
+/// branch tip is correct and needs no snapshot), so on lock contention we fall
+/// back to the existing branch tip rather than failing the submit. An
+/// *uncommitted* worktree behind a live box is captured later by the at-exit
+/// ingest, which runs once the lock frees.
+///
+/// Returns `Ok(None)` — no snapshot taken — when the env has no local worktree
+/// (a *pulled* reviewer clone rides the already-shared branch tip), when the box
+/// is alive (lock contended), or when the worktree already matches the tip.
 pub fn snapshot_for_submit(
     repo: &Repository,
     h5i_root: &Path,
@@ -4953,7 +4984,13 @@ pub fn snapshot_for_submit(
         return Ok(None);
     }
     #[cfg(unix)]
-    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
+    let _run_lock = match RunLock::acquire(&m.dir(h5i_root)) {
+        Ok(lock) => lock,
+        // Box alive (the normal mid-round case) — don't fail the submit; the
+        // already-committed branch tip is what we freeze, and any uncommitted
+        // worktree is picked up by the at-exit ingest with no contention.
+        Err(_) => return Ok(None),
+    };
     mediated_commit(repo, h5i_root, m)
 }
 
@@ -5780,6 +5817,29 @@ mod tests {
             captures: vec![],
             service_digest: None,
         }
+    }
+
+    #[test]
+    fn snapshot_for_submit_is_best_effort_under_run_lock() {
+        // A team submit is ingested while the agent's box is still alive, so the
+        // box holds the env run lock. Unlike propose, snapshot_for_submit must
+        // NOT fail on contention — it falls back to the branch tip (Ok(None)) so
+        // the submission still records; the regression this guards turned every
+        // mid-round `team sync` into a silently-dropped submission.
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let repo = git2::Repository::init(h5i_root.join("repo")).unwrap();
+        let m = canonical_manifest("claude", "fix");
+        // A worktree dir must exist or the function short-circuits before the lock.
+        std::fs::create_dir_all(m.work_dir(h5i_root)).unwrap();
+
+        // Simulate a live `env shell` holding the per-env lock.
+        let _held = RunLock::acquire(&m.dir(h5i_root)).unwrap();
+
+        // propose-style ops refuse under contention; snapshot_for_submit defers.
+        let got = snapshot_for_submit(&repo, h5i_root, &m)
+            .expect("submit snapshot must not fail when the box holds the lock");
+        assert!(got.is_none(), "contended snapshot falls back to the branch tip");
     }
 
     #[test]
