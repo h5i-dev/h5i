@@ -579,3 +579,9 @@ _[Checkpoint: 6a38c262 — edited src/main.rs; edited docs/_static/h5i-team.svg;
 [05:13:34] NOTE: PLACEHOLDER (~/Dev/h5i/src/hooks.rs): host-ingested) but nothing delivers *in*. Relaunching is a workaround for that missing half. Good news: the fix mirrors a mechanism that already works…
 [05:13:34] NOTE: DEFERRAL (~/Dev/h5i/scripts/team-review.sh): ntext snapshot linked to this commit, which isn't worth it. I'll leave it (and avoid backticks in `-m` next time)
 [05:13:34] NOTE: DEFERRAL (~/Dev/h5i/scripts/team-review.sh): isn't worth it. I'll leave it (and avoid backticks in `-m` next time)
+
+
+---
+_[Checkpoint: 6a38c47e — edited src/env.rs; edited src/container.rs; edited scripts/team-review.sh]_
+---
+
