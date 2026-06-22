@@ -789,6 +789,30 @@ pub fn submit(
     Ok(artifact)
 }
 
+/// On-demand drain of every team env's staged outbound spool into the team log
+/// — the live counterpart to the at-exit ingest. A confined box can only stage
+/// `team agent submit` / `team review submit` requests; normally the host
+/// applies them when the box exits, but the team Stop hook keeps boxes alive,
+/// so this lets the host collect that work mid-round (freeze / verify can then
+/// proceed without any relaunch). Returns `(agent_id, records applied)` per env.
+pub fn sync_outbound(
+    repo: &Repository,
+    h5i_root: &Path,
+    run_id: &str,
+) -> Result<Vec<(String, usize)>, H5iError> {
+    let run = status(repo, run_id)?.run;
+    let mut out = Vec::with_capacity(run.agents.len());
+    for a in &run.agents {
+        // A pruned / non-local env has nothing to drain — skip, don't fail.
+        let n = match env::find(h5i_root, &a.env_id) {
+            Ok(m) => env::ingest_team_outbound(repo, h5i_root, &m)?,
+            Err(_) => 0,
+        };
+        out.push((a.agent_id.clone(), n));
+    }
+    Ok(out)
+}
+
 pub fn freeze(
     repo: &Repository,
     run_id: &str,
@@ -2063,6 +2087,42 @@ mod tests {
         assert!(events.iter().any(|e| e.kind == "dispatched"));
         assert!(events.iter().any(|e| e.kind == "review_granted"));
         assert!(events.iter().any(|e| e.kind == "review_submitted"));
+    }
+
+    #[test]
+    fn sync_outbound_ingests_staged_submission_live() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let m = manifest(&repo, h5i_root, "codex", "fix");
+        // The env branch advances to the candidate commit submit captures.
+        let candidate = commit_file(&repo, "feature.txt", "ok\n");
+        repo.reference(&m.branch, candidate, true, "candidate").unwrap();
+
+        create(&repo, "run-sync", "run-sync", "HEAD~1", 1, "human").unwrap();
+        add_env(
+            &repo, h5i_root, "run-sync", "env/codex/fix", "codex-fix", None, None, None, "human",
+        )
+        .unwrap();
+
+        // The box stages a submit request; nothing is recorded yet.
+        let spool = m.dir(h5i_root).join("spool");
+        env::write_team_submit_spool(
+            &spool,
+            &env::TeamSubmitSpool { commit: None, summary: Some("done".into()) },
+        )
+        .unwrap();
+        assert!(status(&repo, "run-sync").unwrap().run.submissions.is_empty());
+
+        // Live sync drains it into the team log without the box exiting.
+        let drained = sync_outbound(&repo, h5i_root, "run-sync").unwrap();
+        assert_eq!(drained, vec![("codex-fix".to_string(), 1)]);
+        let run = status(&repo, "run-sync").unwrap().run;
+        assert_eq!(run.submissions.len(), 1);
+        assert_eq!(run.submissions[0].owner_agent, "codex-fix");
+        // The staged spool file was consumed.
+        assert_eq!(std::fs::read_dir(&spool).unwrap().count(), 0);
     }
 
     #[test]

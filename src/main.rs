@@ -2037,6 +2037,16 @@ enum TeamCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Ingest agents' staged submissions/reviews now, without exiting their
+    /// boxes (live counterpart to the at-exit ingest). Lets a run advance while
+    /// the team Stop hook keeps boxes alive — no relaunch needed.
+    Sync {
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Run neutral verifier evidence for one submitted candidate
     Verify {
         /// Team id
@@ -9413,6 +9423,30 @@ fn main() -> anyhow::Result<()> {
                         println!("{}", serde_json::to_string_pretty(&rows)?);
                     } else {
                         print!("{}", h5i_core::team::render_compare(&rows));
+                    }
+                }
+                TeamCommands::Sync { team, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let drained = h5i_core::team::sync_outbound(git, &h5i_root, &team)?;
+                    let total: usize = drained.iter().map(|(_, n)| n).sum();
+                    if json {
+                        let rows: Vec<_> = drained
+                            .iter()
+                            .map(|(a, n)| serde_json::json!({ "agent": a, "applied": n }))
+                            .collect();
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(
+                                &serde_json::json!({ "total": total, "agents": rows })
+                            )?
+                        );
+                    } else if total == 0 {
+                        println!("{} nothing staged to ingest", SUCCESS);
+                    } else {
+                        println!("{} ingested {total} staged record(s):", SUCCESS);
+                        for (a, n) in drained.iter().filter(|(_, n)| *n > 0) {
+                            println!("  {} {a}: {n}", STEP);
+                        }
                     }
                 }
                 TeamCommands::Verify { team, agent, isolation, cmd, json } => {

@@ -3220,9 +3220,34 @@ fn ingest_shell_spool(
         )?;
     }
 
-    // In-box `h5i team agent submit`. Team refs are host-only, so the box can
-    // only stage a request. Authority comes from the host-owned env binding,
-    // never from fields the boxed process can write.
+    // Drain the in-box team outbound spool (submissions + peer reviews); the
+    // same path runs on demand via `h5i team sync` (see `ingest_team_outbound`).
+    count += ingest_team_outbound(repo, h5i_root, m)?;
+    Ok(count)
+}
+
+/// Drain a team env's staged outbound spool — the `h5i team agent submit` and
+/// `h5i team review submit` records a confined box can only stage — into the
+/// team event log, applying each under the identity-validated env binding (box
+/// fields choose *what*, never *who as*). Shared by the at-exit
+/// `ingest_shell_spool` and the on-demand `h5i team sync`, so a submission or
+/// review becomes visible to the host without waiting for the box to exit.
+/// Returns the number of records applied; a no-op for a non-team env.
+pub fn ingest_team_outbound(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+) -> Result<usize, H5iError> {
+    let spool = m.dir(h5i_root).join("spool");
+    if !spool.is_dir() {
+        return Ok(0);
+    }
+    let env_tip = repo
+        .find_reference(&m.branch)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+        .map(|c| c.id());
+    let mut count = 0usize;
     if let Some((team_id, agent_id)) = team_binding(h5i_root, m) {
         let mut submit_bases: Vec<String> = Vec::new();
         if let Ok(rd) = std::fs::read_dir(&spool) {
@@ -3394,6 +3419,7 @@ fn ingest_shell_spool(
     }
     Ok(count)
 }
+
 
 // ─── diff ───────────────────────────────────────────────────────────────────
 
