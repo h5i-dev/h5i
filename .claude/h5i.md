@@ -104,6 +104,8 @@ Add flags when relevant:
 - `--tests`  — tests were added or modified (captures test metrics)
 - `--audit`  — security-sensitive, authentication, or high-risk changes
 
+**In an agent team: always `h5i capture commit` your work before `h5i team agent submit`.** Submit freezes your env branch; an uncommitted worktree has nothing for reviewers to see.
+
 Every `h5i capture commit` automatically snapshots the context workspace and links it to the git commit SHA, so the workspace state is recoverable per code commit (`h5i recall context restore <sha>`, `h5i recall context diff <sha1> <sha2>`).
 
 ---

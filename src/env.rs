@@ -5025,11 +5025,19 @@ fn commit_worktree_at(path: &Path) -> Result<Option<git2::Oid>, H5iError> {
     let mut index = repo.index()?;
     index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
     index.update_all(["*"].iter(), None)?;
+    // `write_tree` writes the tree (and any new blobs) to the object db from the
+    // *in-memory* index — it does NOT require the on-disk index file to be
+    // rewritten. We deliberately commit from this without an `index.write()`
+    // first: the commit needs only objects (rw) + the env branch ref (rw), both
+    // granted in-box, whereas persisting the index file (`index.lock` →
+    // `index`) is the one step the proven-working `h5i capture commit` path
+    // never exercises (its index was written by the agent's `git add`), and the
+    // step most likely to EACCES under a tight box layout. So land the commit
+    // first, then refresh the index best-effort.
     let tree_oid = index.write_tree()?;
     if head.tree_id() == tree_oid {
         return Ok(None); // worktree already committed — nothing to snapshot
     }
-    index.write()?;
     let tree = repo.find_tree(tree_oid)?;
     let sig = objects::signature(&repo)?;
     let oid = repo.commit(
@@ -5040,6 +5048,9 @@ fn commit_worktree_at(path: &Path) -> Result<Option<git2::Oid>, H5iError> {
         &tree,
         &[&head],
     )?;
+    // Keep a later in-box `git status` clean. Best-effort: the commit already
+    // landed, so an index-write EACCES must not fail (or undo) the snapshot.
+    let _ = index.write();
     Ok(Some(oid))
 }
 

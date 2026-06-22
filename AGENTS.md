@@ -50,6 +50,8 @@ Add flags when relevant:
 - `--tests`  — tests were added or modified
 - `--audit`  — security-sensitive or high-risk changes
 
+**In an agent team: always `h5i capture commit` your work before `h5i team agent submit`.** Submit freezes your env branch; an uncommitted worktree has nothing for reviewers to see.
+
 ### Capturing large command output (token reduction)
 
 Prefer wrapping all shell commands, so the agent receives compact, token-efficient output while preserving the original command behavior; the full raw is stored out-of-band and stays recoverable. Small *successful* output (under ~2 KB) passes through unstored, but failures are always captured regardless of size so they stay searchable:
