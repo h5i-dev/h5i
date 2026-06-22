@@ -939,3 +939,4 @@ _[Checkpoint: 6a3926db — edited src/team.rs; edited src/team.rs; edited src/te
 _[Checkpoint: 6a392932 — edited docs/pitch/index.html; edited docs/blog/agent-ensembles-with-h5i-team/index.html; edited docs/blog/agent-ensemble…]_
 ---
 
+[12:33:58] OBSERVE: read README.md
