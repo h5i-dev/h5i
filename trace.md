@@ -691,3 +691,9 @@ _[Checkpoint: 6a38c9ea — edited docs/index.html; edited docs/index.html; edite
 [05:39:51] OBSERVE: read docs/index.html
 [05:39:51] OBSERVE: searched ── for "Solution\|<!--"
 [05:39:51] OBSERVE: read docs/index.html
+
+
+---
+_[Checkpoint: 6a38cad5 — Updated docs/index.html per homepage structure feedback: added Hindi and Japanese ensemble sayings, removed standalone Solution section, relabeled h5i team as The Solution, and replaced Review Evidence/Token Reduction/Coordination/Risk Triage/Reviewer Brief blocks with safe placeholder comments; validated HTML parse.]_
+---
+
