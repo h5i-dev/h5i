@@ -4934,6 +4934,29 @@ pub fn mediated_commit(
     Ok(Some(oid))
 }
 
+/// Snapshot the env worktree onto its branch for a **team submission** — the
+/// mediated-commit counterpart to `propose`, so `team agent submit` freezes the
+/// agent's working-tree edits instead of the (often unadvanced) branch tip.
+///
+/// Holds the per-env run lock for the commit (mirrors `propose`, which guards
+/// against a concurrent `run`/`shell` mutating the same worktree). Returns
+/// `Ok(None)` — a no-op — when the env has no local worktree, which is the
+/// normal case for a *pulled* reviewer clone (nothing local to commit; the
+/// submission rides the already-shared branch tip) and for the legacy
+/// host-pins-an-explicit-commit path.
+pub fn snapshot_for_submit(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+) -> Result<Option<git2::Oid>, H5iError> {
+    if !m.work_dir(h5i_root).is_dir() {
+        return Ok(None);
+    }
+    #[cfg(unix)]
+    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
+    mediated_commit(repo, h5i_root, m)
+}
+
 /// Record a mediated-commit boundary trip as a `violation` event, then build the
 /// fail-closed error to return. A boundary trip is the highest-confidence
 /// sandbox-probe signal (enforcement actually fired), so it is persisted to
