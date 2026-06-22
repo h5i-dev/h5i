@@ -500,3 +500,9 @@ _[Checkpoint: 6a38c06c — edited src/env.rs; edited docs/_static/h5i-team.svg; 
 [04:57:00] OBSERVE: read src/container.rs
 [04:57:53] ACT: edited docs/_static/h5i-team.svg
 [04:57:53] OBSERVE: searched task|Implement for "prompt|One"
+
+
+---
+_[Checkpoint: 6a38c0d7 — Simplified docs/_static/h5i-team.svg task card: removed INPUT and same prompt/base labels, changed One task to Task, and enlarged Implement XXX label; validated XML and PNG render.]_
+---
+
