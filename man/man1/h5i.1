@@ -145,6 +145,14 @@ with subdirectories
 and
 .BR session_log/ .
 .
+.\" ─── completion ─────────────────────────────────────────────────────────────
+.SS h5i completion \fISHELL\fR
+Print a shell completion script for
+.I SHELL
+.RB ( bash ", " zsh ", " fish ", " powershell ", " elvish )
+to standard output, e.g.
+.BR "h5i completion bash | sudo tee /etc/bash_completion.d/h5i" .
+.
 .\" ─── commit ─────────────────────────────────────────────────────────────────
 .SS h5i capture commit \-m \fIMESSAGE\fR [\fIOPTIONS\fR]
 Commit staged changes with optional AI provenance, test metrics,
@@ -371,7 +379,11 @@ Run a command inside the env, policy-enforced + capture-wrapped.
 .TP
 .BI "shell " "NAME " "[\-\- COMMAND]"
 Open an interactive confined session inside the env (the "agent-in-box"): stdio
-is inherited, so every command the session spawns is confined by the box.
+is inherited, so every command the session spawns is confined by the box. With
+.B \-\- COMMAND
+that command becomes the session (e.g. \fB\-\- claude \(dq<task>\(dq\fR launches
+the agent; boxed agents use staged commands such as \fBh5i team agent submit\fR,
+which the host ingests when the shell exits).
 Defaults to a login shell; exit code passes through. The session is observed (a
 .B shell
 event is logged and per-command evidence is staged + ingested where the tier
@@ -493,7 +505,7 @@ tier's nftables egress is the airtight L3/L4 equivalent).
 Policy is defined per profile in
 .IR .h5i/env.toml " (" "isolation, fs.read/write/deny, net.mode/egress, "
 resources.mem/procs/wall/fsize/cpu, tools, env.pass, container.image, secrets,
-private_paths).
+private_paths, shell.rcfile).
 .B private_paths
 give each env its own backing store for build-cache/lock dirs (kind
 .IR cache / scratch / private ),
@@ -510,6 +522,18 @@ fail-closed; a
 extractor runs host-side code and is refused unless the profile sets
 .B allow_command_extractors
 (pinned in the digest), and is then bounded by a wall timeout + output cap.
+.B shell.rcfile
+points
+.B env shell
+at a custom bash rcfile (path relative to the worktree, e.g.
+.IR .h5i/box.bashrc );
+unset, an interactive bash gets a generated \fIplain\fR rc instead of the host
+.IR ~/.bashrc ,
+which under confinement routinely references blocked tools (e.g.\&
+.IR powerline-shell ).
+The plain rc sets a clear prompt and sources
+.I ~/.h5i_envrc
+if present.
 Long-lived
 .B [service.<name>]
 declarations are pinned at create. The fully-resolved policy's sha256 digest is
@@ -537,6 +561,181 @@ a capture/commit that fails with \fI"h5i data store not writable"\fR means
 \fBsudo\fR run). Repair with
 .BR "sudo chown \-R \(dq$(id \-u):$(id \-g)\(dq .git/.h5i" .
 .RE
+.
+.\" ─── team ───────────────────────────────────────────────────────────────────
+.SS h5i team \fISUBCOMMAND\fR
+Auditable agent ensembles: run several agents on the same task in their own
+isolated
+.B h5i env
+workspaces, driven through a phased, permissioned evidence-publication protocol
+\(em sealed workspaces, permissioned reviews, auditable convergence. A thin
+orchestration layer (\fBenv\fR keeps owning isolation/capture/apply; \fBteam\fR
+owns roster, phases, submissions, verdict); not a group chat and not a daemon. A
+roster member is a
+.I persona
+not a backend \(em the
+.I agent_id
+is the actor, while runtime/model/persona are attributes, so a team may be three
+Claudes with different personas or a Claude+Codex mix. Roles are not enforced:
+every member is an independent peer that implements and peer-reviews; an optional
+persona file shapes one member's working style. Run state is an
+append-only event log in
+.I refs/h5i/team/<run-id>
+(phase/roster/verdict are folded from events), travelling with
+.BR "h5i share push" /pull .
+.PP
+.B Phases:
+.BR draft " \(-> " sealed_submit " \(-> " review " \(-> " discuss " (opt-in) \(-> " verify " \(-> " compare " \(-> " verdict " \(-> " applied .
+Independence-first: no agent sees a peer's work before
+.BR freeze ;
+discussion is opt-in and post-freeze only, and a candidate revised after it is
+stamped \fIindependent=false\fR with its influence edges recorded.
+.PP
+.B Subcommands
+.RS 4
+.TP
+.BI "create " "NAME " "[\-\-base REV] [\-\-rounds N] [\-\-title T]"
+Create a run over existing envs;
+.B \-\-base
+(default HEAD) is the shared base every candidate is compared against.
+.TP
+.BI "add-env " "TEAM ENV " "[\-\-as AGENT-ID] [\-\-runtime R] [\-\-model M] [\-\-persona FILE]"
+Add an existing env to the roster as a persona-bound member (draft phase only).
+.B \-\-as
+is the ref-safe actor key; omit it and h5i assigns a generated name (distinct
+members need distinct ids).
+.B \-\-persona
+is an optional markdown file (its sha256 is recorded; the body is stored
+host-side and injected into the agent's launch prompt as its standing working
+style \(em see \fIexamples/personas/\fR). Also binds the env's in-box
+\fBH5I_AGENT\fR and \fBH5I_TEAM\fR to this persona and run for scoped team-agent
+commands. The message store and team refs remain host-owned.
+.TP
+.BI "persona " "AGENT " "[\-\-team T]"
+Print an agent's persona markdown (what the launcher injects), or nothing if it
+has none.
+.TP
+.BI "submit " "TEAM " "\-\-agent ID [\-\-commit OID] [\-\-summary-file F]"
+Freeze the agent's env-branch tip (or
+.BR \-\-commit )
+as an immutable submission \(em frozen commit/tree oids + diffstat + capture ids.
+.TP
+.BI "agent submit " "[\-\-commit OID] [\-\-summary-file F]"
+Submit as the bound env persona. In sealed envs this writes a scoped request to
+the env spool; the host applies it to \fIrefs/h5i/team/*\fR when the env shell
+exits.
+.TP
+.BI "agent inbox " "[TEAM] [\-\-peek] [\-\-wait] [\-\-interval 10] [\-\-timeout 1800] [\-\-json]"
+Scoped inbox for the team persona. In a sealed box it reads the host-fanned
+per-env inbox (\fB$H5I_ENV_INBOX\fR, read-only); host-side it reads the shared
+store.
+.B \-\-wait
+blocks (peek-only) until a message is waiting or the timeout \(em use it after
+submitting to await a review request without ending the session.
+.TP
+.BI "agent hook " "[TEAM] [\-\-block] [\-\-quiet] [\-\-timeout 1800] [\-\-interval 10]"
+Stop-hook delivery: keeps an agent in an unfinished round from stopping and feeds
+in review requests.
+.B \-\-block
+(Claude and Codex \(em both honor the same block-decision continuation contract)
+waits up to
+.B \-\-timeout
+for the next message, then blocks the stop and hands it back;
+.B \-\-quiet
+prints one-shot (manual use). Released by a TEAM_DONE signal (sent on
+finalize/apply) or the timeout. Registered via
+.BR "h5i hook setup \-\-team" ;
+no-ops outside a team.
+.TP
+.BI "freeze " "TEAM " "[\-\-allow-missing]"
+Transition draft \(-> sealed_submit; refuses if any member lacks a submission
+unless
+.BR \-\-allow-missing .
+.TP
+.BI "verify " "TEAM " "\-\-agent ID [\-\-isolation TIER] \-\- COMMAND..."
+Neutral, sandboxed verifier: replays the frozen candidate at the run base in a
+throwaway worktree and runs COMMAND under the fail-closed
+.B default
+build/test profile.
+.B \-\-isolation
+(workspace/process/supervised/container) defaults to the strongest tier the host
+can enforce (falls back to workspace); the tier is recorded on the verification.
+.TP
+.BI "compare " "TEAM " "[\-\-json]"
+Side-by-side candidates + verifier metrics (advisory; does not pick a winner).
+.TP
+.BI "sync " "TEAM " "[\-\-json]"
+Live ingest: apply every agent's staged in-box submissions/reviews to
+\fIrefs/h5i/team/*\fR now, without the box exiting (on-demand counterpart to the
+at-exit ingest). Lets a run advance while the team Stop hook keeps boxes alive
+\(em no relaunch.
+.TP
+.BI "finalize " "TEAM " "[\-\-json]"
+Apply the finalization rule over verifier evidence \(-> a verdict event. Hard
+gates (tests pass, applies cleanly) first; smallest-diff only breaks ties among
+gate-passers. No gate-passer \(-> \fIno_verdict\fR (never applies a loser).
+.TP
+.BI "apply " "TEAM " "[\-\-winner SUBMISSION-ID] [\-\-force]"
+Replay the winning submission's recorded patch into the current branch and
+commit; records source + target oids. Gated on the verdict's
+.I can_auto_apply
+unless
+.BR \-\-force .
+.TP
+.BI "worker " "\-\-once | \-\-watch " "[\-\-interval N] [\-\-id ID] [\-\-lease-ttl S]"
+Optional automation: one lease-and-finalize pass
+.RB ( \-\-once )
+or an opt-in in-process loop
+.RB ( \-\-watch ).
+Finalize-only \(em never auto-applies. Leases are idempotent + TTL'd; for
+production prefer an external scheduler driving
+.BR \-\-once .
+.TP
+.BI "dispatch " "TEAM " "\-\-prompt-file F"
+Send the task to every roster agent at once over
+.BR "h5i msg" " (no per-env pasting)."
+Notifies, does not launch: the shared message log and cursors are host-owned
+coordination state. For normal interactive runs use
+.B scripts/team-launch.sh --task
+to dispatch for the host log and embed the task text in each boxed agent's
+startup prompt.
+.TP
+.BI "grant-review " "TEAM " "\-\-reviewer A \-\-target B [\-\-artifacts KINDS]"
+Permissioned review: grant A scoped access to B's round artifacts (never raw logs
+or persona bodies by default) + send a REVIEW_REQUEST.
+.TP
+.BI "review submit " "TEAM " "\-\-reviewer A \-\-target B \-\-file F"
+Record a review body for a target candidate.
+.TP
+.BI "discuss " "TEAM " "\-\-from S \-\-to A,B \-\-file F [\-\-artifacts IDS]"
+Send a logged, influence-tracked discussion message (post-freeze only).
+.TP
+.BI "status " "TEAM " "[\-\-json]"
+Folded run state: phase, roster, per-agent submission state.
+.TP
+.BI "list " "[\-\-json]"
+All runs on this clone.
+.TP
+.BI "use " "[NAME] " "[\-\-clear]"
+Pin a current team (like git's current branch) so other single-\fITEAM\fR
+subcommands may omit it. No arg prints the current;
+.B \-\-clear
+unsets;
+.B create
+auto-pins the new run. The flat CLI stays canonical \(em always pass \fITEAM\fR in
+scripts/cron.
+.RE
+.PP
+The
+.BR scripts/team-launch.sh ", " scripts/team-review.sh ", and " scripts/team-run.sh
+helpers compose into a hands-off cycle (install the team Stop hook once with
+.BR "h5i hook setup \-\-team" ).
+.B team-run.sh
+launches the agents, then polls with
+.B h5i team sync
+to advance the run \(em wait until all submitted, freeze, grant mutual review,
+wait until all revised, verify each, finalize, optionally apply \(em so the boxes
+stay alive between turns and no relaunch is needed.
 .
 .\" ─── share push ─────────────────────────────────────────────────────────────
 .SS h5i share push [\fIOPTIONS\fR] (alias: h5i push)
@@ -918,7 +1117,7 @@ owns the cross-agent
 .B Subcommands
 .RS 4
 .TP
-.B setup [\-\-write] [\-\-target claude|codex] [\-\-scope project|user] [\-\-wrap\-bash]
+.B setup [\-\-write] [\-\-target claude|codex] [\-\-scope project|user] [\-\-wrap\-bash] [\-\-team]
 Without
 .B \-\-write
 print the install instructions. With
@@ -948,8 +1147,20 @@ limits to one agent,
 .B \-\-scope user
 writes the user-level config, and
 .B \-\-wrap\-bash
-also registers the Bash capture-wrap hook. The MCP server is no longer wired by
-setup \(em register it by hand (see
+also registers the Bash capture-wrap hook, and
+.B \-\-team
+also registers the team peer-review Stop hook
+.RB ( "h5i team agent hook" ):
+in a live
+.B h5i team
+round it keeps the agent from stopping while it owes work and surfaces review
+requests between turns. Both Claude and Codex use the same blocking
+.RB ( \-\-block )
+hook \(em their Stop hooks honor the same block-decision continuation contract
+\(em waiting for the next review and carrying a long per-hook timeout so the
+runtime doesn't kill it mid-wait; a TEAM_DONE signal (finalize/apply) releases
+it. It no-ops outside a team. The MCP server is no longer wired by setup \(em register
+it by hand (see
 .BR "h5i mcp" ).
 .TP
 .B session\-start

@@ -453,13 +453,21 @@ fn inbox_commit_stages_note_and_host_applies_it() {
         p.set_mode(p.mode() | 0o755);
         std::fs::set_permissions(&bin, p).unwrap();
     }
-    let base = out_str(&git(&r.dir, &["rev-parse", "refs/heads/h5i/env/tester/ibc"]));
+    let base = out_str(&git(
+        &r.dir,
+        &["rev-parse", "refs/heads/h5i/env/tester/ibc"],
+    ));
     let base = base.trim().to_string();
 
     // In-box: stage + commit. The output must report the commit landing AND the
     // note being staged (not a Permission-denied crash).
     let out = r.h5i_ok(&[
-        "env", "run", "ibc", "--", "sh", "-c",
+        "env",
+        "run",
+        "ibc",
+        "--",
+        "sh",
+        "-c",
         "echo hi > f.txt && git add f.txt && \
          ./h5i-bin commit -m 'in-box change' --model claude-fable-5 --agent claude-code",
     ]);
@@ -474,10 +482,16 @@ fn inbox_commit_stages_note_and_host_applies_it() {
     let _ = out;
 
     // The commit advanced the env branch, and the host applied the note to it.
-    let env_tip = out_str(&git(&r.dir, &["rev-parse", "refs/heads/h5i/env/tester/ibc"]));
+    let env_tip = out_str(&git(
+        &r.dir,
+        &["rev-parse", "refs/heads/h5i/env/tester/ibc"],
+    ));
     let env_tip = env_tip.trim();
     assert_ne!(env_tip, base, "in-box commit must advance the env branch");
-    let note = out_str(&git(&r.dir, &["show", &format!("refs/h5i/notes:{env_tip}")]));
+    let note = out_str(&git(
+        &r.dir,
+        &["show", &format!("refs/h5i/notes:{env_tip}")],
+    ));
     let rec: serde_json::Value =
         serde_json::from_str(note.trim()).expect("note applied + valid JSON");
     assert_eq!(rec["ai_metadata"]["model_name"], "claude-fable-5", "{rec}");
@@ -512,14 +526,20 @@ fn inbox_commit_note_off_env_range_is_rejected() {
 
     // No note was attached to main, and the rejection is logged.
     let log = out_str(&r.h5i_ok(&["env", "log", "rej"]));
-    assert!(log.contains("rejected in-box commit note"), "must log rejection: {log}");
+    assert!(
+        log.contains("rejected in-box commit note"),
+        "must log rejection: {log}"
+    );
     // Non-asserting git (the note ref may not exist at all → command fails).
     let note = Command::new("git")
         .args(["show", &format!("refs/h5i/notes:{main_oid}")])
         .current_dir(&r.dir)
         .output()
         .expect("git show");
-    assert!(!note.status.success(), "no note may be attached to the inherited commit");
+    assert!(
+        !note.status.success(),
+        "no note may be attached to the inherited commit"
+    );
 }
 
 /// `env status` surfaces evidence STAGED in the spool but not yet ingested
@@ -545,11 +565,19 @@ fn env_status_shows_pending_spool_evidence() {
     )
     .unwrap();
     std::fs::write(spool.join("cmd-9-0.cmd"), b"ls").unwrap();
+    std::fs::write(
+        spool.join("codex-hook-1-0.json"),
+        r#"{"session_id":"sess","prompts":["inspect"],"events":[{"kind":"OBSERVE","message":"read src/main.rs"}]}"#,
+    )
+    .unwrap();
 
     let status = out_str(&r.h5i_ok(&["env", "status", "pend"]));
     assert!(status.contains("pending"), "{status}");
     assert!(
-        status.contains("1 capture") && status.contains("1 note") && status.contains("1 shim"),
+        status.contains("1 capture")
+            && status.contains("1 note")
+            && status.contains("1 shim")
+            && status.contains("1 codex"),
         "breakdown by lane: {status}"
     );
     // The pending command + note oid are listed (the useful detail).
@@ -559,7 +587,32 @@ fn env_status_shows_pending_spool_evidence() {
     // No spool → no pending line at all.
     std::fs::remove_dir_all(&spool).unwrap();
     let status = out_str(&r.h5i_ok(&["env", "status", "pend"]));
-    assert!(!status.contains("pending"), "no pending line when spool empty: {status}");
+    assert!(
+        !status.contains("pending"),
+        "no pending line when spool empty: {status}"
+    );
+}
+
+#[test]
+fn env_run_ingests_codex_hook_spool_into_context() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "codexspool"]);
+    let spool = r.env_dir("codexspool").join("spool");
+    std::fs::create_dir_all(&spool).unwrap();
+    std::fs::write(
+        spool.join("codex-hook-1-0.json"),
+        r#"{"session_id":"sess","prompts":["inspect"],"events":[{"kind":"OBSERVE","message":"read src/main.rs"}]}"#,
+    )
+    .unwrap();
+
+    r.h5i_ok(&["env", "run", "codexspool", "--", "true"]);
+
+    let out = out_str(&r.h5i_ok(&["env", "context", "codexspool", "--trace"]));
+    assert!(out.contains("read src/main.rs"), "{out}");
+    assert!(
+        !spool.join("codex-hook-1-0.json").exists(),
+        "ingested codex hook spool record should be removed"
+    );
 }
 
 /// End-to-end integrity property: an in-box `h5i capture run` (the
@@ -570,7 +623,9 @@ fn env_status_shows_pending_spool_evidence() {
 #[test]
 fn apply_provenance_preserves_inbox_and_host_lanes() {
     if !process_tier_runnable() {
-        eprintln!("SKIP apply_provenance_preserves_inbox_and_host_lanes: process tier not runnable");
+        eprintln!(
+            "SKIP apply_provenance_preserves_inbox_and_host_lanes: process tier not runnable"
+        );
         return;
     }
     let r = Repo::new();
@@ -594,12 +649,18 @@ fn apply_provenance_preserves_inbox_and_host_lanes() {
 
     let applied = out_str(&git(&r.dir, &["rev-parse", "main"]));
     let applied = applied.trim();
-    let note = out_str(&git(&r.dir, &["show", &format!("refs/h5i/notes:{applied}")]));
+    let note = out_str(&git(
+        &r.dir,
+        &["show", &format!("refs/h5i/notes:{applied}")],
+    ));
     let rec: serde_json::Value = serde_json::from_str(note.trim()).expect("apply note JSON");
     let sources = &rec["env_provenance"]["evidence_sources"];
     // Both lanes are present and distinct — not collapsed into one.
     assert_eq!(sources["host-env-run"], 1, "host lane preserved: {rec}");
-    assert_eq!(sources["inbox-capture"], 1, "box-claimed lane preserved + labeled: {rec}");
+    assert_eq!(
+        sources["inbox-capture"], 1,
+        "box-claimed lane preserved + labeled: {rec}"
+    );
 }
 
 #[test]
@@ -700,13 +761,21 @@ fn apply_stamps_commit_with_env_provenance_note() {
     r.h5i_ok(&["env", "create", "prov"]);
     // An `env run` leaves a host-verified capture on the env.
     r.h5i_ok(&[
-        "env", "run", "prov", "--", "sh", "-c",
+        "env",
+        "run",
+        "prov",
+        "--",
+        "sh",
+        "-c",
         "printf 'def hello():\\n    return 9\\n' > lib.py && echo done",
     ]);
     r.h5i_ok(&["env", "propose", "prov"]);
     let out = out_str(&r.h5i_ok(&["env", "apply", "prov"]));
     assert!(out.contains("applied onto main"), "{out}");
-    assert!(out.contains("provenance note on"), "apply must report the note: {out}");
+    assert!(
+        out.contains("provenance note on"),
+        "apply must report the note: {out}"
+    );
 
     // The applied commit (now main's tip) carries an h5i note whose
     // `env_provenance` links to the env and labels the evidence by lane.
@@ -714,7 +783,10 @@ fn apply_stamps_commit_with_env_provenance_note() {
     let applied = applied.trim();
     // The note ref lives at refs/h5i/notes (outside refs/notes/, read via git2 by
     // h5i) — read the note blob directly at its commit-oid path.
-    let note = out_str(&git(&r.dir, &["show", &format!("refs/h5i/notes:{applied}")]));
+    let note = out_str(&git(
+        &r.dir,
+        &["show", &format!("refs/h5i/notes:{applied}")],
+    ));
     let rec: serde_json::Value =
         serde_json::from_str(note.trim()).expect("note must be H5iCommitRecord JSON");
     let prov = &rec["env_provenance"];
@@ -735,8 +807,14 @@ fn apply_stamps_commit_with_env_provenance_note() {
 
     // `h5i log` renders the provenance so the applied commit is self-describing.
     let clog = out_str(&r.h5i_ok(&["recall", "log", "--limit", "1"]));
-    assert!(clog.contains("From env:") && clog.contains("env/tester/prov"), "{clog}");
-    assert!(clog.contains("Evidence:") && clog.contains("host-env-run=1"), "{clog}");
+    assert!(
+        clog.contains("From env:") && clog.contains("env/tester/prov"),
+        "{clog}"
+    );
+    assert!(
+        clog.contains("Evidence:") && clog.contains("host-env-run=1"),
+        "{clog}"
+    );
 }
 
 /// The provenance note is attached in the merge path too (parent advanced →
@@ -759,8 +837,14 @@ fn apply_stamps_provenance_on_merge_commit() {
     let applied = applied.trim();
     // It's a real merge commit (two parents), and it carries the note.
     let parents = out_str(&git(&r.dir, &["rev-list", "--parents", "-n", "1", applied]));
-    assert!(parents.split_whitespace().count() >= 3, "expected a merge commit: {parents}");
-    let note = out_str(&git(&r.dir, &["show", &format!("refs/h5i/notes:{applied}")]));
+    assert!(
+        parents.split_whitespace().count() >= 3,
+        "expected a merge commit: {parents}"
+    );
+    let note = out_str(&git(
+        &r.dir,
+        &["show", &format!("refs/h5i/notes:{applied}")],
+    ));
     let rec: serde_json::Value = serde_json::from_str(note.trim()).unwrap();
     assert_eq!(rec["env_provenance"]["env_id"], "env/tester/mp");
 }
@@ -1009,7 +1093,10 @@ fn apply_refuses_second_apply() {
     assert_eq!(r.manifest("once")["status"], "applied");
 
     let out = r.h5i(&["env", "apply", "once"]);
-    assert!(!out.status.success(), "re-applying an applied env must refuse");
+    assert!(
+        !out.status.success(),
+        "re-applying an applied env must refuse"
+    );
     assert!(
         out_str(&out).contains("propose"),
         "second apply should point back at propose: {}",
@@ -1482,19 +1569,33 @@ fn inbox_commit_on_supervised_stages_and_applies_note() {
         p.set_mode(p.mode() | 0o755);
         std::fs::set_permissions(&bin, p).unwrap();
     }
-    let base = out_str(&git(&r.dir, &["rev-parse", "refs/heads/h5i/env/tester/ibs"]));
+    let base = out_str(&git(
+        &r.dir,
+        &["rev-parse", "refs/heads/h5i/env/tester/ibs"],
+    ));
     let base = base.trim().to_string();
 
     r.h5i_ok(&[
-        "env", "run", "ibs", "--", "sh", "-c",
+        "env",
+        "run",
+        "ibs",
+        "--",
+        "sh",
+        "-c",
         "echo hi > f.txt && git add f.txt && \
          ./h5i-bin commit -m 'in-box change' --model claude-fable-5 --agent claude-code",
     ]);
 
-    let env_tip = out_str(&git(&r.dir, &["rev-parse", "refs/heads/h5i/env/tester/ibs"]));
+    let env_tip = out_str(&git(
+        &r.dir,
+        &["rev-parse", "refs/heads/h5i/env/tester/ibs"],
+    ));
     let env_tip = env_tip.trim();
     assert_ne!(env_tip, base, "in-box commit must advance the env branch");
-    let note = out_str(&git(&r.dir, &["show", &format!("refs/h5i/notes:{env_tip}")]));
+    let note = out_str(&git(
+        &r.dir,
+        &["show", &format!("refs/h5i/notes:{env_tip}")],
+    ));
     let rec: serde_json::Value =
         serde_json::from_str(note.trim()).expect("note applied + valid JSON");
     assert_eq!(rec["ai_metadata"]["model_name"], "claude-fable-5", "{rec}");
@@ -2912,7 +3013,10 @@ fn container_env_capture_spool_is_mounted_and_ingested() {
         .find(|m| m["evidence_source"] == "inbox-capture")
         .expect("an inbox-capture manifest");
     let raw = r.capture_raw(inbox["raw_oid"].as_str().unwrap());
-    assert!(String::from_utf8_lossy(&raw).contains("boxed-output"), "{inbox}");
+    assert!(
+        String::from_utf8_lossy(&raw).contains("boxed-output"),
+        "{inbox}"
+    );
 
     let status = out_str(&r.h5i_ok(&["env", "status", "cspool"]));
     assert!(status.contains("inbox-capture=1"), "{status}");
@@ -3040,7 +3144,10 @@ fn inspect_renders_a_capture_and_refuses_foreign_ones() {
     assert!(!out.status.success(), "cross-env inspect must be refused");
     let err = out_str(&out);
     assert!(err.contains("not evidence for"), "{err}");
-    assert!(err.contains("env/tester/one"), "names the owning env: {err}");
+    assert!(
+        err.contains("env/tester/one"),
+        "names the owning env: {err}"
+    );
 }
 
 /// `inspect` renders every header field the design promises — the capture id +
@@ -3070,23 +3177,41 @@ fn inspect_renders_all_capture_fields() {
     let out = out_str(&r.h5i_ok(&["env", "inspect", "fields", "--capture", &cap]));
     // Header pairs the capture with its owning env.
     assert!(out.contains(&cap), "header has the capture id: {out}");
-    assert!(out.contains("env/tester/fields"), "header has the env id: {out}");
+    assert!(
+        out.contains("env/tester/fields"),
+        "header has the env id: {out}"
+    );
     // The command line, exactly as run.
     assert!(out.contains("cmd"), "{out}");
-    assert!(out.contains("echo body-marker"), "renders the command: {out}");
+    assert!(
+        out.contains("echo body-marker"),
+        "renders the command: {out}"
+    );
     // A non-zero exit is shown verbatim, never masked.
-    assert!(out.contains("exit") && out.contains("3"), "renders exit 3: {out}");
+    assert!(
+        out.contains("exit") && out.contains("3"),
+        "renders exit 3: {out}"
+    );
     // Policy digest is shown (truncated to its 12-char prefix).
-    assert!(out.contains(&digest[..12]), "renders policy digest prefix: {out}");
+    assert!(
+        out.contains(&digest[..12]),
+        "renders policy digest prefix: {out}"
+    );
     // Provenance: a host-driven env run.
-    assert!(out.contains("host-env-run"), "renders evidence source: {out}");
+    assert!(
+        out.contains("host-env-run"),
+        "renders evidence source: {out}"
+    );
     // Raw object accounting.
     assert!(
         out.contains("bytes") && out.contains("lines"),
         "renders raw size accounting: {out}"
     );
     // The structured findings render the captured stdout.
-    assert!(out.contains("body-marker"), "renders the captured output: {out}");
+    assert!(
+        out.contains("body-marker"),
+        "renders the captured output: {out}"
+    );
 }
 
 /// A capture handle that resolves to nothing, and one too short to be a prefix,
@@ -3101,7 +3226,11 @@ fn inspect_refuses_unknown_and_too_short_handles() {
     // Nonexistent capture id.
     let out = r.h5i(&["env", "inspect", "handles", "--capture", "cap-nope-zzzz"]);
     assert!(!out.status.success(), "unknown capture must be refused");
-    assert!(out_str(&out).contains("no object matches"), "{}", out_str(&out));
+    assert!(
+        out_str(&out).contains("no object matches"),
+        "{}",
+        out_str(&out)
+    );
 
     // A handle shorter than the 4-char prefix floor.
     let out = r.h5i(&["env", "inspect", "handles", "--capture", "ab"]);
@@ -3140,7 +3269,10 @@ fn inspect_surfaces_redactions_without_leaking_the_secret() {
         "secret leaked through inspect: {out}"
     );
     // The redaction placeholder shows where the value was.
-    assert!(out.contains("redacted"), "shows the redaction marker: {out}");
+    assert!(
+        out.contains("redacted"),
+        "shows the redaction marker: {out}"
+    );
 }
 
 /// `inspect` resolves the env by its fully-qualified id (not just the bare slug)
@@ -3158,16 +3290,16 @@ fn inspect_resolves_env_by_full_id_and_capture_by_prefix() {
     let prefix = &cap[..8.min(cap.len())];
 
     // Env addressed by its full id, capture by an 8-char prefix.
-    let out = out_str(&r.h5i_ok(&[
-        "env",
-        "inspect",
-        "env/tester/resolve",
-        "--capture",
-        prefix,
-    ]));
-    assert!(out.contains(&cap), "prefix resolved to the full capture: {out}");
+    let out = out_str(&r.h5i_ok(&["env", "inspect", "env/tester/resolve", "--capture", prefix]));
+    assert!(
+        out.contains(&cap),
+        "prefix resolved to the full capture: {out}"
+    );
     assert!(out.contains("env/tester/resolve"), "{out}");
-    assert!(out.contains("resolved"), "renders the captured output: {out}");
+    assert!(
+        out.contains("resolved"),
+        "renders the captured output: {out}"
+    );
 }
 
 // ─── 9. concurrency: the run-lock serializes runs of one env ────────────────
@@ -3574,7 +3706,10 @@ fn rebase_refuses_when_parent_branch_is_gone() {
     git(&r.dir, &["branch", "-D", "feature"]);
 
     let out = r.h5i(&["env", "rebase", "orphan"]);
-    assert!(!out.status.success(), "rebase onto a gone parent must refuse");
+    assert!(
+        !out.status.success(),
+        "rebase onto a gone parent must refuse"
+    );
     assert!(
         out_str(&out).contains("parent branch 'feature' is gone"),
         "{}",
@@ -4104,17 +4239,29 @@ fn private_paths_isolate_writes_into_per_env_backing() {
     git(&r.dir, &["add", "-A"]);
     git(&r.dir, &["commit", "-m", "add private-path profile"]);
 
-    r.h5i_ok(&["env", "create", "work1", "--profile", "dev", "--isolation", "process"]);
+    r.h5i_ok(&[
+        "env",
+        "create",
+        "work1",
+        "--profile",
+        "dev",
+        "--isolation",
+        "process",
+    ]);
     // Write a file under the private path from inside the box.
     r.h5i_ok(&[
-        "env", "run", "work1", "--", "sh", "-c", "echo hello-from-box > cache/marker.txt",
+        "env",
+        "run",
+        "work1",
+        "--",
+        "sh",
+        "-c",
+        "echo hello-from-box > cache/marker.txt",
     ]);
 
     // The write landed in the per-env backing dir, NOT the shared worktree —
     // this is the inode isolation that prevents cross-env lock/cache contention.
-    let backing = r
-        .env_dir("work1")
-        .join("private/cache/marker.txt");
+    let backing = r.env_dir("work1").join("private/cache/marker.txt");
     assert!(
         backing.is_file(),
         "private-path write must land in the per-env backing dir"
@@ -4173,10 +4320,7 @@ fn env_secrets_reports_status_without_values() {
     let row = &rows.as_array().unwrap()[0];
     assert_eq!(row["name"], "API_KEY");
     assert_eq!(row["status"], "ok");
-    assert!(row["fingerprint"]
-        .as_str()
-        .unwrap()
-        .starts_with("sha256:"));
+    assert!(row["fingerprint"].as_str().unwrap().starts_with("sha256:"));
 }
 
 #[test]
@@ -4186,7 +4330,10 @@ fn command_extractor_gated_by_pinned_policy_flag() {
     // No opt-in → the command: extractor is refused at create (the gate is
     // pinned in the policy digest, not just enforced at run time).
     let bad = r.h5i(&["env", "create", "ebad", "--profile", "cmdbad"]);
-    assert!(!bad.status.success(), "command extractor must fail closed at create");
+    assert!(
+        !bad.status.success(),
+        "command extractor must fail closed at create"
+    );
     assert!(out_str(&bad).contains("allow_command_extractors"));
     // Opted in → create succeeds.
     r.h5i_ok(&["env", "create", "ecmd", "--profile", "cmd"]);
@@ -4274,8 +4421,14 @@ fn service_defs_pinned_at_create_ignore_worktree_edits() {
     r.h5i_ok(&["env", "service", "start", "e1", "web"]);
     std::thread::sleep(std::time::Duration::from_millis(700));
     let logs = out_str(&r.h5i_ok(&["env", "service", "logs", "e1", "web"]));
-    assert!(logs.contains("PINNED_CMD"), "must run the pinned command: {logs}");
-    assert!(!logs.contains("HACKED_CMD"), "must NOT run the edited command: {logs}");
+    assert!(
+        logs.contains("PINNED_CMD"),
+        "must run the pinned command: {logs}"
+    );
+    assert!(
+        !logs.contains("HACKED_CMD"),
+        "must NOT run the edited command: {logs}"
+    );
     let _ = r.h5i(&["env", "service", "stop", "e1", "web"]);
 }
 
@@ -4357,7 +4510,10 @@ fn traversing_service_name_is_rejected() {
     // A path-traversing service name must be rejected before any path is built.
     for bad in ["../manifest", "a/b", ".."] {
         let out = r.h5i(&["env", "service", "start", "e1", bad]);
-        assert!(!out.status.success(), "service name '{bad}' must be rejected");
+        assert!(
+            !out.status.success(),
+            "service name '{bad}' must be rejected"
+        );
         assert!(
             out_str(&out).contains("invalid service name"),
             "name '{bad}': {}",
@@ -4382,7 +4538,10 @@ fn create_rejects_bad_service_name_in_config() {
     git(&r.dir, &["add", "-A"]);
     git(&r.dir, &["commit", "-m", "bad service name"]);
     let out = r.h5i(&["env", "create", "e1", "--profile", "dev"]);
-    assert!(!out.status.success(), "create must reject a traversing service name");
+    assert!(
+        !out.status.success(),
+        "create must reject a traversing service name"
+    );
     assert!(
         out_str(&out).contains("invalid service name"),
         "{}",

@@ -131,6 +131,8 @@ struct ProfileToml {
     container: ContainerToml,
     #[serde(default)]
     env: EnvVarsToml,
+    #[serde(default)]
+    shell: ShellToml,
     /// Per-env private paths (Idea 3):
     /// `[profile.X.private_paths] "target" = { kind = "cache", persist = true }`.
     #[serde(default)]
@@ -176,6 +178,13 @@ struct ResourcesToml {
 struct EnvVarsToml {
     #[serde(default)]
     pass: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ShellToml {
+    /// `[profile.X.shell] rcfile = ".h5i/box.bashrc"` — a custom bash rcfile for
+    /// interactive `env shell`, relative to `$WORK`. Unset → generated plain rc.
+    rcfile: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -341,6 +350,7 @@ pub fn load_profile(
                 },
                 allow_command_extractors: t.allow_command_extractors
                     || base.allow_command_extractors,
+                shell_rcfile: t.shell.rcfile.or(base.shell_rcfile),
             }
         }
     };
@@ -2154,6 +2164,30 @@ env.pass  = ["PATH", "HOME", "LANG"]
         assert_eq!(p.wall_secs, 30 * 60);
         assert_eq!(p.env_pass, vec!["PATH", "HOME", "LANG"]);
         assert_eq!(p.tools.len(), 5);
+    }
+
+    #[test]
+    fn shell_rcfile_parses_and_defaults_none() {
+        // Unset → None (so the generated plain rc is used, and the policy digest
+        // is unchanged: skip_serializing_if keeps it out of the serialization).
+        let base = load_from_str(doc_example_toml(), "default", None).unwrap();
+        assert_eq!(base.shell_rcfile, None);
+        assert!(
+            !toml::to_string(&ResolvedPolicy::new(base.isolation, base.clone()))
+                .unwrap()
+                .contains("shell_rcfile"),
+            "an unset shell_rcfile must not appear in the serialized (digested) policy"
+        );
+
+        // Set → carried onto the profile.
+        let with_rc = r#"
+[profile.dev]
+isolation = "process"
+[profile.dev.shell]
+rcfile = ".h5i/box.bashrc"
+"#;
+        let p = load_from_str(with_rc, "dev", None).unwrap();
+        assert_eq!(p.shell_rcfile.as_deref(), Some(".h5i/box.bashrc"));
     }
 
     #[test]

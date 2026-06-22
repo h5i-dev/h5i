@@ -336,6 +336,15 @@ pub struct Profile {
     /// Serialized only when `true`, so existing digests are unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_command_extractors: bool,
+    /// Custom bash rcfile for interactive `env shell` sessions, as a path
+    /// **relative to `$WORK`** (the env worktree) — e.g. `.h5i/box.bashrc`. When
+    /// unset, `env shell` launches bash with a generated *plain* rcfile instead
+    /// of the host `~/.bashrc` (which, under confinement, often references tools
+    /// the sandbox blocks — e.g. `~/.local/bin/powerline-shell`). Set this to
+    /// opt a specific env back into a richer, version-controlled rc. Serialized
+    /// only when set, so existing policy digests are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_rcfile: Option<String>,
 }
 
 /// Read-only system paths granted by default at the `process` tier — enough to
@@ -391,6 +400,7 @@ impl Profile {
             ],
             private_paths: Vec::new(),
             allow_command_extractors: false,
+            shell_rcfile: None,
         }
     }
 
@@ -407,8 +417,8 @@ impl Profile {
     ///   identity), and the runtime's own `~/.local/share/<runtime>` binary;
     /// - read-write: **only this runtime's** state (Claude →
     ///   `~/.claude`/`~/.claude.json`, Codex → `~/.codex`), shared caches
-    ///   (`~/.cache`, `~/.npm`), and `/tmp` (host-shared at this tier; the
-    ///   container tier gives a private one);
+    ///   (`~/.cache`, `~/.npm`), and `/tmp` (redirected to per-env scratch by
+    ///   env launch on kernel tiers; private in containers);
     /// - `net.egress`: **only this runtime's** API endpoints, DNS-pinned +
     ///   nftables-enforced at the supervised tier (the lint refuses egress at
     ///   tiers that cannot enforce it — `agent` is a supervised/container
@@ -542,6 +552,12 @@ pub struct ResolvedPolicy {
     /// the host ingests records into the real object store after the run/shell.
     #[serde(skip)]
     pub env_capture_spool: Option<PathBuf>,
+    /// Runtime-only per-env inbound mailbox, mounted READ-ONLY in the box. The
+    /// host fans cross-agent messages (team review requests, etc.) into it at
+    /// send time; the box reads them but cannot write — so it can receive
+    /// securely without write access to the shared coordination store.
+    #[serde(skip)]
+    pub env_inbox: Option<PathBuf>,
     /// Runtime-only per-env private-path binds (Idea 3) — never serialized; the
     /// declarative intent lives in `profile.private_paths` (which *is* digested).
     /// Populated by `env::prepare_private_paths`; applied as bind mounts on the
@@ -566,6 +582,7 @@ impl ResolvedPolicy {
             audit: AuditPolicy::default(),
             box_git: Vec::new(),
             env_capture_spool: None,
+            env_inbox: None,
             private_binds: Vec::new(),
             home_binds: Vec::new(),
         }

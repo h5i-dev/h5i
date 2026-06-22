@@ -58,6 +58,12 @@ Command reference for all h5i subcommands and flags.
   - [Secrets broker](#secrets-broker)
   - [Services and dynamic ports](#services-and-dynamic-ports)
   - [Resource limits](#resource-limits)
+- [h5i team (auditable agent ensembles)](#h5i-team-auditable-agent-ensembles)
+  - [Phase model](#phase-model)
+  - [Lifecycle commands](#lifecycle-commands-1)
+  - [The neutral verifier](#the-neutral-verifier-why-finalization-is-trustworthy)
+  - [Minimal-human-labor finalization](#minimal-human-labor-finalization)
+  - [Worked example](#worked-example)
 - [h5i hook](#h5i-hook)
   - [h5i hook setup](#h5i-hook-setup)
   - [h5i hook session-start](#h5i-hook-session-start)
@@ -2355,7 +2361,7 @@ another reviews and applies). See `docs/environments-design.md` and the live
 |---------|-------------|
 | `h5i env create <name> [--from REV] [--profile P] [--isolation TIER] [--audit signal\|all]` | Create an env: code branch + worktree + reasoning branch + pinned policy. Base frozen at creation. With no `--isolation` (or `--isolation auto`) it **auto-picks the strongest tier the host can run**; an explicit tier fails closed if the host can't satisfy it. `--audit all` pins `[audit] capture = "all"` in the resolved policy so wrapped in-env commands are recorded even when they succeed with small output. |
 | `h5i env run <name> -- <cmd> [args…]` | Run a command inside the env, policy-enforced + capture-wrapped. Exit code passes through; evidence is captured. |
-| `h5i env shell <name> [-- <cmd>]` | Open an **interactive** confined session *inside* the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. Defaults to a login shell. Exit code passes through. The session is **observed**: a `shell` event is logged, and per-command evidence is staged + ingested where the tier supports it (see [In-box git, capture & commit](#in-box-git-capture--commit)). |
+| `h5i env shell <name> [-- <cmd>]` | Open an **interactive** confined session *inside* the env (the "agent-in-box") — stdio inherited, every command the session spawns confined by the box. With `-- <cmd>` that command becomes the session (e.g. `-- claude "<task>"` launches the agent). Boxed agents use staged in-box commands such as `h5i capture run` and `h5i team agent submit`; host-owned refs are ingested when the shell exits. Defaults to a login shell. Exit code passes through. The session is **observed**: a `shell` event is logged, and per-command evidence is staged + ingested where the tier supports it (see [In-box git, capture & commit](#in-box-git-capture--commit)). |
 | `h5i env probe` | Show what isolation this host can actually provide (Landlock ABI, user namespaces, seccomp, seccomp-notif, cgroup v2 delegation, rootless Podman) and which claims are satisfiable. |
 | `h5i env list [--json]` | List environments on this clone (the fleet view). `--json` emits an array of manifests, each enriched with base `drift`. |
 | `h5i env status <name> [--json]` | Lifecycle state + enforced policy + evidence + base drift. `--json` emits the raw manifest. |
@@ -2609,6 +2615,227 @@ the whole process tree (`exit 124`).
 
 ---
 
+## h5i team (auditable agent ensembles)
+
+A **team** runs several agents on the *same* task in their own isolated
+[`h5i env`](#h5i-env-isolated-agent-sandboxes) workspaces and drives them through
+a phased, permissioned **evidence-publication** protocol — *sealed workspaces,
+permissioned reviews, auditable convergence*. It is a thin orchestration layer:
+`env` keeps owning isolation, capture, and propose/apply; `team` owns only the
+coordination (roster, phases, submissions, verdict). It is **not** a group chat
+and **not** a daemon.
+
+A roster member is a **persona, not a backend**: the `agent_id` (e.g.
+`claude-architect`) is the durable actor, while `runtime`/`model`/`role` are
+attributes — so a team can be three Claudes with different system prompts/skills
+(architect / implementer / skeptic), a Claude+Codex mix, or one model under two
+roles. The audit records *which configuration produced which candidate*.
+
+Run state lives in one ref per run, `refs/h5i/team/<run-id>`, as an
+**append-only event log** that is the single source of truth — phase, roster, and
+verdict are *folded* from events (deduped by id, union-merged), never stored as
+mutable fields. It travels with `h5i share push` / `h5i share pull` for a
+cross-clone review loop, and the **Team** views in [`h5i serve`](#h5i-serve)
+render the board, timeline, compare, and verdict.
+
+### Phase model
+
+```
+draft → dispatched → independent_work → sealed_submit → review
+      → discuss (opt-in) → improve → verify → compare → verdict → applied
+```
+
+**Independence-first:** before `freeze` (`sealed_submit`) no agent can see a
+peer's work through the team interface. Discussion is **opt-in and only allowed
+after freeze**, every message is logged, and any candidate revised afterward is
+stamped `independent=false` with its influence edges recorded.
+
+`draft` and `dispatched` are the **same open round** for gating — `add-env`,
+`submit`, and `freeze` all work in either, since `dispatch` only notifies
+inboxes and never locks the round.
+
+### Lifecycle commands
+
+| Command | Description |
+|---------|-------------|
+| `h5i team create <name> [--base REV] [--rounds N] [--title T] [--json]` | Create a run over existing envs. `--base` (default `HEAD`) is the shared base all candidates are compared against. |
+| `h5i team add-env <team> <env> --as <agent-id> [--runtime R] [--model M] [--role ROLE] [--json]` | Add an already-created env to the roster as a persona-bound member. `--as` is the ref-safe actor key; distinct personas on the same runtime need distinct ids. Draft phase only. **Also binds the env's in-box identity to this persona** (writes host-owned `team-identity` / `team-run` files), so `env run`/`env shell` inject `H5I_AGENT=<persona>` and `H5I_TEAM=<team>` for scoped team-agent commands. |
+| `h5i team status [<team>] [--json]` | Folded run state: phase, roster, per-agent submission state. |
+| `h5i team list [--json]` | All runs on this clone. |
+| `h5i team use [<name>] [--clear]` | Pin a **current team** (like git's current branch) so other subcommands can drop `<team>`. No arg prints the current; `--clear` unsets. `create` auto-pins the new run. |
+| `h5i team submit <team> --agent <id> [--commit OID] [--summary-file F] [--json]` | Freeze the agent's env-branch tip (or `--commit`) as an **immutable** submission — frozen commit/tree oids + diffstat + capture ids, reviewable even if the env later changes. |
+| `h5i team agent submit [--commit OID] [--summary-file F] [--json]` | In-box submit for a bound team env. In sealed envs it writes a scoped request to the env spool; the host applies it to `refs/h5i/team/*` when the env shell exits. Host-side it submits as `$H5I_AGENT` / `$H5I_TEAM`. |
+| `h5i team agent inbox [<team>] [--peek] [--wait] [--interval 10] [--timeout 1800] [--json]` | Scoped inbox for the team persona. In a sealed box it reads the host-fanned **per-env inbox** (`$H5I_ENV_INBOX`, read-only); host-side it reads the shared store. `--wait` blocks (peek-only) until a message is waiting or the timeout — use it after submitting to await a review request without ending the session. |
+| `h5i team agent hook [<team>] [--block] [--quiet] [--timeout 1800] [--interval 10]` | Stop-hook delivery: keeps an agent in an unfinished round from stopping and feeds in review requests. `--block` (Claude **and Codex** — their Stop hooks share the same `{"decision":"block"}` continuation contract) waits up to `--timeout` for the next message, then blocks the stop and hands it back; `--quiet` prints one-shot (manual). Released by a `TEAM_DONE` signal (sent on finalize/apply) or the timeout. Registered via `h5i hook setup --team`; no-ops outside a team. |
+| `h5i team freeze <team> [--allow-missing] [--json]` | Transition draft → `sealed_submit`. Refuses if any roster member has no submission unless `--allow-missing` (records abstentions). |
+| `h5i team compare <team> [--json]` | Side-by-side candidates + verifier metrics (advisory only — does not pick a winner). |
+| `h5i team sync <team> [--json]` | **Live ingest**: apply every agent's staged in-box submissions/reviews to `refs/h5i/team/*` now, without the box exiting (the on-demand counterpart to the at-exit ingest). Lets a run advance while the team Stop hook keeps boxes alive — no relaunch. |
+| `h5i team verify <team> --agent <id> [--isolation TIER] -- <cmd>` | **Neutral, sandboxed verifier**: replays the frozen candidate into a throwaway worktree at the run base and runs `<cmd>` under the fail-closed `default` build/test profile. `--isolation` (`workspace`/`process`/`supervised`/`container`) defaults to the strongest tier the host can enforce (falls back to `workspace`); the tier is recorded on the verification. |
+| `h5i team finalize <team> [--json]` | Apply the finalization rule over **verifier** evidence → a verdict event. Hard gates (tests pass, applies cleanly) first; `smallest diff` only breaks ties among gate-passers. Records method + the verifier command + losers' reasons. No gate-passer → `no_verdict` (never applies a loser). |
+| `h5i team apply <team> [--winner <submission-id>] [--force] [--json]` | Replay the winning submission's recorded patch (`base..commit`) into the current branch and commit; records source + target commit oids; on conflict records an event, never mutates the artifact. Gated on the verdict's `can_auto_apply` unless `--force`. |
+| `h5i team worker --once \| --watch [--interval N] [--id ID] [--lease-ttl S] [--json]` | Optional automation: one lease-and-finalize pass (`--once`) or an opt-in in-process loop (`--watch`). **Finalize-only — never auto-applies.** Leases are idempotent + TTL'd; for production prefer an external scheduler driving `--once`. |
+| `h5i team dispatch <team> --prompt-file F [--json]` | Send the task to **every roster agent in one command** over [`h5i msg`](#h5i-msg) (an `ASK` per persona, tagged with the team + round) — no per-env pasting. It **notifies, it does not launch**: each agent must be running in its env to pick the task out of its inbox. Receipt/progress count only when the agent replies ACK/DONE threaded to the dispatch. |
+| `h5i team grant-review <team> --reviewer A --target B [--artifacts diff,summary,tests] [--json]` | Open a permissioned review: grant reviewer A scoped access to target B's round artifacts (never raw logs or persona bodies by default) + send a `REVIEW_REQUEST`. |
+| `h5i team review submit <team> --reviewer A --target B --file F [--json]` | Record a review body for a target candidate. |
+| `h5i team discuss <team> --from S --to A,B --file F [--artifacts ids] [--json]` | Send a logged, influence-tracked discussion message (post-freeze only). |
+
+`<env>` accepts a bare slug, `agent/slug`, or the full `env/agent/slug`.
+
+**Current team.** The single-`<team>` subcommands (`status`, `submit`, `freeze`,
+`compare`, `sync`, `finalize`, `apply`, `dispatch`, `grant-review`, `discuss`,
+`review submit`) default to the **current team** when you omit it — set it with `h5i team
+use <name>` (or let `create` set it). `add-env`/`verify` keep `<team>` required
+(they take a second positional). The flat CLI stays canonical, so this never
+changes scripting/cron/agent behavior (always pass `<team>` there). For fast
+typing, generate shell completion: `h5i completion <bash|zsh|fish|powershell> >
+…` (e.g. `h5i completion bash | sudo tee /etc/bash_completion.d/h5i`).
+
+**Dispatching the task to the whole ensemble.** `h5i team dispatch` sends the
+task to every roster agent at once (you never paste the prompt per env). It is a
+**notification, not a launcher**: the shared message log and cursors are
+host-owned coordination state, not writable from sealed boxes. Use
+`scripts/team-launch.sh --task` for normal interactive runs; it dispatches for
+the host-visible log and embeds the task text directly in each boxed agent's
+startup prompt.
+
+```bash
+h5i team dispatch fix-auth --prompt-file task.md   # one host-side broadcast → all agents
+# bring each agent up in its box; the launcher normally embeds the task text
+h5i env shell env/claude-architect/fix-auth        # in-box H5I_AGENT=claude-architect
+h5i env shell env/codex/fix-auth                   # in-box H5I_AGENT=codex
+```
+
+**Sealed-box I/O (the per-env channel).** A confined box can't read or write the
+host-owned coordination store (`.git/.h5i/msg`, `refs/h5i/team/*`) — that's what
+keeps an agent from forging messages or corrupting the event log. h5i bridges it
+with a per-env channel, mirrored in both directions:
+
+- **Inbound** — a host-owned `<env>/inbox/` dir, mounted **read-only** in the box
+  (`$H5I_ENV_INBOX`). When the host sends to a team agent (`grant-review`,
+  `discuss`, `msg send`), it also drops the message there, so a *running* box
+  receives review requests live via `h5i team agent inbox` / `--wait` / the team
+  Stop hook — and messages persist for a box that's down. The box reads only its
+  own inbox and can't write it.
+- **Outbound** — `h5i team agent submit` and `h5i team review submit` write a
+  scoped request to the box-writable spool; the host applies it under the
+  identity-validated env binding (the box chooses *what*, never *who as*). It is
+  ingested when the env shell exits, or **on demand via `h5i team sync`** while
+  the box stays alive.
+
+So the box participates in the round securely without any write access to the
+shared store: the agent works normally, uses `h5i capture run -- <cmd>` for
+evidence, reviews peers, and re-submits — all in the box, no relaunch.
+
+**One-command bring-up.** `scripts/team-launch.sh <team> [--task <file>]` automates
+the grid: it reads the roster, optionally `dispatch`es the task for the host log,
+embeds the task text in each agent's startup prompt, and opens one interactive
+agent per env — launching `claude` or `codex` per the member's runtime via
+`h5i env shell <env> -- <agent> …`. **By default each env gets its
+own terminal window** — Windows Terminal (`wt.exe`) on WSL, a desktop terminal
+emulator on Linux-with-a-display, else a tmux window per env (Ctrl-b n/p to
+switch). `--panes` tiles them all in one tmux window; `--gui`/`--windows` force a
+backend. Re-running never collides — an existing `h5i-team-<team>` session falls
+through to `…-2`, `…-3`. Each box auto-identifies as its persona and team, and
+submissions are staged through `h5i team agent submit`.
+
+```bash
+scripts/team-launch.sh fix-auth --task task.md   # dispatch + embedded task + a tmux window per agent
+tmux attach -t h5i-team-fix-auth                  # supervise; watch the board in `h5i serve`
+```
+
+*Install (optional).* The script needs `jq` and `tmux` (or `--gui`) on top of
+`h5i`. Run it in place from a clone, or symlink it onto your `PATH` so it works
+from any repo:
+
+```bash
+# from a clone of the h5i repo:
+ln -s "$(pwd)/scripts/team-launch.sh" ~/.local/bin/h5i-team-launch
+# ensure ~/.local/bin is on $PATH, then anywhere:
+h5i-team-launch fix-auth --task task.md
+# if the `h5i` binary isn't on $PATH, point to it:
+H5I=/path/to/h5i h5i-team-launch fix-auth
+```
+
+### Automated peer-review cycle
+
+Three scripts compose into a hands-off run. Install the team Stop hook once so
+boxes stay alive between turns instead of exiting after each submit:
+
+```bash
+h5i hook setup --write --team
+```
+
+- **`scripts/team-launch.sh <team> [--task F]`** — bring up one box per agent
+  (above). Each agent implements and runs `h5i team agent submit`.
+- **`scripts/team-review.sh <team>`** — open the review round: `freeze`, grant
+  **mutual** review access (each grant fans a request into the reviewer's inbox),
+  and send every agent a review-and-revise prompt. A running box picks it up via
+  the team Stop hook; `--relaunch` re-opens any box that already exited.
+- **`scripts/team-run.sh <team> [--task F] [--verify-cmd "<cmd>"] [--apply]`** —
+  the full driver. It launches, then **polls with `h5i team sync`** to advance
+  each phase: wait until all submitted → freeze → grant review → wait until all
+  revised → `verify` each candidate → `finalize` (the neutral verdict) →
+  optionally `apply`. `finalize`/`apply` fan a `TEAM_DONE` signal that releases
+  the boxes.
+
+```bash
+h5i hook setup --write --team
+scripts/team-run.sh fix-auth --task task.md --verify-cmd "cargo test" --apply
+# → individual implementation → peer review → improvement → neutral verdict, hands-off
+```
+
+`team sync` is the keystone: it ingests each box's staged submissions/reviews on
+demand, so the host sees them while the boxes stay alive waiting (the at-exit
+ingest alone would deadlock with the wait-hook).
+
+### The neutral verifier (why finalization is trustworthy)
+
+Finalization must not trust an agent's *own* captures — an agent can run weak
+tests, omit failures, or report the wrong result. `h5i team verify` is the
+authority: for each frozen submission it replays the candidate at the **shared
+base** in a fresh worktree and runs the declared command **sandboxed** under
+h5i's confinement (the same machinery as `h5i env`). The hard gates
+(`VerifierTestsPass`, `AppliesCleanly`) come only from this run; the recorded
+diffstat tie-breaker (`SmallestDiff`) is consulted **only among candidates that
+pass every gate** — so a candidate can't win by deleting tests or stubbing
+features. If candidates were verified with *different* commands, `finalize`
+refuses (`no_verdict`) — the comparison isn't apples-to-apples.
+
+### Minimal-human-labor finalization
+
+The default rule is `VerifierTestsPass, AppliesCleanly, SmallestDiff` and runs
+with no human in the loop, yet every verdict is **explainable** (method + which
+verifier command + the losers' reasons). `apply` will only auto-apply a verdict
+that passed the gates (`can_auto_apply`); `--force` is an explicit, logged
+override. A run where nothing clears the gates records `no_verdict` and stops —
+the one place a human is pinged, by choice.
+
+### Worked example
+
+```bash
+h5i team create fix-auth --base HEAD
+h5i team add-env fix-auth env/claude-architect/fix-auth --as claude-architect --runtime claude --role architect
+h5i team add-env fix-auth env/codex/fix-auth          --as codex --runtime codex --role implementer
+# each boxed agent works in its own env, then runs:
+h5i team agent submit
+# the host ingests those staged submits when each env shell exits
+h5i team freeze fix-auth                              # seals both independent attempts
+# neutral, sandboxed verifier re-runs each candidate at the shared base
+h5i team verify fix-auth --agent claude-architect -- cargo test
+h5i team verify fix-auth --agent codex          -- cargo test
+h5i team compare  fix-auth                            # side-by-side + verifier metrics
+h5i team finalize fix-auth                            # explainable verdict over verifier evidence
+h5i team apply    fix-auth                            # replays the winning patch (gated)
+```
+
+Hands-off via an external scheduler (recommended — crash-resilient, no daemon):
+
+```cron
+* * * * * cd /repo && h5i team worker --once >> /var/log/h5i-team.log 2>&1
+```
+
+---
+
 ## h5i hook
 
 ```
@@ -2626,7 +2853,7 @@ h5i hook wrap-bash                      # PreToolUse Bash handler (token-reducti
 
 ### h5i hook setup
 
-`h5i hook setup` (no flags) prints the install instructions. `h5i hook setup --write` writes the wiring directly: Claude Code into `.claude/settings.json` and Codex into `.codex/config.toml`, merged idempotently (each managed command is replaced in place; your own hooks and env keys are preserved). Add `--target claude` or `--target codex` to write only one agent's config, `--scope user` to write the user-level config instead of the repo's, and `--wrap-bash` to also register the optional Bash capture-wrap hook.
+`h5i hook setup` (no flags) prints the install instructions. `h5i hook setup --write` writes the wiring directly: Claude Code into `.claude/settings.json` and Codex into `.codex/config.toml`, merged idempotently (each managed command is replaced in place; your own hooks and env keys are preserved). Add `--target claude` or `--target codex` to write only one agent's config, `--scope user` to write the user-level config instead of the repo's, `--wrap-bash` to also register the optional Bash capture-wrap hook, and `--team` to also register the team peer-review Stop hook (below).
 
 For **Claude Code**, `--write` installs four hooks into `.claude/settings.json`:
 
@@ -2672,6 +2899,8 @@ command = "h5i hook codex finish --quiet"
 Codex requires reviewing/trusting local hooks via `/hooks`; project-local hooks only load after the project `.codex/` layer is trusted.
 
 **Bash capture-wrap (`--wrap-bash`, optional).** Adds a `PreToolUse` Bash hook (`h5i hook wrap-bash`) that rewrites every Bash command into a `h5i capture run` wrapper, so the agent receives a token-reduced summary for large/failing output while the full raw bytes stay stored and searchable via `h5i recall`. Off by default. Note: with it enabled, permission allowlists then match the rewritten `h5i capture run …` command, not the original.
+
+**Team peer-review (`--team`, optional).** Adds a second `Stop` hook — `h5i team agent hook --block` for **both Claude and Codex** (their Stop hooks share the same `{"decision":"block","reason":…}` continuation contract). When the agent is a member of a live [`h5i team`](#h5i-team-auditable-agent-ensembles) round, it keeps the agent from stopping while it still owes work, **waits** for the next review before releasing the stop, and surfaces requests between turns. Each entry carries a long per-hook `timeout` (~1830s) so the agent runtime doesn't kill it mid-wait (set as the Claude hook's `timeout`, and the Codex handler's `timeout` field); a `TEAM_DONE` signal (sent by `finalize`/`apply`) releases it. It **no-ops outside a team**, so it's safe to leave installed. This is what lets `scripts/team-run.sh` drive the full peer-review cycle hands-off — for **both** agent runtimes — with boxes staying alive between turns.
 
 **MCP server (manual).** Hook setup no longer wires the MCP server — register it by hand if you want native h5i tools in Claude Code. Add the `mcpServers` block to `~/.claude/settings.json`:
 

@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use console::style;
 use git2::Oid;
 use std::path::{Path, PathBuf};
@@ -220,6 +220,60 @@ fn stdin_stop_hook_active() -> bool {
         .ok()
         .and_then(|v| v.get("stop_hook_active").and_then(|b| b.as_bool()))
         .unwrap_or(false)
+}
+
+/// Box-side team inbox read. A confined agent can't reach the shared msg store,
+/// so it reads the host-fanned per-env read-only mailbox (`$H5I_ENV_INBOX`),
+/// deduped against a box-writable "seen" cursor in the capture spool
+/// (`$H5I_ENV_CAPTURE_SPOOL`). `consume` advances the cursor. Returns `None`
+/// when not running in a box with an inbox (so the caller falls back to the
+/// host-side path).
+fn box_team_inbox(consume: bool) -> Option<Vec<msg::Message>> {
+    let inbox = std::path::PathBuf::from(std::env::var_os(h5i_core::env::H5I_ENV_INBOX_VAR)?);
+    let spool = std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR)
+        .map(std::path::PathBuf::from);
+    let seen = spool
+        .as_deref()
+        .map(h5i_core::env::read_inbox_cursor)
+        .unwrap_or_default();
+    let unread: Vec<msg::Message> = h5i_core::env::read_env_inbox(&inbox)
+        .into_iter()
+        .filter(|m| !seen.contains(&m.id))
+        .collect();
+    if consume && !unread.is_empty() {
+        if let Some(spool) = spool.as_deref() {
+            let mut seen = seen;
+            for m in &unread {
+                seen.insert(m.id.clone());
+            }
+            let _ = h5i_core::env::write_inbox_cursor(spool, &seen);
+        }
+    }
+    Some(unread)
+}
+
+/// Fan a TEAM_DONE "round complete" signal into every team agent's inbox (and
+/// the shared store) so the waiting team Stop hook releases the agent and lets
+/// it stop. Best-effort: called after finalize/apply, errors are swallowed.
+fn fan_out_team_done(git: &git2::Repository, h5i_root: &std::path::Path, team: &str, actor: &str) {
+    let Ok(status) = h5i_core::team::status(git, team) else {
+        return;
+    };
+    for a in &status.run.agents {
+        if let Ok(m) = msg::send_msg(
+            git,
+            h5i_root,
+            actor,
+            &a.agent_id,
+            "team round complete — you may stop",
+            msg::SendOpts {
+                kind: Some(h5i_core::team::TEAM_DONE_KIND.into()),
+                ..Default::default()
+            },
+        ) {
+            h5i_core::env::fan_out_to_env_inbox(h5i_root, &a.agent_id, Some(team), &m);
+        }
+    }
 }
 
 /// One sanitised line per message for `h5i msg watch --plain` — the format the
@@ -617,6 +671,14 @@ enum Commands {
     /// Initialize the h5i sidecar in the current repository
     Init,
 
+    /// Generate a shell completion script (bash, zsh, fish, …); e.g.
+    /// `h5i completion bash > /etc/bash_completion.d/h5i`
+    Completion {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
     /// Record provenance — commit, memory snapshot.
     /// Run `h5i capture --help` for the verb table with runnable examples.
     Capture {
@@ -650,6 +712,12 @@ enum Commands {
     Env {
         #[command(subcommand)]
         action: EnvCommands,
+    },
+
+    /// Agent teams — phased evidence publication over existing h5i envs.
+    Team {
+        #[command(subcommand)]
+        action: TeamCommands,
     },
 
     /// Commit staged changes with AI provenance and quality tracking
@@ -1862,6 +1930,331 @@ enum EnvCommands {
 }
 
 #[derive(Subcommand)]
+enum TeamCommands {
+    /// Create a team run over existing h5i environments
+    Create {
+        /// Team id (ref-safe slug)
+        name: String,
+        /// Base revision shared by all candidates
+        #[arg(long, default_value = "HEAD")]
+        base: String,
+        /// Maximum improvement rounds planned for this run
+        #[arg(long, default_value_t = 1)]
+        rounds: u32,
+        /// Human-readable label; defaults to the team id
+        #[arg(long)]
+        title: Option<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List team runs
+    List {
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show or set the current team (omit NAME to show; --clear to unset)
+    Use {
+        /// Team id to make current; omit to print the current team
+        name: Option<String>,
+        /// Clear the current-team pointer
+        #[arg(long)]
+        clear: bool,
+    },
+    /// Add an existing env to a team roster
+    AddEnv {
+        /// Team id
+        team: String,
+        /// Env name (`slug`, `agent/slug`, or `env/agent/slug`)
+        env: String,
+        /// Ref-safe agent key for this team (default: a generated name)
+        #[arg(long = "as")]
+        as_agent: Option<String>,
+        /// Runtime adapter (`claude`, `codex`, etc.)
+        #[arg(long)]
+        runtime: Option<String>,
+        /// Model label
+        #[arg(long)]
+        model: Option<String>,
+        /// Persona markdown file injected into this agent's launch prompt
+        /// (its standing working style — see examples/personas/)
+        #[arg(long)]
+        persona: Option<std::path::PathBuf>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show a team run
+    Status {
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print an agent's persona markdown (the launcher uses this to inject it)
+    Persona {
+        /// Team agent key (the `--as` name)
+        agent: String,
+        /// Team id (defaults to the current team — see `team use`)
+        #[arg(long)]
+        team: Option<String>,
+    },
+    /// Freeze one agent's candidate as an immutable submission
+    Submit {
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
+        /// Team agent id
+        #[arg(long)]
+        agent: String,
+        /// Commit to submit; defaults to the env branch tip
+        #[arg(long)]
+        commit: Option<String>,
+        /// Summary text file
+        #[arg(long = "summary-file")]
+        summary_file: Option<std::path::PathBuf>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Move a draft team into sealed_submit after required submissions exist
+    Freeze {
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
+        /// Permit a partial freeze and record missing submissions
+        #[arg(long)]
+        allow_missing: bool,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compare team candidates side by side
+    Compare {
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Ingest agents' staged submissions/reviews now, without exiting their
+    /// boxes (live counterpart to the at-exit ingest). Lets a run advance while
+    /// the team Stop hook keeps boxes alive — no relaunch needed.
+    Sync {
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run neutral verifier evidence for one submitted candidate
+    Verify {
+        /// Team id
+        team: String,
+        /// Team agent id whose latest submission should be verified
+        #[arg(long)]
+        agent: String,
+        /// Isolation tier for the sandboxed verifier (workspace|process|
+        /// supervised|container); default auto-picks the strongest the host can
+        /// enforce, falling back to workspace
+        #[arg(long)]
+        isolation: Option<String>,
+        /// Verifier command and args (everything after `--`), e.g. `-- cargo test`
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
+        cmd: Vec<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Evaluate the conservative verifier-based finalization policy
+    Finalize {
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Apply the selected winner into the current branch
+    Apply {
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
+        /// Submission id; defaults to the finalized winner
+        #[arg(long)]
+        winner: Option<String>,
+        /// Override verifier verdict / auto-apply gate
+        #[arg(long)]
+        force: bool,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Optional automation worker: lease runs and finalize verifier-ready teams
+    Worker {
+        /// Run one finalize pass and exit (mutually exclusive with --watch)
+        #[arg(long)]
+        once: bool,
+        /// Opt-in convenience loop: repeat the one-shot pass every --interval
+        /// seconds until interrupted. Still finalize-only; never auto-applies.
+        /// For production prefer an external scheduler (cron/systemd/CI) driving
+        /// `--once` — crash-resilient and needs no long-lived process.
+        #[arg(long, conflicts_with = "once")]
+        watch: bool,
+        /// Seconds to sleep between passes in --watch mode
+        #[arg(long, default_value_t = 30)]
+        interval: u64,
+        /// Worker id (ref-safe)
+        #[arg(long, default_value = "team-worker")]
+        id: String,
+        /// Lease TTL in seconds
+        #[arg(long, default_value_t = 300)]
+        lease_ttl: i64,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Dispatch a prompt to every team agent through h5i msg
+    Dispatch {
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
+        /// Prompt text file
+        #[arg(long = "prompt-file")]
+        prompt_file: std::path::PathBuf,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Send a logged, influence-tracked post-submit discussion message
+    Discuss {
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
+        /// Sender team agent id
+        #[arg(long)]
+        from: String,
+        /// Comma-separated recipient team agent ids
+        #[arg(long)]
+        to: String,
+        /// Message body file
+        #[arg(long)]
+        file: std::path::PathBuf,
+        /// Comma-separated artifact ids referenced by this message
+        #[arg(long, default_value = "")]
+        artifacts: String,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Grant one team agent review access to another agent's submitted artifacts
+    GrantReview {
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
+        /// Reviewing team agent id
+        #[arg(long)]
+        reviewer: String,
+        /// Target team agent id
+        #[arg(long)]
+        target: String,
+        /// Comma-separated artifact kinds (diff,summary,tests,test-status)
+        #[arg(long, default_value = "diff,summary,tests")]
+        artifacts: String,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record a review body for a target candidate
+    Review {
+        #[command(subcommand)]
+        action: TeamReviewCommands,
+    },
+    /// Scoped commands for a team agent running from a bound env
+    Agent {
+        #[command(subcommand)]
+        action: TeamAgentCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum TeamReviewCommands {
+    /// Submit a review body
+    Submit {
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
+        /// Reviewing team agent id
+        #[arg(long)]
+        reviewer: String,
+        /// Target team agent id
+        #[arg(long)]
+        target: String,
+        /// Review text file
+        #[arg(long)]
+        file: std::path::PathBuf,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TeamAgentCommands {
+    /// Read this team persona's inbox when running host-side
+    Inbox {
+        /// Team id; defaults to $H5I_TEAM or the current team
+        team: Option<String>,
+        /// Show without advancing the cursor
+        #[arg(long)]
+        peek: bool,
+        /// Block until a team message is waiting, then print it and exit
+        /// (peek-only — does not consume). Use after submitting to await a
+        /// review request without ending the session.
+        #[arg(long)]
+        wait: bool,
+        /// Poll interval in seconds while --wait is set.
+        #[arg(long, default_value_t = 10)]
+        interval: u64,
+        /// Give up after this many seconds while --wait is set (0 = forever).
+        #[arg(long, default_value_t = 1800)]
+        timeout: u64,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop-hook: keep this agent working while its team round is unfinished
+    /// and deliver pending review requests between turns. Registered by
+    /// `h5i hook setup --team`. No-ops outside a team and inside a sealed box.
+    Hook {
+        /// Team id; defaults to $H5I_TEAM or the current team
+        team: Option<String>,
+        /// Block the stop (Claude Code) and feed pending messages back so the
+        /// agent keeps working; without it, just surface them.
+        #[arg(long)]
+        block: bool,
+        /// Print plain text with no JSON wrapper (Codex Stop hook / manual).
+        #[arg(long)]
+        quiet: bool,
+        /// While --block, wait up to this many seconds for the next message
+        /// before allowing the stop (0 = check once, don't wait). Lets a team
+        /// agent stay alive between turns until a review arrives or the round
+        /// ends, instead of relying on it to run `inbox --wait` itself.
+        #[arg(long, default_value_t = 1800)]
+        timeout: u64,
+        /// Poll interval in seconds while waiting.
+        #[arg(long, default_value_t = 10)]
+        interval: u64,
+    },
+    /// Submit this env persona's candidate; boxed envs stage for host ingest
+    Submit {
+        /// Commit to submit; defaults to the env branch tip
+        #[arg(long)]
+        commit: Option<String>,
+        /// Summary text file
+        #[arg(long = "summary-file")]
+        summary_file: Option<std::path::PathBuf>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum EnvServiceCommands {
     /// Start a declared service as a confined background process
     Start {
@@ -2189,6 +2582,15 @@ enum HookCommands {
         /// `h5i capture run …` command, not the original.
         #[arg(long, requires = "write")]
         wrap_bash: bool,
+
+        /// Also register the team peer-review Stop hook
+        /// (`h5i team agent hook`): when this agent is running in an active
+        /// `h5i team` round, it keeps the agent from stopping while it still
+        /// owes work and surfaces incoming review requests between turns. For
+        /// Claude it blocks the stop; for Codex it prints the pending review.
+        /// Off by default; safe to leave on outside a team (it no-ops).
+        #[arg(long, requires = "write")]
+        team: bool,
     },
 
     /// Run as the shared SessionStart handler: injects prior context into the agent context window.
@@ -4376,14 +4778,13 @@ fn main() -> anyhow::Result<()> {
                         branch,
                         ..Default::default()
                     };
-                    report_sent(&msg::send_msg(
-                        git,
-                        &h5i_root,
-                        &me,
-                        &to,
-                        &body.join(" "),
-                        opts,
-                    )?);
+                    let sent =
+                        msg::send_msg(git, &h5i_root, &me, &to, &body.join(" "), opts)?;
+                    // Mirror to a confined recipient's per-env read-only inbox so a
+                    // boxed team agent receives it (team id unknown here → match on
+                    // the recipient agent). No-op if the recipient isn't boxed.
+                    h5i_core::env::fan_out_to_env_inbox(&h5i_root, &to, None, &sent);
+                    report_sent(&sent);
                 }
 
                 Some(MsgCommands::Ask {
@@ -4973,6 +5374,9 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
+        Commands::Completion { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "h5i", &mut std::io::stdout());
+        }
         Commands::Init => {
             let repo = H5iRepository::open(".")?;
             println!(
@@ -5839,6 +6243,7 @@ fn main() -> anyhow::Result<()> {
             target,
             scope,
             wrap_bash,
+            team,
         }) => {
             if write {
                 let targets = target
@@ -5888,10 +6293,22 @@ fn main() -> anyhow::Result<()> {
                     let existing = std::fs::read_to_string(&path).unwrap_or_default();
                     let merged = match target {
                         HookTarget::Claude => {
-                            h5i_core::hooks::merge_hook_settings_json(&existing, wrap_bash)?
+                            let core =
+                                h5i_core::hooks::merge_hook_settings_json(&existing, wrap_bash)?;
+                            if team {
+                                h5i_core::hooks::merge_team_hook_settings_json(&core)?
+                            } else {
+                                core
+                            }
                         }
                         HookTarget::Codex => {
-                            h5i_core::hooks::merge_codex_config_toml(&existing, wrap_bash)?
+                            let core =
+                                h5i_core::hooks::merge_codex_config_toml(&existing, wrap_bash)?;
+                            if team {
+                                h5i_core::hooks::merge_team_hook_codex_toml(&core)?
+                            } else {
+                                core
+                            }
                         }
                     };
                     if let Some(parent) = path.parent() {
@@ -5952,6 +6369,16 @@ fn main() -> anyhow::Result<()> {
                         style("--wrap-bash").bold(),
                         style("h5i capture run").yellow(),
                         style("h5i recall").yellow(),
+                    );
+                }
+                if team {
+                    println!(
+                        "   {} {} ({}) — keeps an agent in an active {} round from stopping\n\
+                         \x20  while it owes work; surfaces review requests between turns.",
+                        style("Team peer-review:").dim(),
+                        style("h5i team agent hook").bold(),
+                        style("Stop").dim(),
+                        style("h5i team").yellow(),
                     );
                 }
                 println!();
@@ -8767,6 +9194,845 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
+        Commands::Team { action } => {
+            if let TeamCommands::Agent {
+                action:
+                    TeamAgentCommands::Submit {
+                        commit,
+                        summary_file,
+                        json,
+                    },
+            } = &action
+            {
+                let env_spool =
+                    std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR).map(PathBuf::from);
+                let in_box = env_spool.is_some()
+                    && std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok()
+                    && std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
+                if let (true, Some(spool)) = (in_box, env_spool) {
+                    let summary = match summary_file {
+                        Some(path) => Some(std::fs::read_to_string(path).map_err(|e| {
+                            anyhow::anyhow!(
+                                "failed to read summary file {}: {e}",
+                                path.display()
+                            )
+                        })?),
+                        None => None,
+                    };
+                    let request = h5i_core::env::TeamSubmitSpool {
+                        commit: commit.clone(),
+                        summary,
+                    };
+                    let staged = h5i_core::env::write_team_submit_spool(&spool, &request)?;
+                    if *json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "staged": staged,
+                                "host_ingest": "env-shell-exit"
+                            }))?
+                        );
+                    } else {
+                        println!(
+                            "{} team submit staged for host ingest ({})",
+                            style("▢").cyan().dim(),
+                            staged
+                        );
+                    }
+                    return Ok(());
+                }
+            }
+            let repo = H5iRepository::open(".")?;
+            let h5i_root = repo.h5i_root.clone();
+            let git = repo.git();
+            // Sync the shared env roster to disk — but never in a sealed box,
+            // where the host-owned env manifests are read-only (the write only
+            // fails with EACCES and spams a warning). The box already has its
+            // own env materialized; the shared roster is the host's concern.
+            if std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_err() {
+                if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
+                    eprintln!(
+                        "{} could not sync shared env manifests: {e}",
+                        style("warning:").yellow()
+                    );
+                }
+            }
+            let actor = std::env::var("H5I_AGENT").unwrap_or_else(|_| "human".to_string());
+
+            match action {
+                TeamCommands::Create { name, base, rounds, title, json } => {
+                    let run = h5i_core::team::create(
+                        git,
+                        &name,
+                        title.as_deref().unwrap_or(&name),
+                        &base,
+                        rounds,
+                        &actor,
+                    )?;
+                    let _ = h5i_core::team::set_current(&h5i_root, &run.id);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&run)?);
+                    } else {
+                        let status = h5i_core::team::status(git, &run.id)?;
+                        print!("{}", h5i_core::team::render_status(&status));
+                    }
+                }
+                TeamCommands::List { json } => {
+                    let runs = h5i_core::team::list(git)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&runs)?);
+                    } else {
+                        print!("{}", h5i_core::team::render_list(&runs));
+                    }
+                }
+                TeamCommands::Use { name, clear } => {
+                    if clear {
+                        h5i_core::team::clear_current(&h5i_root)?;
+                        println!("cleared current team");
+                    } else if let Some(name) = name {
+                        h5i_core::team::status(git, &name)?; // validate it exists before pinning
+                        h5i_core::team::set_current(&h5i_root, &name)?;
+                        println!("current team \u{2192} {name}");
+                    } else {
+                        match h5i_core::team::get_current(&h5i_root) {
+                            Some(c) => println!("{c}"),
+                            None => println!("(no current team — set one: h5i team use <name>)"),
+                        }
+                    }
+                }
+                TeamCommands::AddEnv {
+                    team,
+                    env,
+                    as_agent,
+                    runtime,
+                    model,
+                    persona,
+                    json,
+                } => {
+                    // Default the agent key to a generated name so the user
+                    // doesn't have to invent a ref-safe key; `--as` overrides.
+                    let (agent_id, generated) = match as_agent {
+                        Some(a) => (a, false),
+                        None => {
+                            let existing: Vec<String> = h5i_core::team::status(git, &team)?
+                                .run
+                                .agents
+                                .into_iter()
+                                .map(|a| a.agent_id)
+                                .collect();
+                            (h5i_core::team::gen_agent_id(&existing), true)
+                        }
+                    };
+                    // Read the persona markdown (cap the size — it is injected
+                    // into a prompt, not meant to be a whole codebase).
+                    const PERSONA_MAX: u64 = 64 * 1024;
+                    let persona_text = match persona {
+                        Some(path) => {
+                            let meta = std::fs::metadata(&path).map_err(|e| {
+                                anyhow::anyhow!("persona file {}: {e}", path.display())
+                            })?;
+                            if meta.len() > PERSONA_MAX {
+                                anyhow::bail!(
+                                    "persona file {} is {} bytes (max {PERSONA_MAX})",
+                                    path.display(),
+                                    meta.len()
+                                );
+                            }
+                            Some(std::fs::read_to_string(&path).map_err(|e| {
+                                anyhow::anyhow!("persona file {}: {e}", path.display())
+                            })?)
+                        }
+                        None => None,
+                    };
+                    let run = h5i_core::team::add_env(
+                        git, &h5i_root, &team, &env, &agent_id, runtime, model, persona_text,
+                        &actor,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&run)?);
+                    } else {
+                        if generated {
+                            eprintln!(
+                                "{} assigned agent key {} (override with --as)",
+                                STEP,
+                                style(&agent_id).green().bold()
+                            );
+                        }
+                        let status = h5i_core::team::status(git, &team)?;
+                        print!("{}", h5i_core::team::render_status(&status));
+                    }
+                }
+                TeamCommands::Persona { agent, team } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    if let Some(text) = h5i_core::team::persona(git, &h5i_root, &team, &agent)? {
+                        print!("{text}");
+                    }
+                }
+                TeamCommands::Status { team, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let status = h5i_core::team::status(git, &team)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&status)?);
+                    } else {
+                        print!("{}", h5i_core::team::render_status(&status));
+                    }
+                }
+                TeamCommands::Submit {
+                    team,
+                    agent,
+                    commit,
+                    summary_file,
+                    json,
+                } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let summary = match summary_file {
+                        Some(path) => Some(std::fs::read_to_string(&path).map_err(|e| {
+                            anyhow::anyhow!("failed to read summary file {}: {e}", path.display())
+                        })?),
+                        None => None,
+                    };
+                    let artifact = h5i_core::team::submit(
+                        git,
+                        &h5i_root,
+                        &team,
+                        &agent,
+                        commit.as_deref(),
+                        summary,
+                        &actor,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&artifact)?);
+                    } else {
+                        println!(
+                            "{} submitted {} for {} at {}",
+                            SUCCESS,
+                            artifact.id,
+                            artifact.owner_agent,
+                            &artifact.commit_oid[..12.min(artifact.commit_oid.len())]
+                        );
+                    }
+                }
+                TeamCommands::Freeze { team, allow_missing, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let run = h5i_core::team::freeze(git, &team, allow_missing, &actor)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&run)?);
+                    } else {
+                        let status = h5i_core::team::status(git, &team)?;
+                        print!("{}", h5i_core::team::render_status(&status));
+                    }
+                }
+                TeamCommands::Compare { team, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let rows = h5i_core::team::compare(git, &h5i_root, &team)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&rows)?);
+                    } else {
+                        print!("{}", h5i_core::team::render_compare(&rows));
+                    }
+                }
+                TeamCommands::Sync { team, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let drained = h5i_core::team::sync_outbound(git, &h5i_root, &team)?;
+                    let total: usize = drained.iter().map(|(_, n)| n).sum();
+                    if json {
+                        let rows: Vec<_> = drained
+                            .iter()
+                            .map(|(a, n)| serde_json::json!({ "agent": a, "applied": n }))
+                            .collect();
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(
+                                &serde_json::json!({ "total": total, "agents": rows })
+                            )?
+                        );
+                    } else if total == 0 {
+                        println!("{} nothing staged to ingest", SUCCESS);
+                    } else {
+                        println!("{} ingested {total} staged record(s):", SUCCESS);
+                        for (a, n) in drained.iter().filter(|(_, n)| *n > 0) {
+                            println!("  {} {a}: {n}", STEP);
+                        }
+                    }
+                }
+                TeamCommands::Verify { team, agent, isolation, cmd, json } => {
+                    let verification = h5i_core::team::verify(
+                        git,
+                        &h5i_root,
+                        &team,
+                        &agent,
+                        cmd,
+                        isolation.as_deref(),
+                        &actor,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&verification)?);
+                    } else {
+                        println!(
+                            "{} verifier {} for {} [tier: {}]: applies_cleanly={} tests_passed={}",
+                            SUCCESS,
+                            verification.id,
+                            verification.owner_agent,
+                            verification.isolation,
+                            verification.applies_cleanly,
+                            verification.tests_passed
+                        );
+                    }
+                }
+                TeamCommands::Finalize { team, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let verdict = h5i_core::team::finalize(git, &team, &actor)?;
+                    // Round decided → release any agents waiting in the team hook.
+                    fan_out_team_done(git, &h5i_root, &team, &actor);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&verdict)?);
+                    } else if let Some(winner) = &verdict.selected_submission {
+                        println!(
+                            "{} verdict selected {} (auto_apply={})",
+                            SUCCESS, winner, verdict.can_auto_apply
+                        );
+                        for r in &verdict.reasons {
+                            println!("  - {r}");
+                        }
+                    } else {
+                        println!("{} no verdict", style("NOTE").yellow().bold());
+                        for r in &verdict.reasons {
+                            println!("  - {r}");
+                        }
+                    }
+                }
+                TeamCommands::Apply { team, winner, force, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let result = h5i_core::team::apply_winner(
+                        git,
+                        &h5i_root,
+                        &team,
+                        winner.as_deref(),
+                        force,
+                        &actor,
+                    )?;
+                    // Round applied → release any agents waiting in the team hook.
+                    fan_out_team_done(git, &h5i_root, &team, &actor);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&result)?);
+                    } else {
+                        println!(
+                            "{} applied {} as commit {}",
+                            SUCCESS,
+                            result.submission_id,
+                            &result.target_commit_oid[..12.min(result.target_commit_oid.len())]
+                        );
+                    }
+                }
+                TeamCommands::Worker { once, watch, interval, id, lease_ttl, json } => {
+                    if !once && !watch {
+                        anyhow::bail!("team worker needs --once (single pass) or --watch (loop)");
+                    }
+                    let do_pass = || -> anyhow::Result<()> {
+                        let report = h5i_core::team::worker_once(git, &id, lease_ttl, &actor)?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&report)?);
+                        } else {
+                            println!(
+                                "{} worker {} inspected {} team{}; finalized {}",
+                                SUCCESS,
+                                report.worker_id,
+                                report.inspected,
+                                if report.inspected == 1 { "" } else { "s" },
+                                report.finalized.len()
+                            );
+                            for s in &report.skipped {
+                                println!("  - {s}");
+                            }
+                        }
+                        Ok(())
+                    };
+                    if watch {
+                        eprintln!(
+                            "{} team worker watching every {interval}s (finalize-only, never auto-applies); Ctrl-C to stop",
+                            LOOKING
+                        );
+                        loop {
+                            do_pass()?;
+                            std::thread::sleep(std::time::Duration::from_secs(interval));
+                        }
+                    } else {
+                        do_pass()?;
+                    }
+                }
+                TeamCommands::Dispatch { team, prompt_file, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let prompt = std::fs::read_to_string(&prompt_file).map_err(|e| {
+                        anyhow::anyhow!(
+                            "failed to read prompt file {}: {e}",
+                            prompt_file.display()
+                        )
+                    })?;
+                    let messages =
+                        h5i_core::team::dispatch(git, &h5i_root, &team, &prompt, &actor)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&messages)?);
+                    } else {
+                        println!(
+                            "{} dispatched to {} agent{}",
+                            SUCCESS,
+                            messages.len(),
+                            if messages.len() == 1 { "" } else { "s" }
+                        );
+                    }
+                }
+                TeamCommands::Discuss {
+                    team,
+                    from,
+                    to,
+                    file,
+                    artifacts,
+                    json,
+                } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let body = std::fs::read_to_string(&file).map_err(|e| {
+                        anyhow::anyhow!("failed to read discussion file {}: {e}", file.display())
+                    })?;
+                    let recipients: Vec<String> = to
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    let artifact_ids: Vec<String> = artifacts
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    let discussion = h5i_core::team::discuss(
+                        git,
+                        &h5i_root,
+                        &team,
+                        &from,
+                        recipients,
+                        body,
+                        artifact_ids,
+                        &actor,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&discussion)?);
+                    } else {
+                        println!(
+                            "{} discussion {} -> {}",
+                            SUCCESS,
+                            discussion.sender,
+                            discussion.recipients.join(", ")
+                        );
+                    }
+                }
+                TeamCommands::GrantReview {
+                    team,
+                    reviewer,
+                    target,
+                    artifacts,
+                    json,
+                } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let kinds: Vec<String> = artifacts
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    let grant = h5i_core::team::grant_review(
+                        git, &h5i_root, &team, &reviewer, &target, kinds, &actor,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&grant)?);
+                    } else {
+                        println!(
+                            "{} granted {} review access to {} ({})",
+                            SUCCESS,
+                            reviewer,
+                            target,
+                            grant.artifact_ids.join(", ")
+                        );
+                    }
+                }
+                TeamCommands::Review { action } => match action {
+                    TeamReviewCommands::Submit { team, reviewer, target, file, json } => {
+                        let body = std::fs::read_to_string(&file).map_err(|e| {
+                            anyhow::anyhow!("failed to read review file {}: {e}", file.display())
+                        })?;
+                        // In a confined box the team store is host-only: stage the
+                        // review for ingest at session end (the host records it under
+                        // the identity-validated env binding, so the box-supplied
+                        // `--reviewer` is advisory only).
+                        let in_env_spool = std::env::var_os(
+                            h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR,
+                        )
+                        .map(PathBuf::from);
+                        let in_box = in_env_spool.is_some()
+                            && std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok()
+                            && std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
+                        if let (true, Some(spool)) = (in_box, in_env_spool) {
+                            let staged = h5i_core::env::write_team_review_spool(
+                                &spool,
+                                &h5i_core::env::TeamReviewSpool {
+                                    target: target.clone(),
+                                    body,
+                                },
+                            )?;
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "staged": staged,
+                                        "host_ingest": "env-shell-exit"
+                                    }))?
+                                );
+                            } else {
+                                println!(
+                                    "{} team review staged for host ingest ({})",
+                                    style("▢").cyan().dim(),
+                                    staged
+                                );
+                            }
+                        } else {
+                            let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                            let review = h5i_core::team::submit_review(
+                                git, &team, &reviewer, &target, body, &actor,
+                            )?;
+                            if json {
+                                println!("{}", serde_json::to_string_pretty(&review)?);
+                            } else {
+                                println!(
+                                    "{} recorded review {} -> {}",
+                                    SUCCESS, review.reviewer, review.target
+                                );
+                            }
+                        }
+                    }
+                },
+                TeamCommands::Agent { action } => match action {
+                    TeamAgentCommands::Inbox {
+                        team,
+                        peek,
+                        wait,
+                        interval,
+                        timeout,
+                        json,
+                    } => {
+                        // Confined box: read the host-fanned per-env read-only inbox
+                        // ($H5I_ENV_INBOX); the shared msg store and team refs are
+                        // sealed here. (Workspace tier has no inbox and falls through
+                        // to the host path, which it can reach unconfined.)
+                        if std::env::var_os(h5i_core::env::H5I_ENV_INBOX_VAR).is_some() {
+                            use std::io::Write as _;
+                            let agent = std::env::var("H5I_AGENT").unwrap_or_default();
+                            let render = |unread: &[msg::Message]| -> anyhow::Result<()> {
+                                if json {
+                                    println!("{}", serde_json::to_string_pretty(unread)?);
+                                } else if unread.is_empty() {
+                                    println!(
+                                        "{} No new team messages for {}.",
+                                        SUCCESS,
+                                        style(&agent).green().bold()
+                                    );
+                                } else {
+                                    print_messages_numbered(unread, &agent, false);
+                                }
+                                Ok(())
+                            };
+                            if wait {
+                                let interval = interval.max(1);
+                                let mut waited = 0u64;
+                                loop {
+                                    let unread = box_team_inbox(false).unwrap_or_default();
+                                    if !unread.is_empty() {
+                                        render(&unread)?;
+                                        let _ = std::io::stdout().flush();
+                                        break;
+                                    }
+                                    if timeout != 0 && waited >= timeout {
+                                        break;
+                                    }
+                                    std::thread::sleep(std::time::Duration::from_secs(interval));
+                                    waited += interval;
+                                }
+                                return Ok(());
+                            }
+                            // Non-wait: consume unless --peek (advances the cursor).
+                            let unread = box_team_inbox(!peek).unwrap_or_default();
+                            render(&unread)?;
+                            return Ok(());
+                        }
+                        let agent = msg::resolve_identity(&h5i_root, None)?;
+                        let team = match team {
+                            Some(t) => t,
+                            None => std::env::var(h5i_core::env::H5I_TEAM_VAR)
+                                .ok()
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or_else(|| {
+                                    h5i_core::team::resolve_run(&h5i_root, None)
+                                        .unwrap_or_default()
+                                }),
+                        };
+                        if team.is_empty() {
+                            anyhow::bail!(
+                                "no team set — run from `h5i env shell` for a team env, pass TEAM, or run `h5i team use <name>`"
+                            );
+                        }
+                        let status = h5i_core::team::status(git, &team)?;
+                        if !status.run.agents.iter().any(|a| a.agent_id == agent) {
+                            anyhow::bail!("team '{team}' has no agent '{agent}'");
+                        }
+                        if wait {
+                            use std::io::Write as _;
+                            // Host-side (or unconfined workspace tier): poll the
+                            // shared store directly. Confined boxes were handled by
+                            // the env-inbox branch above.
+                            let interval = interval.max(1);
+                            let mut waited = 0u64;
+                            loop {
+                                // Re-open per poll so a concurrent host write is seen.
+                                let repo = H5iRepository::open(".")?;
+                                // Peek (never consume): the woken agent runs
+                                // `h5i team agent inbox` to consume + number for reply.
+                                let unread =
+                                    msg::inbox(repo.git(), &repo.h5i_root, &agent, false)?;
+                                if !unread.is_empty() {
+                                    if json {
+                                        println!("{}", serde_json::to_string_pretty(&unread)?);
+                                    } else {
+                                        print_messages_numbered(&unread, &agent, false);
+                                    }
+                                    let _ = std::io::stdout().flush();
+                                    break; // first delivery is the wake signal
+                                }
+                                if timeout != 0 && waited >= timeout {
+                                    break; // give up quietly (exit 0, no output)
+                                }
+                                std::thread::sleep(std::time::Duration::from_secs(interval));
+                                waited += interval;
+                            }
+                            return Ok(());
+                        }
+                        let unread = msg::inbox(git, &h5i_root, &agent, !peek)?;
+                        let ids: Vec<String> = unread.iter().map(|m| m.id.clone()).collect();
+                        msg::write_last_view(&h5i_root, &agent, &ids)?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&unread)?);
+                        } else if unread.is_empty() {
+                            println!(
+                                "{} No new team messages for {}.",
+                                SUCCESS,
+                                style(&agent).green().bold()
+                            );
+                        } else {
+                            println!(
+                                "{} {} new team message{} for {}{}\n",
+                                STEP,
+                                style(unread.len()).cyan().bold(),
+                                if unread.len() == 1 { "" } else { "s" },
+                                style(&agent).green().bold(),
+                                if peek {
+                                    style(" (peek)").dim().to_string()
+                                } else {
+                                    String::new()
+                                },
+                            );
+                            print_messages_numbered(&unread, &agent, false);
+                        }
+                    }
+                    TeamAgentCommands::Hook {
+                        team,
+                        block,
+                        quiet,
+                        timeout,
+                        interval,
+                    } => {
+                        let interval = interval.max(1);
+                        // The framed messages plus a standing instruction; the hook
+                        // keeps waiting between turns, so the agent need not run
+                        // `inbox --wait` itself.
+                        let block_reason = |text: &str| -> String {
+                            format!(
+                                "{text}\n\n[h5i team] Handle the request(s) above — post a review \
+                                 with `h5i team review submit` and/or improve and re-submit with \
+                                 `h5i team agent submit`. This hook keeps waiting between turns; \
+                                 you're released when the round is applied."
+                            )
+                        };
+                        let is_done =
+                            |m: &msg::Message| m.kind.as_deref() == Some(h5i_core::team::TEAM_DONE_KIND);
+
+                        // Confined box: deliver from the host-fanned per-env inbox
+                        // (the shared store and team refs are sealed here). Consume
+                        // so a message isn't re-delivered on the next stop.
+                        if std::env::var_os(h5i_core::env::H5I_ENV_INBOX_VAR).is_some() {
+                            let agent = std::env::var("H5I_AGENT").unwrap_or_default();
+                            if !block {
+                                // Codex / one-shot: surface pending mail, never wait.
+                                let unread = box_team_inbox(true).unwrap_or_default();
+                                if !unread.is_empty() {
+                                    let text = frame_unread(&agent, &unread);
+                                    if quiet {
+                                        println!("{text}");
+                                    } else {
+                                        let out = serde_json::json!({ "systemMessage": text });
+                                        println!("{}", serde_json::to_string(&out)?);
+                                    }
+                                }
+                                return Ok(());
+                            }
+                            // Claude / --block: wait for the next message, then block
+                            // the stop and feed it back. A round-done signal or the
+                            // wait elapsing releases the agent so it can stop.
+                            let mut waited = 0u64;
+                            loop {
+                                let unread = box_team_inbox(true).unwrap_or_default();
+                                if unread.iter().any(&is_done) {
+                                    return Ok(());
+                                }
+                                if !unread.is_empty() {
+                                    let reason = block_reason(&frame_unread(&agent, &unread));
+                                    let out =
+                                        serde_json::json!({ "decision": "block", "reason": reason });
+                                    println!("{}", serde_json::to_string(&out)?);
+                                    return Ok(());
+                                }
+                                if timeout == 0 || waited >= timeout {
+                                    return Ok(());
+                                }
+                                std::thread::sleep(std::time::Duration::from_secs(interval));
+                                waited += interval;
+                            }
+                        }
+
+                        // Host-side (or unconfined workspace tier): read the shared
+                        // store directly; the run phase tells us when to release.
+                        let Ok(agent) = msg::resolve_identity(&h5i_root, None) else {
+                            return Ok(());
+                        };
+                        let team = match team {
+                            Some(t) => t,
+                            None => std::env::var(h5i_core::env::H5I_TEAM_VAR)
+                                .ok()
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or_else(|| {
+                                    h5i_core::team::resolve_run(&h5i_root, None)
+                                        .unwrap_or_default()
+                                }),
+                        };
+                        if team.is_empty() {
+                            return Ok(());
+                        }
+                        let mut waited = 0u64;
+                        loop {
+                            let repo = H5iRepository::open(".")?;
+                            let Ok(status) = h5i_core::team::status(repo.git(), &team) else {
+                                return Ok(());
+                            };
+                            // Not on this team, or the run is decided → let it stop.
+                            if !status.run.agents.iter().any(|a| a.agent_id == agent) {
+                                return Ok(());
+                            }
+                            if matches!(status.run.phase.as_str(), "applied" | "no_verdict") {
+                                return Ok(());
+                            }
+                            let unread = msg::inbox(repo.git(), &repo.h5i_root, &agent, false)?;
+                            if !unread.is_empty() {
+                                let ids: Vec<String> =
+                                    unread.iter().map(|m| m.id.clone()).collect();
+                                msg::write_last_view(&repo.h5i_root, &agent, &ids)?;
+                                let text = frame_unread(&agent, &unread);
+                                if block {
+                                    let reason = block_reason(&text);
+                                    let out = serde_json::json!({ "decision": "block", "reason": reason });
+                                    println!("{}", serde_json::to_string(&out)?);
+                                } else if quiet {
+                                    println!("{text}");
+                                } else {
+                                    let out = serde_json::json!({ "systemMessage": text });
+                                    println!("{}", serde_json::to_string(&out)?);
+                                }
+                                msg::mark_seen(&repo.h5i_root, &agent, &ids)?;
+                                return Ok(());
+                            }
+                            // Nothing pending. One-shot (non-block) → stop now;
+                            // --block → wait until a message arrives or the timeout.
+                            if !block || timeout == 0 || waited >= timeout {
+                                return Ok(());
+                            }
+                            std::thread::sleep(std::time::Duration::from_secs(interval));
+                            waited += interval;
+                        }
+                    }
+                    TeamAgentCommands::Submit { commit, summary_file, json } => {
+                        let summary = match summary_file {
+                            Some(path) => Some(std::fs::read_to_string(&path).map_err(|e| {
+                                anyhow::anyhow!(
+                                    "failed to read summary file {}: {e}",
+                                    path.display()
+                                )
+                            })?),
+                            None => None,
+                        };
+                        let in_env_spool =
+                            std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR)
+                                .map(PathBuf::from);
+                        let in_box = in_env_spool.is_some()
+                            && std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok()
+                            && std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
+                        if let (true, Some(spool)) = (in_box, in_env_spool) {
+                            let request = h5i_core::env::TeamSubmitSpool { commit, summary };
+                            let staged =
+                                h5i_core::env::write_team_submit_spool(&spool, &request)?;
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "staged": staged,
+                                        "host_ingest": "env-shell-exit"
+                                    }))?
+                                );
+                            } else {
+                                println!(
+                                    "{} team submit staged for host ingest ({})",
+                                    style("▢").cyan().dim(),
+                                    staged
+                                );
+                            }
+                        } else {
+                            let team = std::env::var(h5i_core::env::H5I_TEAM_VAR)
+                                .ok()
+                                .filter(|s| !s.trim().is_empty())
+                                .map(Ok)
+                                .unwrap_or_else(|| h5i_core::team::resolve_run(&h5i_root, None))?;
+                            let agent = msg::resolve_identity(&h5i_root, None)?;
+                            let artifact = h5i_core::team::submit(
+                                git,
+                                &h5i_root,
+                                &team,
+                                &agent,
+                                commit.as_deref(),
+                                summary,
+                                &agent,
+                            )?;
+                            if json {
+                                println!("{}", serde_json::to_string_pretty(&artifact)?);
+                            } else {
+                                println!(
+                                    "{} submitted {} for {} at {}",
+                                    SUCCESS,
+                                    artifact.id,
+                                    artifact.owner_agent,
+                                    &artifact.commit_oid[..12.min(artifact.commit_oid.len())]
+                                );
+                            }
+                        }
+                    }
+                },
+            }
+        }
+
         Commands::Env { action } => {
             let repo = H5iRepository::open(".")?;
             let h5i_root = repo.h5i_root.clone();
@@ -8779,11 +10045,17 @@ fn main() -> anyhow::Result<()> {
             // Surface environments pulled from other clones: materialize any
             // manifests/policies present in refs/h5i/env but absent (or older)
             // on disk, so `list`/`status`/`diff`/`apply` see them.
-            if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
-                eprintln!(
-                    "{} could not sync shared env manifests: {e}",
-                    style("warning:").yellow()
-                );
+            // Sync the shared env roster to disk — but never in a sealed box,
+            // where the host-owned env manifests are read-only (the write only
+            // fails with EACCES and spams a warning). The box already has its
+            // own env materialized; the shared roster is the host's concern.
+            if std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_err() {
+                if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
+                    eprintln!(
+                        "{} could not sync shared env manifests: {e}",
+                        style("warning:").yellow()
+                    );
+                }
             }
 
             match action {
@@ -8910,13 +10182,9 @@ fn main() -> anyhow::Result<()> {
 
                 EnvCommands::Shell { name, command } => {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
-                    // Default to an interactive shell when no command is given.
-                    let argv: Vec<String> = if command.is_empty() {
-                        let sh = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-                        vec![sh, "-i".into()]
-                    } else {
-                        command
-                    };
+                    // An empty `command` means "default interactive shell";
+                    // `env::shell` builds the argv (host bashrc is replaced with a
+                    // generated plain rc by default — see `default_shell_argv`).
                     eprintln!(
                         "{} entering {} (isolation: {}, profile: {}) — confined session; exit to return",
                         LOOKING,
@@ -8930,7 +10198,7 @@ fn main() -> anyhow::Result<()> {
                              here (envs default to --profile agent where the host supports it)"
                         );
                     }
-                    let code = h5i_core::env::shell(git, &h5i_root, &mut m, &argv)?;
+                    let code = h5i_core::env::shell(git, &h5i_root, &mut m, &command)?;
                     match code {
                         0 => {}
                         c => std::process::exit(c),

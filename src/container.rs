@@ -463,6 +463,8 @@ pub struct ShimPlan {
 /// binary enters the box, so there is no glibc/arch compatibility surface).
 const SHIM_ORIG_MOUNT: &str = "/.h5i/orig";
 const SHIM_SPOOL_MOUNT: &str = "/.h5i/spool";
+/// Per-env inbound mailbox, bind-mounted READ-ONLY (host fans messages in).
+const ENV_INBOX_MOUNT: &str = "/.h5i/inbox";
 
 /// Generate the observation shim: a pass-through POSIX `sh` script that tees
 /// stdout/stderr of a non-interactive command-string invocation into the spool
@@ -615,6 +617,9 @@ pub fn build_run_argv(
     // Env capture spool for in-box `h5i capture run`. Mounted at
     // `/.h5i/spool`, matching the tee-shim spool path.
     env_capture_spool: Option<&Path>,
+    // Per-env inbound mailbox, bind-mounted READ-ONLY at `/.h5i/inbox`. The host
+    // fans cross-agent messages in at send time; the box reads but can't write.
+    env_inbox: Option<&Path>,
     // Per-env private paths (Idea 3): each backing dir bind-mounted rw at
     // `/work/<rel>` so concurrent envs of the same repo don't share inode-level
     // locks / build caches. Empty → no extra mounts.
@@ -726,6 +731,17 @@ pub fn build_run_argv(
             a.push(format!(
                 "type=bind,source={},target={SHIM_SPOOL_MOUNT},rw",
                 spool.display()
+            ));
+        }
+    }
+    // Per-env inbound mailbox: read-only so the box can receive cross-agent
+    // messages without any write access to the shared coordination store.
+    if let Some(inbox) = env_inbox {
+        if !inbox.display().to_string().contains(',') {
+            a.push("--mount".into());
+            a.push(format!(
+                "type=bind,source={},target={ENV_INBOX_MOUNT},ro",
+                inbox.display()
             ));
         }
     }
@@ -881,6 +897,7 @@ pub fn run(
         &policy.box_git,
         None,
         policy.env_capture_spool.as_deref(),
+        policy.env_inbox.as_deref(),
         &policy.private_binds,
     );
 
@@ -986,6 +1003,7 @@ pub fn run_interactive(
         &policy.box_git,
         managed_settings.as_deref(),
         policy.env_capture_spool.as_deref(),
+        policy.env_inbox.as_deref(),
         &policy.private_binds,
     );
 
@@ -1194,6 +1212,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
             &[],
         );
         let joined = argv.join(" ");
@@ -1239,6 +1258,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
             None,
             None,
             &[],
@@ -1290,6 +1310,7 @@ mod tests {
             &box_git,
             None,
             None,
+            None,
             &[],
         );
         let joined = argv.join(" ");
@@ -1331,6 +1352,7 @@ mod tests {
             &weird,
             None,
             None,
+            None,
             &[],
         );
         let joined = argv.join(" ");
@@ -1367,6 +1389,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
             &binds,
         );
         let joined = argv.join(" ");
@@ -1398,6 +1421,7 @@ mod tests {
             &[],
             Some(ms),
             None,
+            None,
             &[],
         );
         let joined = with.join(" ");
@@ -1422,6 +1446,7 @@ mod tests {
             Some(true),
             None,
             &[],
+            None,
             None,
             None,
             &[],
@@ -1459,6 +1484,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
             &[],
         );
         let joined = argv.join(" ");
@@ -1484,6 +1510,7 @@ mod tests {
                 tty,
                 None,
                 &[],
+                None,
                 None,
                 None,
                 &[],
@@ -1524,6 +1551,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
             &[],
         );
         let joined = argv.join(" ");
@@ -1549,6 +1577,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
             &[],
         );
         assert!(!plain.join(" ").contains("/.h5i/"));
@@ -1571,12 +1600,38 @@ mod tests {
             &[],
             None,
             Some(Path::new("/envdir/spool")),
+            None,
             &[],
         );
         let joined = argv.join(" ");
         assert!(joined.contains("type=bind,source=/envdir/spool,target=/.h5i/spool,rw"));
         assert!(!joined.contains("target=/bin/sh,ro"));
         assert!(!joined.contains("target=/bin/bash,ro"));
+    }
+
+    #[test]
+    fn run_argv_mounts_env_inbox_read_only() {
+        let p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
+        let argv = build_run_argv(
+            &rt(),
+            &p,
+            Path::new("/w"),
+            "img",
+            "n",
+            &NetPlan::None,
+            &["true".into()],
+            &[],
+            None,
+            None,
+            &[],
+            None,
+            None,
+            Some(Path::new("/envdir/inbox")),
+            &[],
+        );
+        let joined = argv.join(" ");
+        // Read-only: the box receives messages but cannot write the mailbox.
+        assert!(joined.contains("type=bind,source=/envdir/inbox,target=/.h5i/inbox,ro"));
     }
 
     // Live on-host: the generated shim is real POSIX sh — run it against the
@@ -1817,6 +1872,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
             None,
             None,
             &[],

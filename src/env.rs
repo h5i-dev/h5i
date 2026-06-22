@@ -61,7 +61,14 @@ pub const H5I_ENV_ID_VAR: &str = "H5I_ENV_ID";
 pub const H5I_ENV_POLICY_DIGEST_VAR: &str = "H5I_ENV_POLICY_DIGEST";
 pub const H5I_ENV_CAPTURE_SPOOL_VAR: &str = "H5I_ENV_CAPTURE_SPOOL";
 pub const H5I_ENV_AUDIT_CAPTURE_VAR: &str = "H5I_ENV_AUDIT_CAPTURE";
+pub const H5I_TEAM_VAR: &str = "H5I_TEAM";
+/// In-box path to the per-env read-only inbound mailbox (host fans messages in;
+/// the box reads via `h5i team agent inbox`/`--wait`/the team Stop hook).
+pub const H5I_ENV_INBOX_VAR: &str = "H5I_ENV_INBOX";
 const CONTAINER_CAPTURE_SPOOL: &str = "/.h5i/spool";
+const CONTAINER_INBOX_MOUNT: &str = "/.h5i/inbox";
+/// Inbox subdir under the env admin dir; mounted read-only into the box.
+const ENV_INBOX_DIR: &str = "inbox";
 #[cfg(unix)] // only the unix-gated RunLock references this
 const RUN_LOCK_FILE: &str = "run.lock";
 
@@ -585,10 +592,32 @@ pub fn materialize_from_ref(repo: &Repository, h5i_root: &Path) -> Result<usize,
         if local_newer {
             continue;
         }
-        save_manifest(h5i_root, &m)?;
         if let Some(toml) = policies.get(&m.id) {
+            // Guard against a ref whose manifest and policy blob were written by
+            // different h5i versions/operations (e.g. an env id recreated after a
+            // version bump): writing both would land an env whose
+            // policy.resolved.toml doesn't match its pinned digest — surfacing
+            // later as a confusing "tampered policy" failure. Verify first, with
+            // the SAME check load_policy runs, and skip (don't write a broken env).
+            let consistent = ResolvedPolicy::from_toml(toml)
+                .and_then(|p| p.digest())
+                .map(|d| d == m.policy_digest)
+                .unwrap_or(false);
+            if !consistent {
+                eprintln!(
+                    "warning: skipping shared env '{}' — its stored policy does not match the \
+                     pinned digest (likely created by a different h5i version); recreate it: \
+                     `h5i env rm {} --force` then `h5i env create`",
+                    crate::msg::sanitize_display(&m.id),
+                    crate::msg::sanitize_display(&m.slug)
+                );
+                continue;
+            }
+            save_manifest(h5i_root, &m)?;
             let path = dir.join(POLICY_RESOLVED_FILE);
             std::fs::write(&path, toml).map_err(|e| H5iError::with_path(e, &path))?;
+        } else {
+            save_manifest(h5i_root, &m)?;
         }
         written += 1;
     }
@@ -930,7 +959,9 @@ pub fn build_branch_scoped_merge(
     let sig = objects::signature(repo)?;
     let message = format!("h5i push: branch-scoped env ({branch})");
     let parents: Vec<&git2::Commit> = base_commit.iter().collect();
-    Ok(Some(repo.commit(None, &sig, &sig, &message, &tree, &parents)?))
+    Ok(Some(
+        repo.commit(None, &sig, &sig, &message, &tree, &parents)?,
+    ))
 }
 
 // ─── manifest persistence ───────────────────────────────────────────────────
@@ -1008,8 +1039,10 @@ pub fn load_policy(h5i_root: &Path, m: &EnvManifest) -> Result<ResolvedPolicy, H
     if digest != m.policy_digest {
         return Err(H5iError::Metadata(format!(
             "policy.resolved.toml for {} does not match the digest pinned in its manifest \
-             (expected {}, found {digest}) — refusing to run under a tampered policy",
-            m.id, m.policy_digest
+             (expected {}, found {digest}) — refusing to run under a tampered policy. \
+             If you did not edit it, the env was most likely created by a different h5i \
+             version; recreate it: `h5i env rm {} --force` then `h5i env create …`",
+            m.id, m.policy_digest, m.slug
         )));
     }
     Ok(policy)
@@ -1484,7 +1517,10 @@ fn grant_box_git(
     Ok(())
 }
 
-fn prepare_cargo_env(work: &Path, policy: &ResolvedPolicy) -> Result<Vec<(String, String)>, H5iError> {
+fn prepare_cargo_env(
+    work: &Path,
+    policy: &ResolvedPolicy,
+) -> Result<Vec<(String, String)>, H5iError> {
     if policy.claim < IsolationClaim::Process {
         return Ok(Vec::new());
     }
@@ -1535,7 +1571,8 @@ fn prepare_private_paths(
         // Container tier carries the backing dir as a Podman `--mount` whose
         // syntax can't include a comma — fail closed if the env's host path has
         // one, rather than silently dropping the (policy-required) isolation.
-        if policy.claim == IsolationClaim::Container && backing.display().to_string().contains(',') {
+        if policy.claim == IsolationClaim::Container && backing.display().to_string().contains(',')
+        {
             return Err(H5iError::Metadata(format!(
                 "private_paths '{rel}': the env's backing path '{}' contains a ',' which the \
                  container mount syntax cannot carry — move the repo out of a comma'd path \
@@ -1550,6 +1587,47 @@ fn prepare_private_paths(
             .private_binds
             .push(sandbox::PrivateBind { backing, rel });
     }
+    Ok(())
+}
+
+/// Give kernel-tier envs a private `/tmp` by binding an env-owned scratch dir
+/// over the host path before Landlock is applied. Agent profiles used to grant
+/// host-shared `/tmp` at process/supervised tiers; that creates an unnecessary
+/// cross-agent rendezvous point. This replaces any real `/tmp` grant with the
+/// backing dir, then reuses the absolute bind machinery to make `/tmp` resolve
+/// to that backing inside the box.
+fn prepare_private_tmp(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    policy: &mut ResolvedPolicy,
+) -> Result<(), H5iError> {
+    if !matches!(
+        policy.claim,
+        IsolationClaim::Process | IsolationClaim::Supervised
+    ) {
+        return Ok(());
+    }
+    let had_tmp = policy.profile.fs_read.iter().any(|p| p == "/tmp")
+        || policy.profile.fs_write.iter().any(|p| p == "/tmp");
+    if !had_tmp {
+        return Ok(());
+    }
+    let backing = m.dir(h5i_root).join("tmp");
+    let _ = std::fs::remove_dir_all(&backing);
+    std::fs::create_dir_all(&backing).map_err(|e| H5iError::with_path(e, &backing))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&backing, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| H5iError::with_path(e, &backing))?;
+    }
+    policy.profile.fs_read.retain(|p| p != "/tmp");
+    policy.profile.fs_write.retain(|p| p != "/tmp");
+    policy.profile.fs_write.push(backing.display().to_string());
+    policy.home_binds.push(sandbox::HomeBind {
+        backing,
+        target: PathBuf::from("/tmp"),
+    });
     Ok(())
 }
 
@@ -1648,6 +1726,148 @@ fn prepare_home_state(
     Ok(())
 }
 
+/// The host-owned per-env inbound mailbox. Lives at `<env>/inbox/` and is
+/// exposed to the box READ-ONLY (a Landlock read-grant on the kernel tiers, a
+/// read-only bind mount on container). The host writes cross-agent messages
+/// here at send time ([`fan_out_to_env_inbox`]); the box reads them but cannot
+/// write — so a confined agent receives messages without any write access to
+/// the shared coordination store (which stays sealed). Returns the env vars to
+/// inject (`H5I_ENV_INBOX` → the in-box path).
+fn prepare_env_inbox(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    policy: &mut ResolvedPolicy,
+) -> Result<Vec<(String, String)>, H5iError> {
+    if policy.claim < IsolationClaim::Process {
+        return Ok(Vec::new());
+    }
+    let inbox = env_inbox_dir(h5i_root, m);
+    std::fs::create_dir_all(&inbox).map_err(|e| H5iError::with_path(e, &inbox))?;
+    let inside = match policy.claim {
+        IsolationClaim::Container => {
+            policy.env_inbox = Some(inbox);
+            CONTAINER_INBOX_MOUNT.to_string()
+        }
+        IsolationClaim::Process | IsolationClaim::Supervised => {
+            // Read-only: the box may read its inbox, never write it.
+            policy.profile.fs_read.push(inbox.display().to_string());
+            inbox.display().to_string()
+        }
+        _ => return Ok(Vec::new()),
+    };
+    Ok(vec![(H5I_ENV_INBOX_VAR.to_string(), inside)])
+}
+
+/// Host path of an env's inbound mailbox dir (`<env>/inbox/`).
+pub fn env_inbox_dir(h5i_root: &Path, m: &EnvManifest) -> PathBuf {
+    m.dir(h5i_root).join(ENV_INBOX_DIR)
+}
+
+/// Locate the inbound mailbox dir for a team agent, by matching the env bound
+/// to (`team`, `agent`). When `team` is `None`, match on `agent` alone (first
+/// hit). Returns `None` if no bound env exists — delivery is then a no-op and
+/// the shared store stays the source of truth.
+pub fn env_inbox_for_agent(h5i_root: &Path, agent: &str, team: Option<&str>) -> Option<PathBuf> {
+    for m in list(h5i_root) {
+        if let Some((t, a)) = team_binding(h5i_root, &m) {
+            if a == agent && team.map(|want| want == t).unwrap_or(true) {
+                return Some(env_inbox_dir(h5i_root, &m));
+            }
+        }
+    }
+    None
+}
+
+/// Drop a message into an env's inbound mailbox as `<id>.json`. The dir is
+/// host-owned and mounted read-only in the box, so this host-side write is the
+/// only way a message reaches a confined agent. Keyed by message id, so
+/// re-delivering the same message overwrites rather than duplicates.
+pub fn write_env_inbox_message(
+    inbox: &Path,
+    message: &crate::msg::Message,
+) -> Result<String, H5iError> {
+    std::fs::create_dir_all(inbox).map_err(|e| H5iError::with_path(e, inbox))?;
+    let safe: String = message
+        .id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(64)
+        .collect();
+    let name = if safe.is_empty() { "msg" } else { &safe };
+    let path = inbox.join(format!("{name}.json"));
+    let bytes = serde_json::to_vec(message)?;
+    std::fs::write(&path, &bytes).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(path.display().to_string())
+}
+
+/// Read every message queued in an env's inbound mailbox (box side), oldest
+/// first by file mtime. Unparseable or oversized files are skipped; the same
+/// per-entry and per-file caps as the capture spool apply (the mailbox is
+/// host-written but still treated as bounded, untrusted input on read).
+pub fn read_env_inbox(inbox: &Path) -> Vec<crate::msg::Message> {
+    let Ok(rd) = std::fs::read_dir(inbox) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(std::time::SystemTime, crate::msg::Message)> = Vec::new();
+    for entry in rd.flatten().take(SPOOL_MAX_ENTRIES) {
+        let path = entry.path();
+        if path.extension().and_then(|x| x.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(bytes) = read_spool_capped(&path, SPOOL_MAX_CMD_BYTES) else {
+            continue;
+        };
+        if let Ok(m) = serde_json::from_slice::<crate::msg::Message>(&bytes) {
+            let mtime = entry
+                .metadata()
+                .and_then(|md| md.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            out.push((mtime, m));
+        }
+    }
+    out.sort_by_key(|(t, _)| *t);
+    out.into_iter().map(|(_, m)| m).collect()
+}
+
+/// Box-writable "seen" cursor for the inbox, stored in the capture spool (the
+/// inbox itself is read-only, so read-state can't live there). Ignored by the
+/// spool ingest, whose record names use different prefixes.
+pub fn read_inbox_cursor(spool: &Path) -> std::collections::BTreeSet<String> {
+    let path = spool.join("team-inbox-seen.json");
+    std::fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+/// Persist the inbox "seen" cursor (best-effort; box-writable spool path).
+pub fn write_inbox_cursor(
+    spool: &Path,
+    seen: &std::collections::BTreeSet<String>,
+) -> Result<(), H5iError> {
+    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
+    let path = spool.join("team-inbox-seen.json");
+    let bytes = serde_json::to_vec(seen)?;
+    std::fs::write(&path, bytes).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(())
+}
+
+/// Fan a just-sent message out to a recipient's per-env inbox, if that
+/// recipient is a team agent bound to an env. Best-effort and additive: the
+/// shared msg store stays the source of truth, but this is the only path that
+/// reaches a *confined* recipient — the box can't read the shared store, only
+/// its own read-only inbox.
+pub fn fan_out_to_env_inbox(
+    h5i_root: &Path,
+    recipient: &str,
+    team: Option<&str>,
+    message: &crate::msg::Message,
+) {
+    if let Some(inbox) = env_inbox_for_agent(h5i_root, recipient, team) {
+        let _ = write_env_inbox_message(&inbox, message);
+    }
+}
+
 fn prepare_env_capture_spool(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -1694,6 +1914,21 @@ pub struct InboxCaptureMeta {
     pub cmd_argv: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexHookTraceEvent {
+    pub kind: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexHookSpoolRecord {
+    pub session_id: String,
+    #[serde(default)]
+    pub prompts: Vec<String>,
+    #[serde(default)]
+    pub events: Vec<CodexHookTraceEvent>,
+}
+
 pub fn write_inbox_capture_spool(
     spool: &Path,
     meta: &InboxCaptureMeta,
@@ -1713,10 +1948,52 @@ pub fn write_inbox_capture_spool(
     Ok(base)
 }
 
+pub fn write_codex_hook_spool(
+    spool: &Path,
+    record: &CodexHookSpoolRecord,
+) -> Result<String, H5iError> {
+    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = format!("codex-hook-{}-{nanos}", std::process::id());
+    let path = spool.join(format!("{base}.json"));
+    let json = serde_json::to_vec(record)?;
+    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(base)
+}
+
 fn merged_env(a: &[(String, String)], b: &[(String, String)]) -> Vec<(String, String)> {
     let mut out = a.to_vec();
     out.extend_from_slice(b);
     out
+}
+
+/// If this env is bound to a team persona (files written by `h5i team add-env`),
+/// inject `H5I_AGENT=<persona>` and `H5I_TEAM=<run>` for scoped in-box requests.
+/// The coordination refs and cursors remain host-only.
+fn team_identity_env(m: &EnvManifest, h5i_root: &Path) -> Vec<(String, String)> {
+    let Some((team, agent)) = team_binding(h5i_root, m) else {
+        return Vec::new();
+    };
+    vec![
+        ("H5I_AGENT".to_string(), agent),
+        (H5I_TEAM_VAR.to_string(), team),
+    ]
+}
+
+pub fn team_binding(h5i_root: &Path, m: &EnvManifest) -> Option<(String, String)> {
+    let dir = m.dir(h5i_root);
+    let agent = std::fs::read_to_string(dir.join("team-identity")).ok()?;
+    let team = std::fs::read_to_string(dir.join("team-run")).ok()?;
+    let agent = agent.trim();
+    let team = team.trim();
+    if agent.is_empty() || team.is_empty() {
+        None
+    } else {
+        Some((team.to_string(), agent.to_string()))
+    }
 }
 
 /// Stage an in-box `h5i commit` note for host ingest. The notes ref
@@ -1738,6 +2015,58 @@ pub fn write_note_spool(spool: &Path, oid: &str, record_json: &str) -> Result<()
     let path = spool.join(format!("note-{safe}.json"));
     std::fs::write(&path, record_json).map_err(|e| H5iError::with_path(e, &path))?;
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamSubmitSpool {
+    #[serde(default)]
+    pub commit: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+pub fn write_team_submit_spool(
+    spool: &Path,
+    request: &TeamSubmitSpool,
+) -> Result<String, H5iError> {
+    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = format!("team-submit-{}-{nanos}", std::process::id());
+    let path = spool.join(format!("{base}.json"));
+    let json = serde_json::to_vec(request)?;
+    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(base)
+}
+
+/// A boxed agent's staged peer-review (the outbound mirror of the inbound
+/// inbox). The box can't write the host-only team store, so `h5i team review
+/// submit` stages this; the host ingests it after the session, recording the
+/// review under the box's identity-validated team binding (the box-written
+/// `reviewer` is ignored — authority comes from the env binding, never a field
+/// the box controls).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamReviewSpool {
+    pub target: String,
+    pub body: String,
+}
+
+pub fn write_team_review_spool(
+    spool: &Path,
+    request: &TeamReviewSpool,
+) -> Result<String, H5iError> {
+    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = format!("team-review-{}-{nanos}", std::process::id());
+    let path = spool.join(format!("{base}.json"));
+    let json = serde_json::to_vec(request)?;
+    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(base)
 }
 
 const PROTECTED_HOOK_CONFIGS: &[&str] = &[".claude/settings.json", ".codex/config.toml"];
@@ -1913,6 +2242,7 @@ pub fn run(
     // functional git checkout inside the box.
     grant_box_git(repo, m, &work, &mut policy)?;
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
+    prepare_private_tmp(h5i_root, m, &mut policy)?;
     prepare_home_state(
         h5i_root,
         m,
@@ -1920,6 +2250,7 @@ pub fn run(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
     )?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
+    let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
 
     // Broker any declared secrets BEFORE marking the env running, so a
@@ -1928,15 +2259,20 @@ pub fn run(
     // its Drop guard unlinks any file-injected secrets on every exit path.
     let secret_dir = m.dir(h5i_root).join("secrets");
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
-    let brokered =
-        crate::secrets_broker::broker(
-            &policy.profile.secret_grants,
-            &secret_dir,
-            is_workspace,
-            policy.profile.allow_command_extractors,
-        )?;
+    let brokered = crate::secrets_broker::broker(
+        &policy.profile.secret_grants,
+        &secret_dir,
+        is_workspace,
+        policy.profile.allow_command_extractors,
+    )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
-    let injected_env = merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env);
+    let injected_env = merged_env(
+        &merged_env(
+            &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
+            &env_inbox_env,
+        ),
+        &team_identity_env(m, h5i_root),
+    );
 
     set_status(
         repo,
@@ -2120,7 +2456,7 @@ pub fn shell(
     repo: &Repository,
     h5i_root: &Path,
     m: &mut EnvManifest,
-    argv: &[String],
+    command: &[String],
 ) -> Result<i32, H5iError> {
     match m.status.as_str() {
         ST_CREATED | ST_RUNNING | ST_IDLE => {}
@@ -2144,6 +2480,7 @@ pub fn shell(
     // this worktree and must be able to use git / h5i context inside it.
     grant_box_git(repo, m, &work, &mut policy)?;
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
+    prepare_private_tmp(h5i_root, m, &mut policy)?;
     prepare_home_state(
         h5i_root,
         m,
@@ -2151,18 +2488,35 @@ pub fn shell(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
     )?;
     let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
+    let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
     let secret_dir = m.dir(h5i_root).join("secrets");
     let is_workspace = matches!(policy.claim, IsolationClaim::Workspace);
-    let brokered =
-        crate::secrets_broker::broker(
-            &policy.profile.secret_grants,
-            &secret_dir,
-            is_workspace,
-            policy.profile.allow_command_extractors,
-        )?;
+    let brokered = crate::secrets_broker::broker(
+        &policy.profile.secret_grants,
+        &secret_dir,
+        is_workspace,
+        policy.profile.allow_command_extractors,
+    )?;
     let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
-    let injected_env = merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env);
+    let injected_env = merged_env(
+        &merged_env(
+            &merged_env(&merged_env(&brokered.env, &env_capture_env), &cargo_env),
+            &env_inbox_env,
+        ),
+        &team_identity_env(m, h5i_root),
+    );
+
+    // No command given → launch an interactive shell. Rather than inherit the
+    // host `~/.bashrc` (which, under confinement, routinely references tools the
+    // sandbox blocks — e.g. `~/.local/bin/powerline-shell`), bash is launched
+    // with a generated *plain* rcfile by default; a profile may pin a custom one
+    // via `[profile.X.shell] rcfile = "…"`. May Landlock-grant the generated rc.
+    let argv: Vec<String> = if command.is_empty() {
+        default_shell_argv(h5i_root, m, &mut policy, &work)?
+    } else {
+        command.to_vec()
+    };
 
     set_status(
         repo,
@@ -2173,7 +2527,7 @@ pub fn shell(
         Some("running (shell)".into()),
         None,
     )?;
-    let exit_code = match sandbox::run_interactive(&policy, &work, argv, &injected_env) {
+    let exit_code = match sandbox::run_interactive(&policy, &work, &argv, &injected_env) {
         Ok(code) => code,
         Err(e) => {
             let _ = protected_hook_configs.finish();
@@ -2249,6 +2603,131 @@ pub fn shell(
     Ok(exit_code)
 }
 
+// ─── interactive shell rc ────────────────────────────────────────────────────
+
+/// Build the argv for a default (no-command) interactive `env shell` session.
+///
+/// The host `$SHELL` is used, but for **bash** the host `~/.bashrc` is *not*
+/// sourced by default — under confinement it routinely calls tools the sandbox
+/// blocks (e.g. `~/.local/bin/powerline-shell`), spraying `Permission denied`
+/// noise. Instead bash is pointed at:
+///   - a **custom** rcfile when the profile sets `[shell] rcfile` — resolved
+///     relative to `$WORK` (the worktree), so it is version-controlled and
+///     reachable in the box on every tier without an extra grant; or
+///   - a generated **plain** rcfile (clear prompt, a couple of aliases, and an
+///     optional `~/.h5i_envrc` hook), written under the env's private dir and
+///     Landlock-granted read on the kernel tiers.
+///
+/// Non-bash shells and the container tier (whose rc comes from the image, not
+/// the host) fall through to a bare `[$SHELL, "-i"]`.
+fn default_shell_argv(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    policy: &mut ResolvedPolicy,
+    work: &Path,
+) -> Result<Vec<String>, H5iError> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    let is_bash = Path::new(&shell)
+        .file_name()
+        .map(|n| n == "bash")
+        .unwrap_or(false);
+    let bare = vec![shell.clone(), "-i".to_string()];
+
+    // The container shell + its rc come from the image, not the host — the host
+    // `~/.bashrc` is never sourced there, so there is nothing to neutralize and
+    // a host-path rcfile would not resolve in-box. Honor neither default here.
+    if policy.claim == IsolationClaim::Container {
+        if policy.profile.shell_rcfile.is_some() {
+            eprintln!(
+                "   note: [shell] rcfile is ignored at isolation=container \
+                 (the shell rc comes from the image)"
+            );
+        }
+        return Ok(bare);
+    }
+
+    if let Some(rc) = policy.profile.shell_rcfile.clone() {
+        if !is_bash {
+            eprintln!(
+                "   note: [shell] rcfile only applies to bash; $SHELL is '{shell}' — ignoring"
+            );
+            return Ok(bare);
+        }
+        let rcpath = resolve_work_rcfile(work, &rc)?;
+        return Ok(vec![shell, "--rcfile".into(), rcpath, "-i".into()]);
+    }
+
+    if !is_bash {
+        // We only know how to inject a plain rc for bash; other shells keep
+        // their normal startup (zsh/sh source their own host files).
+        return Ok(bare);
+    }
+
+    let rcpath = write_plain_bashrc(h5i_root, m)?;
+    // Kernel tiers enforce a Landlock read allowlist: grant the generated rc so
+    // bash can read it. (Workspace is unconfined; container returned above.)
+    if matches!(
+        policy.claim,
+        IsolationClaim::Process | IsolationClaim::Supervised
+    ) {
+        policy.profile.fs_read.push(rcpath.clone());
+    }
+    Ok(vec![shell, "--rcfile".into(), rcpath, "-i".into()])
+}
+
+/// Resolve a profile `[shell] rcfile` (relative to `$WORK`) to an absolute path,
+/// fail-closed: it must stay inside the worktree (no absolute paths, no `..`
+/// escape) and must exist. Keeps the rc inside the one always-mounted, granted
+/// subtree so it resolves in the box on every tier.
+fn resolve_work_rcfile(work: &Path, rel: &str) -> Result<String, H5iError> {
+    let p = Path::new(rel);
+    if p.is_absolute() {
+        return Err(H5iError::Metadata(format!(
+            "[shell] rcfile '{rel}' must be relative to the worktree, not an absolute path"
+        )));
+    }
+    if p.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(H5iError::Metadata(format!(
+            "[shell] rcfile '{rel}' must not escape the worktree with '..'"
+        )));
+    }
+    let full = work.join(p);
+    if !full.is_file() {
+        return Err(H5iError::Metadata(format!(
+            "[shell] rcfile '{rel}' not found in the worktree (expected at {})",
+            full.display()
+        )));
+    }
+    Ok(full.display().to_string())
+}
+
+/// Write the generated plain bash rcfile into the env's private dir and return
+/// its absolute path. Idempotent (rewritten each session so a re-`create` or an
+/// edited env id stays in sync).
+fn write_plain_bashrc(h5i_root: &Path, m: &EnvManifest) -> Result<String, H5iError> {
+    let dir = m.dir(h5i_root).join("shell");
+    std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+    let path = dir.join("rc.bash");
+    // The env id can contain '/' (agent/slug); harmless inside single quotes.
+    let body = format!(
+        "# Generated by `h5i env shell` — a plain default rc.\n\
+         # The host ~/.bashrc is intentionally NOT sourced inside the confined box\n\
+         # (it tends to reference tools the sandbox blocks, e.g. powerline-shell).\n\
+         # To customize: set `[shell] rcfile = \"…\"` (relative to the worktree) in\n\
+         # .h5i/env.toml, or drop extra shell config in ~/.h5i_envrc (sourced below).\n\
+         PS1='h5i:{id} \\w \\$ '\n\
+         alias ll='ls -alF'\n\
+         alias la='ls -A'\n\
+         alias ls='ls --color=auto' 2>/dev/null\n\
+         [ -f \"$HOME/.h5i_envrc\" ] && . \"$HOME/.h5i_envrc\"\n",
+        id = m.id,
+    );
+    std::fs::write(&path, body).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(path.display().to_string())
+}
+
 // ─── shell-spool ingest (in-box observation evidence) ────────────────────────
 
 /// Ingest caps. Container-tier spool contents are written by the **box** (the
@@ -2275,6 +2754,109 @@ fn read_spool_capped(p: &Path, cap: u64) -> Option<Vec<u8>> {
         buf.extend_from_slice(b"\n----- h5i: spool entry truncated -----\n");
     }
     Some(buf)
+}
+
+fn ingest_codex_hook_spool(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+    spool: &Path,
+) -> Result<usize, H5iError> {
+    let mut bases: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(spool) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(base) = name.strip_suffix(".json") {
+                let ok = base.starts_with("codex-hook-")
+                    && base.len() <= 128
+                    && base.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+                if ok {
+                    bases.push(base.to_string());
+                }
+            }
+        }
+    }
+    bases.sort();
+    let dropped = bases.len().saturating_sub(SPOOL_MAX_ENTRIES);
+    if bases.is_empty() {
+        return Ok(0);
+    }
+    let work = m.work_dir(h5i_root);
+    let h5i_repo = crate::repository::H5iRepository::open(&work)?;
+    let mut replayed = 0usize;
+
+    for base in bases.iter().take(SPOOL_MAX_ENTRIES) {
+        let path = spool.join(format!("{base}.json"));
+        let bytes = match read_spool_capped(&path, SPOOL_MAX_CMD_BYTES) {
+            Some(b) => b,
+            None => continue,
+        };
+        let record: CodexHookSpoolRecord = match serde_json::from_slice(&bytes) {
+            Ok(r) => r,
+            Err(_) => {
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+        };
+        let session_id = record.session_id.chars().take(160).collect::<String>();
+        for prompt in record.prompts.into_iter().take(32) {
+            let prompt = prompt.trim();
+            if !prompt.is_empty() {
+                h5i_repo.record_human_prompt(prompt, Some(&session_id))?;
+            }
+        }
+        let mut event_count = 0usize;
+        for event in record.events.into_iter().take(SPOOL_MAX_ENTRIES) {
+            let kind = match event.kind.as_str() {
+                "OBSERVE" => "OBSERVE",
+                "ACT" => "ACT",
+                _ => continue,
+            };
+            let message: String = event
+                .message
+                .replace(['\n', '\r'], " ")
+                .chars()
+                .take(1000)
+                .collect();
+            if message.trim().is_empty() {
+                continue;
+            }
+            crate::ctx::append_log(&work, kind, &message, false)?;
+            event_count += 1;
+        }
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "exec-log".into(),
+                detail: Some(format!(
+                    "codex hook inbox: session={} events={} source=inbox-capture",
+                    session_id, event_count
+                )),
+                capture: None,
+            },
+        )?;
+        let _ = std::fs::remove_file(&path);
+        replayed += event_count;
+    }
+    if dropped > 0 {
+        append_event(
+            repo,
+            &EnvEvent {
+                ts: now_ts(),
+                env_id: m.id.clone(),
+                agent: m.agent.clone(),
+                event: "exec-log".into(),
+                detail: Some(format!(
+                    "codex hook spool capped at {SPOOL_MAX_ENTRIES}: {dropped} record(s) dropped"
+                )),
+                capture: None,
+            },
+        )?;
+    }
+    Ok(replayed)
 }
 
 /// Ingest the env's observation spool (`<env>/spool/`) into tagged captures —
@@ -2510,6 +3092,9 @@ fn ingest_shell_spool(
         )?;
     }
 
+    let codex_observed = ingest_codex_hook_spool(repo, h5i_root, m, &spool)?;
+    count += codex_observed;
+
     // In-box `h5i commit` notes. The box can land a commit on its own env
     // branch but can't write `refs/h5i/notes`; the note is staged here and
     // applied host-side, **scoped to commits reachable from the env branch** so
@@ -2634,8 +3219,207 @@ fn ingest_shell_spool(
             },
         )?;
     }
+
+    // Drain the in-box team outbound spool (submissions + peer reviews); the
+    // same path runs on demand via `h5i team sync` (see `ingest_team_outbound`).
+    count += ingest_team_outbound(repo, h5i_root, m)?;
     Ok(count)
 }
+
+/// Drain a team env's staged outbound spool — the `h5i team agent submit` and
+/// `h5i team review submit` records a confined box can only stage — into the
+/// team event log, applying each under the identity-validated env binding (box
+/// fields choose *what*, never *who as*). Shared by the at-exit
+/// `ingest_shell_spool` and the on-demand `h5i team sync`, so a submission or
+/// review becomes visible to the host without waiting for the box to exit.
+/// Returns the number of records applied; a no-op for a non-team env.
+pub fn ingest_team_outbound(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+) -> Result<usize, H5iError> {
+    let spool = m.dir(h5i_root).join("spool");
+    if !spool.is_dir() {
+        return Ok(0);
+    }
+    let env_tip = repo
+        .find_reference(&m.branch)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+        .map(|c| c.id());
+    let mut count = 0usize;
+    if let Some((team_id, agent_id)) = team_binding(h5i_root, m) {
+        let mut submit_bases: Vec<String> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&spool) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if let Some(base) = name.strip_suffix(".json") {
+                    let ok = base.starts_with("team-submit-")
+                        && base.len() <= 128
+                        && base.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+                    if ok {
+                        submit_bases.push(base.to_string());
+                    }
+                }
+            }
+        }
+        submit_bases.sort();
+        let submit_dropped = submit_bases.len().saturating_sub(SPOOL_MAX_ENTRIES);
+        for base in submit_bases.iter().take(SPOOL_MAX_ENTRIES) {
+            let path = spool.join(format!("{base}.json"));
+            let bytes = match read_spool_capped(&path, SPOOL_MAX_CMD_BYTES) {
+                Some(b) => b,
+                None => continue,
+            };
+            let request: TeamSubmitSpool = match serde_json::from_slice(&bytes) {
+                Ok(r) => r,
+                Err(_) => {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+            };
+            if let Some(commit) = request.commit.as_deref().filter(|s| !s.trim().is_empty()) {
+                let allowed = repo
+                    .revparse_single(commit)
+                    .ok()
+                    .and_then(|o| o.peel_to_commit().ok())
+                    .map(|c| {
+                        env_tip
+                            .map(|tip| {
+                                tip == c.id()
+                                    || repo.graph_descendant_of(tip, c.id()).unwrap_or(false)
+                            })
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false);
+                if !allowed {
+                    append_event(
+                        repo,
+                        &EnvEvent {
+                            ts: now_ts(),
+                            env_id: m.id.clone(),
+                            agent: m.agent.clone(),
+                            event: "exec-log".into(),
+                            detail: Some(format!(
+                                "rejected in-box team submit for {agent_id} — commit is not reachable from env branch"
+                            )),
+                            capture: None,
+                        },
+                    )?;
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+            }
+            match crate::team::submit(
+                repo,
+                h5i_root,
+                &team_id,
+                &agent_id,
+                request.commit.as_deref(),
+                request.summary,
+                &agent_id,
+            ) {
+                Ok(artifact) => {
+                    append_event(
+                        repo,
+                        &EnvEvent {
+                            ts: now_ts(),
+                            env_id: m.id.clone(),
+                            agent: m.agent.clone(),
+                            event: "team-submit".into(),
+                            detail: Some(format!(
+                                "in-box team submit applied: {} at {}",
+                                artifact.id,
+                                &artifact.commit_oid[..12.min(artifact.commit_oid.len())]
+                            )),
+                            capture: None,
+                        },
+                    )?;
+                    count += 1;
+                }
+                Err(e) => eprintln!("warning: applying in-box team submit failed: {e}"),
+            }
+            let _ = std::fs::remove_file(&path);
+        }
+        if submit_dropped > 0 {
+            append_event(
+                repo,
+                &EnvEvent {
+                    ts: now_ts(),
+                    env_id: m.id.clone(),
+                    agent: m.agent.clone(),
+                    event: "exec-log".into(),
+                    detail: Some(format!(
+                        "in-box team submit spool capped at {SPOOL_MAX_ENTRIES}: {submit_dropped} dropped"
+                    )),
+                    capture: None,
+                },
+            )?;
+        }
+        // Outbound peer reviews staged by the boxed agent (`team review submit`).
+        // Authority is the identity-validated env binding (`agent_id`); the box
+        // only chooses the target + body, never who it reviews *as*.
+        let mut review_bases: Vec<String> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&spool) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if let Some(base) = name.strip_suffix(".json") {
+                    if base.starts_with("team-review-")
+                        && base.len() <= 128
+                        && base.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    {
+                        review_bases.push(base.to_string());
+                    }
+                }
+            }
+        }
+        review_bases.sort();
+        for base in review_bases.iter().take(SPOOL_MAX_ENTRIES) {
+            let path = spool.join(format!("{base}.json"));
+            let bytes = match read_spool_capped(&path, SPOOL_MAX_CMD_BYTES) {
+                Some(b) => b,
+                None => continue,
+            };
+            let request: TeamReviewSpool = match serde_json::from_slice(&bytes) {
+                Ok(r) => r,
+                Err(_) => {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+            };
+            match crate::team::submit_review(
+                repo,
+                &team_id,
+                &agent_id,
+                &request.target,
+                request.body,
+                &agent_id,
+            ) {
+                Ok(review) => {
+                    append_event(
+                        repo,
+                        &EnvEvent {
+                            ts: now_ts(),
+                            env_id: m.id.clone(),
+                            agent: m.agent.clone(),
+                            event: "team-review".into(),
+                            detail: Some(format!(
+                                "in-box team review applied: {} -> {}",
+                                review.reviewer, review.target
+                            )),
+                            capture: None,
+                        },
+                    )?;
+                    count += 1;
+                }
+                Err(e) => eprintln!("warning: applying in-box team review failed: {e}"),
+            }
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    Ok(count)
+}
+
 
 // ─── diff ───────────────────────────────────────────────────────────────────
 
@@ -2949,8 +3733,7 @@ pub fn doctor(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> DoctorRepo
                 // kernel still denies exec — functional self-test is authoritative.
                 _ => {
                     let probe = sandbox::Profile::builtin("doctor", claim);
-                    match sandbox::resolve(&probe, &caps)
-                        .and_then(|pol| sandbox::verify_exec(&pol))
+                    match sandbox::resolve(&probe, &caps).and_then(|pol| sandbox::verify_exec(&pol))
                     {
                         Ok(()) => chk!(
                             "enforcement",
@@ -2968,7 +3751,12 @@ pub fn doctor(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> DoctorRepo
                 }
             }
         }
-        Err(e) => chk!("enforcement", false, false, format!("unknown isolation claim: {e}")),
+        Err(e) => chk!(
+            "enforcement",
+            false,
+            false,
+            format!("unknown isolation claim: {e}")
+        ),
     }
 
     // 3. Workspace — present for live envs, advisory-absent for pulled/gc'd ones.
@@ -3068,7 +3856,10 @@ pub fn secrets_status(policy: &ResolvedPolicy) -> Vec<SecretStatus> {
                 // Dry-run resolution: read-only, value used only for a
                 // fingerprint and immediately dropped, never surfaced.
                 match crate::secrets_broker::resolve_value(g, false) {
-                    Ok(v) => ("ok".to_string(), Some(crate::secrets_broker::fingerprint(&v))),
+                    Ok(v) => (
+                        "ok".to_string(),
+                        Some(crate::secrets_broker::fingerprint(&v)),
+                    ),
                     Err(e) => (format!("error: {e}"), None),
                 }
             };
@@ -3093,7 +3884,11 @@ pub fn render_secrets(env_id: &str, rows: &[SecretStatus]) -> String {
         return out;
     }
     for s in rows {
-        let ttl = s.ttl.as_deref().map(|t| format!(" ttl={t}")).unwrap_or_default();
+        let ttl = s
+            .ttl
+            .as_deref()
+            .map(|t| format!(" ttl={t}"))
+            .unwrap_or_default();
         let fp = s
             .fingerprint
             .as_deref()
@@ -3189,7 +3984,13 @@ fn alloc_free_port() -> Option<u16> {
 /// `web-test` → `WEB_TEST` (an env-var-safe upper-case key).
 fn env_key(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -3335,6 +4136,7 @@ pub fn service_start(
     let mut policy = load_policy(h5i_root, m)?;
     grant_box_git(repo, m, &work, &mut policy)?;
     prepare_private_paths(h5i_root, m, &mut policy, &work)?;
+    prepare_private_tmp(h5i_root, m, &mut policy)?;
     prepare_home_state(
         h5i_root,
         m,
@@ -3389,7 +4191,9 @@ pub fn service_start(
             env_id: m.id.clone(),
             agent: m.agent.clone(),
             event: "service".into(),
-            detail: Some(format!("start {name} pid={pid}{port_note} cmd=`{safe_cmd}`")),
+            detail: Some(format!(
+                "start {name} pid={pid}{port_note} cmd=`{safe_cmd}`"
+            )),
             capture: None,
         },
     )?;
@@ -3517,7 +4321,12 @@ pub fn service_status(h5i_root: &Path, m: &EnvManifest) -> Vec<ServiceStatus> {
 }
 
 /// Tail of a running service's log file.
-pub fn service_logs(h5i_root: &Path, m: &EnvManifest, name: &str, tail: usize) -> Result<String, H5iError> {
+pub fn service_logs(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    name: &str,
+    tail: usize,
+) -> Result<String, H5iError> {
     validate_service_name(name)?;
     let svc_dir = services_dir(h5i_root, m);
     let rec = read_service_record(&svc_dir, name)
@@ -3581,7 +4390,10 @@ pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
         out.push_str(&format!(
             "  {:<16} {:<10} {:<10} http://127.0.0.1:{}\n",
             s.record.name,
-            s.record.port.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
+            s.record
+                .port
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "-".into()),
             injected,
             injected
         ));
@@ -3625,11 +4437,13 @@ struct SpoolPending {
     notes: Vec<String>,
     /// Count of tee-shim observation records (`cmd-*.cmd`).
     shim: usize,
+    /// Count of staged Codex hook sync records (`codex-hook-*.json`).
+    codex: usize,
 }
 
 impl SpoolPending {
     fn total(&self) -> usize {
-        self.captures.len() + self.notes.len() + self.shim
+        self.captures.len() + self.notes.len() + self.shim + self.codex
     }
     /// "2 capture, 1 note, 3 shim" — omitting zero lanes.
     fn breakdown(&self) -> String {
@@ -3642,6 +4456,9 @@ impl SpoolPending {
         }
         if self.shim > 0 {
             parts.push(format!("{} shim", self.shim));
+        }
+        if self.codex > 0 {
+            parts.push(format!("{} codex", self.codex));
         }
         parts.join(", ")
     }
@@ -3674,10 +4491,14 @@ fn scan_spool_pending(h5i_root: &Path, m: &EnvManifest) -> SpoolPending {
             } else if base.starts_with("note-") {
                 let oid = std::fs::read(e.path())
                     .ok()
-                    .and_then(|b| serde_json::from_slice::<crate::metadata::H5iCommitRecord>(&b).ok())
+                    .and_then(|b| {
+                        serde_json::from_slice::<crate::metadata::H5iCommitRecord>(&b).ok()
+                    })
                     .map(|r| r.git_oid)
                     .unwrap_or_default();
                 p.notes.push(oid);
+            } else if base.starts_with("codex-hook-") {
+                p.codex += 1;
             }
         } else if name.starts_with("cmd-") && name.ends_with(".cmd") {
             p.shim += 1;
@@ -3763,7 +4584,14 @@ fn stamp_apply_provenance(repo: &Repository, m: &EnvManifest, applied: git2::Oid
         Ok(j) => j,
         Err(e) => return format!("WARNING: apply note skipped (serialize: {e})"),
     };
-    match repo.note(&sig, &sig, Some(crate::repository::H5I_NOTES_REF), applied, &json, true) {
+    match repo.note(
+        &sig,
+        &sig,
+        Some(crate::repository::H5I_NOTES_REF),
+        applied,
+        &json,
+        true,
+    ) {
         Ok(_) => {
             let lanes = prov
                 .evidence_sources
@@ -3771,8 +4599,17 @@ fn stamp_apply_provenance(repo: &Repository, m: &EnvManifest, applied: git2::Oid
                 .map(|(s, n)| format!("{s}={n}"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let lanes = if lanes.is_empty() { "none".into() } else { lanes };
-            format!("provenance note on {}: {} capture(s) [{}]", &applied.to_string()[..12], prov.captures_total, lanes)
+            let lanes = if lanes.is_empty() {
+                "none".into()
+            } else {
+                lanes
+            };
+            format!(
+                "provenance note on {}: {} capture(s) [{}]",
+                &applied.to_string()[..12],
+                prov.captures_total,
+                lanes
+            )
         }
         Err(e) => format!("WARNING: apply provenance note failed ({e})"),
     }
@@ -4806,6 +5643,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn resolve_work_rcfile_accepts_in_tree_and_rejects_escapes() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path();
+        std::fs::create_dir_all(work.join(".h5i")).unwrap();
+        std::fs::write(work.join(".h5i/box.bashrc"), "PS1='x '\n").unwrap();
+
+        // A real file inside the worktree resolves to its absolute path.
+        let got = resolve_work_rcfile(work, ".h5i/box.bashrc").unwrap();
+        assert_eq!(got, work.join(".h5i/box.bashrc").display().to_string());
+
+        // Absolute, `..`-escaping, and missing all fail closed.
+        assert!(resolve_work_rcfile(work, "/etc/passwd").is_err());
+        assert!(resolve_work_rcfile(work, "../outside.bashrc").is_err());
+        assert!(resolve_work_rcfile(work, ".h5i/../../etc/x").is_err());
+        assert!(resolve_work_rcfile(work, "does-not-exist.bashrc").is_err());
+    }
+
+    #[test]
+    fn write_plain_bashrc_is_self_contained_and_skips_host_bashrc() {
+        let h5i_root = tempfile::tempdir().unwrap();
+        let m = canonical_manifest("claude", "demo");
+
+        let path = write_plain_bashrc(h5i_root.path(), &m).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        // Carries the env id in the prompt, an optional ~/.h5i_envrc hook, and
+        // never sources the host ~/.bashrc.
+        assert!(body.contains(&format!("h5i:{}", m.id)));
+        assert!(body.contains("$HOME/.h5i_envrc"));
+        assert!(!body.contains(".bashrc\""));
+        assert!(path.ends_with("shell/rc.bash"));
+    }
+
+    #[test]
     fn upsert_jsonl_replaces_by_id_and_keeps_others_sorted() {
         let existing = "{\"id\":\"b\",\"v\":1}\n{\"id\":\"a\",\"v\":1}\n";
         // Replace b, keep a; output sorted by id.
@@ -4896,9 +5766,18 @@ mod tests {
         // env to shell into, the parent to merge, and the apply to finish with.
         let m = canonical_manifest("claude", "auth-fix");
         let rb = conflict_runbook(&m);
-        assert!(rb.contains("h5i env shell auth-fix"), "names the env shell: {rb}");
-        assert!(rb.contains("git merge main"), "names the parent merge: {rb}");
-        assert!(rb.contains("h5i env apply auth-fix"), "names the finishing apply: {rb}");
+        assert!(
+            rb.contains("h5i env shell auth-fix"),
+            "names the env shell: {rb}"
+        );
+        assert!(
+            rb.contains("git merge main"),
+            "names the parent merge: {rb}"
+        );
+        assert!(
+            rb.contains("h5i env apply auth-fix"),
+            "names the finishing apply: {rb}"
+        );
     }
 
     #[test]
@@ -4915,10 +5794,79 @@ mod tests {
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert!(names.iter().all(|n| n.starts_with("note-") && n.ends_with(".json")));
-        assert!(!names.iter().any(|n| n.contains("..") || n.contains('/') || n.contains('#')));
+        assert!(names
+            .iter()
+            .all(|n| n.starts_with("note-") && n.ends_with(".json")));
+        assert!(!names
+            .iter()
+            .any(|n| n.contains("..") || n.contains('/') || n.contains('#')));
         // An all-non-alnum oid leaves nothing to name → error, no file written.
         assert!(write_note_spool(&spool, "../", "{}").is_err());
+    }
+
+    #[test]
+    fn write_team_submit_spool_records_scoped_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path().join("spool");
+        let base = write_team_submit_spool(
+            &spool,
+            &TeamSubmitSpool {
+                commit: Some("HEAD".into()),
+                summary: Some("ready".into()),
+            },
+        )
+        .unwrap();
+        assert!(base.starts_with("team-submit-"));
+        let raw = std::fs::read(spool.join(format!("{base}.json"))).unwrap();
+        let request: TeamSubmitSpool = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(request.commit.as_deref(), Some("HEAD"));
+        assert_eq!(request.summary.as_deref(), Some("ready"));
+    }
+
+    #[test]
+    fn write_team_review_spool_records_scoped_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path().join("spool");
+        let base = write_team_review_spool(
+            &spool,
+            &TeamReviewSpool {
+                target: "codex-fix".into(),
+                body: "looks good".into(),
+            },
+        )
+        .unwrap();
+        assert!(base.starts_with("team-review-"));
+        let raw = std::fs::read(spool.join(format!("{base}.json"))).unwrap();
+        let request: TeamReviewSpool = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(request.target, "codex-fix");
+        assert_eq!(request.body, "looks good");
+    }
+
+    #[test]
+    fn env_inbox_write_read_and_cursor_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = dir.path().join("inbox");
+        let m1 = crate::msg::Message {
+            id: "m1".into(),
+            to: "elsa".into(),
+            body: "review please".into(),
+            ..Default::default()
+        };
+        write_env_inbox_message(&inbox, &m1).unwrap();
+        // Keyed by id, so re-delivering the same message overwrites (no dup).
+        write_env_inbox_message(&inbox, &m1).unwrap();
+        let got = read_env_inbox(&inbox);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, "m1");
+        assert_eq!(got[0].to, "elsa");
+
+        // Box-writable seen-cursor (lives in the capture spool).
+        let spool = dir.path().join("spool");
+        assert!(read_inbox_cursor(&spool).is_empty());
+        let mut seen = std::collections::BTreeSet::new();
+        seen.insert("m1".to_string());
+        write_inbox_cursor(&spool, &seen).unwrap();
+        assert!(read_inbox_cursor(&spool).contains("m1"));
     }
 
     #[test]
@@ -5088,8 +6036,15 @@ mod tests {
         let codex = root.join(".codex").display().to_string();
         let claude = root.join(".claude").display().to_string();
         // Existing project-config dirs are READ-granted, never write-granted.
-        assert!(pol.profile.fs_read.contains(&codex), "main-repo .codex read: {:?}", pol.profile.fs_read);
-        assert!(pol.profile.fs_read.contains(&claude), "main-repo .claude read");
+        assert!(
+            pol.profile.fs_read.contains(&codex),
+            "main-repo .codex read: {:?}",
+            pol.profile.fs_read
+        );
+        assert!(
+            pol.profile.fs_read.contains(&claude),
+            "main-repo .claude read"
+        );
         assert!(!pol.profile.fs_write.contains(&codex), "stays immutable");
         assert!(!pol.profile.fs_write.contains(&claude), "stays immutable");
 
@@ -5101,7 +6056,10 @@ mod tests {
             Profile::builtin("default", IsolationClaim::Process),
         );
         grant_box_git(&repo, &m, &work, &mut pol2).unwrap();
-        assert!(!pol2.profile.fs_read.contains(&claude), "absent dir not granted");
+        assert!(
+            !pol2.profile.fs_read.contains(&claude),
+            "absent dir not granted"
+        );
     }
 
     // The same plumbing is applied per backend: Landlock grants (+ global
@@ -5213,6 +6171,44 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn prepare_private_tmp_redirects_shared_tmp_to_env_backing() {
+        use crate::sandbox::{AgentRuntime, Profile};
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let m = canonical_manifest("claude", "tmp");
+        std::fs::create_dir_all(m.dir(h5i_root)).unwrap();
+        let mut pol = ResolvedPolicy::new(
+            IsolationClaim::Supervised,
+            Profile::builtin_agent(IsolationClaim::Supervised, AgentRuntime::Claude),
+        );
+        assert!(pol.profile.fs_write.iter().any(|w| w == "/tmp"));
+
+        prepare_private_tmp(h5i_root, &m, &mut pol).unwrap();
+
+        let backing = m.dir(h5i_root).join("tmp");
+        assert!(backing.is_dir(), "{backing:?}");
+        assert_eq!(
+            std::fs::metadata(&backing).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert!(!pol.profile.fs_read.iter().any(|w| w == "/tmp"));
+        assert!(!pol.profile.fs_write.iter().any(|w| w == "/tmp"));
+        assert!(pol
+            .profile
+            .fs_write
+            .iter()
+            .any(|w| w == &backing.display().to_string()));
+        let tmp_bind = pol
+            .home_binds
+            .iter()
+            .find(|b| b.target.as_path() == Path::new("/tmp"))
+            .unwrap();
+        assert_eq!(tmp_bind.backing, backing);
+    }
+
     // ─── per-env credential/session isolation (#1) ──────────────────────────
 
     /// Build a fake host HOME with the Claude runtime's state: a `.claude` dir
@@ -5252,10 +6248,17 @@ mod tests {
         for b in &pol.home_binds {
             assert!(b.backing.starts_with(&backing_root), "{:?}", b.backing);
         }
-        let claude = pol.home_binds.iter().find(|b| b.target == home.join(".claude")).unwrap();
+        let claude = pol
+            .home_binds
+            .iter()
+            .find(|b| b.target == home.join(".claude"))
+            .unwrap();
         // Copy-in actually happened, content + mode preserved.
         let copied = claude.backing.join(".credentials.json");
-        assert_eq!(std::fs::read_to_string(&copied).unwrap(), "{\"token\":\"real-secret\"}");
+        assert_eq!(
+            std::fs::read_to_string(&copied).unwrap(),
+            "{\"token\":\"real-secret\"}"
+        );
         assert_eq!(
             std::fs::metadata(&copied).unwrap().permissions().mode() & 0o777,
             0o600,
@@ -5323,7 +6326,11 @@ mod tests {
 
         prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
 
-        assert_eq!(pol.home_binds.len(), 1, "only the existing path is redirected");
+        assert_eq!(
+            pol.home_binds.len(),
+            1,
+            "only the existing path is redirected"
+        );
         // The missing path is left as today's direct grant (never created in HOME).
         assert!(pol.profile.fs_write.iter().any(|w| w == "~/.claude.json"));
         assert!(!home.join(".claude.json").exists());
@@ -5347,7 +6354,10 @@ mod tests {
         prepare_home_state(h5i_root, &m, &mut pol, Some(&home)).unwrap();
 
         assert!(pol.home_binds.is_empty());
-        assert_eq!(pol.profile.fs_write, before, "non-agent fs_write must be untouched");
+        assert_eq!(
+            pol.profile.fs_write, before,
+            "non-agent fs_write must be untouched"
+        );
     }
 
     #[test]
@@ -5511,7 +6521,11 @@ mod tests {
         // other is an embedded repo the agent dropped in.
         std::fs::create_dir_all(work.join("examples/sub")).unwrap();
         std::fs::create_dir_all(work.join("vendor/dep")).unwrap();
-        std::fs::write(work.join("examples/sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
+        std::fs::write(
+            work.join("examples/sub/.git"),
+            "gitdir: ../.git/modules/sub\n",
+        )
+        .unwrap();
         std::fs::write(work.join("vendor/dep/.git"), "gitdir: elsewhere\n").unwrap();
         let canon = work.canonicalize().unwrap();
 
@@ -5524,7 +6538,11 @@ mod tests {
         let mut base = HashMap::new();
         base.insert("examples/sub".to_string(), git2::Oid::zero());
         let v = scan_nested_git(&canon, &base);
-        assert_eq!(v.len(), 1, "only the unregistered nested repo flagged: {v:?}");
+        assert_eq!(
+            v.len(),
+            1,
+            "only the unregistered nested repo flagged: {v:?}"
+        );
         assert!(v[0].contains("vendor/dep"), "{v:?}");
     }
 
@@ -5596,7 +6614,8 @@ mod tests {
 
     fn manifest_ids_in(repo: &Repository, oid: git2::Oid) -> Vec<String> {
         let tree = repo.find_commit(oid).unwrap().tree().unwrap();
-        let raw = objects::read_blob_from_tree(repo, Some(&tree), MANIFESTS_FILE).unwrap_or_default();
+        let raw =
+            objects::read_blob_from_tree(repo, Some(&tree), MANIFESTS_FILE).unwrap_or_default();
         let mut ids: Vec<String> = raw
             .lines()
             .filter(|l| !l.trim().is_empty())
