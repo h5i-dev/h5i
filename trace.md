@@ -961,3 +961,9 @@ _[Checkpoint: 6a392c86 — edited docs/pitch/index.html; edited docs/blog/agent-
 
 [12:39:10] THINK: I'll make two commits — the code fix (with `--tests`) and the docs.
 [12:39:10] NOTE: PLACEHOLDER (~/Dev/h5i/docs/blog/agent-ensembles-with-h5i-team/index.html): reatment for the worked example (status line + `<agent-id>` placeholder); the persona prose now says the id is "auto-generated, or pinned with `--as`"…
+
+
+---
+_[Checkpoint: 6a392cee — edited docs/pitch/index.html; edited docs/blog/agent-ensembles-with-h5i-team/index.html; edited docs/blog/agent-ensemble…]_
+---
+
