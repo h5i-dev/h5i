@@ -437,3 +437,4 @@ _[Checkpoint: 6a38bde2 — Revised docs/_static/h5i-team.svg per feedback: chang
 _[Checkpoint: 6a38bde6 — wrote scripts/team-review.sh; edited src/hooks.rs; edited docs/_static/h5i-team.svg]_
 ---
 
+[04:45:57] NOTE: DEFERRAL (~/Dev/h5i/src/main.rs): The SVG was reworked externally — I'll leave it. Back to wiring the handler. Let me update the `Setup` match arm to consume and apply `te
