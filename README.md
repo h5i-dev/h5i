@@ -90,17 +90,18 @@ Run the same task across several agents and merge the verified winner. A roster 
 #     auto-generated id — `h5i team status` shows them)
 h5i team create fix-auth --base HEAD
 h5i team add-env fix-auth env/claude-arch/fix-auth --runtime claude --persona examples/personas/architect.md
-h5i team add-env fix-auth env/codex/fix-auth        --runtime codex  --persona examples/personas/implementer.md
+h5i team add-env fix-auth env/codex/fix-auth       --runtime codex  --persona examples/personas/implementer.md
 h5i team status fix-auth                          # note the generated agent ids
 
 # 2. launch every agent in its own sealed box (a terminal per env)
 scripts/team-launch.sh fix-auth --task task.md
 
-#    … each agent implements, peer-reviews, and revises inside its box …
+# 3. Each agent peer-reviews, and revises inside its box
+scripts/team-review.sh fix-auth
 
 # 3. the neutral verdict: replay each candidate, run the tests, merge the winner
-h5i team sync     fix-auth                       # ingest agents' staged work (no relaunch)
-h5i team freeze   fix-auth                       # seal the independent attempts
+# h5i team sync     fix-auth                       # ingest agents' staged work (no relaunch)
+# h5i team freeze   fix-auth                       # seal the independent attempts
 h5i team verify   fix-auth --agent <agent-id> -- cargo test   # id from `team status`
 h5i team finalize fix-auth                       # explainable verdict (gates + smallest diff)
 h5i team apply    fix-auth                       # merge the winner, gated on the verdict
