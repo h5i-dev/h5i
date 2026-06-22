@@ -2625,11 +2625,15 @@ permissioned reviews, auditable convergence*. It is a thin orchestration layer:
 coordination (roster, phases, submissions, verdict). It is **not** a group chat
 and **not** a daemon.
 
-A roster member is a **persona, not a backend**: the `agent_id` (e.g.
-`claude-architect`) is the durable actor, while `runtime`/`model`/`role` are
-attributes — so a team can be three Claudes with different system prompts/skills
-(architect / implementer / skeptic), a Claude+Codex mix, or one model under two
-roles. The audit records *which configuration produced which candidate*.
+A roster member is a **persona, not a backend**: the `agent_id` (auto-generated,
+or pinned with `--as`) is the durable actor, while `runtime`/`model`/`persona`
+are attributes — so a team can be three Claudes with different system
+prompts/skills (architect / implementer / skeptic), a Claude+Codex mix, or one
+model under two personas. A **persona** is a markdown file (`--persona <file>`;
+see `examples/personas/`) injected into that agent's launch prompt as its
+standing working style. The audit records *which configuration produced which
+candidate*. (`h5i team status` lists each agent's id for the `--agent` /
+`--reviewer` / `--target` flags below.)
 
 Run state lives in one ref per run, `refs/h5i/team/<run-id>`, as an
 **append-only event log** that is the single source of truth — phase, roster, and
@@ -2659,12 +2663,13 @@ inboxes and never locks the round.
 | Command | Description |
 |---------|-------------|
 | `h5i team create <name> [--base REV] [--rounds N] [--title T] [--json]` | Create a run over existing envs. `--base` (default `HEAD`) is the shared base all candidates are compared against. |
-| `h5i team add-env <team> <env> --as <agent-id> [--runtime R] [--model M] [--role ROLE] [--json]` | Add an already-created env to the roster as a persona-bound member. `--as` is the ref-safe actor key; distinct personas on the same runtime need distinct ids. Draft phase only. **Also binds the env's in-box identity to this persona** (writes host-owned `team-identity` / `team-run` files), so `env run`/`env shell` inject `H5I_AGENT=<persona>` and `H5I_TEAM=<team>` for scoped team-agent commands. |
+| `h5i team add-env <team> <env> [--as <agent-id>] [--runtime R] [--model M] [--persona FILE] [--json]` | Add an already-created env to the roster as a persona-bound member. The agent id is **auto-generated** unless you pin it with `--as` (a ref-safe key; distinct personas on the same runtime need distinct ids — see it with `h5i team status`). `--persona <file>` injects a markdown working-style brief into this agent's launch prompt (see `examples/personas/`). Draft phase only. **Also binds the env's in-box identity to this persona** (writes host-owned `team-identity` / `team-run` files), so `env run`/`env shell` inject `H5I_AGENT=<persona>` and `H5I_TEAM=<team>` for scoped team-agent commands. |
+| `h5i team persona <agent> [--team T]` | Print the persona markdown recorded for a roster agent (the launcher uses this to inject it). |
 | `h5i team status [<team>] [--json]` | Folded run state: phase, roster, per-agent submission state. |
 | `h5i team list [--json]` | All runs on this clone. |
 | `h5i team use [<name>] [--clear]` | Pin a **current team** (like git's current branch) so other subcommands can drop `<team>`. No arg prints the current; `--clear` unsets. `create` auto-pins the new run. |
-| `h5i team submit <team> --agent <id> [--commit OID] [--summary-file F] [--json]` | Freeze the agent's env-branch tip (or `--commit`) as an **immutable** submission — frozen commit/tree oids + diffstat + capture ids, reviewable even if the env later changes. |
-| `h5i team agent submit [--commit OID] [--summary-file F] [--json]` | In-box submit for a bound team env. In sealed envs it writes a scoped request to the env spool; the host applies it to `refs/h5i/team/*` when the env shell exits. Host-side it submits as `$H5I_AGENT` / `$H5I_TEAM`. |
+| `h5i team submit <team> --agent <id> [--commit OID] [--summary-file F] [--json]` | Freeze the agent's candidate as an **immutable** submission — frozen commit/tree oids + diffstat + capture ids, reviewable even if the env later changes. Without `--commit` it first **mediates-commits the env worktree** onto the env branch (so uncommitted edits are captured, not silently lost) and freezes the result; with `--commit` it pins that exact commit. A submission whose tree is identical to the team base is **refused** (nothing to review). |
+| `h5i team agent submit [--commit OID] [--summary-file F] [--json]` | In-box submit for a bound team env. In sealed envs it writes a scoped request to the env spool; the host applies it to `refs/h5i/team/*` when the env shell exits (or on `team sync`), at which point the worktree is snapshotted as above. Host-side it submits as `$H5I_AGENT` / `$H5I_TEAM`. |
 | `h5i team agent inbox [<team>] [--peek] [--wait] [--interval 10] [--timeout 1800] [--json]` | Scoped inbox for the team persona. In a sealed box it reads the host-fanned **per-env inbox** (`$H5I_ENV_INBOX`, read-only); host-side it reads the shared store. `--wait` blocks (peek-only) until a message is waiting or the timeout — use it after submitting to await a review request without ending the session. |
 | `h5i team agent hook [<team>] [--block] [--quiet] [--timeout 1800] [--interval 10]` | Stop-hook delivery: keeps an agent in an unfinished round from stopping and feeds in review requests. `--block` (Claude **and Codex** — their Stop hooks share the same `{"decision":"block"}` continuation contract) waits up to `--timeout` for the next message, then blocks the stop and hands it back; `--quiet` prints one-shot (manual). Released by a `TEAM_DONE` signal (sent on finalize/apply) or the timeout. Registered via `h5i hook setup --team`; no-ops outside a team. |
 | `h5i team freeze <team> [--allow-missing] [--json]` | Transition draft → `sealed_submit`. Refuses if any roster member has no submission unless `--allow-missing` (records abstentions). |
@@ -2814,15 +2819,15 @@ the one place a human is pinged, by choice.
 
 ```bash
 h5i team create fix-auth --base HEAD
-h5i team add-env fix-auth env/claude-architect/fix-auth --as claude-architect --runtime claude --role architect
-h5i team add-env fix-auth env/codex/fix-auth          --as codex --runtime codex --role implementer
+h5i team add-env fix-auth env/claude-architect/fix-auth --runtime claude --persona examples/personas/architect.md
+h5i team add-env fix-auth env/codex/fix-auth          --runtime codex --persona examples/personas/implementer.md
+h5i team status fix-auth                              # note the auto-generated agent ids
 # each boxed agent works in its own env, then runs:
 h5i team agent submit
 # the host ingests those staged submits when each env shell exits
 h5i team freeze fix-auth                              # seals both independent attempts
 # neutral, sandboxed verifier re-runs each candidate at the shared base
-h5i team verify fix-auth --agent claude-architect -- cargo test
-h5i team verify fix-auth --agent codex          -- cargo test
+h5i team verify fix-auth --agent <agent-id> -- cargo test   # repeat per candidate; ids from `team status`
 h5i team compare  fix-auth                            # side-by-side + verifier metrics
 h5i team finalize fix-auth                            # explainable verdict over verifier evidence
 h5i team apply    fix-auth                            # replays the winning patch (gated)

@@ -717,10 +717,36 @@ pub fn submit(
     let m = env::find(h5i_root, &agent.env_id)?;
     let commit_oid = match commit {
         Some(c) => repo.revparse_single(c)?.peel_to_commit()?.id(),
-        None => repo.refname_to_id(&m.branch)?,
+        None => {
+            // Snapshot the worktree onto the env branch *first*, so a submission
+            // freezes the agent's working-tree edits — not a branch tip that the
+            // agent never advanced. Without this, an agent that edits files and
+            // runs `team agent submit` (the normal flow) freezes the base tree,
+            // and reviewers see nothing to review. No-op when there's no local
+            // worktree (a pulled reviewer clone rides the shared branch tip).
+            env::snapshot_for_submit(repo, h5i_root, &m)?;
+            repo.refname_to_id(&m.branch)?
+        }
     };
     let commit_obj = repo.find_commit(commit_oid)?;
     let tree_oid = commit_obj.tree_id();
+
+    // Refuse a no-op submission: a tree identical to the team base has nothing to
+    // review (this is exactly what an uncommitted/unchanged worktree produced
+    // before the snapshot above). Fail loud so the agent fixes it rather than
+    // silently freezing the base.
+    let base_tree = repo
+        .revparse_single(&current.base_oid)?
+        .peel_to_commit()?
+        .tree_id();
+    if tree_oid == base_tree {
+        return Err(H5iError::Metadata(format!(
+            "team '{run_id}': {agent_id}'s submission is identical to the team base \
+             ({}) — nothing to review. Make changes in the env worktree (they are \
+             auto-committed on submit), then re-submit.",
+            &current.base_oid[..12.min(current.base_oid.len())]
+        )));
+    }
     let env_rows = env::compare(repo, h5i_root, std::slice::from_ref(&m.id))?;
     let row = env_rows
         .first()
@@ -1899,9 +1925,12 @@ mod tests {
         let repo = Repository::init(dir.path()).unwrap();
         commit_file(&repo, "README.md", "hello\n");
         let h5i_root = dir.path();
-        manifest(&repo, h5i_root, "codex", "fix");
+        let m = manifest(&repo, h5i_root, "codex", "fix");
+        // Advance the env branch off base so the submission is non-empty.
+        let candidate = commit_file(&repo, "feature.txt", "ok\n");
+        repo.reference(&m.branch, candidate, true, "candidate").unwrap();
 
-        create(&repo, "run1", "run1", "HEAD", 1, "human").unwrap();
+        create(&repo, "run1", "run1", "HEAD~1", 1, "human").unwrap();
         add_env(
             &repo,
             h5i_root,
@@ -1935,6 +1964,105 @@ mod tests {
         assert_eq!(
             run.agents[0].latest_submission_id.as_deref(),
             Some(sub.id.as_str())
+        );
+    }
+
+    #[test]
+    fn submit_refuses_no_op_submission() {
+        // An env whose branch tip is still the team base (the agent never
+        // committed any work) has nothing to review — submit must fail loud
+        // rather than silently freezing the base tree.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        manifest(&repo, h5i_root, "codex", "fix"); // branch == base, no work
+
+        create(&repo, "run-noop", "run-noop", "HEAD", 1, "human").unwrap();
+        add_env(
+            &repo,
+            h5i_root,
+            "run-noop",
+            "env/codex/fix",
+            "codex-fix",
+            None,
+            None,
+            None,
+            "human",
+        )
+        .unwrap();
+
+        let err = submit(&repo, h5i_root, "run-noop", "codex-fix", None, None, "codex")
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("identical to the team base"),
+            "expected a no-op refusal, got: {msg}"
+        );
+        // Nothing was recorded — the round has no submission to mislead a review.
+        let run = status(&repo, "run-noop").unwrap().run;
+        assert!(run.submissions.is_empty(), "no-op submit must not record");
+    }
+
+    #[test]
+    fn submit_auto_snapshots_dirty_worktree() {
+        // The core fix: an agent edits files in the env worktree and submits
+        // WITHOUT committing. submit must mediate-commit the worktree onto the
+        // env branch first, so the frozen artifact carries the agent's work
+        // (tree differs from base) — not the unadvanced branch tip.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let base = commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let m = manifest(&repo, h5i_root, "codex", "fix");
+
+        // A real linked worktree checked out on the env branch (mirrors
+        // `env::create`), so `snapshot_for_submit` has something to commit.
+        let work_path = m.work_dir(h5i_root);
+        std::fs::create_dir_all(work_path.parent().unwrap()).unwrap();
+        {
+            let branch_ref = repo.find_reference(&m.branch).unwrap();
+            let mut wt_opts = git2::WorktreeAddOptions::new();
+            wt_opts.reference(Some(&branch_ref));
+            repo.worktree(&m.worktree_name(), &work_path, Some(&wt_opts))
+                .unwrap();
+        }
+        // Agent edits the worktree but never commits.
+        std::fs::write(work_path.join("quick_sort.py"), "def quick_sort():\n    pass\n")
+            .unwrap();
+
+        create(&repo, "run-snap", "run-snap", "HEAD", 1, "human").unwrap();
+        add_env(
+            &repo,
+            h5i_root,
+            "run-snap",
+            "env/codex/fix",
+            "codex-fix",
+            None,
+            None,
+            None,
+            "human",
+        )
+        .unwrap();
+
+        let sub = submit(&repo, h5i_root, "run-snap", "codex-fix", None, None, "codex")
+            .unwrap();
+
+        // The env branch advanced past base (a mediated commit happened) and the
+        // frozen tree differs from base and carries the agent's new file.
+        let base_tree = repo.find_commit(base).unwrap().tree_id().to_string();
+        assert_ne!(sub.tree_oid, base_tree, "submission must capture the edit");
+        let committed = repo.refname_to_id(&m.branch).unwrap();
+        assert_ne!(committed, base, "env branch must advance on submit");
+        assert_eq!(sub.commit_oid, committed.to_string());
+        let tree = repo
+            .find_commit(committed)
+            .unwrap()
+            .tree()
+            .unwrap();
+        assert!(
+            tree.get_path(Path::new("quick_sort.py")).is_ok(),
+            "the agent's file must be in the frozen tree"
         );
     }
 
@@ -2052,10 +2180,13 @@ mod tests {
         let repo = Repository::init(dir.path()).unwrap();
         commit_file(&repo, "README.md", "hello\n");
         let h5i_root = dir.path();
-        manifest(&repo, h5i_root, "codex", "fix");
+        let codex = manifest(&repo, h5i_root, "codex", "fix");
         manifest(&repo, h5i_root, "claude", "fix");
+        // codex-fix is the agent that submits below — give it a real change.
+        let candidate = commit_file(&repo, "feature.txt", "ok\n");
+        repo.reference(&codex.branch, candidate, true, "candidate").unwrap();
 
-        create(&repo, "run3", "run3", "HEAD", 1, "human").unwrap();
+        create(&repo, "run3", "run3", "HEAD~1", 1, "human").unwrap();
         add_env(
             &repo,
             h5i_root,

@@ -2776,6 +2776,8 @@ Add flags when relevant:
 - `--tests`  — tests were added or modified (captures test metrics)
 - `--audit`  — security-sensitive, authentication, or high-risk changes
 
+**In an agent team: always `h5i capture commit` your work before `h5i team agent submit`.** Submit freezes your env branch; an uncommitted worktree has nothing for reviewers to see.
+
 Every `h5i capture commit` automatically snapshots the context workspace and links it to the git commit SHA, so the workspace state is recoverable per code commit (`h5i recall context restore <sha>`, `h5i recall context diff <sha1> <sha2>`).
 
 ---
@@ -2900,6 +2902,8 @@ session sync runs.
 Add flags when relevant:
 - `--tests`  — tests were added or modified
 - `--audit`  — security-sensitive or high-risk changes
+
+**In an agent team: always `h5i capture commit` your work before `h5i team agent submit`.** Submit freezes your env branch; an uncommitted worktree has nothing for reviewers to see.
 
 ### Capturing large command output (token reduction)
 
@@ -9982,6 +9986,32 @@ fn main() -> anyhow::Result<()> {
                             && std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok()
                             && std::env::var(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
                         if let (true, Some(spool)) = (in_box, in_env_spool) {
+                            // Snapshot the worktree onto the env branch *in-box*,
+                            // before staging, unless the caller pinned an explicit
+                            // commit. The host can't snapshot a live box (it holds
+                            // the run lock all session), so the box commits its own
+                            // edits here — otherwise an agent that wrote files but
+                            // never `git commit`ed would stage a no-op that the
+                            // host refuses ("identical to the team base").
+                            if commit.is_none() {
+                                match h5i_core::env::commit_box_worktree() {
+                                    Ok(Some(oid)) => eprintln!(
+                                        "{} snapshotted worktree in-box at {}",
+                                        style("▢").cyan().dim(),
+                                        &oid.to_string()[..12]
+                                    ),
+                                    Ok(None) => {}
+                                    // Surface the failure but don't block the
+                                    // submit — the host freezes the branch tip.
+                                    // A silent failure here is what makes work
+                                    // vanish into a "no changes to review" no-op.
+                                    Err(e) => eprintln!(
+                                        "warning: in-box worktree snapshot failed \
+                                         (submit will use the branch tip — commit \
+                                         your work in-box if this persists): {e}"
+                                    ),
+                                }
+                            }
                             let request = h5i_core::env::TeamSubmitSpool { commit, summary };
                             let staged =
                                 h5i_core::env::write_team_submit_spool(&spool, &request)?;

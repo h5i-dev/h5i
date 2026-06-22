@@ -3336,10 +3336,33 @@ pub fn ingest_team_outbound(
                         },
                     )?;
                     count += 1;
+                    let _ = std::fs::remove_file(&path);
                 }
-                Err(e) => eprintln!("warning: applying in-box team submit failed: {e}"),
+                Err(e) => {
+                    // Do NOT drop the staged request on failure. The common cause
+                    // is a live box: the agent hasn't committed its worktree yet,
+                    // so freezing the tip would be a no-op (refused). Keeping the
+                    // spool lets the at-exit ingest — which runs with the run lock
+                    // free — snapshot the worktree and submit for real. Record the
+                    // failure durably so it is visible in `h5i env log` rather than
+                    // lost to a stderr warning a script-polled `team sync` swallows.
+                    eprintln!("warning: applying in-box team submit failed (kept for retry): {e}");
+                    append_event(
+                        repo,
+                        &EnvEvent {
+                            ts: now_ts(),
+                            env_id: m.id.clone(),
+                            agent: m.agent.clone(),
+                            event: "exec-log".into(),
+                            detail: Some(format!(
+                                "in-box team submit for {agent_id} deferred (kept for retry): {}",
+                                crate::secrets::redact_text(&e.to_string())
+                            )),
+                            capture: None,
+                        },
+                    )?;
+                }
             }
-            let _ = std::fs::remove_file(&path);
         }
         if submit_dropped > 0 {
             append_event(
@@ -4934,6 +4957,103 @@ pub fn mediated_commit(
     Ok(Some(oid))
 }
 
+/// Snapshot the env worktree onto its branch for a **team submission** — the
+/// mediated-commit counterpart to `propose`, so `team agent submit` freezes the
+/// agent's working-tree edits instead of the (often unadvanced) branch tip.
+///
+/// **Best-effort, unlike `propose`.** A team submit is ingested *while the
+/// agent's box is still alive* — the team Stop hook keeps boxes running and
+/// `team sync` drains the spool mid-round — so the box holds the env run lock
+/// for its whole session. `propose` fails on a contended lock (it is a
+/// deliberate state transition that must not race a live run); a team submit
+/// must NOT. A well-behaved agent has already committed its work in-box (the
+/// branch tip is correct and needs no snapshot), so on lock contention we fall
+/// back to the existing branch tip rather than failing the submit. An
+/// *uncommitted* worktree behind a live box is captured later by the at-exit
+/// ingest, which runs once the lock frees.
+///
+/// Returns `Ok(None)` — no snapshot taken — when the env has no local worktree
+/// (a *pulled* reviewer clone rides the already-shared branch tip), when the box
+/// is alive (lock contended), or when the worktree already matches the tip.
+pub fn snapshot_for_submit(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+) -> Result<Option<git2::Oid>, H5iError> {
+    if !m.work_dir(h5i_root).is_dir() {
+        return Ok(None);
+    }
+    #[cfg(unix)]
+    let _run_lock = match RunLock::acquire(&m.dir(h5i_root)) {
+        Ok(lock) => lock,
+        // Box alive (the normal mid-round case) — don't fail the submit; the
+        // already-committed branch tip is what we freeze, and any uncommitted
+        // worktree is picked up by the at-exit ingest with no contention.
+        Err(_) => return Ok(None),
+    };
+    mediated_commit(repo, h5i_root, m)
+}
+
+/// Commit the current worktree onto its checked-out branch from *inside* an env
+/// box — the in-box analogue of [`snapshot_for_submit`]. `team agent submit`
+/// calls this so the agent's edits are frozen even when they were never
+/// `git add`/committed (the common case: an agent writes files and submits
+/// without committing). The host **cannot** do this for a live box: the box
+/// holds the env run lock for its whole session and writing its index from the
+/// host would race the agent's own git use — so the box, which has a functional
+/// checkout (rw on its own env branch + objects via `box_git_plumbing`) and runs
+/// with the worktree as its CWD, snapshots itself here.
+///
+/// Returns `Ok(Some(oid))` for a fresh snapshot, `Ok(None)` when the worktree
+/// already matches the branch tip (a well-behaved agent that committed in-box)
+/// or there is no git checkout to commit. An `Err` means the box tried but
+/// *couldn't* commit — e.g. a `box_git_plumbing` grant is too narrow. The caller
+/// must surface that error (and continue: a failed snapshot must never block the
+/// submit), because a silently-swallowed failure here is exactly what makes an
+/// agent's work vanish into a "no changes to review" no-op.
+pub fn commit_box_worktree() -> Result<Option<git2::Oid>, H5iError> {
+    commit_worktree_at(Path::new("."))
+}
+
+fn commit_worktree_at(path: &Path) -> Result<Option<git2::Oid>, H5iError> {
+    let repo = match Repository::discover(path) {
+        Ok(r) if !r.is_bare() => r,
+        // No checkout to snapshot (not an error worth surfacing).
+        _ => return Ok(None),
+    };
+    let head = repo.head()?.peel_to_commit()?;
+    let mut index = repo.index()?;
+    index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
+    index.update_all(["*"].iter(), None)?;
+    // `write_tree` writes the tree (and any new blobs) to the object db from the
+    // *in-memory* index — it does NOT require the on-disk index file to be
+    // rewritten. We deliberately commit from this without an `index.write()`
+    // first: the commit needs only objects (rw) + the env branch ref (rw), both
+    // granted in-box, whereas persisting the index file (`index.lock` →
+    // `index`) is the one step the proven-working `h5i capture commit` path
+    // never exercises (its index was written by the agent's `git add`), and the
+    // step most likely to EACCES under a tight box layout. So land the commit
+    // first, then refresh the index best-effort.
+    let tree_oid = index.write_tree()?;
+    if head.tree_id() == tree_oid {
+        return Ok(None); // worktree already committed — nothing to snapshot
+    }
+    let tree = repo.find_tree(tree_oid)?;
+    let sig = objects::signature(&repo)?;
+    let oid = repo.commit(
+        Some("HEAD"),
+        &sig,
+        &sig,
+        "h5i team: in-box submit snapshot",
+        &tree,
+        &[&head],
+    )?;
+    // Keep a later in-box `git status` clean. Best-effort: the commit already
+    // landed, so an index-write EACCES must not fail (or undo) the snapshot.
+    let _ = index.write();
+    Ok(Some(oid))
+}
+
 /// Record a mediated-commit boundary trip as a `violation` event, then build the
 /// fail-closed error to return. A boundary trip is the highest-confidence
 /// sandbox-probe signal (enforcement actually fired), so it is persisted to
@@ -5757,6 +5877,73 @@ mod tests {
             captures: vec![],
             service_digest: None,
         }
+    }
+
+    #[test]
+    fn snapshot_for_submit_is_best_effort_under_run_lock() {
+        // A team submit is ingested while the agent's box is still alive, so the
+        // box holds the env run lock. Unlike propose, snapshot_for_submit must
+        // NOT fail on contention — it falls back to the branch tip (Ok(None)) so
+        // the submission still records; the regression this guards turned every
+        // mid-round `team sync` into a silently-dropped submission.
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let repo = git2::Repository::init(h5i_root.join("repo")).unwrap();
+        let m = canonical_manifest("claude", "fix");
+        // A worktree dir must exist or the function short-circuits before the lock.
+        std::fs::create_dir_all(m.work_dir(h5i_root)).unwrap();
+
+        // Simulate a live `env shell` holding the per-env lock.
+        let _held = RunLock::acquire(&m.dir(h5i_root)).unwrap();
+
+        // propose-style ops refuse under contention; snapshot_for_submit defers.
+        let got = snapshot_for_submit(&repo, h5i_root, &m)
+            .expect("submit snapshot must not fail when the box holds the lock");
+        assert!(got.is_none(), "contended snapshot falls back to the branch tip");
+    }
+
+    #[test]
+    fn commit_box_worktree_snapshots_untracked_edits() {
+        // The in-box submit path: an agent writes files but never commits, so
+        // the worktree is dirty/untracked. commit_box_worktree must fold those
+        // onto the branch tip so the host freezes real work — not the base.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let base = commit_file(&repo, "README.md", "hello\n");
+
+        // Untracked file, exactly like codex's `?? quick_sort.py`.
+        std::fs::write(dir.path().join("quick_sort.py"), "def quick_sort():\n    pass\n")
+            .unwrap();
+
+        let oid = commit_worktree_at(dir.path())
+            .expect("commit must not error")
+            .expect("dirty worktree must commit");
+        assert_ne!(oid, base, "branch must advance off base");
+        let tree = repo.find_commit(oid).unwrap().tree().unwrap();
+        assert!(tree.get_path(Path::new("quick_sort.py")).is_ok());
+        assert_eq!(repo.head().unwrap().peel_to_commit().unwrap().id(), oid);
+
+        // Idempotent: a clean worktree is a no-op (well-behaved already-committed agent).
+        assert!(commit_worktree_at(dir.path()).unwrap().is_none());
+    }
+
+    fn commit_file(repo: &git2::Repository, name: &str, body: &str) -> git2::Oid {
+        let work = repo.workdir().unwrap();
+        std::fs::write(work.join(name), body).unwrap();
+        let mut idx = repo.index().unwrap();
+        idx.add_path(Path::new(name)).unwrap();
+        idx.write().unwrap();
+        let tree = repo.find_tree(idx.write_tree().unwrap()).unwrap();
+        let sig = git2::Signature::now("t", "t@e.com").unwrap();
+        let parents: Vec<git2::Commit> = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .into_iter()
+            .collect();
+        let prefs: Vec<&git2::Commit> = parents.iter().collect();
+        repo.commit(Some("HEAD"), &sig, &sig, "c", &tree, &prefs)
+            .unwrap()
     }
 
     #[test]
