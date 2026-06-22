@@ -998,3 +998,4 @@ _[Checkpoint: 6a39372f — edited src/env.rs; edited src/env.rs; edited src/env.
 _[Checkpoint: 6a393b9b — edited src/main.rs; edited src/env.rs; edited src/env.rs]_
 ---
 
+[13:54:31] THINK: Let me confirm codex's worktree still has the uncommitted work (so a re-submit with the new binary will capture it):
