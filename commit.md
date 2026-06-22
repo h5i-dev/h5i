@@ -257,3 +257,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a3899d6 — 2026-06-22 02:11 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Full visual overhaul: adopted Space Grotesk+Space Mono brand faces, reframed shell (Ensemble = default landing + lead nav, brand eyebrow), rebuilt TeamView as the centerpiece with a settlement-rail phase pipeline (draft→seal→review→verify→apply), sealed lanes with winner glow, neutral-verdict card. Kept hyperliquid near-black+mint theme. Routed shared primitives (pane eyebrows, status bar, mono stacks) to the new tokens so all 7 secondary views cascade. tsc+vite build green; dist rebuilt.
+
+---
+
