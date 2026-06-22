@@ -301,3 +301,4 @@ _[Checkpoint: 6a389ba9 — edited web/src/TeamView.tsx; edited web/src/theme.css
 [03:04:15] ACT: wrote docs/_static/h5i-team.svg
 [03:04:25] OBSERVE: read svg-preview.png
 [03:05:03] OBSERVE: read svg-preview2.png
+[03:05:17] THINK: I'll build it in the same visual language as the dashboard (near-black + mint, Space Grotesk / Space Mono), then render a preview to check it.
