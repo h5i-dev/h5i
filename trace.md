@@ -487,3 +487,9 @@ _[Checkpoint: 6a38c01e — edited docs/_static/h5i-team.svg; edited docs/_static
 _[Checkpoint: 6a38c069 — Reverted docs/_static/h5i-team.svg peer review embellishment by removing improve return edges and labels, leaving the clean peer review box; validated XML and PNG render.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a38c06c — edited src/env.rs; edited docs/_static/h5i-team.svg; edited src/env.rs]_
+---
+
