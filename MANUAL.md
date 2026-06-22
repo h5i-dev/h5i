@@ -2650,6 +2650,10 @@ peer's work through the team interface. Discussion is **opt-in and only allowed
 after freeze**, every message is logged, and any candidate revised afterward is
 stamped `independent=false` with its influence edges recorded.
 
+`draft` and `dispatched` are the **same open round** for gating — `add-env`,
+`submit`, and `freeze` all work in either, since `dispatch` only notifies
+inboxes and never locks the round.
+
 ### Lifecycle commands
 
 | Command | Description |
@@ -2661,9 +2665,11 @@ stamped `independent=false` with its influence edges recorded.
 | `h5i team use [<name>] [--clear]` | Pin a **current team** (like git's current branch) so other subcommands can drop `<team>`. No arg prints the current; `--clear` unsets. `create` auto-pins the new run. |
 | `h5i team submit <team> --agent <id> [--commit OID] [--summary-file F] [--json]` | Freeze the agent's env-branch tip (or `--commit`) as an **immutable** submission — frozen commit/tree oids + diffstat + capture ids, reviewable even if the env later changes. |
 | `h5i team agent submit [--commit OID] [--summary-file F] [--json]` | In-box submit for a bound team env. In sealed envs it writes a scoped request to the env spool; the host applies it to `refs/h5i/team/*` when the env shell exits. Host-side it submits as `$H5I_AGENT` / `$H5I_TEAM`. |
-| `h5i team agent inbox [<team>] [--peek] [--json]` | Host-side scoped inbox for the current team persona. Raw message cursors are host-owned; sealed boxes should receive task text through the launcher rather than reading `.git/.h5i/msg` directly. |
+| `h5i team agent inbox [<team>] [--peek] [--wait] [--interval 10] [--timeout 1800] [--json]` | Scoped inbox for the team persona. In a sealed box it reads the host-fanned **per-env inbox** (`$H5I_ENV_INBOX`, read-only); host-side it reads the shared store. `--wait` blocks (peek-only) until a message is waiting or the timeout — use it after submitting to await a review request without ending the session. |
+| `h5i team agent hook [<team>] [--block] [--quiet] [--timeout 1800] [--interval 10]` | Stop-hook delivery: keeps an agent in an unfinished round from stopping and feeds in review requests. `--block` (Claude) waits up to `--timeout` for the next message, then blocks the stop and hands it back; `--quiet` (Codex) prints one-shot. Released by a `TEAM_DONE` signal (sent on finalize/apply) or the timeout. Registered via `h5i hook setup --team`; no-ops outside a team. |
 | `h5i team freeze <team> [--allow-missing] [--json]` | Transition draft → `sealed_submit`. Refuses if any roster member has no submission unless `--allow-missing` (records abstentions). |
 | `h5i team compare <team> [--json]` | Side-by-side candidates + verifier metrics (advisory only — does not pick a winner). |
+| `h5i team sync <team> [--json]` | **Live ingest**: apply every agent's staged in-box submissions/reviews to `refs/h5i/team/*` now, without the box exiting (the on-demand counterpart to the at-exit ingest). Lets a run advance while the team Stop hook keeps boxes alive — no relaunch. |
 | `h5i team verify <team> --agent <id> [--isolation TIER] -- <cmd>` | **Neutral, sandboxed verifier**: replays the frozen candidate into a throwaway worktree at the run base and runs `<cmd>` under the fail-closed `default` build/test profile. `--isolation` (`workspace`/`process`/`supervised`/`container`) defaults to the strongest tier the host can enforce (falls back to `workspace`); the tier is recorded on the verification. |
 | `h5i team finalize <team> [--json]` | Apply the finalization rule over **verifier** evidence → a verdict event. Hard gates (tests pass, applies cleanly) first; `smallest diff` only breaks ties among gate-passers. Records method + the verifier command + losers' reasons. No gate-passer → `no_verdict` (never applies a loser). |
 | `h5i team apply <team> [--winner <submission-id>] [--force] [--json]` | Replay the winning submission's recorded patch (`base..commit`) into the current branch and commit; records source + target commit oids; on conflict records an event, never mutates the artifact. Gated on the verdict's `can_auto_apply` unless `--force`. |
@@ -2676,8 +2682,8 @@ stamped `independent=false` with its influence edges recorded.
 `<env>` accepts a bare slug, `agent/slug`, or the full `env/agent/slug`.
 
 **Current team.** The single-`<team>` subcommands (`status`, `submit`, `freeze`,
-`compare`, `finalize`, `apply`, `dispatch`, `grant-review`, `discuss`, `review
-submit`) default to the **current team** when you omit it — set it with `h5i team
+`compare`, `sync`, `finalize`, `apply`, `dispatch`, `grant-review`, `discuss`,
+`review submit`) default to the **current team** when you omit it — set it with `h5i team
 use <name>` (or let `create` set it). `add-env`/`verify` keep `<team>` required
 (they take a second positional). The flat CLI stays canonical, so this never
 changes scripting/cron/agent behavior (always pass `<team>` there). For fast
@@ -2699,11 +2705,26 @@ h5i env shell env/claude-architect/fix-auth        # in-box H5I_AGENT=claude-arc
 h5i env shell env/codex/fix-auth                   # in-box H5I_AGENT=codex
 ```
 
-Inside a sealed box the agent must not run raw `h5i msg inbox` or top-level
-`h5i team submit`: `.git/.h5i/msg` and `refs/h5i/team/*` are host-only by
-design. The boxed agent works normally, uses `h5i capture run -- <cmd>` for
-evidence, then runs `h5i team agent submit`; that stages a submit request for
-host ingest on env-shell exit.
+**Sealed-box I/O (the per-env channel).** A confined box can't read or write the
+host-owned coordination store (`.git/.h5i/msg`, `refs/h5i/team/*`) — that's what
+keeps an agent from forging messages or corrupting the event log. h5i bridges it
+with a per-env channel, mirrored in both directions:
+
+- **Inbound** — a host-owned `<env>/inbox/` dir, mounted **read-only** in the box
+  (`$H5I_ENV_INBOX`). When the host sends to a team agent (`grant-review`,
+  `discuss`, `msg send`), it also drops the message there, so a *running* box
+  receives review requests live via `h5i team agent inbox` / `--wait` / the team
+  Stop hook — and messages persist for a box that's down. The box reads only its
+  own inbox and can't write it.
+- **Outbound** — `h5i team agent submit` and `h5i team review submit` write a
+  scoped request to the box-writable spool; the host applies it under the
+  identity-validated env binding (the box chooses *what*, never *who as*). It is
+  ingested when the env shell exits, or **on demand via `h5i team sync`** while
+  the box stays alive.
+
+So the box participates in the round securely without any write access to the
+shared store: the agent works normally, uses `h5i capture run -- <cmd>` for
+evidence, reviews peers, and re-submits — all in the box, no relaunch.
 
 **One-command bring-up.** `scripts/team-launch.sh <team> [--task <file>]` automates
 the grid: it reads the roster, optionally `dispatch`es the task for the host log,
@@ -2734,6 +2755,38 @@ h5i-team-launch fix-auth --task task.md
 # if the `h5i` binary isn't on $PATH, point to it:
 H5I=/path/to/h5i h5i-team-launch fix-auth
 ```
+
+### Automated peer-review cycle
+
+Three scripts compose into a hands-off run. Install the team Stop hook once so
+boxes stay alive between turns instead of exiting after each submit:
+
+```bash
+h5i hook setup --write --team
+```
+
+- **`scripts/team-launch.sh <team> [--task F]`** — bring up one box per agent
+  (above). Each agent implements and runs `h5i team agent submit`.
+- **`scripts/team-review.sh <team>`** — open the review round: `freeze`, grant
+  **mutual** review access (each grant fans a request into the reviewer's inbox),
+  and send every agent a review-and-revise prompt. A running box picks it up via
+  the team Stop hook; `--relaunch` re-opens any box that already exited.
+- **`scripts/team-run.sh <team> [--task F] [--verify-cmd "<cmd>"] [--apply]`** —
+  the full driver. It launches, then **polls with `h5i team sync`** to advance
+  each phase: wait until all submitted → freeze → grant review → wait until all
+  revised → `verify` each candidate → `finalize` (the neutral verdict) →
+  optionally `apply`. `finalize`/`apply` fan a `TEAM_DONE` signal that releases
+  the boxes.
+
+```bash
+h5i hook setup --write --team
+scripts/team-run.sh fix-auth --task task.md --verify-cmd "cargo test" --apply
+# → individual implementation → peer review → improvement → neutral verdict, hands-off
+```
+
+`team sync` is the keystone: it ingests each box's staged submissions/reviews on
+demand, so the host sees them while the boxes stay alive waiting (the at-exit
+ingest alone would deadlock with the wait-hook).
 
 ### The neutral verifier (why finalization is trustworthy)
 
@@ -2800,7 +2853,7 @@ h5i hook wrap-bash                      # PreToolUse Bash handler (token-reducti
 
 ### h5i hook setup
 
-`h5i hook setup` (no flags) prints the install instructions. `h5i hook setup --write` writes the wiring directly: Claude Code into `.claude/settings.json` and Codex into `.codex/config.toml`, merged idempotently (each managed command is replaced in place; your own hooks and env keys are preserved). Add `--target claude` or `--target codex` to write only one agent's config, `--scope user` to write the user-level config instead of the repo's, and `--wrap-bash` to also register the optional Bash capture-wrap hook.
+`h5i hook setup` (no flags) prints the install instructions. `h5i hook setup --write` writes the wiring directly: Claude Code into `.claude/settings.json` and Codex into `.codex/config.toml`, merged idempotently (each managed command is replaced in place; your own hooks and env keys are preserved). Add `--target claude` or `--target codex` to write only one agent's config, `--scope user` to write the user-level config instead of the repo's, `--wrap-bash` to also register the optional Bash capture-wrap hook, and `--team` to also register the team peer-review Stop hook (below).
 
 For **Claude Code**, `--write` installs four hooks into `.claude/settings.json`:
 
@@ -2846,6 +2899,8 @@ command = "h5i hook codex finish --quiet"
 Codex requires reviewing/trusting local hooks via `/hooks`; project-local hooks only load after the project `.codex/` layer is trusted.
 
 **Bash capture-wrap (`--wrap-bash`, optional).** Adds a `PreToolUse` Bash hook (`h5i hook wrap-bash`) that rewrites every Bash command into a `h5i capture run` wrapper, so the agent receives a token-reduced summary for large/failing output while the full raw bytes stay stored and searchable via `h5i recall`. Off by default. Note: with it enabled, permission allowlists then match the rewritten `h5i capture run …` command, not the original.
+
+**Team peer-review (`--team`, optional).** Adds a second `Stop` hook — `h5i team agent hook --block` for Claude, `h5i team agent hook --quiet` for Codex. When the agent is a member of a live [`h5i team`](#h5i-team-auditable-agent-ensembles) round, it keeps the agent from stopping while it still owes work and surfaces incoming review requests between turns. The Claude entry **waits** for the next message before releasing the stop, and carries a long per-hook `timeout` (~1830s) so Claude Code doesn't kill it mid-wait; a `TEAM_DONE` signal (sent by `finalize`/`apply`) releases it. It **no-ops outside a team**, so it's safe to leave installed. This is what lets `scripts/team-run.sh` drive the full peer-review cycle hands-off, with boxes staying alive between turns.
 
 **MCP server (manual).** Hook setup no longer wires the MCP server — register it by hand if you want native h5i tools in Claude Code. Add the `mcpServers` block to `~/.claude/settings.json`:
 
