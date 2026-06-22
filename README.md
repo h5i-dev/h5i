@@ -11,9 +11,8 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
   <br>
   <a href="#run-an-ensemble-60-seconds"><img alt="Agent Ensembles" src="https://img.shields.io/badge/Agent%20Ensembles-Claude%20%2B%20Codex-6f42c1"></a>
-  <a href="#why-the-verdict-is-trustworthy"><img alt="Neutral Verifier" src="https://img.shields.io/badge/Neutral%20Verifier-sandboxed%20%26%20gated-D21C1C"></a>
+  <a href="#everything-rides-with-every-run"><img alt="Sandboxed Worktree" src="https://img.shields.io/badge/Sandboxed%20Worktree-isolated%20%26%20confined-D21C1C"></a>
   <a href="#everything-rides-with-every-run"><img alt="95% less token waste" src="https://img.shields.io/badge/Compressed%20Logs-95%25%20less%20token%20waste-2ea44f"></a>
-  <a href="#what-makes-it-auditable-refsh5i"><img alt="Lives in your Git" src="https://img.shields.io/badge/Lives%20in%20your%20Git-refs%2Fh5i%2F*%20%C2%B7%20no%20SaaS-0969da"></a>
 </p>
 
 <h1 align="center">Run many coding agents. Merge one auditable result.</h1>
