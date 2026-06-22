@@ -9245,11 +9245,17 @@ fn main() -> anyhow::Result<()> {
             let repo = H5iRepository::open(".")?;
             let h5i_root = repo.h5i_root.clone();
             let git = repo.git();
-            if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
-                eprintln!(
-                    "{} could not sync shared env manifests: {e}",
-                    style("warning:").yellow()
-                );
+            // Sync the shared env roster to disk — but never in a sealed box,
+            // where the host-owned env manifests are read-only (the write only
+            // fails with EACCES and spams a warning). The box already has its
+            // own env materialized; the shared roster is the host's concern.
+            if std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_err() {
+                if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
+                    eprintln!(
+                        "{} could not sync shared env manifests: {e}",
+                        style("warning:").yellow()
+                    );
+                }
             }
             let actor = std::env::var("H5I_AGENT").unwrap_or_else(|_| "human".to_string());
 
@@ -10039,11 +10045,17 @@ fn main() -> anyhow::Result<()> {
             // Surface environments pulled from other clones: materialize any
             // manifests/policies present in refs/h5i/env but absent (or older)
             // on disk, so `list`/`status`/`diff`/`apply` see them.
-            if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
-                eprintln!(
-                    "{} could not sync shared env manifests: {e}",
-                    style("warning:").yellow()
-                );
+            // Sync the shared env roster to disk — but never in a sealed box,
+            // where the host-owned env manifests are read-only (the write only
+            // fails with EACCES and spams a warning). The box already has its
+            // own env materialized; the shared roster is the host's concern.
+            if std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_err() {
+                if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
+                    eprintln!(
+                        "{} could not sync shared env manifests: {e}",
+                        style("warning:").yellow()
+                    );
+                }
             }
 
             match action {
