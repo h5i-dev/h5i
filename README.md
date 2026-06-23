@@ -38,23 +38,13 @@ Agent ensembles work because **independent attempts beat isolated guesses**. h5i
 
 ### Why naive agent teams break
 
-In ML, ensembles beat the best single model: diverse estimators cut variance and won a decade of competitions. The same shift is coming to coding agents, with an architect, an implementer, a reviewer, a security skeptic. But spawn several agents on one repo with **no coordination layer** and you don't get an ensemble, you get a pileup. Six failure modes Git was never built to handle:
+In ML, ensembles beat the best single model: diverse estimators cut variance and won a decade of competitions. The same shift is coming to coding agents. But spawn several agents on one repo with **no coordination layer** and you don't get an ensemble, you get a pileup:
 
 | Failure mode | What happens | h5i's answer |
 |---|---|---|
-| **Environment conflict** | agents overwrite each other's files, ports, caches, credentials, branches | a confined worktree + policy per agent (`h5i env`) |
-| **Context contamination** | agents see a peer's output before an independent attempt, so diversity collapses | sealed submissions; no peer access until `freeze` |
+| **Environment conflict** | agents overwrite each other's files and may run destructive commands | a confined worktree + policy per agent (`h5i env`) |
 | **Token explosion** | every agent re-reads the repo and drags raw logs into context | compressed tool logs (`h5i capture run`, ~95% less) |
-| **Review overload** | humans can't inspect every prompt, command, retry, and failure across N agents | one reviewer-ready PR brief (`h5i share pr`) |
-| **Unsafe autonomy** | agents run destructive commands without containment | Landlock + seccomp + namespaces, fail-closed |
-| **No fair winner** | many patches, no neutral evidence for which to merge | a sandboxed verifier + explainable verdict |
-
-### Recent News
-
-- **New: Agent teams (`h5i team`).** Run several agents on one task in sealed sandboxes, peer-review, verify neutrally, and merge one auditable winner. [Run an ensemble below](#run-an-ensemble-60-seconds)
-- **New: Sandboxed agent workspaces (`h5i env`).** A disposable, confined worktree per agent: prove what it couldn't reach, apply only after review.
-- **New: Prompt Maturity Score.** A deterministic, fully offline **0 to 100** quality signal for every AI commit's prompt, rolled into the PR brief.
-- **Agent Radio reached 100+ on Hacker News.** Cross-agent messaging over Git ([discussion](https://news.ycombinator.com/item?id=48345837)).
+| **Review overload** | humans can't inspect every prompt or command | reviewer-ready PR (`h5i share pr`) |
 
 ---
 
