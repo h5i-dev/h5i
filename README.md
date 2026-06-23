@@ -38,14 +38,13 @@ Agent ensembles work because **independent attempts beat isolated guesses**. h5i
 
 ### Why naive agent teams break
 
-In ML, ensembles beat the best single model: diverse estimators cut variance and won a decade of competitions. The same shift is coming to coding agents, with an architect, an implementer, a reviewer, a security skeptic. But spawn several agents on one repo with **no coordination layer** and you don't get an ensemble, you get a pileup. Six failure modes Git was never built to handle:
+In ML, ensembles beat the best single model: diverse estimators cut variance and won a decade of competitions. The same shift is coming to coding agents. But spawn several agents on one repo with **no coordination layer** and you don't get an ensemble, you get a pileup:
 
 | Failure mode | What happens | h5i's answer |
 |---|---|---|
-| **Environment conflict** | agents overwrite each other's files, ports, caches, credentials, branches | a confined worktree + policy per agent (`h5i env`) |
+| **Environment conflict** | agents overwrite each other's files and may run destructive commands | a confined worktree + policy per agent (`h5i env`) |
 | **Token explosion** | every agent re-reads the repo and drags raw logs into context | compressed tool logs (`h5i capture run`, ~95% less) |
 | **Review overload** | humans can't inspect every prompt or command | reviewer-ready PR (`h5i share pr`) |
-| **Unsafe autonomy** | agents run destructive commands without containment | Landlock + seccomp + namespaces, fail-closed |
 
 ---
 
