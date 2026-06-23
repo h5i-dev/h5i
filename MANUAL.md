@@ -767,6 +767,7 @@ Print working context: current Git branch goal, active h5i context branch, miles
 | `--commit <hash>` | Pull a specific milestone entry by hash prefix |
 | `--trace` | Include recent OTA trace lines |
 | `--window <n>` | Number of recent milestone commits to include (default: 3) |
+| `--limit <n>` | Show only the N most recent milestones (default: 20; `0` = all). The header notes how many older ones are hidden. Keeps the view focused on long-lived workspaces that accumulate hundreds of milestones |
 | `--trace-offset <n>` | Scroll back N lines from the end of the trace (sliding window) |
 | `--metadata <segment>` | Pull a named section from `metadata.yaml` |
 

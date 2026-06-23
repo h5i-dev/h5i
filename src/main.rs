@@ -1586,6 +1586,10 @@ enum ContextCommands {
         /// Number of recent commits to show (context window K)
         #[arg(long, default_value_t = 3)]
         window: usize,
+        /// Show only the N most recent milestones (0 = all). Long-lived
+        /// workspaces accumulate hundreds; this keeps the view focused.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
         /// Scroll back N lines in the trace (sliding-window offset k)
         #[arg(long, default_value_t = 0)]
         trace_offset: usize,
@@ -3102,6 +3106,10 @@ fn write_codex_instructions(workdir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Recent-milestone cap for the orientation preludes (Codex `hook codex prelude`).
+/// Keeps the glance compact on workspaces with a long milestone history.
+const PRELUDE_MILESTONE_LIMIT: usize = 8;
+
 fn print_shared_context_prelude(workdir: &Path) {
     let has_ctx = match git2::Repository::discover(workdir) {
         Ok(r) => r.find_reference("refs/h5i/context/main").is_ok(),
@@ -3121,9 +3129,14 @@ fn print_shared_context_prelude(workdir: &Path) {
         window: 3,
         depth: 1,
     };
-    let Ok(snap) = ctx::gcc_context(workdir, &opts) else {
+    let Ok(mut snap) = ctx::gcc_context(workdir, &opts) else {
         return;
     };
+    // A long-lived workspace can hold hundreds/thousands of milestones; the
+    // prelude is an orientation glance, so cap it to the most recent few (the
+    // renderer notes how many older ones are hidden). Mirrors the `take(5)` the
+    // decisions/TODOs below already use.
+    ctx::limit_recent_milestones(&mut snap, PRELUDE_MILESTONE_LIMIT);
 
     println!("[h5i] Context workspace active — prior reasoning follows.");
     println!();
@@ -10653,6 +10666,7 @@ fn main() -> anyhow::Result<()> {
                     trace,
                     metadata,
                     window,
+                    limit,
                     trace_offset,
                     depth,
                 } => {
@@ -10670,7 +10684,10 @@ fn main() -> anyhow::Result<()> {
                         window,
                         depth: effective_depth,
                     };
-                    let snapshot = ctx::gcc_context(workdir, &opts)?;
+                    let mut snapshot = ctx::gcc_context(workdir, &opts)?;
+                    // Cap milestones to the most recent N (--limit, 0 = all); the
+                    // renderer notes how many older ones are hidden.
+                    ctx::limit_recent_milestones(&mut snapshot, limit);
                     ctx::print_context_depth(&snapshot, effective_depth);
                 }
 

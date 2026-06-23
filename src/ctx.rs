@@ -153,6 +153,10 @@ pub struct GccContext {
     pub git_branch: String,
     pub git_branch_goal: String,
     pub milestones: Vec<String>,
+    /// Full milestone count before any recency limit (see [`limit_recent_milestones`]).
+    /// `milestones.len()` is what's rendered; this is what exists — the renderer
+    /// notes the difference so a capped view never reads as the whole history.
+    pub milestone_total: usize,
     pub active_branches: Vec<String>,
     pub current_branch: String,
     pub recent_commits: Vec<String>,
@@ -1408,6 +1412,7 @@ pub fn gcc_context(workdir: &Path, opts: &ContextOpts) -> Result<GccContext, H5i
     let main_text = ctx_read_file(&repo, "main.md").unwrap_or_default();
     let project_goal = extract_section(&main_text, "Goal");
     let milestones = extract_list_items(&extract_section(&main_text, "Milestones"));
+    let milestone_total = milestones.len();
     let active_branches = ctx_list_branches_git(&repo);
 
     let commit_path = format!("branches/{branch_name}/commit.md");
@@ -1501,6 +1506,7 @@ pub fn gcc_context(workdir: &Path, opts: &ContextOpts) -> Result<GccContext, H5i
         git_branch,
         git_branch_goal,
         milestones,
+        milestone_total,
         active_branches,
         current_branch: branch_name,
         recent_commits,
@@ -2569,7 +2575,7 @@ fn print_context_index(ctx: &GccContext) {
     );
     println!(
         "  milestones={}  commits={}  trace_lines={}+{}",
-        ctx.milestones.len(),
+        ctx.milestone_total,
         ctx.recent_commits.len(),
         style(ctx.stable_line_count).green(),
         style(ctx.dynamic_line_count).yellow(),
@@ -2586,6 +2592,13 @@ fn print_context_index(ctx: &GccContext) {
                 })
                 .collect::<Vec<_>>()
                 .join("  ")
+        );
+    }
+    let hidden = ctx.milestone_total.saturating_sub(ctx.milestones.len());
+    if hidden > 0 {
+        println!(
+            "  {}",
+            style(format!("… (+{hidden} earlier milestones — h5i context show --limit 0)")).dim()
         );
     }
     for (i, m) in ctx.milestones.iter().enumerate() {
@@ -2630,7 +2643,21 @@ fn print_context_timeline(ctx: &GccContext) {
 
     if !ctx.milestones.is_empty() {
         println!();
-        println!("  {}", style("Milestones:").bold());
+        let hidden = ctx.milestone_total.saturating_sub(ctx.milestones.len());
+        if hidden > 0 {
+            println!(
+                "  {} {}",
+                style("Milestones:").bold(),
+                style(format!(
+                    "(showing {} most recent of {}; --limit 0 for all)",
+                    ctx.milestones.len(),
+                    ctx.milestone_total
+                ))
+                .dim()
+            );
+        } else {
+            println!("  {}", style("Milestones:").bold());
+        }
         for m in &ctx.milestones {
             let done = m.starts_with("[x]") || m.starts_with("[X]");
             let label: String = m.chars().take(80).collect();
@@ -2698,6 +2725,18 @@ fn print_context_timeline(ctx: &GccContext) {
 
 pub fn print_context(ctx: &GccContext) {
     print_context_depth(ctx, 2);
+}
+
+/// Keep only the most recent `keep` milestones in `ctx`. Milestones are
+/// append-only (oldest first), so the tail is newest. `keep == 0` means "no
+/// limit" (show all). `milestone_total` is left untouched so the renderer can
+/// report how many older milestones are hidden — important on long-lived
+/// workspaces where the list runs to hundreds or thousands of entries.
+pub fn limit_recent_milestones(ctx: &mut GccContext, keep: usize) {
+    if keep > 0 && ctx.milestones.len() > keep {
+        let drop = ctx.milestones.len() - keep;
+        ctx.milestones = ctx.milestones.split_off(drop);
+    }
 }
 
 /// Render context at the requested depth (1=index, 2=timeline, 3=full trace).
@@ -4024,6 +4063,38 @@ mod tests {
     use super::*;
     use git2::Repository;
     use tempfile::tempdir;
+
+    #[test]
+    fn limit_recent_milestones_keeps_newest_tail_and_total() {
+        let mut ctx = GccContext {
+            milestones: (0..50).map(|i| format!("m{i}")).collect(),
+            milestone_total: 50,
+            ..Default::default()
+        };
+        // Keep the 5 most recent (append-only → tail is newest).
+        limit_recent_milestones(&mut ctx, 5);
+        assert_eq!(ctx.milestones, vec!["m45", "m46", "m47", "m48", "m49"]);
+        // Total is preserved so the renderer can report what's hidden.
+        assert_eq!(ctx.milestone_total, 50);
+
+        // keep == 0 means "no limit": nothing is dropped.
+        let mut all = GccContext {
+            milestones: (0..3).map(|i| format!("m{i}")).collect(),
+            milestone_total: 3,
+            ..Default::default()
+        };
+        limit_recent_milestones(&mut all, 0);
+        assert_eq!(all.milestones.len(), 3);
+
+        // keep >= len is a no-op.
+        let mut few = GccContext {
+            milestones: vec!["a".into(), "b".into()],
+            milestone_total: 2,
+            ..Default::default()
+        };
+        limit_recent_milestones(&mut few, 10);
+        assert_eq!(few.milestones, vec!["a", "b"]);
+    }
 
     /// Create a bare-minimum git repo in `dir` so ctx functions can discover it.
     fn git_init(dir: &Path) {
