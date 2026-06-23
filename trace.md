@@ -1198,3 +1198,4 @@ _[Checkpoint: 6a3ae425 — edited _static/highlight.js; edited _static/highlight
 [19:54:25] OBSERVE: read MANUAL.md
 [19:54:28] OBSERVE: read src/team.rs
 [19:54:31] OBSERVE: read src/team.rs
+[19:54:32] OBSERVE: read roadmap/environments-design.md
