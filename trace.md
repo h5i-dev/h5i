@@ -1165,3 +1165,4 @@ _[Checkpoint: 6a39de5f — edited _static/highlight.js; edited _static/highlight
 _[Checkpoint: 6a39dec5 — edited _static/highlight.js; edited _static/highlight.js; edited _static/highlight.css]_
 ---
 
+[19:53:09] THINK: I'll explore the current `--persona` implementation and the config toml structure before proposing a design.
