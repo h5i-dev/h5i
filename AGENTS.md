@@ -9,7 +9,6 @@ Codex should use `h5i recall context` as shared cross-session memory and `h5i ca
 
 **At the start of a non-trivial task:**
 ```bash
-h5i hook codex prelude
 # If no workspace exists yet, initialize it once:
 h5i recall context init --goal "<one-line task summary>"
 ```
