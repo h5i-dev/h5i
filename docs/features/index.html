@@ -795,9 +795,7 @@
   <ul class="nav-links" id="nav-links">
     <li><a href="/">Home</a></li>
     <li><a href="/#install">Install</a></li>
-    <li><a href="/features/">Features</a></li>
     <li><a href="/guides/">Guides</a></li>
-    <li><a href="/workflows/">Workflows</a></li>
     <li><a href="/manual/">Manual</a></li>
     <li><a href="/blog/">Blog</a></li>
     <li><a href="/pitch/">Pitch Deck</a></li>
@@ -944,39 +942,6 @@
       <div class="usecase-header">
         <div class="usecase-num">01</div>
         <div>
-          <div class="usecase-title">Find who wrote this, and with what prompt</div>
-          <div class="usecase-sub">Per-line AI authorship, model, and the exact prompt that produced it.</div>
-        </div>
-      </div>
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">~/my-project</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/auth.rs</span>
-
-<span class="t-bold">STAT COMMIT   AUTHOR/AGENT    | CONTENT</span>
-<span class="t-pass">✅</span> <span class="t-ai">✨</span> <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code    </span> | <span class="t-out">fn validate_token(tok: &amp;str) -&gt; bool {</span>
-<span class="t-pass">✅</span>    <span class="t-ai">a3f9c2b</span>  <span class="t-ai">claude-code    </span> | <span class="t-out">    tok.len() == 64 &amp;&amp; tok.chars().all(|c| c.is_ascii_hexdigit())</span>
-       <span class="t-out">9eff001</span>  <span class="t-out">alice          </span> | <span class="t-out">}</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --limit 1</span>
-
-<span class="t-bold">commit a3f9c2b...</span>
-<span class="t-out">Author:  Alice &lt;alice@example.com&gt;</span>
-<span class="t-ai">Agent:   claude-code (claude-sonnet-4-6) ✨</span>
-<span class="t-warn">Prompt:  "add per-IP rate limiting to the auth endpoint"</span>
-<span class="t-pass">Tests:   ✔ 42 passed, 0 failed, 1.23s [pytest]</span>
-
-<span class="t-out">    implement rate limiting</span></pre></div>
-      </div>
-    </div>
-
-    <!-- 2 -->
-    <div class="usecase reveal">
-      <div class="usecase-header">
-        <div class="usecase-num">02</div>
-        <div>
           <div class="usecase-title">Let one agent ask another for a review</div>
           <div class="usecase-sub">With <code style="font-family:var(--mono);color:var(--red-text)">h5i msg</code> (the i5h protocol), Claude and Codex coordinate over Git, ask, review, hand off, and reply, without sharing a terminal.</div>
         </div>
@@ -1002,83 +967,10 @@
       </figure>
     </div>
 
-    <!-- 3 -->
+    <!-- 2 -->
     <div class="usecase reveal">
       <div class="usecase-header">
-        <div class="usecase-num">03</div>
-        <div>
-          <div class="usecase-title">Resume exactly where you left off</div>
-          <div class="usecase-sub">Claude Code can use hooks and MCP. Codex uses explicit <code style="font-family:var(--mono);color:var(--red-text)">prelude</code>, <code style="font-family:var(--mono);color:var(--red-text)">sync</code>, and <code style="font-family:var(--mono);color:var(--red-text)">finish</code> commands.</div>
-        </div>
-      </div>
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">~/my-project , new Codex session starts</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-cmt"># Start by restoring the shared context:</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i hook codex prelude</span>
-
-<span class="t-bold">[h5i] Context workspace active — prior reasoning follows.</span>
-
-  <span class="t-out">branch=main  goal=Build an OAuth2 login system</span>
-  <span class="t-out">milestones=3  commits=7  trace_lines=142+12</span>
-
-  <span class="t-out">m0: </span><span class="t-pass">[x]</span><span class="t-out"> Initial setup</span>
-  <span class="t-out">m1: </span><span class="t-pass">[x]</span><span class="t-out"> GitHub provider integration</span>
-  <span class="t-out">m2: </span><span class="t-warn">[ ] Token refresh flow</span>
-
-<span class="t-bold">[h5i] Last decisions &amp; actions:</span>
-  <span class="t-ai">THINK:</span> <span class="t-out">40 MB overhead acceptable; Redis survives process restarts</span>
-  <span class="t-red">ACT:</span>   <span class="t-out">switched session store to Redis in src/session.rs</span>
-  <span class="t-warn">NOTE:</span>  <span class="t-out">TODO: integration test for failover path</span>
-
-<span class="t-out">[h5i] Use `h5i recall context show` for full details.</span>
-
-<span class="t-cmt"># Need more depth? Progressive disclosure pays only for what you need:</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context show --depth 1</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context show --depth 2</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context show --depth 3</span>
-
-<span class="t-cmt"># Time-travel to any past commit's reasoning state:</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context restore a3f9c2b</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context diff a3f9c2b 7216039</span>
-
-<span class="t-cmt"># Close with synced traces and a checkpoint:</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i hook codex sync</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i hook codex finish --summary "implemented token refresh flow"</span></pre></div>
-      </div>
-    </div>
-
-    <!-- 4 -->
-    <div class="usecase reveal">
-      <div class="usecase-header">
-        <div class="usecase-num">04</div>
-        <div>
-          <div class="usecase-title">Audit what the integrity engine caught</div>
-          <div class="usecase-sub">Quality signals flag real review risks; shape signals explain large or broad diffs without creating noise by themselves.</div>
-        </div>
-      </div>
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">~/my-project</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "refactor auth module" --audit</span>
-
-<span class="t-warn">⚠ INTEGRITY WARNING (score: 0.70)</span>
-  <span class="t-warn">⚠ [MASS_DELETION]        247 lines deleted</span>
-  <span class="t-out">                         deletion-heavy diff needs review.</span>
-  <span class="t-out">ℹ [CI_CD_MODIFIED]       .github/workflows/test.yaml modified.</span>
-
-<span class="t-out">Commit anyway with --force, or revise your changes.</span></pre></div>
-      </div>
-    </div>
-
-    <!-- 5 -->
-    <div class="usecase reveal">
-      <div class="usecase-header">
-        <div class="usecase-num">05</div>
+        <div class="usecase-num">02</div>
         <div>
           <div class="usecase-title">Understand what Claude actually did in a session</div>
           <div class="usecase-sub">Footprint, uncertainty heatmap, and file churn, all from the session log.</div>
@@ -1108,10 +1000,10 @@
       </div>
     </div>
 
-    <!-- 6 -->
+    <!-- 3 -->
     <div class="usecase reveal">
       <div class="usecase-header">
-        <div class="usecase-num">06</div>
+        <div class="usecase-num">03</div>
         <div>
           <div class="usecase-title">Detect prompt-injection signals in the reasoning trace</div>
           <div class="usecase-sub">Eight regex rules scan every OBSERVE/THINK/ACT entry, no model call, fully deterministic.</div>
@@ -1144,10 +1036,10 @@
       </div>
     </div>
 
-    <!-- 7 -->
+    <!-- 4 -->
     <div class="usecase reveal">
       <div class="usecase-header">
-        <div class="usecase-num">07</div>
+        <div class="usecase-num">04</div>
         <div>
           <div class="usecase-title">Start the next session with full situational awareness</div>
           <div class="usecase-sub">No API call needed, every field comes from locally stored h5i data.</div>
@@ -1229,9 +1121,7 @@
     </div>
     <nav class="footer-links">
       <a href="https://github.com/h5i-dev/h5i">GitHub</a>
-      <a href="/features/">Features</a>
       <a href="/guides/">Guides</a>
-      <a href="/workflows/">Workflows</a>
       <a href="/manual/">Manual</a>
       <a href="https://github.com/h5i-dev/h5i/issues">Issues</a>
       <a href="https://github.com/h5i-dev/h5i/blob/main/LICENSE">License</a>
