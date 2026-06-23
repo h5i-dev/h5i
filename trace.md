@@ -1349,3 +1349,4 @@ _[Checkpoint: 6a3aef3c — session ended (auto-checkpoint)]_
 [21:16:21] THINK: Let me implement. Starting with the config plumbing.
 [21:16:21] THINK: Let me insert `persona_digest: None,` after each (preserving indentation) across the test/helper files:
 [21:16:21] THINK: Let me confirm the multiline shape is uniform (three trailing `None`s) before a bulk transform:
+[21:16:21] NOTE: DEFERRAL: rsona/`") is enough, and the hard bind-over hide is a clean follow-up. (If you'd rather the agent never even see the pile, the simplest hard version i…
