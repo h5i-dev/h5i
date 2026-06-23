@@ -1363,3 +1363,9 @@ _[Checkpoint: 6a3af7a6 — edited MANUAL.md; edited MANUAL.md; edited examples/p
 [21:17:01] NOTE: DEFERRAL (~/Dev/h5i/examples/personas/README.md): → worktree stays clean → manifest records the digest. ## Follow-ups (deliberately deferred, per our design) - **Codex inline injection**: today Co…
 [21:17:01] NOTE: DEFERRAL (~/Dev/h5i/examples/personas/README.md): → manifest records the digest. ## Follow-ups (deliberately deferred, per our design) - **Codex inline injection**: today Codex gets a *read-PERSONA.…
 [21:17:01] NOTE: PLACEHOLDER (~/Dev/h5i/examples/personas/README.md): ktree`). **`h5i init` scaffolding** (`main.rs`) - Writes a placeholder `PERSONA.md`, adds `/PERSONA.md` to `.gitignore`, wires `@PERSONA.md` into `CLA…
+
+
+---
+_[Checkpoint: 6a3af7cd — edited MANUAL.md; edited MANUAL.md; edited examples/personas/README.md]_
+---
+
