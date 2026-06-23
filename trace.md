@@ -1360,3 +1360,4 @@ _[Checkpoint: 6a3aef3c — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a3af7a6 — edited MANUAL.md; edited MANUAL.md; edited examples/personas/README.md]_
 ---
 
+[21:17:01] NOTE: DEFERRAL (~/Dev/h5i/examples/personas/README.md): → worktree stays clean → manifest records the digest. ## Follow-ups (deliberately deferred, per our design) - **Codex inline injection**: today Co…
