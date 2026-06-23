@@ -1129,3 +1129,4 @@ _[Checkpoint: 6a39d7ee — edited blog/what-is-ai-aware-version-control/index.ht
 
 [00:49:29] THINK: Let me sweep that to match the new nav (this is mechanical and shared across all posts).
 [00:49:29] THINK: Let me clean up the ones the restructure made stale (replace the `Workflows` nav item with `Manual`, matching the pilot and the rest of the site).
+[00:49:29] THINK: Let me stage them explicitly (no `git add .
