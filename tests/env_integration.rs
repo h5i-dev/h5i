@@ -195,6 +195,7 @@ fn synthetic_env_manifest(
         status: "proposed".into(),
         captures: Vec::new(),
         service_digest: None,
+        persona_digest: None,
     }
 }
 

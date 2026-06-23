@@ -66,12 +66,6 @@ pub struct TeamAgent {
     pub runtime: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// sha256 of this agent's persona markdown (`--persona <file>`), if any —
-    /// provenance for the standing instructions injected into its launch prompt.
-    /// The content itself lives host-side at `<env-dir>/team-persona` (never in
-    /// the shared event log). `None` for a plain independent peer.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub persona_digest: Option<String>,
     pub isolation_claim: String,
     pub policy_digest: String,
     pub branch_ref: String,
@@ -281,30 +275,6 @@ pub fn gen_agent_id(existing: &[String]) -> String {
         if !taken(&cand) {
             return cand;
         }
-    }
-}
-
-/// Read an agent's persona markdown (the standing working style set with
-/// `--persona`), host-side, from its env dir. `Ok(None)` when the agent has no
-/// persona. Used by the launcher to inject it into the box's first prompt.
-pub fn persona(
-    repo: &Repository,
-    h5i_root: &Path,
-    run_id: &str,
-    agent_id: &str,
-) -> Result<Option<String>, H5iError> {
-    let run = status(repo, run_id)?.run;
-    let Some(agent) = run.agents.iter().find(|a| a.agent_id == agent_id) else {
-        return Err(H5iError::Metadata(format!(
-            "team '{run_id}' has no agent '{agent_id}'"
-        )));
-    };
-    let m = env::find(h5i_root, &agent.env_id)?;
-    let path = m.dir(h5i_root).join("team-persona");
-    match std::fs::read_to_string(&path) {
-        Ok(s) => Ok(Some(s)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(H5iError::with_path(e, &path)),
     }
 }
 
@@ -619,7 +589,6 @@ pub fn add_env(
     agent_id: &str,
     runtime: Option<String>,
     model: Option<String>,
-    persona: Option<String>,
     actor: &str,
 ) -> Result<TeamRun, H5iError> {
     validate_agent_id(agent_id)?;
@@ -636,31 +605,12 @@ pub fn add_env(
         )));
     }
     let m = env::find(h5i_root, env_name)?;
-    // A persona is the agent's standing working style (an optional markdown file,
-    // like a Dockerfile for behavior). Store the content host-side next to the
-    // identity binding; the launcher injects it into the box's first prompt. We
-    // keep only its digest in the shared event log.
     let env_dir = m.dir(h5i_root);
-    let persona_digest = match &persona {
-        Some(text) => {
-            let persona_path = env_dir.join("team-persona");
-            std::fs::write(&persona_path, text)
-                .map_err(|e| H5iError::with_path(e, &persona_path))?;
-            Some(crate::objects::sha256_hex(text.as_bytes()))
-        }
-        None => {
-            // Adding an env without a persona must clear any stale one from a
-            // prior add (envs are reused across teams).
-            let _ = std::fs::remove_file(env_dir.join("team-persona"));
-            None
-        }
-    };
     let agent = TeamAgent {
         agent_id: agent_id.to_string(),
         env_id: m.id.clone(),
         runtime,
         model,
-        persona_digest,
         isolation_claim: m.isolation_claim.clone(),
         policy_digest: m.policy_digest.clone(),
         branch_ref: m.branch.clone(),
@@ -679,8 +629,8 @@ pub fn add_env(
         serde_json::to_value(agent)?,
     );
     append_event(repo, &ev)?;
-    // Bind the env to this team persona. env run/shell reads these host-owned
-    // files and injects H5I_AGENT/H5I_TEAM for scoped in-box requests.
+    // Bind the env's in-box identity to this roster member. env run/shell reads
+    // these host-owned files and injects H5I_AGENT/H5I_TEAM for scoped requests.
     let identity_path = env_dir.join("team-identity");
     std::fs::write(&identity_path, format!("{agent_id}\n"))
         .map_err(|e| H5iError::with_path(e, &identity_path))?;
@@ -1914,6 +1864,7 @@ mod tests {
             status: env::ST_IDLE.into(),
             captures: vec![],
             service_digest: None,
+            persona_digest: None,
         };
         write_env(h5i_root, &m);
         m
@@ -1939,7 +1890,6 @@ mod tests {
             "codex-fix",
             Some("codex".into()),
             None,
-            Some("# Implementer\nWrite the code; keep the diff minimal.\n".into()),
             "human",
         )
         .unwrap();
@@ -1954,10 +1904,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(sub.owner_agent, "codex-fix");
-        // The persona was recorded: digest on the agent, content readable host-side.
-        assert!(run_has_persona_digest(&repo, "run1", "codex-fix"));
-        let p = persona(&repo, h5i_root, "run1", "codex-fix").unwrap();
-        assert_eq!(p.as_deref(), Some("# Implementer\nWrite the code; keep the diff minimal.\n"));
         let run = freeze(&repo, "run1", false, "human").unwrap();
         assert_eq!(run.phase, PHASE_SEALED_SUBMIT);
         assert_eq!(run.submissions.len(), 1);
@@ -1985,7 +1931,6 @@ mod tests {
             "run-noop",
             "env/codex/fix",
             "codex-fix",
-            None,
             None,
             None,
             "human",
@@ -2040,7 +1985,6 @@ mod tests {
             "codex-fix",
             None,
             None,
-            None,
             "human",
         )
         .unwrap();
@@ -2066,17 +2010,6 @@ mod tests {
         );
     }
 
-    fn run_has_persona_digest(repo: &Repository, run_id: &str, agent_id: &str) -> bool {
-        status(repo, run_id)
-            .unwrap()
-            .run
-            .agents
-            .iter()
-            .find(|a| a.agent_id == agent_id)
-            .and_then(|a| a.persona_digest.clone())
-            .is_some()
-    }
-
     #[test]
     fn gen_agent_id_avoids_collisions() {
         let taken: Vec<String> = AGENT_NAMES.iter().map(|s| s.to_string()).collect();
@@ -2091,25 +2024,6 @@ mod tests {
         validate_agent_id(&pick).unwrap();
     }
 
-    #[test]
-    fn add_env_without_persona_clears_a_stale_one() {
-        let dir = tempfile::tempdir().unwrap();
-        let repo = Repository::init(dir.path()).unwrap();
-        commit_file(&repo, "README.md", "hello\n");
-        let h5i_root = dir.path();
-        manifest(&repo, h5i_root, "codex", "fix");
-
-        // First team pins a persona on the env.
-        create(&repo, "runa", "runa", "HEAD", 1, "human").unwrap();
-        add_env(&repo, h5i_root, "runa", "fix", "a", None, None, Some("be careful".into()), "human").unwrap();
-        assert_eq!(persona(&repo, h5i_root, "runa", "a").unwrap().as_deref(), Some("be careful"));
-
-        // Reusing the same env in a new team WITHOUT a persona must not inherit
-        // the old file (envs are reused across teams).
-        create(&repo, "runb", "runb", "HEAD", 1, "human").unwrap();
-        add_env(&repo, h5i_root, "runb", "fix", "b", None, None, None, "human").unwrap();
-        assert_eq!(persona(&repo, h5i_root, "runb", "b").unwrap(), None);
-    }
 
     #[test]
     fn freeze_refuses_missing_submission() {
@@ -2128,7 +2042,6 @@ mod tests {
             "codex-fix",
             None,
             None,
-            None,
             "human",
         )
         .unwrap();
@@ -2145,7 +2058,7 @@ mod tests {
         let m = manifest(&repo, h5i_root, "codex", "fix");
         create(&repo, "run-i", "run-i", "HEAD", 1, "human").unwrap();
         add_env(
-            &repo, h5i_root, "run-i", "env/codex/fix", "codex-impl", None, None, None, "human",
+            &repo, h5i_root, "run-i", "env/codex/fix", "codex-impl", None, None, "human",
         )
         .unwrap();
         let id = std::fs::read_to_string(m.dir(h5i_root).join("team-identity")).unwrap();
@@ -2195,7 +2108,6 @@ mod tests {
             "codex-fix",
             None,
             None,
-            None,
             "human",
         )
         .unwrap();
@@ -2205,7 +2117,6 @@ mod tests {
             "run3",
             "env/claude/fix",
             "claude-fix",
-            None,
             None,
             None,
             "human",
@@ -2270,7 +2181,7 @@ mod tests {
 
         create(&repo, "run-sync", "run-sync", "HEAD~1", 1, "human").unwrap();
         add_env(
-            &repo, h5i_root, "run-sync", "env/codex/fix", "codex-fix", None, None, None, "human",
+            &repo, h5i_root, "run-sync", "env/codex/fix", "codex-fix", None, None, "human",
         )
         .unwrap();
 
@@ -2311,7 +2222,6 @@ mod tests {
             "run4",
             "env/codex/fix",
             "codex-fix",
-            None,
             None,
             None,
             "human",
@@ -2364,7 +2274,7 @@ mod tests {
 
         create(&repo, "run-d", "run-d", "HEAD~2", 1, "human").unwrap();
         add_env(
-            &repo, h5i_root, "run-d", "env/codex/fix", "codex-fix", None, None, None, "human",
+            &repo, h5i_root, "run-d", "env/codex/fix", "codex-fix", None, None, "human",
         )
         .unwrap();
 
@@ -2374,7 +2284,7 @@ mod tests {
 
         // ...but the round is still open: add-env, submit, and freeze all work.
         add_env(
-            &repo, h5i_root, "run-d", "env/claude/impl", "claude-impl", None, None, None, "human",
+            &repo, h5i_root, "run-d", "env/claude/impl", "claude-impl", None, None, "human",
         )
         .unwrap();
         let sub = submit(&repo, h5i_root, "run-d", "codex-fix", None, None, "codex").unwrap();
@@ -2403,7 +2313,7 @@ mod tests {
 
         create(&repo, "run-rev", "run-rev", &base.to_string(), 1, "human").unwrap();
         add_env(
-            &repo, h5i_root, "run-rev", "env/codex/fix", "codex-fix", None, None, None, "human",
+            &repo, h5i_root, "run-rev", "env/codex/fix", "codex-fix", None, None, "human",
         )
         .unwrap();
         let sub = submit(&repo, h5i_root, "run-rev", "codex-fix", None, None, "codex").unwrap();
@@ -2442,7 +2352,6 @@ mod tests {
             "run5",
             "env/codex/fix",
             "codex-fix",
-            None,
             None,
             None,
             "human",
@@ -2499,7 +2408,6 @@ mod tests {
             "codex-fix",
             None,
             None,
-            None,
             "human",
         )
         .unwrap();
@@ -2509,7 +2417,6 @@ mod tests {
             "run6",
             "env/claude/fix",
             "claude-fix",
-            None,
             None,
             None,
             "human",
@@ -2548,9 +2455,9 @@ mod tests {
         manifest(&repo, h5i_root, "codex", "fix");
         manifest(&repo, h5i_root, "claude", "fix");
         create(&repo, "run-d", "run-d", "HEAD", 1, "human").unwrap();
-        add_env(&repo, h5i_root, "run-d", "env/codex/fix", "codex-fix", None, None, None, "human")
+        add_env(&repo, h5i_root, "run-d", "env/codex/fix", "codex-fix", None, None, "human")
             .unwrap();
-        add_env(&repo, h5i_root, "run-d", "env/claude/fix", "claude-fix", None, None, None, "human")
+        add_env(&repo, h5i_root, "run-d", "env/claude/fix", "claude-fix", None, None, "human")
             .unwrap();
         // draft → discussion forbidden (first attempts not yet sealed).
         let err = discuss(
@@ -2590,8 +2497,8 @@ mod tests {
         manifest(&repo, h5i_root, "a1", "fix");
         manifest(&repo, h5i_root, "a2", "fix");
         create(&repo, "run-v", "run-v", "HEAD", 1, "human").unwrap();
-        add_env(&repo, h5i_root, "run-v", "env/a1/fix", "a1", None, None, None, "human").unwrap();
-        add_env(&repo, h5i_root, "run-v", "env/a2/fix", "a2", None, None, None, "human").unwrap();
+        add_env(&repo, h5i_root, "run-v", "env/a1/fix", "a1", None, None, "human").unwrap();
+        add_env(&repo, h5i_root, "run-v", "env/a2/fix", "a2", None, None, "human").unwrap();
 
         // Hand-craft two passing submissions + verifications with DIFFERENT commands.
         for (agent, sid) in [("a1", "sub-a1"), ("a2", "sub-a2")] {
@@ -2677,7 +2584,6 @@ mod tests {
             "run7",
             "env/codex/fix",
             "codex-fix",
-            None,
             None,
             None,
             "human",

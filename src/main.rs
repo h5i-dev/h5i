@@ -1977,10 +1977,6 @@ enum TeamCommands {
         /// Model label
         #[arg(long)]
         model: Option<String>,
-        /// Persona markdown file injected into this agent's launch prompt
-        /// (its standing working style — see examples/personas/)
-        #[arg(long)]
-        persona: Option<std::path::PathBuf>,
         /// Emit JSON
         #[arg(long)]
         json: bool,
@@ -1992,14 +1988,6 @@ enum TeamCommands {
         /// Emit JSON
         #[arg(long)]
         json: bool,
-    },
-    /// Print an agent's persona markdown (the launcher uses this to inject it)
-    Persona {
-        /// Team agent key (the `--as` name)
-        agent: String,
-        /// Team id (defaults to the current team — see `team use`)
-        #[arg(long)]
-        team: Option<String>,
     },
     /// Freeze one agent's candidate as an immutable submission
     Submit {
@@ -3023,6 +3011,49 @@ fn write_claude_instructions(workdir: &Path) -> anyhow::Result<()> {
             .open(&claude_md)?;
         writeln!(f, "\n@.claude/h5i.md")?;
     }
+    // Auto-load the per-env persona (h5i env create bakes PERSONA.md from a
+    // profile's `persona = [...]`). `@PERSONA.md` is a no-op when the file holds
+    // only the placeholder, so it is safe to wire unconditionally.
+    let existing = std::fs::read_to_string(&claude_md).unwrap_or_default();
+    if !existing.contains("@PERSONA.md") {
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&claude_md)?;
+        writeln!(f, "\n@PERSONA.md")?;
+    }
+
+    Ok(())
+}
+
+/// PERSONA.md placeholder written by `h5i init`. Real content is baked per-env
+/// by `h5i env create` from a profile's `persona = [...]` sources.
+const PERSONA_PLACEHOLDER: &str = "<!-- PERSONA.md — machine-managed by h5i.\n     `h5i env create` overwrites this file, per environment, from the\n     `persona = [...]` sources in that profile (.h5i/env.toml). It is\n     git-ignored: edits here are local-only and never tracked. -->\n";
+
+/// Scaffold the PERSONA.md convention: a git-ignored, machine-managed file at
+/// the repo root that `h5i env create` overwrites per-env. CLAUDE.md auto-loads
+/// it via `@PERSONA.md`; AGENTS.md gets a literal read instruction (Codex has no
+/// `@import` yet). Idempotent.
+fn write_persona_scaffold(workdir: &Path) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    let persona_md = workdir.join("PERSONA.md");
+    if !persona_md.exists() {
+        std::fs::write(&persona_md, PERSONA_PLACEHOLDER)?;
+    }
+
+    let gitignore = workdir.join(".gitignore");
+    let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    if !existing.lines().any(|l| l.trim() == "/PERSONA.md") {
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&gitignore)?;
+        if !existing.is_empty() && !existing.ends_with('\n') {
+            writeln!(f)?;
+        }
+        writeln!(f, "/PERSONA.md")?;
+    }
 
     Ok(())
 }
@@ -3031,6 +3062,28 @@ fn write_codex_instructions(workdir: &Path) -> anyhow::Result<()> {
     use std::io::Write as _;
 
     let agents_md = workdir.join("AGENTS.md");
+    let existing = std::fs::read_to_string(&agents_md).unwrap_or_default();
+
+    // Persona pointer: Codex has no `@import`, so instruct it to read PERSONA.md
+    // itself (h5i bakes it per-env). Idempotent via its own marker.
+    if !existing.contains("read `PERSONA.md`") {
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&agents_md)?;
+        if !existing.is_empty() && !existing.ends_with('\n') {
+            writeln!(f)?;
+        }
+        writeln!(
+            f,
+            "\n## Persona\n\nAt the start of a session, read `PERSONA.md` at the repo root (if present) \
+             and follow it as your standing working style. Do not read other files under the \
+             profile's persona source directory — `PERSONA.md` is the resolved, per-env brief."
+        )?;
+    }
+
+    // Re-read so the token-reduction block's idempotency check sees any persona
+    // text just appended.
     let existing = std::fs::read_to_string(&agents_md).unwrap_or_default();
     // Stable marker (survives the `h5i codex` → `h5i hook codex` rename) so an
     // already-instructed AGENTS.md isn't appended to twice.
@@ -5406,6 +5459,20 @@ fn main() -> anyhow::Result<()> {
                 ),
                 Err(e) => println!(
                     "{} Could not write Codex instructions: {}",
+                    style("warn:").yellow(),
+                    e
+                ),
+            }
+            match write_persona_scaffold(&workdir) {
+                Ok(()) => println!(
+                    "{} {} ({} auto-loads it; set per-env content via {})",
+                    SUCCESS,
+                    style("Persona scaffold written to PERSONA.md").green(),
+                    style("CLAUDE.md").yellow(),
+                    style("persona = [...] in .h5i/env.toml").cyan()
+                ),
+                Err(e) => println!(
+                    "{} Could not write persona scaffold: {}",
                     style("warn:").yellow(),
                     e
                 ),
@@ -9304,7 +9371,6 @@ fn main() -> anyhow::Result<()> {
                     as_agent,
                     runtime,
                     model,
-                    persona,
                     json,
                 } => {
                     // Default the agent key to a generated name so the user
@@ -9321,30 +9387,8 @@ fn main() -> anyhow::Result<()> {
                             (h5i_core::team::gen_agent_id(&existing), true)
                         }
                     };
-                    // Read the persona markdown (cap the size — it is injected
-                    // into a prompt, not meant to be a whole codebase).
-                    const PERSONA_MAX: u64 = 64 * 1024;
-                    let persona_text = match persona {
-                        Some(path) => {
-                            let meta = std::fs::metadata(&path).map_err(|e| {
-                                anyhow::anyhow!("persona file {}: {e}", path.display())
-                            })?;
-                            if meta.len() > PERSONA_MAX {
-                                anyhow::bail!(
-                                    "persona file {} is {} bytes (max {PERSONA_MAX})",
-                                    path.display(),
-                                    meta.len()
-                                );
-                            }
-                            Some(std::fs::read_to_string(&path).map_err(|e| {
-                                anyhow::anyhow!("persona file {}: {e}", path.display())
-                            })?)
-                        }
-                        None => None,
-                    };
                     let run = h5i_core::team::add_env(
-                        git, &h5i_root, &team, &env, &agent_id, runtime, model, persona_text,
-                        &actor,
+                        git, &h5i_root, &team, &env, &agent_id, runtime, model, &actor,
                     )?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&run)?);
@@ -9358,12 +9402,6 @@ fn main() -> anyhow::Result<()> {
                         }
                         let status = h5i_core::team::status(git, &team)?;
                         print!("{}", h5i_core::team::render_status(&status));
-                    }
-                }
-                TeamCommands::Persona { agent, team } => {
-                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
-                    if let Some(text) = h5i_core::team::persona(git, &h5i_root, &team, &agent)? {
-                        print!("{text}");
                     }
                 }
                 TeamCommands::Status { team, json } => {

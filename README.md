@@ -61,19 +61,23 @@ h5i init
 h5i hook setup --write --wrap-bash --team
 ```
 
-Run the same task across several agents and merge the verified winner. A roster member is a **persona, not a backend**: `runtime` · `model` · `persona` are attributes, so a team can be three Claudes with different skills, a Claude + Codex mix, or one model under two personas:
+Run the same task across several agents and merge the verified winner. A roster member is a **persona, not a backend**: `runtime` · `model` · persona are attributes, so a team can be three Claudes with different skills, a Claude + Codex mix, or one model under two personas. A **persona** is its standing working style, declared per-profile in `.h5i/env.toml` (`persona = [...]`) and baked into a git-ignored `PERSONA.md` at `env create` — the agent loads it via `@PERSONA.md` in `CLAUDE.md` (Claude) or a read instruction in `AGENTS.md` (Codex):
 
 ```bash
-# 0. create sandboxed environments
-h5i env create claude-env --profile agent-claude
-h5i env create codex-env  --profile agent-codex
+# 0. declare each role's working style in .h5i/env.toml, e.g.
+#      [profile.architect]
+#      persona = ["examples/personas/architect.md"]
+#      [profile.implementer]
+#      persona = ["examples/personas/implementer.md"]
+#    then create one sandboxed env per role (PERSONA.md is baked now)
+h5i env create claude-env --profile architect
+h5i env create codex-env  --profile implementer
 
-# 1. create a run, then add one confined env per agent persona
-#    (--persona injects a standing working style; each agent gets an
-#     auto-generated id — `h5i team status` shows them)
+# 1. create a run, then add each env to the roster (each agent gets an
+#    auto-generated id — `h5i team status` shows them)
 h5i team create fix-auth --base HEAD
-h5i team add-env fix-auth env/human/claude-env --runtime claude --persona examples/personas/architect.md
-h5i team add-env fix-auth env/human/codex-env  --runtime codex  --persona examples/personas/implementer.md
+h5i team add-env fix-auth env/human/claude-env --runtime claude
+h5i team add-env fix-auth env/human/codex-env  --runtime codex
 h5i team status fix-auth                          # note the generated agent ids
 
 # 2. launch every agent in its own sealed box (a terminal per env)

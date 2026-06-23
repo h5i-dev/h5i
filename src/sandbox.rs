@@ -133,6 +133,11 @@ struct ProfileToml {
     env: EnvVarsToml,
     #[serde(default)]
     shell: ShellToml,
+    /// Persona source files, each relative to `$WORK`: their contents are
+    /// concatenated into `PERSONA.md` at `env create`. `[profile.X] persona =
+    /// ["plugin/persona/architect.md", "plugin/persona/careful.md"]`.
+    #[serde(default)]
+    persona: Vec<String>,
     /// Per-env private paths (Idea 3):
     /// `[profile.X.private_paths] "target" = { kind = "cache", persist = true }`.
     #[serde(default)]
@@ -351,6 +356,7 @@ pub fn load_profile(
                 allow_command_extractors: t.allow_command_extractors
                     || base.allow_command_extractors,
                 shell_rcfile: t.shell.rcfile.or(base.shell_rcfile),
+                persona: if t.persona.is_empty() { base.persona } else { t.persona },
             }
         }
     };
@@ -478,6 +484,29 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
                     g.name
                 )))
             }
+        }
+    }
+    // Persona sources are read from the worktree at `env create` and baked into
+    // PERSONA.md. Pin them inside `$WORK` (fail-closed): no absolute paths, no
+    // `..` escape — the same containment the `[shell] rcfile` gets.
+    for src in &p.persona {
+        let rel = Path::new(src);
+        if src.is_empty() || rel.is_absolute() {
+            return Err(H5iError::Metadata(format!(
+                "profile '{}' persona source '{src}' must be a non-empty path relative to \
+                 the worktree, not an absolute path (fail-closed)",
+                p.name
+            )));
+        }
+        if rel
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(H5iError::Metadata(format!(
+                "profile '{}' persona source '{src}' must not escape the worktree with '..' \
+                 (fail-closed)",
+                p.name
+            )));
         }
     }
     // A domain egress allowlist cannot be honored by the static process tier
@@ -2188,6 +2217,40 @@ rcfile = ".h5i/box.bashrc"
 "#;
         let p = load_from_str(with_rc, "dev", None).unwrap();
         assert_eq!(p.shell_rcfile.as_deref(), Some(".h5i/box.bashrc"));
+    }
+
+    #[test]
+    fn persona_sources_parse_and_validate() {
+        // Unset → empty, and kept out of the digested serialization.
+        let base = load_from_str(doc_example_toml(), "default", None).unwrap();
+        assert!(base.persona.is_empty());
+        assert!(
+            !toml::to_string(&ResolvedPolicy::new(base.isolation, base.clone()))
+                .unwrap()
+                .contains("persona"),
+            "an empty persona list must not appear in the serialized (digested) policy"
+        );
+
+        // Set → carried in declared order.
+        let with_persona = r#"
+[profile.architect]
+isolation = "process"
+persona = ["plugin/persona/architect.md", "plugin/persona/careful.md"]
+"#;
+        let p = load_from_str(with_persona, "architect", None).unwrap();
+        assert_eq!(
+            p.persona,
+            vec!["plugin/persona/architect.md", "plugin/persona/careful.md"]
+        );
+
+        // Fail-closed: absolute path and `..` escape are both refused at load.
+        for bad in ["/etc/passwd", "../secrets.md", "a/../../b.md"] {
+            let doc = format!("[profile.x]\nisolation = \"process\"\npersona = [\"{bad}\"]\n");
+            assert!(
+                load_from_str(&doc, "x", None).is_err(),
+                "persona source '{bad}' must be refused (fail-closed)"
+            );
+        }
     }
 
     #[test]

@@ -345,6 +345,15 @@ pub struct Profile {
     /// only when set, so existing policy digests are unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_rcfile: Option<String>,
+    /// Persona source files (`[profile.X] persona = ["plugin/persona/architect.md"]`),
+    /// each a path **relative to `$WORK`** (the env worktree). At `env create`
+    /// their contents are concatenated, in order, into a single `PERSONA.md` at
+    /// the worktree root — the agent's standing working style, loaded via
+    /// `@PERSONA.md` in `CLAUDE.md` (Claude) or a read-`PERSONA.md` instruction
+    /// in `AGENTS.md` (Codex). Empty for most profiles, so existing policy
+    /// digests are unchanged (serialized only when non-empty).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub persona: Vec<String>,
 }
 
 /// Read-only system paths granted by default at the `process` tier — enough to
@@ -401,6 +410,7 @@ impl Profile {
             private_paths: Vec::new(),
             allow_command_extractors: false,
             shell_rcfile: None,
+            persona: Vec::new(),
         }
     }
 
