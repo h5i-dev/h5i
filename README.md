@@ -107,7 +107,7 @@ Full command reference: [`MANUAL.md`](MANUAL.md) · `man h5i`.
 - h5i **is not** a Git replacement, a hosted SaaS / dev-environment, or *just* a sandbox.
 - h5i **is** a Git sidecar for **auditable agent ensembles**: run many agents, merge one provable result.
 
-#### Why not a hosted sandbox?**
+**Why not a hosted sandbox?**
 
 The whole point is that the workspace and its evidence live *in your repo* (`refs/h5i/*`): pushable, fetchable, offline, and yours. Codespaces, Coder, and E2B give you an environment; h5i gives you an *auditable* one, versioned in Git with no service to depend on.
 
