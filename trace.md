@@ -1346,3 +1346,4 @@ _[Checkpoint: 6a3aef3c — session ended (auto-checkpoint)]_
 [21:11:44] OBSERVE: read examples/personas/README.md
 [21:11:58] ACT: edited examples/personas/README.md
 [21:12:02] OBSERVE: read examples/personas/architect.md
+[21:16:21] THINK: Let me implement. Starting with the config plumbing.
