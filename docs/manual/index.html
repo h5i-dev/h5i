@@ -128,7 +128,6 @@
       .nav-hamburger{display:flex;}
     }
   </style>
-  <link rel="stylesheet" href="/_static/highlight.css">
 </head>
 <body>
 <nav>
@@ -138,7 +137,9 @@
   </a>
   <ul class="nav-links" id="nav-links">
     <li><a href="/">Home</a></li>
+    <li><a href="/features/">Features</a></li>
     <li><a href="/guides/">Guides</a></li>
+    <li><a href="/workflows/">Workflows</a></li>
     <li><a href="/manual/" aria-current="page">Manual</a></li>
     <li><a href="/blog/">Blog</a></li>
     <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
@@ -1124,6 +1125,10 @@ h5i recall context init --goal &quot;Implement retry-safe HTTP client&quot;   # 
 <tr>
 <td><code>--window &lt;n&gt;</code></td>
 <td>Number of recent milestone commits to include (default: 3)</td>
+</tr>
+<tr>
+<td><code>--limit &lt;n&gt;</code></td>
+<td>Show only the N most recent milestones (default: 20; <code>0</code> = all). The header notes how many older ones are hidden. Keeps the view focused on long-lived workspaces that accumulate hundreds of milestones</td>
 </tr>
 <tr>
 <td><code>--trace-offset &lt;n&gt;</code></td>
@@ -3314,14 +3319,21 @@ permissioned reviews, auditable convergence</em>. It is a thin orchestration lay
 coordination (roster, phases, submissions, verdict). It is <strong>not</strong> a group chat
 and <strong>not</strong> a daemon.</p>
 <p>A roster member is a <strong>persona, not a backend</strong>: the <code>agent_id</code> (auto-generated,
-or pinned with <code>--as</code>) is the durable actor, while <code>runtime</code>/<code>model</code>/<code>persona</code>
+or pinned with <code>--as</code>) is the durable actor, while <code>runtime</code>/<code>model</code>/persona
 are attributes — so a team can be three Claudes with different system
 prompts/skills (architect / implementer / skeptic), a Claude+Codex mix, or one
-model under two personas. A <strong>persona</strong> is a markdown file (<code>--persona &lt;file&gt;</code>;
-see <code>examples/personas/</code>) injected into that agent's launch prompt as its
-standing working style. The audit records <em>which configuration produced which
-candidate</em>. (<code>h5i team status</code> lists each agent's id for the <code>--agent</code> /
-<code>--reviewer</code> / <code>--target</code> flags below.)</p>
+model under two personas. A <strong>persona</strong> is the agent's standing working style,
+declared <strong>per profile</strong> in <code>.h5i/env.toml</code> as <code>persona = ["path/to/style.md", …]</code>
+(paths relative to the worktree; see <code>examples/personas/</code>). At <code>h5i env create</code>
+the listed files are concatenated, in order, into a git-ignored <code>PERSONA.md</code> at
+the worktree root — loaded automatically via <code>@PERSONA.md</code> in <code>CLAUDE.md</code>
+(Claude) or a read instruction in <code>AGENTS.md</code> (Codex). Because it is git-ignored
+it never enters the agent's diff, and its sha256 is pinned in the env manifest
+(<code>persona_digest</code>) for provenance. To give an agent a persona, create its env
+with the right profile; <code>h5i team add-env</code> then inherits it (no per-add flag).
+The audit records <em>which configuration produced which candidate</em>. (<code>h5i team
+status</code> lists each agent's id for the <code>--agent</code> / <code>--reviewer</code> / <code>--target</code>
+flags below.)</p>
 <p>Run state lives in one ref per run, <code>refs/h5i/team/&lt;run-id&gt;</code>, as an
 <strong>append-only event log</strong> that is the single source of truth — phase, roster, and
 verdict are <em>folded</em> from events (deduped by id, union-merged), never stored as
@@ -3353,12 +3365,8 @@ inboxes and never locks the round.</p>
 <td>Create a run over existing envs. <code>--base</code> (default <code>HEAD</code>) is the shared base all candidates are compared against.</td>
 </tr>
 <tr>
-<td><code>h5i team add-env &lt;team&gt; &lt;env&gt; [--as &lt;agent-id&gt;] [--runtime R] [--model M] [--persona FILE] [--json]</code></td>
-<td>Add an already-created env to the roster as a persona-bound member. The agent id is <strong>auto-generated</strong> unless you pin it with <code>--as</code> (a ref-safe key; distinct personas on the same runtime need distinct ids — see it with <code>h5i team status</code>). <code>--persona &lt;file&gt;</code> injects a markdown working-style brief into this agent's launch prompt (see <code>examples/personas/</code>). Draft phase only. <strong>Also binds the env's in-box identity to this persona</strong> (writes host-owned <code>team-identity</code> / <code>team-run</code> files), so <code>env run</code>/<code>env shell</code> inject <code>H5I_AGENT=&lt;persona&gt;</code> and <code>H5I_TEAM=&lt;team&gt;</code> for scoped team-agent commands.</td>
-</tr>
-<tr>
-<td><code>h5i team persona &lt;agent&gt; [--team T]</code></td>
-<td>Print the persona markdown recorded for a roster agent (the launcher uses this to inject it).</td>
+<td><code>h5i team add-env &lt;team&gt; &lt;env&gt; [--as &lt;agent-id&gt;] [--runtime R] [--model M] [--json]</code></td>
+<td>Add an already-created env to the roster as a persona-bound member. The agent id is <strong>auto-generated</strong> unless you pin it with <code>--as</code> (a ref-safe key; distinct personas on the same runtime need distinct ids — see it with <code>h5i team status</code>). The persona itself comes from the env's profile (<code>persona = [...]</code> in <code>.h5i/env.toml</code>, baked into <code>PERSONA.md</code> at <code>env create</code>) — no per-add flag. Draft phase only. <strong>Also binds the env's in-box identity</strong> (writes host-owned <code>team-identity</code> / <code>team-run</code> files), so <code>env run</code>/<code>env shell</code> inject <code>H5I_AGENT=&lt;agent&gt;</code> and <code>H5I_TEAM=&lt;team&gt;</code> for scoped team-agent commands.</td>
 </tr>
 <tr>
 <td><code>h5i team status [&lt;team&gt;] [--json]</code></td>
@@ -3544,9 +3552,13 @@ that passed the gates (<code>can_auto_apply</code>); <code>--force</code> is an 
 override. A run where nothing clears the gates records <code>no_verdict</code> and stops —
 the one place a human is pinged, by choice.</p>
 <h3 id="worked-example">Worked example</h3>
-<pre><code class="language-bash">h5i team create fix-auth --base HEAD
-h5i team add-env fix-auth env/claude-architect/fix-auth --runtime claude --persona examples/personas/architect.md
-h5i team add-env fix-auth env/codex/fix-auth          --runtime codex --persona examples/personas/implementer.md
+<pre><code class="language-bash"># personas are declared per profile in .h5i/env.toml and baked at env create:
+#   [profile.architect]   persona = [&quot;examples/personas/architect.md&quot;]
+#   [profile.implementer] persona = [&quot;examples/personas/implementer.md&quot;]
+# so each env carries its working style before it joins the roster.
+h5i team create fix-auth --base HEAD
+h5i team add-env fix-auth env/claude-architect/fix-auth --runtime claude
+h5i team add-env fix-auth env/codex/fix-auth          --runtime codex
 h5i team status fix-auth                              # note the auto-generated agent ids
 # each boxed agent works in its own env, then runs:
 h5i team agent submit
@@ -4571,6 +4583,5 @@ h5i serve --port 8080
     heads.forEach(function(h){obs.observe(h);});
   })();
 </script>
-<script src="/_static/highlight.js" defer></script>
 </body>
 </html>

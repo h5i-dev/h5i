@@ -879,9 +879,11 @@
         <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
         <span class="terminal-path">~/my-project · h5i team: fix-auth</span>
       </div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i team create fix-auth --base HEAD</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/claude-arch/fix-auth --persona examples/personas/architect.md</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/codex/fix-auth       --persona examples/personas/implementer.md</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i env create claude-arch --profile architect</span>  <span class="t-cmt"># persona baked from .h5i/env.toml</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env create codex-impl --profile implementer</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i team create fix-auth --base HEAD</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/claude-arch/fix-auth --runtime claude</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/codex/codex-impl     --runtime codex</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team status fix-auth</span>  <span class="t-cmt"># note the generated agent ids</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team dispatch fix-auth --prompt-file task.md</span>  <span class="t-cmt"># one broadcast → all agents</span>
   <span class="t-out">…each agent works sealed in its own box…</span>
