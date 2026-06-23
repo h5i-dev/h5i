@@ -92,3 +92,5 @@ h5i env rm <name> [--force]              # permanently remove: worktree + branch
 - **landlock / seccompiler / libc** (Linux) — `h5i env` process-tier sandbox (filesystem allowlist, syscall deny-list, namespaces)
 
 @.claude/h5i.md
+
+@PERSONA.md

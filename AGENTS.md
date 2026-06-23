@@ -1,4 +1,8 @@
 
+## Persona
+
+At the start of a session, read `PERSONA.md` at the repo root (if present) and follow it as your standing working style. Do not read other files under the profile's persona source directory — `PERSONA.md` is the resolved, per-env brief.
+
 ## h5i Integration
 
 This repository uses **h5i** (a Git sidecar for AI-era version control).
