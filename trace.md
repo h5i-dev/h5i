@@ -1219,3 +1219,4 @@ _[Checkpoint: 6a3ae4b3 — session ended (auto-checkpoint)]_
 [20:01:15] OBSERVE: searched src/main.rs for "\{|profile|config""
 [20:01:15] OBSERVE: searched src/env.rs for ".*Config|toml|serde|Profile|ResolvedPolicy|EnvManifest|create\(""
 [20:01:15] OBSERVE: read src/team.rs
+[20:01:15] OBSERVE: read src/team.rs
