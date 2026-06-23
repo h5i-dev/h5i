@@ -16,7 +16,6 @@ Apply these automatically, without being asked.
 
 **At the start of every non-trivial task:**
 ```bash
-h5i recall context status
 # If no workspace exists yet, initialize one:
 h5i recall context init --goal "<one-line summary of what you are about to do>"
 ```

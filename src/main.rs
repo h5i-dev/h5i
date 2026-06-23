@@ -2680,7 +2680,6 @@ Apply these automatically, without being asked.
 
 **At the start of every non-trivial task:**
 ```bash
-h5i recall context status
 # If no workspace exists yet, initialize one:
 h5i recall context init --goal "<one-line summary of what you are about to do>"
 ```
@@ -2849,7 +2848,6 @@ Codex should use `h5i recall context` as shared cross-session memory and `h5i ca
 
 **At the start of a non-trivial task:**
 ```bash
-h5i hook codex prelude
 # If no workspace exists yet, initialize it once:
 h5i recall context init --goal "<one-line task summary>"
 ```
