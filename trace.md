@@ -1505,3 +1505,4 @@ _[Checkpoint: 6a3b0bb3 — edited .claude/h5i.md; edited src/main.rs; edited src
 [22:56:04] THINK: I have what I need. Let me set the goal for this sub-task (dogfooding our own rule), then implement.
 [22:56:04] THINK: Let me wire that up: add `--limit N` to `status` so it shows a short *recent*-trace tail (not the full dump).
 [22:56:04] THINK: Let me run clippy (CI gates on `-D warnings`) to be safe:
+[22:56:04] NOTE: DEFERRAL (~/Dev/h5i/src/main.rs): t detect a pin-vs-git mismatch and hint to unpin — so the next time an agent re-sets a goal, it learns the goal is stale *because* of a pin, not jus…
