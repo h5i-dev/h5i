@@ -1120,3 +1120,4 @@ _[Checkpoint: 6a39d670 — edited guides/index.html; edited features/index.html;
 [00:47:53] OBSERVE: read blog/index.html
 [00:48:01] ACT: edited blog/index.html
 [00:48:16] OBSERVE: read manual/index.html
+[00:48:21] ACT: edited manual/index.html
