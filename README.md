@@ -122,8 +122,8 @@ Full command reference: [`MANUAL.md`](MANUAL.md) · `man h5i`.
 ## Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Pitch Deck](https://h5i.dev/pitch/)
-- [`MANUAL.md`](MANUAL.md) / `man h5i`: full command reference
 - [Tutorials](https://h5i.dev/guides/): guided workflows · [Blog](https://h5i.dev/blog/): design notes, audits, case studies
+- [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
 
 ---
 
