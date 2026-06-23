@@ -1137,3 +1137,4 @@ _[Checkpoint: 6a39d819 — edited blog/what-is-ai-aware-version-control/index.ht
 ---
 
 [01:02:28] ACT: wrote _static/highlight.css
+[01:03:03] ACT: wrote _static/highlight.js
