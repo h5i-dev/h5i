@@ -1151,3 +1151,4 @@ _[Checkpoint: 6a39dbd1 — wrote _static/highlight.css; wrote _static/highlight.
 [01:14:40] ACT: edited _static/highlight.js
 [01:14:52] ACT: edited _static/highlight.css
 [01:16:15] THINK: terminal-body`. Let me confirm both structures:
+[01:16:15] THINK: Let me run a final cross-page integrity sweep (front page, a guide, a blog post) to be sure the broadened `.
