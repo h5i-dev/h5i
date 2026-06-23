@@ -1501,3 +1501,4 @@ _[Checkpoint: 6a3b0bb3 — edited .claude/h5i.md; edited src/main.rs; edited src
 [22:54:25] ACT: edited src/main.rs
 [22:54:32] ACT: edited src/main.rs
 [22:54:40] ACT: edited .claude/h5i.md
+[22:56:04] THINK: Clear plan. Let me explore the current command structure so I implement this cleanly — the CLI dispatch for `context`, the full `print_status`, and the helpers I'll reuse.
