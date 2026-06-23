@@ -1127,3 +1127,4 @@ _[Checkpoint: 6a39d670 — edited guides/index.html; edited features/index.html;
 _[Checkpoint: 6a39d7ee — edited blog/what-is-ai-aware-version-control/index.html; edited blog/index.html; edited manual/index.html]_
 ---
 
+[00:49:29] THINK: Let me sweep that to match the new nav (this is mechanical and shared across all posts).
