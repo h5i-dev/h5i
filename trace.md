@@ -1185,3 +1185,4 @@ _[Checkpoint: 6a3ae425 — edited _static/highlight.js; edited _static/highlight
 [19:53:43] OBSERVE: read src/team.rs
 [19:53:50] OBSERVE: read examples/personas/architect.md
 [19:53:51] OBSERVE: read examples/personas/implementer.md
+[19:53:51] OBSERVE: read examples/personas/README.md
