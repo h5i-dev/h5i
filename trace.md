@@ -1100,3 +1100,9 @@ _[Checkpoint: 6a39d372 — edited guides/index.html; edited features/index.html;
 ---
 
 [00:41:35] OBSERVE: read pitch/index.html
+
+
+---
+_[Checkpoint: 6a39d670 — edited guides/index.html; edited features/index.html; edited index.html]_
+---
+
