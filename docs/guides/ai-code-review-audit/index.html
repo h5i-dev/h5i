@@ -56,6 +56,7 @@
   <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How does h5i decide which AI commits are risky?", "acceptedAnswer": {"@type": "Answer", "text": "It scores commits from signals captured during the AI session: expressed uncertainty, blind edits (a file edited with no prior read), edit churn, and how many files the change touched. h5i audit review ranks commits by that combined score, riskiest first."}}, {"@type": "Question", "name": "What is a 'blind edit' and why does it matter?", "acceptedAnswer": {"@type": "Answer", "text": "A blind edit is a Write or Edit with no preceding Read of the same file in that session — the agent changed the file from memory rather than its current state. High blind-edit counts (visible via h5i recall notes coverage) are a strong signal a change deserves a closer look."}}, {"@type": "Question", "name": "Is a language model used to do the audit?", "acceptedAnswer": {"@type": "Answer", "text": "No. The ranking and prompt-injection scans are deterministic — derived from recorded session signals — so there's no model in the audit path and results are reproducible."}}, {"@type": "Question", "name": "Can I produce a report for compliance or an external auditor?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i audit compliance --since/--until --format html|json|text generates a date-ranged report of AI-assisted activity. Combine it with h5i share pr post to leave an auditable trail on the pull request itself."}}, {"@type": "Question", "name": "Can I enforce review rules automatically?", "acceptedAnswer": {"@type": "Answer", "text": "h5i audit policy manages .h5i/policy.toml, where you declare rules such as blocking on credential leaks or requiring an audit on authentication changes, so the gates apply at commit time."}}]}
 </script>
+  <link rel="stylesheet" href="/_static/highlight.css">
 </head>
 <body>
 
@@ -193,5 +194,6 @@
 
 <script src="/_static/blog.js" defer></script>
 <!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+<script src="/_static/highlight.js" defer></script>
 </body>
 </html>

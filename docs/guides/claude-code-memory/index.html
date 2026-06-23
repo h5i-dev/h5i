@@ -56,6 +56,7 @@
   <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Does this give Claude Code memory across sessions automatically?", "acceptedAnswer": {"@type": "Answer", "text": "h5i stores memory snapshots and a reasoning workspace in Git refs. With the Claude Code hooks installed (h5i hook setup), prompts and reasoning traces are captured automatically; you snapshot the memory directory with h5i capture memory at the end of a notable session, and restore or resume it later."}}, {"@type": "Question", "name": "Where is the memory stored — does it get pushed to GitHub?", "acceptedAnswer": {"@type": "Answer", "text": "Memory lives in refs/h5i/memory, not in your working tree. A plain git push ignores it, so it never clutters a normal remote. Run h5i share push (or h5i share memory push) to share it, and h5i share pull to receive it."}}, {"@type": "Question", "name": "How is this different from Claude Code's built-in memory files?", "acceptedAnswer": {"@type": "Answer", "text": "Claude's memory/ directory lives on one machine and isn't versioned with your code. h5i snapshots it into Git so you can diff what Claude learned over time, restore an earlier state, and hand it to a teammate or another machine."}}, {"@type": "Question", "name": "What does a session handoff actually contain?", "acceptedAnswer": {"@type": "Answer", "text": "h5i recall resume renders the branch goal, what was completed (with commit SHAs), what's still open, the approaches that were considered and rejected, and the latest memory snapshot — a structured briefing rather than a chat transcript."}}, {"@type": "Question", "name": "Can I roll back memory if Claude learned something wrong?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i recall memory log lists every snapshot and h5i recall memory restore <oid> rolls the memory directory back to that state, the same way you'd reset code to a past commit."}}]}
 </script>
+  <link rel="stylesheet" href="/_static/highlight.css">
 </head>
 <body>
 
@@ -205,5 +206,6 @@
 
 <script src="/_static/blog.js" defer></script>
 <!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+<script src="/_static/highlight.js" defer></script>
 </body>
 </html>

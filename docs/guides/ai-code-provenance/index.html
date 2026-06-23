@@ -56,6 +56,7 @@
   <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "What exactly is captured as provenance?", "acceptedAnswer": {"@type": "Answer", "text": "For each AI-assisted commit, h5i stores model, agent identity, the prompt, a token count, optional test metrics (framework, pass/fail, duration), and any recorded design decisions — as JSON in refs/h5i/notes keyed by the commit OID."}}, {"@type": "Question", "name": "Does this change my Git history or commit hashes?", "acceptedAnswer": {"@type": "Answer", "text": "No. h5i wraps a normal git commit; the provenance is stored in a separate ref (refs/h5i/notes), so your code history, hashes, and a plain git log are unchanged. Teammates who don't use h5i see ordinary Git."}}, {"@type": "Question", "name": "How do I find what fraction of the repo is AI-generated?", "acceptedAnswer": {"@type": "Answer", "text": "h5i audit vibe reports a repo-wide footprint: the percentage of AI-generated commits, fully-AI directories, the most active agents, and token-leak signals."}}, {"@type": "Question", "name": "Can I record why an approach was chosen, not just the prompt?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Pass --decisions with a JSON array of {location, choice, alternatives, reason} to h5i capture commit. Those appear in h5i recall log under a Decisions block, preserving context that never fits in a commit message."}}, {"@type": "Question", "name": "Is the provenance shared with my team?", "acceptedAnswer": {"@type": "Answer", "text": "Only if you opt in. The notes ref isn't moved by a plain git push; run h5i share push to share it and h5i share pull to receive it, so provenance follows the code for teammates who want it."}}]}
 </script>
+  <link rel="stylesheet" href="/_static/highlight.css">
 </head>
 <body>
 
@@ -209,5 +210,6 @@
 
 <script src="/_static/blog.js" defer></script>
 <!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+<script src="/_static/highlight.js" defer></script>
 </body>
 </html>

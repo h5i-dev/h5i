@@ -56,6 +56,7 @@
   <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How is h5i recall blame different from git blame?", "acceptedAnswer": {"@type": "Answer", "text": "It keeps the same command shape but adds AI provenance at each commit boundary: the agent, the model, the exact prompt, and the captured test result — fields git blame has no place to store. Use --show-prompt to annotate each boundary with its prompt."}}, {"@type": "Question", "name": "Where does the prompt and test data come from?", "acceptedAnswer": {"@type": "Answer", "text": "From the provenance recorded at commit time (h5i capture commit) and stored in refs/h5i/notes, keyed by commit OID. If a line's commit had no AI metadata, blame falls back to ordinary author/date for that line."}}, {"@type": "Question", "name": "Can I see every prompt that ever touched one line?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. h5i recall log --ancestry <file>:<line> walks the history of that specific line and prints the prompt behind each change, so you get the full intent trail rather than just the most recent commit."}}, {"@type": "Question", "name": "Does it work for code written by humans too?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Human-authored commits show normal author and date with no AI badge; AI-assisted commits add the agent, model, prompt, and tests. The two coexist line-by-line in the same blame output."}}]}
 </script>
+  <link rel="stylesheet" href="/_static/highlight.css">
 </head>
 <body>
 
@@ -184,5 +185,6 @@
 
 <script src="/_static/blog.js" defer></script>
 <!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f100fc4d4dd34a69969dbda4588ab4d9"}'></script><!-- End Cloudflare Web Analytics -->
+<script src="/_static/highlight.js" defer></script>
 </body>
 </html>

@@ -1,0 +1,21 @@
+/* ════════════════════════════════════════════════════════
+   h5i — tiny syntax highlighter theme
+   Tokens are colored with the site's monochrome + red palette
+   (vars come from each page's :root; literal fallbacks keep it
+   working on any page that doesn't define one). Layout/base
+   styling of <pre>/<code>/.terminal is intentionally untouched —
+   these rules only set token color + emphasis.
+   ════════════════════════════════════════════════════════ */
+.hl-cmd      { color: var(--ink, #fff); font-weight: 600; }
+.hl-builtin  { color: var(--red-text, #ff6258); font-weight: 600; }
+.hl-prompt   { color: var(--red-text, #ff6258); font-weight: 700; }
+.hl-flag     { color: var(--cyan, #a9bdd0); }
+.hl-var      { color: var(--cyan, #a9bdd0); }
+.hl-string   { color: var(--green, #62c98c); }
+.hl-comment  { color: var(--text-faint, #6b6b75); font-style: italic; }
+.hl-op       { color: var(--text-faint, #6b6b75); }
+.hl-punct    { color: var(--text-faint, #6b6b75); }
+.hl-num      { color: var(--yellow, #d6a94e); }
+.hl-bool     { color: var(--yellow, #d6a94e); }
+.hl-key      { color: var(--red-text, #ff6258); }
+.hl-section  { color: var(--red-text, #ff6258); font-weight: 700; }
