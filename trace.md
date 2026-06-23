@@ -1393,3 +1393,4 @@ _[Checkpoint: 6a3af7cd — edited MANUAL.md; edited MANUAL.md; edited examples/p
 [21:29:31] ACT: edited src/ctx.rs
 [21:31:06] OBSERVE: read MANUAL.md
 [21:31:12] ACT: edited MANUAL.md
+[21:31:40] NOTE: PLACEHOLDER (~/Dev/h5i/examples/personas/README.md): persona_digest` in the manifest. - `h5i init` scaffolds the placeholder, `.gitignore`, and `@PERSONA.md` / AGENTS.md wiring. - `--persona`, the `team …
