@@ -96,9 +96,6 @@ Or drive the whole cycle hands-off:
 scripts/team-run.sh fix-auth --task task.md --verify-cmd "cargo test" --apply
 ```
 
-Full command reference: [`MANUAL.md`](MANUAL.md) · `man h5i`.
-
-
 ---
 
 
