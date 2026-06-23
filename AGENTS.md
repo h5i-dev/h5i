@@ -1,4 +1,8 @@
 
+## Persona
+
+At the start of a session, read `PERSONA.md` at the repo root (if present) and follow it as your standing working style. Do not read other files under the profile's persona source directory — `PERSONA.md` is the resolved, per-env brief.
+
 ## h5i Integration
 
 This repository uses **h5i** (a Git sidecar for AI-era version control).
@@ -9,7 +13,6 @@ Codex should use `h5i recall context` as shared cross-session memory and `h5i ca
 
 **At the start of a non-trivial task:**
 ```bash
-h5i hook codex prelude
 # If no workspace exists yet, initialize it once:
 h5i recall context init --goal "<one-line task summary>"
 ```

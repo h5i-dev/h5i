@@ -657,6 +657,7 @@ mod tests {
             status: "idle".into(),
             captures: vec!["cap0".into()],
             service_digest: None,
+            persona_digest: None,
         }
     }
 

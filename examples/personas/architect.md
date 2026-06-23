@@ -15,7 +15,8 @@ Bias your work toward design and structure over volume of code:
 When you submit, your summary should explain *why* the shape is what it is —
 the design rationale, not just the diff.
 
-> This is an **example** persona. Copy it, edit it, and pass your own file with
-> `h5i team add-env <team> <env> --persona path/to/your-persona.md`.
+> This is an **example** persona. Copy it, edit it, and reference your own file
+> from a profile in `.h5i/env.toml` (`persona = ["path/to/your-persona.md"]`); it
+> is baked into `PERSONA.md` at `h5i env create`.
 > Roles are not enforced — every team member is an independent peer that also
 > reviews the others. A persona only shapes one agent's working style.

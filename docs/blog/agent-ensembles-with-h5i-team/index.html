@@ -195,12 +195,13 @@
 
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">team run</span></div>
-      <div class="terminal-body"><pre><span class="t-cmt"># group existing envs as a team</span>
+      <div class="terminal-body"><pre><span class="t-cmt"># each env is created with a profile that bakes its persona (PERSONA.md)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env create claude-architect --profile architect</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i env create codex-impl --profile implementer</span>
+<span class="t-cmt"># group the envs as a team</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team create fix-auth --base HEAD</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/claude-architect/fix-auth \
-    --runtime claude --persona examples/personas/architect.md</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/codex/fix-auth \
-    --runtime codex --persona examples/personas/implementer.md</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/claude-architect/fix-auth --runtime claude</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i team add-env fix-auth env/codex/codex-impl --runtime codex</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team status fix-auth</span>   <span class="t-cmt"># note the auto-generated agent ids</span>
 
 <span class="t-cmt"># each agent works in its own env, then freezes an immutable candidate</span>
@@ -217,7 +218,9 @@
     <p>
       <code>add-env</code> takes the env (as a <code>slug</code>, <code>agent/slug</code>, or
       <code>env/agent/slug</code>) and optional <code>--runtime</code> / <code>--model</code>
-      attributes plus a <code>--persona &lt;file&gt;</code> working-style brief. Each agent
+      attributes. The working-style brief comes from the env's profile
+      (<code>persona = [...]</code> in <code>.h5i/env.toml</code>, baked into <code>PERSONA.md</code>
+      at <code>env create</code>), so <code>add-env</code> just inherits it. Each agent
       gets an auto-generated id (shown by <code>h5i team status</code>; pin your own with
       <code>--as</code> if you prefer). Roster changes are
       only allowed while the run is still in <code>draft</code> — once frozen, the contestant list is

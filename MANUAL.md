@@ -767,6 +767,7 @@ Print working context: current Git branch goal, active h5i context branch, miles
 | `--commit <hash>` | Pull a specific milestone entry by hash prefix |
 | `--trace` | Include recent OTA trace lines |
 | `--window <n>` | Number of recent milestone commits to include (default: 3) |
+| `--limit <n>` | Show only the N most recent milestones (default: 20; `0` = all). The header notes how many older ones are hidden. Keeps the view focused on long-lived workspaces that accumulate hundreds of milestones |
 | `--trace-offset <n>` | Scroll back N lines from the end of the trace (sliding window) |
 | `--metadata <segment>` | Pull a named section from `metadata.yaml` |
 
@@ -2626,14 +2627,21 @@ coordination (roster, phases, submissions, verdict). It is **not** a group chat
 and **not** a daemon.
 
 A roster member is a **persona, not a backend**: the `agent_id` (auto-generated,
-or pinned with `--as`) is the durable actor, while `runtime`/`model`/`persona`
+or pinned with `--as`) is the durable actor, while `runtime`/`model`/persona
 are attributes — so a team can be three Claudes with different system
 prompts/skills (architect / implementer / skeptic), a Claude+Codex mix, or one
-model under two personas. A **persona** is a markdown file (`--persona <file>`;
-see `examples/personas/`) injected into that agent's launch prompt as its
-standing working style. The audit records *which configuration produced which
-candidate*. (`h5i team status` lists each agent's id for the `--agent` /
-`--reviewer` / `--target` flags below.)
+model under two personas. A **persona** is the agent's standing working style,
+declared **per profile** in `.h5i/env.toml` as `persona = ["path/to/style.md", …]`
+(paths relative to the worktree; see `examples/personas/`). At `h5i env create`
+the listed files are concatenated, in order, into a git-ignored `PERSONA.md` at
+the worktree root — loaded automatically via `@PERSONA.md` in `CLAUDE.md`
+(Claude) or a read instruction in `AGENTS.md` (Codex). Because it is git-ignored
+it never enters the agent's diff, and its sha256 is pinned in the env manifest
+(`persona_digest`) for provenance. To give an agent a persona, create its env
+with the right profile; `h5i team add-env` then inherits it (no per-add flag).
+The audit records *which configuration produced which candidate*. (`h5i team
+status` lists each agent's id for the `--agent` / `--reviewer` / `--target`
+flags below.)
 
 Run state lives in one ref per run, `refs/h5i/team/<run-id>`, as an
 **append-only event log** that is the single source of truth — phase, roster, and
@@ -2663,8 +2671,7 @@ inboxes and never locks the round.
 | Command | Description |
 |---------|-------------|
 | `h5i team create <name> [--base REV] [--rounds N] [--title T] [--json]` | Create a run over existing envs. `--base` (default `HEAD`) is the shared base all candidates are compared against. |
-| `h5i team add-env <team> <env> [--as <agent-id>] [--runtime R] [--model M] [--persona FILE] [--json]` | Add an already-created env to the roster as a persona-bound member. The agent id is **auto-generated** unless you pin it with `--as` (a ref-safe key; distinct personas on the same runtime need distinct ids — see it with `h5i team status`). `--persona <file>` injects a markdown working-style brief into this agent's launch prompt (see `examples/personas/`). Draft phase only. **Also binds the env's in-box identity to this persona** (writes host-owned `team-identity` / `team-run` files), so `env run`/`env shell` inject `H5I_AGENT=<persona>` and `H5I_TEAM=<team>` for scoped team-agent commands. |
-| `h5i team persona <agent> [--team T]` | Print the persona markdown recorded for a roster agent (the launcher uses this to inject it). |
+| `h5i team add-env <team> <env> [--as <agent-id>] [--runtime R] [--model M] [--json]` | Add an already-created env to the roster as a persona-bound member. The agent id is **auto-generated** unless you pin it with `--as` (a ref-safe key; distinct personas on the same runtime need distinct ids — see it with `h5i team status`). The persona itself comes from the env's profile (`persona = [...]` in `.h5i/env.toml`, baked into `PERSONA.md` at `env create`) — no per-add flag. Draft phase only. **Also binds the env's in-box identity** (writes host-owned `team-identity` / `team-run` files), so `env run`/`env shell` inject `H5I_AGENT=<agent>` and `H5I_TEAM=<team>` for scoped team-agent commands. |
 | `h5i team status [<team>] [--json]` | Folded run state: phase, roster, per-agent submission state. |
 | `h5i team list [--json]` | All runs on this clone. |
 | `h5i team use [<name>] [--clear]` | Pin a **current team** (like git's current branch) so other subcommands can drop `<team>`. No arg prints the current; `--clear` unsets. `create` auto-pins the new run. |
@@ -2818,9 +2825,13 @@ the one place a human is pinged, by choice.
 ### Worked example
 
 ```bash
+# personas are declared per profile in .h5i/env.toml and baked at env create:
+#   [profile.architect]   persona = ["examples/personas/architect.md"]
+#   [profile.implementer] persona = ["examples/personas/implementer.md"]
+# so each env carries its working style before it joins the roster.
 h5i team create fix-auth --base HEAD
-h5i team add-env fix-auth env/claude-architect/fix-auth --runtime claude --persona examples/personas/architect.md
-h5i team add-env fix-auth env/codex/fix-auth          --runtime codex --persona examples/personas/implementer.md
+h5i team add-env fix-auth env/claude-architect/fix-auth --runtime claude
+h5i team add-env fix-auth env/codex/fix-auth          --runtime codex
 h5i team status fix-auth                              # note the auto-generated agent ids
 # each boxed agent works in its own env, then runs:
 h5i team agent submit

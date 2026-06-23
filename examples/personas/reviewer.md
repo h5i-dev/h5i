@@ -15,7 +15,8 @@ Bias your work toward correctness and risk, not toward writing the most code:
 When you submit, your summary should lead with the risks you found and how you
 checked them.
 
-> This is an **example** persona. Copy it, edit it, and pass your own file with
-> `h5i team add-env <team> <env> --persona path/to/your-persona.md`.
+> This is an **example** persona. Copy it, edit it, and reference your own file
+> from a profile in `.h5i/env.toml` (`persona = ["path/to/your-persona.md"]`); it
+> is baked into `PERSONA.md` at `h5i env create`.
 > Roles are not enforced — every team member is an independent peer that also
 > reviews the others. A persona only shapes one agent's working style.

@@ -56,6 +56,9 @@ const MANIFEST_FILE: &str = "manifest.json";
 const POLICY_RESOLVED_FILE: &str = "policy.resolved.toml";
 const STATUS_FILE: &str = "status";
 const WORK_DIR: &str = "work";
+/// Worktree-root file the persona sources are baked into at create; loaded by
+/// the agent via `@PERSONA.md` (Claude) or a read instruction (Codex).
+const PERSONA_FILE: &str = "PERSONA.md";
 
 pub const H5I_ENV_ID_VAR: &str = "H5I_ENV_ID";
 pub const H5I_ENV_POLICY_DIGEST_VAR: &str = "H5I_ENV_POLICY_DIGEST";
@@ -160,6 +163,12 @@ pub struct EnvManifest {
     /// a different long-lived command than the reviewer approved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_digest: Option<String>,
+    /// sha256 of the `PERSONA.md` baked from the profile's `persona = [...]`
+    /// sources at create — provenance for the agent's standing working style.
+    /// `None` when the profile declares no persona. The content lives in the
+    /// worktree (git-excluded, so it never enters the agent's diff/commit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona_digest: Option<String>,
 }
 
 impl EnvManifest {
@@ -1255,6 +1264,12 @@ pub fn create(
     // new envs (even pinned-empty), so the legacy fallback below never applies.
     let service_digest = Some(pin_services_at_create(&work_path, &dir)?);
 
+    // Bake the profile's persona sources into a single PERSONA.md at the
+    // worktree root (the agent loads it via `@PERSONA.md`). Git-excluded so it
+    // never enters the agent's diff/commit. Fail-closed: a missing source aborts
+    // create rather than launching an agent with a silently-empty persona.
+    let persona_digest = materialize_persona(&work_path, &profile.persona)?;
+
     let manifest = EnvManifest {
         id: id.clone(),
         agent: agent.to_string(),
@@ -1274,6 +1289,7 @@ pub fn create(
         status: ST_CREATED.to_string(),
         captures: Vec::new(),
         service_digest,
+        persona_digest,
     };
 
     let policy_toml = policy.to_toml()?;
@@ -1301,6 +1317,65 @@ pub fn create(
         Some(&policy_toml),
     )?;
     Ok(manifest)
+}
+
+/// Bake the profile's `persona = [...]` sources into a single `PERSONA.md` at
+/// the worktree root. Sources ride in the repo at the pinned base, so they are
+/// present in the freshly checked-out worktree; their contents are concatenated
+/// in declared order, each under an HTML-comment header naming the source. The
+/// file is then git-excluded (so it never appears in `env diff`/propose/commit,
+/// even when `h5i init` did not add it to a tracked `.gitignore`). Returns the
+/// sha256 of the written `PERSONA.md` for provenance, or `None` when the profile
+/// declares no persona. Paths are validated (relative, no `..`) at policy load.
+fn materialize_persona(work: &Path, persona: &[String]) -> Result<Option<String>, H5iError> {
+    if persona.is_empty() {
+        return Ok(None);
+    }
+    let mut body = String::new();
+    for src in persona {
+        let path = work.join(src);
+        let text = std::fs::read_to_string(&path).map_err(|e| {
+            H5iError::Metadata(format!(
+                "persona source '{src}' is not in the worktree ({}): {e} — commit it at the \
+                 base revision or fix `persona` in .h5i/env.toml (fail-closed)",
+                path.display()
+            ))
+        })?;
+        if !body.is_empty() {
+            body.push('\n');
+        }
+        body.push_str(&format!("<!-- persona: {src} -->\n"));
+        body.push_str(text.trim_end());
+        body.push('\n');
+    }
+    let persona_md = work.join(PERSONA_FILE);
+    std::fs::write(&persona_md, &body).map_err(|e| H5iError::with_path(e, &persona_md))?;
+    exclude_in_worktree(work, PERSONA_FILE)?;
+    Ok(Some(crate::objects::sha256_hex(body.as_bytes())))
+}
+
+/// Idempotently add `pattern` to the worktree's git exclude file so a
+/// machine-managed, untracked file (e.g. `PERSONA.md`) never shows as dirty.
+/// Writes to the **common** `info/exclude` (what git actually consults for
+/// excludes — shared across worktrees), so it holds even when the base commit's
+/// tracked `.gitignore` predates the file.
+fn exclude_in_worktree(work: &Path, pattern: &str) -> Result<(), H5iError> {
+    let wt_repo = Repository::open(work)?;
+    let info = wt_repo.commondir().join("info");
+    std::fs::create_dir_all(&info).map_err(|e| H5iError::with_path(e, &info))?;
+    let exclude = info.join("exclude");
+    let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
+    let line = format!("/{pattern}");
+    if existing.lines().any(|l| l.trim() == line) {
+        return Ok(());
+    }
+    let mut next = existing;
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    next.push_str(&format!("{line}\n"));
+    std::fs::write(&exclude, next).map_err(|e| H5iError::with_path(e, &exclude))?;
+    Ok(())
 }
 
 // ─── run (§9): capture-wrapped, policy-enforced ─────────────────────────────
@@ -5876,6 +5951,7 @@ mod tests {
             status: ST_IDLE.into(),
             captures: vec![],
             service_digest: None,
+            persona_digest: None,
         }
     }
 
@@ -6646,6 +6722,7 @@ mod tests {
             status: ST_CREATED.into(),
             captures: vec!["cap1".into()],
             service_digest: None,
+            persona_digest: None,
         };
         let text = serde_json::to_string_pretty(&m).unwrap();
         let back: EnvManifest = serde_json::from_str(&text).unwrap();
@@ -6757,6 +6834,7 @@ mod tests {
                 status: ST_CREATED.into(),
                 captures: Vec::new(),
                 service_digest: None,
+                persona_digest: None,
             };
             save_manifest(h5i_root, &m).unwrap();
         }
@@ -6866,5 +6944,42 @@ mod tests {
         assert!(build_branch_scoped_merge(&repo, "feature", None)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn materialize_persona_concatenates_excludes_and_digests() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path();
+        git2::Repository::init(work).unwrap();
+        std::fs::create_dir_all(work.join("plugin/persona")).unwrap();
+        std::fs::write(work.join("plugin/persona/architect.md"), "# Architect\nThink first.\n").unwrap();
+        std::fs::write(work.join("plugin/persona/careful.md"), "Be careful.\n").unwrap();
+
+        // Empty list → no file, no digest.
+        assert_eq!(materialize_persona(work, &[]).unwrap(), None);
+        assert!(!work.join(PERSONA_FILE).exists());
+
+        // Two sources → concatenated in order with per-source headers.
+        let sources = vec![
+            "plugin/persona/architect.md".to_string(),
+            "plugin/persona/careful.md".to_string(),
+        ];
+        let digest = materialize_persona(work, &sources).unwrap().expect("a digest");
+        let body = std::fs::read_to_string(work.join(PERSONA_FILE)).unwrap();
+        assert!(body.contains("<!-- persona: plugin/persona/architect.md -->"));
+        assert!(body.contains("# Architect"));
+        // Order is preserved: architect appears before careful.
+        assert!(body.find("# Architect").unwrap() < body.find("Be careful.").unwrap());
+        assert_eq!(digest, crate::objects::sha256_hex(body.as_bytes()));
+
+        // PERSONA.md is git-excluded so it never shows as a worktree change.
+        let exclude =
+            std::fs::read_to_string(work.join(".git/info/exclude")).unwrap_or_default();
+        assert!(exclude.lines().any(|l| l.trim() == "/PERSONA.md"));
+        let wt = Repository::open(work).unwrap();
+        assert!(wt.status_should_ignore(Path::new(PERSONA_FILE)).unwrap());
+
+        // A missing source fails closed.
+        assert!(materialize_persona(work, &["plugin/persona/nope.md".to_string()]).is_err());
     }
 }

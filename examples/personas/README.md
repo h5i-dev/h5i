@@ -1,11 +1,22 @@
 # Example team personas
 
-A **persona** is an optional markdown file that gives one `h5i team` agent a
-standing working style — think of it as a small "Dockerfile for behavior". It is
-injected near the top of that agent's launch prompt, ahead of the task.
+A **persona** is an optional markdown file that gives an `h5i env` agent a
+standing working style — think of it as a small "Dockerfile for behavior". You
+declare it **per profile** in `.h5i/env.toml`; at `h5i env create` the listed
+files are concatenated into a git-ignored `PERSONA.md` at the worktree root,
+which the agent loads automatically (`@PERSONA.md` in `CLAUDE.md` for Claude, a
+read instruction in `AGENTS.md` for Codex).
+
+```toml
+# .h5i/env.toml
+[profile.architect]
+isolation = "process"
+persona = ["examples/personas/architect.md"]   # one or more, concatenated in order
+```
 
 ```bash
-h5i team add-env myteam env/claude/auth-fix --persona examples/personas/architect.md
+h5i env create auth-fix --profile architect     # PERSONA.md baked here
+h5i team add-env myteam env/claude/auth-fix --runtime claude   # inherits it
 ```
 
 These files are **examples**, not a fixed menu. Roles are not enforced: by
@@ -18,6 +29,8 @@ whatever shapes the agent the way you want.
 - [`reviewer.md`](reviewer.md) — correctness/risk first, verify claims.
 
 Notes:
-- Omit `--persona` for a plain peer (no standing style).
-- `--as <name>` is optional too; omit it and h5i assigns a ref-safe name.
-- Inspect what an agent will see with `h5i team persona <name> --team <team>`.
+- Omit `persona` from the profile for a plain peer (no standing style).
+- List several files to compose a style (e.g. a role brief + a house-rules file).
+- The baked persona's sha256 is pinned in the env manifest (`persona_digest`).
+- `h5i env create` overwrites `PERSONA.md`; it is git-ignored, so it never shows
+  in the agent's diff. Inspect it directly at the worktree root.
