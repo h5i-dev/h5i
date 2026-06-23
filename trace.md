@@ -1153,3 +1153,9 @@ _[Checkpoint: 6a39dbd1 — wrote _static/highlight.css; wrote _static/highlight.
 [01:16:15] THINK: terminal-body`. Let me confirm both structures:
 [01:16:15] THINK: Let me run a final cross-page integrity sweep (front page, a guide, a blog post) to be sure the broadened `.
 [01:16:15] NOTE: DEFERRAL (~/Dev/h5i/docs/_static/highlight.js): at don't define a given var. - **Wired into all 41 pages**, deferred and idempotent. ## What it touches (and respectfully doesn't) - **The Manual** …
+
+
+---
+_[Checkpoint: 6a39de5f — edited _static/highlight.js; edited _static/highlight.js; edited _static/highlight.css]_
+---
+
