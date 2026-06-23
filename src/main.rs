@@ -1611,8 +1611,20 @@ enum ContextCommands {
         ephemeral: bool,
     },
 
-    /// Show the current reasoning workspace state (branch, commit count, trace size)
-    Status,
+    /// Show the current reasoning workspace state (branch, counts, pin status)
+    /// plus a short tail of recent trace entries
+    Status {
+        /// Number of recent trace entries to show (0 = none). Unlike
+        /// `context show --trace`, this stays a *recent* view, not the full log.
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+    },
+
+    /// Print just the current goal + pin status — a cheap, low-token check to run
+    /// at the start of a task (before `context init --goal`). Warns when context
+    /// is pinned to a branch other than the current git branch (a stale pin that
+    /// silently misroutes new traces), and suggests `context unpin`.
+    Goal,
 
     /// Print a system prompt for injecting h5i context commands into an agent session
     Prompt,
@@ -2678,11 +2690,20 @@ Apply these automatically, without being asked.
 
 ### Context workspace
 
-**At the start of every non-trivial task:**
+**At the start of every non-trivial task**, check the current goal and pin
+status (cheap — just a goal line), then (re)set the goal:
 ```bash
-# If no workspace exists yet, initialize one:
+h5i recall context goal        # prints the goal + warns if context is PINNED to a stale branch
 h5i recall context init --goal "<one-line summary of what you are about to do>"
 ```
+Run `init` **even if a workspace already exists** — it is idempotent: it updates
+the goal in place and keeps the existing context branch and milestones. A session
+often resumes with a *stale* goal left over from a previous task (the SessionStart
+hook will show it); always re-point the goal at what you are about to do now,
+rather than skipping `init` because a workspace exists. If `context goal` reports
+the context is **pinned** to a branch other than your current git branch, your
+traces are landing on the wrong branch — run `h5i recall context unpin` to resume
+tracking the git branch.
 
 **You do not need to call `h5i recall context trace` yourself.** h5i's hooks derive
 the trace automatically:
@@ -2846,11 +2867,17 @@ Codex should use `h5i recall context` as shared cross-session memory and `h5i ca
 
 ### Workflow
 
-**At the start of a non-trivial task:**
+**At the start of a non-trivial task**, check the current goal/pin, then (re)set it:
 ```bash
-# If no workspace exists yet, initialize it once:
+h5i recall context goal        # prints the goal + warns if context is PINNED to a stale branch
 h5i recall context init --goal "<one-line task summary>"
 ```
+Run `init` **even if a workspace already exists** — it is idempotent and just
+updates the goal in place (keeping the context branch and milestones). A session
+often resumes with a *stale* goal from a previous task; always re-point it at
+what you are doing now instead of skipping `init` because a workspace exists. If
+`context goal` reports the context is **pinned** to a branch other than the
+current git branch, run `h5i recall context unpin` to resume branch tracking.
 
 **While working:**
 ```bash
@@ -10714,8 +10741,8 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
 
-                ContextCommands::Status => {
-                    ctx::print_status(workdir)?;
+                ContextCommands::Status { limit } => {
+                    ctx::print_status(workdir, limit)?;
                     // Feature 5: append proactive review surface if git repo + notes exist.
                     if let Ok(repo) = H5iRepository::open(workdir) {
                         if let Ok(pts) = repo.suggest_review_points(3, 0.4) {
@@ -10744,6 +10771,10 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
                     }
+                }
+
+                ContextCommands::Goal => {
+                    ctx::print_goal(workdir)?;
                 }
 
                 ContextCommands::Prompt => {

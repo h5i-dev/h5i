@@ -2870,7 +2870,84 @@ pub fn reconcile_git_vs_ctx(workdir: &Path) -> Result<ReconciliationReport, H5iE
     Ok(report)
 }
 
-pub fn print_status(workdir: &Path) -> Result<(), H5iError> {
+/// True when the context is pinned to a branch other than the current git
+/// branch — i.e. new traces/milestones would silently land on the pinned branch
+/// instead of the one matching `git`. Powers the warnings in [`print_goal`] and
+/// [`print_status`]. Returns `false` when not pinned or when the pin happens to
+/// match the git branch.
+pub fn is_pin_misrouting(workdir: &Path) -> bool {
+    is_pinned(workdir) && current_branch(workdir) != current_git_branch(workdir)
+}
+
+/// Print just the current goal and pin status — a deliberately cheap, low-token
+/// view (a few short lines) meant to be run at the start of a task, *before*
+/// `context init --goal`. It lets an agent read the existing goal and catch a
+/// *stale pin* that is silently routing new context to a non-current branch
+/// (the failure mode that kept a stale goal in place across many tasks).
+pub fn print_goal(workdir: &Path) -> Result<(), H5iError> {
+    use console::style;
+
+    ctx_git_repo(workdir)?;
+    if !is_initialized(workdir) {
+        println!(
+            "{} context not initialized — run {} to set a goal.",
+            style("ℹ").blue(),
+            style("h5i recall context init --goal \"<goal>\"").bold(),
+        );
+        return Ok(());
+    }
+
+    let git_branch = current_git_branch(workdir);
+    let git_goal = git_branch_goal(workdir, &git_branch).unwrap_or_default();
+    let ctx_branch = current_branch(workdir);
+
+    if git_goal.trim().is_empty() {
+        println!(
+            "{} no goal set for git branch {} — run {}",
+            style("ℹ").blue(),
+            style(&git_branch).cyan().bold(),
+            style("h5i recall context init --goal \"<goal>\"").bold(),
+        );
+    } else {
+        println!("{} {}", style("Goal:").dim(), style(git_goal.trim()).cyan());
+        println!(
+            "  {} {}  ·  {} {}",
+            style("git branch:").dim(),
+            style(&git_branch).cyan(),
+            style("context branch:").dim(),
+            style(&ctx_branch).magenta(),
+        );
+    }
+
+    // The silent footgun: a pin to a non-current git branch.
+    if is_pinned(workdir) {
+        if ctx_branch != git_branch {
+            println!(
+                "{} context is {} to {} but git branch is {} — new traces are landing on the pinned branch, not {}.",
+                style("⚠").yellow().bold(),
+                style("PINNED").yellow().bold(),
+                style(&ctx_branch).magenta().bold(),
+                style(&git_branch).cyan().bold(),
+                style(&git_branch).cyan(),
+            );
+            println!(
+                "  Run {} to resume tracking the git branch.",
+                style("h5i recall context unpin").bold(),
+            );
+        } else {
+            println!(
+                "  {} context is pinned to {} (auto-follow off; {} to resume)",
+                style("·").dim(),
+                style(&ctx_branch).magenta(),
+                style("h5i recall context unpin").bold(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+pub fn print_status(workdir: &Path, limit: usize) -> Result<(), H5iError> {
     use console::style;
 
     // A repo we cannot open (e.g. EACCES under a sandbox that doesn't grant
@@ -2930,6 +3007,27 @@ pub fn print_status(workdir: &Path) -> Result<(), H5iError> {
         if log_lines == 1 { "" } else { "s" },
     );
 
+    // Pin visibility: a context pinned to a non-current git branch silently
+    // misroutes new traces/milestones to the pinned branch. Surface it loudly.
+    if is_pinned(workdir) {
+        if branch != git_branch {
+            println!(
+                "  {} context {} to {} but git branch is {} — new traces land on the pinned branch; run {} to track git.",
+                style("⚠").yellow().bold(),
+                style("PINNED").yellow().bold(),
+                style(&branch).magenta().bold(),
+                style(&git_branch).cyan().bold(),
+                style("h5i recall context unpin").bold(),
+            );
+        } else {
+            println!(
+                "  {} context pinned (auto-follow off; {} to resume)",
+                style("·").dim(),
+                style("h5i recall context unpin").bold(),
+            );
+        }
+    }
+
     // Separate regular branches from scoped sub-contexts.
     let (scope_branches, regular_branches): (Vec<&String>, Vec<&String>) = branches
         .iter()
@@ -2971,6 +3069,29 @@ pub fn print_status(workdir: &Path) -> Result<(), H5iError> {
             style(stable).cyan(),
             style(dynamic).yellow(),
         );
+    }
+
+    // Recent-trace tail — `--limit N` (0 = none). Keeps `status` a *recent*
+    // activity view without the full dump that `context show --trace` gives.
+    if limit > 0 {
+        let recent: Vec<&str> = trace_text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        if !recent.is_empty() {
+            let shown = limit.min(recent.len());
+            println!();
+            println!(
+                "  {} (last {} of {})",
+                style("Recent trace:").dim(),
+                style(shown).cyan(),
+                style(recent.len()).dim(),
+            );
+            for line in &recent[recent.len() - shown..] {
+                println!("    {}", style(line).dim());
+            }
+        }
     }
 
     // Reconciliation against git branches.
@@ -4129,7 +4250,7 @@ mod tests {
         let git_dir = dir.path().join(".git");
         let orig = std::fs::metadata(&git_dir).unwrap().permissions();
         std::fs::set_permissions(&git_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let res = print_status(dir.path());
+        let res = print_status(dir.path(), 0);
         // Restore before asserting so tempdir cleanup works on every path.
         std::fs::set_permissions(&git_dir, orig).unwrap();
         assert!(res.is_err(), "unreadable .git must surface as an error");
@@ -5493,6 +5614,36 @@ mod tests {
             current_branch(dir.path()),
             "some-other-branch",
             "after unpin, ctx should re-shadow the current git branch"
+        );
+    }
+
+    #[test]
+    fn is_pin_misrouting_flags_stale_pin() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+
+        // Not pinned, ctx tracks git → no misrouting.
+        assert!(!is_pin_misrouting(dir.path()), "fresh workspace is not misrouting");
+
+        // Pin to a spike, then move the git branch sideways: the pin now points
+        // at a branch other than the current git branch → misrouting.
+        gcc_branch(dir.path(), "pinned-spike", "explore").unwrap();
+        {
+            let repo = Repository::open(dir.path()).unwrap();
+            repo.set_head("refs/heads/some-other-branch").unwrap();
+        }
+        assert!(
+            is_pin_misrouting(dir.path()),
+            "pinned to 'pinned-spike' while git is on 'some-other-branch' should misroute"
+        );
+
+        // Unpin resumes auto-follow → no longer misrouting.
+        unpin(dir.path()).unwrap();
+        let _ = prepare_context_write(dir.path());
+        assert!(
+            !is_pin_misrouting(dir.path()),
+            "after unpin the pin warning must clear"
         );
     }
 
