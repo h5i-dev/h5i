@@ -1086,3 +1086,4 @@ _[Checkpoint: 6a39c71e — edited src/main.rs; edited AGENTS.md; edited .claude/
 [00:28:04] ACT: edited workflows/index.html
 [00:28:07] OBSERVE: read workflows/index.html
 [00:28:11] ACT: edited workflows/index.html
+[00:28:22] ACT: edited guides/index.html
