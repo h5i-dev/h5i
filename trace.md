@@ -1071,3 +1071,4 @@ _[Checkpoint: 6a398dda — edited src/main.rs; edited AGENTS.md; edited .claude/
 _[Checkpoint: 6a39c71e — edited src/main.rs; edited AGENTS.md; edited .claude/h5i.md]_
 ---
 
+[00:24:08] OBSERVE: read docs/index.html
