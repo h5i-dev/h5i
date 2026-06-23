@@ -1348,3 +1348,4 @@ _[Checkpoint: 6a3aef3c — session ended (auto-checkpoint)]_
 [21:12:02] OBSERVE: read examples/personas/architect.md
 [21:16:21] THINK: Let me implement. Starting with the config plumbing.
 [21:16:21] THINK: Let me insert `persona_digest: None,` after each (preserving indentation) across the test/helper files:
+[21:16:21] THINK: Let me confirm the multiline shape is uniform (three trailing `None`s) before a bulk transform:
