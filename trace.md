@@ -1255,3 +1255,9 @@ _[Checkpoint: 6a3ae78c — session ended (auto-checkpoint)]_
 ---
 
 [20:11:38] NOTE: DEFERRAL: n through, or is settling the persona-vs-setup split enough for now
+
+
+---
+_[Checkpoint: 6a3ae87a — session ended (auto-checkpoint)]_
+---
+
