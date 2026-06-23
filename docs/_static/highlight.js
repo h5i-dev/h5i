@@ -72,9 +72,9 @@
 
   function lexer(rules) { return function (src) { return lex(src, rules); }; }
 
-  var SHELL_KW = /^(?:if|then|else|elif|fi|for|while|until|do|done|case|esac|in|function|return|export|local|source|set|unset|echo|cd|sudo)$/;
-
   // ── bash / shell session ────────────────────────────────
+  // The command word (incl. `h5i`) is rendered uniformly (hl-cmd); the red
+  // `$` prompt is the single accent, matching the site's terminal style.
   var BASH = lexer([
     { t: 'plain', re: /\n/y, after: function (_, c) { c.cmd = true; } },
     { t: 'plain', re: /[ \t]+/y },
@@ -87,7 +87,7 @@
     { t: 'op', re: /&&|\|\||[;|]/y, after: function (_, c) { c.cmd = true; } },
     { t: 'op', re: /[<>&]/y },
     {
-      t: function (w, c) { return c.cmd ? (w === 'h5i' || SHELL_KW.test(w) ? 'builtin' : 'cmd') : 'plain'; },
+      t: function (w, c) { return c.cmd ? 'cmd' : 'plain'; },
       re: /[\w./@:+=~-]+/y,
       after: function (_, c) { c.cmd = false; }
     }
@@ -147,15 +147,36 @@
     catch (e) { /* fail open: keep the original text */ }
   }
 
-  function run() {
-    // language-tagged code blocks (the Manual, any markdown-rendered page)
-    var coded = document.querySelectorAll('pre > code[class*="language-"]');
-    for (var i = 0; i < coded.length; i++) {
-      var m = /language-([\w-]+)/.exec(coded[i].className);
-      highlight(coded[i], m ? m[1].toLowerCase() : null);
+  // Conservative shell detection for code blocks with NO language hint
+  // (e.g. the Manual's bare ```fences```). We only highlight a block when it
+  // reads like commands and shows no rendered-output/diagram glyphs — so usage
+  // blocks like `h5i recall log [options]` light up while status dumps and box
+  // diagrams (✔ Committed…, ── Heatmap ──) are left untouched.
+  var OUT_GLYPH = /[─│┌┐└┘├┤┼█░▓▒●○✔✓✗✘⚠✨ℹ]/;
+  var SHELL_CMD = /^(?:\$\s*)?(?:h5i|git|cargo|cd|curl|wget|npm|npx|pnpm|yarn|bash|sh|zsh|export|claude|codex|sudo|mkdir|rm|cp|mv|cat|ls|echo|chmod|chown|ssh|scp|docker|podman|pip3?|python3?|node|make|tar|grep|sed|awk|source|set|unset|kill|touch|brew|apt)\b/;
+  function looksShell(text) {
+    if (OUT_GLYPH.test(text)) return false;
+    var lines = text.split('\n'), kept = 0, hits = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var l = lines[i].replace(/^\s+/, '');
+      if (!l) continue;
+      kept++;
+      if (l.charAt(0) === '#' || SHELL_CMD.test(l)) hits++;   // command or comment line
     }
-    // plain terminal-session blocks (skip hand-authored ones that already have spans)
-    var terms = document.querySelectorAll('.terminal-body pre');
+    return kept > 0 && hits * 2 >= kept;     // majority of non-blank lines look like shell
+  }
+
+  function run() {
+    // <pre><code> blocks: use the language hint if present, else sniff for shell.
+    var coded = document.querySelectorAll('pre > code');
+    for (var i = 0; i < coded.length; i++) {
+      var code = coded[i];
+      var m = /language-([\w-]+)/.exec(code.className || '');
+      if (m) highlight(code, m[1].toLowerCase());
+      else if (code.childElementCount === 0 && looksShell(code.textContent)) highlight(code, 'bash');
+    }
+    // terminal-session blocks (skip hand-authored ones that already have spans)
+    var terms = document.querySelectorAll('.terminal pre');
     for (var j = 0; j < terms.length; j++) {
       if (terms[j].childElementCount === 0) highlight(terms[j], 'bash');
     }

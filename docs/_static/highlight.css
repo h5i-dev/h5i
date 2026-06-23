@@ -7,7 +7,6 @@
    these rules only set token color + emphasis.
    ════════════════════════════════════════════════════════ */
 .hl-cmd      { color: var(--ink, #fff); font-weight: 600; }
-.hl-builtin  { color: var(--red-text, #ff6258); font-weight: 600; }
 .hl-prompt   { color: var(--red-text, #ff6258); font-weight: 700; }
 .hl-flag     { color: var(--cyan, #a9bdd0); }
 .hl-var      { color: var(--cyan, #a9bdd0); }
