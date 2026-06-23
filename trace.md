@@ -1354,3 +1354,9 @@ _[Checkpoint: 6a3aef3c — session ended (auto-checkpoint)]_
 [21:16:21] NOTE: PLACEHOLDER: - **Track a dummy `PERSONA.md`** at `h5i init` (a one-line placeholder), so `@PERSONA.md` always resolves and fresh clones don't get a dangling import…
 [21:16:21] NOTE: PLACEHOLDER: t out of the agent's diff cleanly. Concretely: - **Track a dummy `PERSONA.md`** at `h5i init` (a one-line placeholder), so `@PERSONA.md` always resolv…
 [21:16:22] NOTE: PLACEHOLDER (~/Dev/h5i/src/env.rs): de done. Now **4. `h5i init` scaffolding** — `PERSONA.md` dummy + `.gitignore` + `@PERSONA.md` in CLAUDE.md + read-instruction in AGENTS.md
+
+
+---
+_[Checkpoint: 6a3af7a6 — edited MANUAL.md; edited MANUAL.md; edited examples/personas/README.md]_
+---
+
