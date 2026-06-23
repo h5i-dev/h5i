@@ -1291,3 +1291,4 @@ _[Checkpoint: 6a3aef3c — session ended (auto-checkpoint)]_
 [20:46:11] OBSERVE: read src/sandbox.rs
 [20:46:12] OBSERVE: read src/sandbox_policy.rs
 [20:46:34] OBSERVE: read src/env.rs
+[20:46:43] OBSERVE: read src/env.rs
