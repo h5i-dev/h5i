@@ -36,16 +36,6 @@ Agent ensembles work because **independent attempts beat isolated guesses**. h5i
 
 **Who it's for:** platform, security, and DevEx leads rolling out Claude Code and Codex who want to run *teams* of agents and keep review and audit defensible as agents write more of the diff.
 
-### Why naive agent teams break
-
-In ML, ensembles beat the best single model: diverse estimators cut variance and won a decade of competitions. The same shift is coming to coding agents. But spawn several agents on one repo with **no coordination layer** and you don't get an ensemble, you get a pileup:
-
-| Failure mode | What happens | h5i's answer |
-|---|---|---|
-| **Environment conflict** | agents overwrite each other's files and may run destructive commands | a confined worktree + policy per agent (`h5i env`) |
-| **Token explosion** | every agent re-reads the repo and drags raw logs into context | compressed tool logs (`h5i capture run`, ~95% less) |
-| **Review overload** | humans can't inspect every prompt or command | reviewer-ready PR (`h5i share pr`) |
-
 ---
 
 ## Install
@@ -112,12 +102,24 @@ Full command reference: [`MANUAL.md`](MANUAL.md) · `man h5i`.
 ---
 
 
-### What h5i is, and is not
+## What h5i is, and is not
 
 - h5i **is not** a Git replacement, a hosted SaaS / dev-environment, or *just* a sandbox.
 - h5i **is** a Git sidecar for **auditable agent ensembles**: run many agents, merge one provable result.
 
-**Why not a hosted sandbox?** The whole point is that the workspace and its evidence live *in your repo* (`refs/h5i/*`): pushable, fetchable, offline, and yours. Codespaces, Coder, and E2B give you an environment; h5i gives you an *auditable* one, versioned in Git with no service to depend on.
+### Why not a hosted sandbox?
+
+The whole point is that the workspace and its evidence live *in your repo* (`refs/h5i/*`): pushable, fetchable, offline, and yours. Codespaces, Coder, and E2B give you an environment; h5i gives you an *auditable* one, versioned in Git with no service to depend on.
+
+### Why naive agent teams break
+
+In ML, ensembles beat the best single model: diverse estimators cut variance and won a decade of competitions. The same shift is coming to coding agents. But spawn several agents on one repo with **no coordination layer** and you don't get an ensemble, you get a pileup:
+
+| Failure mode | What happens | h5i's answer |
+|---|---|---|
+| **Environment conflict** | agents overwrite each other's files and may run destructive commands | a confined worktree + policy per agent (`h5i env`) |
+| **Token explosion** | every agent re-reads the repo and drags raw logs into context | compressed tool logs (`h5i capture run`, ~95% less) |
+| **Review overload** | humans can't inspect every prompt or command | reviewer-ready PR (`h5i share pr`) |
 
 ---
 
