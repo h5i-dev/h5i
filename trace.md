@@ -1141,3 +1141,9 @@ _[Checkpoint: 6a39d819 — edited blog/what-is-ai-aware-version-control/index.ht
 [01:03:55] ACT: edited _static/highlight.js
 [01:05:21] THINK: css` and the Manual's inline `:root` both define the palette vars (I'll add literal fallbacks for any a page is missing, like `--yellow`).
 [01:05:21] THINK: Let me wire the CSS + JS into every page (idempotent insertion before `</head>` and `</body>`):
+
+
+---
+_[Checkpoint: 6a39dbd1 — wrote _static/highlight.css; wrote _static/highlight.js; edited _static/highlight.js]_
+---
+
