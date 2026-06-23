@@ -1192,3 +1192,4 @@ _[Checkpoint: 6a3ae425 — edited _static/highlight.js; edited _static/highlight
 [19:54:03] OBSERVE: read src/team.rs
 [19:54:06] OBSERVE: read src/team.rs
 [19:54:10] OBSERVE: read tests/env_integration.rs
+[19:54:13] OBSERVE: read src/env.rs
