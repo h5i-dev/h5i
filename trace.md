@@ -1796,3 +1796,4 @@ _[Checkpoint: 6a3b609e — edited src/mcp.rs; edited src/ctx.rs; edited src/mcp.
 [05:03:39] ACT: edited src/repository.rs
 [05:04:27] ACT: edited src/repository.rs
 [05:07:30] OBSERVE: read MANUAL.md
+[05:07:46] ACT: edited MANUAL.md
