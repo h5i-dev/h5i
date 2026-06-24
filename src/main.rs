@@ -2005,6 +2005,8 @@ enum TeamCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Print the standing bootstrap prompt for a boxed team agent
+    Bootstrap,
     /// Show or set the current team (omit NAME to show; --clear to unset)
     Use {
         /// Team id to make current; omit to print the current team
@@ -9587,6 +9589,9 @@ fn main() -> anyhow::Result<()> {
                     } else {
                         print!("{}", h5i_core::team::render_list(&runs));
                     }
+                }
+                TeamCommands::Bootstrap => {
+                    println!("{}", h5i_core::team::AGENT_BOOTSTRAP);
                 }
                 TeamCommands::Use { name, clear } => {
                     if clear {
