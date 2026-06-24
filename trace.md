@@ -1690,3 +1690,4 @@ _[Checkpoint: 6a3b58aa — Add h5i context rm <name>]_
 _[Checkpoint: 6a3b58b9 — edited src/ctx.rs; edited src/ctx.rs; edited MANUAL.md]_
 ---
 
+[04:11:18] NOTE: DEFERRAL (~/Dev/h5i/MANUAL.md): `. Say the word if you want me to design the tombstone as a follow-up. Two things I did **not** do without your go-ahead: 1. **Commit** the change (`s…
