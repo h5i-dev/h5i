@@ -1650,3 +1650,9 @@ _[Checkpoint: 6a3b4e14 — edited src/main.rs; edited tests/cli_integration.rs; 
 _[Checkpoint: 6a3b4eec — edited src/main.rs; edited tests/cli_integration.rs; edited MANUAL.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3b5705 — edited src/main.rs; edited tests/cli_integration.rs; edited MANUAL.md]_
+---
+
