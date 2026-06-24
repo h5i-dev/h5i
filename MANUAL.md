@@ -740,13 +740,48 @@ h5i recall context init --goal <text>
 
 Create the context workspace if needed and set the goal for the current Git branch. Run it once per Git branch before writing context on that branch.
 
+`init` is **idempotent** — re-running it on the same Git branch updates the goal in place rather than forking a second workspace, so it is safe (and expected) to run at the start of every task. It also **eagerly creates** the current Git branch's *shadow* context branch (`refs/h5i/context/<git-branch>`) and makes it active, instead of waiting for the first `trace`/`commit` to fork it lazily. This keeps `context status` consistent immediately after `init` (no spurious "git/&lt;branch&gt; has no ctx shadow"). It is a no-op on `main` and when the context is pinned.
+
+Previous goals are not lost: each change is appended to the history of the `main` context ref — see `context goal --log`. Running `init` with no `--goal` leaves the existing goal untouched.
+
 | Option | Description |
 |--------|-------------|
-| `--goal <text>` | Goal for the current Git branch (required before `trace` / `commit`) |
+| `--goal <text>` | Goal for the current Git branch (optional; omit to set up / refresh the workspace without changing the goal) |
 
 ```bash
 h5i recall context init --goal "Build an OAuth2 login system"
 h5i recall context init --goal "Implement retry-safe HTTP client"   # on another Git branch
+```
+
+---
+
+#### h5i recall context goal
+
+```
+h5i recall context goal [--log]
+```
+
+Print just the current goal and pin status for the current Git branch — a cheap, low-token check to run before `context init`. Warns when the context is pinned to a branch other than the current Git branch (a stale pin that silently misroutes new traces).
+
+| Option | Description |
+|--------|-------------|
+| `--log` | Show the full goal history for the current Git branch (every recorded revision, newest first) instead of just the current goal |
+
+The history is mined from the commit history of the `main` context ref, where each Git branch's goal file lives. Only commits that actually *changed* the goal appear, so unrelated milestone/snapshot commits are not shown.
+
+```bash
+h5i recall context goal          # current goal only (default)
+h5i recall context goal --log    # full revision history for this Git branch
+```
+
+```
+Goal history — feature/login (3 revisions)
+  ● c0604766 build login v3 (current)
+      2026-06-24 04:23 UTC
+  ○ 8370f04b build login v2
+      2026-06-24 04:23 UTC
+  ○ 653d8acc build login v1
+      2026-06-24 04:23 UTC
 ```
 
 ---
@@ -903,6 +938,44 @@ context is pinned to a branch other than the current Git branch.
 h5i recall context goal
 h5i recall context unpin
 h5i recall context init --goal "Current task on this Git branch"
+```
+
+---
+
+#### h5i recall context rm
+
+```
+h5i recall context rm <name> [--force]
+```
+
+Permanently remove a context (reasoning) branch (`refs/h5i/context/<name>`) — the
+safe, first-class counterpart to deleting the ref by hand. `h5i recall context
+status` lists stale context branches (a `ctx/<name>` whose Git branch is gone)
+and points here.
+
+It applies the same guards `h5i env rm` does:
+
+- refuses `main` (the root branch holds the project goal and milestone roadmap);
+- refuses an `env/…` branch (those belong to an h5i environment — use `h5i env rm`);
+- refuses the **active** branch unless `--force`, which first resets the
+  worktree's context HEAD to `main` and clears the pin;
+- never touches the per-commit workspace snapshots, so `h5i recall context
+  restore <sha>` / `diff` still work after removal.
+
+This is a **local** removal. If the branch was shared (`h5i share push`), the
+remote copy survives and a later `h5i share pull` will resurrect it — delete it
+on the remote too.
+
+**Options**
+
+| Option | Description |
+|--------|-------------|
+| `<name>` | Context branch to remove (required, positional) |
+| `--force` | Remove even if it is the active branch (resets HEAD to `main` + unpins) |
+
+```bash
+h5i recall context status            # find stale ctx/<name> branches
+h5i recall context rm improve-shell  # drop one stale reasoning branch
 ```
 
 ---
@@ -1476,6 +1549,50 @@ h5i recall object <id> --manifest         # the full manifest JSON record
 ```
 
 Handles accept the short id, a full `sha256:<hex>`, or any unambiguous prefix.
+
+### h5i recall rm
+
+```bash
+h5i recall rm <branch>            # dry-run: print what WOULD be removed
+h5i recall rm <branch> --force    # actually remove it
+```
+
+Purge **every** `refs/h5i/*` artifact scoped to a branch in one shot — the
+inverse of `h5i share push --branch <b>`. It removes, scoped to `<branch>`:
+
+| Family | What is removed | Scoping rule |
+|--------|-----------------|--------------|
+| context | `refs/h5i/context/<branch>` reasoning DAG | the branch's own ref (per-commit snapshots are preserved) |
+| notes | `refs/h5i/notes` provenance | **only** commits reachable from `<branch>` but no other branch — shared provenance is never touched |
+| objects | `refs/h5i/objects` captures | manifests tagged with the branch, plus the evidence of envs forked from it |
+| msg | `refs/h5i/msg` messages | messages tagged with the branch (free-text/global messages stay; the roster is preserved) |
+| env | worktree + code/reasoning branches + `refs/h5i/env/meta` records | each environment forked from the branch (full `h5i env rm`) |
+
+**Safety:**
+
+- **Dry-run by default.** Without `--force` it only prints a per-family plan and
+  changes nothing.
+- **Notes are scoped to commits *unique* to the branch.** A commit also
+  reachable from `main` (or any other live branch) keeps its note, so a purge
+  never strips provenance another branch still relies on.
+- It **refuses `main`/`master`** — `recall rm` is for feature/topic branches.
+- It is **local and irreversible.** If the branch's data was already shared,
+  delete it on the remote too — run `h5i share push` afterwards to propagate the
+  deletion (a later `share pull` would otherwise re-fetch what survives there).
+
+```
+➜  Plan — h5i data for branch feature/login
+  • context    1 reasoning branch (refs/h5i/context)
+  • notes      3 notes on commits unique to this branch (refs/h5i/notes)
+  • objects    7 captures (refs/h5i/objects)
+  • msg        2 messages (refs/h5i/msg)
+  • env        1 environments (worktree + branches + meta)
+
+  ℹ dry-run — nothing changed. Re-run with --force to apply.
+```
+
+To remove *only* a stale reasoning branch (not the rest), use the narrower
+`h5i recall context rm <name>` instead.
 
 ### Structured output
 

@@ -671,7 +671,13 @@ pub fn init(workdir: &Path, goal: &str) -> Result<(), H5iError> {
         if !goal.trim().is_empty() {
             set_git_branch_goal(&repo, &git_branch, goal)?;
         }
-        return Ok(());
+        drop(repo);
+        // Eager-create: ensure the current git branch's shadow context branch
+        // exists and is active, instead of waiting for the first write to fork
+        // it (see [`auto_follow`]). Idempotent (create-if-absent) and a no-op
+        // when pinned or already on `main` — so re-running `init` never forks a
+        // second branch.
+        return auto_follow(workdir);
     }
 
     let main_content = format!(
@@ -713,7 +719,11 @@ pub fn init(workdir: &Path, goal: &str) -> Result<(), H5iError> {
 
     // Ensure HEAD is initialized even if `.current_branch` write was a no-op
     // (e.g. on a re-init where ctx_write_files routed it to the head file).
-    write_head(&repo, MAIN_BRANCH)
+    write_head(&repo, MAIN_BRANCH)?;
+    drop(repo);
+    // Eager-create the current git branch's shadow context branch (see the
+    // re-init path above for rationale). No-op on `main` / when pinned.
+    auto_follow(workdir)
 }
 
 /// Return `true` if the context workspace is initialized (the main branch ref exists).
@@ -772,18 +782,96 @@ fn set_git_branch_goal(repo: &Repository, git_branch: &str, goal: &str) -> Resul
     )
 }
 
+/// Parse a stored `git-goals/<branch>.md` blob into the bare goal text,
+/// dropping the `# Git Branch Goal: …` heading lines and trimming.
+fn parse_goal_text(text: &str) -> String {
+    text.lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
 pub fn git_branch_goal(workdir: &Path, git_branch: &str) -> Option<String> {
     let repo = ctx_git_repo(workdir).ok()?;
     ctx_read_file(&repo, &git_goal_path(git_branch))
-        .map(|text| {
-            text.lines()
-                .filter(|line| !line.starts_with('#'))
-                .collect::<Vec<_>>()
-                .join("\n")
-                .trim()
-                .to_string()
-        })
+        .map(|text| parse_goal_text(&text))
         .filter(|s| !s.is_empty())
+}
+
+/// One recorded version of a git branch's goal, mined from the commit history
+/// of the `main` context ref (where `git-goals/<branch>.md` lives).
+#[derive(Debug, Clone)]
+pub struct GoalRevision {
+    /// Short id of the context commit that changed the goal to this value.
+    pub short_id: String,
+    /// Human-readable timestamp of that commit (UTC).
+    pub timestamp: String,
+    /// The goal text as of that commit.
+    pub goal: String,
+}
+
+/// Walk the history of `refs/h5i/context/main` and return the distinct goal
+/// versions recorded for `git_branch`, **newest first**.
+///
+/// A revision is emitted only at commits where the goal actually *changed*
+/// (its value differs from the first parent's), so unrelated `main`-ref commits
+/// — milestone updates, per-commit snapshots — don't appear as duplicate
+/// entries. The first element is therefore the current goal.
+pub fn git_branch_goal_log(
+    workdir: &Path,
+    git_branch: &str,
+) -> Result<Vec<GoalRevision>, H5iError> {
+    let repo = ctx_git_repo(workdir)?;
+    let Ok(reference) = repo.find_reference(&branch_ref(MAIN_BRANCH)) else {
+        return Ok(Vec::new());
+    };
+    let Some(tip) = reference.target() else {
+        return Ok(Vec::new());
+    };
+    let goal_path = git_goal_path(git_branch);
+    let rel = Path::new(&goal_path);
+
+    // Read + parse the goal blob from a commit's tree (None if absent/empty).
+    let goal_at = |oid: git2::Oid| -> Option<String> {
+        let commit = repo.find_commit(oid).ok()?;
+        let tree = commit.tree().ok()?;
+        let entry = tree.get_path(rel).ok()?;
+        let blob = repo.find_blob(entry.id()).ok()?;
+        let text = std::str::from_utf8(blob.content()).ok()?;
+        let parsed = parse_goal_text(text);
+        (!parsed.is_empty()).then_some(parsed)
+    };
+
+    let mut walk = repo.revwalk()?;
+    // Topological (children before parents) so the chain is newest-first; TIME
+    // is only a tiebreak. Plain TIME sort is non-deterministic when several
+    // goal edits land in the same second (e.g. successive `init` calls).
+    walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
+    walk.push(tip)?;
+
+    let mut out: Vec<GoalRevision> = Vec::new();
+    for oid in walk {
+        let oid = oid?;
+        let Some(goal) = goal_at(oid) else { continue };
+        let commit = repo.find_commit(oid)?;
+        // Emit only when this commit changed the goal vs. its first parent.
+        let parent_goal = commit.parent_id(0).ok().and_then(goal_at);
+        if parent_goal.as_deref() == Some(goal.as_str()) {
+            continue;
+        }
+        let secs = commit.time().seconds();
+        let timestamp = chrono::DateTime::from_timestamp(secs, 0)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+            .unwrap_or_default();
+        out.push(GoalRevision {
+            short_id: oid.to_string()[..8].to_string(),
+            timestamp,
+            goal,
+        });
+    }
+    Ok(out)
 }
 
 pub fn context_branch_purpose(workdir: &Path, branch: &str) -> Option<String> {
@@ -1605,6 +1693,101 @@ pub fn list_branches(workdir: &Path) -> Vec<String> {
     ctx_git_repo(workdir)
         .map(|repo| ctx_list_branches_git(&repo))
         .unwrap_or_default()
+}
+
+/// Outcome of [`rm_branch`], for the CLI to report back to the user.
+#[derive(Debug)]
+pub struct CtxRmOutcome {
+    /// The branch that was removed.
+    pub name: String,
+    /// Number of non-blank `trace.md` lines that were in the removed branch
+    /// (an informational "how much reasoning is being dropped" figure).
+    pub trace_lines: usize,
+    /// `true` when the removed branch was the worktree's *active* context
+    /// branch (so HEAD was reset to `main` + unpinned as part of removal).
+    pub was_active: bool,
+}
+
+/// Permanently remove a context (reasoning) branch ref
+/// `refs/h5i/context/<name>`.
+///
+/// This is the safe, first-class counterpart to deleting the ref by hand (which
+/// is what `context status` previously told users to do). It applies the same
+/// guards `h5i env rm` does for env branches:
+///
+/// - **refuses `main`** — the root branch carries the project goal,
+///   per-git-branch goals, and the milestone roadmap;
+/// - **refuses an `env/…` branch** — those are owned by `h5i env`; removing one
+///   out from under a live env orphans it. Use `h5i env rm` instead;
+/// - **refuses the *active* branch unless `force`** — removing the branch HEAD
+///   points at would orphan the current worktree's selection. With `force`,
+///   HEAD is reset to `main` and the pin (if any) is cleared first;
+/// - **never touches `refs/h5i/context-snapshots/*`** — the per-commit
+///   workspace snapshots taken at each `h5i commit` stay restorable
+///   (`context restore <sha>` / `context diff`), so removing a branch drops the
+///   live reasoning thread but not the history bound to code commits.
+///
+/// Note: this is a *local* removal. If the branch was shared
+/// (`h5i share push`), the remote copy survives and a later `h5i share pull`
+/// will resurrect it — the caller surfaces that caveat. (A share-aware
+/// tombstone, like the env `removed` event, is intentionally out of scope here.)
+pub fn rm_branch(workdir: &Path, name: &str, force: bool) -> Result<CtxRmOutcome, H5iError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(H5iError::InvalidPath(
+            "context branch name is required".into(),
+        ));
+    }
+    if name == MAIN_BRANCH {
+        return Err(H5iError::InvalidPath(
+            "the root context branch 'main' cannot be removed (it holds the project goal \
+             and milestone roadmap)"
+                .into(),
+        ));
+    }
+    if name == "env" || name.starts_with("env/") {
+        return Err(H5iError::InvalidPath(format!(
+            "context branch '{name}' is owned by an h5i environment — remove the env with \
+             `h5i env rm` instead of deleting its reasoning branch directly"
+        )));
+    }
+
+    let repo = ctx_git_repo(workdir)?;
+    let ref_name = branch_ref(name);
+    let mut reference = repo.find_reference(&ref_name).map_err(|_| {
+        H5iError::InvalidPath(format!(
+            "no context branch '{name}' (see `h5i context status` for existing branches)"
+        ))
+    })?;
+
+    let was_active = current_branch(workdir) == name;
+    if was_active && !force {
+        return Err(H5iError::InvalidPath(format!(
+            "context branch '{name}' is the active branch — checkout another branch \
+             (`h5i context checkout main`) or unpin first, or pass --force to reset HEAD to main"
+        )));
+    }
+
+    // Count the reasoning being dropped, for the report (best-effort).
+    let trace_lines = read_ref_file(&repo, &ref_name, "trace.md")
+        .map(|t| t.lines().filter(|l| !l.trim().is_empty()).count())
+        .unwrap_or(0);
+
+    // If we're removing the active branch under --force, move HEAD off it first
+    // so the worktree doesn't keep pointing at a now-dangling ref. Resetting to
+    // `main` + unpinning lets auto-follow take over cleanly on the next write.
+    if was_active {
+        let _ = unpin(workdir);
+        write_head(&repo, MAIN_BRANCH)?;
+    }
+
+    reference.delete().map_err(H5iError::Git)?;
+
+    Ok(CtxRmOutcome {
+        name: name.to_string(),
+        trace_lines,
+        was_active,
+    })
 }
 
 /// Return the raw text of `trace.md` for the given branch (default: current).
@@ -2884,6 +3067,65 @@ pub fn is_pin_misrouting(workdir: &Path) -> bool {
 /// `context init --goal`. It lets an agent read the existing goal and catch a
 /// *stale pin* that is silently routing new context to a non-current branch
 /// (the failure mode that kept a stale goal in place across many tasks).
+/// Print the full goal history for the current git branch (newest first),
+/// the `--log` view of `h5i context goal`. Default `print_goal` shows only the
+/// current goal; this renders every recorded revision.
+pub fn print_goal_log(workdir: &Path) -> Result<(), H5iError> {
+    use console::style;
+
+    ctx_git_repo(workdir)?;
+    if !is_initialized(workdir) {
+        println!(
+            "{} context not initialized — run {} to set a goal.",
+            style("ℹ").blue(),
+            style("h5i recall context init --goal \"<goal>\"").bold(),
+        );
+        return Ok(());
+    }
+
+    let git_branch = current_git_branch(workdir);
+    let revs = git_branch_goal_log(workdir, &git_branch)?;
+    if revs.is_empty() {
+        println!(
+            "{} no goal history for git branch {} — run {}",
+            style("ℹ").blue(),
+            style(&git_branch).cyan().bold(),
+            style("h5i recall context init --goal \"<goal>\"").bold(),
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{} {} ({} revision{})",
+        style("Goal history —").dim(),
+        style(&git_branch).cyan().bold(),
+        revs.len(),
+        if revs.len() == 1 { "" } else { "s" },
+    );
+    for (i, rev) in revs.iter().enumerate() {
+        let current = i == 0;
+        let marker = if current {
+            style("●").green()
+        } else {
+            style("○").dim()
+        };
+        println!(
+            "  {} {} {}{}",
+            marker,
+            style(&rev.short_id).dim(),
+            style(&rev.goal).cyan(),
+            if current {
+                style(" (current)").green()
+            } else {
+                style("").dim()
+            },
+        );
+        println!("      {}", style(&rev.timestamp).dim());
+    }
+
+    Ok(())
+}
+
 pub fn print_goal(workdir: &Path) -> Result<(), H5iError> {
     use console::style;
 
@@ -3129,7 +3371,7 @@ pub fn print_status(workdir: &Path, limit: usize) -> Result<(), H5iError> {
                 style("✗").red(),
                 style(name).magenta(),
                 style(name).cyan(),
-                style("(intentional or stale — delete manually if stale)").dim(),
+                style(format!("intentional, or stale → h5i context rm {name}")).dim(),
             );
         }
     }
@@ -4219,7 +4461,13 @@ mod tests {
 
     /// Create a bare-minimum git repo in `dir` so ctx functions can discover it.
     fn git_init(dir: &Path) {
-        Repository::init(dir).expect("failed to init git repo");
+        let repo = Repository::init(dir).expect("failed to init git repo");
+        // Pin a deterministic default branch. The host's `init.defaultBranch`
+        // varies (CI uses `master`), and eager-create at `context init` now
+        // follows the *git* branch — so without this these tests would assert
+        // `main` while the active shadow became `master`.
+        repo.set_head("refs/heads/main")
+            .expect("failed to set HEAD to main");
     }
 
     // ── init / is_initialized ─────────────────────────────────────────────────
@@ -4347,6 +4595,196 @@ mod tests {
         init(dir.path(), "goal").unwrap();
         gcc_branch(dir.path(), "feat-oauth", "oauth work").unwrap();
         assert!(list_branches(dir.path()).contains(&"feat-oauth".to_string()));
+    }
+
+    // ── rm_branch ─────────────────────────────────────────────────────────────
+
+    // ── init eager-create + goal history ──────────────────────────────────────
+
+    /// Point the (still-unborn) git HEAD at a non-default branch so
+    /// `current_git_branch` resolves to it (eager-create is a no-op on `main`).
+    fn checkout_unborn_branch(dir: &Path, branch: &str) {
+        let repo = Repository::open(dir).unwrap();
+        repo.set_head(&format!("refs/heads/{branch}")).unwrap();
+    }
+
+    #[test]
+    fn init_eager_creates_active_shadow_for_git_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        checkout_unborn_branch(dir.path(), "feature/login");
+        init(dir.path(), "goal").unwrap();
+        // The shadow exists with NO intervening write, and is the active branch.
+        assert!(list_branches(dir.path()).contains(&"feature/login".to_string()));
+        assert_eq!(current_branch(dir.path()), "feature/login");
+    }
+
+    #[test]
+    fn init_eager_create_is_idempotent() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        checkout_unborn_branch(dir.path(), "feature/login");
+        init(dir.path(), "v1").unwrap();
+        init(dir.path(), "v2").unwrap();
+        init(dir.path(), "v3").unwrap();
+        let shadows = list_branches(dir.path())
+            .into_iter()
+            .filter(|b| b == "feature/login")
+            .count();
+        assert_eq!(shadows, 1, "re-init must not fork a second shadow");
+    }
+
+    #[test]
+    fn init_eager_create_respects_pin() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        checkout_unborn_branch(dir.path(), "feature/login");
+        init(dir.path(), "goal").unwrap();
+        // gcc_branch pins the worktree to `experiment`.
+        gcc_branch(dir.path(), "experiment", "explore").unwrap();
+        assert_eq!(current_branch(dir.path()), "experiment");
+        // A re-init must not move HEAD off the pinned branch.
+        init(dir.path(), "goal2").unwrap();
+        assert_eq!(current_branch(dir.path()), "experiment");
+    }
+
+    #[test]
+    fn goal_log_tracks_history_newest_first() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        checkout_unborn_branch(dir.path(), "feature/login");
+        init(dir.path(), "v1").unwrap();
+        init(dir.path(), "v2").unwrap();
+        init(dir.path(), "v3").unwrap();
+        let log = git_branch_goal_log(dir.path(), "feature/login").unwrap();
+        let goals: Vec<_> = log.iter().map(|r| r.goal.as_str()).collect();
+        assert_eq!(goals, vec!["v3", "v2", "v1"]);
+    }
+
+    #[test]
+    fn goal_log_collapses_unchanged_reinit() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        checkout_unborn_branch(dir.path(), "feature/login");
+        init(dir.path(), "v1").unwrap();
+        init(dir.path(), "v1").unwrap(); // identical goal again
+        let log = git_branch_goal_log(dir.path(), "feature/login").unwrap();
+        assert_eq!(log.len(), 1, "re-init with identical goal adds no revision");
+        assert_eq!(log[0].goal, "v1");
+    }
+
+    #[test]
+    fn goal_log_empty_for_unknown_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "v1").unwrap();
+        let log = git_branch_goal_log(dir.path(), "no-such-branch").unwrap();
+        assert!(log.is_empty());
+    }
+
+    #[test]
+    fn goal_log_skips_unchanged_commits_and_records_reverts() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        checkout_unborn_branch(dir.path(), "feature/login");
+        init(dir.path(), "v1").unwrap();
+        init(dir.path(), "v1").unwrap(); // unchanged re-init → no new revision
+        init(dir.path(), "v2").unwrap();
+        init(dir.path(), "v1").unwrap(); // reverting to a prior value IS a change
+        let goals: Vec<_> = git_branch_goal_log(dir.path(), "feature/login")
+            .unwrap()
+            .into_iter()
+            .map(|r| r.goal)
+            .collect();
+        // newest-first: v1 (restored), v2, v1 (original). The unchanged re-init
+        // between the two original v1 writes is collapsed away — only commits
+        // that actually changed the goal appear.
+        assert_eq!(goals, vec!["v1", "v2", "v1"]);
+    }
+
+    #[test]
+    fn rm_branch_removes_an_inactive_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "stale", "exploratory").unwrap();
+        // gcc_branch switches to the new branch; move off it so it's inactive.
+        gcc_checkout(dir.path(), MAIN_BRANCH).unwrap();
+
+        assert!(list_branches(dir.path()).contains(&"stale".to_string()));
+        let outcome = rm_branch(dir.path(), "stale", false).unwrap();
+        assert_eq!(outcome.name, "stale");
+        assert!(!outcome.was_active);
+        assert!(!list_branches(dir.path()).contains(&"stale".to_string()));
+    }
+
+    #[test]
+    fn rm_branch_refuses_main() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let err = rm_branch(dir.path(), MAIN_BRANCH, false).unwrap_err();
+        assert!(err.to_string().contains("cannot be removed"));
+        assert!(list_branches(dir.path()).contains(&MAIN_BRANCH.to_string()));
+    }
+
+    #[test]
+    fn rm_branch_refuses_env_owned_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let err = rm_branch(dir.path(), "env/claude/foo", false).unwrap_err();
+        assert!(err.to_string().contains("h5i env rm"));
+    }
+
+    #[test]
+    fn rm_branch_errors_for_missing_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let err = rm_branch(dir.path(), "never-existed", false).unwrap_err();
+        assert!(err.to_string().contains("no context branch"));
+    }
+
+    #[test]
+    fn rm_branch_refuses_active_without_force_then_force_resets_head() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        // gcc_branch creates + switches + pins, so `active` is the active branch.
+        gcc_branch(dir.path(), "active", "current work").unwrap();
+        assert_eq!(current_branch(dir.path()), "active");
+
+        let err = rm_branch(dir.path(), "active", false).unwrap_err();
+        assert!(err.to_string().contains("active branch"));
+        assert!(list_branches(dir.path()).contains(&"active".to_string()));
+
+        let outcome = rm_branch(dir.path(), "active", true).unwrap();
+        assert!(outcome.was_active);
+        assert!(!list_branches(dir.path()).contains(&"active".to_string()));
+        // HEAD reset to main + unpinned.
+        assert_eq!(current_branch(dir.path()), MAIN_BRANCH);
+        assert!(!is_pinned(dir.path()));
+    }
+
+    #[test]
+    fn rm_branch_preserves_context_snapshots() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "stale", "explore").unwrap();
+        gcc_checkout(dir.path(), MAIN_BRANCH).unwrap();
+        // A per-commit snapshot (stored on the main ctx ref, keyed by git sha).
+        snapshot_for_commit(dir.path(), "abc12345deadbeef").unwrap();
+
+        rm_branch(dir.path(), "stale", false).unwrap();
+
+        // Removing a branch must not disturb the snapshot history.
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        assert!(
+            ctx_read_file(&repo, "snapshots/abc12345.md").is_some(),
+            "context snapshot must survive a branch rm"
+        );
     }
 
     // ── append_log ────────────────────────────────────────────────────────────

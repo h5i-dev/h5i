@@ -69,6 +69,73 @@ pub fn copy_scoped_notes_onto(
     Ok(copied)
 }
 
+/// Commits reachable from `branch` but from **no other local branch** — the
+/// commits "unique" to `branch`. Used by `h5i recall rm` to scope a destructive
+/// notes purge so it never strips provenance a still-live branch shares.
+///
+/// Returns an empty vec when the branch ref is gone (nothing to scope to).
+pub fn unique_commits_for_branch(
+    repo: &Repository,
+    branch: &str,
+) -> Result<Vec<Oid>, H5iError> {
+    let tip = match repo.refname_to_id(&format!("refs/heads/{branch}")) {
+        Ok(o) => o,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut walk = repo.revwalk()?;
+    walk.push(tip)?;
+    // Hide everything reachable from every OTHER local branch, so only commits
+    // exclusive to `branch` survive the walk.
+    if let Ok(branches) = repo.branches(Some(git2::BranchType::Local)) {
+        for b in branches.flatten() {
+            if let Ok(Some(name)) = b.0.name() {
+                if name == branch {
+                    continue;
+                }
+            }
+            if let Some(target) = b.0.get().target() {
+                let _ = walk.hide(target);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for oid in walk {
+        out.push(oid?);
+    }
+    Ok(out)
+}
+
+/// Of `commits`, those that carry an `refs/h5i/notes` note. Cheap pre-check for
+/// the dry-run plan of `recall rm` (counts what a purge would delete).
+pub fn commits_with_notes(repo: &Repository, commits: &[Oid]) -> Vec<Oid> {
+    if repo.refname_to_id(H5I_NOTES_REF).is_err() {
+        return Vec::new();
+    }
+    commits
+        .iter()
+        .copied()
+        .filter(|oid| repo.find_note(Some(H5I_NOTES_REF), *oid).is_ok())
+        .collect()
+}
+
+/// Delete the `refs/h5i/notes` note on each of `commits` (commits without a note
+/// are skipped). Returns how many notes were actually removed.
+pub fn remove_notes_for_commits(repo: &Repository, commits: &[Oid]) -> Result<usize, H5iError> {
+    if repo.refname_to_id(H5I_NOTES_REF).is_err() {
+        return Ok(0);
+    }
+    let sig = repo_signature_or_fallback(repo)?;
+    let mut removed = 0usize;
+    for &oid in commits {
+        if repo.find_note(Some(H5I_NOTES_REF), oid).is_err() {
+            continue;
+        }
+        repo.note_delete(oid, Some(H5I_NOTES_REF), &sig, &sig)?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
 pub struct H5iRepository {
     git_repo: Repository,
     pub h5i_root: PathBuf,
@@ -2841,5 +2908,81 @@ mod tests {
             copy_scoped_notes_onto(repo, &reachable, "refs/h5i/_t").unwrap(),
             0
         );
+    }
+
+    // ── recall rm: branch-scoped notes purge ──────────────────────────────
+
+    /// base ←(shared by main)— feat. Returns (repo handle, base oid, feat oid).
+    fn two_branch_repo(dir: &std::path::Path) -> (H5iRepository, Oid, Oid) {
+        let h5i = setup_test_repo(dir);
+        // Scope the commit/branch handles so their borrow of `h5i` ends before
+        // we move `h5i` into the returned tuple.
+        let (base, feat) = {
+            let repo = h5i.git();
+            // Pin the first commit onto `main`, then branch `feature/x` off it
+            // and add a commit only `feature/x` can reach.
+            repo.set_head("refs/heads/main").ok();
+            let base = create_commit(repo, "base", "a.txt", "1", &[]);
+            let base_c = repo.find_commit(base).unwrap();
+            repo.branch("feature/x", &base_c, false).unwrap();
+            repo.set_head("refs/heads/feature/x").unwrap();
+            let feat = create_commit(repo, "feat", "b.txt", "2", &[&base_c]);
+            (base, feat)
+        };
+        (h5i, base, feat)
+    }
+
+    #[test]
+    fn unique_commits_excludes_commits_shared_with_other_branches() {
+        let dir = tempdir().unwrap();
+        let (h5i, base, feat) = two_branch_repo(dir.path());
+        let uniq = unique_commits_for_branch(h5i.git(), "feature/x").unwrap();
+        assert!(uniq.contains(&feat), "feat is unique to feature/x");
+        assert!(!uniq.contains(&base), "base is shared with main → excluded");
+    }
+
+    #[test]
+    fn unique_commits_empty_for_missing_branch() {
+        let dir = tempdir().unwrap();
+        let h5i = setup_test_repo(dir.path());
+        assert!(unique_commits_for_branch(h5i.git(), "nope")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn remove_notes_deletes_only_listed_commits() {
+        let dir = tempdir().unwrap();
+        let (h5i, base, feat) = two_branch_repo(dir.path());
+        let repo = h5i.git();
+        let sig = Signature::now("t", "t@e.com").unwrap();
+        repo.note(&sig, &sig, Some(H5I_NOTES_REF), base, "base-note", true)
+            .unwrap();
+        repo.note(&sig, &sig, Some(H5I_NOTES_REF), feat, "feat-note", true)
+            .unwrap();
+
+        // commits_with_notes pre-check sees both annotated commits.
+        let annotated = commits_with_notes(repo, &[base, feat]);
+        assert_eq!(annotated.len(), 2);
+
+        // Remove only feat's note (the unique-to-feature commit).
+        let removed = remove_notes_for_commits(repo, &[feat]).unwrap();
+        assert_eq!(removed, 1);
+        assert!(
+            repo.find_note(Some(H5I_NOTES_REF), feat).is_err(),
+            "feat note removed"
+        );
+        assert!(
+            repo.find_note(Some(H5I_NOTES_REF), base).is_ok(),
+            "shared base note must survive"
+        );
+    }
+
+    #[test]
+    fn remove_notes_is_zero_without_notes_ref() {
+        let dir = tempdir().unwrap();
+        let (h5i, base, _feat) = two_branch_repo(dir.path());
+        assert_eq!(remove_notes_for_commits(h5i.git(), &[base]).unwrap(), 0);
+        assert!(commits_with_notes(h5i.git(), &[base]).is_empty());
     }
 }

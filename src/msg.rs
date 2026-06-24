@@ -477,6 +477,68 @@ fn append_message_cas(repo: &Repository, msg: &Message) -> Result<(), H5iError> 
     )))
 }
 
+/// Count local messages tagged with `branch` — the records `h5i recall rm`
+/// would drop (free-text messages carry no branch, so they are never counted).
+pub fn count_branch_scoped(repo: &Repository, branch: &str) -> usize {
+    read_messages(repo)
+        .iter()
+        .filter(|m| m.branch.as_deref() == Some(branch))
+        .count()
+}
+
+/// Rewrite `refs/h5i/msg`, dropping the messages tagged with `branch`. The agent
+/// roster is preserved wholesale (identity is global, not per-branch). Returns
+/// the number of messages removed (0 ⇒ the ref is left untouched).
+pub fn remove_branch_scoped(repo: &Repository, branch: &str) -> Result<usize, H5iError> {
+    const MAX_ATTEMPTS: usize = 64;
+    let message = format!("h5i recall rm: drop messages scoped to branch {branch}");
+
+    for _ in 0..MAX_ATTEMPTS {
+        let tip = repo.refname_to_id(MSG_REF).ok();
+        let parent = match tip {
+            Some(oid) => Some(repo.find_commit(oid)?),
+            None => return Ok(0), // no msg ref → nothing to remove
+        };
+        let all = parse_messages(
+            &read_file_from_commit(repo, tip.unwrap(), MESSAGES_FILE).unwrap_or_default(),
+        );
+        let total = all.len();
+        let kept: Vec<Message> = all
+            .into_iter()
+            .filter(|m| m.branch.as_deref() != Some(branch))
+            .collect();
+        let removed = total - kept.len();
+        if removed == 0 {
+            return Ok(0);
+        }
+        // Canonical serialisation (dedup-by-id, sorted) — reuse the merge path.
+        let log = merge_message_sets(kept, Vec::new());
+        let roster = read_roster_from(repo, tip.unwrap());
+        let roster_json = serde_json::to_string_pretty(&roster)?;
+
+        let base_tree = parent.as_ref().and_then(|c| c.tree().ok());
+        let tree_oid = build_tree(
+            repo,
+            base_tree.as_ref(),
+            &[(MESSAGES_FILE, &log), (AGENTS_FILE, &roster_json)],
+        )?;
+        let tree = repo.find_tree(tree_oid)?;
+        let sig = signature(repo)?;
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+        let new_oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
+
+        let cas_ok = repo
+            .reference_matching(MSG_REF, new_oid, true, tip.unwrap(), &message)
+            .is_ok();
+        if cas_ok {
+            return Ok(removed);
+        }
+    }
+    Err(H5iError::Internal(format!(
+        "h5i recall rm: msg ref could not be rewritten after {MAX_ATTEMPTS} attempts"
+    )))
+}
+
 /// Return the messages addressed to `me` that it has not yet seen, sorted
 /// oldest-first. When `advance` is true the returned ids are added to `me`'s
 /// seen-set (so the next call won't repeat them); pass `false` to peek.
@@ -1411,6 +1473,59 @@ mod tests {
         let bob = inbox(&repo, &root, "bob", false).unwrap();
         assert_eq!(bob.len(), 1);
         assert_eq!(bob[0].to, "bob");
+    }
+
+    fn send_on_branch(repo: &Repository, root: &Path, body: &str, branch: &str) {
+        send_msg(
+            repo,
+            root,
+            "alice",
+            "bob",
+            body,
+            SendOpts {
+                branch: Some(branch.to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn remove_branch_scoped_drops_only_that_branch_messages() {
+        let (_d, repo, root) = fixture();
+        send_on_branch(&repo, &root, "on feature", "feature/x");
+        send_on_branch(&repo, &root, "on main", "main");
+        send_on_branch(&repo, &root, "untagged", ""); // empty → opt out of tagging
+
+        assert_eq!(count_branch_scoped(&repo, "feature/x"), 1);
+        let removed = remove_branch_scoped(&repo, "feature/x").unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(count_branch_scoped(&repo, "feature/x"), 0);
+        // The main + untagged messages survive.
+        assert_eq!(read_messages(&repo).len(), 2);
+    }
+
+    #[test]
+    fn remove_branch_scoped_message_noop_when_none_match() {
+        let (_d, repo, root) = fixture();
+        send_on_branch(&repo, &root, "on main", "main");
+        let before = repo.refname_to_id(MSG_REF).unwrap();
+        assert_eq!(remove_branch_scoped(&repo, "feature/x").unwrap(), 0);
+        assert_eq!(repo.refname_to_id(MSG_REF).unwrap(), before);
+    }
+
+    #[test]
+    fn remove_branch_scoped_preserves_the_roster() {
+        let (_d, repo, root) = fixture();
+        send_on_branch(&repo, &root, "on feature", "feature/x");
+        let roster_before = read_roster(&repo).agents;
+        assert!(
+            roster_before.contains_key("alice"),
+            "sender must be in the roster"
+        );
+        remove_branch_scoped(&repo, "feature/x").unwrap();
+        // Identity is global, not per-branch: the roster survives the purge.
+        assert_eq!(read_roster(&repo).agents, roster_before);
     }
 
     #[test]
