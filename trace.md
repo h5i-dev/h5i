@@ -1945,3 +1945,4 @@ _[Checkpoint: 6a3bc301 — edited src/team.rs; edited src/team.rs; edited src/te
 [13:54:07] THINK: h5i natively handles pytest/cargo/git-diff in Rust (not TOML), so I'll exclude those.
 [13:54:07] THINK: Let me confirm the golden-test runner's name so issue instructions are accurate, then generate.
 [13:54:07] THINK: I have everything. Let me generate all 25 issues with a reproducible script (bodies written to scratchpad, created via `gh issue create --body-file`).
+[13:54:07] THINK: Let me clean up the two awkward titles (`aws (CLI)` / `glab (GitLab CLI)`) to just the command name, then create all 25 for real.
