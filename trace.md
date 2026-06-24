@@ -1847,3 +1847,4 @@ _[Checkpoint: 6a3b69a1 — edited tests/cli_integration.rs; edited tests/cli_int
 ---
 
 [11:17:49] THINK: Let me pin down exactly which **image/video** files are referenced (the server embed and markdown/docs).
+[11:17:49] THINK: Let me double-check the "unused" ones aren't referenced via other path forms (e.
