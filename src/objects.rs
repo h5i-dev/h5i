@@ -2826,6 +2826,22 @@ mod tests {
     }
 
     #[test]
+    fn remove_branch_scoped_advances_ref_to_empty_when_all_match() {
+        let (_d, repo, _h5i_root) = setup();
+        append_manifest(&repo, &manifest_on('a', Some("feature"))).unwrap();
+        append_manifest(&repo, &manifest_on('b', Some("feature"))).unwrap();
+        let before = repo.refname_to_id(OBJECTS_REF).unwrap();
+
+        let removed = remove_branch_scoped(&repo, "feature", &no_envs()).unwrap();
+        assert_eq!(removed, 2);
+        // The ref is advanced (not deleted), now holding an empty manifest log —
+        // so it stays valid and shareable.
+        let tip = repo.refname_to_id(OBJECTS_REF).unwrap();
+        assert_ne!(tip, before, "ref must advance to the rewritten commit");
+        assert!(read_manifests(&repo).is_empty(), "all manifests removed");
+    }
+
+    #[test]
     fn remove_branch_scoped_also_drops_env_evidence_by_env_id() {
         let (_d, repo, _h5i_root) = setup();
         let mut env_cap = manifest_on('a', Some("h5i/env/claude/fix"));

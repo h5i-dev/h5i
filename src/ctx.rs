@@ -4683,6 +4683,26 @@ mod tests {
     }
 
     #[test]
+    fn goal_log_skips_unchanged_commits_and_records_reverts() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        checkout_unborn_branch(dir.path(), "feature/login");
+        init(dir.path(), "v1").unwrap();
+        init(dir.path(), "v1").unwrap(); // unchanged re-init → no new revision
+        init(dir.path(), "v2").unwrap();
+        init(dir.path(), "v1").unwrap(); // reverting to a prior value IS a change
+        let goals: Vec<_> = git_branch_goal_log(dir.path(), "feature/login")
+            .unwrap()
+            .into_iter()
+            .map(|r| r.goal)
+            .collect();
+        // newest-first: v1 (restored), v2, v1 (original). The unchanged re-init
+        // between the two original v1 writes is collapsed away — only commits
+        // that actually changed the goal appear.
+        assert_eq!(goals, vec!["v1", "v2", "v1"]);
+    }
+
+    #[test]
     fn rm_branch_removes_an_inactive_branch() {
         let dir = tempdir().unwrap();
         git_init(dir.path());
@@ -4745,6 +4765,26 @@ mod tests {
         // HEAD reset to main + unpinned.
         assert_eq!(current_branch(dir.path()), MAIN_BRANCH);
         assert!(!is_pinned(dir.path()));
+    }
+
+    #[test]
+    fn rm_branch_preserves_context_snapshots() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "stale", "explore").unwrap();
+        gcc_checkout(dir.path(), MAIN_BRANCH).unwrap();
+        // A per-commit snapshot (stored on the main ctx ref, keyed by git sha).
+        snapshot_for_commit(dir.path(), "abc12345deadbeef").unwrap();
+
+        rm_branch(dir.path(), "stale", false).unwrap();
+
+        // Removing a branch must not disturb the snapshot history.
+        let repo = ctx_git_repo(dir.path()).unwrap();
+        assert!(
+            ctx_read_file(&repo, "snapshots/abc12345.md").is_some(),
+            "context snapshot must survive a branch rm"
+        );
     }
 
     // ── append_log ────────────────────────────────────────────────────────────

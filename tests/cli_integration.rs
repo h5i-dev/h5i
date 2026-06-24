@@ -2659,3 +2659,178 @@ fn share_push_detects_legacy_conflict_and_advises_migrate() {
         "expected remediation pointing at migrate-remote:\n{combined}"
     );
 }
+
+// ─── recall rm (branch-scoped purge) ─────────────────────────────────────────
+
+/// The commit oids that carry an `refs/h5i/notes` note (path = oid, de-fanned).
+fn h5i_note_commits(repo: &Repo) -> Vec<String> {
+    let out = Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", "refs/h5i/notes"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    if !out.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.replace('/', ""))
+        .collect()
+}
+
+/// A repo with context + notes + objects + msg all scoped to a `feature`
+/// branch, plus a provenance note on a commit shared with `main`.
+/// Returns (repo, shared_commit_oid, feature_unique_commit_oid).
+fn repo_with_feature_data() -> (Repo, String, String) {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+    repo.h5i_ok(&["context", "init", "--goal", "main goal"]);
+    // A note on a commit shared by main and feature.
+    repo.make_commit("a.rs", "fn a() {}", "main seed");
+    let shared = head_oid(&repo);
+
+    run_ok(
+        Command::new("git")
+            .args(["checkout", "-b", "feature"])
+            .current_dir(repo.path()),
+    );
+    // Context DAG materialised on the feature branch.
+    repo.h5i_ok(&["context", "init", "--goal", "feature goal"]);
+    repo.h5i_ok(&["context", "trace", "--kind", "NOTE", "feature work"]);
+    // A note on a commit unique to feature.
+    repo.make_commit("b.rs", "fn b() {}", "feature seed");
+    let unique = head_oid(&repo);
+    // An object capture on feature (a FAILURE → always stored, regardless of size).
+    let _ = repo.h5i(&["capture", "run", "--", "sh", "-c", "echo hi; exit 3"]);
+    // A branch-tagged message.
+    let out = repo
+        .h5i_cmd()
+        .args(["msg", "review", "codex", "please review", "--branch", "feature"])
+        .env("H5I_AGENT", "claude")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "msg send failed: {}", stderr(&out));
+
+    (repo, shared, unique)
+}
+
+#[test]
+fn recall_rm_dry_run_changes_nothing() {
+    let (repo, _shared, unique) = repo_with_feature_data();
+    let notes_before = h5i_note_commits(&repo);
+
+    let out = stdout(&repo.h5i_ok(&["recall", "rm", "feature"]));
+    assert!(out.contains("dry-run"), "expected a dry-run notice:\n{out}");
+    assert!(out.contains("Plan"), "expected a plan header:\n{out}");
+
+    // Everything is still in place.
+    assert!(resolve_ref_in(&repo, "refs/h5i/context/feature").is_some());
+    assert_eq!(h5i_note_commits(&repo), notes_before);
+    assert!(h5i_note_commits(&repo).contains(&unique));
+    let objs = stdout(&repo.h5i(&["recall", "objects"]));
+    assert!(
+        !objs.contains("No captured objects"),
+        "objects kept on dry-run:\n{objs}"
+    );
+}
+
+#[test]
+fn recall_rm_force_purges_feature_but_keeps_main() {
+    let (repo, shared, unique) = repo_with_feature_data();
+
+    let out = stdout(&repo.h5i_ok(&["recall", "rm", "feature", "--force"]));
+    assert!(
+        out.contains("purged branch feature"),
+        "expected purge summary:\n{out}"
+    );
+
+    // Context: feature gone, main survives.
+    assert!(
+        resolve_ref_in(&repo, "refs/h5i/context/feature").is_none(),
+        "feature context removed"
+    );
+    assert!(
+        resolve_ref_in(&repo, "refs/h5i/context/main").is_some(),
+        "main context survives"
+    );
+
+    // Notes: the feature-unique note is gone, the shared note survives.
+    let notes = h5i_note_commits(&repo);
+    assert!(!notes.contains(&unique), "feature-unique note removed");
+    assert!(notes.contains(&shared), "shared (main) note survives");
+
+    // Objects: the feature capture is gone (it was the only one).
+    let objs = stdout(&repo.h5i(&["recall", "objects"]));
+    assert!(
+        objs.contains("No captured objects"),
+        "feature objects removed:\n{objs}"
+    );
+}
+
+#[test]
+fn recall_rm_refuses_primary_branch() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+    let out = repo.h5i(&["recall", "rm", "main"]);
+    assert!(!out.status.success(), "recall rm main must fail");
+    assert!(
+        stderr(&out).contains("refusing to purge"),
+        "expected guard message:\n{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn recall_rm_is_idempotent() {
+    let (repo, _s, _u) = repo_with_feature_data();
+    repo.h5i_ok(&["recall", "rm", "feature", "--force"]);
+    // Second run: nothing remains scoped to feature.
+    let out = stdout(&repo.h5i_ok(&["recall", "rm", "feature"]));
+    assert!(
+        out.contains("nothing to remove"),
+        "expected an empty plan on the second run:\n{out}"
+    );
+}
+
+#[test]
+fn recall_rm_tears_down_environments_forked_from_branch() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+    repo.make_commit("a.rs", "fn a() {}", "seed");
+    run_ok(
+        Command::new("git")
+            .args(["checkout", "-b", "feature"])
+            .current_dir(repo.path()),
+    );
+    // workspace isolation needs no kernel features → safe on any CI host.
+    repo.h5i_ok(&[
+        "env",
+        "create",
+        "fixenv",
+        "--isolation",
+        "workspace",
+        "--profile",
+        "default",
+    ]);
+    assert!(stdout(&repo.h5i(&["env", "list"])).contains("fixenv"));
+
+    let out = stdout(&repo.h5i_ok(&["recall", "rm", "feature", "--force"]));
+    assert!(out.contains("1 env"), "expected an env in the summary:\n{out}");
+
+    assert!(
+        !stdout(&repo.h5i(&["env", "list"])).contains("fixenv"),
+        "env must be torn down"
+    );
+    // No env code branch should remain (agent-agnostic — the creating runtime
+    // may resolve to claude/codex/human depending on the host).
+    let env_branches = Command::new("git")
+        .args(["for-each-ref", "--format=%(refname)", "refs/heads/h5i/env/"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(
+        env_branches.stdout.is_empty(),
+        "env code branches must be deleted, found: {}",
+        String::from_utf8_lossy(&env_branches.stdout)
+    );
+}

@@ -282,6 +282,11 @@ mod tests {
             plan_noun_route(&argv(&["h5i", "recall", "search", "needle", "--json"])),
             NounRoute::Rewritten(argv(&["h5i", "objects", "search", "needle", "--json"]))
         );
+        // `recall rm` routes to the hidden recall-rm command, flags preserved.
+        assert_eq!(
+            plan_noun_route(&argv(&["h5i", "recall", "rm", "feature/x", "--force"])),
+            NounRoute::Rewritten(argv(&["h5i", "recall-rm", "feature/x", "--force"]))
+        );
     }
 
     #[test]

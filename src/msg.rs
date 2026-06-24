@@ -1515,6 +1515,20 @@ mod tests {
     }
 
     #[test]
+    fn remove_branch_scoped_preserves_the_roster() {
+        let (_d, repo, root) = fixture();
+        send_on_branch(&repo, &root, "on feature", "feature/x");
+        let roster_before = read_roster(&repo).agents;
+        assert!(
+            roster_before.contains_key("alice"),
+            "sender must be in the roster"
+        );
+        remove_branch_scoped(&repo, "feature/x").unwrap();
+        // Identity is global, not per-branch: the roster survives the purge.
+        assert_eq!(read_roster(&repo).agents, roster_before);
+    }
+
+    #[test]
     fn broadcast_reaches_everyone_but_sender() {
         let (_d, repo, root) = fixture();
         send(&repo, &root, "alice", BROADCAST, "standup in 5", None).unwrap();
