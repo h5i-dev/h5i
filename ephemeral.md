@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: improve-dispatch
+# Ephemeral traces — Branch: overview-svg
 
