@@ -60,12 +60,12 @@
       .eyebrow{ fill:#2dd4bf; font-size:14px; font-weight:700; letter-spacing:0.22em; }
       .title  { fill:#f4f7fb; font-size:30px; font-weight:700; }
       .sub    { fill:#9aa7b6; font-size:15px; }
-      .stage  { fill:#8a96a6; font-size:11px; font-weight:700; letter-spacing:0.18em; }
-      .agent  { fill:#f4f7fb; font-size:21px; font-weight:700; }
-      .meta   { fill:#8a96a6; font-size:12.5px; }
-      .label  { fill:#e7edf4; font-size:16px; font-weight:700; }
-      .small  { fill:#9aa7b6; font-size:12.5px; }
-      .chip   { fill:#0a0e14; font-size:13px; font-weight:800; }
+      .stage  { fill:#8a96a6; font-size:12.5px; font-weight:700; letter-spacing:0.16em; }
+      .agent  { fill:#f4f7fb; font-size:24px; font-weight:700; }
+      .meta   { fill:#8a96a6; font-size:14px; }
+      .label  { fill:#e7edf4; font-size:18px; font-weight:700; }
+      .small  { fill:#9aa7b6; font-size:14px; }
+      .chip   { fill:#0a0e14; font-size:14.5px; font-weight:800; }
       .ok     { fill:#34d399; font-weight:800; }
       .no     { fill:#ff7a6b; font-weight:800; }
       .loopcap{ fill:#cfe9e3; font-size:12px; font-weight:700; letter-spacing:0.12em; }
@@ -93,12 +93,12 @@
   </path>
 
   <!-- verifier -> result -->
-  <path d="M1018,332 L1062,332" fill="none" stroke="#a78bfa" stroke-width="2.5" stroke-dasharray="9 7" marker-end="url(#aViolet)">
+  <path d="M1040,332 L1084,332" fill="none" stroke="#a78bfa" stroke-width="2.5" stroke-dasharray="9 7" marker-end="url(#aViolet)">
     <animate attributeName="stroke-dashoffset" from="16" to="0" dur="0.8s" repeatCount="indefinite"/>
   </path>
 
   <!-- result -> back to you (the return loop) -->
-  <path d="M1150,398 C1150,536 132,536 132,372" fill="none" stroke="#34d399" stroke-width="2" stroke-opacity="0.55" stroke-dasharray="3 9" stroke-linecap="round" marker-end="url(#aGreen)">
+  <path d="M1172,398 C1172,536 132,536 132,372" fill="none" stroke="#34d399" stroke-width="2" stroke-opacity="0.55" stroke-dasharray="3 9" stroke-linecap="round" marker-end="url(#aGreen)">
     <animate attributeName="stroke-dashoffset" from="24" to="0" dur="1.3s" repeatCount="indefinite"/>
   </path>
   <text x="640" y="524" text-anchor="middle" class="small mono">merged into your repo · refs/h5i/*</text>
@@ -173,7 +173,7 @@
 
   <!-- ============ VERIFIER ============ -->
   <g filter="url(#cardShadow)">
-    <rect x="840" y="232" width="178" height="200" rx="20" fill="url(#panel)" stroke="#5b4b8a"/>
+    <rect x="840" y="232" width="200" height="200" rx="20" fill="url(#panel)" stroke="#5b4b8a"/>
   </g>
   <text x="864" y="266" class="mono stage" fill="#b9a7ff">VERIFIER</text>
   <g transform="translate(858 284) scale(0.82)">
@@ -197,13 +197,13 @@
 
   <!-- ============ RESULT ============ -->
   <g filter="url(#softGlow)">
-    <rect x="1064" y="266" width="160" height="132" rx="20" fill="#0e1a16" stroke="url(#mint)" stroke-width="2"/>
+    <rect x="1086" y="266" width="160" height="132" rx="20" fill="#0e1a16" stroke="url(#mint)" stroke-width="2"/>
   </g>
-  <circle cx="1144" cy="312" r="26" fill="#34d399">
+  <circle cx="1166" cy="312" r="26" fill="#34d399">
     <animate attributeName="r" values="25;27;25" dur="2.4s" repeatCount="indefinite"/>
   </circle>
-  <path d="M1131,312 l9,10 l18,-22" fill="none" stroke="#0a0e14" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="1144" y="362" text-anchor="middle" class="label">verified</text>
-  <text x="1144" y="384" text-anchor="middle" class="small">high-quality output</text>
+  <path d="M1153,312 l9,10 l18,-22" fill="none" stroke="#0a0e14" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="1166" y="362" text-anchor="middle" class="label">verified</text>
+  <text x="1166" y="384" text-anchor="middle" class="small">high-quality output</text>
 
 </svg>
