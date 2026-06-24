@@ -2110,3 +2110,4 @@ _[Checkpoint: 6a3c51a7 — edited README.md; edited docs/_static/hero-team.svg; 
 [22:13:30] ACT: edited docs/_static/hero-team.svg
 [22:13:38] ACT: edited docs/_static/hero-team.svg
 [22:13:46] OBSERVE: read hero6.png
+[22:14:02] THINK: I'll widen the verifier card and nudge the result block right to keep spacing (there's ~56px of right margin to absorb it).
