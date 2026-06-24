@@ -1683,3 +1683,4 @@ _[Checkpoint: 6a3b5705 — edited src/main.rs; edited tests/cli_integration.rs; 
 _[Checkpoint: 6a3b58aa — Add h5i context rm <name>]_
 ---
 
+[04:10:33] THINK: Clippy clean. Let me smoke-test the real CLI against guard paths (no data deleted) and confirm help renders:
