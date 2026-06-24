@@ -1803,3 +1803,4 @@ _[Checkpoint: 6a3b609e — edited src/mcp.rs; edited src/ctx.rs; edited src/mcp.
 _[Checkpoint: 6a3b6633 — Implement h5i recall rm <branch>]_
 ---
 
+[05:08:15] THINK: Before I build this, I need to pin down a few decisions — `recall rm` is destructive and "scoped to a branch" means something different (and riskier) for each ref family.
