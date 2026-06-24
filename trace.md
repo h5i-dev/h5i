@@ -1982,3 +1982,9 @@ _[Checkpoint: 6a3bef6f — edited make_issues.sh; edited make_issues.sh; wrote m
 [14:56:58] ACT: edited src/team.rs
 [14:57:51] NOTE: DEFERRAL: rs` change so the launcher can keep its belt-and-suspenders for now
 [14:57:51] NOTE: PLACEHOLDER: are sealed from the box by design. So h5i already built the workaround you're describing: - **`env::fan_out_to_env_inbox`** (`env.rs:1935`) drops a ju…
+
+
+---
+_[Checkpoint: 6a3bf06f — edited scripts/team-launch.sh; edited src/team.rs; edited src/team.rs]_
+---
+
