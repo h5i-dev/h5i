@@ -22,7 +22,7 @@ Agent ensembles work because **independent attempts beat isolated guesses**. h5i
 > ***Two heads are better than one.***
 
 <p align="center">
-  <img src="./docs/_static/screenshot_sandbox_h5i_3.png" alt="One task fans out to several agents working in sealed sandboxes; the agents peer-review each other; a neutral verifier replays each candidate; one verified result is applied." width="95%">
+  <img src="./docs/_static/hero-team.svg" alt="One task fans out to claude and codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the one verified result is merged back into your repo." width="99%">
 </p>
 
 <table align="center">
@@ -108,6 +108,16 @@ h5i team verify   qsort-demo --agent <agent-id> -- pytest  # id from `team statu
 h5i team finalize qsort-demo                               # explainable verdict (gates + smallest diff)
 h5i team apply    qsort-demo                               # merge the winner, gated on the verdict
 ```
+
+Monitor the status:
+
+```bash
+h5i serve
+```
+
+<p align="center">
+  <img src="./docs/_static/screenshot-team-serve.png" alt="One task fans out to claude and codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the one verified result is merged back into your repo." width="95%">
+</p>
 
 ---
 
