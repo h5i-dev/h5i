@@ -1860,3 +1860,4 @@ _[Checkpoint: 6a3bbcdd — edited tests/cli_integration.rs; edited tests/cli_int
 _[Checkpoint: 6a3bbd52 — edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited tests/cli_integration.rs]_
 ---
 
+[11:22:28] THINK: The changes are staged but not committed — let me know if you'd like me to commit (and whether to also strip the blobs from git history to actually reclaim the ~35 MB from the repo).
