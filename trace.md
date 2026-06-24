@@ -2041,3 +2041,4 @@ _[Checkpoint: 6a3c4995 — edited src/team.rs; edited src/main.rs; edited src/ma
 _[Checkpoint: 6a3c4a76 — edited src/main.rs; edited docs/manual/index.html; edited docs/manual/index.html]_
 ---
 
+[21:22:15] OBSERVE: read MANUAL.md
