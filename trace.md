@@ -1684,3 +1684,9 @@ _[Checkpoint: 6a3b58aa — Add h5i context rm <name>]_
 ---
 
 [04:10:33] THINK: Clippy clean. Let me smoke-test the real CLI against guard paths (no data deleted) and confirm help renders:
+
+
+---
+_[Checkpoint: 6a3b58b9 — edited src/ctx.rs; edited src/ctx.rs; edited MANUAL.md]_
+---
+
