@@ -2064,3 +2064,4 @@ _[Checkpoint: 6a3c4aca — edited README.md; edited docs/index.html; edited docs
 _[Checkpoint: 6a3c4ae4 — edited README.md; edited docs/index.html; edited docs/pitch/index.html]_
 ---
 
+[21:31:45] OBSERVE: read docs/_static/h5i-team.svg
