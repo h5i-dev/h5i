@@ -54,60 +54,60 @@ cargo install --git https://github.com/h5i-dev/h5i h5i-core
 
 ## Run an ensemble (60 seconds)
 
-Initialize h5i and wire the Claude Code / Codex hooks (the `--team` hook keeps each agent alive through the peer-review round):
+Initialize h5i and wire the Claude Code / Codex hooks:
 
 ```bash
 h5i init
 h5i hook setup --write --wrap-bash --team
 ```
 
-Create sandboxed environments:
+Create two sandboxed agent environments:
 
 ```bash
 h5i env create claude-env --profile agent-claude
 h5i env create codex-env  --profile agent-codex
 ```
 
-Create a team, then add each env to the roster (each agent gets an auto-generated id — `h5i team status` shows them):
+Create a team and register both agents:
 
 ```bash
-h5i team create  team-name --base HEAD
-h5i team add-env team-name env/human/claude-env --runtime claude
-h5i team add-env team-name env/human/codex-env  --runtime codex
-h5i team status  team-name                      # note the generated agent ids
+h5i team create  qsort-demo --base HEAD
+h5i team add-env qsort-demo env/human/claude-env --runtime claude
+h5i team add-env qsort-demo env/human/codex-env  --runtime codex
+h5i team status  qsort-demo                                 # note the generated agent ids
 ```
 
-Send the task to each agent:
+Dispatch one task to every agent:
 
 ```bash
 echo "Implement Quick Sort from scratch in Python." > TASK.md
-h5i team dispatch team-name --prompt-file TASK.md
+h5i team dispatch qsort-demo --prompt-file TASK.md
 ```
 
-Launch every agent in its own sandboxed environment (a terminal per env). Each agent automatically starts working on the given task:
+Launch every agent in its own sandboxed environment. Each agent automatically starts working on the dispatched task:
 
 ```bash
-h5i env shell env/human/claude-1 -- claude --dangerously-skip-permissions "$(h5i team bootstrap)"
+# Terminal 1: Claude, running inside its own h5i sandboxed env.
+h5i env shell env/human/claude-env -- claude --dangerously-skip-permissions "$(h5i team bootstrap)"
 ```
 
 ```bash
-h5i env shell env/human/codex-1 -- codex --sandbox danger-full-access "$(h5i team bootstrap)"
+# Terminal 2: Codex, running inside its own h5i sandboxed env.
+h5i env shell env/human/codex-env  -- codex  --sandbox danger-full-access "$(h5i team bootstrap)"
 ```
 
 Each agent peer-reviews, and revises inside its own implementation:
 
 ```bash
-h5i team auto-peer-review team-name              # sync → freeze → mutual grant → instruct
+h5i team auto-peer-review qsort-demo                       # sync → freeze → mutual grant → instruct
 ```
 
 Replay each candidate, run the tests, merge the winner:
 
 ```bash
-# h5i team sync     team-name                              # ingest agents' staged work (no relaunch)
-# h5i team freeze   team-name                              # seal the independent attempts
-h5i team verify   team-name --agent <agent-id> -- pytest   # id from `team status`
-h5i team finalize team-name                                # explainable verdict (gates + smallest diff)
-h5i team apply    team-name                                # merge the winner, gated on the verdict
+h5i team verify   qsort-demo --agent <agent-id> -- pytest  # id from `team status`
+h5i team finalize qsort-demo                               # explainable verdict (gates + smallest diff)
+h5i team apply    qsort-demo                               # merge the winner, gated on the verdict
 ```
 
 ---
