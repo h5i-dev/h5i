@@ -1631,3 +1631,9 @@ _[Checkpoint: 6a3b4dc5 — Implemented h5i recall context unpin CLI support with
 _[Checkpoint: 6a3b4dcc — edited src/main.rs; edited tests/cli_integration.rs; edited MANUAL.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3b4e12 — Committed context unpin command implementation and regression test.]_
+---
+
