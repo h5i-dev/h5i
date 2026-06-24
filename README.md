@@ -54,46 +54,60 @@ cargo install --git https://github.com/h5i-dev/h5i h5i-core
 
 ## Run an ensemble (60 seconds)
 
-Initialize h5i and wire the Claude Code / Codex hooks (the `--team` hook keeps each agent alive through the peer-review round):
+Initialize h5i and wire the Claude Code / Codex hooks:
 
 ```bash
 h5i init
 h5i hook setup --write --wrap-bash --team
 ```
 
-Run the same task across several agents and merge the verified winner.
+Create two sandboxed agent environments:
 
 ```bash
-# 0. create sandboxed environments
 h5i env create claude-env --profile agent-claude
 h5i env create codex-env  --profile agent-codex
-
-# 1. create a run, then add each env to the roster (each agent gets an
-#    auto-generated id — `h5i team status` shows them)
-h5i team create fix-auth --base HEAD
-h5i team add-env fix-auth env/human/claude-env --runtime claude
-h5i team add-env fix-auth env/human/codex-env  --runtime codex
-h5i team status fix-auth                          # note the generated agent ids
-
-# 2. launch every agent in its own sealed box (a terminal per env)
-scripts/team-launch.sh fix-auth --task task.md
-
-# 3. Each agent peer-reviews, and revises inside its box
-h5i team auto-peer-review fix-auth                # sync → freeze → mutual grant → instruct
-# (scripts/team-review.sh fix-auth is the shell equivalent, adds --relaunch)
-
-# 3. the neutral verdict: replay each candidate, run the tests, merge the winner
-# h5i team sync     fix-auth                       # ingest agents' staged work (no relaunch)
-# h5i team freeze   fix-auth                       # seal the independent attempts
-h5i team verify   fix-auth --agent <agent-id> -- cargo test   # id from `team status`
-h5i team finalize fix-auth                       # explainable verdict (gates + smallest diff)
-h5i team apply    fix-auth                       # merge the winner, gated on the verdict
 ```
 
-Or drive the whole cycle hands-off:
+Create a team and register both agents:
 
 ```bash
-scripts/team-run.sh fix-auth --task task.md --verify-cmd "cargo test" --apply
+h5i team create  qsort-demo --base HEAD
+h5i team add-env qsort-demo env/human/claude-env --runtime claude
+h5i team add-env qsort-demo env/human/codex-env  --runtime codex
+h5i team status  qsort-demo                                 # note the generated agent ids
+```
+
+Dispatch one task to every agent:
+
+```bash
+echo "Implement Quick Sort from scratch in Python." > TASK.md
+h5i team dispatch qsort-demo --prompt-file TASK.md
+```
+
+Launch every agent in its own sandboxed environment. Each agent automatically starts working on the dispatched task:
+
+```bash
+# Terminal 1: Claude, running inside its own h5i sandboxed env.
+h5i env shell env/human/claude-env -- claude --dangerously-skip-permissions "$(h5i team bootstrap)"
+```
+
+```bash
+# Terminal 2: Codex, running inside its own h5i sandboxed env.
+h5i env shell env/human/codex-env  -- codex  --sandbox danger-full-access "$(h5i team bootstrap)"
+```
+
+Each agent peer-reviews, and revises inside its own implementation:
+
+```bash
+h5i team auto-peer-review qsort-demo                       # sync → freeze → mutual grant → instruct
+```
+
+Replay each candidate, run the tests, merge the winner:
+
+```bash
+h5i team verify   qsort-demo --agent <agent-id> -- pytest  # id from `team status`
+h5i team finalize qsort-demo                               # explainable verdict (gates + smallest diff)
+h5i team apply    qsort-demo                               # merge the winner, gated on the verdict
 ```
 
 ---
@@ -121,20 +135,7 @@ scripts/team-run.sh fix-auth --task task.md --verify-cmd "cargo test" --apply
 - [Official Website](https://h5i.dev/): project overview, [Pitch Deck](https://h5i.dev/pitch/)
 - [Tutorials](https://h5i.dev/guides/): guided workflows · [Blog](https://h5i.dev/blog/): design notes, audits, case studies
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
-
----
-
-## Contributing
-
-High-impact contributions:
-
-- try h5i on a real AI-assisted repo and file issues with confusing moments
-- run a real agent team and report where the cycle snags
-- improve PR-body presentation and GitHub reviewer workflows
-- add adapters for more test runners and agent tools
-- harden prompt-injection and compliance rules
-
-If the idea matters to you, starring the repo is the fastest way to help more AI-heavy teams find it.
+- [CONTRIBUTING.md](CONTRIBUTING.md): we welcomes contributions of any kind.
 
 ---
 
