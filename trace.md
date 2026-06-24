@@ -1813,3 +1813,9 @@ _[Checkpoint: 6a3b6633 — Implement h5i recall rm <branch>]_
 _[Checkpoint: 6a3b663f — edited src/repository.rs; edited src/repository.rs; edited MANUAL.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3b66b9 — edited src/repository.rs; edited src/repository.rs; edited MANUAL.md]_
+---
+
