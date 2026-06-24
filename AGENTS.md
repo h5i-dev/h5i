@@ -11,11 +11,17 @@ Codex should use `h5i recall context` as shared cross-session memory and `h5i ca
 
 ### Workflow
 
-**At the start of a non-trivial task:**
+**At the start of a non-trivial task**, check the current goal/pin, then (re)set it:
 ```bash
-# If no workspace exists yet, initialize it once:
+h5i recall context goal        # prints the goal + warns if context is PINNED to a stale branch
 h5i recall context init --goal "<one-line task summary>"
 ```
+Run `init` **even if a workspace already exists** — it is idempotent and just
+updates the goal in place (keeping the context branch and milestones). A session
+often resumes with a *stale* goal from a previous task; always re-point it at
+what you are doing now instead of skipping `init` because a workspace exists. If
+`context goal` reports the context is **pinned** to a branch other than the
+current git branch, run `h5i recall context unpin` to resume branch tracking.
 
 **While working:**
 ```bash
