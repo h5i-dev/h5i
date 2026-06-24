@@ -876,10 +876,33 @@ h5i recall context branch experiment/redis-session --purpose "try Redis-backed s
 h5i recall context checkout <name>
 ```
 
-Switch to an existing context branch.
+Switch to an existing context branch. This pins the h5i context branch for the
+current worktree, so subsequent Git branch changes do not automatically move the
+active context.
 
 ```bash
 h5i recall context checkout main
+```
+
+---
+
+#### h5i recall context unpin
+
+```
+h5i recall context unpin
+```
+
+Remove the per-worktree context pin and resume auto-follow. After unpinning, the
+next context write prepares the active h5i context branch to track the current
+Git branch again.
+
+Use this when `h5i recall context goal` or `h5i recall context status` warns that
+context is pinned to a branch other than the current Git branch.
+
+```bash
+h5i recall context goal
+h5i recall context unpin
+h5i recall context init --goal "Current task on this Git branch"
 ```
 
 ---

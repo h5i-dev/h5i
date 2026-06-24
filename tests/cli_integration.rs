@@ -482,6 +482,51 @@ fn context_status_after_init() {
     );
 }
 
+#[test]
+fn context_unpin_resumes_git_branch_auto_follow() {
+    let repo = Repo::new();
+    repo.h5i_ok(&["init"]);
+    repo.h5i_ok(&["context", "init", "--goal", "main goal"]);
+    repo.h5i_ok(&[
+        "context",
+        "branch",
+        "pinned-spike",
+        "--purpose",
+        "explore a pinned branch",
+    ]);
+
+    run_ok(
+        Command::new("git")
+            .args(["checkout", "-b", "feature"])
+            .current_dir(repo.path()),
+    );
+
+    let pinned_goal = repo.h5i_ok(&["context", "goal"]);
+    let pinned = stdout(&pinned_goal);
+    assert!(
+        pinned.contains("PINNED") && pinned.contains("pinned-spike"),
+        "context goal should warn about the stale pin: {pinned}"
+    );
+
+    let out = repo.h5i_ok(&["context", "unpin"]);
+    let s = stdout(&out);
+    assert!(s.contains("unpinned"), "unpin output unexpected: {s}");
+
+    repo.h5i_ok(&["context", "init", "--goal", "feature goal"]);
+    repo.h5i_ok(&["context", "trace", "--kind", "NOTE", "after unpin"]);
+
+    let unpinned_goal = repo.h5i_ok(&["context", "goal"]);
+    let unpinned = stdout(&unpinned_goal);
+    assert!(
+        unpinned.contains("context branch:") && unpinned.contains("feature"),
+        "context goal should report the auto-followed feature context: {unpinned}"
+    );
+    assert!(
+        !unpinned.contains("PINNED"),
+        "context goal should stop warning after unpin and auto-follow: {unpinned}"
+    );
+}
+
 // ─── context trace ──────────────────────────────────────────────────────────
 
 #[test]

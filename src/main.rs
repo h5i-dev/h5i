@@ -1626,6 +1626,10 @@ enum ContextCommands {
     /// silently misroutes new traces), and suggests `context unpin`.
     Goal,
 
+    /// Resume auto-follow: remove the per-worktree context pin so the active
+    /// h5i context branch tracks the current git branch on the next write.
+    Unpin,
+
     /// Print a system prompt for injecting h5i context commands into an agent session
     Prompt,
 
@@ -10775,6 +10779,14 @@ fn main() -> anyhow::Result<()> {
 
                 ContextCommands::Goal => {
                     ctx::print_goal(workdir)?;
+                }
+
+                ContextCommands::Unpin => {
+                    ctx::unpin(workdir)?;
+                    println!(
+                        "{} context unpinned; auto-follow will track the current git branch",
+                        SUCCESS
+                    );
                 }
 
                 ContextCommands::Prompt => {
