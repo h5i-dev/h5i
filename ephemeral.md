@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: auto-review
+# Ephemeral traces — Branch: open-issues
 
