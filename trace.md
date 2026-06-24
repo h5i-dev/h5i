@@ -2047,3 +2047,4 @@ _[Checkpoint: 6a3c4a76 — edited src/main.rs; edited docs/manual/index.html; ed
 [21:22:24] ACT: edited MANUAL.md
 [21:22:32] ACT: edited MANUAL.md
 [21:22:37] ACT: edited man/man1/h5i.1
+[21:22:41] ACT: edited README.md
