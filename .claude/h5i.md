@@ -14,11 +14,20 @@ Apply these automatically, without being asked.
 
 ### Context workspace
 
-**At the start of every non-trivial task:**
+**At the start of every non-trivial task**, check the current goal and pin
+status (cheap — just a goal line), then (re)set the goal:
 ```bash
-# If no workspace exists yet, initialize one:
+h5i recall context goal        # prints the goal + warns if context is PINNED to a stale branch
 h5i recall context init --goal "<one-line summary of what you are about to do>"
 ```
+Run `init` **even if a workspace already exists** — it is idempotent: it updates
+the goal in place and keeps the existing context branch and milestones. A session
+often resumes with a *stale* goal left over from a previous task (the SessionStart
+hook will show it); always re-point the goal at what you are about to do now,
+rather than skipping `init` because a workspace exists. If `context goal` reports
+the context is **pinned** to a branch other than your current git branch, your
+traces are landing on the wrong branch — run `h5i recall context unpin` to resume
+tracking the git branch.
 
 **You do not need to call `h5i recall context trace` yourself.** h5i's hooks derive
 the trace automatically:
