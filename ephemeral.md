@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: open-issues
+# Ephemeral traces — Branch: improve-dispatch
 
