@@ -1624,7 +1624,12 @@ enum ContextCommands {
     /// at the start of a task (before `context init --goal`). Warns when context
     /// is pinned to a branch other than the current git branch (a stale pin that
     /// silently misroutes new traces), and suggests `context unpin`.
-    Goal,
+    Goal {
+        /// Show the full goal history for the current git branch (newest first)
+        /// instead of just the current goal.
+        #[arg(long)]
+        log: bool,
+    },
 
     /// Resume auto-follow: remove the per-worktree context pin so the active
     /// h5i context branch tracks the current git branch on the next write.
@@ -10791,8 +10796,12 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                ContextCommands::Goal => {
-                    ctx::print_goal(workdir)?;
+                ContextCommands::Goal { log } => {
+                    if log {
+                        ctx::print_goal_log(workdir)?;
+                    } else {
+                        ctx::print_goal(workdir)?;
+                    }
                 }
 
                 ContextCommands::Unpin => {

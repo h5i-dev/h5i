@@ -740,13 +740,48 @@ h5i recall context init --goal <text>
 
 Create the context workspace if needed and set the goal for the current Git branch. Run it once per Git branch before writing context on that branch.
 
+`init` is **idempotent** — re-running it on the same Git branch updates the goal in place rather than forking a second workspace, so it is safe (and expected) to run at the start of every task. It also **eagerly creates** the current Git branch's *shadow* context branch (`refs/h5i/context/<git-branch>`) and makes it active, instead of waiting for the first `trace`/`commit` to fork it lazily. This keeps `context status` consistent immediately after `init` (no spurious "git/&lt;branch&gt; has no ctx shadow"). It is a no-op on `main` and when the context is pinned.
+
+Previous goals are not lost: each change is appended to the history of the `main` context ref — see `context goal --log`. Running `init` with no `--goal` leaves the existing goal untouched.
+
 | Option | Description |
 |--------|-------------|
-| `--goal <text>` | Goal for the current Git branch (required before `trace` / `commit`) |
+| `--goal <text>` | Goal for the current Git branch (optional; omit to set up / refresh the workspace without changing the goal) |
 
 ```bash
 h5i recall context init --goal "Build an OAuth2 login system"
 h5i recall context init --goal "Implement retry-safe HTTP client"   # on another Git branch
+```
+
+---
+
+#### h5i recall context goal
+
+```
+h5i recall context goal [--log]
+```
+
+Print just the current goal and pin status for the current Git branch — a cheap, low-token check to run before `context init`. Warns when the context is pinned to a branch other than the current Git branch (a stale pin that silently misroutes new traces).
+
+| Option | Description |
+|--------|-------------|
+| `--log` | Show the full goal history for the current Git branch (every recorded revision, newest first) instead of just the current goal |
+
+The history is mined from the commit history of the `main` context ref, where each Git branch's goal file lives. Only commits that actually *changed* the goal appear, so unrelated milestone/snapshot commits are not shown.
+
+```bash
+h5i recall context goal          # current goal only (default)
+h5i recall context goal --log    # full revision history for this Git branch
+```
+
+```
+Goal history — feature/login (3 revisions)
+  ● c0604766 build login v3 (current)
+      2026-06-24 04:23 UTC
+  ○ 8370f04b build login v2
+      2026-06-24 04:23 UTC
+  ○ 653d8acc build login v1
+      2026-06-24 04:23 UTC
 ```
 
 ---
