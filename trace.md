@@ -1807,3 +1807,9 @@ _[Checkpoint: 6a3b6633 — Implement h5i recall rm <branch>]_
 [05:08:15] THINK: Let me study the storage internals for each family's scoped-merge so I can write the inverse (removal) functions.
 [05:08:15] THINK: Now let me find the env-rm function to reuse, the notes ref/delete machinery, and confirm visibility of the helpers I'll reuse.
 [05:08:15] THINK: Let me restructure to branch `feature/x` off `main` and commit there:
+
+
+---
+_[Checkpoint: 6a3b663f — edited src/repository.rs; edited src/repository.rs; edited MANUAL.md]_
+---
+
