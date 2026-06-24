@@ -90,7 +90,7 @@ pub fn nearest_verb(noun: &str, typo: &str) -> Option<&'static str> {
         "capture" => &["commit", "memory", "run"],
         "recall" => &[
             "log", "blame", "context", "notes", "memory", "recap", "resume",
-            "object", "objects", "search",
+            "object", "objects", "search", "rm",
         ],
         "audit" => &["review", "scan", "compliance", "policy", "vibe"],
         "share" => &[
@@ -160,6 +160,7 @@ pub fn noun_alias(noun: &str, verb: &str) -> Option<&'static [&'static str]> {
         ("recall", "object") => &["objects", "get"],
         ("recall", "objects") => &["objects", "list"],
         ("recall", "search") => &["objects", "search"],
+        ("recall", "rm") => &["recall-rm"],
 
         // ── audit ───────────────────────────────────────────────────────
         ("audit", "review") => &["notes", "review"],

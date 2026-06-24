@@ -962,6 +962,18 @@ enum Commands {
         action: ContextCommands,
     },
 
+    /// (internal) Backs `h5i recall rm` — purge every refs/h5i artifact scoped to
+    /// a branch: its context DAG, its objects/msg records, the notes on commits
+    /// unique to it, and its environments. Dry-run unless `--force`.
+    #[command(name = "recall-rm", hide = true)]
+    RecallRm {
+        /// Git branch whose h5i data to remove.
+        branch: String,
+        /// Actually delete. Without this flag the command only prints a plan.
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Generate a structured handoff briefing to resume an AI session
     Resume {
         /// Branch to resume (defaults to current branch)
@@ -3872,6 +3884,143 @@ fn cmd_setup_remote(remote: &str, dry_run: bool, workdir: &Path) -> anyhow::Resu
 /// `refs/h5i/context` is preserved as `refs/h5i/context-legacy` (create-only —
 /// never clobbering an existing backup), then deleted, then the local
 /// per-branch `refs/h5i/context/*` are pushed in its place.
+/// Backs `h5i recall rm <branch>`: purge every refs/h5i artifact scoped to a
+/// branch — its context DAG, its objects/msg records, the notes on commits
+/// unique to it, and its environments. Dry-run by default; `--force` applies.
+///
+/// The plan is computed up front (before any deletion) so the notes scope —
+/// commits reachable from the branch but no other — is not perturbed by
+/// removing the branch's own env code branches mid-run; the precomputed set is
+/// the conservative (most-protective) one.
+fn cmd_recall_rm(workdir: &Path, branch: &str, force: bool) -> anyhow::Result<()> {
+    if branch == "main" || branch == "master" {
+        anyhow::bail!(
+            "refusing to purge h5i data for the primary branch '{branch}' — \
+             recall rm is for feature/topic branches"
+        );
+    }
+    if let Err(e) = h5i_core::cli_routing::validate_ctx_branch_name(branch) {
+        anyhow::bail!("invalid branch name: {e}");
+    }
+
+    let repo = H5iRepository::open(workdir)?;
+    let git = repo.git();
+    let h5i_root = repo.h5i_root.clone();
+
+    // ── Plan (read-only) ────────────────────────────────────────────────────
+    let ctx_exists = git
+        .find_reference(&h5i_core::ctx::branch_ref(branch))
+        .is_ok();
+    let env_manifests: Vec<h5i_core::env::EnvManifest> = h5i_core::env::list(&h5i_root)
+        .into_iter()
+        .filter(|m| m.parent_branch == branch)
+        .collect();
+    let env_ids: std::collections::HashSet<String> =
+        env_manifests.iter().map(|m| m.id.clone()).collect();
+    let obj_count = h5i_core::objects::branch_scoped_manifests(git, branch, &env_ids).len();
+    let msg_count = h5i_core::msg::count_branch_scoped(git, branch);
+    let unique_commits = h5i_core::repository::unique_commits_for_branch(git, branch)?;
+    let notes_commits = h5i_core::repository::commits_with_notes(git, &unique_commits);
+    let notes_count = notes_commits.len();
+
+    let total =
+        ctx_exists as usize + env_manifests.len() + obj_count + msg_count + notes_count;
+
+    // ── Print the plan ──────────────────────────────────────────────────────
+    println!(
+        "{} {} branch {}",
+        STEP,
+        style(if force { "Removing h5i data for" } else { "Plan — h5i data for" })
+            .cyan()
+            .bold(),
+        style(branch).yellow(),
+    );
+    let line = |label: &str, n: usize, unit: &str| {
+        let mark = if n == 0 {
+            style("·").dim()
+        } else {
+            style("•").cyan()
+        };
+        println!(
+            "  {} {} {:>3} {}",
+            mark,
+            style(format!("{label:<8}")).bold(),
+            n,
+            style(unit).dim(),
+        );
+    };
+    line(
+        "context",
+        ctx_exists as usize,
+        "reasoning branch (refs/h5i/context)",
+    );
+    line(
+        "notes",
+        notes_count,
+        "notes on commits unique to this branch (refs/h5i/notes)",
+    );
+    line("objects", obj_count, "captures (refs/h5i/objects)");
+    line("msg", msg_count, "messages (refs/h5i/msg)");
+    line(
+        "env",
+        env_manifests.len(),
+        "environments (worktree + branches + meta)",
+    );
+
+    if total == 0 {
+        println!(
+            "  {} nothing scoped to {} — nothing to remove",
+            style("✔").green(),
+            style(branch).yellow(),
+        );
+        return Ok(());
+    }
+    if !force {
+        println!();
+        println!(
+            "  {} dry-run — nothing changed. Re-run with {} to apply.",
+            style("ℹ").blue(),
+            style("--force").bold(),
+        );
+        return Ok(());
+    }
+
+    // ── Apply (destructive) ─────────────────────────────────────────────────
+    if ctx_exists {
+        // force=true: remove even if it is the active context branch.
+        h5i_core::ctx::rm_branch(workdir, branch, true)?;
+    }
+    for m in &env_manifests {
+        h5i_core::env::rm(git, &h5i_root, m, true)?;
+    }
+    let removed_obj = h5i_core::objects::remove_branch_scoped(git, branch, &env_ids)?;
+    let removed_msg = h5i_core::msg::remove_branch_scoped(git, branch)?;
+    let removed_notes = h5i_core::repository::remove_notes_for_commits(git, &notes_commits)?;
+
+    let plur = |n: usize| if n == 1 { "" } else { "s" };
+    println!();
+    println!(
+        "{} purged branch {} — {} context, {} note{}, {} object{}, {} message{}, {} env{}",
+        SUCCESS,
+        style(branch).yellow(),
+        ctx_exists as usize,
+        removed_notes,
+        plur(removed_notes),
+        removed_obj,
+        plur(removed_obj),
+        removed_msg,
+        plur(removed_msg),
+        env_manifests.len(),
+        plur(env_manifests.len()),
+    );
+    println!(
+        "  {} local only — run {} to propagate the deletion to a remote",
+        style("·").dim(),
+        style("h5i share push").cyan(),
+    );
+    Ok(())
+}
+
 fn cmd_migrate_remote(remote: &str, dry_run: bool, workdir: &Path) -> anyhow::Result<()> {
     println!(
         "{} {} on {}",
@@ -4464,10 +4613,17 @@ fn noun_table(noun: &str) -> (&'static str, &'static [NounVerb], &'static [&'sta
                     legacy: "(new)",
                     example: "h5i recall objects --limit 20",
                 },
+                NounVerb {
+                    verb: "rm",
+                    summary: "Purge all h5i data scoped to a branch (context, notes, objects, msg, env). Dry-run unless --force.",
+                    legacy: "(new)",
+                    example: "h5i recall rm feature/login\n      h5i recall rm feature/login --force",
+                },
             ],
             &[
                 "Tip: legacy top-level forms (`h5i log`, `h5i blame`, …) still work — they print a one-line deprecation hint.",
                 "MCP equivalents: h5i_log, h5i_blame, h5i_context_show, h5i_notes_show.",
+                "`recall rm` is local + irreversible (notes scoped to commits unique to the branch); share the deletion with `h5i share push` afterwards.",
             ],
         ),
         "audit" => (
@@ -4792,6 +4948,10 @@ fn main() -> anyhow::Result<()> {
         Commands::Recall { .. } => {
             print_noun_help("recall");
             std::process::exit(0);
+        }
+        Commands::RecallRm { branch, force } => {
+            let workdir = std::env::current_dir()?;
+            cmd_recall_rm(&workdir, &branch, force)?;
         }
         Commands::Audit { .. } => {
             print_noun_help("audit");

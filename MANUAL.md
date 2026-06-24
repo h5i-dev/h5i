@@ -1550,6 +1550,50 @@ h5i recall object <id> --manifest         # the full manifest JSON record
 
 Handles accept the short id, a full `sha256:<hex>`, or any unambiguous prefix.
 
+### h5i recall rm
+
+```bash
+h5i recall rm <branch>            # dry-run: print what WOULD be removed
+h5i recall rm <branch> --force    # actually remove it
+```
+
+Purge **every** `refs/h5i/*` artifact scoped to a branch in one shot — the
+inverse of `h5i share push --branch <b>`. It removes, scoped to `<branch>`:
+
+| Family | What is removed | Scoping rule |
+|--------|-----------------|--------------|
+| context | `refs/h5i/context/<branch>` reasoning DAG | the branch's own ref (per-commit snapshots are preserved) |
+| notes | `refs/h5i/notes` provenance | **only** commits reachable from `<branch>` but no other branch — shared provenance is never touched |
+| objects | `refs/h5i/objects` captures | manifests tagged with the branch, plus the evidence of envs forked from it |
+| msg | `refs/h5i/msg` messages | messages tagged with the branch (free-text/global messages stay; the roster is preserved) |
+| env | worktree + code/reasoning branches + `refs/h5i/env/meta` records | each environment forked from the branch (full `h5i env rm`) |
+
+**Safety:**
+
+- **Dry-run by default.** Without `--force` it only prints a per-family plan and
+  changes nothing.
+- **Notes are scoped to commits *unique* to the branch.** A commit also
+  reachable from `main` (or any other live branch) keeps its note, so a purge
+  never strips provenance another branch still relies on.
+- It **refuses `main`/`master`** — `recall rm` is for feature/topic branches.
+- It is **local and irreversible.** If the branch's data was already shared,
+  delete it on the remote too — run `h5i share push` afterwards to propagate the
+  deletion (a later `share pull` would otherwise re-fetch what survives there).
+
+```
+➜  Plan — h5i data for branch feature/login
+  • context    1 reasoning branch (refs/h5i/context)
+  • notes      3 notes on commits unique to this branch (refs/h5i/notes)
+  • objects    7 captures (refs/h5i/objects)
+  • msg        2 messages (refs/h5i/msg)
+  • env        1 environments (worktree + branches + meta)
+
+  ℹ dry-run — nothing changed. Re-run with --force to apply.
+```
+
+To remove *only* a stale reasoning branch (not the rest), use the narrower
+`h5i recall context rm <name>` instead.
+
 ### Structured output
 
 `h5i capture run` emits a normalized, AI-friendly **structured result** by

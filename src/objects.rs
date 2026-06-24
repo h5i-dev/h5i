@@ -801,6 +801,88 @@ pub fn read_manifests(repo: &Repository) -> Vec<Manifest> {
         .collect()
 }
 
+/// Predicate: is this manifest scoped to `branch`? True when it was captured on
+/// the branch directly, or it is the evidence of an env in `env_ids` (env
+/// captures are tagged with the env's own branch, so a plain branch match misses
+/// them — mirrors [`build_branch_scoped_merge`]).
+fn manifest_on_branch(m: &Manifest, branch: &str, env_ids: &HashSet<String>) -> bool {
+    m.branch.as_deref() == Some(branch)
+        || m.env_id.as_deref().is_some_and(|e| env_ids.contains(e))
+}
+
+/// The local manifests scoped to `branch` — i.e. the records `h5i recall rm`
+/// would drop. Read-only; used for the dry-run plan.
+pub fn branch_scoped_manifests(
+    repo: &Repository,
+    branch: &str,
+    env_ids: &HashSet<String>,
+) -> Vec<Manifest> {
+    read_manifests(repo)
+        .into_iter()
+        .filter(|m| manifest_on_branch(m, branch, env_ids))
+        .collect()
+}
+
+/// Rewrite `refs/h5i/objects`, keeping only the manifests **not** scoped to
+/// `branch`. Returns the number of manifests removed (0 ⇒ the ref is left
+/// untouched). The ref is advanced (not deleted) even when the log becomes
+/// empty, so it stays valid and shareable. The on-disk raw blobs that the
+/// dropped manifests pointed at are left for `h5i objects gc` to reclaim.
+pub fn remove_branch_scoped(
+    repo: &Repository,
+    branch: &str,
+    env_ids: &HashSet<String>,
+) -> Result<usize, H5iError> {
+    const MAX_ATTEMPTS: usize = 64;
+    let message = format!("h5i recall rm: drop objects scoped to branch {branch}");
+
+    for _ in 0..MAX_ATTEMPTS {
+        let tip = repo.refname_to_id(OBJECTS_REF).ok();
+        let parent = match tip {
+            Some(oid) => Some(repo.find_commit(oid)?),
+            None => return Ok(0), // no objects ref → nothing to remove
+        };
+        let base_tree = parent.as_ref().and_then(|c| c.tree().ok());
+
+        let all: Vec<Manifest> = read_blob_from_tree(repo, base_tree.as_ref(), MANIFESTS_FILE)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str::<Manifest>(l).ok())
+            .collect();
+        let total = all.len();
+        let kept: Vec<Manifest> = all
+            .into_iter()
+            .filter(|m| !manifest_on_branch(m, branch, env_ids))
+            .collect();
+        let removed = total - kept.len();
+        if removed == 0 {
+            return Ok(0);
+        }
+
+        let mut log = String::new();
+        for m in &kept {
+            log.push_str(&serde_json::to_string(m)?);
+            log.push('\n');
+        }
+        let tree_oid = build_tree(repo, base_tree.as_ref(), &[(MANIFESTS_FILE, &log)])?;
+        let tree = repo.find_tree(tree_oid)?;
+        let sig = signature(repo)?;
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+        let new_oid = repo.commit(None, &sig, &sig, &message, &tree, &parents)?;
+
+        let cas_ok = repo
+            .reference_matching(OBJECTS_REF, new_oid, true, tip.unwrap(), &message)
+            .is_ok();
+        if cas_ok {
+            return Ok(removed);
+        }
+    }
+    Err(H5iError::Internal(format!(
+        "h5i recall rm: objects ref could not be rewritten after {MAX_ATTEMPTS} attempts"
+    )))
+}
+
 /// Resolve a user-supplied handle to a manifest. Accepts the short id, the full
 /// `sha256:<hex>` form, or any unambiguous hex prefix. Returns the most recent
 /// match when an id repeats (same content captured twice).
@@ -2714,6 +2796,50 @@ mod tests {
             .filter(|l| !l.trim().is_empty())
             .map(|l| serde_json::from_str::<Manifest>(l).unwrap().branch)
             .collect()
+    }
+
+    #[test]
+    fn remove_branch_scoped_drops_only_that_branch() {
+        let (_d, repo, _h5i_root) = setup();
+        append_manifest(&repo, &manifest_on('a', Some("main"))).unwrap();
+        append_manifest(&repo, &manifest_on('b', Some("feature"))).unwrap();
+        append_manifest(&repo, &manifest_on('c', None)).unwrap();
+
+        let removed = remove_branch_scoped(&repo, "feature", &no_envs()).unwrap();
+        assert_eq!(removed, 1);
+        let tip = repo.refname_to_id(OBJECTS_REF).unwrap();
+        // main + the untagged capture survive, in their original order.
+        assert_eq!(
+            branches_in_commit(&repo, tip),
+            vec![Some("main".to_string()), None]
+        );
+    }
+
+    #[test]
+    fn remove_branch_scoped_is_noop_when_nothing_matches() {
+        let (_d, repo, _h5i_root) = setup();
+        append_manifest(&repo, &manifest_on('a', Some("main"))).unwrap();
+        let before = repo.refname_to_id(OBJECTS_REF).unwrap();
+        assert_eq!(remove_branch_scoped(&repo, "feature", &no_envs()).unwrap(), 0);
+        // The ref must be left exactly as it was (no empty advancing commit).
+        assert_eq!(repo.refname_to_id(OBJECTS_REF).unwrap(), before);
+    }
+
+    #[test]
+    fn remove_branch_scoped_also_drops_env_evidence_by_env_id() {
+        let (_d, repo, _h5i_root) = setup();
+        let mut env_cap = manifest_on('a', Some("h5i/env/claude/fix"));
+        env_cap.env_id = Some("env/claude/fix".to_string());
+        append_manifest(&repo, &env_cap).unwrap();
+        append_manifest(&repo, &manifest_on('b', Some("main"))).unwrap();
+
+        let mut envs = HashSet::new();
+        envs.insert("env/claude/fix".to_string());
+        // The env's evidence is removed even though its branch != "feature".
+        let removed = remove_branch_scoped(&repo, "feature", &envs).unwrap();
+        assert_eq!(removed, 1);
+        let tip = repo.refname_to_id(OBJECTS_REF).unwrap();
+        assert_eq!(branches_in_commit(&repo, tip), vec![Some("main".to_string())]);
     }
 
     #[test]
