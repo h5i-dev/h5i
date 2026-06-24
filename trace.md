@@ -1962,3 +1962,4 @@ _[Checkpoint: 6a3be17f — wrote make_issues.sh; edited make_issues.sh; edited m
 _[Checkpoint: 6a3be44f — edited make_issues.sh; edited make_issues.sh; wrote make_test_issues.sh]_
 ---
 
+[14:52:31] OBSERVE: read src/env.rs
