@@ -1846,3 +1846,4 @@ _[Checkpoint: 6a3b6994 — Add edge-case + integration tests for recall rm and g
 _[Checkpoint: 6a3b69a1 — edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited tests/cli_integration.rs]_
 ---
 
+[11:17:49] THINK: Let me pin down exactly which **image/video** files are referenced (the server embed and markdown/docs).
