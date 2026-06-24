@@ -1954,3 +1954,4 @@ _[Checkpoint: 6a3be17f — wrote make_issues.sh; edited make_issues.sh; edited m
 
 [13:58:47] ACT: wrote make_test_issues.sh
 [14:06:06] THINK: But if you'd rather consolidate the five `pulumi-*` variants into separate issues (rtk ships them as five files), say the word and I'll split #194.
+[14:06:06] THINK: Let me pull the exact public API names so each issue references real functions, then generate.
