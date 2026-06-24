@@ -1644,3 +1644,9 @@ _[Checkpoint: 6a3b4e14 — edited src/main.rs; edited tests/cli_integration.rs; 
 ---
 
 [03:28:44] NOTE: DEFERRAL (~/Dev/h5i/.claude/h5i.md): — read-only `status`/`goal` don't trigger the switch. The next time any agent writes context, it'll create/switch to the shadow for the current git …
+
+
+---
+_[Checkpoint: 6a3b4eec — edited src/main.rs; edited tests/cli_integration.rs; edited MANUAL.md]_
+---
+
