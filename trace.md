@@ -2081,3 +2081,9 @@ _[Checkpoint: 6a3c4e89 — Animated team hero SVG]_
 ---
 
 [21:39:33] THINK: Let me build a new, polished animated hero SVG focused on the `team` peer-review loop, with genuine motion (flowing dashes + traveling light particles around the claude⇄codex review cycle).
+
+
+---
+_[Checkpoint: 6a3c4e95 — edited docs/_static/hero-team.svg; edited docs/_static/hero-team.svg; edited README.md]_
+---
+
