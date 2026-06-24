@@ -1674,3 +1674,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a3b58aa — 2026-06-24 04:10 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+ctx::rm_branch (guards: main/env/active+force, snapshots preserved, share-resurrection caveat); Rm subcommand + dispatch in main.rs; status-sync hint now suggests 'context rm'; 5 unit tests; MANUAL.md section. clippy+ctx lib tests green.
+
+---
+

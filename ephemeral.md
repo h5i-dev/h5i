@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: prompt-score
+# Ephemeral traces — Branch: rm-ctx
 
