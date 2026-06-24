@@ -1578,3 +1578,9 @@ _[Checkpoint: 6a3b4b49 — added SECURITY.md; added CONTRIBUTING.md]_
 ---
 
 [03:16:34] OBSERVE: searched src for "run|wrap-bash""
+
+
+---
+_[Checkpoint: 6a3b4c12 — Committed SECURITY.md and CONTRIBUTING.md with h5i provenance.]_
+---
+
