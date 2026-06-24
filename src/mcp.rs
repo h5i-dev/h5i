@@ -2141,6 +2141,10 @@ mod tests {
             cfg.set_str("user.name", "Test").unwrap();
             cfg.set_str("user.email", "test@test.com").unwrap();
         }
+        // Pin a deterministic default branch (the host's init.defaultBranch
+        // varies — CI uses `master`) so the initial commit lands on `main` and
+        // eager-create at `context init` keeps the active shadow on `main`.
+        repo.set_head("refs/heads/main").unwrap();
         // Write a file and make an initial commit so HEAD resolves.
         fs::write(path.join("hello.rs"), "fn main() {}").unwrap();
         let sig = git2::Signature::now("Test", "test@test.com").unwrap();

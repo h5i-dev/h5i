@@ -4461,7 +4461,13 @@ mod tests {
 
     /// Create a bare-minimum git repo in `dir` so ctx functions can discover it.
     fn git_init(dir: &Path) {
-        Repository::init(dir).expect("failed to init git repo");
+        let repo = Repository::init(dir).expect("failed to init git repo");
+        // Pin a deterministic default branch. The host's `init.defaultBranch`
+        // varies (CI uses `master`), and eager-create at `context init` now
+        // follows the *git* branch — so without this these tests would assert
+        // `main` while the active shadow became `master`.
+        repo.set_head("refs/heads/main")
+            .expect("failed to set HEAD to main");
     }
 
     // ── init / is_initialized ─────────────────────────────────────────────────
