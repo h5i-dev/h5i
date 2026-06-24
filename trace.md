@@ -1739,3 +1739,9 @@ _[Checkpoint: 6a3b5c77 — Eager-create shadow at init + context goal --log]_
 _[Checkpoint: 6a3b5c81 — edited src/ctx.rs; edited src/ctx.rs; edited MANUAL.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3b5cba — edited src/ctx.rs; edited src/ctx.rs; edited MANUAL.md]_
+---
+
