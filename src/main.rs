@@ -2199,6 +2199,23 @@ enum TeamCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Open the peer-review round in one shot: sync staged work, freeze the
+    /// round, grant every agent mutual review access, and send each the
+    /// review-and-revise instruction. Native equivalent of
+    /// `scripts/team-review.sh`.
+    AutoPeerReview {
+        /// Team id (defaults to the current team — see `team use`)
+        team: Option<String>,
+        /// Comma-separated artifact kinds to grant (diff,summary,tests,test-status)
+        #[arg(long, default_value = "diff,summary,tests")]
+        artifacts: String,
+        /// Freeze even if some agents have not submitted (seals a partial round)
+        #[arg(long)]
+        allow_missing: bool,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Record a review body for a target candidate
     Review {
         #[command(subcommand)]
@@ -9909,6 +9926,75 @@ fn main() -> anyhow::Result<()> {
                             reviewer,
                             target,
                             grant.artifact_ids.join(", ")
+                        );
+                    }
+                }
+                TeamCommands::AutoPeerReview { team, artifacts, allow_missing, json } => {
+                    let team = h5i_core::team::resolve_run(&h5i_root, team)?;
+                    let kinds: Vec<String> = artifacts
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    let report = h5i_core::team::auto_peer_review(
+                        git,
+                        &h5i_root,
+                        &team,
+                        kinds,
+                        allow_missing,
+                        &actor,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        println!(
+                            "{} opened peer review for '{}' (round {}) — reviewers: {}",
+                            SUCCESS,
+                            report.run_id,
+                            report.round,
+                            report.reviewers.join(", ")
+                        );
+                        let excluded: Vec<&String> = report
+                            .agents
+                            .iter()
+                            .filter(|a| !report.reviewers.contains(a))
+                            .collect();
+                        if !excluded.is_empty() {
+                            println!(
+                                "  {} excluded (no round-{} submission): {}",
+                                STEP,
+                                report.round,
+                                excluded
+                                    .iter()
+                                    .map(|s| s.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            );
+                        }
+                        if report.ingested > 0 {
+                            println!("  {} ingested {} staged submission(s)", STEP, report.ingested);
+                        }
+                        println!(
+                            "  {} {} ({})",
+                            STEP,
+                            if report.froze { "froze the round" } else { "already frozen" },
+                            report.phase
+                        );
+                        println!(
+                            "  {} granted {} mutual review access ({})",
+                            STEP,
+                            report.grants.len(),
+                            report.artifact_kinds.join(",")
+                        );
+                        println!(
+                            "  {} sent {} review instruction(s)",
+                            STEP,
+                            report.instruction_message_ids.len()
+                        );
+                        println!(
+                            "Inspect: h5i team status {0}   ·   h5i team compare {0}",
+                            report.run_id
                         );
                     }
                 }

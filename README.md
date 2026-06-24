@@ -79,7 +79,8 @@ h5i team status fix-auth                          # note the generated agent ids
 scripts/team-launch.sh fix-auth --task task.md
 
 # 3. Each agent peer-reviews, and revises inside its box
-scripts/team-review.sh fix-auth
+h5i team auto-peer-review fix-auth                # sync → freeze → mutual grant → instruct
+# (scripts/team-review.sh fix-auth is the shell equivalent, adds --relaunch)
 
 # 3. the neutral verdict: replay each candidate, run the tests, merge the winner
 # h5i team sync     fix-auth                       # ingest agents' staged work (no relaunch)
