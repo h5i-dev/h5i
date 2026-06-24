@@ -924,6 +924,9 @@ pub fn dispatch(
                 ..Default::default()
             },
         )?;
+        // Reach a confined agent too: the box can't read the shared msg store,
+        // so also drop the task into its per-env read-only inbox.
+        crate::env::fan_out_to_env_inbox(h5i_root, &agent.agent_id, Some(run_id), &message);
         sent.push(message);
     }
     let ev = event(
@@ -2338,6 +2341,18 @@ mod tests {
         assert_eq!(sent.len(), 2);
         assert!(sent.iter().all(|m| m.kind.as_deref() == Some("ASK")));
 
+        // Dispatch fans the task into every confined agent's per-env read-only
+        // inbox, so a boxed agent receives its task without reading the shared
+        // store (the only delivery path a sealed box can see).
+        for agent in ["codex-fix", "claude-fix"] {
+            let inbox = crate::env::env_inbox_for_agent(h5i_root, agent, Some("run3"))
+                .expect("agent env inbox should resolve");
+            let queued = crate::env::read_env_inbox(&inbox);
+            assert_eq!(queued.len(), 1, "{agent} should have the dispatched task");
+            assert_eq!(queued[0].kind.as_deref(), Some("ASK"));
+            assert_eq!(queued[0].body, "do the task");
+        }
+
         let grant = grant_review(
             &repo,
             h5i_root,
@@ -2354,12 +2369,16 @@ mod tests {
 
         // Send-time fan-out: the request also lands in the reviewer's per-env
         // read-only inbox, so a *confined* reviewer receives it without ever
-        // reading the shared store.
+        // reading the shared store. The reviewer now holds both the dispatched
+        // task (ASK) and this review request.
         let inbox = crate::env::env_inbox_for_agent(h5i_root, "claude-fix", Some("run3"))
             .expect("reviewer env inbox should resolve");
         let queued = crate::env::read_env_inbox(&inbox);
-        assert_eq!(queued.len(), 1);
-        assert_eq!(queued[0].to, "claude-fix");
+        assert_eq!(queued.len(), 2);
+        assert!(queued.iter().all(|m| m.to == "claude-fix"));
+        assert!(queued
+            .iter()
+            .any(|m| m.kind.as_deref() == Some("REVIEW_REQUEST")));
 
         let review = submit_review(
             &repo,

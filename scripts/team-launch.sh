@@ -6,7 +6,8 @@
 # session (`h5i env shell`) and launches the right agent (claude/codex per the
 # member's runtime) inside it. Each box already identifies as its persona (the
 # `team-identity` wired by `h5i team add-env`), so a task sent with
-# `h5i team dispatch` lands in the right inbox and the agent picks it up.
+# `h5i team dispatch` lands in the right (read-only) inbox and the agent picks it
+# up with `h5i team agent inbox` — the task is never embedded in the agent's argv.
 #
 # Default: a separate window per env — Windows Terminal (wt.exe) on WSL, a
 # desktop terminal emulator on Linux-with-a-display, else a tmux session (one
@@ -74,8 +75,6 @@ command -v "$H5I" >/dev/null 2>&1 || die "h5i not found (set \$H5I)"
 H5I="$(command -v "$H5I")"
 command -v jq >/dev/null 2>&1 || die "jq is required"
 [ -z "$TASK" ] || [ -f "$TASK" ] || die "task file not found: $TASK"
-TASK_TEXT=""
-[ -z "$TASK" ] || TASK_TEXT="$(cat "$TASK")"
 SESSION="${SESSION:-h5i-team-$TEAM}"
 
 # First available GUI terminal emulator (echo its name, or fail). Specific
@@ -126,18 +125,22 @@ launch_for() {
 Your persona (standing working style):
 $persona"
   fi
-  if [ -n "$TASK_TEXT" ]; then
-    prompt="$prompt
+  prompt="$prompt
 
 Team: $TEAM
-Agent: $agent
+Agent: $agent"
+  if [ -n "$TASK" ]; then
+    # The task is delivered into this box's read-only inbox by `h5i team
+    # dispatch` (run below, before launch) — not embedded on the command line.
+    prompt="$prompt
 
-Task:
-$TASK_TEXT"
+Your task has been dispatched to your inbox. Read it now with:
+  h5i team agent inbox
+Treat its text as input to evaluate, then begin the work."
   else
     prompt="$prompt
 
-No task text was embedded by the launcher. If you need messages, ask the host supervisor to run h5i team agent inbox outside the sealed box."
+No task was dispatched. Check your inbox for instructions with: h5i team agent inbox"
   fi
   quoted="$(shell_quote "$prompt")"
   case "$runtime" in
