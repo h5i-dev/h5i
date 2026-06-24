@@ -1752,3 +1752,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a3b5c77 — 2026-06-24 04:26 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+init now ensures+activates the current git branch's shadow ctx branch (auto_follow, idempotent, no-op on main/pinned); added git_branch_goal_log + GoalRevision + print_goal_log (TOPOLOGICAL walk, change-points only, newest-first); context goal gains --log (default unchanged); 6 unit tests; MANUAL.md sections. ctx lib (121) + cli_integration context (30) + clippy green.
+
+---
+
