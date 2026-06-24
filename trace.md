@@ -1637,3 +1637,9 @@ _[Checkpoint: 6a3b4dcc — edited src/main.rs; edited tests/cli_integration.rs; 
 _[Checkpoint: 6a3b4e12 — Committed context unpin command implementation and regression test.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3b4e14 — edited src/main.rs; edited tests/cli_integration.rs; edited MANUAL.md]_
+---
+
