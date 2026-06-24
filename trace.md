@@ -1931,3 +1931,4 @@ _[Checkpoint: 6a3bc2ca — Hardened auto-peer-review + filled test gaps]_
 _[Checkpoint: 6a3bc2db — edited src/team.rs; edited src/team.rs; edited src/team.rs]_
 ---
 
+[11:44:01] THINK: On branch `auto-review` (not main), so I'll commit directly.
