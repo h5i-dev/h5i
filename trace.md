@@ -1886,3 +1886,4 @@ _[Checkpoint: 6a3bbee2 — edited README.md]_
 [11:32:38] OBSERVE: read src/main.rs
 [11:32:47] OBSERVE: read src/team.rs
 [11:32:52] OBSERVE: read src/team.rs
+[11:33:17] OBSERVE: read src/msg.rs
