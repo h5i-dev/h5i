@@ -1804,3 +1804,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a3b6633 — 2026-06-24 05:08 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Branch-scoped purge of all refs/h5i data: ctx (rm_branch), notes (unique-to-branch commits only via repository::unique_commits_for_branch/commits_with_notes/remove_notes_for_commits), objects (objects::remove_branch_scoped + branch_scoped_manifests, env-evidence aware), msg (msg::remove_branch_scoped/count_branch_scoped), env (full env::rm per parent_branch). Dry-run default, --force applies. CLI: recall-rm hidden cmd + cli_routing alias + verb help. 9 unit tests + MANUAL.md. Decisions: notes=unique-only, dry-run default, env=full teardown. Verified e2e (shared note survives, unique removed). clippy clean; only pre-existing host-gated env_lifecycle_over_mcp fails.
+
+---
+
