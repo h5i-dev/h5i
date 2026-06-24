@@ -1675,3 +1675,4 @@ _[Checkpoint: 6a3b5705 — edited src/main.rs; edited tests/cli_integration.rs; 
 [04:08:08] OBSERVE: read src/ctx.rs
 [04:08:24] ACT: edited src/ctx.rs
 [04:08:44] ACT: edited src/ctx.rs
+[04:09:54] OBSERVE: read MANUAL.md
