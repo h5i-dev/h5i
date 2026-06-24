@@ -1571,3 +1571,9 @@ _[Checkpoint: 6a3b0f22 — edited src/main.rs; edited src/main.rs; edited .claud
 _[Checkpoint: 6a3b4b43 — Added detailed SECURITY.md and CONTRIBUTING.md covering reporting, security model, sandbox limits, contributor workflow, tests, docs, and review standards.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3b4b49 — added SECURITY.md; added CONTRIBUTING.md]_
+---
+
