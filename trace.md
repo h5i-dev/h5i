@@ -2044,3 +2044,4 @@ _[Checkpoint: 6a3c4a76 — edited src/main.rs; edited docs/manual/index.html; ed
 [21:22:15] OBSERVE: read MANUAL.md
 [21:22:19] OBSERVE: read man/man1/h5i.1
 [21:22:19] OBSERVE: read README.md
+[21:22:24] ACT: edited MANUAL.md
