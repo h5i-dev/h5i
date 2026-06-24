@@ -110,6 +110,16 @@ h5i team finalize qsort-demo                               # explainable verdict
 h5i team apply    qsort-demo                               # merge the winner, gated on the verdict
 ```
 
+Monitor the status:
+
+```bash
+h5i serve
+```
+
+<p align="center">
+  <img src="./docs/_static/screenshot-team-serve.png" alt="One task fans out to claude and codex in sealed sandboxes; they peer-review each other in a continuous loop; a neutral verifier replays and tests every candidate; the one verified result is merged back into your repo." width="95%">
+</p>
+
 ---
 
 
