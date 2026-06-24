@@ -1771,3 +1771,4 @@ _[Checkpoint: 6a3b609e — edited src/mcp.rs; edited src/ctx.rs; edited src/mcp.
 [04:50:28] OBSERVE: read src/cli_routing.rs
 [04:51:03] OBSERVE: read src/repository.rs
 [04:52:33] ACT: edited src/repository.rs
+[04:52:37] OBSERVE: read src/objects.rs
