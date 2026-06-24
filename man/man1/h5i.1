@@ -691,9 +691,13 @@ Finalize-only \(em never auto-applies. Leases are idempotent + TTL'd; for
 production prefer an external scheduler driving
 .BR \-\-once .
 .TP
-.BI "dispatch " "TEAM " "\-\-prompt-file F"
+.BI "dispatch " "TEAM " "[\-\-prompt-file F]"
 Send the task to every roster agent at once over
 .BR "h5i msg" " (no per-env pasting)."
+The task prompt is read from standard input by default
+.RB ( "h5i team dispatch TEAM < TASK.md" );
+.B \-\-prompt-file
+reads it from a named file instead.
 Notifies, does not launch: the shared message log and cursors are host-owned
 coordination state. For normal interactive runs use
 .B scripts/team-launch.sh --task
