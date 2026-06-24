@@ -1840,3 +1840,9 @@ _[Checkpoint: 6a3b66b9 — edited src/repository.rs; edited src/repository.rs; e
 _[Checkpoint: 6a3b6994 — Add edge-case + integration tests for recall rm and goal-log]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3b69a1 — edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited tests/cli_integration.rs]_
+---
+
