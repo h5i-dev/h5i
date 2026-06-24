@@ -1942,3 +1942,4 @@ _[Checkpoint: 6a3bc301 — edited src/team.rs; edited src/team.rs; edited src/te
 [13:52:46] ACT: edited make_issues.sh
 [13:52:47] ACT: edited make_issues.sh
 [13:54:07] THINK: Let me compute the precise gap and check the existing test structure for the test-coverage issues.
+[13:54:07] THINK: h5i natively handles pytest/cargo/git-diff in Rust (not TOML), so I'll exclude those.
