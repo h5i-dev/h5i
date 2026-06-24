@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: rm-ctx
+# Ephemeral traces — Branch: auto-review
 
