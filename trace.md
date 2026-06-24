@@ -1980,3 +1980,4 @@ _[Checkpoint: 6a3bef6f — edited make_issues.sh; edited make_issues.sh; wrote m
 [14:56:38] OBSERVE: read src/team.rs
 [14:56:51] ACT: edited src/team.rs
 [14:56:58] ACT: edited src/team.rs
+[14:57:51] NOTE: DEFERRAL: rs` change so the launcher can keep its belt-and-suspenders for now
