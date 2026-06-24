@@ -1988,3 +1988,4 @@ _[Checkpoint: 6a3bef6f — edited make_issues.sh; edited make_issues.sh; wrote m
 _[Checkpoint: 6a3bf06f — edited scripts/team-launch.sh; edited src/team.rs; edited src/team.rs]_
 ---
 
+[14:58:58] NOTE: DEFERRAL (~/Dev/h5i/src/team.rs): uivalent), `bash -n` clean. One thing worth flagging for a follow-up if you want belt-and-suspenders: the launcher still passes `--task` only when giv…
