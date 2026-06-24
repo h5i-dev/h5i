@@ -1630,6 +1630,20 @@ enum ContextCommands {
     /// h5i context branch tracks the current git branch on the next write.
     Unpin,
 
+    /// Permanently remove a context (reasoning) branch
+    /// (`refs/h5i/context/<name>`) — the safe counterpart to deleting the ref
+    /// by hand. Refuses `main`, an env-owned `env/…` branch, and (without
+    /// `--force`) the active branch. Per-commit workspace snapshots
+    /// (`context restore`/`diff`) are preserved. Local only: if the branch was
+    /// shared, delete it on the remote too or `share pull` will resurrect it.
+    Rm {
+        /// Context branch name to remove (e.g. `improve-shell`, `scope/foo`)
+        name: String,
+        /// Remove even if it is the active branch (resets HEAD to main + unpins)
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Print a system prompt for injecting h5i context commands into an agent session
     Prompt,
 
@@ -10786,6 +10800,34 @@ fn main() -> anyhow::Result<()> {
                     println!(
                         "{} context unpinned; auto-follow will track the current git branch",
                         SUCCESS
+                    );
+                }
+
+                ContextCommands::Rm { name, force } => {
+                    let outcome = ctx::rm_branch(workdir, &name, force)?;
+                    println!(
+                        "{} removed context branch {} ({} trace line{} dropped)",
+                        SUCCESS,
+                        style(&outcome.name).magenta().bold(),
+                        outcome.trace_lines,
+                        if outcome.trace_lines == 1 { "" } else { "s" },
+                    );
+                    if outcome.was_active {
+                        println!(
+                            "  {} it was the active branch — HEAD reset to {} and unpinned",
+                            style("·").dim(),
+                            style("main").magenta(),
+                        );
+                    }
+                    println!(
+                        "  {} per-commit snapshots kept — recover via {}",
+                        style("·").dim(),
+                        style("h5i context restore <sha>").cyan(),
+                    );
+                    println!(
+                        "  {} local only: if shared, also delete it on the remote or {} will resurrect it",
+                        style("·").dim(),
+                        style("h5i share pull").cyan(),
                     );
                 }
 

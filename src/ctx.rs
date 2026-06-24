@@ -1607,6 +1607,101 @@ pub fn list_branches(workdir: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Outcome of [`rm_branch`], for the CLI to report back to the user.
+#[derive(Debug)]
+pub struct CtxRmOutcome {
+    /// The branch that was removed.
+    pub name: String,
+    /// Number of non-blank `trace.md` lines that were in the removed branch
+    /// (an informational "how much reasoning is being dropped" figure).
+    pub trace_lines: usize,
+    /// `true` when the removed branch was the worktree's *active* context
+    /// branch (so HEAD was reset to `main` + unpinned as part of removal).
+    pub was_active: bool,
+}
+
+/// Permanently remove a context (reasoning) branch ref
+/// `refs/h5i/context/<name>`.
+///
+/// This is the safe, first-class counterpart to deleting the ref by hand (which
+/// is what `context status` previously told users to do). It applies the same
+/// guards `h5i env rm` does for env branches:
+///
+/// - **refuses `main`** — the root branch carries the project goal,
+///   per-git-branch goals, and the milestone roadmap;
+/// - **refuses an `env/…` branch** — those are owned by `h5i env`; removing one
+///   out from under a live env orphans it. Use `h5i env rm` instead;
+/// - **refuses the *active* branch unless `force`** — removing the branch HEAD
+///   points at would orphan the current worktree's selection. With `force`,
+///   HEAD is reset to `main` and the pin (if any) is cleared first;
+/// - **never touches `refs/h5i/context-snapshots/*`** — the per-commit
+///   workspace snapshots taken at each `h5i commit` stay restorable
+///   (`context restore <sha>` / `context diff`), so removing a branch drops the
+///   live reasoning thread but not the history bound to code commits.
+///
+/// Note: this is a *local* removal. If the branch was shared
+/// (`h5i share push`), the remote copy survives and a later `h5i share pull`
+/// will resurrect it — the caller surfaces that caveat. (A share-aware
+/// tombstone, like the env `removed` event, is intentionally out of scope here.)
+pub fn rm_branch(workdir: &Path, name: &str, force: bool) -> Result<CtxRmOutcome, H5iError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(H5iError::InvalidPath(
+            "context branch name is required".into(),
+        ));
+    }
+    if name == MAIN_BRANCH {
+        return Err(H5iError::InvalidPath(
+            "the root context branch 'main' cannot be removed (it holds the project goal \
+             and milestone roadmap)"
+                .into(),
+        ));
+    }
+    if name == "env" || name.starts_with("env/") {
+        return Err(H5iError::InvalidPath(format!(
+            "context branch '{name}' is owned by an h5i environment — remove the env with \
+             `h5i env rm` instead of deleting its reasoning branch directly"
+        )));
+    }
+
+    let repo = ctx_git_repo(workdir)?;
+    let ref_name = branch_ref(name);
+    let mut reference = repo.find_reference(&ref_name).map_err(|_| {
+        H5iError::InvalidPath(format!(
+            "no context branch '{name}' (see `h5i context status` for existing branches)"
+        ))
+    })?;
+
+    let was_active = current_branch(workdir) == name;
+    if was_active && !force {
+        return Err(H5iError::InvalidPath(format!(
+            "context branch '{name}' is the active branch — checkout another branch \
+             (`h5i context checkout main`) or unpin first, or pass --force to reset HEAD to main"
+        )));
+    }
+
+    // Count the reasoning being dropped, for the report (best-effort).
+    let trace_lines = read_ref_file(&repo, &ref_name, "trace.md")
+        .map(|t| t.lines().filter(|l| !l.trim().is_empty()).count())
+        .unwrap_or(0);
+
+    // If we're removing the active branch under --force, move HEAD off it first
+    // so the worktree doesn't keep pointing at a now-dangling ref. Resetting to
+    // `main` + unpinning lets auto-follow take over cleanly on the next write.
+    if was_active {
+        let _ = unpin(workdir);
+        write_head(&repo, MAIN_BRANCH)?;
+    }
+
+    reference.delete().map_err(H5iError::Git)?;
+
+    Ok(CtxRmOutcome {
+        name: name.to_string(),
+        trace_lines,
+        was_active,
+    })
+}
+
 /// Return the raw text of `trace.md` for the given branch (default: current).
 /// Returns an empty string if the workspace or trace does not yet exist.
 pub fn read_trace(workdir: &Path, branch: Option<&str>) -> Result<String, H5iError> {
@@ -3129,7 +3224,7 @@ pub fn print_status(workdir: &Path, limit: usize) -> Result<(), H5iError> {
                 style("✗").red(),
                 style(name).magenta(),
                 style(name).cyan(),
-                style("(intentional or stale — delete manually if stale)").dim(),
+                style(format!("intentional, or stale → h5i context rm {name}")).dim(),
             );
         }
     }
@@ -4347,6 +4442,73 @@ mod tests {
         init(dir.path(), "goal").unwrap();
         gcc_branch(dir.path(), "feat-oauth", "oauth work").unwrap();
         assert!(list_branches(dir.path()).contains(&"feat-oauth".to_string()));
+    }
+
+    // ── rm_branch ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn rm_branch_removes_an_inactive_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        gcc_branch(dir.path(), "stale", "exploratory").unwrap();
+        // gcc_branch switches to the new branch; move off it so it's inactive.
+        gcc_checkout(dir.path(), MAIN_BRANCH).unwrap();
+
+        assert!(list_branches(dir.path()).contains(&"stale".to_string()));
+        let outcome = rm_branch(dir.path(), "stale", false).unwrap();
+        assert_eq!(outcome.name, "stale");
+        assert!(!outcome.was_active);
+        assert!(!list_branches(dir.path()).contains(&"stale".to_string()));
+    }
+
+    #[test]
+    fn rm_branch_refuses_main() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let err = rm_branch(dir.path(), MAIN_BRANCH, false).unwrap_err();
+        assert!(err.to_string().contains("cannot be removed"));
+        assert!(list_branches(dir.path()).contains(&MAIN_BRANCH.to_string()));
+    }
+
+    #[test]
+    fn rm_branch_refuses_env_owned_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let err = rm_branch(dir.path(), "env/claude/foo", false).unwrap_err();
+        assert!(err.to_string().contains("h5i env rm"));
+    }
+
+    #[test]
+    fn rm_branch_errors_for_missing_branch() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        let err = rm_branch(dir.path(), "never-existed", false).unwrap_err();
+        assert!(err.to_string().contains("no context branch"));
+    }
+
+    #[test]
+    fn rm_branch_refuses_active_without_force_then_force_resets_head() {
+        let dir = tempdir().unwrap();
+        git_init(dir.path());
+        init(dir.path(), "goal").unwrap();
+        // gcc_branch creates + switches + pins, so `active` is the active branch.
+        gcc_branch(dir.path(), "active", "current work").unwrap();
+        assert_eq!(current_branch(dir.path()), "active");
+
+        let err = rm_branch(dir.path(), "active", false).unwrap_err();
+        assert!(err.to_string().contains("active branch"));
+        assert!(list_branches(dir.path()).contains(&"active".to_string()));
+
+        let outcome = rm_branch(dir.path(), "active", true).unwrap();
+        assert!(outcome.was_active);
+        assert!(!list_branches(dir.path()).contains(&"active".to_string()));
+        // HEAD reset to main + unpinned.
+        assert_eq!(current_branch(dir.path()), MAIN_BRANCH);
+        assert!(!is_pinned(dir.path()));
     }
 
     // ── append_log ────────────────────────────────────────────────────────────

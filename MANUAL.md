@@ -907,6 +907,44 @@ h5i recall context init --goal "Current task on this Git branch"
 
 ---
 
+#### h5i recall context rm
+
+```
+h5i recall context rm <name> [--force]
+```
+
+Permanently remove a context (reasoning) branch (`refs/h5i/context/<name>`) — the
+safe, first-class counterpart to deleting the ref by hand. `h5i recall context
+status` lists stale context branches (a `ctx/<name>` whose Git branch is gone)
+and points here.
+
+It applies the same guards `h5i env rm` does:
+
+- refuses `main` (the root branch holds the project goal and milestone roadmap);
+- refuses an `env/…` branch (those belong to an h5i environment — use `h5i env rm`);
+- refuses the **active** branch unless `--force`, which first resets the
+  worktree's context HEAD to `main` and clears the pin;
+- never touches the per-commit workspace snapshots, so `h5i recall context
+  restore <sha>` / `diff` still work after removal.
+
+This is a **local** removal. If the branch was shared (`h5i share push`), the
+remote copy survives and a later `h5i share pull` will resurrect it — delete it
+on the remote too.
+
+**Options**
+
+| Option | Description |
+|--------|-------------|
+| `<name>` | Context branch to remove (required, positional) |
+| `--force` | Remove even if it is the active branch (resets HEAD to `main` + unpins) |
+
+```bash
+h5i recall context status            # find stale ctx/<name> branches
+h5i recall context rm improve-shell  # drop one stale reasoning branch
+```
+
+---
+
 #### h5i recall context merge
 
 ```
