@@ -126,15 +126,7 @@ scripts/team-run.sh fix-auth --task task.md --verify-cmd "cargo test" --apply
 
 ## Contributing
 
-High-impact contributions:
-
-- try h5i on a real AI-assisted repo and file issues with confusing moments
-- run a real agent team and report where the cycle snags
-- improve PR-body presentation and GitHub reviewer workflows
-- add adapters for more test runners and agent tools
-- harden prompt-injection and compliance rules
-
-If the idea matters to you, starring the repo is the fastest way to help more AI-heavy teams find it.
+We welcomes contributions of any kind. If you'd like to propose a new feature, please refer to [our guide](./CONTRIBUTING.md).
 
 ---
 
