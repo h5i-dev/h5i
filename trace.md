@@ -1819,3 +1819,4 @@ _[Checkpoint: 6a3b663f — edited src/repository.rs; edited src/repository.rs; e
 _[Checkpoint: 6a3b66b9 — edited src/repository.rs; edited src/repository.rs; edited MANUAL.md]_
 ---
 
+[05:13:48] OBSERVE: read tests/cli_integration.rs
