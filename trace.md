@@ -1745,3 +1745,4 @@ _[Checkpoint: 6a3b5c81 — edited src/ctx.rs; edited src/ctx.rs; edited MANUAL.m
 _[Checkpoint: 6a3b5cba — edited src/ctx.rs; edited src/ctx.rs; edited MANUAL.md]_
 ---
 
+[04:36:03] OBSERVE: read src/ctx.rs
