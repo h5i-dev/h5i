@@ -1704,3 +1704,9 @@ _[Checkpoint: 6a3b58e6 — edited src/ctx.rs; edited src/ctx.rs; edited MANUAL.m
 _[Checkpoint: 6a3b5970 — edited src/ctx.rs; edited src/ctx.rs; edited MANUAL.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3b5a36 — edited src/ctx.rs; edited src/ctx.rs; edited MANUAL.md]_
+---
+
