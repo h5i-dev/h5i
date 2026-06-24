@@ -1867,3 +1867,4 @@ _[Checkpoint: 6a3bbd52 — edited tests/cli_integration.rs; edited tests/cli_int
 _[Checkpoint: 6a3bbdf4 — edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited tests/cli_integration.rs]_
 ---
 
+[11:23:15] OBSERVE: read README.md
