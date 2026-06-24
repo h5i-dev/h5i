@@ -1843,3 +1843,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a3b6994 — 2026-06-24 05:22 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Closed the gaps from the test audit: 5 cli_integration tests for cmd_recall_rm (dry-run no-op, force purges feature/keeps main incl shared-vs-unique notes, refuse-main guard, idempotency, env teardown via workspace-isolation env); goal_log change-back/unchanged-collapse unit test; objects empty-ref-advance test; msg roster-preserved test; ctx rm_branch snapshot-preservation test; cli_routing recall rm->recall-rm assertion. All green; only pre-existing host-gated env_lifecycle_over_mcp fails; clippy clean.
+
+---
+
