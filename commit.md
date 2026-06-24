@@ -1973,3 +1973,16 @@ Tests revealed a real bug: --allow-missing froze the round then grant_review abo
 
 ---
 
+## Commit 6a3bc2db — 2026-06-24 11:43 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+Tests revealed a real bug: --allow-missing froze the round then grant_review aborted on the missing agent (no submission). Fix: scope mutual grants+instructions to round submitters (new 'reviewers' field), require >=2 submitters before freeze, exclude non-submitters. Added 3 tests: allow-missing exclusion, <2-submitters guard, sync-ingestion. 5 auto_peer_review tests, 22 team tests green, clippy clean.
+
+### This Commit's Contribution
+
+
+---
+
