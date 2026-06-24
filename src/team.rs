@@ -2745,6 +2745,37 @@ mod tests {
     }
 
     #[test]
+    fn dispatch_to_unbound_agent_is_a_noop_not_an_error() {
+        // Safety contract: an agent whose env-binding doesn't resolve (a gc'd
+        // env, or a team pulled onto another clone where the host-owned
+        // team-identity/team-run files didn't travel) still gets dispatched via
+        // the shared msg store — the inbox fan-out is a silent no-op, never an
+        // error, so dispatch keeps working for non-confined / cross-clone teams.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let m = manifest(&repo, h5i_root, "codex", "fix");
+
+        create(&repo, "run-nb", "run-nb", "HEAD", 1, "human").unwrap();
+        add_env(
+            &repo, h5i_root, "run-nb", "env/codex/fix", "codex-fix", None, None, "human",
+        )
+        .unwrap();
+        // Sever the binding the way a gc / cross-clone pull would: drop the
+        // host-owned identity files so team_binding() no longer resolves.
+        let env_dir = m.dir(h5i_root);
+        std::fs::remove_file(env_dir.join("team-identity")).unwrap();
+        std::fs::remove_file(env_dir.join("team-run")).unwrap();
+
+        let sent = dispatch(&repo, h5i_root, "run-nb", "do the task", "human").unwrap();
+        assert_eq!(sent.len(), 1, "shared-store delivery still happens");
+        assert!(crate::env::env_inbox_for_agent(h5i_root, "codex-fix", Some("run-nb")).is_none());
+        let events = read_events(&repo, "run-nb").unwrap();
+        assert!(events.iter().any(|e| e.kind == "dispatched"));
+    }
+
+    #[test]
     fn dispatch_does_not_block_add_env_submit_or_freeze() {
         // Regression: `dispatch` advances the phase to `dispatched`. That must
         // not wedge the open round — add-env, submit, and freeze all still apply
