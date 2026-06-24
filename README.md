@@ -128,8 +128,6 @@ scripts/team-run.sh fix-auth --task task.md --verify-cmd "cargo test" --apply
 
 We welcomes contributions of any kind. If you'd like to propose a new feature, please refer to [our guide](./CONTRIBUTING.md).
 
----
-
 ## Acknowledgements
 
 h5i's token-reduction filters build on prior art, both Apache-2.0:
