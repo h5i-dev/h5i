@@ -1754,3 +1754,4 @@ _[Checkpoint: 6a3b5cba — edited src/ctx.rs; edited src/ctx.rs; edited MANUAL.m
 [04:40:05] ACT: edited src/ctx.rs
 [04:40:13] OBSERVE: read src/mcp.rs
 [04:40:16] ACT: edited src/mcp.rs
+[04:44:14] THINK: Let me reconcile the count difference (110 vs 121) — I want to be sure tests aren't being silently skipped:
