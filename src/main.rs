@@ -2154,12 +2154,16 @@ enum TeamCommands {
         json: bool,
     },
     /// Dispatch a prompt to every team agent through h5i msg
+    ///
+    /// The task prompt is read from stdin by default
+    /// (`h5i team dispatch qsort-demo < TASK.md`); pass `--prompt-file` to read
+    /// it from a named file instead.
     Dispatch {
         /// Team id (defaults to the current team — see `team use`)
         team: Option<String>,
-        /// Prompt text file
+        /// Read the task prompt from this file instead of stdin
         #[arg(long = "prompt-file")]
-        prompt_file: std::path::PathBuf,
+        prompt_file: Option<std::path::PathBuf>,
         /// Emit JSON
         #[arg(long)]
         json: bool,
@@ -9841,12 +9845,27 @@ fn main() -> anyhow::Result<()> {
                 }
                 TeamCommands::Dispatch { team, prompt_file, json } => {
                     let team = h5i_core::team::resolve_run(&h5i_root, team)?;
-                    let prompt = std::fs::read_to_string(&prompt_file).map_err(|e| {
-                        anyhow::anyhow!(
-                            "failed to read prompt file {}: {e}",
-                            prompt_file.display()
-                        )
-                    })?;
+                    let prompt = match prompt_file {
+                        Some(path) => std::fs::read_to_string(&path).map_err(|e| {
+                            anyhow::anyhow!("failed to read prompt file {}: {e}", path.display())
+                        })?,
+                        None => {
+                            use std::io::{IsTerminal, Read};
+                            if std::io::stdin().is_terminal() {
+                                anyhow::bail!(
+                                    "no task prompt given — pipe one in (e.g. `h5i team dispatch {team} < TASK.md`) or pass --prompt-file <path>"
+                                );
+                            }
+                            let mut s = String::new();
+                            std::io::stdin().read_to_string(&mut s).map_err(|e| {
+                                anyhow::anyhow!("failed to read prompt from stdin: {e}")
+                            })?;
+                            s
+                        }
+                    };
+                    if prompt.trim().is_empty() {
+                        anyhow::bail!("task prompt is empty");
+                    }
                     let messages =
                         h5i_core::team::dispatch(git, &h5i_root, &team, &prompt, &actor)?;
                     if json {

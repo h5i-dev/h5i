@@ -80,8 +80,7 @@ h5i team status  qsort-demo                                 # note the generated
 Dispatch one task to every agent:
 
 ```bash
-echo "Implement Quick Sort from scratch in Python." > TASK.md
-h5i team dispatch qsort-demo --prompt-file TASK.md
+echo "Implement Quick Sort from scratch in Python." | h5i team dispatch qsort-demo
 ```
 
 Launch every agent in its own sandboxed environment. Each agent automatically starts working on the dispatched task:

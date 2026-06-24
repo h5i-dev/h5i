@@ -2826,7 +2826,7 @@ inboxes and never locks the round.
 | `h5i team finalize <team> [--json]` | Apply the finalization rule over **verifier** evidence → a verdict event. Hard gates (tests pass, applies cleanly) first; `smallest diff` only breaks ties among gate-passers. Records method + the verifier command + losers' reasons. No gate-passer → `no_verdict` (never applies a loser). |
 | `h5i team apply <team> [--winner <submission-id>] [--force] [--json]` | Replay the winning submission's recorded patch (`base..commit`) into the current branch and commit; records source + target commit oids; on conflict records an event, never mutates the artifact. Gated on the verdict's `can_auto_apply` unless `--force`. |
 | `h5i team worker --once \| --watch [--interval N] [--id ID] [--lease-ttl S] [--json]` | Optional automation: one lease-and-finalize pass (`--once`) or an opt-in in-process loop (`--watch`). **Finalize-only — never auto-applies.** Leases are idempotent + TTL'd; for production prefer an external scheduler driving `--once`. |
-| `h5i team dispatch <team> --prompt-file F [--json]` | Send the task to **every roster agent in one command** over [`h5i msg`](#h5i-msg) (an `ASK` per persona, tagged with the team + round) — no per-env pasting. It **notifies, it does not launch**: each agent must be running in its env to pick the task out of its inbox. Receipt/progress count only when the agent replies ACK/DONE threaded to the dispatch. |
+| `h5i team dispatch <team> [--prompt-file F] [--json]` | Send the task to **every roster agent in one command** (prompt read from **stdin** by default — `h5i team dispatch <team> < TASK.md`; `--prompt-file` reads it from a named file instead) over [`h5i msg`](#h5i-msg) (an `ASK` per persona, tagged with the team + round) — no per-env pasting. It **notifies, it does not launch**: each agent must be running in its env to pick the task out of its inbox. Receipt/progress count only when the agent replies ACK/DONE threaded to the dispatch. |
 | `h5i team grant-review <team> --reviewer A --target B [--artifacts diff,summary,tests] [--json]` | Open a permissioned review: grant reviewer A scoped access to target B's round artifacts (never raw logs or persona bodies by default) + send a `REVIEW_REQUEST`. |
 | `h5i team review submit <team> --reviewer A --target B --file F [--json]` | Record a review body for a target candidate. |
 | `h5i team discuss <team> --from S --to A,B --file F [--artifacts ids] [--json]` | Send a logged, influence-tracked discussion message (post-freeze only). |
@@ -2851,7 +2851,8 @@ the host-visible log and embeds the task text directly in each boxed agent's
 startup prompt.
 
 ```bash
-h5i team dispatch fix-auth --prompt-file task.md   # one host-side broadcast → all agents
+h5i team dispatch fix-auth < task.md               # one host-side broadcast → all agents (prompt from stdin)
+h5i team dispatch fix-auth --prompt-file task.md   # equivalent: read the prompt from a named file
 # bring each agent up in its box; the launcher normally embeds the task text
 h5i env shell env/claude-architect/fix-auth        # in-box H5I_AGENT=claude-architect
 h5i env shell env/codex/fix-auth                   # in-box H5I_AGENT=codex

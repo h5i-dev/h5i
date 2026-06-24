@@ -3425,7 +3425,7 @@ inboxes and never locks the round.</p>
 <td>Optional automation: one lease-and-finalize pass (<code>--once</code>) or an opt-in in-process loop (<code>--watch</code>). <strong>Finalize-only — never auto-applies.</strong> Leases are idempotent + TTL'd; for production prefer an external scheduler driving <code>--once</code>.</td>
 </tr>
 <tr>
-<td><code>h5i team dispatch &lt;team&gt; --prompt-file F [--json]</code></td>
+<td><code>h5i team dispatch &lt;team&gt; [--prompt-file F] [--json]</code> (prompt from stdin by default)</td>
 <td>Send the task to <strong>every roster agent in one command</strong> over <a href="#h5i-msg"><code>h5i msg</code></a> (an <code>ASK</code> per persona, tagged with the team + round) — no per-env pasting. It <strong>notifies, it does not launch</strong>: each agent must be running in its env to pick the task out of its inbox. Receipt/progress count only when the agent replies ACK/DONE threaded to the dispatch.</td>
 </tr>
 <tr>
@@ -3458,7 +3458,8 @@ host-owned coordination state, not writable from sealed boxes. Use
 <code>scripts/team-launch.sh --task</code> for normal interactive runs; it dispatches for
 the host-visible log and embeds the task text directly in each boxed agent's
 startup prompt.</p>
-<pre><code class="language-bash">h5i team dispatch fix-auth --prompt-file task.md   # one host-side broadcast → all agents
+<pre><code class="language-bash">h5i team dispatch fix-auth &lt; task.md               # one host-side broadcast → all agents (prompt from stdin)
+h5i team dispatch fix-auth --prompt-file task.md   # equivalent: read the prompt from a named file
 # bring each agent up in its box; the launcher normally embeds the task text
 h5i env shell env/claude-architect/fix-auth        # in-box H5I_AGENT=claude-architect
 h5i env shell env/codex/fix-auth                   # in-box H5I_AGENT=codex

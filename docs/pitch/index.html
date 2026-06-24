@@ -834,7 +834,7 @@
         <span class="terminal-path">~/my-project · h5i team: fix-auth</span>
       </div>
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i team create fix-auth --base HEAD</span>            <span class="t-cmt"># roster of persona envs</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i team dispatch fix-auth --prompt-file task.md</span> <span class="t-cmt"># one broadcast → all agents</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i team dispatch fix-auth &lt; task.md</span> <span class="t-cmt"># one broadcast → all agents</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team freeze fix-auth</span>                        <span class="t-cmt"># seals independent attempts</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team verify fix-auth -- cargo test</span>          <span class="t-ai"># neutral, sandboxed replay</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i team apply fix-auth</span>   <span class="t-pass">→ verdict: claude-impl (gates pass, smallest diff)</span></pre></div>
