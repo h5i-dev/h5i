@@ -1854,3 +1854,9 @@ _[Checkpoint: 6a3b69a1 — edited tests/cli_integration.rs; edited tests/cli_int
 _[Checkpoint: 6a3bbcdd — edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited tests/cli_integration.rs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3bbd52 — edited tests/cli_integration.rs; edited tests/cli_integration.rs; edited tests/cli_integration.rs]_
+---
+
