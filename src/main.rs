@@ -158,6 +158,25 @@ fn message_details(m: &msg::Message) -> Vec<String> {
     if let Some(pr) = m.links.as_ref().and_then(|l| l.get("pr")) {
         meta.push(format!("pr {pr}"));
     }
+    // Team review grants carry the granted artifact kinds in `links`; surface
+    // them so `h5i team agent inbox` shows "granted diff,summary,tests" next to
+    // the artifact ids (which ride in `focus`) — no host-only command needed.
+    if let Some(kinds) = m
+        .links
+        .as_ref()
+        .and_then(|l| l.get("artifact_kinds"))
+        .and_then(|v| v.as_array())
+    {
+        let g = kinds
+            .iter()
+            .filter_map(|x| x.as_str())
+            .map(msg::sanitize_display)
+            .collect::<Vec<_>>()
+            .join(",");
+        if !g.is_empty() {
+            meta.push(format!("granted {g}"));
+        }
+    }
     if !meta.is_empty() {
         rows.push(meta.join("  ·  "));
     }
@@ -250,6 +269,17 @@ fn box_team_inbox(consume: bool) -> Option<Vec<msg::Message>> {
         }
     }
     Some(unread)
+}
+
+/// The team round a message belongs to, read from its i5h `links.round` (set by
+/// `grant_review` / `auto_peer_review`). `None` for non-team messages — those are
+/// always surfaced (never silently swallowed by the round filter).
+fn msg_round(m: &msg::Message) -> Option<u32> {
+    m.links
+        .as_ref()
+        .and_then(|l| l.get("round"))
+        .and_then(|v| v.as_u64())
+        .map(|r| r as u32)
 }
 
 /// Fan a TEAM_DONE "round complete" signal into every team agent's inbox (and
@@ -2074,6 +2104,27 @@ enum TeamCommands {
     Compare {
         /// Team id (defaults to the current team — see `team use`)
         team: Option<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one teammate's submission by artifact id (read-only; safe in a box).
+    /// Defaults to the diff; `--summary`/`--tests` show the other granted views.
+    Artifact {
+        /// Submission artifact id, e.g. `sub-hana-r1-4ea2333c040f`
+        id: String,
+        /// Team id (defaults to the current team / $H5I_TEAM)
+        #[arg(long)]
+        team: Option<String>,
+        /// Show the unified diff against the team base (the default)
+        #[arg(long)]
+        diff: bool,
+        /// Show the submission's summary
+        #[arg(long)]
+        summary: bool,
+        /// Show the captured test evidence (capture ids + change stats)
+        #[arg(long)]
+        tests: bool,
         /// Emit JSON
         #[arg(long)]
         json: bool,
@@ -9714,6 +9765,79 @@ fn main() -> anyhow::Result<()> {
                         print!("{}", h5i_core::team::render_compare(&rows));
                     }
                 }
+                TeamCommands::Artifact { id, team, diff, summary, tests, json } => {
+                    // Resolve the team like the hook does: explicit arg, then the
+                    // host-injected $H5I_TEAM (set inside a team box), then the
+                    // current-team pointer.
+                    let team = match team {
+                        Some(t) => t,
+                        None => std::env::var(h5i_core::env::H5I_TEAM_VAR)
+                            .ok()
+                            .filter(|s| !s.trim().is_empty())
+                            .map(Ok)
+                            .unwrap_or_else(|| h5i_core::team::resolve_run(&h5i_root, None))?,
+                    };
+                    let (art, base) = h5i_core::team::find_submission(git, &team, &id)?;
+                    // The diff is the default view unless another is requested.
+                    let want_diff = diff || (!summary && !tests);
+                    if json {
+                        let mut obj = serde_json::json!({
+                            "id": art.id,
+                            "owner_agent": art.owner_agent,
+                            "round": art.round,
+                            "commit_oid": art.commit_oid,
+                            "base_oid": base,
+                            "files_changed": art.files_changed,
+                            "insertions": art.insertions,
+                            "deletions": art.deletions,
+                            "capture_ids": art.capture_ids,
+                            "summary": art.summary,
+                        });
+                        if want_diff {
+                            obj["diff"] = serde_json::Value::String(
+                                h5i_core::team::submission_diff(git, &base, &art.commit_oid)?,
+                            );
+                        }
+                        println!("{}", serde_json::to_string_pretty(&obj)?);
+                    } else {
+                        println!(
+                            "{} {} · {} · round {} · {}",
+                            style("submission").bold(),
+                            style(&art.id).magenta(),
+                            art.owner_agent,
+                            art.round,
+                            style(format!(
+                                "{} file(s) +{} -{}",
+                                art.files_changed, art.insertions, art.deletions
+                            ))
+                            .dim(),
+                        );
+                        if summary {
+                            match art.summary.as_deref() {
+                                Some(s) if !s.trim().is_empty() => println!("\n{s}"),
+                                _ => println!("  {}", style("(no summary)").dim()),
+                            }
+                        }
+                        if tests {
+                            if art.capture_ids.is_empty() {
+                                println!("  {}", style("(no captured test evidence)").dim());
+                            } else {
+                                println!("\ncaptured evidence ({}):", art.capture_ids.len());
+                                for c in &art.capture_ids {
+                                    println!("  {} {c}  ·  h5i recall object {c}", STEP);
+                                }
+                            }
+                        }
+                        if want_diff {
+                            let d = h5i_core::team::submission_diff(git, &base, &art.commit_oid)?;
+                            if d.trim().is_empty() {
+                                println!("  {}", style("(empty diff)").dim());
+                            } else {
+                                print!("\n{d}");
+                            }
+                        }
+                    }
+                }
                 TeamCommands::Sync { team, json } => {
                     let team = h5i_core::team::resolve_run(&h5i_root, team)?;
                     let drained = h5i_core::team::sync_outbound(git, &h5i_root, &team)?;
@@ -10223,8 +10347,8 @@ fn main() -> anyhow::Result<()> {
                             format!(
                                 "{text}\n\n[h5i team] Handle the request(s) above — post a review \
                                  with `h5i team review submit` and/or improve and re-submit with \
-                                 `h5i team agent submit`. This hook keeps waiting between turns; \
-                                 you're released when the round is applied."
+                                 `h5i team agent submit`. Submitting marks you done for this round \
+                                 and releases you until the next round opens — no need to poll."
                             )
                         };
                         let is_done =
@@ -10235,9 +10359,29 @@ fn main() -> anyhow::Result<()> {
                         // so a message isn't re-delivered on the next stop.
                         if std::env::var_os(h5i_core::env::H5I_ENV_INBOX_VAR).is_some() {
                             let agent = std::env::var("H5I_AGENT").unwrap_or_default();
+                            // "Submit == done for this round": once we've submitted
+                            // for round R, drop round-≤R review messages so the host
+                            // re-fanning the same standing requests can't loop us.
+                            // Newer rounds (higher round) and non-team messages (no
+                            // round) still break through. The round we last submitted
+                            // for is recorded box-side by `team agent submit`.
+                            let submitted_round =
+                                std::env::var_os(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR)
+                                    .map(PathBuf::from)
+                                    .as_deref()
+                                    .and_then(h5i_core::env::read_submitted_round);
+                            let still_pending = |msgs: Vec<msg::Message>| -> Vec<msg::Message> {
+                                msgs.into_iter()
+                                    .filter(|m| match (submitted_round, msg_round(m)) {
+                                        (Some(s), Some(r)) => r > s,
+                                        _ => true,
+                                    })
+                                    .collect()
+                            };
                             if !block {
                                 // Codex / one-shot: surface pending mail, never wait.
-                                let unread = box_team_inbox(true).unwrap_or_default();
+                                let unread =
+                                    still_pending(box_team_inbox(true).unwrap_or_default());
                                 if !unread.is_empty() {
                                     let text = frame_unread(&agent, &unread);
                                     if quiet {
@@ -10254,10 +10398,11 @@ fn main() -> anyhow::Result<()> {
                             // wait elapsing releases the agent so it can stop.
                             let mut waited = 0u64;
                             loop {
-                                let unread = box_team_inbox(true).unwrap_or_default();
-                                if unread.iter().any(&is_done) {
+                                let raw = box_team_inbox(true).unwrap_or_default();
+                                if raw.iter().any(&is_done) {
                                     return Ok(());
                                 }
+                                let unread = still_pending(raw);
                                 if !unread.is_empty() {
                                     let reason = block_reason(&frame_unread(&agent, &unread));
                                     let out =
@@ -10378,6 +10523,21 @@ fn main() -> anyhow::Result<()> {
                             let request = h5i_core::env::TeamSubmitSpool { commit, summary };
                             let staged =
                                 h5i_core::env::write_team_submit_spool(&spool, &request)?;
+                            // Submit == "done for this round": record the round so
+                            // the Stop hook stops re-surfacing this round's standing
+                            // review messages. The box can't read team state, but
+                            // the round rides in the inbox messages' i5h links.
+                            if let Some(inbox) =
+                                std::env::var_os(h5i_core::env::H5I_ENV_INBOX_VAR).map(PathBuf::from)
+                            {
+                                if let Some(round) = h5i_core::env::read_env_inbox(&inbox)
+                                    .iter()
+                                    .filter_map(msg_round)
+                                    .max()
+                                {
+                                    let _ = h5i_core::env::write_submitted_round(&spool, round);
+                                }
+                            }
                             if json {
                                 println!(
                                     "{}",

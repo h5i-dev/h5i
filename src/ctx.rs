@@ -1834,9 +1834,14 @@ pub fn snapshot_for_commit(workdir: &Path, git_sha: &str) -> Result<(), H5iError
         .or_else(|_| Signature::now("h5i", "h5i@local"))
         .map_err(H5iError::Git)?;
     let anchor_ref = format!("refs/h5i/context-snapshots/{short_sha}");
+    // Build the anchor as a parentless commit *object* (no ref) — the object
+    // store is writable even inside a sealed env box. The ref is created below,
+    // either directly (host) or, in a box where `refs/h5i/context-snapshots/*`
+    // is sealed read-only, staged to the capture spool for the host to apply on
+    // session end (same pattern as the in-box commit note).
     let anchor_oid = repo
         .commit(
-            Some(&anchor_ref),
+            None,
             &sig,
             &sig,
             &format!("h5i context snapshot anchor: {short_sha}"),
@@ -1845,6 +1850,37 @@ pub fn snapshot_for_commit(workdir: &Path, git_sha: &str) -> Result<(), H5iError
         )
         .map_err(H5iError::Git)?;
     let ctx_oid = anchor_oid.to_string();
+
+    // Same triple gate as in-box `h5i capture commit` note staging: a spool path
+    // plus the env id + policy digest the host injects only inside a real box.
+    let env_spool = {
+        let spool =
+            std::env::var_os(crate::env::H5I_ENV_CAPTURE_SPOOL_VAR).map(std::path::PathBuf::from);
+        let in_env = spool.is_some()
+            && std::env::var(crate::env::H5I_ENV_ID_VAR).is_ok()
+            && std::env::var(crate::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
+        if in_env {
+            spool
+        } else {
+            None
+        }
+    };
+    match env_spool {
+        Some(spool) => {
+            crate::env::write_context_snapshot_spool(
+                &spool,
+                &crate::env::ContextSnapshotSpool {
+                    git_sha: git_sha.to_string(),
+                    short_sha: short_sha.to_string(),
+                    anchor_oid: ctx_oid.clone(),
+                },
+            )?;
+        }
+        None => {
+            repo.reference(&anchor_ref, anchor_oid, true, "h5i context snapshot anchor")
+                .map_err(H5iError::Git)?;
+        }
+    }
 
     let branch = current_branch(workdir);
     let goal = ctx_read_file(&repo, "main.md")
