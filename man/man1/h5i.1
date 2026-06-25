@@ -623,15 +623,20 @@ as an immutable submission \(em frozen commit/tree oids + diffstat + capture ids
 .BI "agent submit " "[\-\-commit OID] [\-\-summary-file F]"
 Submit as the bound env persona. In sealed envs this writes a scoped request to
 the env spool; the host applies it to \fIrefs/h5i/team/*\fR when the env shell
-exits.
+exits. Submitting marks the agent done for the current round: it records the
+round box-side so the team Stop hook stops re-surfacing that round's standing
+review requests (a host re-fan can't loop the agent); a newer round still breaks
+through.
 .TP
 .BI "agent inbox " "[TEAM] [\-\-peek] [\-\-wait] [\-\-interval 10] [\-\-timeout 1800] [\-\-json]"
 Scoped inbox for the team persona. In a sealed box it reads the host-fanned
 per-env inbox (\fB$H5I_ENV_INBOX\fR, read-only); host-side it reads the shared
-store.
+store. Each review grant shows its granted artifact kinds + artifact ids, which
+the reviewer reads with \fBh5i team artifact show\fR \fIID\fR \fB\-\-diff\fR (no
+host-only \fBcompare\fR).
 .B \-\-wait
-blocks (peek-only) until a message is waiting or the timeout \(em use it after
-submitting to await a review request without ending the session.
+blocks (peek-only) until a message is waiting or the timeout \(em use it to await
+the next round's review request without ending the session.
 .TP
 .BI "agent hook " "[TEAM] [\-\-block] [\-\-quiet] [\-\-timeout 1800] [\-\-interval 10]"
 Stop-hook delivery: keeps an agent in an unfinished round from stopping and feeds
@@ -643,7 +648,9 @@ waits up to
 for the next message, then blocks the stop and hands it back;
 .B \-\-quiet
 prints one-shot (manual use). Released by a TEAM_DONE signal (sent on
-finalize/apply) or the timeout. Registered via
+finalize/apply), by the agent submitting for the round (a round-\(<=-submitted
+re-fan no longer re-surfaces; a newer round still does), or the timeout.
+Registered via
 .BR "h5i hook setup \-\-team" ;
 no-ops outside a team.
 .TP
@@ -663,6 +670,20 @@ can enforce (falls back to workspace); the tier is recorded on the verification.
 .TP
 .BI "compare " "TEAM " "[\-\-json]"
 Side-by-side candidates + verifier metrics (advisory; does not pick a winner).
+.TP
+.BI "artifact show " "ID " "[\-\-team T] [\-\-diff] [\-\-summary] [\-\-tests] [\-\-json]"
+Read one teammate's submission by artifact id \(em the in-box, read-only
+per-candidate view a granted reviewer uses, so a boxed reviewer never needs the
+host-only
+.BR compare .
+Defaults to the unified diff against the team base;
+.B \-\-summary
+/
+.B \-\-tests
+show the submission summary / captured test evidence. Resolves
+.B \-\-team
+from the current team or
+.BR $H5I_TEAM .
 .TP
 .BI "sync " "TEAM " "[\-\-json]"
 Live ingest: apply every agent's staged in-box submissions/reviews to

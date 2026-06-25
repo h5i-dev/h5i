@@ -2816,11 +2816,12 @@ inboxes and never locks the round.
 | `h5i team list [--json]` | All runs on this clone. |
 | `h5i team use [<name>] [--clear]` | Pin a **current team** (like git's current branch) so other subcommands can drop `<team>`. No arg prints the current; `--clear` unsets. `create` auto-pins the new run. |
 | `h5i team submit <team> --agent <id> [--commit OID] [--summary-file F] [--json]` | Freeze the agent's candidate as an **immutable** submission — frozen commit/tree oids + diffstat + capture ids, reviewable even if the env later changes. Without `--commit` it first **mediates-commits the env worktree** onto the env branch (so uncommitted edits are captured, not silently lost) and freezes the result; with `--commit` it pins that exact commit. A submission whose tree is identical to the team base is **refused** (nothing to review). |
-| `h5i team agent submit [--commit OID] [--summary-file F] [--json]` | In-box submit for a bound team env. In sealed envs it writes a scoped request to the env spool; the host applies it to `refs/h5i/team/*` when the env shell exits (or on `team sync`), at which point the worktree is snapshotted as above. Host-side it submits as `$H5I_AGENT` / `$H5I_TEAM`. |
-| `h5i team agent inbox [<team>] [--peek] [--wait] [--interval 10] [--timeout 1800] [--json]` | Scoped inbox for the team persona. In a sealed box it reads the host-fanned **per-env inbox** (`$H5I_ENV_INBOX`, read-only); host-side it reads the shared store. `--wait` blocks (peek-only) until a message is waiting or the timeout — use it after submitting to await a review request without ending the session. |
-| `h5i team agent hook [<team>] [--block] [--quiet] [--timeout 1800] [--interval 10]` | Stop-hook delivery: keeps an agent in an unfinished round from stopping and feeds in review requests. `--block` (Claude **and Codex** — their Stop hooks share the same `{"decision":"block"}` continuation contract) waits up to `--timeout` for the next message, then blocks the stop and hands it back; `--quiet` prints one-shot (manual). Released by a `TEAM_DONE` signal (sent on finalize/apply) or the timeout. Registered via `h5i hook setup --team`; no-ops outside a team. |
+| `h5i team agent submit [--commit OID] [--summary-file F] [--json]` | In-box submit for a bound team env. In sealed envs it writes a scoped request to the env spool; the host applies it to `refs/h5i/team/*` when the env shell exits (or on `team sync`), at which point the worktree is snapshotted as above. Host-side it submits as `$H5I_AGENT` / `$H5I_TEAM`. **Submitting marks the agent done for the current round**: it records the round box-side so the team Stop hook stops re-surfacing that round's standing review requests (a host re-fan can't loop the agent) — a newer round still breaks through. |
+| `h5i team agent inbox [<team>] [--peek] [--wait] [--interval 10] [--timeout 1800] [--json]` | Scoped inbox for the team persona. In a sealed box it reads the host-fanned **per-env inbox** (`$H5I_ENV_INBOX`, read-only); host-side it reads the shared store. Each review grant shows its **granted artifact kinds + artifact ids**, which the reviewer reads with `h5i team artifact show <id> --diff` (no host-only `compare`). `--wait` blocks (peek-only) until a message is waiting or the timeout — use it to await the next round's review request without ending the session. |
+| `h5i team agent hook [<team>] [--block] [--quiet] [--timeout 1800] [--interval 10]` | Stop-hook delivery: keeps an agent in an unfinished round from stopping and feeds in review requests. `--block` (Claude **and Codex** — their Stop hooks share the same `{"decision":"block"}` continuation contract) waits up to `--timeout` for the next message, then blocks the stop and hands it back; `--quiet` prints one-shot (manual). Released by a `TEAM_DONE` signal (sent on finalize/apply), by the agent **submitting for the round** (a round-≤-submitted re-fan no longer re-surfaces; a newer round still does), or the timeout. Registered via `h5i hook setup --team`; no-ops outside a team. |
 | `h5i team freeze <team> [--allow-missing] [--json]` | Transition draft → `sealed_submit`. Refuses if any roster member has no submission unless `--allow-missing` (records abstentions). |
 | `h5i team compare <team> [--json]` | Side-by-side candidates + verifier metrics (advisory only — does not pick a winner). |
+| `h5i team artifact show <id> [--team T] [--diff] [--summary] [--tests] [--json]` | Read one teammate's submission by artifact id — the **in-box, read-only** per-candidate view a granted reviewer uses, so a boxed reviewer never needs the host-only `compare`. Defaults to the unified diff against the team base; `--summary` / `--tests` show the submission summary / captured test evidence (capture ids + change stats). Resolves `--team` from the current team / `$H5I_TEAM`. |
 | `h5i team sync <team> [--json]` | **Live ingest**: apply every agent's staged in-box submissions/reviews to `refs/h5i/team/*` now, without the box exiting (the on-demand counterpart to the at-exit ingest). Lets a run advance while the team Stop hook keeps boxes alive — no relaunch. |
 | `h5i team verify <team> --agent <id> [--isolation TIER] -- <cmd>` | **Neutral, sandboxed verifier**: replays the frozen candidate into a throwaway worktree at the run base and runs `<cmd>` under the fail-closed `default` build/test profile. `--isolation` (`workspace`/`process`/`supervised`/`container`) defaults to the strongest tier the host can enforce (falls back to `workspace`); the tier is recorded on the verification. |
 | `h5i team finalize <team> [--json]` | Apply the finalization rule over **verifier** evidence → a verdict event. Hard gates (tests pass, applies cleanly) first; `smallest diff` only breaks ties among gate-passers. Records method + the verifier command + losers' reasons. No gate-passer → `no_verdict` (never applies a loser). |
@@ -2835,7 +2836,8 @@ inboxes and never locks the round.
 
 **Current team.** The single-`<team>` subcommands (`status`, `submit`, `freeze`,
 `compare`, `sync`, `finalize`, `apply`, `dispatch`, `grant-review`, `discuss`,
-`review submit`) default to the **current team** when you omit it — set it with `h5i team
+`review submit`) — plus `artifact show` (via `--team`, also honoring `$H5I_TEAM`) —
+default to the **current team** when you omit it — set it with `h5i team
 use <name>` (or let `create` set it). `add-env`/`verify` keep `<team>` required
 (they take a second positional). The flat CLI stays canonical, so this never
 changes scripting/cron/agent behavior (always pass `<team>` there). For fast
@@ -2923,7 +2925,10 @@ h5i hook setup --write --team
 - **`scripts/team-review.sh <team>`** — open the review round: `freeze`, grant
   **mutual** review access (each grant fans a request into the reviewer's inbox),
   and send every agent a review-and-revise prompt. A running box picks it up via
-  the team Stop hook; `--relaunch` re-opens any box that already exited.
+  the team Stop hook; `--relaunch` re-opens any box that already exited. Each
+  boxed reviewer reads its target read-only with `h5i team artifact show <id>
+  --diff` (the inbox carries the artifact ids), reviews statically, then
+  re-submits — which marks it done for the round.
 - **`scripts/team-run.sh <team> [--task F] [--verify-cmd "<cmd>"] [--apply]`** —
   the full driver. It launches, then **polls with `h5i team sync`** to advance
   each phase: wait until all submitted → freeze → grant review → wait until all
