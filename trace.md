@@ -2465,3 +2465,4 @@ _[Checkpoint: 6a3d74c0 — wrote docs/sandbox-comparison.md]_
 _[Checkpoint: 6a3d75d4 — wrote docs/sandbox-comparison.md]_
 ---
 
+[19:04:01] OBSERVE: read README.md
