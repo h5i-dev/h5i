@@ -2176,3 +2176,4 @@ _[Checkpoint: 6a3c7641 — session ended (auto-checkpoint)]_
 [00:28:55] OBSERVE: read src/team.rs
 [00:29:04] OBSERVE: read src/env.rs
 [00:29:10] OBSERVE: read src/team.rs
+[00:29:12] OBSERVE: read src/mcp.rs
