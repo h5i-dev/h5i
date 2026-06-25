@@ -2262,3 +2262,4 @@ _[Checkpoint: 6a3c7afb — edited src/team.rs; edited src/team.rs; edited src/en
 
 I have **not committed** — per your workflow I'll stage and `h5i capture commit` only when you say so.
 [01:00:14] THINK: Committing first. I'll stage the four files explicitly and use `h5i capture commit` (with `--tests` since tests were added, and `--audit` since this touches the sandbox isolation boundary / in-box ingest guards):
+[01:00:15] THINK: I have everything. Let me add two integration tests (positive apply + off-range rejection) for the #1 round-trip, modeled on the note-spool tests:
