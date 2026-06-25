@@ -70,15 +70,15 @@ git commit -m "update hooks"
 Once the hooks are registered, h5i versions your human prompts and every agent context step (reads, writes, thinking) as Git objects, trimming noisy tool output along the way (for `pytest`, just the failures) to cut up to 95% of the tokens while keeping the raw output recoverable. 
 
 ```bash
-h5i recall context show
+h5i recall context show   # replay the captured prompts and agent context steps
 ```
 
 
 Share it with `h5i share push`, or post an AI-usage summary (prompt quality, AI/human commit ratio, secret leaks, prompt injection, and more) to the pull request with `h5i share pr post` (needs the `gh` CLI).
 
 ```bash
-h5i share push
-h5i share pr post
+h5i share push      # push the h5i metadata (refs/h5i/*) to your teammates
+h5i share pr post   # post the AI-usage summary to the pull request (needs `gh`)
 ```
 
 ### 2.3. Sandboxed Environment
@@ -92,9 +92,9 @@ h5i env shell claude-env
 box$ claude --dangerously-skip-permissions
 box$ exit
 
-h5i env diff claude-env
-h5i env propose claude-env
-h5i env apply claude-env
+h5i env diff claude-env      # review what the agent changed in the box
+h5i env propose claude-env   # turn the box's work into a reviewable proposal
+h5i env apply claude-env     # merge the reviewed changes onto your branch
 ```
 
 ### 2.4. Run an ensemble
