@@ -2422,3 +2422,4 @@ _[Checkpoint: 6a3cb373 — edited tests/env_integration.rs; edited src/mcp.rs; e
 [18:21:24] OBSERVE: read settings-lax.json
 [18:21:24] OBSERVE: read landlock.rs
 [18:21:25] OBSERVE: read bwrap.rs
+[18:21:25] OBSERVE: read policy_transforms.rs
