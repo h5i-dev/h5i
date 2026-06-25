@@ -2439,3 +2439,4 @@ _[Checkpoint: 6a3cb373 — edited tests/env_integration.rs; edited src/mcp.rs; e
 [18:21:57] OBSERVE: read bwrap.rs
 [18:22:01] OBSERVE: read manager.rs
 [18:22:07] OBSERVE: read models.rs
+[18:22:37] OBSERVE: read resolved_permission_profile.rs
