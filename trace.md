@@ -2266,3 +2266,9 @@ I have **not committed** — per your workflow I'll stage and `h5i capture commi
 [01:00:15] THINK: Both pass. Let me also add a `--diff` end-to-end check for the new `team artifact show` (#7).
 [01:00:15] THINK: The core of #7 is the library path (`find_submission`/`submission_diff`), which I'll cover with a unit test reusing the real `submit()`.
 [01:00:15] THINK: Let me add a `find_submission` + `submission_diff` test (#7) right after it:
+
+
+---
+_[Checkpoint: 6a3c7d9f — edited src/env.rs; edited tests/env_integration.rs; edited src/team.rs]_
+---
+
