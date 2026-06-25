@@ -2145,3 +2145,4 @@ _[Checkpoint: 6a3c7389 — edited docs/_static/hero-team.svg; edited docs/_stati
 _[Checkpoint: 6a3c7622 — edited docs/_static/hero-team.svg; edited docs/_static/hero-team.svg; edited docs/_static/hero-team.svg]_
 ---
 
+[00:28:19] OBSERVE: read src/env.rs
