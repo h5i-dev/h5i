@@ -2241,3 +2241,6 @@ _[Checkpoint: 6a3c768a — session ended (auto-checkpoint)]_
 _[Checkpoint: 6a3c7ae7 — Implemented 8 h5i team/sandbox improvements from T2 log analysis]_
 ---
 
+[00:48:59] THINK: rs:235–250`).
+
+Still waiting on the team-data-model and spool/ingest maps before I touch code — I'll read the actual hook arm (`main.
