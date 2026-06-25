@@ -2121,3 +2121,4 @@ _[Checkpoint: 6a3c56aa — edited docs/_static/hero-team.svg; edited docs/_stati
 [00:15:36] OBSERVE: read log/codex.txt
 [00:15:39] OBSERVE: read log/codex.txt
 [00:16:14] OBSERVE: read src/ctx.rs
+[00:16:29] NOTE: Analyzed log/{claude,codex}.txt (T2 team demo run). Key h5i friction: (1) capture commit context-snapshot ref write fails Permission denied in sealed box (ctx.rs:1836 writes refs/h5i/context-snapshots/* which box has ro); (2) dispatched task prompt instructs agents to run host-only sealed cmds team compare/team use/team agent inbox (contradicts AGENT_BOOTSTRAP team.rs:38); (3) Stop hook re-surfaces same standing msgs forever, no agent-side ack of round-applied; (4) team agent inbox returns empty while hook delivers reviews; (5) no in-box way to fetch granted artifact by id; (6) git worktree add blocked -> reviewers checkout teammate files into own worktree, pollute staging; (7) team status prints stale short submission id.
