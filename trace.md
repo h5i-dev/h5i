@@ -2393,3 +2393,9 @@ _[Checkpoint: 6a3c8fd9 — edited src/ctx.rs; edited src/ctx.rs; edited src/ctx.
 [04:11:46] OBSERVE: read MANUAL.md
 [04:11:53] ACT: edited MANUAL.md
 [04:12:29] NOTE: PLACEHOLDER (~/Dev/h5i/src/ctx.rs): y discovers the `h5i capture run --min-bytes 999999 -- …` workaround — but it took ~8 commands to read one 2.7 KB diff Let me find the `capture ru…
+
+
+---
+_[Checkpoint: 6a3caaad — edited tests/env_integration.rs; edited src/mcp.rs; edited MANUAL.md]_
+---
+
