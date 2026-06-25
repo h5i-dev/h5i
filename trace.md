@@ -2531,3 +2531,4 @@ _[Checkpoint: 6a3d81a0 — edited README.md; edited README.md; edited README.md]
 _[Checkpoint: 6a3d81ac — edited README.md; edited README.md; edited README.md]_
 ---
 
+[19:32:21] OBSERVE: read src/sandbox_policy.rs
