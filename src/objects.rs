@@ -895,6 +895,42 @@ pub fn find_manifest(repo: &Repository, handle: &str) -> Option<Manifest> {
     })
 }
 
+/// Whether a `h5i capture run -- <argv>` target is itself an h5i command whose
+/// whole purpose is to emit content the caller must read IN FULL — `recall
+/// object` / `recall objects` / `recall search` and `team artifact`. Wrapping
+/// these in capture run's summarizer is counterproductive: a boxed agent
+/// rehydrating a teammate's diff via `recall object` would get it *re-compacted*,
+/// and an audit-all box stages a pointless capture-of-a-recall. capture run
+/// passes them through verbatim instead (consistent with the tee-shim already
+/// letting `h5i` commands pass unrecorded).
+///
+/// Matches the binary by basename, so `/abs/path/to/h5i` and bare `h5i` both
+/// count. Conservative: only the leading subcommand pair is inspected.
+pub fn is_read_through_command(argv: &[String]) -> bool {
+    let Some(first) = argv.first() else {
+        return false;
+    };
+    let bin = std::path::Path::new(first)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(first);
+    if bin != "h5i" {
+        return false;
+    }
+    let rest: Vec<&str> = argv[1..].iter().map(String::as_str).collect();
+    matches!(
+        rest.as_slice(),
+        ["recall", "object", ..]
+            | ["recall", "objects", ..]
+            | ["recall", "search", ..]
+            | ["team", "artifact", ..]
+            // legacy/alias noun forms for the same reads
+            | ["objects", "get", ..]
+            | ["objects", "list", ..]
+            | ["objects", "search", ..]
+    )
+}
+
 /// Resolve a user handle to exactly one manifest, erroring on no match or an
 /// **ambiguous** prefix (one that matches two or more *distinct* digests).
 ///
@@ -2044,6 +2080,28 @@ mod tests {
             egress: None,
             redactions: Vec::new(),
         }
+    }
+
+    #[test]
+    fn read_through_command_detection() {
+        let argv = |s: &str| s.split_whitespace().map(String::from).collect::<Vec<_>>();
+        // The reads the agent must see in full → pass through.
+        assert!(is_read_through_command(&argv("h5i recall object cap-123")));
+        assert!(is_read_through_command(&argv("h5i recall object cap-123 --format json")));
+        assert!(is_read_through_command(&argv("h5i recall objects --limit 5")));
+        assert!(is_read_through_command(&argv("h5i recall search needle")));
+        assert!(is_read_through_command(&argv("h5i team artifact show sub-x-r1-abc --diff")));
+        // Absolute path to the binary still matches (basename == "h5i").
+        assert!(is_read_through_command(&argv("/usr/local/bin/h5i recall object x")));
+        // NOT read-through: other h5i commands, and non-h5i tools.
+        assert!(!is_read_through_command(&argv("h5i capture commit -m x")));
+        assert!(!is_read_through_command(&argv("h5i team agent submit")));
+        assert!(!is_read_through_command(&argv("h5i recall context goal")));
+        assert!(!is_read_through_command(&argv("python3 -m pytest")));
+        assert!(!is_read_through_command(&argv("git diff")));
+        assert!(!is_read_through_command(&[]));
+        // Not fooled by a tool literally named with the subcommand words.
+        assert!(!is_read_through_command(&argv("recall object x")));
     }
 
     #[test]

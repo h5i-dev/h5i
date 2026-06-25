@@ -8462,6 +8462,15 @@ fn main() -> anyhow::Result<()> {
                             .map(|s| s == "all")
                             .unwrap_or(true);
 
+                    // Read-through h5i commands (recall object/objects/search,
+                    // team artifact) exist to emit content the caller must read in
+                    // FULL. Compacting them defeats the purpose — and in an
+                    // audit-all box even a `recall object` rehydrate of a teammate's
+                    // diff gets re-summarized. Pass them through verbatim, unstored
+                    // (the tee-shim already lets `h5i` commands pass unrecorded), so
+                    // an agent never has to reach for `--min-bytes 999999`.
+                    let read_through = objects::is_read_through_command(&command);
+
                     // Signal-aware gate. Store when there's either token-reduction
                     // value (raw ≥ min_bytes) OR provenance/search value (the
                     // command failed). Inside an audit-all h5i env, stage every
@@ -8469,8 +8478,8 @@ fn main() -> anyhow::Result<()> {
                     // even for small successful commands; the host ingests the spool
                     // later. Legacy envs without the audit var keep the old all-capture
                     // behavior.
-                    let worth_storing =
-                        audit_all || (raw.len() as u64) >= min_bytes || exit_code != Some(0);
+                    let worth_storing = !read_through
+                        && (audit_all || (raw.len() as u64) >= min_bytes || exit_code != Some(0));
                     if !worth_storing {
                         use std::io::Write;
                         std::io::stdout().write_all(&raw)?;

@@ -640,6 +640,58 @@ fn inbox_context_snapshot_off_env_range_is_rejected() {
     );
 }
 
+/// `h5i capture run -- h5i recall object|objects|search / team artifact …` must
+/// PASS THROUGH verbatim — never summarize or re-capture a read whose whole point
+/// is to emit content in full. Otherwise a boxed agent (whose harness wraps every
+/// command in `capture run`) gets a teammate's diff re-compacted and has to reach
+/// for `--min-bytes 999999`, plus the audit-all box stages a pointless
+/// capture-of-a-recall.
+#[test]
+fn capture_run_passes_read_through_h5i_commands_through() {
+    let r = Repo::new();
+    let spool = r.dir.join("rtspool");
+    std::fs::create_dir_all(&spool).unwrap();
+    let run = |inner: &[&str]| -> Output {
+        let mut args = vec!["capture", "run", "--"];
+        args.extend_from_slice(inner);
+        Command::new(H5I)
+            .args(&args)
+            .env("H5I_AGENT", "tester")
+            // Audit-all box context: without the fix, EVERY command is staged + compacted.
+            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
+            .env(h5i_core::env::H5I_ENV_ID_VAR, "env/tester/x")
+            .env(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR, "deadbeef")
+            .current_dir(&r.dir)
+            .output()
+            .expect("capture run")
+    };
+    let cap_files = || {
+        std::fs::read_dir(&spool)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("cap-"))
+            .count()
+    };
+
+    // Read-through: `capture run -- <h5i> recall objects` (the inner binary's
+    // basename is `h5i`) passes through — full output, no "staged" line, no spool.
+    let out = run(&[H5I, "recall", "objects"]);
+    let s = out_str(&out);
+    assert!(out.status.success(), "read-through must succeed: {s}");
+    assert!(
+        !s.contains("staged for host ingest"),
+        "a read-through h5i command must not be captured: {s}"
+    );
+    assert_eq!(cap_files(), 0, "read-through must not stage a spool capture");
+
+    // Control: a normal command in an audit-all box IS still captured.
+    let _ = run(&["echo", "hello-world"]);
+    assert!(
+        cap_files() >= 1,
+        "a non-read-through command should still be captured in an audit-all box"
+    );
+}
+
 /// In a box, `h5i recall object <cap-id>` must rehydrate a capture that is still
 /// STAGED in the spool (not yet ingested into refs/h5i/objects) — so an agent can
 /// read the full raw output `capture run` compacted, instead of the misleading
