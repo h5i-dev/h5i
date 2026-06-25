@@ -38,7 +38,7 @@ Agent ensembles work because **independent attempts beat isolated guesses**. h5i
 
 ---
 
-## Install
+## 1. Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
@@ -52,7 +52,9 @@ cargo install --git https://github.com/h5i-dev/h5i h5i-core
 
 ---
 
-## Run an ensemble (60 seconds)
+## 2. 60-Second Flow
+
+### 2.1. Setup
 
 Initialize h5i and wire the Claude Code / Codex hooks:
 
@@ -62,6 +64,40 @@ h5i hook setup --write --wrap-bash --team
 git add .
 git commit -m "update hooks"
 ```
+
+### 2.2. Track Prompts and Contexts
+
+Once the hooks are registered, h5i versions your human prompts and every agent context step (reads, writes, thinking) as Git objects, trimming noisy tool output along the way (for `pytest`, just the failures) to cut up to 95% of the tokens while keeping the raw output recoverable. 
+
+```bash
+h5i recall context show
+```
+
+
+Share it with `h5i share push`, or post an AI-usage summary (prompt quality, AI/human commit ratio, secret leaks, prompt injection, and more) to the pull request with `h5i share pr post` (needs the `gh` CLI).
+
+```bash
+h5i share push
+h5i share pr post
+```
+
+### 2.3. Sandboxed Environment
+
+h5i gives each agent a secure, sandboxed worktree. Let it run with permissions
+off inside the box, then review its diff before anything lands on your branch:
+
+```bash
+h5i env create claude-env --profile agent-claude
+h5i env shell claude-env
+box$ claude --dangerously-skip-permissions
+box$ exit
+
+h5i env diff claude-env
+h5i env propose claude-env
+h5i env apply claude-env
+```
+
+### 2.4. Run an ensemble
 
 Create two sandboxed agent environments:
 
@@ -124,7 +160,7 @@ h5i serve
 ---
 
 
-## What h5i is, and is not
+## 3. What h5i is, and is not
 
 - h5i **is not** a Git replacement, a hosted SaaS / dev-environment, or *just* a sandbox.
 - h5i **is** a Git sidecar for **auditable agent ensembles**: run many agents, merge one provable result.
@@ -141,7 +177,7 @@ h5i serve
 
 ---
 
-## Documentation
+## 4. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Pitch Deck](https://h5i.dev/pitch/)
 - [Tutorials](https://h5i.dev/guides/): guided workflows · [Blog](https://h5i.dev/blog/): design notes, audits, case studies
@@ -150,7 +186,7 @@ h5i serve
 
 ---
 
-## Acknowledgements
+## 5. Acknowledgements
 
 h5i's token-reduction filters build on prior art, both Apache-2.0:
 
@@ -159,6 +195,6 @@ h5i's token-reduction filters build on prior art, both Apache-2.0:
 
 See [`NOTICE`](NOTICE) and [`assets/filters/NOTICE`](assets/filters/NOTICE) for full attribution.
 
-## License
+## 6. License
 
 Apache-2.0. See [LICENSE](LICENSE).
