@@ -2364,3 +2364,4 @@ _[Checkpoint: 6a3c8cd6 — edited MANUAL.md; wrote process-tier-host-drift-workt
 [02:08:09] ACT: edited src/ctx.rs
 [02:08:17] OBSERVE: read src/ctx.rs
 [02:08:29] ACT: edited src/ctx.rs
+[02:11:30] NOTE: DEFERRAL (~/.claude/projects/-home-koukyosyumei-Dev-h5i/memory/MEMORY.md): ted in a real run, the one regression is fixed, and the two follow-up friction points (#1/#2) are resolved. The only remaining item from my T3 analysi…
