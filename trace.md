@@ -2453,3 +2453,9 @@ _[Checkpoint: 6a3d7258 — session ended (auto-checkpoint)]_
 ---
 
 [18:34:25] ACT: wrote docs/sandbox-comparison.md
+
+
+---
+_[Checkpoint: 6a3d74c0 — wrote docs/sandbox-comparison.md]_
+---
+
