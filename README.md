@@ -80,7 +80,7 @@ h5i share pr post
 h5i gives each agent a secure, sandboxed worktree. Let it run with permissions
 off inside the box, then review its diff before anything lands on your branch:
 
-```
+```bash
 h5i env create claude-env --profile agent-claude
 h5i env shell claude-env
 box$ claude --dangerously-skip-permissions
