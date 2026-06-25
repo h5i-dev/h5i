@@ -2264,3 +2264,4 @@ I have **not committed** — per your workflow I'll stage and `h5i capture commi
 [01:00:14] THINK: Committing first. I'll stage the four files explicitly and use `h5i capture commit` (with `--tests` since tests were added, and `--audit` since this touches the sandbox isolation boundary / in-box ingest guards):
 [01:00:15] THINK: I have everything. Let me add two integration tests (positive apply + off-range rejection) for the #1 round-trip, modeled on the note-spool tests:
 [01:00:15] THINK: Both pass. Let me also add a `--diff` end-to-end check for the new `team artifact show` (#7).
+[01:00:15] THINK: The core of #7 is the library path (`find_submission`/`submission_diff`), which I'll cover with a unit test reusing the real `submit()`.
