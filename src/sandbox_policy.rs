@@ -638,3 +638,135 @@ pub struct ExecOutcome {
     /// populates this; `None` for `workspace`/`process`.
     pub egress: Option<crate::objects::EgressSummary>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolved_policy_round_trips_through_toml() {
+        let mut profile = Profile::builtin("locked", IsolationClaim::Process);
+        profile.tools = vec!["cargo".into(), "rustc".into()];
+        profile.net_egress = vec!["crates.io".into()];
+        profile.secret_grants = vec![SecretGrant {
+            name: "GITHUB_TOKEN".into(),
+            source: Some("env:GITHUB_TOKEN".into()),
+            inject: Some("env".into()),
+            ttl: Some("10m".into()),
+        }];
+        profile.private_paths = vec![PrivatePath {
+            path: "target".into(),
+            kind: "cache".into(),
+            persist: true,
+        }];
+
+        let policy = ResolvedPolicy::new(IsolationClaim::Process, profile);
+        let encoded = policy.to_toml().expect("policy serializes");
+        let decoded = ResolvedPolicy::from_toml(&encoded).expect("policy deserializes");
+
+        assert_eq!(decoded.claim, IsolationClaim::Process);
+        assert_eq!(decoded.profile.name, "locked");
+        assert_eq!(decoded.profile.isolation, IsolationClaim::Process);
+        assert_eq!(decoded.profile.tools, ["cargo", "rustc"]);
+        assert_eq!(decoded.profile.net_egress, ["crates.io"]);
+        assert_eq!(decoded.profile.secret_grants[0].source_or_default(), "env:GITHUB_TOKEN");
+        assert_eq!(decoded.profile.private_paths[0].path, "target");
+        assert_eq!(decoded.audit.capture, AuditCapture::Signal);
+        assert_eq!(decoded.to_toml().expect("re-serializes"), encoded);
+        assert_eq!(decoded.digest().expect("digest"), policy.digest().expect("digest"));
+    }
+
+    #[test]
+    fn process_profile_defaults_are_fail_closed() {
+        let profile = Profile::builtin("default", IsolationClaim::Process);
+
+        assert_eq!(profile.net_mode, NetMode::Deny);
+        assert!(profile.net_egress.is_empty());
+        assert!(profile.secrets.is_empty());
+        assert!(profile.secret_grants.is_empty());
+        assert!(profile.private_paths.is_empty());
+        assert!(!profile.allow_command_extractors);
+        assert_eq!(profile.wall_secs, DEFAULT_WALL.as_secs());
+        assert_eq!(AuditCapture::default(), AuditCapture::Signal);
+        assert_eq!(AuditPolicy::default().capture, AuditCapture::Signal);
+    }
+
+    #[test]
+    fn serde_defaults_keep_missing_optional_policy_fields_conservative() {
+        let text = r#"
+claim = "process"
+
+[profile]
+name = "minimal"
+isolation = "process"
+fs_read = ["/usr"]
+fs_write = ["$WORK"]
+fs_deny = ["~/.ssh"]
+net_mode = "deny"
+net_egress = []
+secrets = []
+mem_bytes = 1073741824
+max_procs = 32
+wall_secs = 1800
+tools = []
+env_pass = ["PATH"]
+"#;
+
+        let policy = ResolvedPolicy::from_toml(text).expect("missing defaulted fields deserialize");
+
+        assert_eq!(policy.audit.capture, AuditCapture::Signal);
+        assert_eq!(policy.profile.net_mode, NetMode::Deny);
+        assert!(policy.profile.secret_grants.is_empty());
+        assert!(policy.profile.private_paths.is_empty());
+        assert!(!policy.profile.allow_command_extractors);
+        assert!(policy.profile.net_egress.is_empty());
+    }
+
+    #[test]
+    fn enum_toml_spellings_are_strict() {
+        #[derive(Deserialize)]
+        struct EnumFixture {
+            isolation: IsolationClaim,
+            net_mode: NetMode,
+            audit_capture: AuditCapture,
+        }
+
+        let parsed: EnumFixture = toml::from_str(
+            r#"
+isolation = "hardened-container"
+net_mode = "deny"
+audit_capture = "signal"
+"#,
+        )
+        .expect("known enum spellings deserialize");
+
+        assert_eq!(parsed.isolation, IsolationClaim::HardenedContainer);
+        assert_eq!(parsed.net_mode, NetMode::Deny);
+        assert_eq!(parsed.audit_capture, AuditCapture::Signal);
+
+        assert!(toml::from_str::<EnumFixture>(
+            r#"
+isolation = "hardened_container"
+net_mode = "deny"
+audit_capture = "signal"
+"#,
+        )
+        .is_err());
+        assert!(toml::from_str::<EnumFixture>(
+            r#"
+isolation = "process"
+net_mode = "allow"
+audit_capture = "signal"
+"#,
+        )
+        .is_err());
+        assert!(toml::from_str::<EnumFixture>(
+            r#"
+isolation = "process"
+net_mode = "deny"
+audit_capture = "verbose"
+"#,
+        )
+        .is_err());
+    }
+}
