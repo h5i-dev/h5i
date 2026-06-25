@@ -67,7 +67,7 @@ git commit -m "update hooks"
 
 ### Track Prompts and Contexts
 
-Once the hooks are registered, h5i automatically version controls the human prompts and every agent context step (reads, writes, thinking, and so on) of your Claude and Codex agents as Git objects. Noisy tool output is trimmed at the same time. For a `pytest` run, for example, only the failing tests are kept, cutting up to 95% of the token footprint while the full raw output stays tracked and recoverable whenever you need it. Share this metadata with the rest of your team via `h5i share push`, and post a summary of your AI usage (prompt quality score, AI/human commit ratio, secret leak detection, prompt injection score, and more) straight to the pull request with `h5i share pr post` (this one needs the `gh` CLI installed).
+Once the hooks are registered, h5i versions your human prompts and every agent context step (reads, writes, thinking) as Git objects, trimming noisy tool output along the way (for `pytest`, just the failures) to cut up to 95% of the tokens while keeping the raw output recoverable. Share it with `h5i share push`, or post an AI-usage summary (prompt quality, AI/human commit ratio, secret leaks, prompt injection, and more) to the pull request with `h5i share pr post` (needs the `gh` CLI).
 
 ```bash
 h5i recall context show
