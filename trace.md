@@ -2297,3 +2297,4 @@ _[Checkpoint: 6a3c7fa2 — edited tests/env_integration.rs; wrote testing-in-box
 [01:15:12] ACT: edited MANUAL.md
 [01:15:28] ACT: edited MANUAL.md
 [01:15:33] ACT: edited MANUAL.md
+[01:15:40] ACT: edited MANUAL.md
