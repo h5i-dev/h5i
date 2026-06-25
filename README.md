@@ -160,7 +160,7 @@ h5i serve
 ---
 
 
-## 2.5. What h5i is, and is not
+## 3. What h5i is, and is not
 
 - h5i **is not** a Git replacement, a hosted SaaS / dev-environment, or *just* a sandbox.
 - h5i **is** a Git sidecar for **auditable agent ensembles**: run many agents, merge one provable result.
@@ -177,7 +177,7 @@ h5i serve
 
 ---
 
-## 2.6. Documentation
+## 4. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Pitch Deck](https://h5i.dev/pitch/)
 - [Tutorials](https://h5i.dev/guides/): guided workflows · [Blog](https://h5i.dev/blog/): design notes, audits, case studies
@@ -186,7 +186,7 @@ h5i serve
 
 ---
 
-## 2.7. Acknowledgements
+## 5. Acknowledgements
 
 h5i's token-reduction filters build on prior art, both Apache-2.0:
 
@@ -195,6 +195,6 @@ h5i's token-reduction filters build on prior art, both Apache-2.0:
 
 See [`NOTICE`](NOTICE) and [`assets/filters/NOTICE`](assets/filters/NOTICE) for full attribution.
 
-## 2.8. License
+## 6. License
 
 Apache-2.0. See [LICENSE](LICENSE).
