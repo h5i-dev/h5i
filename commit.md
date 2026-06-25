@@ -2259,3 +2259,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a3c7ae7 — 2026-06-25 00:48 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Done: (#1) ctx snapshot spool→host ingest (ctx.rs builds parentless anchor, env.rs ContextSnapshotSpool + drain w/ base..env_tip guard); (#2/#8) review_instruction drops sealed team compare, points at artifact show, read-only review; (#3) message_details surfaces granted kinds; (#4) TeamArtifact.submitted_at, project()+compare() tie-break by time not id; (#5/#6) submit records round (submitted-round sentinel), box hook releases on round<=submitted; (#7) h5i team artifact show <id> --diff/--summary/--tests. Build+clippy clean, new tests pass. Pre-existing mcp supervised-spawn flake (os err 22) unrelated. Not committed (awaiting user).
+
+---
+
