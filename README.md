@@ -52,7 +52,9 @@ cargo install --git https://github.com/h5i-dev/h5i h5i-core
 
 ---
 
-## Run an ensemble (60 seconds)
+## 60-Seconds Flow
+
+### Setup
 
 Initialize h5i and wire the Claude Code / Codex hooks:
 
@@ -62,6 +64,34 @@ h5i hook setup --write --wrap-bash --team
 git add .
 git commit -m "update hooks"
 ```
+
+### Track Prompts and Contexts
+
+Once the hooks are registered, h5i automatically version controls the human prompts and every agent context step (reads, writes, thinking, and so on) of your Claude and Codex agents as Git objects. Noisy tool output is trimmed at the same time. For a `pytest` run, for example, only the failing tests are kept, cutting up to 95% of the token footprint while the full raw output stays tracked and recoverable whenever you need it. Share this metadata with the rest of your team via `h5i share push`, and post a summary of your AI usage (prompt quality score, AI/human commit ratio, secret leak detection, prompt injection score, and more) straight to the pull request with `h5i share pr post` (this one needs the `gh` CLI installed).
+
+```bash
+h5i recall context show
+h5i share push
+h5i share pr post
+```
+
+### Sandboxed Environment
+
+h5i gives each agent a secure, sandboxed worktree. Let it run with permissions
+off inside the box, then review its diff before anything lands on your branch:
+
+```
+h5i env create claude-env --profile agent-claude
+h5i env shell claude-env
+box$ claude --dangerously-skip-permissions
+box$ exit
+
+h5i env diff claude-env
+h5i env propose claude-env
+h5i env apply claude-env
+```
+
+### Run an ensemble
 
 Create two sandboxed agent environments:
 
