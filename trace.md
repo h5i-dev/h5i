@@ -2272,3 +2272,9 @@ I have **not committed** — per your workflow I'll stage and `h5i capture commi
 _[Checkpoint: 6a3c7d9f — edited src/env.rs; edited tests/env_integration.rs; edited src/team.rs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3c7e4e — edited src/env.rs; edited tests/env_integration.rs; edited src/team.rs]_
+---
+
