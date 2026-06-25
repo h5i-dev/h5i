@@ -2299,6 +2299,52 @@ mod tests {
     }
 
     #[test]
+    fn find_submission_resolves_artifact_and_diffs_against_base() {
+        // The library half of `h5i team artifact show`: a reviewer looks a
+        // submission up by id and renders its diff read-only.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        commit_file(&repo, "README.md", "hello\n");
+        let h5i_root = dir.path();
+        let m = manifest(&repo, h5i_root, "codex", "fix");
+
+        let work_path = m.work_dir(h5i_root);
+        std::fs::create_dir_all(work_path.parent().unwrap()).unwrap();
+        {
+            let branch_ref = repo.find_reference(&m.branch).unwrap();
+            let mut wt_opts = git2::WorktreeAddOptions::new();
+            wt_opts.reference(Some(&branch_ref));
+            repo.worktree(&m.worktree_name(), &work_path, Some(&wt_opts))
+                .unwrap();
+        }
+        std::fs::write(work_path.join("quick_sort.py"), "def quick_sort():\n    return []\n")
+            .unwrap();
+
+        create(&repo, "run-as", "run-as", "HEAD", 1, "human").unwrap();
+        add_env(&repo, h5i_root, "run-as", "env/codex/fix", "codex-fix", None, None, "human")
+            .unwrap();
+        let sub = submit(&repo, h5i_root, "run-as", "codex-fix", None, None, "codex").unwrap();
+
+        // Lookup by id returns the artifact + the run's base.
+        let (found, base) = find_submission(&repo, "run-as", &sub.id).unwrap();
+        assert_eq!(found.commit_oid, sub.commit_oid);
+        let base_tip = repo.refname_to_id("refs/heads/main").ok();
+        let _ = base_tip; // base is the create() HEAD; just assert it's non-empty.
+        assert!(!base.is_empty(), "base oid must resolve");
+
+        // The diff against base contains the agent's added file.
+        let diff = submission_diff(&repo, &base, &found.commit_oid).unwrap();
+        assert!(
+            diff.contains("quick_sort.py") && diff.contains("def quick_sort"),
+            "diff must show the submitted change: {diff}"
+        );
+
+        // An unknown id is a clear error, not a panic.
+        let err = find_submission(&repo, "run-as", "sub-nope-r1-deadbeef").unwrap_err();
+        assert!(format!("{err}").contains("no submission"), "{err}");
+    }
+
+    #[test]
     fn gen_agent_id_avoids_collisions() {
         let taken: Vec<String> = AGENT_NAMES.iter().map(|s| s.to_string()).collect();
         // Pool fully taken → must fall back to a unique suffixed name.

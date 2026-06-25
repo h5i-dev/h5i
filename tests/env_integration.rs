@@ -543,6 +543,103 @@ fn inbox_commit_note_off_env_range_is_rejected() {
     );
 }
 
+/// In-box `h5i commit` can't write `refs/h5i/context-snapshots/*` (sealed ro in
+/// the box), so it builds the anchor commit *object* (objects/ is rw) and stages
+/// the ref creation to the spool. The host applies it on the next env run —
+/// scoped to the env's own commits — re-creating the snapshot ref. This is the
+/// host half of the round-trip; the box half (object build + staging) is covered
+/// by ctx::snapshot_for_commit's gate.
+#[test]
+fn inbox_context_snapshot_stages_and_host_applies_it() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "csok"]);
+
+    // Advance the env branch with an env-owned commit so its sha is in
+    // base..env_tip (the snapshot's `git_sha` is range-guarded on ingest).
+    let wt = r.work("csok");
+    std::fs::write(wt.join("g.txt"), b"hi\n").unwrap();
+    git(&wt, &["add", "g.txt"]);
+    git(&wt, &["commit", "-m", "env-owned change"]);
+    let env_tip = out_str(&git(
+        &r.dir,
+        &["rev-parse", "refs/heads/h5i/env/tester/csok"],
+    ));
+    let env_tip = env_tip.trim().to_string();
+    let short = env_tip[..8].to_string();
+
+    // Build the parentless anchor commit object the box would have written.
+    let tree = out_str(&git(&r.dir, &["rev-parse", &format!("{env_tip}^{{tree}}")]));
+    let anchor = out_str(&git(&r.dir, &["commit-tree", tree.trim(), "-m", "anchor"]));
+    let anchor = anchor.trim().to_string();
+
+    // Stage the ref-creation request, exactly as ctx::snapshot_for_commit does.
+    let spool = r.env_dir("csok").join("spool");
+    std::fs::create_dir_all(&spool).unwrap();
+    std::fs::write(
+        spool.join(format!("ctxsnap-{short}.json")),
+        format!("{{\"git_sha\":\"{env_tip}\",\"short_sha\":\"{short}\",\"anchor_oid\":\"{anchor}\"}}"),
+    )
+    .unwrap();
+
+    // An env run triggers the host ingest.
+    r.h5i_ok(&["env", "run", "csok", "--", "sh", "-c", "echo trigger"]);
+
+    // The host created the snapshot ref, pointing at the staged anchor.
+    let got = out_str(&git(
+        &r.dir,
+        &["rev-parse", &format!("refs/h5i/context-snapshots/{short}")],
+    ));
+    assert_eq!(
+        got.trim(),
+        anchor,
+        "snapshot ref must be created pointing at the staged anchor"
+    );
+    let log = out_str(&r.h5i_ok(&["env", "log", "csok"]));
+    assert!(log.contains("in-box context snapshot applied"), "{log}");
+}
+
+/// The host applies in-box snapshots only for the env's OWN commits: a staged
+/// snapshot whose `git_sha` is outside `base..env_tip` (e.g. the inherited
+/// `main`) is rejected, so a box can't plant a snapshot anchor for arbitrary
+/// history. Mirrors the note-spool scope guard.
+#[test]
+fn inbox_context_snapshot_off_env_range_is_rejected() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "csrej"]);
+    // Fresh env: branch == base == main tip, so main is inherited (off-range).
+    let main_oid = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let main_oid = main_oid.trim().to_string();
+    let short = main_oid[..8].to_string();
+    let tree = out_str(&git(&r.dir, &["rev-parse", &format!("{main_oid}^{{tree}}")]));
+    let anchor = out_str(&git(&r.dir, &["commit-tree", tree.trim(), "-m", "forged-anchor"]));
+    let anchor = anchor.trim().to_string();
+
+    let spool = r.env_dir("csrej").join("spool");
+    std::fs::create_dir_all(&spool).unwrap();
+    std::fs::write(
+        spool.join(format!("ctxsnap-{short}.json")),
+        format!("{{\"git_sha\":\"{main_oid}\",\"short_sha\":\"{short}\",\"anchor_oid\":\"{anchor}\"}}"),
+    )
+    .unwrap();
+
+    r.h5i_ok(&["env", "run", "csrej", "--", "sh", "-c", "echo trigger"]);
+
+    let log = out_str(&r.h5i_ok(&["env", "log", "csrej"]));
+    assert!(
+        log.contains("rejected in-box context snapshot"),
+        "must log rejection: {log}"
+    );
+    let got = Command::new("git")
+        .args(["rev-parse", &format!("refs/h5i/context-snapshots/{short}")])
+        .current_dir(&r.dir)
+        .output()
+        .expect("git rev-parse");
+    assert!(
+        !got.status.success(),
+        "no snapshot ref may be created for an off-range commit"
+    );
+}
+
 /// `env status` surfaces evidence STAGED in the spool but not yet ingested
 /// (visible mid-session, before the host materializes it at run/shell end) —
 /// staged captures, notes, and tee-shim records, with the pending commands.
