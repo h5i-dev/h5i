@@ -2168,3 +2168,4 @@ _[Checkpoint: 6a3c7622 — edited docs/_static/hero-team.svg; edited docs/_stati
 _[Checkpoint: 6a3c7641 — session ended (auto-checkpoint)]_
 ---
 
+[00:28:50] OBSERVE: read src/ctx.rs
