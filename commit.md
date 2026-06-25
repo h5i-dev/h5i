@@ -2350,3 +2350,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a3c8caf — 2026-06-25 02:04 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+T3 logs validated all T2 fixes. Fixed: (regression) artifact show was flat 'team artifact <id>' but docs/prompt say 'artifact show <id>' -> made it a real subcommand + CLI-shape test; (prompt) step1 references delivered review request not drained inbox; (#1/#2) recall object now rehydrates staged in-box captures from spool (env::read_staged_capture + main handler fallback) -> unblocks reading diffs capture-run compacted. 6 commits total this session. Pre-existing host failure: process/supervised env_integration in-box-commit tests fail with 'failed to stat .../work' (reproduced at 0409f721e, before session) - host drift, not a regression.
+
+---
+

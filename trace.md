@@ -2337,3 +2337,9 @@ _[Checkpoint: 6a3c89b3 — edited src/team.rs; edited src/team.rs; edited tests/
 [01:56:48] ACT: edited tests/env_integration.rs
 [02:03:51] OBSERVE: read MANUAL.md
 [02:03:56] ACT: edited MANUAL.md
+
+
+---
+_[Checkpoint: 6a3c8caf — Fixed T3 regression + #1/#2 (in-box staged-capture rehydration)]_
+---
+
