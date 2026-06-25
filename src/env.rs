@@ -2048,6 +2048,42 @@ pub fn write_inbox_capture_spool(
     Ok(base)
 }
 
+/// A staged (not-yet-ingested) in-box capture, read back from the spool by id.
+pub struct StagedCapture {
+    pub raw: Vec<u8>,
+    pub meta: Option<InboxCaptureMeta>,
+}
+
+/// Read a staged in-box capture (`cap-<id>`) from a capture spool dir by the id
+/// `h5i capture run` printed — before the host ingests it into refs/h5i/objects.
+/// Pure (takes the spool path) so it's unit-testable. Returns None when the id
+/// isn't a safe staged-capture id or the `.raw` file is gone (already ingested).
+pub fn read_staged_capture_at(spool: &Path, id: &str) -> Option<StagedCapture> {
+    // Defensive: the id becomes a filename, so reject anything but a `cap-…`
+    // base of the alnum/`-` charset `write_inbox_capture_spool` produces.
+    if !id.starts_with("cap-")
+        || id.len() > 96
+        || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return None;
+    }
+    let raw = std::fs::read(spool.join(format!("{id}.raw"))).ok()?;
+    let meta = std::fs::read(spool.join(format!("{id}.json")))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok());
+    Some(StagedCapture { raw, meta })
+}
+
+/// Read a staged in-box capture by id, locating the spool from the env the host
+/// injects (`$H5I_ENV_CAPTURE_SPOOL`). Returns None when not running in a box.
+/// Lets an agent rehydrate the full raw output of a capture it just produced —
+/// the host hasn't ingested it into refs/h5i/objects yet, so `resolve_manifest`
+/// can't see it.
+pub fn read_staged_capture(id: &str) -> Option<StagedCapture> {
+    let spool = std::env::var_os(H5I_ENV_CAPTURE_SPOOL_VAR).map(PathBuf::from)?;
+    read_staged_capture_at(&spool, id)
+}
+
 pub fn write_codex_hook_spool(
     spool: &Path,
     record: &CodexHookSpoolRecord,
@@ -6212,6 +6248,28 @@ mod tests {
         // ...but a lower (stale) round never lowers it.
         write_submitted_round(&spool, 2).unwrap();
         assert_eq!(read_submitted_round(&spool), Some(3));
+    }
+
+    #[test]
+    fn read_staged_capture_round_trips_and_rejects_unsafe_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path().join("spool");
+        let meta = InboxCaptureMeta {
+            cmd: "h5i team artifact show x --diff".into(),
+            cwd: None,
+            exit_code: Some(0),
+            files: vec![],
+            cmd_argv: vec![],
+        };
+        let id = write_inbox_capture_spool(&spool, &meta, b"FULL DIFF\nLINE 2\n").unwrap();
+        // The id `capture run` printed rehydrates the full raw + meta from the spool.
+        let staged = read_staged_capture_at(&spool, &id).expect("staged capture present");
+        assert_eq!(staged.raw, b"FULL DIFF\nLINE 2\n");
+        assert_eq!(staged.meta.unwrap().cmd, "h5i team artifact show x --diff");
+        // Unknown / non-cap / path-traversal ids return None (never touch disk).
+        assert!(read_staged_capture_at(&spool, "cap-does-not-exist").is_none());
+        assert!(read_staged_capture_at(&spool, "note-abc").is_none());
+        assert!(read_staged_capture_at(&spool, "cap-../../etc/passwd").is_none());
     }
 
     #[test]

@@ -8599,7 +8599,43 @@ fn main() -> anyhow::Result<()> {
                     manifest,
                     format,
                 } => {
-                    let m = objects::resolve_manifest(git, &id)?;
+                    let m = match objects::resolve_manifest(git, &id) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            // In a box, a capture the agent just made may still be
+                            // STAGED in the spool (not yet ingested into
+                            // refs/h5i/objects). Rehydrate its full raw output from
+                            // the spool so the agent can read what `capture run`
+                            // compacted — instead of a misleading "no object matches".
+                            if let Some(staged) = h5i_core::env::read_staged_capture(&id) {
+                                if manifest || format.is_some() {
+                                    anyhow::bail!(
+                                        "capture {id} is staged in-box and not yet ingested — the \
+                                         manifest / structured views are computed by the host on \
+                                         session end. Its raw output is available now: \
+                                         h5i recall object {id}"
+                                    );
+                                }
+                                if summary {
+                                    println!("staged capture {id} (not yet ingested by the host)");
+                                    if let Some(meta) = &staged.meta {
+                                        if !meta.cmd.is_empty() {
+                                            println!("  cmd:  {}", meta.cmd);
+                                        }
+                                        if let Some(code) = meta.exit_code {
+                                            println!("  exit: {code}");
+                                        }
+                                    }
+                                    println!("  raw:  h5i recall object {id}");
+                                } else {
+                                    use std::io::Write;
+                                    std::io::stdout().write_all(&staged.raw)?;
+                                }
+                                return Ok(());
+                            }
+                            return Err(e.into());
+                        }
+                    };
                     if let Some(fmt) = format {
                         // Re-render the stored structured result exactly as it was
                         // shown at capture time. The summary/text formats fall back

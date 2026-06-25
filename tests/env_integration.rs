@@ -640,6 +640,56 @@ fn inbox_context_snapshot_off_env_range_is_rejected() {
     );
 }
 
+/// In a box, `h5i recall object <cap-id>` must rehydrate a capture that is still
+/// STAGED in the spool (not yet ingested into refs/h5i/objects) — so an agent can
+/// read the full raw output `capture run` compacted, instead of the misleading
+/// "no object matches". This is the rehydrate hint `capture run` itself prints.
+#[test]
+fn recall_object_rehydrates_a_staged_inbox_capture() {
+    let r = Repo::new();
+    let spool = r.dir.join("capspool");
+    std::fs::create_dir_all(&spool).unwrap();
+    // Mimic what an in-box `h5i capture run` stages: a `cap-*.raw` + `.json`.
+    std::fs::write(spool.join("cap-99-12345.raw"), b"FULL DIFF LINE 1\nFULL DIFF LINE 2\n")
+        .unwrap();
+    std::fs::write(
+        spool.join("cap-99-12345.json"),
+        br#"{"cmd":"h5i team artifact show x --diff","cwd":null,"exit_code":0,"files":[],"cmd_argv":[]}"#,
+    )
+    .unwrap();
+
+    let recall = |args: &[&str]| -> Output {
+        Command::new(H5I)
+            .args(args)
+            .env("H5I_AGENT", "tester")
+            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
+            .current_dir(&r.dir)
+            .output()
+            .expect("recall object")
+    };
+
+    // Default rehydrate prints the full raw output.
+    let out = recall(&["recall", "object", "cap-99-12345"]);
+    let s = out_str(&out);
+    assert!(out.status.success(), "staged rehydrate must succeed: {s}");
+    assert!(
+        s.contains("FULL DIFF LINE 1") && s.contains("FULL DIFF LINE 2"),
+        "must print the full staged raw: {s}"
+    );
+
+    // --summary gives a clear staged note (not a crash / not "no object matches").
+    let sum = out_str(&recall(&["recall", "object", "cap-99-12345", "--summary"]));
+    assert!(sum.contains("staged capture") && sum.contains("not yet ingested"), "{sum}");
+
+    // Host-side (no spool env), an unknown id still fails clearly — no false hit.
+    let host = Command::new(H5I)
+        .args(["recall", "object", "cap-99-12345"])
+        .current_dir(&r.dir)
+        .output()
+        .expect("recall object host");
+    assert!(!host.status.success(), "host-side unknown id must still error");
+}
+
 /// `h5i team artifact show <id>` must parse as a real subcommand — the form the
 /// peer-review prompt and the docs tell agents to run. (A prior version wired it
 /// flat as `team artifact <id>`, so the documented `show` form failed with a clap

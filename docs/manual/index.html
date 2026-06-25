@@ -1987,6 +1987,12 @@ h5i recall object &lt;id&gt; --summary          # the reduced summary only
 h5i recall object &lt;id&gt; --manifest         # the full manifest JSON record
 </code></pre>
 <p>Handles accept the short id, a full <code>sha256:&lt;hex&gt;</code>, or any unambiguous prefix.</p>
+<p>Inside a sandboxed env, a capture you just made is <strong>staged</strong> in the box's spool
+and not yet ingested into <code>refs/h5i/objects</code>; <code>h5i recall object &lt;cap-id&gt;</code> still
+rehydrates its full raw bytes from the spool (so an agent can re-read output that
+<code>h5i capture run</code> compacted). The structured <code>--manifest</code> / <code>--format</code> views are
+computed host-side on session end, so in-box they report the capture as staged
+and point you at the raw.</p>
 <h3 id="h5i-recall-rm">h5i recall rm</h3>
 <pre><code class="language-bash">h5i recall rm &lt;branch&gt;            # dry-run: print what WOULD be removed
 h5i recall rm &lt;branch&gt; --force    # actually remove it

@@ -1550,6 +1550,13 @@ h5i recall object <id> --manifest         # the full manifest JSON record
 
 Handles accept the short id, a full `sha256:<hex>`, or any unambiguous prefix.
 
+Inside a sandboxed env, a capture you just made is **staged** in the box's spool
+and not yet ingested into `refs/h5i/objects`; `h5i recall object <cap-id>` still
+rehydrates its full raw bytes from the spool (so an agent can re-read output that
+`h5i capture run` compacted). The structured `--manifest` / `--format` views are
+computed host-side on session end, so in-box they report the capture as staged
+and point you at the raw.
+
 ### h5i recall rm
 
 ```bash
