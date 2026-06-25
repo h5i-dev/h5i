@@ -2111,23 +2111,8 @@ enum TeamCommands {
     /// Show one teammate's submission by artifact id (read-only; safe in a box).
     /// Defaults to the diff; `--summary`/`--tests` show the other granted views.
     Artifact {
-        /// Submission artifact id, e.g. `sub-hana-r1-4ea2333c040f`
-        id: String,
-        /// Team id (defaults to the current team / $H5I_TEAM)
-        #[arg(long)]
-        team: Option<String>,
-        /// Show the unified diff against the team base (the default)
-        #[arg(long)]
-        diff: bool,
-        /// Show the submission's summary
-        #[arg(long)]
-        summary: bool,
-        /// Show the captured test evidence (capture ids + change stats)
-        #[arg(long)]
-        tests: bool,
-        /// Emit JSON
-        #[arg(long)]
-        json: bool,
+        #[command(subcommand)]
+        action: TeamArtifactCommands,
     },
     /// Ingest agents' staged submissions/reviews now, without exiting their
     /// boxes (live counterpart to the at-exit ingest). Lets a run advance while
@@ -2282,6 +2267,30 @@ enum TeamCommands {
     Agent {
         #[command(subcommand)]
         action: TeamAgentCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum TeamArtifactCommands {
+    /// Show one teammate's submission by artifact id (read-only; safe in a box)
+    Show {
+        /// Submission artifact id, e.g. `sub-hana-r1-4ea2333c040f`
+        id: String,
+        /// Team id (defaults to the current team / $H5I_TEAM)
+        #[arg(long)]
+        team: Option<String>,
+        /// Show the unified diff against the team base (the default)
+        #[arg(long)]
+        diff: bool,
+        /// Show the submission's summary
+        #[arg(long)]
+        summary: bool,
+        /// Show the captured test evidence (capture ids + change stats)
+        #[arg(long)]
+        tests: bool,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -9765,7 +9774,9 @@ fn main() -> anyhow::Result<()> {
                         print!("{}", h5i_core::team::render_compare(&rows));
                     }
                 }
-                TeamCommands::Artifact { id, team, diff, summary, tests, json } => {
+                TeamCommands::Artifact {
+                    action: TeamArtifactCommands::Show { id, team, diff, summary, tests, json },
+                } => {
                     // Resolve the team like the hook does: explicit arg, then the
                     // host-injected $H5I_TEAM (set inside a team box), then the
                     // current-team pointer.

@@ -640,6 +640,27 @@ fn inbox_context_snapshot_off_env_range_is_rejected() {
     );
 }
 
+/// `h5i team artifact show <id>` must parse as a real subcommand — the form the
+/// peer-review prompt and the docs tell agents to run. (A prior version wired it
+/// flat as `team artifact <id>`, so the documented `show` form failed with a clap
+/// usage error and agents had to guess the right shape.)
+#[test]
+fn team_artifact_show_is_a_subcommand() {
+    let r = Repo::new();
+    // The documented form must get PAST clap into the logic. With a nonexistent
+    // team it errors on resolution — but specifically NOT a clap usage error.
+    let out = r.h5i(&["team", "artifact", "show", "sub-nobody-r1-deadbeef", "--team", "nope"]);
+    let s = out_str(&out);
+    assert!(!out.status.success(), "unknown team must still fail: {s}");
+    assert!(
+        !s.contains("unexpected argument") && !s.contains("Usage: h5i team artifact <ID>"),
+        "`artifact show <id>` must parse as a subcommand, not a clap usage error: {s}"
+    );
+    // The bare flat form (no `show`) must NOT parse — `show` is the required verb.
+    let flat = r.h5i(&["team", "artifact", "sub-nobody-r1-deadbeef"]);
+    assert!(!flat.status.success(), "bare `artifact <id>` (no `show`) must not parse");
+}
+
 /// The team Stop hook, in a box, must stop re-surfacing a round's standing
 /// review messages once the agent has submitted for that round — even when the
 /// host re-fans the *same* round under a fresh message id (which defeats the
