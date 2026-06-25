@@ -2299,3 +2299,4 @@ _[Checkpoint: 6a3c7fa2 — edited tests/env_integration.rs; wrote testing-in-box
 [01:15:33] ACT: edited MANUAL.md
 [01:15:40] ACT: edited MANUAL.md
 [01:15:55] ACT: edited man/man1/h5i.1
+[01:16:14] ACT: edited man/man1/h5i.1
