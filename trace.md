@@ -2247,3 +2247,9 @@ Still waiting on the team-data-model and spool/ingest maps before I touch code â
 [00:48:59] THINK: Let me re-read that block (line numbers shifted):
 [00:48:59] THINK: Clippy is clean. Let me run the relevant unit tests (team, ctx, env).
 [00:48:59] THINK: Let me add a focused test for the #4 fix (newest submission wins over lexicographic id).
+
+
+---
+_[Checkpoint: 6a3c7afb â€” edited src/team.rs; edited src/team.rs; edited src/env.rs]_
+---
+
