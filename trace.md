@@ -2343,3 +2343,4 @@ _[Checkpoint: 6a3c89b3 — edited src/team.rs; edited src/team.rs; edited tests/
 _[Checkpoint: 6a3c8caf — Fixed T3 regression + #1/#2 (in-box staged-capture rehydration)]_
 ---
 
+[02:04:43] ACT: wrote process-tier-host-drift-worktree-stat.md
