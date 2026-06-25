@@ -2432,3 +2432,4 @@ _[Checkpoint: 6a3cb373 — edited tests/env_integration.rs; edited src/mcp.rs; e
 [18:21:45] OBSERVE: read README.md
 [18:21:50] OBSERVE: read linux_run_main.rs
 [18:21:51] OBSERVE: read managed-settings.json
+[18:21:52] OBSERVE: read com.anthropic.claudecode.plist
