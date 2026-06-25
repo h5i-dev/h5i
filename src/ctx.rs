@@ -1834,9 +1834,14 @@ pub fn snapshot_for_commit(workdir: &Path, git_sha: &str) -> Result<(), H5iError
         .or_else(|_| Signature::now("h5i", "h5i@local"))
         .map_err(H5iError::Git)?;
     let anchor_ref = format!("refs/h5i/context-snapshots/{short_sha}");
+    // Build the anchor as a parentless commit *object* (no ref) — the object
+    // store is writable even inside a sealed env box. The ref is created below,
+    // either directly (host) or, in a box where `refs/h5i/context-snapshots/*`
+    // is sealed read-only, staged to the capture spool for the host to apply on
+    // session end (same pattern as the in-box commit note).
     let anchor_oid = repo
         .commit(
-            Some(&anchor_ref),
+            None,
             &sig,
             &sig,
             &format!("h5i context snapshot anchor: {short_sha}"),
@@ -1845,6 +1850,37 @@ pub fn snapshot_for_commit(workdir: &Path, git_sha: &str) -> Result<(), H5iError
         )
         .map_err(H5iError::Git)?;
     let ctx_oid = anchor_oid.to_string();
+
+    // Same triple gate as in-box `h5i capture commit` note staging: a spool path
+    // plus the env id + policy digest the host injects only inside a real box.
+    let env_spool = {
+        let spool =
+            std::env::var_os(crate::env::H5I_ENV_CAPTURE_SPOOL_VAR).map(std::path::PathBuf::from);
+        let in_env = spool.is_some()
+            && std::env::var(crate::env::H5I_ENV_ID_VAR).is_ok()
+            && std::env::var(crate::env::H5I_ENV_POLICY_DIGEST_VAR).is_ok();
+        if in_env {
+            spool
+        } else {
+            None
+        }
+    };
+    match env_spool {
+        Some(spool) => {
+            crate::env::write_context_snapshot_spool(
+                &spool,
+                &crate::env::ContextSnapshotSpool {
+                    git_sha: git_sha.to_string(),
+                    short_sha: short_sha.to_string(),
+                    anchor_oid: ctx_oid.clone(),
+                },
+            )?;
+        }
+        None => {
+            repo.reference(&anchor_ref, anchor_oid, true, "h5i context snapshot anchor")
+                .map_err(H5iError::Git)?;
+        }
+    }
 
     let branch = current_branch(workdir);
     let goal = ctx_read_file(&repo, "main.md")
@@ -3053,13 +3089,24 @@ pub fn reconcile_git_vs_ctx(workdir: &Path) -> Result<ReconciliationReport, H5iE
     Ok(report)
 }
 
+/// Whether a pinned context branch `ctx` is correctly tracking git branch `git`.
+/// Usually these are equal. The deliberate exception is an **env worktree**: it
+/// pins its context to the reasoning branch `env/<agent>/<slug>` while its git
+/// HEAD is the *code* branch `h5i/env/<agent>/<slug>` (git = `h5i/` + ctx). That
+/// is the intended pairing, so it must not be reported as a misrouting pin —
+/// otherwise a fresh env warns spuriously and an agent that "fixes" it by
+/// unpinning ends up landing its reasoning on the wrong branch.
+fn pin_tracks_git(ctx: &str, git: &str) -> bool {
+    ctx == git || git == format!("h5i/{ctx}")
+}
+
 /// True when the context is pinned to a branch other than the current git
 /// branch — i.e. new traces/milestones would silently land on the pinned branch
 /// instead of the one matching `git`. Powers the warnings in [`print_goal`] and
-/// [`print_status`]. Returns `false` when not pinned or when the pin happens to
-/// match the git branch.
+/// [`print_status`]. Returns `false` when not pinned, when the pin matches the
+/// git branch, or for the expected env-worktree pairing (see [`pin_tracks_git`]).
 pub fn is_pin_misrouting(workdir: &Path) -> bool {
-    is_pinned(workdir) && current_branch(workdir) != current_git_branch(workdir)
+    is_pinned(workdir) && !pin_tracks_git(&current_branch(workdir), &current_git_branch(workdir))
 }
 
 /// Print just the current goal and pin status — a deliberately cheap, low-token
@@ -3161,9 +3208,10 @@ pub fn print_goal(workdir: &Path) -> Result<(), H5iError> {
         );
     }
 
-    // The silent footgun: a pin to a non-current git branch.
+    // The silent footgun: a pin to a non-current git branch. An env worktree's
+    // `env/<a>/<s>` ↔ `h5i/env/<a>/<s>` pairing is correct, not misrouting.
     if is_pinned(workdir) {
-        if ctx_branch != git_branch {
+        if !pin_tracks_git(&ctx_branch, &git_branch) {
             println!(
                 "{} context is {} to {} but git branch is {} — new traces are landing on the pinned branch, not {}.",
                 style("⚠").yellow().bold(),
@@ -3176,7 +3224,7 @@ pub fn print_goal(workdir: &Path) -> Result<(), H5iError> {
                 "  Run {} to resume tracking the git branch.",
                 style("h5i recall context unpin").bold(),
             );
-        } else {
+        } else if ctx_branch == git_branch {
             println!(
                 "  {} context is pinned to {} (auto-follow off; {} to resume)",
                 style("·").dim(),
@@ -3184,6 +3232,8 @@ pub fn print_goal(workdir: &Path) -> Result<(), H5iError> {
                 style("h5i recall context unpin").bold(),
             );
         }
+        // else: the expected env-worktree pairing — correct, so say nothing
+        // (the goal line above already shows both branches).
     }
 
     Ok(())
@@ -3250,9 +3300,10 @@ pub fn print_status(workdir: &Path, limit: usize) -> Result<(), H5iError> {
     );
 
     // Pin visibility: a context pinned to a non-current git branch silently
-    // misroutes new traces/milestones to the pinned branch. Surface it loudly.
+    // misroutes new traces/milestones to the pinned branch. Surface it loudly —
+    // but an env worktree's `env/<a>/<s>` ↔ `h5i/env/<a>/<s>` pairing is correct.
     if is_pinned(workdir) {
-        if branch != git_branch {
+        if !pin_tracks_git(&branch, &git_branch) {
             println!(
                 "  {} context {} to {} but git branch is {} — new traces land on the pinned branch; run {} to track git.",
                 style("⚠").yellow().bold(),
@@ -3261,13 +3312,14 @@ pub fn print_status(workdir: &Path, limit: usize) -> Result<(), H5iError> {
                 style(&git_branch).cyan().bold(),
                 style("h5i recall context unpin").bold(),
             );
-        } else {
+        } else if branch == git_branch {
             println!(
                 "  {} context pinned (auto-follow off; {} to resume)",
                 style("·").dim(),
                 style("h5i recall context unpin").bold(),
             );
         }
+        // else: the expected env-worktree pairing — say nothing.
     }
 
     // Separate regular branches from scoped sub-contexts.
@@ -4537,6 +4589,19 @@ mod tests {
         init(dir.path(), "New goal").unwrap();
         let ctx = gcc_context(dir.path(), &ContextOpts::default()).unwrap();
         assert!(ctx.project_goal.contains("Original goal"));
+    }
+
+    #[test]
+    fn pin_tracks_git_accepts_env_pairing_not_genuine_misroute() {
+        // Normal: pinned to the branch you're on.
+        assert!(pin_tracks_git("main", "main"));
+        // Env worktree: context `env/<a>/<s>` pinned while git HEAD is the code
+        // branch `h5i/env/<a>/<s>` (git = `h5i/` + ctx) — the intended pairing.
+        assert!(pin_tracks_git("env/human/codex-env", "h5i/env/human/codex-env"));
+        // A genuine misroute: pinned to an unrelated branch.
+        assert!(!pin_tracks_git("experiment/foo", "main"));
+        // Not fooled by a partial/`h5i`-ish prefix that isn't the exact pairing.
+        assert!(!pin_tracks_git("env/a/s", "h5i/env/a/other"));
     }
 
     // ── current_branch / set_current_branch ──────────────────────────────────

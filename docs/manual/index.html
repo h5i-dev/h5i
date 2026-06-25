@@ -182,6 +182,7 @@
 <div class="t3group">
 <a class="t3" href="#h5i-capture-run">h5i capture run</a>
 <a class="t3" href="#h5i-recall-object--objects">h5i recall object / objects</a>
+<a class="t3" href="#h5i-recall-rm">h5i recall rm</a>
 <a class="t3" href="#structured-output">Structured output</a>
 <a class="t3" href="#h5i-objects-gc--pin--fsck">h5i objects gc / pin / fsck</a>
 <a class="t3" href="#h5i-objects-push--pull--sharing-raw-blobs-optional">h5i objects push / pull — sharing raw blobs (optional)</a>
@@ -1079,6 +1080,8 @@ h5i recall context status                                         # session end:
 <pre><code>h5i recall context init --goal &lt;text&gt;
 </code></pre>
 <p>Create the context workspace if needed and set the goal for the current Git branch. Run it once per Git branch before writing context on that branch.</p>
+<p><code>init</code> is <strong>idempotent</strong> — re-running it on the same Git branch updates the goal in place rather than forking a second workspace, so it is safe (and expected) to run at the start of every task. It also <strong>eagerly creates</strong> the current Git branch's <em>shadow</em> context branch (<code>refs/h5i/context/&lt;git-branch&gt;</code>) and makes it active, instead of waiting for the first <code>trace</code>/<code>commit</code> to fork it lazily. This keeps <code>context status</code> consistent immediately after <code>init</code> (no spurious "git/&lt;branch&gt; has no ctx shadow"). It is a no-op on <code>main</code> and when the context is pinned.</p>
+<p>Previous goals are not lost: each change is appended to the history of the <code>main</code> context ref — see <code>context goal --log</code>. Running <code>init</code> with no <code>--goal</code> leaves the existing goal untouched.</p>
 <table>
 <thead>
 <tr>
@@ -1089,12 +1092,43 @@ h5i recall context status                                         # session end:
 <tbody>
 <tr>
 <td><code>--goal &lt;text&gt;</code></td>
-<td>Goal for the current Git branch (required before <code>trace</code> / <code>commit</code>)</td>
+<td>Goal for the current Git branch (optional; omit to set up / refresh the workspace without changing the goal)</td>
 </tr>
 </tbody>
 </table>
 <pre><code class="language-bash">h5i recall context init --goal &quot;Build an OAuth2 login system&quot;
 h5i recall context init --goal &quot;Implement retry-safe HTTP client&quot;   # on another Git branch
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-goal">h5i recall context goal</h4>
+<pre><code>h5i recall context goal [--log]
+</code></pre>
+<p>Print just the current goal and pin status for the current Git branch — a cheap, low-token check to run before <code>context init</code>. Warns when the context is pinned to a branch other than the current Git branch (a stale pin that silently misroutes new traces).</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--log</code></td>
+<td>Show the full goal history for the current Git branch (every recorded revision, newest first) instead of just the current goal</td>
+</tr>
+</tbody>
+</table>
+<p>The history is mined from the commit history of the <code>main</code> context ref, where each Git branch's goal file lives. Only commits that actually <em>changed</em> the goal appear, so unrelated milestone/snapshot commits are not shown.</p>
+<pre><code class="language-bash">h5i recall context goal          # current goal only (default)
+h5i recall context goal --log    # full revision history for this Git branch
+</code></pre>
+<pre><code>Goal history — feature/login (3 revisions)
+  ● c0604766 build login v3 (current)
+      2026-06-24 04:23 UTC
+  ○ 8370f04b build login v2
+      2026-06-24 04:23 UTC
+  ○ 653d8acc build login v1
+      2026-06-24 04:23 UTC
 </code></pre>
 <hr />
 <h4 id="h5i-recall-context-show">h5i recall context show</h4>
@@ -1250,8 +1284,65 @@ h5i recall context branch experiment/redis-session --purpose &quot;try Redis-bac
 <h4 id="h5i-recall-context-checkout">h5i recall context checkout</h4>
 <pre><code>h5i recall context checkout &lt;name&gt;
 </code></pre>
-<p>Switch to an existing context branch.</p>
+<p>Switch to an existing context branch. This pins the h5i context branch for the
+current worktree, so subsequent Git branch changes do not automatically move the
+active context.</p>
 <pre><code class="language-bash">h5i recall context checkout main
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-unpin">h5i recall context unpin</h4>
+<pre><code>h5i recall context unpin
+</code></pre>
+<p>Remove the per-worktree context pin and resume auto-follow. After unpinning, the
+next context write prepares the active h5i context branch to track the current
+Git branch again.</p>
+<p>Use this when <code>h5i recall context goal</code> or <code>h5i recall context status</code> warns that
+context is pinned to a branch other than the current Git branch.</p>
+<pre><code class="language-bash">h5i recall context goal
+h5i recall context unpin
+h5i recall context init --goal &quot;Current task on this Git branch&quot;
+</code></pre>
+<hr />
+<h4 id="h5i-recall-context-rm">h5i recall context rm</h4>
+<pre><code>h5i recall context rm &lt;name&gt; [--force]
+</code></pre>
+<p>Permanently remove a context (reasoning) branch (<code>refs/h5i/context/&lt;name&gt;</code>) — the
+safe, first-class counterpart to deleting the ref by hand. <code>h5i recall context
+status</code> lists stale context branches (a <code>ctx/&lt;name&gt;</code> whose Git branch is gone)
+and points here.</p>
+<p>It applies the same guards <code>h5i env rm</code> does:</p>
+<ul>
+<li>refuses <code>main</code> (the root branch holds the project goal and milestone roadmap);</li>
+<li>refuses an <code>env/…</code> branch (those belong to an h5i environment — use <code>h5i env rm</code>);</li>
+<li>refuses the <strong>active</strong> branch unless <code>--force</code>, which first resets the
+  worktree's context HEAD to <code>main</code> and clears the pin;</li>
+<li>never touches the per-commit workspace snapshots, so <code>h5i recall context
+  restore &lt;sha&gt;</code> / <code>diff</code> still work after removal.</li>
+</ul>
+<p>This is a <strong>local</strong> removal. If the branch was shared (<code>h5i share push</code>), the
+remote copy survives and a later <code>h5i share pull</code> will resurrect it — delete it
+on the remote too.</p>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;name&gt;</code></td>
+<td>Context branch to remove (required, positional)</td>
+</tr>
+<tr>
+<td><code>--force</code></td>
+<td>Remove even if it is the active branch (resets HEAD to <code>main</code> + unpins)</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">h5i recall context status            # find stale ctx/&lt;name&gt; branches
+h5i recall context rm improve-shell  # drop one stale reasoning branch
 </code></pre>
 <hr />
 <h4 id="h5i-recall-context-merge">h5i recall context merge</h4>
@@ -1887,6 +1978,13 @@ h5i capture run --file src/auth.rs -- pytest tests/test_auth.py   # tag related 
 <p>Every capture is automatically tagged with the <strong>branch</strong> and the <strong>files</strong> it
 concerns (explicit <code>--file</code> ∪ paths mentioned in the output) plus the <strong>working
 diff</strong> at capture time.</p>
+<p><strong>Read-through commands pass through.</strong> Wrapping an h5i <em>read</em> whose whole point
+is to emit content in full — <code>h5i recall object</code> / <code>recall objects</code> / <code>recall
+search</code> and <code>h5i team artifact …</code> — is a no-op: <code>capture run</code> runs them
+verbatim, <strong>unstored and uncompacted</strong> (even inside an audit-all env box, and
+regardless of <code>--min-bytes</code>). So an agent whose harness wraps every command in
+<code>capture run</code> can still rehydrate a teammate's full diff with <code>h5i capture run --
+h5i team artifact show &lt;id&gt; --diff</code> without it being summarized.</p>
 <h3 id="h5i-recall-object--objects">h5i recall object / objects</h3>
 <pre><code class="language-bash">h5i recall objects                       # list captures (newest first) with summaries
 h5i recall objects --status failed       # filter by structured status
@@ -1896,6 +1994,77 @@ h5i recall object &lt;id&gt; --summary          # the reduced summary only
 h5i recall object &lt;id&gt; --manifest         # the full manifest JSON record
 </code></pre>
 <p>Handles accept the short id, a full <code>sha256:&lt;hex&gt;</code>, or any unambiguous prefix.</p>
+<p>Inside a sandboxed env, a capture you just made is <strong>staged</strong> in the box's spool
+and not yet ingested into <code>refs/h5i/objects</code>; <code>h5i recall object &lt;cap-id&gt;</code> still
+rehydrates its full raw bytes from the spool (so an agent can re-read output that
+<code>h5i capture run</code> compacted). The structured <code>--manifest</code> / <code>--format</code> views are
+computed host-side on session end, so in-box they report the capture as staged
+and point you at the raw.</p>
+<h3 id="h5i-recall-rm">h5i recall rm</h3>
+<pre><code class="language-bash">h5i recall rm &lt;branch&gt;            # dry-run: print what WOULD be removed
+h5i recall rm &lt;branch&gt; --force    # actually remove it
+</code></pre>
+<p>Purge <strong>every</strong> <code>refs/h5i/*</code> artifact scoped to a branch in one shot — the
+inverse of <code>h5i share push --branch &lt;b&gt;</code>. It removes, scoped to <code>&lt;branch&gt;</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>What is removed</th>
+<th>Scoping rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>context</td>
+<td><code>refs/h5i/context/&lt;branch&gt;</code> reasoning DAG</td>
+<td>the branch's own ref (per-commit snapshots are preserved)</td>
+</tr>
+<tr>
+<td>notes</td>
+<td><code>refs/h5i/notes</code> provenance</td>
+<td><strong>only</strong> commits reachable from <code>&lt;branch&gt;</code> but no other branch — shared provenance is never touched</td>
+</tr>
+<tr>
+<td>objects</td>
+<td><code>refs/h5i/objects</code> captures</td>
+<td>manifests tagged with the branch, plus the evidence of envs forked from it</td>
+</tr>
+<tr>
+<td>msg</td>
+<td><code>refs/h5i/msg</code> messages</td>
+<td>messages tagged with the branch (free-text/global messages stay; the roster is preserved)</td>
+</tr>
+<tr>
+<td>env</td>
+<td>worktree + code/reasoning branches + <code>refs/h5i/env/meta</code> records</td>
+<td>each environment forked from the branch (full <code>h5i env rm</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Safety:</strong></p>
+<ul>
+<li><strong>Dry-run by default.</strong> Without <code>--force</code> it only prints a per-family plan and
+  changes nothing.</li>
+<li><strong>Notes are scoped to commits <em>unique</em> to the branch.</strong> A commit also
+  reachable from <code>main</code> (or any other live branch) keeps its note, so a purge
+  never strips provenance another branch still relies on.</li>
+<li>It <strong>refuses <code>main</code>/<code>master</code></strong> — <code>recall rm</code> is for feature/topic branches.</li>
+<li>It is <strong>local and irreversible.</strong> If the branch's data was already shared,
+  delete it on the remote too — run <code>h5i share push</code> afterwards to propagate the
+  deletion (a later <code>share pull</code> would otherwise re-fetch what survives there).</li>
+</ul>
+<pre><code>➜  Plan — h5i data for branch feature/login
+  • context    1 reasoning branch (refs/h5i/context)
+  • notes      3 notes on commits unique to this branch (refs/h5i/notes)
+  • objects    7 captures (refs/h5i/objects)
+  • msg        2 messages (refs/h5i/msg)
+  • env        1 environments (worktree + branches + meta)
+
+  ℹ dry-run — nothing changed. Re-run with --force to apply.
+</code></pre>
+<p>To remove <em>only</em> a stale reasoning branch (not the rest), use the narrower
+<code>h5i recall context rm &lt;name&gt;</code> instead.</p>
 <h3 id="structured-output">Structured output</h3>
 <p><code>h5i capture run</code> emits a normalized, AI-friendly <strong>structured result</strong> by
 default — one schema across test runners, compilers, linters, and type checkers:</p>
@@ -3386,15 +3555,15 @@ inboxes and never locks the round.</p>
 </tr>
 <tr>
 <td><code>h5i team agent submit [--commit OID] [--summary-file F] [--json]</code></td>
-<td>In-box submit for a bound team env. In sealed envs it writes a scoped request to the env spool; the host applies it to <code>refs/h5i/team/*</code> when the env shell exits (or on <code>team sync</code>), at which point the worktree is snapshotted as above. Host-side it submits as <code>$H5I_AGENT</code> / <code>$H5I_TEAM</code>.</td>
+<td>In-box submit for a bound team env. In sealed envs it writes a scoped request to the env spool; the host applies it to <code>refs/h5i/team/*</code> when the env shell exits (or on <code>team sync</code>), at which point the worktree is snapshotted as above. Host-side it submits as <code>$H5I_AGENT</code> / <code>$H5I_TEAM</code>. <strong>Submitting marks the agent done for the current round</strong>: it records the round box-side so the team Stop hook stops re-surfacing that round's standing review requests (a host re-fan can't loop the agent) — a newer round still breaks through.</td>
 </tr>
 <tr>
 <td><code>h5i team agent inbox [&lt;team&gt;] [--peek] [--wait] [--interval 10] [--timeout 1800] [--json]</code></td>
-<td>Scoped inbox for the team persona. In a sealed box it reads the host-fanned <strong>per-env inbox</strong> (<code>$H5I_ENV_INBOX</code>, read-only); host-side it reads the shared store. <code>--wait</code> blocks (peek-only) until a message is waiting or the timeout — use it after submitting to await a review request without ending the session.</td>
+<td>Scoped inbox for the team persona. In a sealed box it reads the host-fanned <strong>per-env inbox</strong> (<code>$H5I_ENV_INBOX</code>, read-only); host-side it reads the shared store. Each review grant shows its <strong>granted artifact kinds + artifact ids</strong>, which the reviewer reads with <code>h5i team artifact show &lt;id&gt; --diff</code> (no host-only <code>compare</code>). <code>--wait</code> blocks (peek-only) until a message is waiting or the timeout — use it to await the next round's review request without ending the session.</td>
 </tr>
 <tr>
 <td><code>h5i team agent hook [&lt;team&gt;] [--block] [--quiet] [--timeout 1800] [--interval 10]</code></td>
-<td>Stop-hook delivery: keeps an agent in an unfinished round from stopping and feeds in review requests. <code>--block</code> (Claude <strong>and Codex</strong> — their Stop hooks share the same <code>{"decision":"block"}</code> continuation contract) waits up to <code>--timeout</code> for the next message, then blocks the stop and hands it back; <code>--quiet</code> prints one-shot (manual). Released by a <code>TEAM_DONE</code> signal (sent on finalize/apply) or the timeout. Registered via <code>h5i hook setup --team</code>; no-ops outside a team.</td>
+<td>Stop-hook delivery: keeps an agent in an unfinished round from stopping and feeds in review requests. <code>--block</code> (Claude <strong>and Codex</strong> — their Stop hooks share the same <code>{"decision":"block"}</code> continuation contract) waits up to <code>--timeout</code> for the next message, then blocks the stop and hands it back; <code>--quiet</code> prints one-shot (manual). Released by a <code>TEAM_DONE</code> signal (sent on finalize/apply), by the agent <strong>submitting for the round</strong> (a round-≤-submitted re-fan no longer re-surfaces; a newer round still does), or the timeout. Registered via <code>h5i hook setup --team</code>; no-ops outside a team.</td>
 </tr>
 <tr>
 <td><code>h5i team freeze &lt;team&gt; [--allow-missing] [--json]</code></td>
@@ -3403,6 +3572,10 @@ inboxes and never locks the round.</p>
 <tr>
 <td><code>h5i team compare &lt;team&gt; [--json]</code></td>
 <td>Side-by-side candidates + verifier metrics (advisory only — does not pick a winner).</td>
+</tr>
+<tr>
+<td><code>h5i team artifact show &lt;id&gt; [--team T] [--diff] [--summary] [--tests] [--json]</code></td>
+<td>Read one teammate's submission by artifact id — the <strong>in-box, read-only</strong> per-candidate view a granted reviewer uses, so a boxed reviewer never needs the host-only <code>compare</code>. Defaults to the unified diff against the team base; <code>--summary</code> / <code>--tests</code> show the submission summary / captured test evidence (capture ids + change stats). Resolves <code>--team</code> from the current team / <code>$H5I_TEAM</code>.</td>
 </tr>
 <tr>
 <td><code>h5i team sync &lt;team&gt; [--json]</code></td>
@@ -3425,8 +3598,8 @@ inboxes and never locks the round.</p>
 <td>Optional automation: one lease-and-finalize pass (<code>--once</code>) or an opt-in in-process loop (<code>--watch</code>). <strong>Finalize-only — never auto-applies.</strong> Leases are idempotent + TTL'd; for production prefer an external scheduler driving <code>--once</code>.</td>
 </tr>
 <tr>
-<td><code>h5i team dispatch &lt;team&gt; [--prompt-file F] [--json]</code> (prompt from stdin by default)</td>
-<td>Send the task to <strong>every roster agent in one command</strong> over <a href="#h5i-msg"><code>h5i msg</code></a> (an <code>ASK</code> per persona, tagged with the team + round) — no per-env pasting. It <strong>notifies, it does not launch</strong>: each agent must be running in its env to pick the task out of its inbox. Receipt/progress count only when the agent replies ACK/DONE threaded to the dispatch.</td>
+<td><code>h5i team dispatch &lt;team&gt; [--prompt-file F] [--json]</code></td>
+<td>Send the task to <strong>every roster agent in one command</strong> (prompt read from <strong>stdin</strong> by default — <code>h5i team dispatch &lt;team&gt; &lt; TASK.md</code>; <code>--prompt-file</code> reads it from a named file instead) over <a href="#h5i-msg"><code>h5i msg</code></a> (an <code>ASK</code> per persona, tagged with the team + round) — no per-env pasting. It <strong>notifies, it does not launch</strong>: each agent must be running in its env to pick the task out of its inbox. Receipt/progress count only when the agent replies ACK/DONE threaded to the dispatch.</td>
 </tr>
 <tr>
 <td><code>h5i team grant-review &lt;team&gt; --reviewer A --target B [--artifacts diff,summary,tests] [--json]</code></td>
@@ -3445,7 +3618,8 @@ inboxes and never locks the round.</p>
 <p><code>&lt;env&gt;</code> accepts a bare slug, <code>agent/slug</code>, or the full <code>env/agent/slug</code>.</p>
 <p><strong>Current team.</strong> The single-<code>&lt;team&gt;</code> subcommands (<code>status</code>, <code>submit</code>, <code>freeze</code>,
 <code>compare</code>, <code>sync</code>, <code>finalize</code>, <code>apply</code>, <code>dispatch</code>, <code>grant-review</code>, <code>discuss</code>,
-<code>review submit</code>) default to the <strong>current team</strong> when you omit it — set it with <code>h5i team
+<code>review submit</code>) — plus <code>artifact show</code> (via <code>--team</code>, also honoring <code>$H5I_TEAM</code>) —
+default to the <strong>current team</strong> when you omit it — set it with <code>h5i team
 use &lt;name&gt;</code> (or let <code>create</code> set it). <code>add-env</code>/<code>verify</code> keep <code>&lt;team&gt;</code> required
 (they take a second positional). The flat CLI stays canonical, so this never
 changes scripting/cron/agent behavior (always pass <code>&lt;team&gt;</code> there). For fast
@@ -3519,7 +3693,10 @@ boxes stay alive between turns instead of exiting after each submit:</p>
 <li><strong><code>scripts/team-review.sh &lt;team&gt;</code></strong> — open the review round: <code>freeze</code>, grant
   <strong>mutual</strong> review access (each grant fans a request into the reviewer's inbox),
   and send every agent a review-and-revise prompt. A running box picks it up via
-  the team Stop hook; <code>--relaunch</code> re-opens any box that already exited.</li>
+  the team Stop hook; <code>--relaunch</code> re-opens any box that already exited. Each
+  boxed reviewer reads its target read-only with <code>h5i team artifact show &lt;id&gt;
+  --diff</code> (the inbox carries the artifact ids), reviews statically, then
+  re-submits — which marks it done for the round.</li>
 <li><strong><code>scripts/team-run.sh &lt;team&gt; [--task F] [--verify-cmd "&lt;cmd&gt;"] [--apply]</code></strong> —
   the full driver. It launches, then <strong>polls with <code>h5i team sync</code></strong> to advance
   each phase: wait until all submitted → freeze → grant review → wait until all

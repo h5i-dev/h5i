@@ -1351,18 +1351,27 @@ fn tool_capture_run(params: &Value, workdir: &Path) -> Result<Value> {
         raw.extend_from_slice(&output.stderr);
     }
 
+    // Read-through h5i commands (recall object/objects/search, team artifact)
+    // emit content the caller must read in full — never summarize or re-capture
+    // them (mirrors the CLI `capture run`).
+    let read_through = crate::objects::is_read_through_command(&argv);
+
     // Match the CLI's signal-aware gate: store when there's token-reduction value
     // (raw ≥ min_bytes) OR provenance/search value (the command failed). A small
     // failure is exactly what `recall search --fingerprint` recurrence-tracks, so
     // it's kept regardless of size; only small *successful* output is returned
     // as-is, unstored, to keep trivial commands from bloating the ref.
-    let worth_storing = (raw.len() as u64) >= min_bytes || exit_code != Some(0);
+    let worth_storing = !read_through && ((raw.len() as u64) >= min_bytes || exit_code != Some(0));
     if !worth_storing {
         return Ok(json_content(json!({
             "stored": false,
             "exit_code": exit_code,
             "output": String::from_utf8_lossy(&raw),
-            "hint": "Small successful output; returned in full, not stored.",
+            "hint": if read_through {
+                "Read-through h5i command; output returned in full, not stored."
+            } else {
+                "Small successful output; returned in full, not stored."
+            },
         })));
     }
 

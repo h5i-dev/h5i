@@ -543,6 +543,304 @@ fn inbox_commit_note_off_env_range_is_rejected() {
     );
 }
 
+/// In-box `h5i commit` can't write `refs/h5i/context-snapshots/*` (sealed ro in
+/// the box), so it builds the anchor commit *object* (objects/ is rw) and stages
+/// the ref creation to the spool. The host applies it on the next env run —
+/// scoped to the env's own commits — re-creating the snapshot ref. This is the
+/// host half of the round-trip; the box half (object build + staging) is covered
+/// by ctx::snapshot_for_commit's gate.
+#[test]
+fn inbox_context_snapshot_stages_and_host_applies_it() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "csok"]);
+
+    // Advance the env branch with an env-owned commit so its sha is in
+    // base..env_tip (the snapshot's `git_sha` is range-guarded on ingest).
+    let wt = r.work("csok");
+    std::fs::write(wt.join("g.txt"), b"hi\n").unwrap();
+    git(&wt, &["add", "g.txt"]);
+    git(&wt, &["commit", "-m", "env-owned change"]);
+    let env_tip = out_str(&git(
+        &r.dir,
+        &["rev-parse", "refs/heads/h5i/env/tester/csok"],
+    ));
+    let env_tip = env_tip.trim().to_string();
+    let short = env_tip[..8].to_string();
+
+    // Build the parentless anchor commit object the box would have written.
+    let tree = out_str(&git(&r.dir, &["rev-parse", &format!("{env_tip}^{{tree}}")]));
+    let anchor = out_str(&git(&r.dir, &["commit-tree", tree.trim(), "-m", "anchor"]));
+    let anchor = anchor.trim().to_string();
+
+    // Stage the ref-creation request, exactly as ctx::snapshot_for_commit does.
+    let spool = r.env_dir("csok").join("spool");
+    std::fs::create_dir_all(&spool).unwrap();
+    std::fs::write(
+        spool.join(format!("ctxsnap-{short}.json")),
+        format!("{{\"git_sha\":\"{env_tip}\",\"short_sha\":\"{short}\",\"anchor_oid\":\"{anchor}\"}}"),
+    )
+    .unwrap();
+
+    // An env run triggers the host ingest.
+    r.h5i_ok(&["env", "run", "csok", "--", "sh", "-c", "echo trigger"]);
+
+    // The host created the snapshot ref, pointing at the staged anchor.
+    let got = out_str(&git(
+        &r.dir,
+        &["rev-parse", &format!("refs/h5i/context-snapshots/{short}")],
+    ));
+    assert_eq!(
+        got.trim(),
+        anchor,
+        "snapshot ref must be created pointing at the staged anchor"
+    );
+    let log = out_str(&r.h5i_ok(&["env", "log", "csok"]));
+    assert!(log.contains("in-box context snapshot applied"), "{log}");
+}
+
+/// The host applies in-box snapshots only for the env's OWN commits: a staged
+/// snapshot whose `git_sha` is outside `base..env_tip` (e.g. the inherited
+/// `main`) is rejected, so a box can't plant a snapshot anchor for arbitrary
+/// history. Mirrors the note-spool scope guard.
+#[test]
+fn inbox_context_snapshot_off_env_range_is_rejected() {
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "csrej"]);
+    // Fresh env: branch == base == main tip, so main is inherited (off-range).
+    let main_oid = out_str(&git(&r.dir, &["rev-parse", "main"]));
+    let main_oid = main_oid.trim().to_string();
+    let short = main_oid[..8].to_string();
+    let tree = out_str(&git(&r.dir, &["rev-parse", &format!("{main_oid}^{{tree}}")]));
+    let anchor = out_str(&git(&r.dir, &["commit-tree", tree.trim(), "-m", "forged-anchor"]));
+    let anchor = anchor.trim().to_string();
+
+    let spool = r.env_dir("csrej").join("spool");
+    std::fs::create_dir_all(&spool).unwrap();
+    std::fs::write(
+        spool.join(format!("ctxsnap-{short}.json")),
+        format!("{{\"git_sha\":\"{main_oid}\",\"short_sha\":\"{short}\",\"anchor_oid\":\"{anchor}\"}}"),
+    )
+    .unwrap();
+
+    r.h5i_ok(&["env", "run", "csrej", "--", "sh", "-c", "echo trigger"]);
+
+    let log = out_str(&r.h5i_ok(&["env", "log", "csrej"]));
+    assert!(
+        log.contains("rejected in-box context snapshot"),
+        "must log rejection: {log}"
+    );
+    let got = Command::new("git")
+        .args(["rev-parse", &format!("refs/h5i/context-snapshots/{short}")])
+        .current_dir(&r.dir)
+        .output()
+        .expect("git rev-parse");
+    assert!(
+        !got.status.success(),
+        "no snapshot ref may be created for an off-range commit"
+    );
+}
+
+/// `h5i capture run -- h5i recall object|objects|search / team artifact …` must
+/// PASS THROUGH verbatim — never summarize or re-capture a read whose whole point
+/// is to emit content in full. Otherwise a boxed agent (whose harness wraps every
+/// command in `capture run`) gets a teammate's diff re-compacted and has to reach
+/// for `--min-bytes 999999`, plus the audit-all box stages a pointless
+/// capture-of-a-recall.
+#[test]
+fn capture_run_passes_read_through_h5i_commands_through() {
+    let r = Repo::new();
+    let spool = r.dir.join("rtspool");
+    std::fs::create_dir_all(&spool).unwrap();
+    let run = |inner: &[&str]| -> Output {
+        let mut args = vec!["capture", "run", "--"];
+        args.extend_from_slice(inner);
+        Command::new(H5I)
+            .args(&args)
+            .env("H5I_AGENT", "tester")
+            // Audit-all box context: without the fix, EVERY command is staged + compacted.
+            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
+            .env(h5i_core::env::H5I_ENV_ID_VAR, "env/tester/x")
+            .env(h5i_core::env::H5I_ENV_POLICY_DIGEST_VAR, "deadbeef")
+            .current_dir(&r.dir)
+            .output()
+            .expect("capture run")
+    };
+    let cap_files = || {
+        std::fs::read_dir(&spool)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("cap-"))
+            .count()
+    };
+
+    // Read-through: `capture run -- <h5i> recall objects` (the inner binary's
+    // basename is `h5i`) passes through — full output, no "staged" line, no spool.
+    let out = run(&[H5I, "recall", "objects"]);
+    let s = out_str(&out);
+    assert!(out.status.success(), "read-through must succeed: {s}");
+    assert!(
+        !s.contains("staged for host ingest"),
+        "a read-through h5i command must not be captured: {s}"
+    );
+    assert_eq!(cap_files(), 0, "read-through must not stage a spool capture");
+
+    // Control: a normal command in an audit-all box IS still captured.
+    let _ = run(&["echo", "hello-world"]);
+    assert!(
+        cap_files() >= 1,
+        "a non-read-through command should still be captured in an audit-all box"
+    );
+}
+
+/// In a box, `h5i recall object <cap-id>` must rehydrate a capture that is still
+/// STAGED in the spool (not yet ingested into refs/h5i/objects) — so an agent can
+/// read the full raw output `capture run` compacted, instead of the misleading
+/// "no object matches". This is the rehydrate hint `capture run` itself prints.
+#[test]
+fn recall_object_rehydrates_a_staged_inbox_capture() {
+    let r = Repo::new();
+    let spool = r.dir.join("capspool");
+    std::fs::create_dir_all(&spool).unwrap();
+    // Mimic what an in-box `h5i capture run` stages: a `cap-*.raw` + `.json`.
+    std::fs::write(spool.join("cap-99-12345.raw"), b"FULL DIFF LINE 1\nFULL DIFF LINE 2\n")
+        .unwrap();
+    std::fs::write(
+        spool.join("cap-99-12345.json"),
+        br#"{"cmd":"h5i team artifact show x --diff","cwd":null,"exit_code":0,"files":[],"cmd_argv":[]}"#,
+    )
+    .unwrap();
+
+    let recall = |args: &[&str]| -> Output {
+        Command::new(H5I)
+            .args(args)
+            .env("H5I_AGENT", "tester")
+            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
+            .current_dir(&r.dir)
+            .output()
+            .expect("recall object")
+    };
+
+    // Default rehydrate prints the full raw output.
+    let out = recall(&["recall", "object", "cap-99-12345"]);
+    let s = out_str(&out);
+    assert!(out.status.success(), "staged rehydrate must succeed: {s}");
+    assert!(
+        s.contains("FULL DIFF LINE 1") && s.contains("FULL DIFF LINE 2"),
+        "must print the full staged raw: {s}"
+    );
+
+    // --summary gives a clear staged note (not a crash / not "no object matches").
+    let sum = out_str(&recall(&["recall", "object", "cap-99-12345", "--summary"]));
+    assert!(sum.contains("staged capture") && sum.contains("not yet ingested"), "{sum}");
+
+    // Host-side (no spool env), an unknown id still fails clearly — no false hit.
+    let host = Command::new(H5I)
+        .args(["recall", "object", "cap-99-12345"])
+        .current_dir(&r.dir)
+        .output()
+        .expect("recall object host");
+    assert!(!host.status.success(), "host-side unknown id must still error");
+}
+
+/// `h5i team artifact show <id>` must parse as a real subcommand — the form the
+/// peer-review prompt and the docs tell agents to run. (A prior version wired it
+/// flat as `team artifact <id>`, so the documented `show` form failed with a clap
+/// usage error and agents had to guess the right shape.)
+#[test]
+fn team_artifact_show_is_a_subcommand() {
+    let r = Repo::new();
+    // The documented form must get PAST clap into the logic. With a nonexistent
+    // team it errors on resolution — but specifically NOT a clap usage error.
+    let out = r.h5i(&["team", "artifact", "show", "sub-nobody-r1-deadbeef", "--team", "nope"]);
+    let s = out_str(&out);
+    assert!(!out.status.success(), "unknown team must still fail: {s}");
+    assert!(
+        !s.contains("unexpected argument") && !s.contains("Usage: h5i team artifact <ID>"),
+        "`artifact show <id>` must parse as a subcommand, not a clap usage error: {s}"
+    );
+    // The bare flat form (no `show`) must NOT parse — `show` is the required verb.
+    let flat = r.h5i(&["team", "artifact", "sub-nobody-r1-deadbeef"]);
+    assert!(!flat.status.success(), "bare `artifact <id>` (no `show`) must not parse");
+}
+
+/// The team Stop hook, in a box, must stop re-surfacing a round's standing
+/// review messages once the agent has submitted for that round — even when the
+/// host re-fans the *same* round under a fresh message id (which defeats the
+/// seen-cursor). A genuinely newer round still breaks through. Also covers that
+/// the inbox surfaces the granted artifact kinds (so a boxed reviewer never
+/// needs the host-only `team compare`).
+#[test]
+fn box_team_hook_releases_after_submit_until_a_new_round_opens() {
+    let r = Repo::new();
+    let inbox = r.dir.join("ibox");
+    let spool = r.dir.join("ispool");
+    std::fs::create_dir_all(&inbox).unwrap();
+    std::fs::create_dir_all(&spool).unwrap();
+
+    // Drop a REVIEW_REQUEST into the box's read-only mailbox. The round + granted
+    // kinds ride in i5h `links`, the artifact id in `focus`.
+    let write_msg = |file: &str, id: &str, round: u64, body: &str| {
+        let m = h5i_core::msg::Message {
+            id: id.into(),
+            ts: "2026-06-24T00:00:00Z".into(),
+            from: "human".into(),
+            to: "hana".into(),
+            body: body.into(),
+            kind: Some("REVIEW_REQUEST".into()),
+            focus: vec!["sub-rohan-r1-aaaaaaaaaaaa".into()],
+            links: Some(serde_json::json!({
+                "team": "demo",
+                "round": round,
+                "artifact_kinds": ["diff", "summary", "tests"],
+            })),
+            ..Default::default()
+        };
+        std::fs::write(inbox.join(file), serde_json::to_vec(&m).unwrap()).unwrap();
+    };
+
+    // The hook in a box: H5I_ENV_INBOX picks the box path; --quiet prints the
+    // framed text directly. Returns combined output.
+    let run_hook = || -> String {
+        let out = Command::new(H5I)
+            .args(["team", "agent", "hook", "--quiet"])
+            .env("H5I_AGENT", "hana")
+            .env(h5i_core::env::H5I_ENV_INBOX_VAR, &inbox)
+            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
+            .current_dir(&r.dir)
+            .output()
+            .expect("run team agent hook");
+        out_str(&out)
+    };
+
+    // Round 1 arrives → surfaced, WITH the grant + artifact id (the #3 fix), so a
+    // boxed reviewer can act without `team compare`.
+    write_msg("m1.json", "rev-round1-id-0001", 1, "Review rohan's submission for demo");
+    let first = run_hook();
+    assert!(first.contains("Review rohan's submission"), "round 1 must surface: {first}");
+    assert!(first.contains("granted diff,summary,tests"), "must show the grant: {first}");
+    assert!(first.contains("sub-rohan-r1-aaaaaaaaaaaa"), "must show the artifact id: {first}");
+
+    // The host re-fans the SAME round under a NEW id (fresh file + fresh id) —
+    // this is what looped the agent before the fix, since the seen-cursor can't
+    // catch a new id.
+    write_msg("m2.json", "rev-round1-id-0002", 1, "Review rohan's submission for demo");
+    // The agent has now submitted for round 1 (recorded box-side by submit).
+    h5i_core::env::write_submitted_round(&spool, 1).unwrap();
+    let after_submit = run_hook();
+    assert!(
+        !after_submit.contains("Review rohan's submission"),
+        "after submitting for round 1, the re-fanned round-1 request must NOT re-surface: {after_submit}"
+    );
+
+    // A genuinely newer round (round 2) still breaks through.
+    write_msg("m3.json", "rev-round2-id-0003", 2, "Round two review opened");
+    let round_two = run_hook();
+    assert!(
+        round_two.contains("Round two review opened"),
+        "a newer round must still surface: {round_two}"
+    );
+}
+
 /// `env status` surfaces evidence STAGED in the spool but not yet ingested
 /// (visible mid-session, before the host materializes it at run/shell end) —
 /// staged captures, notes, and tee-shim records, with the pending commands.

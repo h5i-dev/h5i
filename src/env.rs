@@ -1927,6 +1927,31 @@ pub fn write_inbox_cursor(
     Ok(())
 }
 
+/// The highest round this box has submitted for (`h5i team agent submit` records
+/// it). The team Stop hook reads it so that, once an agent has submitted, the
+/// round's standing review messages stop re-surfacing — submit == "done for this
+/// round" — while a *newer* round's messages (higher round) still break through.
+/// Box-writable spool path (the team refs are sealed), like the inbox cursor.
+/// Named without a `team-`/`note-`/`ctxsnap-` prefix so the spool ingest never
+/// drains it.
+pub fn read_submitted_round(spool: &Path) -> Option<u32> {
+    let path = spool.join("submitted-round.json");
+    std::fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+}
+
+/// Record that this box has submitted for `round` (monotonic: never lowers a
+/// previously recorded round). Best-effort.
+pub fn write_submitted_round(spool: &Path, round: u32) -> Result<(), H5iError> {
+    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
+    let next = read_submitted_round(spool).unwrap_or(0).max(round);
+    let path = spool.join("submitted-round.json");
+    let bytes = serde_json::to_vec(&next)?;
+    std::fs::write(&path, bytes).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(())
+}
+
 /// Fan a just-sent message out to a recipient's per-env inbox, if that
 /// recipient is a team agent bound to an env. Best-effort and additive: the
 /// shared msg store stays the source of truth, but this is the only path that
@@ -2023,6 +2048,42 @@ pub fn write_inbox_capture_spool(
     Ok(base)
 }
 
+/// A staged (not-yet-ingested) in-box capture, read back from the spool by id.
+pub struct StagedCapture {
+    pub raw: Vec<u8>,
+    pub meta: Option<InboxCaptureMeta>,
+}
+
+/// Read a staged in-box capture (`cap-<id>`) from a capture spool dir by the id
+/// `h5i capture run` printed — before the host ingests it into refs/h5i/objects.
+/// Pure (takes the spool path) so it's unit-testable. Returns None when the id
+/// isn't a safe staged-capture id or the `.raw` file is gone (already ingested).
+pub fn read_staged_capture_at(spool: &Path, id: &str) -> Option<StagedCapture> {
+    // Defensive: the id becomes a filename, so reject anything but a `cap-…`
+    // base of the alnum/`-` charset `write_inbox_capture_spool` produces.
+    if !id.starts_with("cap-")
+        || id.len() > 96
+        || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return None;
+    }
+    let raw = std::fs::read(spool.join(format!("{id}.raw"))).ok()?;
+    let meta = std::fs::read(spool.join(format!("{id}.json")))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok());
+    Some(StagedCapture { raw, meta })
+}
+
+/// Read a staged in-box capture by id, locating the spool from the env the host
+/// injects (`$H5I_ENV_CAPTURE_SPOOL`). Returns None when not running in a box.
+/// Lets an agent rehydrate the full raw output of a capture it just produced —
+/// the host hasn't ingested it into refs/h5i/objects yet, so `resolve_manifest`
+/// can't see it.
+pub fn read_staged_capture(id: &str) -> Option<StagedCapture> {
+    let spool = std::env::var_os(H5I_ENV_CAPTURE_SPOOL_VAR).map(PathBuf::from)?;
+    read_staged_capture_at(&spool, id)
+}
+
 pub fn write_codex_hook_spool(
     spool: &Path,
     record: &CodexHookSpoolRecord,
@@ -2089,6 +2150,45 @@ pub fn write_note_spool(spool: &Path, oid: &str, record_json: &str) -> Result<()
     }
     let path = spool.join(format!("note-{safe}.json"));
     std::fs::write(&path, record_json).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(())
+}
+
+/// A context snapshot staged from inside a box. The box can build the anchor
+/// commit object (the `objects/` store is rw) but can't write
+/// `refs/h5i/context-snapshots/*` (sealed ro), so the *ref creation* is deferred
+/// to the host ingest — scoped to the env's own commits, like the note spool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextSnapshotSpool {
+    /// The git commit this snapshot is linked to (range-guarded on ingest).
+    pub git_sha: String,
+    /// Short sha — the `refs/h5i/context-snapshots/<short>` ref leaf.
+    pub short_sha: String,
+    /// The pre-built anchor commit (already in the shared object store) the ref
+    /// should point at.
+    pub anchor_oid: String,
+}
+
+/// Stage a context snapshot's ref creation for host ingest. Keyed by short sha,
+/// so a re-commit at the same short sha overwrites rather than piling up.
+pub fn write_context_snapshot_spool(
+    spool: &Path,
+    record: &ContextSnapshotSpool,
+) -> Result<(), H5iError> {
+    std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
+    let safe: String = record
+        .short_sha
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(64)
+        .collect();
+    if safe.is_empty() {
+        return Err(H5iError::Metadata(
+            "empty short sha for context snapshot spool".into(),
+        ));
+    }
+    let path = spool.join(format!("ctxsnap-{safe}.json"));
+    let json = serde_json::to_vec(record)?;
+    std::fs::write(&path, json).map_err(|e| H5iError::with_path(e, &path))?;
     Ok(())
 }
 
@@ -3293,6 +3393,98 @@ fn ingest_shell_spool(
                 capture: None,
             },
         )?;
+    }
+
+    // In-box context snapshots. The box built the anchor commit object (it lands
+    // in the shared `objects/`), but `refs/h5i/context-snapshots/*` is sealed ro,
+    // so the *ref creation* was staged here. Re-create it host-side, scoped to
+    // the env's own commits (same `base..env_tip` guard as the note spool) so a
+    // box can't plant a snapshot anchor for an arbitrary commit.
+    let mut snap_bases: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&spool) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(base) = name.strip_suffix(".json") {
+                let ok = base.starts_with("ctxsnap-")
+                    && base.len() <= 96
+                    && base.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+                if ok {
+                    snap_bases.push(base.to_string());
+                }
+            }
+        }
+    }
+    snap_bases.sort();
+    for base in snap_bases.iter().take(SPOOL_MAX_ENTRIES) {
+        let path = spool.join(format!("{base}.json"));
+        let bytes = match read_spool_capped(&path, SPOOL_MAX_CMD_BYTES) {
+            Some(b) => b,
+            None => continue,
+        };
+        let record: ContextSnapshotSpool = match serde_json::from_slice(&bytes) {
+            Ok(r) => r,
+            Err(_) => {
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+        };
+        // Scope guard: only snapshots linked to the env's OWN commits.
+        let linked = git2::Oid::from_str(&record.git_sha).ok();
+        let anchor = git2::Oid::from_str(&record.anchor_oid).ok();
+        let leaf: String = record
+            .short_sha
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .take(64)
+            .collect();
+        let valid = match (linked, anchor) {
+            (Some(l), Some(a)) => {
+                in_env_range(l) && !leaf.is_empty() && repo.find_commit(a).is_ok()
+            }
+            _ => false,
+        };
+        if !valid {
+            append_event(
+                repo,
+                &EnvEvent {
+                    ts: now_ts(),
+                    env_id: m.id.clone(),
+                    agent: m.agent.clone(),
+                    event: "exec-log".into(),
+                    detail: Some(format!(
+                        "rejected in-box context snapshot for {} — not an env-owned commit",
+                        &record.git_sha[..12.min(record.git_sha.len())]
+                    )),
+                    capture: None,
+                },
+            )?;
+            let _ = std::fs::remove_file(&path);
+            continue;
+        }
+        let refname = format!("refs/h5i/context-snapshots/{leaf}");
+        match repo.reference(
+            &refname,
+            anchor.expect("anchor validated above"),
+            true,
+            "h5i in-box context snapshot",
+        ) {
+            Ok(_) => {
+                append_event(
+                    repo,
+                    &EnvEvent {
+                        ts: now_ts(),
+                        env_id: m.id.clone(),
+                        agent: m.agent.clone(),
+                        event: "note".into(),
+                        detail: Some(format!("in-box context snapshot applied for {leaf}")),
+                        capture: None,
+                    },
+                )?;
+                count += 1;
+            }
+            Err(e) => eprintln!("warning: applying in-box context snapshot failed: {e}"),
+        }
+        let _ = std::fs::remove_file(&path);
     }
 
     // Drain the in-box team outbound spool (submissions + peer reviews); the
@@ -6041,6 +6233,64 @@ mod tests {
             rb.contains("h5i env apply auth-fix"),
             "names the finishing apply: {rb}"
         );
+    }
+
+    #[test]
+    fn submitted_round_sentinel_is_monotonic() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path().join("spool");
+        assert_eq!(read_submitted_round(&spool), None);
+        write_submitted_round(&spool, 1).unwrap();
+        assert_eq!(read_submitted_round(&spool), Some(1));
+        // A higher round advances it...
+        write_submitted_round(&spool, 3).unwrap();
+        assert_eq!(read_submitted_round(&spool), Some(3));
+        // ...but a lower (stale) round never lowers it.
+        write_submitted_round(&spool, 2).unwrap();
+        assert_eq!(read_submitted_round(&spool), Some(3));
+    }
+
+    #[test]
+    fn read_staged_capture_round_trips_and_rejects_unsafe_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path().join("spool");
+        let meta = InboxCaptureMeta {
+            cmd: "h5i team artifact show x --diff".into(),
+            cwd: None,
+            exit_code: Some(0),
+            files: vec![],
+            cmd_argv: vec![],
+        };
+        let id = write_inbox_capture_spool(&spool, &meta, b"FULL DIFF\nLINE 2\n").unwrap();
+        // The id `capture run` printed rehydrates the full raw + meta from the spool.
+        let staged = read_staged_capture_at(&spool, &id).expect("staged capture present");
+        assert_eq!(staged.raw, b"FULL DIFF\nLINE 2\n");
+        assert_eq!(staged.meta.unwrap().cmd, "h5i team artifact show x --diff");
+        // Unknown / non-cap / path-traversal ids return None (never touch disk).
+        assert!(read_staged_capture_at(&spool, "cap-does-not-exist").is_none());
+        assert!(read_staged_capture_at(&spool, "note-abc").is_none());
+        assert!(read_staged_capture_at(&spool, "cap-../../etc/passwd").is_none());
+    }
+
+    #[test]
+    fn context_snapshot_spool_is_named_so_ingest_never_drains_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path().join("spool");
+        let rec = ContextSnapshotSpool {
+            git_sha: "a".repeat(40),
+            short_sha: "abc12345".into(),
+            anchor_oid: "b".repeat(40),
+        };
+        write_context_snapshot_spool(&spool, &rec).unwrap();
+        let name = "ctxsnap-abc12345.json";
+        assert!(spool.join(name).is_file());
+        // Must not collide with the note / team-outbound / inbox-cursor names the
+        // spool ingest recognizes.
+        assert!(!name.starts_with("note-"));
+        assert!(!name.starts_with("team-submit-"));
+        assert!(!name.starts_with("team-review-"));
+        assert_ne!(name, "team-inbox-seen.json");
+        assert_ne!(name, "submitted-round.json");
     }
 
     #[test]
