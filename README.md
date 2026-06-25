@@ -38,7 +38,7 @@ Agent ensembles work because **independent attempts beat isolated guesses**. h5i
 
 ---
 
-## Install
+## 1. Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
@@ -52,9 +52,9 @@ cargo install --git https://github.com/h5i-dev/h5i h5i-core
 
 ---
 
-## 60-Second Flow
+## 2. 60-Second Flow
 
-### Setup
+### 2.1. Setup
 
 Initialize h5i and wire the Claude Code / Codex hooks:
 
@@ -65,7 +65,7 @@ git add .
 git commit -m "update hooks"
 ```
 
-### Track Prompts and Contexts
+### 2.2. Track Prompts and Contexts
 
 Once the hooks are registered, h5i versions your human prompts and every agent context step (reads, writes, thinking) as Git objects, trimming noisy tool output along the way (for `pytest`, just the failures) to cut up to 95% of the tokens while keeping the raw output recoverable. 
 
@@ -81,7 +81,7 @@ h5i share push
 h5i share pr post
 ```
 
-### Sandboxed Environment
+### 2.3. Sandboxed Environment
 
 h5i gives each agent a secure, sandboxed worktree. Let it run with permissions
 off inside the box, then review its diff before anything lands on your branch:
@@ -97,7 +97,7 @@ h5i env propose claude-env
 h5i env apply claude-env
 ```
 
-### Run an ensemble
+### 2.4. Run an ensemble
 
 Create two sandboxed agent environments:
 
@@ -160,7 +160,7 @@ h5i serve
 ---
 
 
-## What h5i is, and is not
+## 2.5. What h5i is, and is not
 
 - h5i **is not** a Git replacement, a hosted SaaS / dev-environment, or *just* a sandbox.
 - h5i **is** a Git sidecar for **auditable agent ensembles**: run many agents, merge one provable result.
@@ -177,7 +177,7 @@ h5i serve
 
 ---
 
-## Documentation
+## 2.6. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Pitch Deck](https://h5i.dev/pitch/)
 - [Tutorials](https://h5i.dev/guides/): guided workflows · [Blog](https://h5i.dev/blog/): design notes, audits, case studies
@@ -186,7 +186,7 @@ h5i serve
 
 ---
 
-## Acknowledgements
+## 2.7. Acknowledgements
 
 h5i's token-reduction filters build on prior art, both Apache-2.0:
 
@@ -195,6 +195,6 @@ h5i's token-reduction filters build on prior art, both Apache-2.0:
 
 See [`NOTICE`](NOTICE) and [`assets/filters/NOTICE`](assets/filters/NOTICE) for full attribution.
 
-## License
+## 2.8. License
 
 Apache-2.0. See [LICENSE](LICENSE).
