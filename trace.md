@@ -2352,3 +2352,4 @@ _[Checkpoint: 6a3c8caf — Fixed T3 regression + #1/#2 (in-box staged-capture re
 _[Checkpoint: 6a3c8cd6 — edited MANUAL.md; wrote process-tier-host-drift-worktree-stat.md; edited MEMORY.md]_
 ---
 
+[02:06:11] OBSERVE: read src/ctx.rs
