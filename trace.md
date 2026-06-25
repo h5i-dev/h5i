@@ -2412,3 +2412,4 @@ _[Checkpoint: 6a3cb373 — edited tests/env_integration.rs; edited src/mcp.rs; e
 ---
 
 [18:21:10] OBSERVE: read settings-bash-sandbox.json
+[18:21:10] OBSERVE: read settings-strict.json
