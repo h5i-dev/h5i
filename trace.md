@@ -2346,3 +2346,9 @@ _[Checkpoint: 6a3c8caf — Fixed T3 regression + #1/#2 (in-box staged-capture re
 [02:04:43] ACT: wrote process-tier-host-drift-worktree-stat.md
 [02:04:47] OBSERVE: read MEMORY.md
 [02:04:56] ACT: edited MEMORY.md
+
+
+---
+_[Checkpoint: 6a3c8cd6 — edited MANUAL.md; wrote process-tier-host-drift-worktree-stat.md; edited MEMORY.md]_
+---
+
