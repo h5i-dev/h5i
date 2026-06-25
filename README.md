@@ -52,7 +52,7 @@ cargo install --git https://github.com/h5i-dev/h5i h5i-core
 
 ---
 
-## 60-Seconds Flow
+## 60-Second Flow
 
 ### Setup
 
