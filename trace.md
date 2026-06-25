@@ -2291,3 +2291,4 @@ _[Checkpoint: 6a3c7e4e — edited src/env.rs; edited tests/env_integration.rs; e
 _[Checkpoint: 6a3c7fa2 — edited tests/env_integration.rs; wrote testing-in-box-host-ingest.md; edited MEMORY.md]_
 ---
 
+[01:14:17] OBSERVE: read MANUAL.md
