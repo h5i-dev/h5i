@@ -2427,3 +2427,4 @@ _[Checkpoint: 6a3cb373 — edited tests/env_integration.rs; edited src/mcp.rs; e
 [18:21:34] OBSERVE: read policy_transforms.rs
 [18:21:34] OBSERVE: read permissions.rs
 [18:21:37] OBSERVE: read SECURITY.md
+[18:21:38] OBSERVE: read permissions.rs
