@@ -2388,3 +2388,4 @@ _[Checkpoint: 6a3c8fd9 — edited src/ctx.rs; edited src/ctx.rs; edited src/ctx.
 [04:07:41] ACT: edited src/objects.rs
 [04:08:56] OBSERVE: read tests/env_integration.rs
 [04:09:11] ACT: edited tests/env_integration.rs
+[04:10:08] OBSERVE: read src/mcp.rs
