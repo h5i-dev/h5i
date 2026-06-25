@@ -3132,6 +3132,31 @@ mod tests {
     }
 
     #[test]
+    fn review_instruction_is_read_only_and_drops_sealed_commands() {
+        let body = review_instruction(
+            "demo",
+            "hana",
+            &["diff".to_string(), "summary".to_string(), "tests".to_string()],
+        );
+        // Must NOT steer a boxed agent at the host-only/sealed commands that
+        // fail inside the box (the original friction).
+        assert!(
+            !body.contains("team compare"),
+            "must not suggest the sealed `team compare`: {body}"
+        );
+        // Must point at the in-box, read-only review surface instead.
+        assert!(body.contains("h5i team artifact show"), "{body}");
+        assert!(body.contains("--diff"), "{body}");
+        assert!(
+            body.contains("do NOT") || body.contains("do not run"),
+            "must ask for a static, read-only review: {body}"
+        );
+        // And tell the agent submit ends the round (no more polling).
+        assert!(body.to_lowercase().contains("submitting marks you done"), "{body}");
+        assert!(body.contains("h5i team review submit demo"), "{body}");
+    }
+
+    #[test]
     fn latest_submission_is_newest_by_time_not_lexicographic_id() {
         let dir = tempfile::tempdir().unwrap();
         let repo = Repository::init(dir.path()).unwrap();
@@ -3181,6 +3206,12 @@ mod tests {
         let run = status(&repo, "run-l").unwrap().run;
         let a1 = run.agents.iter().find(|a| a.agent_id == "a1").unwrap();
         assert_eq!(a1.latest_submission_id.as_deref(), Some("sub-aaa-new"));
+
+        // compare() selects per agent independently of project(); it must agree —
+        // the newest submission, not the lexicographically-largest id.
+        let rows = compare(&repo, h5i_root, "run-l").unwrap();
+        let row = rows.iter().find(|r| r.agent_id == "a1").unwrap();
+        assert_eq!(row.submission_id.as_deref(), Some("sub-aaa-new"));
     }
 
     #[test]

@@ -640,6 +640,84 @@ fn inbox_context_snapshot_off_env_range_is_rejected() {
     );
 }
 
+/// The team Stop hook, in a box, must stop re-surfacing a round's standing
+/// review messages once the agent has submitted for that round — even when the
+/// host re-fans the *same* round under a fresh message id (which defeats the
+/// seen-cursor). A genuinely newer round still breaks through. Also covers that
+/// the inbox surfaces the granted artifact kinds (so a boxed reviewer never
+/// needs the host-only `team compare`).
+#[test]
+fn box_team_hook_releases_after_submit_until_a_new_round_opens() {
+    let r = Repo::new();
+    let inbox = r.dir.join("ibox");
+    let spool = r.dir.join("ispool");
+    std::fs::create_dir_all(&inbox).unwrap();
+    std::fs::create_dir_all(&spool).unwrap();
+
+    // Drop a REVIEW_REQUEST into the box's read-only mailbox. The round + granted
+    // kinds ride in i5h `links`, the artifact id in `focus`.
+    let write_msg = |file: &str, id: &str, round: u64, body: &str| {
+        let m = h5i_core::msg::Message {
+            id: id.into(),
+            ts: "2026-06-24T00:00:00Z".into(),
+            from: "human".into(),
+            to: "hana".into(),
+            body: body.into(),
+            kind: Some("REVIEW_REQUEST".into()),
+            focus: vec!["sub-rohan-r1-aaaaaaaaaaaa".into()],
+            links: Some(serde_json::json!({
+                "team": "demo",
+                "round": round,
+                "artifact_kinds": ["diff", "summary", "tests"],
+            })),
+            ..Default::default()
+        };
+        std::fs::write(inbox.join(file), serde_json::to_vec(&m).unwrap()).unwrap();
+    };
+
+    // The hook in a box: H5I_ENV_INBOX picks the box path; --quiet prints the
+    // framed text directly. Returns combined output.
+    let run_hook = || -> String {
+        let out = Command::new(H5I)
+            .args(["team", "agent", "hook", "--quiet"])
+            .env("H5I_AGENT", "hana")
+            .env(h5i_core::env::H5I_ENV_INBOX_VAR, &inbox)
+            .env(h5i_core::env::H5I_ENV_CAPTURE_SPOOL_VAR, &spool)
+            .current_dir(&r.dir)
+            .output()
+            .expect("run team agent hook");
+        out_str(&out)
+    };
+
+    // Round 1 arrives → surfaced, WITH the grant + artifact id (the #3 fix), so a
+    // boxed reviewer can act without `team compare`.
+    write_msg("m1.json", "rev-round1-id-0001", 1, "Review rohan's submission for demo");
+    let first = run_hook();
+    assert!(first.contains("Review rohan's submission"), "round 1 must surface: {first}");
+    assert!(first.contains("granted diff,summary,tests"), "must show the grant: {first}");
+    assert!(first.contains("sub-rohan-r1-aaaaaaaaaaaa"), "must show the artifact id: {first}");
+
+    // The host re-fans the SAME round under a NEW id (fresh file + fresh id) —
+    // this is what looped the agent before the fix, since the seen-cursor can't
+    // catch a new id.
+    write_msg("m2.json", "rev-round1-id-0002", 1, "Review rohan's submission for demo");
+    // The agent has now submitted for round 1 (recorded box-side by submit).
+    h5i_core::env::write_submitted_round(&spool, 1).unwrap();
+    let after_submit = run_hook();
+    assert!(
+        !after_submit.contains("Review rohan's submission"),
+        "after submitting for round 1, the re-fanned round-1 request must NOT re-surface: {after_submit}"
+    );
+
+    // A genuinely newer round (round 2) still breaks through.
+    write_msg("m3.json", "rev-round2-id-0003", 2, "Round two review opened");
+    let round_two = run_hook();
+    assert!(
+        round_two.contains("Round two review opened"),
+        "a newer round must still surface: {round_two}"
+    );
+}
+
 /// `env status` surfaces evidence STAGED in the spool but not yet ingested
 /// (visible mid-session, before the host materializes it at run/shell end) —
 /// staged captures, notes, and tee-shim records, with the pending commands.
