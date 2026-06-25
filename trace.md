@@ -2253,3 +2253,4 @@ Still waiting on the team-data-model and spool/ingest maps before I touch code â
 _[Checkpoint: 6a3c7afb â€” edited src/team.rs; edited src/team.rs; edited src/env.rs]_
 ---
 
+[00:56:02] OBSERVE: read tests/env_integration.rs
