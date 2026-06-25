@@ -2245,3 +2245,4 @@ _[Checkpoint: 6a3c7ae7 — Implemented 8 h5i team/sandbox improvements from T2 l
 
 Still waiting on the team-data-model and spool/ingest maps before I touch code — I'll read the actual hook arm (`main.
 [00:48:59] THINK: Let me re-read that block (line numbers shifted):
+[00:48:59] THINK: Clippy is clean. Let me run the relevant unit tests (team, ctx, env).
