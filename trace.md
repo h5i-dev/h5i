@@ -2258,3 +2258,6 @@ _[Checkpoint: 6a3c7afb — edited src/team.rs; edited src/team.rs; edited src/en
 [00:57:42] ACT: edited tests/env_integration.rs
 [00:58:48] OBSERVE: read src/team.rs
 [00:59:01] ACT: edited src/team.rs
+[01:00:14] THINK: rs`, `team.rs`.
+
+I have **not committed** — per your workflow I'll stage and `h5i capture commit` only when you say so.
