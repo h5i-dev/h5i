@@ -2301,3 +2301,9 @@ _[Checkpoint: 6a3c7fa2 — edited tests/env_integration.rs; wrote testing-in-box
 [01:15:55] ACT: edited man/man1/h5i.1
 [01:16:14] ACT: edited man/man1/h5i.1
 [01:17:33] NOTE: DEFERRAL (~/Dev/h5i/man/man1/h5i.1): `team artifact show`). The blog post is a dated article — I'll leave it as-is. Let me verify what changed and commit
+
+
+---
+_[Checkpoint: 6a3c81ad — edited MANUAL.md; edited man/man1/h5i.1; edited man/man1/h5i.1]_
+---
+
