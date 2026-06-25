@@ -1978,6 +1978,13 @@ h5i capture run --file src/auth.rs -- pytest tests/test_auth.py   # tag related 
 <p>Every capture is automatically tagged with the <strong>branch</strong> and the <strong>files</strong> it
 concerns (explicit <code>--file</code> ∪ paths mentioned in the output) plus the <strong>working
 diff</strong> at capture time.</p>
+<p><strong>Read-through commands pass through.</strong> Wrapping an h5i <em>read</em> whose whole point
+is to emit content in full — <code>h5i recall object</code> / <code>recall objects</code> / <code>recall
+search</code> and <code>h5i team artifact …</code> — is a no-op: <code>capture run</code> runs them
+verbatim, <strong>unstored and uncompacted</strong> (even inside an audit-all env box, and
+regardless of <code>--min-bytes</code>). So an agent whose harness wraps every command in
+<code>capture run</code> can still rehydrate a teammate's full diff with <code>h5i capture run --
+h5i team artifact show &lt;id&gt; --diff</code> without it being summarized.</p>
 <h3 id="h5i-recall-object--objects">h5i recall object / objects</h3>
 <pre><code class="language-bash">h5i recall objects                       # list captures (newest first) with summaries
 h5i recall objects --status failed       # filter by structured status

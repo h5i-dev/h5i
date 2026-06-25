@@ -1537,6 +1537,14 @@ Every capture is automatically tagged with the **branch** and the **files** it
 concerns (explicit `--file` ∪ paths mentioned in the output) plus the **working
 diff** at capture time.
 
+**Read-through commands pass through.** Wrapping an h5i *read* whose whole point
+is to emit content in full — `h5i recall object` / `recall objects` / `recall
+search` and `h5i team artifact …` — is a no-op: `capture run` runs them
+verbatim, **unstored and uncompacted** (even inside an audit-all env box, and
+regardless of `--min-bytes`). So an agent whose harness wraps every command in
+`capture run` can still rehydrate a teammate's full diff with `h5i capture run --
+h5i team artifact show <id> --diff` without it being summarized.
+
 ### h5i recall object / objects
 
 ```bash
