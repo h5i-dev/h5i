@@ -2643,3 +2643,9 @@ _[Checkpoint: 6a3efa9d — edited docs/index.html; edited docs/index.html; edite
 [22:20:55] ACT: edited docs/index.html
 [22:21:02] ACT: edited docs/index.html
 [22:21:17] THINK: Let me remove the RES and PROV columns from the timeline (grid + all three rows).
+
+
+---
+_[Checkpoint: 6a3efb5d — edited docs/index.html; edited docs/index.html; edited docs/index.html]_
+---
+
