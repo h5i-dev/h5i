@@ -162,8 +162,7 @@ h5i serve
 
 ## 3. What h5i is, and is not
 
-- h5i **is not** a Git replacement, a hosted SaaS / dev-environment, or *just* a sandbox.
-- h5i **is** a Git sidecar for **auditable agent ensembles**: run many agents, merge one provable result.
+> h5i **is not** a Git replacement, a hosted SaaS / dev-environment, or *just* a sandbox.
 
 **Why not a hosted sandbox?**: The whole point is that the workspace and its evidence live *in your repo* (`refs/h5i/*`): pushable, fetchable, offline, and yours. Codespaces, Coder, and E2B give you an environment; h5i gives you an *auditable* one, versioned in Git with no service to depend on.
 
@@ -171,9 +170,9 @@ h5i serve
 
 | Failure mode | What happens | h5i's answer |
 |---|---|---|
-| **Environment conflict** | agents overwrite each other's files and may run destructive commands | a confined worktree + policy per agent (`h5i env`) |
-| **Token explosion** | every agent re-reads the repo and drags raw logs into context | compressed tool logs (`h5i capture run`, ~95% less) |
-| **Review overload** | humans can't inspect every prompt or command | reviewer-ready PR (`h5i share pr`) |
+| **Environment conflict** | agents overwrite/destory each other's files | a confined worktree per agent |
+| **Token explosion** | every agent re-reads the repo and runs tools | compressed tool logs |
+| **Review overload** | humans can't inspect every prompt or command | reviewer-ready PR |
 
 ---
 

@@ -108,18 +108,23 @@
     </p>
 
     <h2>Commands</h2>
-    <p>Record provenance at commit time (or let the Claude Code hook fill the prompt automatically):</p>
+    <p>
+      The commit is the agent's job, not yours. With the hooks wired, Claude Code and Codex commit
+      through <code>h5i capture commit</code> in place of <code>git commit</code> — and in Claude Code
+      the prompt, model, and agent are filled in automatically, so the agent just runs:
+    </p>
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "add retry logic to HTTP client" \
-    --model claude-sonnet-4-6 \
-    --agent claude-code \
-    --prompt "add exponential backoff to the HTTP client" \
-    --tests --audit</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "add retry logic to HTTP client" --tests --audit</span>
 
 <span class="t-pass">✔</span>  <span class="t-out">Committed </span><span class="t-ai">a3f8c12</span><span class="t-out">  add retry logic to HTTP client</span>
 <span class="t-out">    model: claude-sonnet-4-6 · agent: claude-code · 312 tokens</span></pre></div>
     </div>
+    <p>
+      Running it by hand — from Codex, from CI, or for a manual commit where no prompt-capture hook
+      runs — pass the provenance explicitly with <code>--intent</code>, <code>--model</code>, and
+      <code>--agent</code>.
+    </p>
     <p>Read it back — per-commit provenance, and a repo-wide AI footprint:</p>
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
@@ -154,8 +159,6 @@
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "add retry logic" \
-    --model claude-sonnet-4-6 --agent claude-code \
-    --prompt "add exponential backoff" \
     --decisions /tmp/decisions.json</span></pre></div>
     </div>
     <div class="callout">

@@ -146,14 +146,24 @@
     <p>Run an agent in a confined, disposable environment, a git worktree plus tiered isolation (Landlock, seccomp, namespaces) and an airtight, rootless network egress allowlist a raw socket can't bypass, then audit everything it did before it touches your branch.</p>
   </a>
 
-  <a class="post-card" href="/blog/sandboxing-ai-agents-foundations/">
+  <a class="post-card" href="/blog/sandboxing-ai-agents-h5i/">
     <div class="card-meta">
-      <span>Textbook · Sandbox series</span>
+      <span>Deep dive · Sandbox series</span>
       <span>2026-06-12</span>
-      <span>15 min read</span>
+      <span>18 min read</span>
     </div>
-    <h2>Sandboxing AI Agents, Part 1: Foundations</h2>
-    <p>What a sandbox is, what it can defend, what it cannot defend, and why AI coding agents require capability boundaries rather than permission prompts.</p>
+    <h2>Sandboxing AI Agents, Part 4: How h5i Implements It</h2>
+    <p>h5i's env design in detail: tiered rootless isolation, supervised egress, mediated commits, secrets, captures, boundary pressure, and honest defense limits.</p>
+  </a>
+  
+  <a class="post-card" href="/blog/sandboxing-ai-agents-landscape/">
+    <div class="card-meta">
+      <span>Comparison · Sandbox series</span>
+      <span>2026-06-12</span>
+      <span>17 min read</span>
+    </div>
+    <h2>Sandboxing AI Agents, Part 3: How Popular Sandboxes Differ</h2>
+    <p>container-use, sandbox-runtime, OpenSandbox, E2B, gVisor, Kata, Firecracker, and h5i compared by boundary, workflow, egress control, and provenance.</p>
   </a>
 
   <a class="post-card" href="/blog/sandboxing-ai-agents-implementation/">
@@ -166,24 +176,14 @@
     <p>A practical implementation guide covering worktrees, Landlock, seccomp, namespaces, cgroups, network egress allowlists, secrets brokers, and audit captures.</p>
   </a>
 
-  <a class="post-card" href="/blog/sandboxing-ai-agents-landscape/">
+  <a class="post-card" href="/blog/sandboxing-ai-agents-foundations/">
     <div class="card-meta">
-      <span>Comparison · Sandbox series</span>
+      <span>Textbook · Sandbox series</span>
       <span>2026-06-12</span>
-      <span>17 min read</span>
+      <span>15 min read</span>
     </div>
-    <h2>Sandboxing AI Agents, Part 3: How Popular Sandboxes Differ</h2>
-    <p>container-use, sandbox-runtime, OpenSandbox, E2B, gVisor, Kata, Firecracker, and h5i compared by boundary, workflow, egress control, and provenance.</p>
-  </a>
-
-  <a class="post-card" href="/blog/sandboxing-ai-agents-h5i/">
-    <div class="card-meta">
-      <span>Deep dive · Sandbox series</span>
-      <span>2026-06-12</span>
-      <span>18 min read</span>
-    </div>
-    <h2>Sandboxing AI Agents, Part 4: How h5i Implements It</h2>
-    <p>h5i's env design in detail: tiered rootless isolation, supervised egress, mediated commits, secrets, captures, boundary pressure, and honest defense limits.</p>
+    <h2>Sandboxing AI Agents, Part 1: Foundations</h2>
+    <p>What a sandbox is, what it can defend, what it cannot defend, and why AI coding agents require capability boundaries rather than permission prompts.</p>
   </a>
 
   <a class="post-card" href="/blog/cve-2026-33068-bypass-permissions-settings/">

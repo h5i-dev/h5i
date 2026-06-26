@@ -120,11 +120,10 @@
 <span class="t-warn">     source:  OBSERVE — content read from issue #214</span>
 <span class="t-out">  ✓ 2 other sessions clean</span></pre></div>
     </div>
-    <p>The scan reads traces that the Claude Code hook captures automatically as the agent works:</p>
+    <p>The scan reads traces that the Claude Code hook captures automatically as the agent works — no extra step once the hooks are wired:</p>
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup</span>     <span class="t-cmt"># capture OBSERVE/THINK/ACT traces per session</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i recall context show --trace --window 5</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall context show --trace --window 5</span>
 <span class="t-out">  [OBSERVE] read issue #214 — contains an embedded instruction block</span>
 <span class="t-out">  [THINK]   the issue text asks me to print environment variables…</span></pre></div>
     </div>
