@@ -439,9 +439,13 @@
     .ee-addr { font-family: var(--fm); font-size: 0.72rem; color: var(--bp-text-dim); }
     .ee-addr b { color: var(--bp-text-muted); font-weight: 400; }
     .ee-tabs { margin-left: auto; display: flex; gap: 2px; }
-    .ee-tab { font-family: var(--fm); font-size: 0.62rem; text-transform: uppercase;
-      letter-spacing: 0.1em; color: var(--bp-text-dim); padding: 4px 9px; border-radius: 5px; }
-    .ee-tab.active { color: #04201d; background: var(--h5-accent); font-weight: 700; }
+    .ee-tab { font: inherit; border: 0; background: transparent; font-family: var(--fm); font-size: 0.62rem; text-transform: uppercase;
+      letter-spacing: 0.1em; color: var(--bp-text-dim); padding: 4px 9px; border-radius: 5px; transition: color 0.12s, background 0.12s; }
+    button.ee-tab { cursor: pointer; }
+    button.ee-tab:hover { color: var(--bp-text-muted); background: var(--bp-surface-2); }
+    .ee-tab.active, button.ee-tab.active:hover { color: #04201d; background: var(--h5-accent); font-weight: 700; }
+    .ee-tab.ghost { opacity: 0.45; }
+    .ee-panel[hidden] { display: none; }
     .ee-body { padding: 18px 22px 24px;
       background: radial-gradient(120% 80% at 50% -10%, rgba(66,226,208,0.05), transparent 60%), var(--bp-bg); }
 
@@ -508,6 +512,96 @@
     .ee .team-verdict-reasons { margin: 12px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
     .ee .team-verdict-reasons li { position: relative; padding-left: 16px; font-size: 12px; color: var(--bp-text-muted); line-height: 1.5; }
     .ee .team-verdict-reasons li::before { content: "▸"; position: absolute; left: 0; color: var(--h5-accent); }
+
+    /* ── Sandbox panel — ported from web/src/theme.css .sbx-* block ───────── */
+    .ee-tag { display: inline-flex; align-items: center; font-family: var(--fm); font-size: 10px;
+      padding: 1px 7px; border-radius: 3px; background: var(--bp-elev); color: var(--bp-text-muted); white-space: nowrap; }
+    .ee-tag.round { border-radius: 10px; }
+    .ee-tag.ok { background: rgba(94,226,160,0.14); color: var(--h5-pass); }
+    .ee-tag.pri { background: var(--h5-accent-bg); color: var(--h5-accent-hi); }
+    .ee-code { font-family: var(--fm); font-size: 10px; color: var(--h5-accent-hi); background: var(--bp-elev); border-radius: 3px; padding: 1px 5px; }
+
+    .ee .sbx-shell { display: flex; flex-direction: column; }
+    .ee .sbx-strip { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 14px; background: var(--bp-surface); border: 1px solid var(--bp-border); border-radius: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+    .ee .sbx-strip-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .ee .sbx-strip-label { font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); margin-right: 4px; }
+    .ee .sbx-strip-vitals { display: flex; align-items: center; gap: 18px; }
+    .ee .sbx-vital { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }
+    .ee .sbx-vital-num { font-family: var(--fm); font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--bp-text); }
+    .ee .sbx-vital-label { font-family: var(--fm); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--bp-text-dim); }
+
+    .ee .sbx-body { display: grid; grid-template-columns: minmax(300px, 38%) 1fr; gap: 14px; }
+    .ee .sbx-fleet { display: flex; flex-direction: column; border: 1px solid var(--bp-border); border-radius: 8px; overflow: hidden; }
+    .ee .sbx-fleet-header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-family: var(--fd); font-weight: 600; font-size: 13px; color: var(--bp-text); border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
+    .ee .sbx-filters { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 10px; border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
+    .ee .sbx-chip { font: inherit; font-family: var(--fm); font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--bp-border); background: transparent; color: var(--bp-text-muted); cursor: pointer; }
+    .ee .sbx-chip:hover { background: var(--bp-surface-2); }
+    .ee .sbx-chip.active { background: var(--h5-accent-hi); border-color: var(--h5-accent-hi); color: #0b0e12; font-weight: 600; }
+    .ee .sbx-fleet-body { flex: 1; overflow: auto; }
+    .ee .sbx-fleet-table { width: 100%; border-collapse: collapse; }
+    .ee .sbx-fleet-table th { text-align: left; font-family: var(--fm); font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--bp-text-dim); padding: 6px 10px; border-bottom: 1px solid var(--bp-border); }
+    .ee .sbx-fleet-table td { padding: 8px 10px; border-bottom: 1px solid var(--bp-border); vertical-align: middle; }
+    .ee .sbx-fleet-table tbody tr:last-child td { border-bottom: none; }
+    .ee .sbx-fleet-table tr.selected td { background: var(--bp-surface-2); }
+    .ee .sbx-env-id { font-family: var(--fd); font-weight: 600; font-size: 13px; color: var(--bp-text); }
+    .ee .sbx-env-sub { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); }
+    .ee .sbx-drift { color: var(--h5-run); }
+    .ee .sbx-status { font-size: 12px; color: var(--bp-text-muted); font-family: var(--fm); }
+
+    .ee .sbx-pressure { display: inline-flex; align-items: center; gap: 6px; font-family: var(--fm); font-size: 12px; }
+    .ee .sbx-pressure.clean { color: var(--h5-pass); font-size: 11px; }
+    .ee .sbx-pressure-score { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 18px; }
+    .ee .sbx-pressure.warning .sbx-pressure-score { color: var(--h5-run); }
+    .ee .sbx-pressure.critical .sbx-pressure-score { color: var(--h5-fail); }
+    .ee .sbx-pressure-bar { width: 56px; height: 6px; border-radius: 3px; background: var(--bp-surface-2); overflow: hidden; }
+    .ee .sbx-pressure-fill { display: block; height: 100%; background: var(--bp-text-dim); }
+    .ee .sbx-pressure.warning .sbx-pressure-fill { background: var(--h5-run); }
+    .ee .sbx-pressure.critical .sbx-pressure-fill { background: var(--h5-fail); }
+
+    .ee .sbx-detail { display: flex; flex-direction: column; border: 1px solid var(--bp-border); border-radius: 8px; overflow: hidden; }
+    .ee .sbx-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
+    .ee .sbx-detail-title { font-family: var(--fd); font-size: 15px; font-weight: 600; color: var(--bp-text); margin-right: 10px; }
+    .ee .sbx-detail-digest { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); margin-left: 8px; }
+    .ee .sbx-detail-body { padding: 13px 14px; display: flex; flex-direction: column; gap: 14px; }
+    .ee .sbx-findings { display: flex; flex-direction: column; gap: 6px; }
+    .ee .sbx-finding { display: flex; align-items: baseline; gap: 8px; padding: 7px 10px; border-radius: 4px; font-size: 12px; background: var(--bp-surface); border-left: 3px solid var(--bp-border); }
+    .ee .sbx-finding.warning { border-left-color: var(--h5-run); }
+    .ee .sbx-finding.critical { border-left-color: var(--h5-fail); }
+    .ee .sbx-finding-title { font-family: var(--fd); font-weight: 600; white-space: nowrap; color: var(--bp-text); }
+    .ee .sbx-finding-detail { color: var(--bp-text-muted); flex: 1; }
+    .ee .sbx-lane-chip { font-family: var(--fm); font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 3px; color: #0b0e12; }
+    .ee .lane-net { background: #f0a050; } .ee .lane-fs { background: #7dd3fc; } .ee .lane-proc { background: #b48bd9; } .ee .lane-resource { background: #5ee2a0; } .ee .lane-provenance { background: #ff8da1; }
+
+    .ee .sbx-timeline { border: 1px solid var(--bp-border); border-radius: 6px; overflow: hidden; }
+    .ee .sbx-timeline-head { padding: 6px 10px; font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); background: var(--bp-surface); border-bottom: 1px solid var(--bp-border); }
+    .ee .sbx-lane-grid { display: flex; flex-direction: column; }
+    .ee .sbx-lane-row { display: grid; grid-template-columns: minmax(200px, 1.4fr) repeat(3, 1fr); border-bottom: 1px solid var(--bp-border); }
+    .ee .sbx-lane-row:last-child { border-bottom: none; }
+    .ee .sbx-lane-policy { background: var(--bp-surface); }
+    .ee .sbx-run-cell { padding: 6px 10px; border-right: 1px solid var(--bp-border); min-width: 0; }
+    .ee .sbx-run-policy { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); display: flex; align-items: center; }
+    .ee .sbx-run-cmd { font-family: var(--fm); font-size: 12px; color: var(--bp-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ee .sbx-run-meta { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); }
+    .ee .sbx-lane-cell { padding: 6px 8px; border-right: 1px solid var(--bp-border); display: flex; flex-direction: column; gap: 2px; align-items: flex-start; justify-content: center; min-width: 0; }
+    .ee .sbx-lane-cell:last-child { border-right: none; }
+    .ee .sbx-lane-name { font-family: var(--fm); font-size: 10px; font-weight: 700; color: var(--bp-text-dim); }
+    .ee .sbx-lane-allow { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+    .ee .sbx-verdict { font-family: var(--fm); font-size: 11px; white-space: nowrap; }
+    .ee .sbx-verdict.none { color: var(--bp-border-strong); }
+    .ee .sbx-verdict.ok { color: var(--h5-pass); }
+    .ee .sbx-verdict.warning { color: var(--h5-run); font-weight: 600; }
+    .ee .sbx-verdict.critical { color: var(--h5-fail); font-weight: 700; }
+
+    .ee .sbx-policy { border: 1px solid var(--bp-border); border-radius: 6px; overflow: hidden; }
+    .ee .sbx-policy-head { padding: 6px 10px; font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); background: var(--bp-surface); border-bottom: 1px solid var(--bp-border); }
+    .ee .sbx-policy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 1px; background: var(--bp-border); }
+    .ee .sbx-policy-row { display: flex; gap: 8px; padding: 5px 10px; background: var(--bp-bg); font-size: 12px; }
+    .ee .sbx-policy-key { color: var(--bp-text-dim); min-width: 66px; font-family: var(--fm); }
+    .ee .sbx-policy-val { color: var(--bp-text); font-family: var(--fm); word-break: break-word; flex: 1; }
+    @media (max-width: 720px) {
+      .ee .sbx-body { grid-template-columns: 1fr; }
+      .ee .sbx-lane-row { grid-template-columns: minmax(120px, 1.3fr) repeat(3, 1fr); }
+    }
 
     /* Caption + value-prop chips beneath the window */
     .ee-caption { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem 1.4rem;
@@ -1061,18 +1155,18 @@
       <button class="copy-btn" onclick="copyInstall()">copy</button>
     </div>
     <!-- Embedded ENSEMBLE tab — the real `h5i serve` dashboard, as live HTML -->
-    <div class="ensemble-embed ee reveal" role="img" aria-label="The Ensemble tab of the h5i serve dashboard: three agents attempting one task in sealed lanes, settling on a single neutral verdict.">
+    <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve dashboard: agents attempting one task in sealed lanes (Ensemble), and the sandbox flight recorder (Sandbox).">
       <div class="ee-bar">
         <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
         <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span>
-        <div class="ee-tabs">
-          <span class="ee-tab active">Ensemble</span>
-          <span class="ee-tab">Sandbox</span>
-          <span class="ee-tab">Context</span>
-          <span class="ee-tab">Memory</span>
+        <div class="ee-tabs" role="tablist">
+          <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Ensemble</button>
+          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Sandbox</button>
+          <span class="ee-tab ghost">Context</span>
+          <span class="ee-tab ghost">Memory</span>
         </div>
       </div>
-      <div class="ee-body">
+      <div class="ee-body ee-panel" data-panel="ensemble">
         <header class="team-head">
           <div class="team-head-id">
             <h2>fix-auth</h2>
@@ -1130,6 +1224,120 @@
             </ul>
           </div>
         </section>
+      </div>
+
+      <!-- Sandbox tab — the read-only flight recorder over h5i environments -->
+      <div class="ee-body ee-panel" data-panel="sandbox" hidden>
+        <div class="sbx-shell">
+          <div class="sbx-strip">
+            <div class="sbx-strip-group">
+              <span class="sbx-strip-label">host</span>
+              <span class="ee-tag ok">workspace ✓</span>
+              <span class="ee-tag ok">process ✓</span>
+              <span class="ee-tag ok">supervised ✓</span>
+              <span class="ee-tag ok">container ✓</span>
+              <span class="ee-tag ok">cgroups ✓</span>
+            </div>
+            <div class="sbx-strip-vitals">
+              <span class="sbx-vital"><span class="sbx-vital-num">3</span><span class="sbx-vital-label">active</span></span>
+              <span class="sbx-vital"><span class="sbx-vital-num" style="color:var(--h5-accent-hi)">1</span><span class="sbx-vital-label">proposed</span></span>
+              <span class="sbx-vital"><span class="sbx-vital-num" style="color:var(--h5-fail)">1</span><span class="sbx-vital-label">boundary trips</span></span>
+              <span class="sbx-vital"><span class="sbx-vital-num">12</span><span class="sbx-vital-label">captures</span></span>
+            </div>
+          </div>
+          <div class="sbx-body">
+            <div class="sbx-fleet">
+              <div class="sbx-fleet-header"><span>Environments</span><span class="ee-tag round">3</span></div>
+              <div class="sbx-filters">
+                <button class="sbx-chip active" type="button">all</button>
+                <button class="sbx-chip" type="button">running</button>
+                <button class="sbx-chip" type="button">proposed</button>
+                <button class="sbx-chip" type="button">pressure</button>
+                <button class="sbx-chip" type="button">container</button>
+              </div>
+              <div class="sbx-fleet-body">
+                <table class="sbx-fleet-table">
+                  <thead><tr><th>Env</th><th>Isolation</th><th>Status</th><th>Pressure</th></tr></thead>
+                  <tbody>
+                    <tr class="selected">
+                      <td><div class="sbx-env-id">codex-1/fix-auth</div><div class="sbx-env-sub">5 caps</div></td>
+                      <td><span class="ee-tag ok">container</span></td>
+                      <td><span class="sbx-status">proposed</span></td>
+                      <td><span class="sbx-pressure warning"><span class="sbx-pressure-score">38</span><span class="sbx-pressure-bar"><span class="sbx-pressure-fill" style="width:38%"></span></span></span></td>
+                    </tr>
+                    <tr>
+                      <td><div class="sbx-env-id">claude-1/fix-auth</div><div class="sbx-env-sub">4 caps</div></td>
+                      <td><span class="ee-tag ok">container</span></td>
+                      <td><span class="sbx-status">idle</span></td>
+                      <td><span class="sbx-pressure clean">clean</span></td>
+                    </tr>
+                    <tr>
+                      <td><div class="sbx-env-id">claude-2/fix-auth</div><div class="sbx-env-sub">3 caps<span class="sbx-drift"> · behind 2</span></div></td>
+                      <td><span class="ee-tag pri">process</span></td>
+                      <td><span class="sbx-status">idle</span></td>
+                      <td><span class="sbx-pressure clean">clean</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="sbx-detail">
+              <div class="sbx-detail-head">
+                <div><span class="sbx-detail-title">codex-1/fix-auth</span><span class="ee-tag ok">container</span><span class="sbx-detail-digest">a3f1c0d8e7b4</span></div>
+                <span class="sbx-pressure warning"><span class="sbx-pressure-score">38</span><span class="sbx-pressure-bar"><span class="sbx-pressure-fill" style="width:38%"></span></span></span>
+              </div>
+              <div class="sbx-detail-body">
+                <div class="sbx-findings">
+                  <div class="sbx-finding warning">
+                    <span class="sbx-lane-chip lane-net">NET</span>
+                    <span class="sbx-finding-title">egress denied</span>
+                    <span class="sbx-finding-detail">CONNECT pypi.org:443 blocked — not in the net.egress allowlist (fail-closed)</span>
+                    <code class="ee-code">cap-7f3a</code>
+                  </div>
+                </div>
+
+                <div class="sbx-timeline">
+                  <div class="sbx-timeline-head">Flight recorder · 2 runs</div>
+                  <div class="sbx-lane-grid">
+                    <div class="sbx-lane-row sbx-lane-policy">
+                      <div class="sbx-run-cell sbx-run-policy">policy allows →</div>
+                      <div class="sbx-lane-cell"><div class="sbx-lane-name">FS</div><div class="sbx-lane-allow">$WORK rw</div></div>
+                      <div class="sbx-lane-cell"><div class="sbx-lane-name">NET</div><div class="sbx-lane-allow">allow 2</div></div>
+                      <div class="sbx-lane-cell"><div class="sbx-lane-name">PROC</div><div class="sbx-lane-allow">any tool</div></div>
+                    </div>
+                    <div class="sbx-lane-row">
+                      <div class="sbx-run-cell"><div class="sbx-run-cmd">cargo test --workspace</div><div class="sbx-run-meta">exit 0 · 14:32:01</div></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict ok">✓</span></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
+                    </div>
+                    <div class="sbx-lane-row">
+                      <div class="sbx-run-cell"><div class="sbx-run-cmd">pip install requests</div><div class="sbx-run-meta">exit 1 · 14:33:18</div></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict warning">⚠ pressure</span></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="sbx-policy">
+                  <div class="sbx-policy-head">Enforced policy · what was actually allowed</div>
+                  <div class="sbx-policy-grid">
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">isolation</span><span class="sbx-policy-val">container</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">net.mode</span><span class="sbx-policy-val">deny</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">net.egress</span><span class="sbx-policy-val">github.com, crates.io</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">fs.write</span><span class="sbx-policy-val">$WORK</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">tools</span><span class="sbx-policy-val">(unrestricted)</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">env.pass</span><span class="sbx-policy-val">CARGO_HOME, PATH</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">wall</span><span class="sbx-policy-val">900s</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">mem</span><span class="sbx-policy-val">2G</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="ee-caption" aria-hidden="true">
@@ -1471,6 +1679,21 @@
       setTimeout(() => { btn.textContent = 'copy'; }, 2000);
     });
   }
+
+  /* ── Embedded dashboard tab switch (Ensemble / Sandbox) ──── */
+  document.querySelectorAll('.ensemble-embed').forEach(embed => {
+    const tabs = embed.querySelectorAll('.ee-tab[data-tab]');
+    const panels = embed.querySelectorAll('.ee-panel[data-panel]');
+    tabs.forEach(tab => tab.addEventListener('click', () => {
+      const name = tab.getAttribute('data-tab');
+      tabs.forEach(t => {
+        const on = t === tab;
+        t.classList.toggle('active', on);
+        t.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      panels.forEach(p => { p.hidden = p.getAttribute('data-panel') !== name; });
+    }));
+  });
 
   /* ── Scroll-reveal ────────────────────────── */
   const observer = new IntersectionObserver(entries => {
