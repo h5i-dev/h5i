@@ -120,6 +120,16 @@
       </table>
     </div>
 
+    <div class="callout">
+      <p><strong>Who runs this?</strong> In practice the agent does, not a human. With the optional
+      <code>wrap-bash</code> hook installed (<code>h5i hook setup --write --wrap-bash</code>), a
+      Claude Code <code>PreToolUse</code> handler transparently rewrites every Bash command the agent
+      runs into <code>h5i capture run …</code> — so the agent gets the token-reduced summary
+      automatically while the full raw bytes are stored for <code>h5i recall</code>. (You can of
+      course also run it by hand; for agents without a PreToolUse hook, such as Codex, the command is
+      wrapped explicitly.)</p>
+    </div>
+
     <p>
       The agent reads only the manifest's summary. The full bytes are content-addressed by SHA-256
       and one command away (<code>h5i recall object &lt;id&gt;</code>), so the output is
@@ -246,6 +256,12 @@ $ h5i recall object 0bb827e4               # the full raw bytes, exactly</pre></
     </p>
 
     <h2>Try it</h2>
+
+    <p>
+      These are the commands the agent runs; with the <code>wrap-bash</code> hook installed
+      (<code>h5i hook setup --write --wrap-bash</code>) they're invoked automatically on every Bash
+      call, so the agent never has to remember to wrap anything — but each works typed by hand too:
+    </p>
 
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>

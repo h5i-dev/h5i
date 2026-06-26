@@ -102,20 +102,20 @@
 <h2>What to capture</h2>
 <p>For Claude Code work, capture at least five fields: the task prompt, the agent name, the model if known, the changed commit, and the test result. For longer sessions, also capture context traces and decisions. Those records make the diff explainable without storing an entire chat transcript in the commit message.</p>
 <h2>Manual capture</h2>
-<p>The direct workflow is simple:</p>
+<p><strong>Who types this: a human or a script</strong>, in any setup with no prompt-capture hook — Codex, CI, or a hand-run commit. You pass the prompt explicitly with <code>--intent</code> because nothing recorded it for you:</p>
 <div class="terminal"><div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/repo</span></div><div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i capture commit -m "add retry handling" \
   --agent claude-code \
   --model claude-sonnet-4-6 \
-  --prompt "add retry handling to the API client" \
+  --intent "add retry handling to the API client" \
   --tests</span></pre></div></div>
 <p>Then inspect it later:</p>
 <div class="terminal"><div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/repo</span></div><div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i recall log --limit 5</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i recall blame src/api/client.py --show-prompt</span></pre></div></div>
 <h2>Hook-based capture</h2>
 <p>Claude Code hooks are user-defined commands or endpoints that run at lifecycle events. Anthropic's hooks reference documents events such as <code>SessionStart</code>, <code>UserPromptSubmit</code>, <code>PreToolUse</code>, and <code>PostToolUse</code>, with JSON context passed to hook handlers. h5i uses that mechanism to make provenance capture less manual.</p>
-<p>Run:</p>
-<div class="terminal"><div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/repo</span></div><div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup</span></pre></div></div>
-<p>The h5i hook commands are designed for four moments: <code>h5i hook claude prompt</code> captures the verbatim prompt when you submit it, <code>h5i hook session-start</code> injects prior context when a Claude Code session begins, <code>h5i hook claude sync</code> records tool-use traces after edits, and <code>h5i hook claude finish</code> checkpoints the context when the turn stops.</p>
+<p><strong>Who types this: a human, exactly once.</strong> Install the wiring and you are done:</p>
+<div class="terminal"><div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/repo</span></div><div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup --write</span>  <span class="t-cmt"># writes ./.claude/settings.json (--scope user for ~/.claude); idempotent</span></pre></div></div>
+<p>After that, <strong>nobody types <code>h5i hook claude …</code> by hand</strong> — Claude Code's runtime fires the handlers automatically at four moments: <code>h5i hook claude prompt</code> (on <code>UserPromptSubmit</code>) captures the verbatim prompt, which then beats any agent-supplied <code>--intent</code> at commit time; <code>h5i hook session-start</code> (on <code>SessionStart</code>) injects prior context; <code>h5i hook claude sync</code> (on <code>PostToolUse</code>) records tool-use traces after edits; and <code>h5i hook claude finish</code> (on <code>Stop</code>) checkpoints the context when the turn stops. Codex wires only two handlers (<code>SessionStart</code> and <code>Stop</code>); it has no per-prompt or per-edit hook, which is why Codex commits fall back to the <em>Manual capture</em> path above.</p>
 <h2>What this gives reviewers</h2>
 <p>A reviewer can see the ordinary diff and the AI context around it. That context answers whether the prompt asked for exactly this behavior, whether the agent touched files outside scope, whether tests ran, and whether the agent recorded a risky assumption.</p>
 <p>The better workflow is not "trust Claude Code because it wrote a clean diff." It is "review Claude Code with the prompt, diff, tests, and trace in one packet."</p>

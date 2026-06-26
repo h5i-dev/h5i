@@ -319,6 +319,7 @@
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/your-project</span></div>
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i init</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup --write</span> <span class="t-cmt"># installs the capture hooks (idempotent)</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes analyze --since 7.days.ago</span>
 <span class="t-out">  scanned 38 commits · 24 had session logs · linked 24/24</span>
 
@@ -328,6 +329,12 @@
 <span class="t-cmt"># Open them. See if the framework agrees with the bugs you</span>
 <span class="t-cmt"># actually shipped.</span></pre></div>
     </div>
+
+    <p>
+      The <code>h5i hook setup --write</code> step installs the SessionStart, PostToolUse, Stop, and
+      UserPromptSubmit hooks that passively capture the prompts, traces, and test evidence every audit
+      vector scores &mdash; once wired, they run on their own with nothing more to type.
+    </p>
 
     <p>
       The first time you do this, you'll find one or two flagged commits you remember as "weird,

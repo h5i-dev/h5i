@@ -135,6 +135,17 @@
 <p>Models are useful for coding, summarizing, and suggesting fixes. Audit records should be durable even when models change, vendors change, or transcripts are unavailable. That is why Git-native (sidecar) storage is attractive: the data can be fetched, pushed, reviewed, backed up, and inspected with normal developer tooling.</p>
 <h2>Where h5i fits</h2>
 <p>h5i treats Git as the transport and durability layer. It records AI provenance with commits, stores versioned reasoning as context, creates review surfaces for pull requests, and lets agents exchange typed messages over a shareable Git ref.</p>
+<p>In practice the workflow is small. A human wires it up once; after that the record of agent, prompt, context, action, test, and review accrues without anyone typing it:</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ h5i init                      # one-time: attach the sidecar to this repo
+$ h5i hook setup --write        # one-time: wire Claude Code hooks (idempotent)
+
+# from here, provenance is captured automatically as the agent works:
+#   prompt   ← UserPromptSubmit hook
+#   context  ← OBSERVE/THINK/ACT traces (PostToolUse, Stop)
+#   action   ← h5i capture commit -m "..." --model ... --agent ...
+
+$ h5i recall log                # the AI history: prompt + model + agent + tests
+$ h5i share pr post             # a PR brief surfacing context, test, and review</pre></div></div>
 <p>The result is not a replacement for review. It is a better review packet. Instead of asking a reviewer to infer intent from a patch, h5i gives them the patch, the prompt, the agent's working context, and the risk signals that say which parts deserve attention first.</p>
 <h2>When do you need an auditable workspace?</h2>
 <p>You need an auditable workspace when AI-generated code becomes routine rather than experimental. One-off autocomplete can survive with normal Git hygiene. Agentic development needs stronger records because the agent can edit multiple files, run tools, hand off work, and make architectural choices across a long session.</p>

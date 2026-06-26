@@ -125,7 +125,23 @@
 </ul>
 <p>That packet turns review from archaeology into verification. The reviewer can ask whether the implementation matches the intent, whether the agent had enough context, and whether tests cover the changed behavior.</p>
 <h2>How h5i adds the missing layer</h2>
-<p>h5i keeps the Git diff intact and adds structured context around it. <code>h5i capture commit</code> records prompt, model, agent, tests, tokens, and decisions with the commit. <code>h5i recall context</code> shows the goal, milestones, and OBSERVE/THINK/ACT trace. <code>h5i recall blame --show-prompt</code> connects lines back to the AI prompt at commit boundaries. <code>h5i share pr</code> can turn that context into a reviewer-facing pull-request body.</p>
+<p>h5i keeps the Git diff intact and adds structured context around it. <code>h5i capture commit</code> records prompt, model, agent, tests, tokens, and decisions with the commit. <code>h5i recall context</code> shows the goal, milestones, and OBSERVE/THINK/ACT trace. <code>h5i recall blame --show-prompt</code> connects lines back to the AI prompt at commit boundaries. <code>h5i share pr post</code> can turn that context into a reviewer-facing pull-request body.</p>
+<p>The contrast is concrete. Plain Git shows the change and a hand-written summary:</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ git log --oneline -1
+a1b2c3d  shorten token expiry to 15m
+
+$ git show a1b2c3d        # the diff, and nothing about how it came to be
+-    expiry = Duration::hours(24);
++    expiry = Duration::minutes(15);</pre></div></div>
+<p>The same commit through h5i carries the intent, the model and agent that produced it, and whether the change was tested:</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ h5i recall log --limit 1
+a1b2c3d  shorten token expiry to 15m
+  prompt: "make sessions expire faster, security review flagged 24h"
+  model:  claude-sonnet-4-6   agent: claude-code
+  tests:  auth::token_expiry  PASS (1 added)
+
+$ h5i recall blame src/auth/token.rs   # same lines, plus who/why/tested
+a1b2c3d  (claude-code · claude-sonnet-4-6 · tests PASS)  expiry = Duration::minutes(15);</pre></div></div>
 <p>The point is not to make reviews longer. It is to make them narrower. Review the diff, but use provenance and context to decide where the human attention should go first.</p>
 <h2>FAQ</h2>
 <h3>Should reviewers still read the diff?</h3>

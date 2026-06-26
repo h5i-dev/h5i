@@ -319,10 +319,19 @@
 <span class="t-cmt"># Initialize in your repo</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i init</span>
 
+<span class="t-cmt"># Install the hooks that capture every session (idempotent)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i hook setup --write</span>
+
 <span class="t-cmt"># After your next Claude Code session:</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes analyze</span>
 <span class="t-prompt">$</span> <span class="t-cmd">h5i recall notes uncertainty</span></pre></div>
     </div>
+
+    <p>
+      The <code>h5i hook setup --write</code> step wires in the SessionStart, PostToolUse, Stop, and
+      UserPromptSubmit hooks that passively capture the prompts, traces, and test evidence the heatmap
+      reads &mdash; so you never have to run those captures by hand.
+    </p>
 
     <p>
       That's it. The heatmap is waiting.

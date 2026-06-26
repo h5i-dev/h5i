@@ -108,7 +108,43 @@
 <p>A Git hook sees the repository event. A Claude Code hook sees the agent event. If you only use Git hooks, you may know a commit happened but not which prompt caused it or what Claude observed while editing. If you only use Claude Code hooks, you may capture rich session context but miss enforcement at the final commit or push boundary.</p>
 <h2>How h5i combines them</h2>
 <p>h5i's Claude Code hook commands are designed for agent context. <code>h5i hook session-start</code> prints prior context into the new session. <code>h5i hook claude sync</code> reads JSON from Claude Code as a <code>PostToolUse</code> handler and emits h5i context traces. <code>h5i hook claude finish</code> checkpoints recent context when a turn stops, and <code>h5i hook claude prompt</code> captures the verbatim prompt as a <code>UserPromptSubmit</code> handler.</p>
+<p>You do not wire these handlers in by hand. <code>h5i hook setup</code> prints the copy-paste install instructions, and <code>h5i hook setup --write</code> merges the wiring straight into the agent config for you (idempotent — safe to run twice):</p>
+<div class="terminal"><div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div><div class="terminal-body"><pre>$ h5i hook setup                       # print the wiring; write nothing
+$ h5i hook setup --write                # write Claude AND Codex config (project scope)
+$ h5i hook setup --write --target claude  # write only .claude/settings.json
+$ h5i hook setup --write --scope user   # write ~/.claude/settings.json (all projects)
+$ h5i hook setup --write --wrap-bash    # also route every agent Bash through h5i capture run
+$ h5i hook setup --write --team         # also register the team peer-review Stop hook</pre></div></div>
 <p>That can coexist with Git hooks for conventional repository policy. For example, Claude Code hooks can capture the prompt and tool trace, while a Git <code>pre-commit</code> hook runs tests or blocks secrets.</p>
+<h2>The h5i hook commands</h2>
+<p>The <code>setup</code> command is the entry point; everything else is a <em>handler</em> the agent runtime invokes at a lifecycle event — you never type those by hand. Start with these <code>setup</code> options:</p>
+<table class="data">
+  <thead>
+    <tr><th>Option</th><th>What it does</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>setup</code> (no flag)</td><td>Prints copy-paste install instructions. Writes nothing.</td></tr>
+    <tr><td><code>--write</code></td><td>Merges the hook wiring into the agent config. Idempotent.</td></tr>
+    <tr><td><code>--target claude|codex</code></td><td>Which config to write. Omit to write <strong>both</strong>.</td></tr>
+    <tr><td><code>--scope project|user</code></td><td>Default <code>project</code> (repo <code>./.claude/settings.json</code>); <code>user</code> writes <code>~/.claude/settings.json</code> for every project.</td></tr>
+    <tr><td><code>--wrap-bash</code></td><td>Optional. Also registers the Bash capture-wrap <code>PreToolUse</code> hook that routes each agent Bash command through <code>h5i capture run</code> (token-reduced summary; full raw kept for <code>h5i recall</code>). Off by default — note that permission allowlists then match the rewritten <code>h5i capture run …</code> command, not the original.</td></tr>
+    <tr><td><code>--team</code></td><td>Optional. Also registers the team peer-review Stop hook (<code>h5i team agent hook</code>); a no-op outside a live <code>h5i team</code> round, safe to leave on.</td></tr>
+  </tbody>
+</table>
+<p>For Claude, <code>--write</code> installs four handlers (plus the optional fifth with <code>--wrap-bash</code>):</p>
+<table class="data">
+  <thead>
+    <tr><th>Handler</th><th>Event</th><th>What it does</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>h5i hook session-start</code></td><td><code>SessionStart</code></td><td>Injects prior context — goal, recent milestones, decisions/actions, open TODOs — into the new session. (Wired for Claude <em>and</em> Codex.)</td></tr>
+    <tr><td><code>h5i hook claude sync</code></td><td><code>PostToolUse</code> (<code>Edit|Write|Read</code>)</td><td>Emits an OBSERVE trace for <code>Read</code>, an ACT trace for <code>Edit</code>/<code>Write</code>; on <code>Read</code> also injects prior reasoning about that file.</td></tr>
+    <tr><td><code>h5i hook claude finish</code></td><td><code>Stop</code></td><td>Mines THINK entries from the transcript plus NOTE entries for deferrals/placeholders/unfulfilled promises, and auto-checkpoints a context milestone.</td></tr>
+    <tr><td><code>h5i hook claude prompt</code></td><td><code>UserPromptSubmit</code></td><td>Records the verbatim human prompt; a later <code>h5i capture commit</code> uses it as the recorded prompt (it wins over an agent-authored <code>--intent</code>).</td></tr>
+    <tr><td><code>h5i hook wrap-bash</code></td><td><code>PreToolUse</code> (<code>Bash</code>)</td><td>Optional (<code>--wrap-bash</code>). Rewrites the Bash command into <code>h5i capture run …</code>; skips h5i's own commands, top-level <code>cd</code>, and non-git dirs, and fails open so the original command still runs.</td></tr>
+  </tbody>
+</table>
+<p>Codex has no <code>PostToolUse</code> or <code>UserPromptSubmit</code>, so it derives the same prompt and OBSERVE/ACT signals by parsing its session JSONL. <code>--write</code> wires <code>SessionStart</code> → <code>h5i hook session-start</code> and <code>Stop</code> → <code>h5i hook codex finish --quiet</code>; the matching <code>h5i hook codex prelude</code> and <code>h5i hook codex sync</code> handlers cover its tool loop.</p>
 <h2>Practical rule</h2>
 <p>Use Claude Code hooks for agent observability and session memory. Use Git hooks for repository gates. Use h5i to connect the two into provenance that survives beyond the chat window.</p>
 <h2>Where teams get the boundary wrong</h2>

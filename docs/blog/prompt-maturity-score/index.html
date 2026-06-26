@@ -320,25 +320,6 @@
       to optimise, it stops measuring anything real.
     </p>
 
-    <h2>Honesty about what this is</h2>
-
-    <p>
-      The weights and gate thresholds are <strong>normative</strong>, hand-tuned and locked through
-      review, not learned from data. They're an explainable proxy, not a validated model, and the code
-      says so in a standing <code>TODO</code>. The path forward is deliberately conservative: the
-      per-prompt features are already exposed, so a future version can join them against h5i's existing
-      per-commit outcome signals, test pass/fail, review-flag scores, diff churn, later reverts, over
-      a real commit corpus, and <em>learn</em> the weights while keeping every feature explainable. What
-      it must <em>not</em> do is regress from a tiny biased sample, where a senior engineer writes both
-      good prompts and good code and the metric just rediscovers seniority.
-    </p>
-
-    <p>
-      Until then, the value isn't precision to the decimal, it's making prompt craft <em>visible</em>.
-      A reviewer who sees "context grounding 0.41" across a branch learns something true and actionable
-      about how the agent was steered, with no model call and no guesswork.
-    </p>
-
     <div class="next-up">
       <span class="label">Read next</span>
       <a href="/blog/from-git-blame-to-ai-blame/">

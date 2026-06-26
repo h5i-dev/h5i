@@ -107,7 +107,46 @@
     <h2>The idea: one result, every tool</h2>
 
     <p>
-      h5i parses each tool into a single typed <code>ToolResult</code>. The key realization is that a
+      Here's what an agent normally swallows — a single failing <code>pytest</code> run:
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span></div>
+      <div class="terminal-body"><pre>$ pytest -q
+============================= test session starts ==============================
+platform linux -- Python 3.11.4, pytest-8.1.1, pluggy-1.4.0
+rootdir: /home/dev/app
+plugins: anyio-4.3.0, cov-4.1.0
+collected 121 items
+
+tests/test_auth.py .........................F.............              [ 30%]
+tests/test_api.py ....................................                  [ 70%]
+tests/test_db.py ..................................                     [100%]
+
+=================================== FAILURES ===================================
+______________________________ test_refresh ___________________________________
+
+    def test_refresh():
+        token = refresh(expired_session())
+&gt;       assert token.ttl == 100
+E       assert 0 == 100
+E        +  where 0 = Token(ttl=0).ttl
+
+tests/test_auth.py:42: AssertionError
+=============================== warnings summary ===============================
+tests/test_api.py::test_list
+  /home/dev/app/api.py:88: DeprecationWarning: client.get(...) is deprecated
+    return client.get(url)
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_auth.py::test_refresh - assert 0 == 100
+1 failed, 120 passed, 1 warning in 4.31s</pre></div>
+    </div>
+
+    <p>
+      Run that through <code>h5i capture run</code> and the <em>same</em> run becomes the compact
+      typed result below — roughly 95% fewer tokens, with the raw output kept out-of-band and one
+      command away. h5i parses each tool into a single typed <code>ToolResult</code>. The key realization is that a
       <strong>failing test, a compile error, and a lint diagnostic are the same shape</strong>: a
       thing, somewhere, with a message and a severity. So they all become a unified
       <code>Finding</code>, under one envelope:
