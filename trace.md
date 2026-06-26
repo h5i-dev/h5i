@@ -2612,3 +2612,4 @@ _[Checkpoint: 6a3ef873 — edited docs/index.html; edited docs/index.html; edite
 
 [22:12:08] ACT: edited docs/index.html
 [22:12:12] ACT: edited docs/index.html
+[22:12:15] NOTE: DEFERRAL (~/Dev/h5i/docs/index.html): `cd docs && python3 -m http.server`). A couple of optional follow-ups if you want them: add the dense **Compare table + Recent events** rows for even …
