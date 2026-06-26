@@ -444,7 +444,6 @@
     button.ee-tab { cursor: pointer; }
     button.ee-tab:hover { color: var(--bp-text-muted); background: var(--bp-surface-2); }
     .ee-tab.active, button.ee-tab.active:hover { color: #04201d; background: var(--h5-accent); font-weight: 700; }
-    .ee-tab.ghost { opacity: 0.45; }
     .ee-panel[hidden] { display: none; }
     .ee-body { padding: 18px 22px 24px;
       background: radial-gradient(120% 80% at 50% -10%, rgba(66,226,208,0.05), transparent 60%), var(--bp-bg); }
@@ -1200,7 +1199,6 @@
           <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Ensemble</button>
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Sandbox</button>
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="context">Context</button>
-          <span class="ee-tab ghost">Memory</span>
         </div>
       </div>
       <div class="ee-body ee-panel" data-panel="ensemble">
