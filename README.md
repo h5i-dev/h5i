@@ -172,7 +172,7 @@ h5i serve
 |---|---|---|
 | **Environment conflict** | agents overwrite each other's files and may run destructive commands | a confined worktree + policy per agent |
 | **Token explosion** | every agent re-reads the repo and runs tools | compressed tool logs (~95% less) |
-| **Review overload** | humans can't inspect every prompt or command | auto risk scan + reviewer-ready PR |
+| **Review overload** | humans can't inspect every prompt or command | reviewer-ready PR |
 
 ---
 
