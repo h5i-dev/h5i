@@ -2541,3 +2541,4 @@ _[Checkpoint: 6a3d81ac — edited README.md; edited README.md; edited README.md]
 _[Checkpoint: 6a3d82c3 — edited README.md; edited README.md; edited README.md]_
 ---
 
+[12:22:34] OBSERVE: read docs/guides/index.html
