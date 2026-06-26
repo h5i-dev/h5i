@@ -2603,3 +2603,4 @@ _[Checkpoint: 6a3ef867 — Hero: embed live ENSEMBLE dashboard]_
 
 [22:08:51] THINK: For a hero I'll embed the *essence* — the window frame, header, settlement rail, sealed lanes, and the verdict card — not the dense compare-table/events readout (those bloat the hero without adding punch).
 [22:08:51] THINK: Now let me grab the design token values (the `--bp-*` and `--h5-*` variables) from theme.
+[22:08:51] THINK: Let me do a structural sanity check on the edited region and confirm tag balance.
