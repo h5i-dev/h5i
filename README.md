@@ -170,7 +170,7 @@ h5i serve
 
 | Failure mode | What happens | h5i's answer |
 |---|---|---|
-| **Environment conflict** | agents overwrite each other's files and may destroy environments | a confined worktree per agent |
+| **Environment conflict** | agents overwrite/destory each other's files | a confined worktree per agent |
 | **Token explosion** | every agent re-reads the repo and runs tools | compressed tool logs |
 | **Review overload** | humans can't inspect every prompt or command | reviewer-ready PR |
 
