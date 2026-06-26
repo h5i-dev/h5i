@@ -2768,3 +2768,4 @@ _[Checkpoint: 6a3f0162 — edited docs/index.html; edited docs/index.html; edite
 [23:52:05] OBSERVE: read docs/blog/prompt-maturity-score/index.html
 [23:52:28] THINK: Let me set the goal and gather the two cross-cutting facts (the `h5i hook` CLI surface, and the current Claude/Codex hook setup + human-vs-agent command split) via parallel agents, while I learn the blog HTML format.
 [23:52:28] THINK: While those run, let me learn the blog HTML format by reading two of the posts I'll edit — the smallest (claude-code-hooks-vs-git-hooks) and one needing the human/agent workflow fix.
+[23:52:29] THINK: Let me set up tracking and read two self-contained posts (the cross-linking one and the trim one) while the ground-truth agents finish.
