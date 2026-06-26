@@ -2794,3 +2794,4 @@ _[Checkpoint: 6a3f10bd — session ended (auto-checkpoint)]_
 [23:55:46] OBSERVE: read docs/blog/token-reduction-object-store/index.html
 [23:55:50] ACT: edited docs/blog/persistent-memory-for-claude-code/index.html
 [23:55:55] OBSERVE: read docs/blog/why-git-diffs-are-not-enough-for-ai-generated-code/index.html
+[23:55:55] OBSERVE: read docs/blog/what-is-ai-aware-version-control/index.html
