@@ -2595,3 +2595,9 @@ _[Checkpoint: 6a3ef75b — edited docs/workflows/index.html; edited docs/workflo
 [22:07:37] ACT: edited docs/index.html
 [22:07:58] ACT: edited docs/index.html
 [22:08:27] ACT: edited docs/index.html
+
+
+---
+_[Checkpoint: 6a3ef867 — Hero: embed live ENSEMBLE dashboard]_
+---
+

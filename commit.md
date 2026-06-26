@@ -2688,3 +2688,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a3ef867 — 2026-06-26 22:08 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Replaced the 4 hero stat-cards in docs/index.html with a scoped, crisp HTML+CSS embed of the h5i serve Ensemble tab (browser-window frame, settlement rail, 3 sealed lanes, codex winner, neutral-verdict card). Ported .team-* CSS from web/src/theme.css under .ee namespace + dark tokens; reused page fonts. Kept Works strip; folded value-prop keywords into caption row. Verified HTML balanced (html.parser depth 0). Not visually previewed — no headless browser on host.
+
+---
+
