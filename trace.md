@@ -2695,3 +2695,4 @@ _[Checkpoint: 6a3efd5e — edited docs/index.html; edited docs/index.html; edite
 _[Checkpoint: 6a3efe02 — edited docs/index.html; edited docs/index.html; edited docs/index.html]_
 ---
 
+[22:38:38] OBSERVE: read web/src/ContextView.tsx
