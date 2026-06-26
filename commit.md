@@ -2649,3 +2649,16 @@ guides/index: removed features Overview card + JSON-LD entry, reworked workflows
 
 ---
 
+## Commit 6a3e8da7 — 2026-06-26 14:33 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+guides/index: removed features Overview card + JSON-LD entry, reworked workflows card & hero to ensemble framing. prompt-injection: dropped unnecessary 'h5i hook setup' code line. ai-code-provenance: reframed commit as agent-run (h5i capture commit replaces git commit; prompt/model/agent auto-captured), dropped deprecated --prompt. codex-collaboration: replaced agent-run msg terminals with human-only 'h5i msg setup' + natural-language instruction + embedded existing i5h-protocol.svg diagram. workflows: rewrote body to follow README 60-second flow (install→setup→track→sandbox→ensemble→recall) + updated meta/og/JSON-LD. Left docs/features intact (other links). Not committed.
+
+### This Commit's Contribution
+
+
+---
+
