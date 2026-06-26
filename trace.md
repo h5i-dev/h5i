@@ -2788,3 +2788,4 @@ _[Checkpoint: 6a3f10bd — session ended (auto-checkpoint)]_
 [23:55:21] ACT: edited docs/blog/auditing-ai-generated-code/index.html
 [23:55:31] ACT: edited docs/blog/auditing-ai-generated-code/index.html
 [23:55:37] ACT: edited docs/blog/persistent-memory-for-claude-code/index.html
+[23:55:37] OBSERVE: read docs/blog/structured-tool-output-schema/index.html
