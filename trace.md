@@ -2798,3 +2798,4 @@ _[Checkpoint: 6a3f10bd — session ended (auto-checkpoint)]_
 [23:55:56] OBSERVE: read docs/blog/review-code-written-by-ai-agents/index.html
 [23:56:05] ACT: edited docs/blog/persistent-memory-for-claude-code/index.html
 [23:56:12] ACT: edited docs/blog/why-git-diffs-are-not-enough-for-ai-generated-code/index.html
+[23:56:13] ACT: edited docs/blog/structured-tool-output-schema/index.html
