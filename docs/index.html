@@ -392,8 +392,6 @@
       color: var(--ink); font-family: var(--mono);
     }
     .hero-stat .lbl { font-size: 0.66rem; color: var(--text-faint); letter-spacing: 0.14em; margin-top: 0.6rem; text-transform: uppercase; }
-    /* feature-name variant: keyword as the bold word, smaller than the number tiles */
-    .hero-stats--feat .val { font-size: 1.05rem; line-height: 1.3; }
     .hero-shot {
       margin: 4rem auto 0;
       max-width: 960px;
@@ -412,6 +410,245 @@
       border-top: 1px solid var(--border);
     }
     .hero-shot-caption code { font-family: var(--mono); color: var(--red-text); font-size: 0.92em; }
+
+    /* ── Embedded ENSEMBLE dashboard (real h5i serve DOM, scoped dark) ────────
+       The markup mirrors web/src/TeamView.tsx and the rules below are ported
+       from web/src/theme.css's .team-* block, namespaced under .ee so the dark
+       palette never bleeds into the light page. It is live HTML+CSS, not a
+       screenshot — crisp at any zoom. */
+    .ensemble-embed {
+      --bp-bg: #0a0c10; --bp-surface: #12161c; --bp-surface-2: #1a1f26;
+      --bp-elev: #232931; --bp-border: #2a3138; --bp-border-strong: #3a424b;
+      --bp-text: #f6f7f9; --bp-text-muted: #abb3bf; --bp-text-dim: #6b7785;
+      --h5-accent: #42e2d0; --h5-accent-hi: #7cefe0;
+      --h5-accent-bg: rgba(66,226,208,0.14); --h5-accent-glow: rgba(66,226,208,0.32);
+      --h5-pass: #5ee2a0; --h5-fail: #ff6b6b; --h5-run: #f0a050; --h5-model: #b48bd9;
+      --h5-winner-glow: 0 0 0 1px var(--h5-accent), 0 0 22px -2px var(--h5-accent-glow);
+      --fd: var(--sans); --fm: var(--mono);
+      margin: 3.6rem auto 0; max-width: 980px;
+      border: 1px solid #20262e; border-radius: var(--radius-lg); overflow: hidden;
+      box-shadow: 0 40px 90px rgba(0,0,0,0.55); text-align: left;
+      color: var(--bp-text);
+    }
+    /* Browser-window chrome */
+    .ee-bar { display: flex; align-items: center; gap: 11px; padding: 9px 14px;
+      background: #0d1117; border-bottom: 1px solid var(--bp-border); }
+    .ee-dots { display: flex; gap: 7px; }
+    .ee-dot { width: 11px; height: 11px; border-radius: 50%; background: #2a3138; }
+    .ee-dot.r { background: #e06c75; } .ee-dot.y { background: #e5c07b; } .ee-dot.g { background: #98c379; }
+    .ee-addr { font-family: var(--fm); font-size: 0.72rem; color: var(--bp-text-dim); }
+    .ee-addr b { color: var(--bp-text-muted); font-weight: 400; }
+    .ee-tabs { margin-left: auto; display: flex; gap: 2px; }
+    .ee-tab { font: inherit; border: 0; background: transparent; font-family: var(--fm); font-size: 0.62rem; text-transform: uppercase;
+      letter-spacing: 0.1em; color: var(--bp-text-dim); padding: 4px 9px; border-radius: 5px; transition: color 0.12s, background 0.12s; }
+    button.ee-tab { cursor: pointer; }
+    button.ee-tab:hover { color: var(--bp-text-muted); background: var(--bp-surface-2); }
+    .ee-tab.active, button.ee-tab.active:hover { color: #04201d; background: var(--h5-accent); font-weight: 700; }
+    .ee-panel[hidden] { display: none; }
+    .ee-body { padding: 18px 22px 24px;
+      background: radial-gradient(120% 80% at 50% -10%, rgba(66,226,208,0.05), transparent 60%), var(--bp-bg); }
+
+    /* Run header */
+    .ee .team-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+    .ee .team-head h2 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: -0.02em; font-family: var(--fd); color: var(--bp-text); }
+    .ee .team-head-meta { display: flex; align-items: center; gap: 7px; margin-top: 5px; font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); }
+    .ee .team-base { color: var(--bp-text-muted); }
+    .ee .team-dot-sep { color: var(--bp-border-strong); }
+    .ee .team-phase-badge { flex-shrink: 0; font-family: var(--fm); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--h5-accent-hi); background: var(--h5-accent-bg); border: 1px solid rgba(66,226,208,0.4); padding: 5px 11px; border-radius: 20px; }
+
+    /* Settlement rail */
+    .ee .team-rail { list-style: none; margin: 0 0 22px; padding: 18px 6px 4px; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
+    .ee .team-rail-stage { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 6px; min-width: 0; }
+    .ee .team-rail-stage::before { content: ""; position: absolute; top: 9px; left: -50%; width: 100%; height: 2px; background: var(--bp-border); }
+    .ee .team-rail-stage:first-child::before { display: none; }
+    .ee .team-rail-stage.lit::before { background: var(--h5-accent); }
+    .ee .team-rail-dot { position: relative; z-index: 1; width: 20px; height: 20px; border-radius: 50%; background: var(--bp-bg); border: 2px solid var(--bp-border-strong); display: flex; align-items: center; justify-content: center; }
+    .ee .team-rail-num { font-family: var(--fm); font-size: 9px; font-weight: 700; color: var(--bp-text-dim); }
+    .ee .team-rail-label { margin-top: 8px; font-family: var(--fd); font-size: 12px; font-weight: 600; color: var(--bp-text-dim); }
+    .ee .team-rail-hint { margin-top: 3px; font-size: 9.5px; line-height: 1.4; color: var(--bp-text-dim); opacity: 0; transition: opacity 0.15s; max-width: 130px; }
+    .ee .team-rail-stage:hover .team-rail-hint { opacity: 0.7; }
+    .ee .team-rail-stage.is-done .team-rail-dot { background: var(--h5-accent); border-color: var(--h5-accent); }
+    .ee .team-rail-stage.is-done .team-rail-num { color: #04201d; }
+    .ee .team-rail-stage.is-done .team-rail-label { color: var(--bp-text-muted); }
+    .ee .team-rail-stage.is-active .team-rail-dot { background: var(--bp-bg); border-color: var(--h5-accent); box-shadow: 0 0 0 4px var(--h5-accent-bg); animation: team-pulse 1.8s ease-in-out infinite; }
+    .ee .team-rail-stage.is-active .team-rail-num { color: var(--h5-accent-hi); }
+    .ee .team-rail-stage.is-active .team-rail-label { color: var(--bp-text); }
+    @keyframes team-pulse { 0%,100% { box-shadow: 0 0 0 4px var(--h5-accent-bg); } 50% { box-shadow: 0 0 0 7px rgba(66,226,208,0.05); } }
+
+    /* Lanes */
+    .ee .team-lanes { display: grid; grid-template-columns: repeat(auto-fill, minmax(238px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .ee .team-lane { position: relative; border: 1px solid var(--bp-border); border-radius: 9px; padding: 13px 14px; background: var(--bp-surface); display: flex; flex-direction: column; gap: 10px; transition: border-color 0.15s, box-shadow 0.15s, opacity 0.2s; }
+    .ee .team-lane.winner { border-color: var(--h5-accent); box-shadow: var(--h5-winner-glow); background: linear-gradient(180deg, rgba(66,226,208,0.06), transparent 60%), var(--bp-surface); }
+    .ee .team-lane.dimmed { opacity: 0.55; filter: saturate(0.55); }
+    .ee .team-lane.dimmed:hover { opacity: 0.9; filter: none; }
+    .ee .team-lane-ribbon { position: absolute; top: 10px; right: -1px; font-family: var(--fm); font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.14em; color: #04201d; background: var(--h5-accent); padding: 3px 9px 3px 8px; border-radius: 10px 0 0 10px; font-weight: 700; }
+    .ee .team-lane-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .ee .team-lane-name { font-family: var(--fd); font-size: 14px; font-weight: 600; color: var(--bp-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ee .team-seal { flex-shrink: 0; font-family: var(--fm); font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--h5-accent-hi); border: 1px solid rgba(66,226,208,0.4); border-radius: 3px; padding: 2px 6px; }
+    .ee .team-lane-ident { display: flex; flex-wrap: wrap; gap: 5px; }
+    .ee .team-chip { font-family: var(--fm); font-size: 10px; color: var(--bp-text-muted); background: var(--bp-elev); border-radius: 4px; padding: 2px 7px; }
+    .ee .team-chip.model { color: var(--h5-model); background: rgba(180,139,217,0.12); }
+    .ee .team-chip.ghost { color: var(--bp-text-dim); background: transparent; border: 1px solid var(--bp-border); }
+    .ee .team-lane-diff { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; font-family: var(--fm); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .ee .team-lane-diff .d-files { color: var(--bp-text); }
+    .ee .team-lane-diff .d-ins { color: var(--h5-pass); }
+    .ee .team-lane-diff .d-del { color: var(--bp-text-dim); }
+    .ee .team-lane-diff .d-indep { margin-left: auto; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--h5-pass); }
+    .ee .team-gates { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 9px; border-top: 1px solid var(--bp-border); }
+    .ee .team-gate { display: inline-flex; align-items: center; gap: 5px; font-family: var(--fm); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 7px; border-radius: 4px; }
+    .ee .team-gate-mark { font-size: 11px; }
+    .ee .team-gate.pass { color: var(--h5-pass); background: rgba(94,226,160,0.1); }
+    .ee .team-gate.fail { color: var(--h5-fail); background: rgba(255,107,107,0.1); }
+
+    /* Verdict card */
+    .ee .team-verdict-card { display: flex; border: 1px solid rgba(66,226,208,0.35); border-radius: 10px; overflow: hidden; background: var(--bp-surface); }
+    .ee .team-verdict-rail { flex: 0 0 4px; background: var(--h5-accent); box-shadow: 0 0 18px -2px var(--h5-accent-glow); }
+    .ee .team-verdict-body { padding: 15px 18px; flex: 1; min-width: 0; }
+    .ee .team-verdict-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+    .ee .team-verdict-eyebrow { font-family: var(--fm); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--bp-text-dim); }
+    .ee .team-verdict-pick { font-family: var(--fm); font-size: 17px; font-weight: 700; color: var(--h5-accent-hi); }
+    .ee .team-verdict-meta { margin-top: 4px; font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); }
+    .ee .team-verdict-reasons { margin: 12px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
+    .ee .team-verdict-reasons li { position: relative; padding-left: 16px; font-size: 12px; color: var(--bp-text-muted); line-height: 1.5; }
+    .ee .team-verdict-reasons li::before { content: "▸"; position: absolute; left: 0; color: var(--h5-accent); }
+
+    /* ── Sandbox panel — ported from web/src/theme.css .sbx-* block ───────── */
+    .ee-tag { display: inline-flex; align-items: center; font-family: var(--fm); font-size: 10px;
+      padding: 1px 7px; border-radius: 3px; background: var(--bp-elev); color: var(--bp-text-muted); white-space: nowrap; }
+    .ee-tag.round { border-radius: 10px; }
+    .ee-tag.ok { background: rgba(94,226,160,0.14); color: var(--h5-pass); }
+    .ee-tag.pri { background: var(--h5-accent-bg); color: var(--h5-accent-hi); }
+    .ee-code { font-family: var(--fm); font-size: 10px; color: var(--h5-accent-hi); background: var(--bp-elev); border-radius: 3px; padding: 1px 5px; }
+
+    .ee .sbx-shell { display: flex; flex-direction: column; }
+    .ee .sbx-strip { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 14px; background: var(--bp-surface); border: 1px solid var(--bp-border); border-radius: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+    .ee .sbx-strip-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .ee .sbx-strip-label { font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); margin-right: 4px; }
+    .ee .sbx-strip-vitals { display: flex; align-items: center; gap: 18px; }
+    .ee .sbx-vital { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }
+    .ee .sbx-vital-num { font-family: var(--fm); font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--bp-text); }
+    .ee .sbx-vital-label { font-family: var(--fm); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--bp-text-dim); }
+
+    .ee .sbx-body { display: grid; grid-template-columns: minmax(300px, 38%) 1fr; gap: 14px; }
+    .ee .sbx-fleet { display: flex; flex-direction: column; border: 1px solid var(--bp-border); border-radius: 8px; overflow: hidden; }
+    .ee .sbx-fleet-header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-family: var(--fd); font-weight: 600; font-size: 13px; color: var(--bp-text); border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
+    .ee .sbx-filters { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 10px; border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
+    .ee .sbx-chip { font: inherit; font-family: var(--fm); font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--bp-border); background: transparent; color: var(--bp-text-muted); cursor: pointer; }
+    .ee .sbx-chip:hover { background: var(--bp-surface-2); }
+    .ee .sbx-chip.active { background: var(--h5-accent-hi); border-color: var(--h5-accent-hi); color: #0b0e12; font-weight: 600; }
+    .ee .sbx-fleet-body { flex: 1; overflow: auto; }
+    .ee .sbx-fleet-table { width: 100%; min-width: 380px; border-collapse: collapse; }
+    .ee .sbx-fleet-table th { text-align: left; font-family: var(--fm); font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--bp-text-dim); padding: 6px 10px; border-bottom: 1px solid var(--bp-border); }
+    .ee .sbx-fleet-table td { padding: 8px 10px; border-bottom: 1px solid var(--bp-border); vertical-align: middle; }
+    /* Pin the three right columns so the Env column takes the remaining width. */
+    .ee .sbx-fleet-table tbody tr:last-child td { border-bottom: none; }
+    .ee .sbx-fleet-table tr.selected td { background: var(--bp-surface-2); }
+    .ee .sbx-env-id { font-family: var(--fd); font-weight: 600; font-size: 13px; color: var(--bp-text); white-space: nowrap; }
+    .ee .sbx-env-sub { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); }
+    .ee .sbx-drift { color: var(--h5-run); }
+    .ee .sbx-status { font-size: 12px; color: var(--bp-text-muted); font-family: var(--fm); }
+
+    .ee .sbx-pressure { display: inline-flex; align-items: center; gap: 6px; font-family: var(--fm); font-size: 12px; }
+    .ee .sbx-pressure.clean { color: var(--h5-pass); font-size: 11px; }
+    .ee .sbx-pressure-score { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 18px; }
+    .ee .sbx-pressure.warning .sbx-pressure-score { color: var(--h5-run); }
+    .ee .sbx-pressure.critical .sbx-pressure-score { color: var(--h5-fail); }
+    .ee .sbx-pressure-bar { width: 56px; height: 6px; border-radius: 3px; background: var(--bp-surface-2); overflow: hidden; }
+    .ee .sbx-pressure-fill { display: block; height: 100%; background: var(--bp-text-dim); }
+    .ee .sbx-pressure.warning .sbx-pressure-fill { background: var(--h5-run); }
+    .ee .sbx-pressure.critical .sbx-pressure-fill { background: var(--h5-fail); }
+
+    .ee .sbx-detail { display: flex; flex-direction: column; border: 1px solid var(--bp-border); border-radius: 8px; overflow: hidden; }
+    .ee .sbx-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--bp-border); background: var(--bp-surface); }
+    .ee .sbx-detail-title { font-family: var(--fd); font-size: 15px; font-weight: 600; color: var(--bp-text); margin-right: 10px; }
+    .ee .sbx-detail-digest { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); margin-left: 8px; }
+    .ee .sbx-detail-body { padding: 13px 14px; display: flex; flex-direction: column; gap: 14px; }
+    .ee .sbx-findings { display: flex; flex-direction: column; gap: 6px; }
+    .ee .sbx-finding { display: flex; align-items: baseline; gap: 8px; padding: 7px 10px; border-radius: 4px; font-size: 12px; background: var(--bp-surface); border-left: 3px solid var(--bp-border); }
+    .ee .sbx-finding.warning { border-left-color: var(--h5-run); }
+    .ee .sbx-finding.critical { border-left-color: var(--h5-fail); }
+    .ee .sbx-finding-title { font-family: var(--fd); font-weight: 600; white-space: nowrap; color: var(--bp-text); }
+    .ee .sbx-finding-detail { color: var(--bp-text-muted); flex: 1; }
+    .ee .sbx-lane-chip { font-family: var(--fm); font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 3px; color: #0b0e12; }
+    .ee .lane-net { background: #f0a050; } .ee .lane-fs { background: #7dd3fc; } .ee .lane-proc { background: #b48bd9; } .ee .lane-resource { background: #5ee2a0; } .ee .lane-provenance { background: #ff8da1; }
+
+    .ee .sbx-timeline { border: 1px solid var(--bp-border); border-radius: 6px; overflow: hidden; }
+    .ee .sbx-timeline-head { padding: 6px 10px; font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); background: var(--bp-surface); border-bottom: 1px solid var(--bp-border); }
+    .ee .sbx-lane-grid { display: flex; flex-direction: column; }
+    .ee .sbx-lane-row { display: grid; grid-template-columns: minmax(200px, 1.4fr) repeat(3, 1fr); border-bottom: 1px solid var(--bp-border); }
+    .ee .sbx-lane-row:last-child { border-bottom: none; }
+    .ee .sbx-lane-policy { background: var(--bp-surface); }
+    .ee .sbx-run-cell { padding: 6px 10px; border-right: 1px solid var(--bp-border); min-width: 0; }
+    .ee .sbx-run-policy { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); display: flex; align-items: center; }
+    .ee .sbx-run-cmd { font-family: var(--fm); font-size: 12px; color: var(--bp-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ee .sbx-run-meta { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); }
+    .ee .sbx-lane-cell { padding: 6px 8px; border-right: 1px solid var(--bp-border); display: flex; flex-direction: column; gap: 2px; align-items: flex-start; justify-content: center; min-width: 0; }
+    .ee .sbx-lane-cell:last-child { border-right: none; }
+    .ee .sbx-lane-name { font-family: var(--fm); font-size: 10px; font-weight: 700; color: var(--bp-text-dim); }
+    .ee .sbx-lane-allow { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+    .ee .sbx-verdict { font-family: var(--fm); font-size: 11px; white-space: nowrap; }
+    .ee .sbx-verdict.none { color: var(--bp-border-strong); }
+    .ee .sbx-verdict.ok { color: var(--h5-pass); }
+    .ee .sbx-verdict.warning { color: var(--h5-run); font-weight: 600; }
+    .ee .sbx-verdict.critical { color: var(--h5-fail); font-weight: 700; }
+
+    .ee .sbx-policy { border: 1px solid var(--bp-border); border-radius: 6px; overflow: hidden; }
+    .ee .sbx-policy-head { padding: 6px 10px; font-family: var(--fm); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bp-text-dim); background: var(--bp-surface); border-bottom: 1px solid var(--bp-border); }
+    .ee .sbx-policy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 1px; background: var(--bp-border); }
+    .ee .sbx-policy-row { display: flex; gap: 8px; padding: 5px 10px; background: var(--bp-bg); font-size: 12px; }
+    .ee .sbx-policy-key { color: var(--bp-text-dim); min-width: 66px; font-family: var(--fm); }
+    .ee .sbx-policy-val { color: var(--bp-text); font-family: var(--fm); word-break: break-word; flex: 1; }
+    @media (max-width: 720px) {
+      .ee .sbx-body { grid-template-columns: 1fr; }
+      .ee .sbx-lane-row { grid-template-columns: minmax(120px, 1.3fr) repeat(3, 1fr); }
+    }
+
+    /* ── Context panel — ported from web/src/theme.css .ctx-* block ───────── */
+    .ee .ctx-view { display: flex; flex-direction: column; gap: 14px; }
+    .ee .ctx-hero { display: grid; grid-template-columns: 1fr auto; gap: 28px; padding: 20px 22px; align-items: center; border-radius: 6px;
+      background: linear-gradient(135deg, rgba(180,139,217,0.08), rgba(66,226,208,0.06)); }
+    .ee .ctx-hero-goal { min-width: 0; }
+    .ee .ctx-eyebrow { font-family: var(--fm); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--h5-model); margin-bottom: 6px; }
+    .ee .ctx-hero-text { font-family: var(--fd); font-size: 18px; font-weight: 500; color: var(--bp-text); line-height: 1.45; max-width: 60ch; word-break: break-word; }
+    .ee .ctx-hero-purpose { font-size: 13px; color: var(--bp-text-muted); margin-top: 8px; line-height: 1.5; max-width: 80ch; }
+    .ee .ctx-purpose-key { font-family: var(--fm); color: var(--bp-text-dim); font-size: 11px; margin-right: 6px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+    .ee .ctx-kpis { display: flex; gap: 18px; flex-shrink: 0; }
+    .ee .ctx-kpi { text-align: right; min-width: 50px; }
+    .ee .ctx-kpi-val { font-family: var(--fm); font-size: 27px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: var(--bp-text); line-height: 1; }
+    .ee .ctx-kpi-label { font-family: var(--fm); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--bp-text-dim); font-weight: 600; margin-top: 5px; }
+    .ee .ctx-kpi-sub { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); margin-top: 2px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .ee .ctx-section { background: var(--bp-surface); border-radius: 6px; padding: 14px 18px; }
+    .ee .ctx-section-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--bp-border); }
+    .ee .ctx-section-title { font-family: var(--fm); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--bp-text-dim); }
+    .ee .ctx-section-sub { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); font-weight: 400; margin-left: auto; }
+    .ee .ctx-milestones { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
+    .ee .ctx-milestones li { position: relative; padding: 8px 0; font-size: 13px; color: var(--bp-text); line-height: 1.5; border-top: 1px solid var(--bp-border); }
+    .ee .ctx-milestones li:first-child { border-top: none; }
+    .ee .ctx-milestone-sha { display: inline-block; font-family: var(--fm); font-size: 10px; font-weight: 600; color: var(--h5-accent-hi); background: var(--h5-accent-bg); padding: 1px 6px; border-radius: 3px; margin-right: 8px; letter-spacing: 0.04em; }
+    .ee .ctx-ota-bar { display: flex; height: 10px; background: var(--bp-elev); border-radius: 3px; overflow: hidden; }
+    .ee .ctx-ota-segment { height: 100%; }
+    .ee .ctx-ota-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 11px; }
+    .ee .ctx-ota-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .ee .ctx-ota-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+    .ee .ctx-ota-legend-label { font-family: var(--fm); color: var(--bp-text-muted); text-transform: uppercase; font-size: 9.5px; letter-spacing: 0.06em; font-weight: 600; }
+    .ee .ctx-ota-legend-val { font-family: var(--fm); font-size: 12px; color: var(--bp-text); font-variant-numeric: tabular-nums; font-weight: 600; }
+    .ee .ctx-ota-legend-pct { font-family: var(--fm); font-variant-numeric: tabular-nums; font-size: 10px; color: var(--bp-text-dim); }
+    @media (max-width: 720px) {
+      .ee .ctx-hero { grid-template-columns: 1fr; gap: 16px; }
+      .ee .ctx-kpis { flex-wrap: wrap; gap: 14px 18px; }
+      .ee .ctx-kpi { text-align: left; }
+    }
+
+    /* Caption + value-prop chips beneath the window */
+    .ee-caption { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem 1.4rem;
+      max-width: 980px; margin: 1.1rem auto 0; }
+    .ee-caption span { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.04em; color: var(--text-faint); }
+    .ee-caption span b { color: var(--text-dim); font-weight: 700; }
+    @media (max-width: 720px) {
+      .ee-body { padding: 14px 13px 18px; }
+      .ee .team-rail-label { font-size: 10px; }
+      .ee-addr { display: none; }
+    }
 
     /* ── Section heading ───────────────────────────────────── */
     .section-head { max-width: 720px; margin: 0 auto 4rem; }
@@ -953,11 +1190,246 @@
       <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh</code>
       <button class="copy-btn" onclick="copyInstall()">copy</button>
     </div>
-    <div class="hero-stats hero-stats--feat">
-      <div class="hero-stat"><div class="val">Isolated per agent</div><div class="lbl">no file or branch clashes</div></div>
-      <div class="hero-stat"><div class="val">Sealed attempts</div><div class="lbl">independence-first</div></div>
-      <div class="hero-stat"><div class="val">Neutral verifier</div><div class="lbl">a fair, sandboxed winner</div></div>
-      <div class="hero-stat"><div class="val">Lives in your Git</div><div class="lbl">refs/h5i/* · no SaaS</div></div>
+    <!-- Embedded ENSEMBLE tab — the real `h5i serve` dashboard, as live HTML -->
+    <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve dashboard: agents attempting one task in sealed lanes (Ensemble), the sandbox flight recorder (Sandbox), and the reasoning/context workspace (Context).">
+      <div class="ee-bar">
+        <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
+        <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span>
+        <div class="ee-tabs" role="tablist">
+          <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Ensemble</button>
+          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Sandbox</button>
+          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="context">Context</button>
+        </div>
+      </div>
+      <div class="ee-body ee-panel" data-panel="ensemble">
+        <header class="team-head">
+          <div class="team-head-id">
+            <h2>fix-auth</h2>
+            <div class="team-head-meta">
+              <span class="team-base">base 3d80a8d7b4</span>
+              <span class="team-dot-sep">·</span><span>3 agents</span>
+              <span class="team-dot-sep">·</span><span>3 sealed</span>
+            </div>
+          </div>
+          <span class="team-phase-badge">applied</span>
+        </header>
+
+        <ol class="team-rail" aria-label="ensemble lifecycle">
+          <li class="team-rail-stage is-done lit"><span class="team-rail-dot"><span class="team-rail-num">1</span></span><span class="team-rail-label">Draft</span><span class="team-rail-hint">roster created · agents working sealed</span></li>
+          <li class="team-rail-stage is-done lit"><span class="team-rail-dot"><span class="team-rail-num">2</span></span><span class="team-rail-label">Seal</span><span class="team-rail-hint">submissions frozen, immutable</span></li>
+          <li class="team-rail-stage is-done lit"><span class="team-rail-dot"><span class="team-rail-num">3</span></span><span class="team-rail-label">Review</span><span class="team-rail-hint">permissioned peer review</span></li>
+          <li class="team-rail-stage is-done lit"><span class="team-rail-dot"><span class="team-rail-num">4</span></span><span class="team-rail-label">Verify</span><span class="team-rail-hint">neutral verifier replays each candidate</span></li>
+          <li class="team-rail-stage is-active lit"><span class="team-rail-dot"><span class="team-rail-num">5</span></span><span class="team-rail-label">Apply</span><span class="team-rail-hint">one winner committed to base</span></li>
+        </ol>
+
+        <section class="team-lanes">
+          <article class="team-lane dimmed">
+            <div class="team-lane-top"><strong class="team-lane-name">claude-1</strong><span class="team-seal">sealed</span></div>
+            <div class="team-lane-ident"><span class="team-chip model">opus-4-8</span><span class="team-chip">design</span><span class="team-chip ghost">container</span></div>
+            <div class="team-lane-diff"><span class="d-files">3 files</span><span class="d-ins">+91</span><span class="d-del">−20</span><span class="d-indep">independent</span></div>
+            <div class="team-gates"><span class="team-gate pass"><span class="team-gate-mark">✓</span>applies</span><span class="team-gate pass"><span class="team-gate-mark">✓</span>tests</span></div>
+          </article>
+          <article class="team-lane winner">
+            <div class="team-lane-ribbon">verdict</div>
+            <div class="team-lane-top"><strong class="team-lane-name">codex-1</strong></div>
+            <div class="team-lane-ident"><span class="team-chip model">codex</span><span class="team-chip">build</span><span class="team-chip ghost">container</span></div>
+            <div class="team-lane-diff"><span class="d-files">4 files</span><span class="d-ins">+272</span><span class="d-del">−31</span><span class="d-indep">independent</span></div>
+            <div class="team-gates"><span class="team-gate pass"><span class="team-gate-mark">✓</span>applies</span><span class="team-gate pass"><span class="team-gate-mark">✓</span>tests</span></div>
+          </article>
+          <article class="team-lane dimmed">
+            <div class="team-lane-top"><strong class="team-lane-name">claude-2</strong><span class="team-seal">sealed</span></div>
+            <div class="team-lane-ident"><span class="team-chip model">sonnet-4-6</span><span class="team-chip">security</span><span class="team-chip ghost">process</span></div>
+            <div class="team-lane-diff"><span class="d-files">1 file</span><span class="d-ins">+12</span><span class="d-del">−3</span><span class="d-indep">independent</span></div>
+            <div class="team-gates"><span class="team-gate pass"><span class="team-gate-mark">✓</span>applies</span><span class="team-gate fail"><span class="team-gate-mark">✕</span>tests</span></div>
+          </article>
+        </section>
+
+        <section class="team-verdict-card">
+          <div class="team-verdict-rail"></div>
+          <div class="team-verdict-body">
+            <div class="team-verdict-head">
+              <span class="team-verdict-eyebrow">neutral verdict</span>
+              <span class="team-verdict-pick">sub-codex-1-r1-c34f11daf8e2</span>
+            </div>
+            <div class="team-verdict-meta">verify:replay-tests · smallest-diff tiebreak<span class="team-dot-sep"> · </span>auto-apply enabled</div>
+            <ul class="team-verdict-reasons">
+              <li>sub-codex-1-r1-c34f11daf8e2 applies cleanly</li>
+              <li>sub-codex-1-r1-c34f11daf8e2 verifier tests passed</li>
+              <li>smallest diff among verifier-passing candidates</li>
+            </ul>
+          </div>
+        </section>
+      </div>
+
+      <!-- Sandbox tab — the read-only flight recorder over h5i environments -->
+      <div class="ee-body ee-panel" data-panel="sandbox" hidden>
+        <div class="sbx-shell">
+          <div class="sbx-strip">
+            <div class="sbx-strip-group">
+              <span class="sbx-strip-label">host</span>
+              <span class="ee-tag ok">workspace ✓</span>
+              <span class="ee-tag ok">process ✓</span>
+              <span class="ee-tag ok">supervised ✓</span>
+              <span class="ee-tag ok">container ✓</span>
+              <span class="ee-tag ok">cgroups ✓</span>
+            </div>
+            <div class="sbx-strip-vitals">
+              <span class="sbx-vital"><span class="sbx-vital-num">3</span><span class="sbx-vital-label">active</span></span>
+              <span class="sbx-vital"><span class="sbx-vital-num" style="color:var(--h5-accent-hi)">1</span><span class="sbx-vital-label">proposed</span></span>
+              <span class="sbx-vital"><span class="sbx-vital-num" style="color:var(--h5-fail)">1</span><span class="sbx-vital-label">boundary trips</span></span>
+              <span class="sbx-vital"><span class="sbx-vital-num">12</span><span class="sbx-vital-label">captures</span></span>
+            </div>
+          </div>
+          <div class="sbx-body">
+            <div class="sbx-fleet">
+              <div class="sbx-fleet-header"><span>Environments</span><span class="ee-tag round">3</span></div>
+              <div class="sbx-filters">
+                <button class="sbx-chip active" type="button">all</button>
+                <button class="sbx-chip" type="button">running</button>
+                <button class="sbx-chip" type="button">proposed</button>
+                <button class="sbx-chip" type="button">pressure</button>
+                <button class="sbx-chip" type="button">container</button>
+              </div>
+              <div class="sbx-fleet-body">
+                <table class="sbx-fleet-table">
+                  <thead><tr><th>Env</th><th>Isolation</th><th>Status</th><th>Pressure</th></tr></thead>
+                  <tbody>
+                    <tr class="selected">
+			    <td><div class="sbx-env-id">codex-1/<br>fix-auth</div><div class="sbx-env-sub">5 caps</div></td>
+                      <td><span class="ee-tag ok">container</span></td>
+                      <td><span class="sbx-status">proposed</span></td>
+                      <td><span class="sbx-pressure warning"><span class="sbx-pressure-score">38</span><span class="sbx-pressure-bar"><span class="sbx-pressure-fill" style="width:38%"></span></span></span></td>
+                    </tr>
+                    <tr>
+			    <td><div class="sbx-env-id">claude-1/<br>fix-auth</div><div class="sbx-env-sub">4 caps</div></td>
+                      <td><span class="ee-tag ok">container</span></td>
+                      <td><span class="sbx-status">idle</span></td>
+                      <td><span class="sbx-pressure clean">clean</span></td>
+                    </tr>
+                    <tr>
+			    <td><div class="sbx-env-id">claude-2/<br>fix-auth</div><div class="sbx-env-sub">3 caps<span class="sbx-drift"><br>behind 2</span></div></td>
+                      <td><span class="ee-tag pri">process</span></td>
+                      <td><span class="sbx-status">idle</span></td>
+                      <td><span class="sbx-pressure clean">clean</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="sbx-detail">
+              <div class="sbx-detail-head">
+                <div><span class="sbx-detail-title">codex-1/fix-auth</span><span class="ee-tag ok">container</span><span class="sbx-detail-digest">a3f1c0d8e7b4</span></div>
+                <span class="sbx-pressure warning"><span class="sbx-pressure-score">38</span><span class="sbx-pressure-bar"><span class="sbx-pressure-fill" style="width:38%"></span></span></span>
+              </div>
+              <div class="sbx-detail-body">
+                <div class="sbx-findings">
+                  <div class="sbx-finding warning">
+                    <span class="sbx-lane-chip lane-net">NET</span>
+                    <span class="sbx-finding-title">egress denied</span>
+                    <span class="sbx-finding-detail">CONNECT pypi.org:443 blocked — not in the net.egress allowlist (fail-closed)</span>
+                    <code class="ee-code">cap-7f3a</code>
+                  </div>
+                </div>
+
+                <div class="sbx-timeline">
+                  <div class="sbx-timeline-head">Flight recorder · 2 runs</div>
+                  <div class="sbx-lane-grid">
+                    <div class="sbx-lane-row sbx-lane-policy">
+                      <div class="sbx-run-cell sbx-run-policy">policy allows →</div>
+                      <div class="sbx-lane-cell"><div class="sbx-lane-name">FS</div><div class="sbx-lane-allow">$WORK rw</div></div>
+                      <div class="sbx-lane-cell"><div class="sbx-lane-name">NET</div><div class="sbx-lane-allow">allow 2</div></div>
+                      <div class="sbx-lane-cell"><div class="sbx-lane-name">PROC</div><div class="sbx-lane-allow">any tool</div></div>
+                    </div>
+                    <div class="sbx-lane-row">
+                      <div class="sbx-run-cell"><div class="sbx-run-cmd">cargo test --workspace</div><div class="sbx-run-meta">exit 0 · 14:32:01</div></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict ok">✓</span></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
+                    </div>
+                    <div class="sbx-lane-row">
+                      <div class="sbx-run-cell"><div class="sbx-run-cmd">pip install requests</div><div class="sbx-run-meta">exit 1 · 14:33:18</div></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict warning">⚠ pressure</span></div>
+                      <div class="sbx-lane-cell"><span class="sbx-verdict none">·</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="sbx-policy">
+                  <div class="sbx-policy-head">Enforced policy · what was actually allowed</div>
+                  <div class="sbx-policy-grid">
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">isolation</span><span class="sbx-policy-val">container</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">net.mode</span><span class="sbx-policy-val">deny</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">net.egress</span><span class="sbx-policy-val">github.com, crates.io</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">fs.write</span><span class="sbx-policy-val">$WORK</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">tools</span><span class="sbx-policy-val">(unrestricted)</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">env.pass</span><span class="sbx-policy-val">CARGO_HOME, PATH</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">wall</span><span class="sbx-policy-val">900s</span></div>
+                    <div class="sbx-policy-row"><span class="sbx-policy-key">mem</span><span class="sbx-policy-val">2G</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Context tab — the reasoning/context workspace (refs/h5i/context) -->
+      <div class="ee-body ee-panel" data-panel="context" hidden>
+        <div class="ctx-view">
+          <div class="ctx-hero">
+            <div class="ctx-hero-goal">
+              <div class="ctx-eyebrow">Git branch goal · improve-website</div>
+              <div class="ctx-hero-text">Embed the live h5i serve dashboard into the docs landing hero</div>
+              <div class="ctx-hero-purpose">
+                <span class="ctx-purpose-key">Context</span><span class="ee-tag round">main</span>
+                show, don't tell — replace the abstract stat-cards with the real UI
+              </div>
+            </div>
+            <div class="ctx-kpis">
+              <div class="ctx-kpi"><div class="ctx-kpi-val">18</div><div class="ctx-kpi-label">milestones</div><div class="ctx-kpi-sub">5 branches</div></div>
+              <div class="ctx-kpi"><div class="ctx-kpi-val">1,240</div><div class="ctx-kpi-label">trace lines</div><div class="ctx-kpi-sub">412 stable · 828 live</div></div>
+              <div class="ctx-kpi"><div class="ctx-kpi-val">32</div><div class="ctx-kpi-label">snapshots</div><div class="ctx-kpi-sub">last 3h ago</div></div>
+              <div class="ctx-kpi"><div class="ctx-kpi-val" style="color:var(--h5-run)">2</div><div class="ctx-kpi-label">todos</div><div class="ctx-kpi-sub">1 branch</div></div>
+              <div class="ctx-kpi"><div class="ctx-kpi-val">5</div><div class="ctx-kpi-label">branches</div><div class="ctx-kpi-sub">1 stale</div></div>
+            </div>
+          </div>
+
+          <div class="ctx-section">
+            <div class="ctx-section-head"><span class="ctx-section-title">Recent milestones</span><span class="ctx-section-sub">refs/h5i/context</span></div>
+            <ol class="ctx-milestones">
+              <li><span class="ctx-milestone-sha">c80adf9</span><span class="ctx-milestone-text">Widen the Env column in the embedded Sandbox fleet table</span></li>
+              <li><span class="ctx-milestone-sha">3a8f359</span><span class="ctx-milestone-text">Make the embedded dashboard tabs switchable (Ensemble / Sandbox)</span></li>
+              <li><span class="ctx-milestone-sha">04c9f5c</span><span class="ctx-milestone-text">Embed the live ENSEMBLE dashboard in the hero, replacing the stat-cards</span></li>
+            </ol>
+          </div>
+
+          <div class="ctx-section">
+            <div class="ctx-section-head"><span class="ctx-section-title">OTA balance</span><span class="ctx-section-sub">observe / think / act / note / merge across 801 entries</span></div>
+            <div class="ctx-ota-bar">
+              <div class="ctx-ota-segment" style="width:39%;background:var(--h5-accent)"></div>
+              <div class="ctx-ota-segment" style="width:31%;background:var(--h5-model)"></div>
+              <div class="ctx-ota-segment" style="width:24%;background:var(--h5-pass)"></div>
+              <div class="ctx-ota-segment" style="width:5%;background:var(--h5-run)"></div>
+              <div class="ctx-ota-segment" style="width:1%;background:#ff7bff"></div>
+            </div>
+            <div class="ctx-ota-legend">
+              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:var(--h5-accent)"></span><span class="ctx-ota-legend-label">OBSERVE</span><span class="ctx-ota-legend-val">312</span><span class="ctx-ota-legend-pct">39%</span></span>
+              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:var(--h5-model)"></span><span class="ctx-ota-legend-label">THINK</span><span class="ctx-ota-legend-val">248</span><span class="ctx-ota-legend-pct">31%</span></span>
+              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:var(--h5-pass)"></span><span class="ctx-ota-legend-label">ACT</span><span class="ctx-ota-legend-val">196</span><span class="ctx-ota-legend-pct">24%</span></span>
+              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:var(--h5-run)"></span><span class="ctx-ota-legend-label">NOTE</span><span class="ctx-ota-legend-val">38</span><span class="ctx-ota-legend-pct">5%</span></span>
+              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:#ff7bff"></span><span class="ctx-ota-legend-label">MERGE</span><span class="ctx-ota-legend-val">7</span><span class="ctx-ota-legend-pct">1%</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="ee-caption" aria-hidden="true">
+      <span><b>Isolated</b> per agent</span>
+      <span><b>Sealed</b> attempts</span>
+      <span><b>Neutral</b> verifier</span>
+      <span>Lives in your Git · <b>refs/h5i/*</b></span>
     </div>
   </div>
 </section>
@@ -1292,6 +1764,21 @@
       setTimeout(() => { btn.textContent = 'copy'; }, 2000);
     });
   }
+
+  /* ── Embedded dashboard tab switch (Ensemble / Sandbox) ──── */
+  document.querySelectorAll('.ensemble-embed').forEach(embed => {
+    const tabs = embed.querySelectorAll('.ee-tab[data-tab]');
+    const panels = embed.querySelectorAll('.ee-panel[data-panel]');
+    tabs.forEach(tab => tab.addEventListener('click', () => {
+      const name = tab.getAttribute('data-tab');
+      tabs.forEach(t => {
+        const on = t === tab;
+        t.classList.toggle('active', on);
+        t.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      panels.forEach(p => { p.hidden = p.getAttribute('data-panel') !== name; });
+    }));
+  });
 
   /* ── Scroll-reveal ────────────────────────── */
   const observer = new IntersectionObserver(entries => {
