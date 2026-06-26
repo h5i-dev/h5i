@@ -604,6 +604,42 @@
       .ee .sbx-lane-row { grid-template-columns: minmax(120px, 1.3fr) repeat(3, 1fr); }
     }
 
+    /* ── Context panel — ported from web/src/theme.css .ctx-* block ───────── */
+    .ee .ctx-view { display: flex; flex-direction: column; gap: 14px; }
+    .ee .ctx-hero { display: grid; grid-template-columns: 1fr auto; gap: 28px; padding: 20px 22px; align-items: center; border-radius: 6px;
+      background: linear-gradient(135deg, rgba(180,139,217,0.08), rgba(66,226,208,0.06)); }
+    .ee .ctx-hero-goal { min-width: 0; }
+    .ee .ctx-eyebrow { font-family: var(--fm); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--h5-model); margin-bottom: 6px; }
+    .ee .ctx-hero-text { font-family: var(--fd); font-size: 18px; font-weight: 500; color: var(--bp-text); line-height: 1.45; max-width: 60ch; word-break: break-word; }
+    .ee .ctx-hero-purpose { font-size: 13px; color: var(--bp-text-muted); margin-top: 8px; line-height: 1.5; max-width: 80ch; }
+    .ee .ctx-purpose-key { font-family: var(--fm); color: var(--bp-text-dim); font-size: 11px; margin-right: 6px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+    .ee .ctx-kpis { display: flex; gap: 18px; flex-shrink: 0; }
+    .ee .ctx-kpi { text-align: right; min-width: 50px; }
+    .ee .ctx-kpi-val { font-family: var(--fm); font-size: 27px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: var(--bp-text); line-height: 1; }
+    .ee .ctx-kpi-label { font-family: var(--fm); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--bp-text-dim); font-weight: 600; margin-top: 5px; }
+    .ee .ctx-kpi-sub { font-family: var(--fm); font-size: 10px; color: var(--bp-text-dim); margin-top: 2px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .ee .ctx-section { background: var(--bp-surface); border-radius: 6px; padding: 14px 18px; }
+    .ee .ctx-section-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--bp-border); }
+    .ee .ctx-section-title { font-family: var(--fm); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--bp-text-dim); }
+    .ee .ctx-section-sub { font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); font-weight: 400; margin-left: auto; }
+    .ee .ctx-milestones { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
+    .ee .ctx-milestones li { position: relative; padding: 8px 0; font-size: 13px; color: var(--bp-text); line-height: 1.5; border-top: 1px solid var(--bp-border); }
+    .ee .ctx-milestones li:first-child { border-top: none; }
+    .ee .ctx-milestone-sha { display: inline-block; font-family: var(--fm); font-size: 10px; font-weight: 600; color: var(--h5-accent-hi); background: var(--h5-accent-bg); padding: 1px 6px; border-radius: 3px; margin-right: 8px; letter-spacing: 0.04em; }
+    .ee .ctx-ota-bar { display: flex; height: 10px; background: var(--bp-elev); border-radius: 3px; overflow: hidden; }
+    .ee .ctx-ota-segment { height: 100%; }
+    .ee .ctx-ota-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 11px; }
+    .ee .ctx-ota-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .ee .ctx-ota-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+    .ee .ctx-ota-legend-label { font-family: var(--fm); color: var(--bp-text-muted); text-transform: uppercase; font-size: 9.5px; letter-spacing: 0.06em; font-weight: 600; }
+    .ee .ctx-ota-legend-val { font-family: var(--fm); font-size: 12px; color: var(--bp-text); font-variant-numeric: tabular-nums; font-weight: 600; }
+    .ee .ctx-ota-legend-pct { font-family: var(--fm); font-variant-numeric: tabular-nums; font-size: 10px; color: var(--bp-text-dim); }
+    @media (max-width: 720px) {
+      .ee .ctx-hero { grid-template-columns: 1fr; gap: 16px; }
+      .ee .ctx-kpis { flex-wrap: wrap; gap: 14px 18px; }
+      .ee .ctx-kpi { text-align: left; }
+    }
+
     /* Caption + value-prop chips beneath the window */
     .ee-caption { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem 1.4rem;
       max-width: 980px; margin: 1.1rem auto 0; }
@@ -1156,14 +1192,14 @@
       <button class="copy-btn" onclick="copyInstall()">copy</button>
     </div>
     <!-- Embedded ENSEMBLE tab — the real `h5i serve` dashboard, as live HTML -->
-    <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve dashboard: agents attempting one task in sealed lanes (Ensemble), and the sandbox flight recorder (Sandbox).">
+    <div class="ensemble-embed ee reveal" role="group" aria-label="A static preview of the h5i serve dashboard: agents attempting one task in sealed lanes (Ensemble), the sandbox flight recorder (Sandbox), and the reasoning/context workspace (Context).">
       <div class="ee-bar">
         <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
         <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span>
         <div class="ee-tabs" role="tablist">
           <button class="ee-tab active" type="button" role="tab" aria-selected="true" data-tab="ensemble">Ensemble</button>
           <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="sandbox">Sandbox</button>
-          <span class="ee-tab ghost">Context</span>
+          <button class="ee-tab" type="button" role="tab" aria-selected="false" data-tab="context">Context</button>
           <span class="ee-tab ghost">Memory</span>
         </div>
       </div>
@@ -1336,6 +1372,56 @@
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Context tab — the reasoning/context workspace (refs/h5i/context) -->
+      <div class="ee-body ee-panel" data-panel="context" hidden>
+        <div class="ctx-view">
+          <div class="ctx-hero">
+            <div class="ctx-hero-goal">
+              <div class="ctx-eyebrow">Git branch goal · improve-website</div>
+              <div class="ctx-hero-text">Embed the live h5i serve dashboard into the docs landing hero</div>
+              <div class="ctx-hero-purpose">
+                <span class="ctx-purpose-key">Context</span><span class="ee-tag round">main</span>
+                show, don't tell — replace the abstract stat-cards with the real UI
+              </div>
+            </div>
+            <div class="ctx-kpis">
+              <div class="ctx-kpi"><div class="ctx-kpi-val">18</div><div class="ctx-kpi-label">milestones</div><div class="ctx-kpi-sub">5 branches</div></div>
+              <div class="ctx-kpi"><div class="ctx-kpi-val">1,240</div><div class="ctx-kpi-label">trace lines</div><div class="ctx-kpi-sub">412 stable · 828 live</div></div>
+              <div class="ctx-kpi"><div class="ctx-kpi-val">32</div><div class="ctx-kpi-label">snapshots</div><div class="ctx-kpi-sub">last 3h ago</div></div>
+              <div class="ctx-kpi"><div class="ctx-kpi-val" style="color:var(--h5-run)">2</div><div class="ctx-kpi-label">todos</div><div class="ctx-kpi-sub">1 branch</div></div>
+              <div class="ctx-kpi"><div class="ctx-kpi-val">5</div><div class="ctx-kpi-label">branches</div><div class="ctx-kpi-sub">1 stale</div></div>
+            </div>
+          </div>
+
+          <div class="ctx-section">
+            <div class="ctx-section-head"><span class="ctx-section-title">Recent milestones</span><span class="ctx-section-sub">refs/h5i/context</span></div>
+            <ol class="ctx-milestones">
+              <li><span class="ctx-milestone-sha">c80adf9</span><span class="ctx-milestone-text">Widen the Env column in the embedded Sandbox fleet table</span></li>
+              <li><span class="ctx-milestone-sha">3a8f359</span><span class="ctx-milestone-text">Make the embedded dashboard tabs switchable (Ensemble / Sandbox)</span></li>
+              <li><span class="ctx-milestone-sha">04c9f5c</span><span class="ctx-milestone-text">Embed the live ENSEMBLE dashboard in the hero, replacing the stat-cards</span></li>
+            </ol>
+          </div>
+
+          <div class="ctx-section">
+            <div class="ctx-section-head"><span class="ctx-section-title">OTA balance</span><span class="ctx-section-sub">observe / think / act / note / merge across 801 entries</span></div>
+            <div class="ctx-ota-bar">
+              <div class="ctx-ota-segment" style="width:39%;background:var(--h5-accent)"></div>
+              <div class="ctx-ota-segment" style="width:31%;background:var(--h5-model)"></div>
+              <div class="ctx-ota-segment" style="width:24%;background:var(--h5-pass)"></div>
+              <div class="ctx-ota-segment" style="width:5%;background:var(--h5-run)"></div>
+              <div class="ctx-ota-segment" style="width:1%;background:#ff7bff"></div>
+            </div>
+            <div class="ctx-ota-legend">
+              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:var(--h5-accent)"></span><span class="ctx-ota-legend-label">OBSERVE</span><span class="ctx-ota-legend-val">312</span><span class="ctx-ota-legend-pct">39%</span></span>
+              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:var(--h5-model)"></span><span class="ctx-ota-legend-label">THINK</span><span class="ctx-ota-legend-val">248</span><span class="ctx-ota-legend-pct">31%</span></span>
+              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:var(--h5-pass)"></span><span class="ctx-ota-legend-label">ACT</span><span class="ctx-ota-legend-val">196</span><span class="ctx-ota-legend-pct">24%</span></span>
+              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:var(--h5-run)"></span><span class="ctx-ota-legend-label">NOTE</span><span class="ctx-ota-legend-val">38</span><span class="ctx-ota-legend-pct">5%</span></span>
+              <span class="ctx-ota-legend-item"><span class="ctx-ota-swatch" style="background:#ff7bff"></span><span class="ctx-ota-legend-label">MERGE</span><span class="ctx-ota-legend-val">7</span><span class="ctx-ota-legend-pct">1%</span></span>
             </div>
           </div>
         </div>
