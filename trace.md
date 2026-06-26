@@ -2804,3 +2804,9 @@ _[Checkpoint: 6a3f10bd — session ended (auto-checkpoint)]_
 
 I'll proceed automatically once the ground-truth agents report back (should be shortly).
 [23:56:16] THINK: Let me do quick targeted greps so I can give each editing agent exact anchors (the outdated hook text in context-dag, the "Getting started" sections, current command mentions).
+
+
+---
+_[Checkpoint: 6a3f11a1 — edited docs/blog/persistent-memory-for-claude-code/index.html; edited docs/blog/why-git-diffs-are-not-enough-for-ai-gene…]_
+---
+
