@@ -542,9 +542,6 @@
     .ee .sbx-fleet-table th { text-align: left; font-family: var(--fm); font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--bp-text-dim); padding: 6px 10px; border-bottom: 1px solid var(--bp-border); }
     .ee .sbx-fleet-table td { padding: 8px 10px; border-bottom: 1px solid var(--bp-border); vertical-align: middle; }
     /* Pin the three right columns so the Env column takes the remaining width. */
-    .ee .sbx-fleet-table th:nth-child(2), .ee .sbx-fleet-table td:nth-child(2) { width: 80px; }
-    .ee .sbx-fleet-table th:nth-child(3), .ee .sbx-fleet-table td:nth-child(3) { width: 64px; }
-    .ee .sbx-fleet-table th:nth-child(4), .ee .sbx-fleet-table td:nth-child(4) { width: 96px; }
     .ee .sbx-fleet-table tbody tr:last-child td { border-bottom: none; }
     .ee .sbx-fleet-table tr.selected td { background: var(--bp-surface-2); }
     .ee .sbx-env-id { font-family: var(--fd); font-weight: 600; font-size: 13px; color: var(--bp-text); white-space: nowrap; }
@@ -1264,19 +1261,19 @@
                   <thead><tr><th>Env</th><th>Isolation</th><th>Status</th><th>Pressure</th></tr></thead>
                   <tbody>
                     <tr class="selected">
-                      <td><div class="sbx-env-id">codex-1/fix-auth</div><div class="sbx-env-sub">5 caps</div></td>
+			    <td><div class="sbx-env-id">codex-1/<br>fix-auth</div><div class="sbx-env-sub">5 caps</div></td>
                       <td><span class="ee-tag ok">container</span></td>
                       <td><span class="sbx-status">proposed</span></td>
                       <td><span class="sbx-pressure warning"><span class="sbx-pressure-score">38</span><span class="sbx-pressure-bar"><span class="sbx-pressure-fill" style="width:38%"></span></span></span></td>
                     </tr>
                     <tr>
-                      <td><div class="sbx-env-id">claude-1/fix-auth</div><div class="sbx-env-sub">4 caps</div></td>
+			    <td><div class="sbx-env-id">claude-1/<br>fix-auth</div><div class="sbx-env-sub">4 caps</div></td>
                       <td><span class="ee-tag ok">container</span></td>
                       <td><span class="sbx-status">idle</span></td>
                       <td><span class="sbx-pressure clean">clean</span></td>
                     </tr>
                     <tr>
-                      <td><div class="sbx-env-id">claude-2/fix-auth</div><div class="sbx-env-sub">3 caps<span class="sbx-drift"> · behind 2</span></div></td>
+			    <td><div class="sbx-env-id">claude-2/<br>fix-auth</div><div class="sbx-env-sub">3 caps<span class="sbx-drift"><br>behind 2</span></div></td>
                       <td><span class="ee-tag pri">process</span></td>
                       <td><span class="sbx-status">idle</span></td>
                       <td><span class="sbx-pressure clean">clean</span></td>
