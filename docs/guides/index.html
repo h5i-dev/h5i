@@ -17,7 +17,7 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
   <meta property="og:title" content="h5i Guides — memory, multi-agent, provenance, audit, blame">
-  <meta property="og:description" content="Task-focused guides for using h5i with Claude Code and Codex: memory & handoff, multi-agent coordination, provenance, audit, prompt-injection detection, and AI blame.">
+  <meta property="og:description" content="Run many coding agents, merge one auditable result. The end-to-end workflow plus task-focused guides for h5i with Claude Code and Codex: memory & handoff, multi-agent coordination, provenance, audit, prompt-injection detection, and AI blame.">
   <meta property="og:url" content="https://h5i.dev/guides/">
   <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
 
@@ -36,7 +36,7 @@
   {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"}, {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"}]}
   </script>
   <script type="application/ld+json">
-  {"@context": "https://schema.org", "@type": "ItemList", "name": "h5i Guides", "itemListElement": [{"@type": "ListItem", "position": 1, "url": "https://h5i.dev/features/"}, {"@type": "ListItem", "position": 2, "url": "https://h5i.dev/workflows/"}, {"@type": "ListItem", "position": 3, "url": "https://h5i.dev/guides/token-reduction-capture-run/"}, {"@type": "ListItem", "position": 4, "url": "https://h5i.dev/guides/claude-code-memory/"}, {"@type": "ListItem", "position": 5, "url": "https://h5i.dev/guides/codex-claude-code-collaboration/"}, {"@type": "ListItem", "position": 6, "url": "https://h5i.dev/guides/ai-code-provenance/"}, {"@type": "ListItem", "position": 7, "url": "https://h5i.dev/guides/ai-code-review-audit/"}, {"@type": "ListItem", "position": 8, "url": "https://h5i.dev/guides/prompt-injection-detection-for-agents/"}, {"@type": "ListItem", "position": 9, "url": "https://h5i.dev/guides/git-blame-for-ai-code/"}]}
+  {"@context": "https://schema.org", "@type": "ItemList", "name": "h5i Guides", "itemListElement": [{"@type": "ListItem", "position": 1, "url": "https://h5i.dev/workflows/"}, {"@type": "ListItem", "position": 2, "url": "https://h5i.dev/guides/token-reduction-capture-run/"}, {"@type": "ListItem", "position": 3, "url": "https://h5i.dev/guides/claude-code-memory/"}, {"@type": "ListItem", "position": 4, "url": "https://h5i.dev/guides/codex-claude-code-collaboration/"}, {"@type": "ListItem", "position": 5, "url": "https://h5i.dev/guides/ai-code-provenance/"}, {"@type": "ListItem", "position": 6, "url": "https://h5i.dev/guides/ai-code-review-audit/"}, {"@type": "ListItem", "position": 7, "url": "https://h5i.dev/guides/prompt-injection-detection-for-agents/"}, {"@type": "ListItem", "position": 8, "url": "https://h5i.dev/guides/git-blame-for-ai-code/"}]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css">
 </head>
@@ -57,32 +57,20 @@
 
 <section class="index-hero">
   <div class="post-eyebrow">h5i Guides</div>
-  <h1>Practical guides for AI-era version control</h1>
+  <h1>Practical guides for AI-era auditable workspace</h1>
   <p>
-    Start with the two overviews — a feature-by-feature tour and the end-to-end workflows — then
-    dive into task-focused walkthroughs for using h5i with Claude Code and Codex: persistent memory
-    and handoff, multi-agent coordination, AI code provenance, auditing AI-generated code,
-    prompt-injection detection, and AI blame. Each guide: the problem, the h5i fix, the commands,
-    a worked example, and an FAQ.
+    Run many coding agents, merge one auditable result. Start with the end-to-end workflow, then dive into task-focused walkthroughs for using h5i with Claude Code and Codex: persistent memory and handoff, multi-agent coordination, AI code provenance, auditing AI-generated code, prompt-injection detection, and AI blame.
   </p>
 </section>
 
 <section class="post-list">
 
-  <a class="post-card" href="/features/">
-    <div class="card-meta">
-      <span>Overview · Features</span>
-    </div>
-    <h2>The auditable workspace, feature by feature</h2>
-    <p>The full tour of what h5i adds on top of Git — provenance, sandboxed envs, capture, messaging, audit signals, and PR evidence — with the workspace shown in action.</p>
-  </a>
-
   <a class="post-card" href="/workflows/">
     <div class="card-meta">
-      <span>Overview · Workflows</span>
+      <span>Overview · Workflow</span>
     </div>
-    <h2>End-to-end flows: solo, review loop, and team</h2>
-    <p>The golden path from install to merge, plus worked flows for a solo Claude Code developer, a Claude + Codex review loop, a security-sensitive refactor, and team PR review.</p>
+    <h2>Run many agents, merge one auditable result</h2>
+    <p>The end-to-end flow, straight from the README: install and wire the hooks, track every prompt and context step, give each agent a sealed sandbox, then run an ensemble — peer review, a neutral verifier replays and tests each candidate, and the one result that passes is merged.</p>
   </a>
 
   <a class="post-card" href="/guides/token-reduction-capture-run/">

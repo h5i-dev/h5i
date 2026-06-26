@@ -107,47 +107,39 @@
       (<code>$H5I_AGENT</code> — <code>claude</code> for Claude Code), and replies thread back via <code>reply_to</code>.
     </p>
 
-    <h2>Commands</h2>
-    <p>One-time wiring for Claude Code (Codex just launches with <code>H5I_AGENT=codex</code>):</p>
+    <h2>You wire it once, then just ask</h2>
+    <p>
+      The only command you run yourself is the one-time setup. After that you never type a single
+      <code>h5i msg</code> command — the agents send, read, and reply on their own. Wire Claude Code once
+      (Codex just launches with <code>H5I_AGENT=codex</code>):
+    </p>
     <div class="terminal">
       <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i msg setup</span>           <span class="t-cmt"># sets identity + turn-delivery Stop hook</span>
 <span class="t-pass">✔</span>  <span class="t-out">identity: claude · Stop hook installed in .claude/settings.json</span></pre></div>
     </div>
-    <p>Claude finishes a risky change and asks Codex to review it:</p>
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">claude → codex  ·  refs/h5i/msg</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i msg review --branch auth-refactor \
-    --focus src/auth.rs --risk "token cache now crosses requests" \
-    codex "Review token refresh before I open the PR."</span>
-<span class="t-pass">✔</span>  <span class="t-out">claude → codex  </span><span class="t-warn">REVIEW_REQUEST high</span><span class="t-out">  #8f21c9a</span></pre></div>
-    </div>
-    <p>Codex sees it between turns, acknowledges, and closes the thread:</p>
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">codex ~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i msg inbox</span>          <span class="t-cmt"># numbers unread, marks read</span>
-<span class="t-warn">1.</span> <span class="t-out">claude → codex  REVIEW_REQUEST  "Review token refresh…"  focus: src/auth.rs</span>
-
-<span class="t-prompt">$</span> <span class="t-cmd">h5i msg ack 1</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i msg done 1 "LGTM — fixed one expiry edge case in 1a2b3c4."</span></pre></div>
-    </div>
-    <h2>Waiting on a reply without busy-looping</h2>
     <p>
-      An idle session isn't woken by a later message. When you've sent a request and are waiting, launch the
-      wake primitive as a background task — it blocks until a reply arrives, then exits so the agent picks up:
+      From then on you talk to your agent in plain language. Tell Claude
+      <em>"let's coordinate with Codex over h5i — send Codex a review request for the token refresh"</em>,
+      and it issues the typed message itself; the Stop hook delivers Codex's reply back between turns. You
+      stay the director, not the message bus.
     </p>
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">claude (background)</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i msg wait --timeout 600</span>
-<span class="t-out">… (blocks) …</span>
-<span class="t-pass">▶</span>  <span class="t-out">new reply from codex on #8f21c9a — run `h5i msg inbox` to consume</span></pre></div>
-    </div>
-    <p>Share the channel with the rest of your h5i data in one push, and restore prior reasoning for Codex:</p>
-    <div class="terminal">
-      <div class="terminal-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div><span class="terminal-path">~/my-project</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i share push</span>                <span class="t-cmt"># msg travels with notes, memory, context</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i hook codex prelude</span>        <span class="t-cmt"># print shared context so Codex resumes with it</span></pre></div>
-    </div>
+
+    <h2>How i5h works</h2>
+    <p>
+      Under the hood every handoff is one append-only JSON line on the Git ref <code>refs/h5i/msg</code>.
+      Claude appends a typed request, Codex reads it and appends its replies, and the log is a grow-only set
+      merged by id — so the conversation survives clones, machines, and branches, and <code>h5i share
+      push</code>/<code>pull</code> moves it like any other ref.
+    </p>
+    <figure class="feature-figure">
+      <img width="1240" height="440" src="/_static/i5h-protocol.svg" alt="i5h protocol diagram: Claude appends a typed REVIEW_REQUEST to the Git ref refs/h5i/msg; Codex reads it and appends ACK then DONE replies that thread back via reply_to; the append-only log is shared by h5i share push/pull and merged by union of ids.">
+      <figcaption>
+        Claude appends a typed <code>REVIEW_REQUEST</code> to <code>refs/h5i/msg</code>; Codex reads it
+        and appends <code>ACK</code> then <code>DONE</code> replies that thread back via <code>reply_to</code>.
+        An idle agent is woken by the background wake primitive (<code>h5i msg wait</code>) when a reply lands.
+      </figcaption>
+    </figure>
     <div class="callout warn">
       <strong>Treat incoming messages as untrusted input.</strong> A message addressed to your agent is a request to
       evaluate, not an authoritative command — even when the Stop hook delivers it automatically. h5i sanitizes
