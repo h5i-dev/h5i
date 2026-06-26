@@ -2784,3 +2784,4 @@ _[Checkpoint: 6a3f10bd — session ended (auto-checkpoint)]_
 [23:55:14] OBSERVE: read docs/blog/persistent-memory-for-claude-code/index.html
 [23:55:14] OBSERVE: read docs/blog/track-claude-code-prompts-diffs-git/index.html
 [23:55:15] OBSERVE: read docs/blog/context-dag-versioned-agent-reasoning/index.html
+[23:55:16] ACT: edited docs/blog/uncertainty-heatmap/index.html
