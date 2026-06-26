@@ -2758,3 +2758,4 @@ _[Checkpoint: 6a3f0162 — edited docs/index.html; edited docs/index.html; edite
 [23:51:09] OBSERVE: read docs/blog/structured-tool-output-schema/index.html
 [23:51:11] OBSERVE: read src/main.rs
 [23:51:16] OBSERVE: read src/main.rs
+[23:51:18] OBSERVE: read docs/manual/index.html
