@@ -2563,3 +2563,9 @@ _[Checkpoint: 6a3d82c3 — edited README.md; edited README.md; edited README.md]
 [14:32:25] ACT: edited docs/workflows/index.html
 [14:32:32] ACT: edited docs/workflows/index.html
 [14:32:48] OBSERVE: read docs/guides/codex-claude-code-collaboration/index.html
+
+
+---
+_[Checkpoint: 6a3e8d9b — Refreshed docs/guides per feedback]_
+---
+

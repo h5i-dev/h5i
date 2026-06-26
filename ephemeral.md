@@ -1,2 +1,2 @@
-# Ephemeral traces — Branch: analyze-log
+# Ephemeral traces — Branch: improve-doc
 
