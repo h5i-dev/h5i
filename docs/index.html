@@ -392,8 +392,6 @@
       color: var(--ink); font-family: var(--mono);
     }
     .hero-stat .lbl { font-size: 0.66rem; color: var(--text-faint); letter-spacing: 0.14em; margin-top: 0.6rem; text-transform: uppercase; }
-    /* feature-name variant: keyword as the bold word, smaller than the number tiles */
-    .hero-stats--feat .val { font-size: 1.05rem; line-height: 1.3; }
     .hero-shot {
       margin: 4rem auto 0;
       max-width: 960px;
@@ -412,6 +410,115 @@
       border-top: 1px solid var(--border);
     }
     .hero-shot-caption code { font-family: var(--mono); color: var(--red-text); font-size: 0.92em; }
+
+    /* ── Embedded ENSEMBLE dashboard (real h5i serve DOM, scoped dark) ────────
+       The markup mirrors web/src/TeamView.tsx and the rules below are ported
+       from web/src/theme.css's .team-* block, namespaced under .ee so the dark
+       palette never bleeds into the light page. It is live HTML+CSS, not a
+       screenshot — crisp at any zoom. */
+    .ensemble-embed {
+      --bp-bg: #0a0c10; --bp-surface: #12161c; --bp-surface-2: #1a1f26;
+      --bp-elev: #232931; --bp-border: #2a3138; --bp-border-strong: #3a424b;
+      --bp-text: #f6f7f9; --bp-text-muted: #abb3bf; --bp-text-dim: #6b7785;
+      --h5-accent: #42e2d0; --h5-accent-hi: #7cefe0;
+      --h5-accent-bg: rgba(66,226,208,0.14); --h5-accent-glow: rgba(66,226,208,0.32);
+      --h5-pass: #5ee2a0; --h5-fail: #ff6b6b; --h5-run: #f0a050; --h5-model: #b48bd9;
+      --h5-winner-glow: 0 0 0 1px var(--h5-accent), 0 0 22px -2px var(--h5-accent-glow);
+      --fd: var(--sans); --fm: var(--mono);
+      margin: 3.6rem auto 0; max-width: 980px;
+      border: 1px solid #20262e; border-radius: var(--radius-lg); overflow: hidden;
+      box-shadow: 0 40px 90px rgba(0,0,0,0.55); text-align: left;
+      color: var(--bp-text);
+    }
+    /* Browser-window chrome */
+    .ee-bar { display: flex; align-items: center; gap: 11px; padding: 9px 14px;
+      background: #0d1117; border-bottom: 1px solid var(--bp-border); }
+    .ee-dots { display: flex; gap: 7px; }
+    .ee-dot { width: 11px; height: 11px; border-radius: 50%; background: #2a3138; }
+    .ee-dot.r { background: #e06c75; } .ee-dot.y { background: #e5c07b; } .ee-dot.g { background: #98c379; }
+    .ee-addr { font-family: var(--fm); font-size: 0.72rem; color: var(--bp-text-dim); }
+    .ee-addr b { color: var(--bp-text-muted); font-weight: 400; }
+    .ee-tabs { margin-left: auto; display: flex; gap: 2px; }
+    .ee-tab { font-family: var(--fm); font-size: 0.62rem; text-transform: uppercase;
+      letter-spacing: 0.1em; color: var(--bp-text-dim); padding: 4px 9px; border-radius: 5px; }
+    .ee-tab.active { color: #04201d; background: var(--h5-accent); font-weight: 700; }
+    .ee-body { padding: 18px 22px 24px;
+      background: radial-gradient(120% 80% at 50% -10%, rgba(66,226,208,0.05), transparent 60%), var(--bp-bg); }
+
+    /* Run header */
+    .ee .team-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+    .ee .team-head h2 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: -0.02em; font-family: var(--fd); color: var(--bp-text); }
+    .ee .team-head-meta { display: flex; align-items: center; gap: 7px; margin-top: 5px; font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); }
+    .ee .team-base { color: var(--bp-text-muted); }
+    .ee .team-dot-sep { color: var(--bp-border-strong); }
+    .ee .team-phase-badge { flex-shrink: 0; font-family: var(--fm); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--h5-accent-hi); background: var(--h5-accent-bg); border: 1px solid rgba(66,226,208,0.4); padding: 5px 11px; border-radius: 20px; }
+
+    /* Settlement rail */
+    .ee .team-rail { list-style: none; margin: 0 0 22px; padding: 18px 6px 4px; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
+    .ee .team-rail-stage { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 6px; min-width: 0; }
+    .ee .team-rail-stage::before { content: ""; position: absolute; top: 9px; left: -50%; width: 100%; height: 2px; background: var(--bp-border); }
+    .ee .team-rail-stage:first-child::before { display: none; }
+    .ee .team-rail-stage.lit::before { background: var(--h5-accent); }
+    .ee .team-rail-dot { position: relative; z-index: 1; width: 20px; height: 20px; border-radius: 50%; background: var(--bp-bg); border: 2px solid var(--bp-border-strong); display: flex; align-items: center; justify-content: center; }
+    .ee .team-rail-num { font-family: var(--fm); font-size: 9px; font-weight: 700; color: var(--bp-text-dim); }
+    .ee .team-rail-label { margin-top: 8px; font-family: var(--fd); font-size: 12px; font-weight: 600; color: var(--bp-text-dim); }
+    .ee .team-rail-hint { margin-top: 3px; font-size: 9.5px; line-height: 1.4; color: var(--bp-text-dim); opacity: 0; transition: opacity 0.15s; max-width: 130px; }
+    .ee .team-rail-stage:hover .team-rail-hint { opacity: 0.7; }
+    .ee .team-rail-stage.is-done .team-rail-dot { background: var(--h5-accent); border-color: var(--h5-accent); }
+    .ee .team-rail-stage.is-done .team-rail-num { color: #04201d; }
+    .ee .team-rail-stage.is-done .team-rail-label { color: var(--bp-text-muted); }
+    .ee .team-rail-stage.is-active .team-rail-dot { background: var(--bp-bg); border-color: var(--h5-accent); box-shadow: 0 0 0 4px var(--h5-accent-bg); animation: team-pulse 1.8s ease-in-out infinite; }
+    .ee .team-rail-stage.is-active .team-rail-num { color: var(--h5-accent-hi); }
+    .ee .team-rail-stage.is-active .team-rail-label { color: var(--bp-text); }
+    @keyframes team-pulse { 0%,100% { box-shadow: 0 0 0 4px var(--h5-accent-bg); } 50% { box-shadow: 0 0 0 7px rgba(66,226,208,0.05); } }
+
+    /* Lanes */
+    .ee .team-lanes { display: grid; grid-template-columns: repeat(auto-fill, minmax(238px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .ee .team-lane { position: relative; border: 1px solid var(--bp-border); border-radius: 9px; padding: 13px 14px; background: var(--bp-surface); display: flex; flex-direction: column; gap: 10px; transition: border-color 0.15s, box-shadow 0.15s, opacity 0.2s; }
+    .ee .team-lane.winner { border-color: var(--h5-accent); box-shadow: var(--h5-winner-glow); background: linear-gradient(180deg, rgba(66,226,208,0.06), transparent 60%), var(--bp-surface); }
+    .ee .team-lane.dimmed { opacity: 0.55; filter: saturate(0.55); }
+    .ee .team-lane.dimmed:hover { opacity: 0.9; filter: none; }
+    .ee .team-lane-ribbon { position: absolute; top: 10px; right: -1px; font-family: var(--fm); font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.14em; color: #04201d; background: var(--h5-accent); padding: 3px 9px 3px 8px; border-radius: 10px 0 0 10px; font-weight: 700; }
+    .ee .team-lane-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .ee .team-lane-name { font-family: var(--fd); font-size: 14px; font-weight: 600; color: var(--bp-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ee .team-seal { flex-shrink: 0; font-family: var(--fm); font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--h5-accent-hi); border: 1px solid rgba(66,226,208,0.4); border-radius: 3px; padding: 2px 6px; }
+    .ee .team-lane-ident { display: flex; flex-wrap: wrap; gap: 5px; }
+    .ee .team-chip { font-family: var(--fm); font-size: 10px; color: var(--bp-text-muted); background: var(--bp-elev); border-radius: 4px; padding: 2px 7px; }
+    .ee .team-chip.model { color: var(--h5-model); background: rgba(180,139,217,0.12); }
+    .ee .team-chip.ghost { color: var(--bp-text-dim); background: transparent; border: 1px solid var(--bp-border); }
+    .ee .team-lane-diff { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; font-family: var(--fm); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .ee .team-lane-diff .d-files { color: var(--bp-text); }
+    .ee .team-lane-diff .d-ins { color: var(--h5-pass); }
+    .ee .team-lane-diff .d-del { color: var(--bp-text-dim); }
+    .ee .team-lane-diff .d-indep { margin-left: auto; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--h5-pass); }
+    .ee .team-gates { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 9px; border-top: 1px solid var(--bp-border); }
+    .ee .team-gate { display: inline-flex; align-items: center; gap: 5px; font-family: var(--fm); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 7px; border-radius: 4px; }
+    .ee .team-gate-mark { font-size: 11px; }
+    .ee .team-gate.pass { color: var(--h5-pass); background: rgba(94,226,160,0.1); }
+    .ee .team-gate.fail { color: var(--h5-fail); background: rgba(255,107,107,0.1); }
+
+    /* Verdict card */
+    .ee .team-verdict-card { display: flex; border: 1px solid rgba(66,226,208,0.35); border-radius: 10px; overflow: hidden; background: var(--bp-surface); }
+    .ee .team-verdict-rail { flex: 0 0 4px; background: var(--h5-accent); box-shadow: 0 0 18px -2px var(--h5-accent-glow); }
+    .ee .team-verdict-body { padding: 15px 18px; flex: 1; min-width: 0; }
+    .ee .team-verdict-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+    .ee .team-verdict-eyebrow { font-family: var(--fm); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--bp-text-dim); }
+    .ee .team-verdict-pick { font-family: var(--fm); font-size: 17px; font-weight: 700; color: var(--h5-accent-hi); }
+    .ee .team-verdict-meta { margin-top: 4px; font-family: var(--fm); font-size: 11px; color: var(--bp-text-dim); }
+    .ee .team-verdict-reasons { margin: 12px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
+    .ee .team-verdict-reasons li { position: relative; padding-left: 16px; font-size: 12px; color: var(--bp-text-muted); line-height: 1.5; }
+    .ee .team-verdict-reasons li::before { content: "▸"; position: absolute; left: 0; color: var(--h5-accent); }
+
+    /* Caption + value-prop chips beneath the window */
+    .ee-caption { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem 1.4rem;
+      max-width: 980px; margin: 1.1rem auto 0; }
+    .ee-caption span { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.04em; color: var(--text-faint); }
+    .ee-caption span b { color: var(--text-dim); font-weight: 700; }
+    @media (max-width: 720px) {
+      .ee-body { padding: 14px 13px 18px; }
+      .ee .team-rail-label { font-size: 10px; }
+      .ee-addr { display: none; }
+    }
 
     /* ── Section heading ───────────────────────────────────── */
     .section-head { max-width: 720px; margin: 0 auto 4rem; }
@@ -953,11 +1060,83 @@
       <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh</code>
       <button class="copy-btn" onclick="copyInstall()">copy</button>
     </div>
-    <div class="hero-stats hero-stats--feat">
-      <div class="hero-stat"><div class="val">Isolated per agent</div><div class="lbl">no file or branch clashes</div></div>
-      <div class="hero-stat"><div class="val">Sealed attempts</div><div class="lbl">independence-first</div></div>
-      <div class="hero-stat"><div class="val">Neutral verifier</div><div class="lbl">a fair, sandboxed winner</div></div>
-      <div class="hero-stat"><div class="val">Lives in your Git</div><div class="lbl">refs/h5i/* · no SaaS</div></div>
+    <!-- Embedded ENSEMBLE tab — the real `h5i serve` dashboard, as live HTML -->
+    <div class="ensemble-embed ee reveal" role="img" aria-label="The Ensemble tab of the h5i serve dashboard: three agents attempting one task in sealed lanes, settling on a single neutral verdict.">
+      <div class="ee-bar">
+        <div class="ee-dots"><span class="ee-dot r"></span><span class="ee-dot y"></span><span class="ee-dot g"></span></div>
+        <span class="ee-addr"><b>h5i serve</b> · localhost:7421</span>
+        <div class="ee-tabs">
+          <span class="ee-tab active">Ensemble</span>
+          <span class="ee-tab">Sandbox</span>
+          <span class="ee-tab">Context</span>
+          <span class="ee-tab">Memory</span>
+        </div>
+      </div>
+      <div class="ee-body">
+        <header class="team-head">
+          <div class="team-head-id">
+            <h2>fix-auth</h2>
+            <div class="team-head-meta">
+              <span class="team-base">base 3d80a8d7b4</span>
+              <span class="team-dot-sep">·</span><span>3 agents</span>
+              <span class="team-dot-sep">·</span><span>3 sealed</span>
+            </div>
+          </div>
+          <span class="team-phase-badge">applied</span>
+        </header>
+
+        <ol class="team-rail" aria-label="ensemble lifecycle">
+          <li class="team-rail-stage is-done lit"><span class="team-rail-dot"><span class="team-rail-num">1</span></span><span class="team-rail-label">Draft</span><span class="team-rail-hint">roster created · agents working sealed</span></li>
+          <li class="team-rail-stage is-done lit"><span class="team-rail-dot"><span class="team-rail-num">2</span></span><span class="team-rail-label">Seal</span><span class="team-rail-hint">submissions frozen, immutable</span></li>
+          <li class="team-rail-stage is-done lit"><span class="team-rail-dot"><span class="team-rail-num">3</span></span><span class="team-rail-label">Review</span><span class="team-rail-hint">permissioned peer review</span></li>
+          <li class="team-rail-stage is-done lit"><span class="team-rail-dot"><span class="team-rail-num">4</span></span><span class="team-rail-label">Verify</span><span class="team-rail-hint">neutral verifier replays each candidate</span></li>
+          <li class="team-rail-stage is-active lit"><span class="team-rail-dot"><span class="team-rail-num">5</span></span><span class="team-rail-label">Apply</span><span class="team-rail-hint">one winner committed to base</span></li>
+        </ol>
+
+        <section class="team-lanes">
+          <article class="team-lane dimmed">
+            <div class="team-lane-top"><strong class="team-lane-name">claude-1</strong><span class="team-seal">sealed</span></div>
+            <div class="team-lane-ident"><span class="team-chip model">opus-4-8</span><span class="team-chip">design</span><span class="team-chip ghost">container</span></div>
+            <div class="team-lane-diff"><span class="d-files">3 files</span><span class="d-ins">+91</span><span class="d-del">−20</span><span class="d-indep">independent</span></div>
+            <div class="team-gates"><span class="team-gate pass"><span class="team-gate-mark">✓</span>applies</span><span class="team-gate pass"><span class="team-gate-mark">✓</span>tests</span></div>
+          </article>
+          <article class="team-lane winner">
+            <div class="team-lane-ribbon">verdict</div>
+            <div class="team-lane-top"><strong class="team-lane-name">codex-1</strong></div>
+            <div class="team-lane-ident"><span class="team-chip model">codex</span><span class="team-chip">build</span><span class="team-chip ghost">container</span></div>
+            <div class="team-lane-diff"><span class="d-files">4 files</span><span class="d-ins">+272</span><span class="d-del">−31</span><span class="d-indep">independent</span></div>
+            <div class="team-gates"><span class="team-gate pass"><span class="team-gate-mark">✓</span>applies</span><span class="team-gate pass"><span class="team-gate-mark">✓</span>tests</span></div>
+          </article>
+          <article class="team-lane dimmed">
+            <div class="team-lane-top"><strong class="team-lane-name">claude-2</strong><span class="team-seal">sealed</span></div>
+            <div class="team-lane-ident"><span class="team-chip model">sonnet-4-6</span><span class="team-chip">security</span><span class="team-chip ghost">process</span></div>
+            <div class="team-lane-diff"><span class="d-files">1 file</span><span class="d-ins">+12</span><span class="d-del">−3</span><span class="d-indep">independent</span></div>
+            <div class="team-gates"><span class="team-gate pass"><span class="team-gate-mark">✓</span>applies</span><span class="team-gate fail"><span class="team-gate-mark">✕</span>tests</span></div>
+          </article>
+        </section>
+
+        <section class="team-verdict-card">
+          <div class="team-verdict-rail"></div>
+          <div class="team-verdict-body">
+            <div class="team-verdict-head">
+              <span class="team-verdict-eyebrow">neutral verdict</span>
+              <span class="team-verdict-pick">sub-codex-1-r1-c34f11daf8e2</span>
+            </div>
+            <div class="team-verdict-meta">verify:replay-tests · smallest-diff tiebreak<span class="team-dot-sep"> · </span>auto-apply enabled</div>
+            <ul class="team-verdict-reasons">
+              <li>sub-codex-1-r1-c34f11daf8e2 applies cleanly</li>
+              <li>sub-codex-1-r1-c34f11daf8e2 verifier tests passed</li>
+              <li>smallest diff among verifier-passing candidates</li>
+            </ul>
+          </div>
+        </section>
+      </div>
+    </div>
+    <div class="ee-caption" aria-hidden="true">
+      <span><b>Isolated</b> per agent</span>
+      <span><b>Sealed</b> attempts</span>
+      <span><b>Neutral</b> verifier</span>
+      <span>Lives in your Git · <b>refs/h5i/*</b></span>
     </div>
   </div>
 </section>
