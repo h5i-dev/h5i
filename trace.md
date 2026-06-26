@@ -2799,3 +2799,4 @@ _[Checkpoint: 6a3f10bd — session ended (auto-checkpoint)]_
 [23:56:05] ACT: edited docs/blog/persistent-memory-for-claude-code/index.html
 [23:56:12] ACT: edited docs/blog/why-git-diffs-are-not-enough-for-ai-generated-code/index.html
 [23:56:13] ACT: edited docs/blog/structured-tool-output-schema/index.html
+[23:56:16] THINK: **Approach:** once ground truth lands, I'll batch the 13 posts across parallel editing agents (each post is a separate file, no conflicts), every agent armed with the verified facts sheet + format conventions + strict "don't invent CLI beha…
