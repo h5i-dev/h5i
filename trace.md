@@ -2545,3 +2545,4 @@ _[Checkpoint: 6a3d82c3 — edited README.md; edited README.md; edited README.md]
 [12:22:39] OBSERVE: read README.md
 [12:22:43] OBSERVE: read docs/guides/prompt-injection-detection-for-agents/index.html
 [12:22:45] OBSERVE: read docs/guides/ai-code-provenance/index.html
+[12:22:48] OBSERVE: read docs/guides/codex-claude-code-collaboration/index.html
