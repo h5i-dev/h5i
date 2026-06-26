@@ -2825,3 +2825,4 @@ _[Checkpoint: 6a3f11a1 — edited docs/blog/persistent-memory-for-claude-code/in
 [23:57:17] ACT: edited docs/blog/context-dag-versioned-agent-reasoning/index.html
 [23:57:41] OBSERVE: read docs/blog/what-is-ai-aware-version-control/index.html
 [23:57:52] ACT: edited docs/blog/what-is-ai-aware-version-control/index.html
+[23:58:04] OBSERVE: read docs/blog/why-git-diffs-are-not-enough-for-ai-generated-code/index.html
