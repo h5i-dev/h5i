@@ -162,7 +162,7 @@ h5i serve
 
 ## 3. What h5i is, and is not
 
-- h5i **is not** a Git replacement, a hosted SaaS / dev-environment, or *just* a sandbox.
+> h5i **is not** a Git replacement, a hosted SaaS / dev-environment, or *just* a sandbox.
 
 **Why not a hosted sandbox?**: The whole point is that the workspace and its evidence live *in your repo* (`refs/h5i/*`): pushable, fetchable, offline, and yours. Codespaces, Coder, and E2B give you an environment; h5i gives you an *auditable* one, versioned in Git with no service to depend on.
 
