@@ -2601,3 +2601,4 @@ _[Checkpoint: 6a3ef75b — edited docs/workflows/index.html; edited docs/workflo
 _[Checkpoint: 6a3ef867 — Hero: embed live ENSEMBLE dashboard]_
 ---
 
+[22:08:51] THINK: For a hero I'll embed the *essence* — the window frame, header, settlement rail, sealed lanes, and the verdict card — not the dense compare-table/events readout (those bloat the hero without adding punch).
