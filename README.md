@@ -28,8 +28,8 @@ Agent ensembles work because **independent attempts beat isolated guesses**. h5i
 <table align="center">
   <tr>
     <td align="center"><strong>Isolated per agent</strong><br><sub>no file, branch, or port clashes</sub></td>
-    <td align="center"><strong>Auto peer-review</strong><br><sub>independence-first</sub></td>
-    <td align="center"><strong>Neutral verifier</strong><br><sub>a fair, sandboxed winner</sub></td>
+    <td align="center"><strong>Auto peer-review</strong><br><sub>cross-agent msg</sub></td>
+    <td align="center"><strong>Rich dashboard</strong><br><sub>diffs, reviews, results</sub></td>
     <td align="center"><strong>Lives in your Git</strong><br><sub>refs/h5i/* · no SaaS</sub></td>
   </tr>
 </table>
