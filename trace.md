@@ -2882,3 +2882,4 @@ _[Checkpoint: 6a3f153e — edited docs/blog/claude-code-hooks-vs-git-hooks/index
 [00:21:48] ACT: edited docs/blog/what-is-ai-aware-version-control/index.html
 [00:21:51] ACT: edited docs/blog/why-git-diffs-are-not-enough-for-ai-generated-code/index.html
 [00:21:57] OBSERVE: read docs/blog/review-code-written-by-ai-agents/index.html
+[00:22:01] ACT: edited docs/blog/why-git-diffs-are-not-enough-for-ai-generated-code/index.html
