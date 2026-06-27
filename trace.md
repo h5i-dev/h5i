@@ -3096,3 +3096,4 @@ _[Checkpoint: 6a3f1b55 — edited docs/blog/agent-ensembles-with-h5i-team/index.
 
 [00:37:42] ACT: edited docs/blog/agent-ensembles-with-h5i-team/index.html
 [00:37:43] ACT: edited docs/blog/from-git-blame-to-ai-blame/index.html
+[00:37:49] ACT: edited docs/blog/uncertainty-heatmap/index.html
