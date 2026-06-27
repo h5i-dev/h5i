@@ -3154,3 +3154,4 @@ _[Checkpoint: 6a3f1bb7 — Deepened agent-ensembles-with-h5i-team blog post]_
 _[Checkpoint: 6a3f1bd1 — edited docs/blog/from-git-blame-to-ai-blame/index.html; edited docs/blog/token-reduction-object-store/index.html; edited…]_
 ---
 
+[00:39:47] ACT: edited docs/blog/uncertainty-heatmap/index.html
