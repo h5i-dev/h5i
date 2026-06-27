@@ -2899,3 +2899,4 @@ _[Checkpoint: 6a3f17b2 — edited docs/blog/why-git-diffs-are-not-enough-for-ai-
 [00:22:26] ACT: edited docs/blog/what-is-ai-aware-version-control/index.html
 [00:22:33] ACT: edited docs/blog/what-is-ai-aware-version-control/index.html
 [00:22:39] ACT: edited docs/blog/what-is-ai-aware-version-control/index.html
+[00:22:49] ACT: edited docs/blog/git-notes-vs-h5i-ai-coding-workflows/index.html
