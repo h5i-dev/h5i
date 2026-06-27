@@ -3287,3 +3287,9 @@ _[Checkpoint: 6a3f1de7 — Rewrote sandbox landscape post into approach-centric 
 _[Checkpoint: 6a3f1e06 — edited docs/blog/sandboxing-ai-agents-landscape/index.html; edited docs/blog/sandboxing-ai-agents-implementation/index.h…]_
 ---
 
+
+
+---
+_[Checkpoint: 6a3f1e12 — edited docs/blog/sandboxing-ai-agents-landscape/index.html; edited docs/blog/sandboxing-ai-agents-implementation/index.h…]_
+---
+
