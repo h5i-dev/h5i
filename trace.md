@@ -3309,3 +3309,4 @@ _[Checkpoint: 6a3f1e30 — edited docs/blog/sandboxing-ai-agents-implementation/
 [00:53:02] OBSERVE: read blog-brief.md
 [00:53:02] OBSERVE: read docs/blog/prompt-injection-in-agent-traces/index.html
 [00:53:11] OBSERVE: read blog-brief.md
+[00:53:11] OBSERVE: read docs/blog/auditing-ai-generated-code/index.html
