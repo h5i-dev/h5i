@@ -3318,3 +3318,4 @@ _[Checkpoint: 6a3f1e30 — edited docs/blog/sandboxing-ai-agents-implementation/
 [00:53:37] OBSERVE: read src/msg.rs
 [00:53:39] ACT: edited CLAUDE.md
 [00:53:41] ACT: edited docs/blog/cve-2025-59536-startup-trust-dialog/index.html
+[00:53:45] OBSERVE: read src/cli_routing.rs
