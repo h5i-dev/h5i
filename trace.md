@@ -2838,3 +2838,4 @@ _[Checkpoint: 6a3f1265 — edited docs/blog/context-dag-versioned-agent-reasonin
 [00:08:26] OBSERVE: read docs/blog/token-reduction-object-store/index.html
 [00:08:38] ACT: edited docs/blog/token-reduction-object-store/index.html
 [00:09:27] OBSERVE: read docs/blog/claude-code-hooks-vs-git-hooks/index.html
+[00:09:33] ACT: edited docs/blog/claude-code-hooks-vs-git-hooks/index.html
