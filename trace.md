@@ -3342,3 +3342,4 @@ _[Checkpoint: 6a3f1f22 — edited docs/blog/cve-2025-59536-startup-trust-dialog/
 _[Checkpoint: 6a3f1f3f — edited docs/blog/cve-2025-59536-startup-trust-dialog/index.html; edited docs/blog/cve-2026-33068-bypass-permissions-sett…]_
 ---
 
+[00:54:26] OBSERVE: read src/metadata.rs
