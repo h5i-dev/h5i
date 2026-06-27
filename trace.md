@@ -2933,3 +2933,9 @@ _[Checkpoint: 6a3f1836 — edited docs/blog/claude-code-hooks-vs-git-hooks/index
 [00:25:00] ACT: edited docs/blog/review-code-written-by-ai-agents/index.html
 [00:25:01] ACT: edited docs/blog/claude-code-hooks-vs-git-hooks/index.html
 [00:25:09] ACT: edited docs/blog/review-code-written-by-ai-agents/index.html
+
+
+---
+_[Checkpoint: 6a3f1866 — edited docs/blog/review-code-written-by-ai-agents/index.html; edited docs/blog/claude-code-hooks-vs-git-hooks/index.html…]_
+---
+
