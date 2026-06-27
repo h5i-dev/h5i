@@ -3312,3 +3312,4 @@ _[Checkpoint: 6a3f1e30 — edited docs/blog/sandboxing-ai-agents-implementation/
 [00:53:11] OBSERVE: read docs/blog/auditing-ai-generated-code/index.html
 [00:53:14] ACT: edited docs/blog/cve-2025-59536-startup-trust-dialog/index.html
 [00:53:29] ACT: edited docs/blog/cve-2025-59536-startup-trust-dialog/index.html
+[00:53:30] ACT: edited docs/blog/cve-2026-33068-bypass-permissions-settings/index.html
