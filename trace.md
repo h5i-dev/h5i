@@ -3344,3 +3344,4 @@ _[Checkpoint: 6a3f1f3f — edited docs/blog/cve-2025-59536-startup-trust-dialog/
 
 [00:54:26] OBSERVE: read src/metadata.rs
 [00:54:29] OBSERVE: read src/injection.rs
+[00:54:39] NOTE: DEFERRAL (/tmp/claude-1000/-home-koukyosyumei-Dev-h5i/0458259c-229f-4ffd-b1d1-f1e98d00ebae/scratchpad/blog-brief.md): ent-sandbox-env` done (repositioned around the review-loop, deferred deep tier mechanics to Part 4). It surfaced a nuance …
