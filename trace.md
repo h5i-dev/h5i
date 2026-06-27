@@ -2929,3 +2929,4 @@ _[Checkpoint: 6a3f1836 — edited docs/blog/claude-code-hooks-vs-git-hooks/index
 [00:24:25] ACT: edited docs/blog/why-git-diffs-are-not-enough-for-ai-generated-code/index.html
 [00:24:26] ACT: edited docs/blog/claude-code-hooks-vs-git-hooks/index.html
 [00:24:37] ACT: edited docs/blog/what-is-ai-aware-version-control/index.html
+[00:24:48] ACT: edited docs/blog/what-is-ai-aware-version-control/index.html
