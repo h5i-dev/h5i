@@ -3034,3 +3034,4 @@ _[Checkpoint: 6a3f1ab2 — edited docs/blog/context-dag-versioned-agent-reasonin
 [00:35:30] ACT: edited docs/blog/structured-tool-output-schema/index.html
 [00:35:30] OBSERVE: read src/cli_routing.rs
 [00:35:30] ACT: edited docs/blog/context-dag-versioned-agent-reasoning/index.html
+[00:35:30] OBSERVE: read src/metadata.rs
