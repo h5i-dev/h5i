@@ -3247,3 +3247,16 @@ h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
 
 ---
 
+## Commit 6a3f1de7 — 2026-06-27 00:48 UTC
+
+### Branch Purpose
+h5i environment env/human/codex-1 (profile agent-codex, isolation supervised)
+
+### Previous Progress Summary
+
+
+### This Commit's Contribution
+Added YOLO/full-VM/language-runtime categories, 6-col comparison table, honest h5i L7-egress placement, FAQ + FAQPage JSON-LD, real conclusion. HTML balanced, 3 JSON-LD blocks parse, canonical/nav/footer/cta preserved.
+
+---
+
