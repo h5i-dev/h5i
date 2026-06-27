@@ -3243,3 +3243,4 @@ _[Checkpoint: 6a3f1cb6 — edited docs/blog/uncertainty-heatmap/index.html; edit
 [00:45:19] ACT: edited docs/blog/sandboxing-ai-agents-foundations/index.html
 [00:45:19] ACT: edited docs/blog/auditable-workspaces-for-ai-agents/index.html
 [00:45:31] OBSERVE: read src/main.rs
+[00:45:35] ACT: edited docs/blog/sandboxing-ai-agents-foundations/index.html
