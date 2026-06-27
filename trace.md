@@ -2975,3 +2975,4 @@ _[Checkpoint: 6a3f18ff — edited docs/blog/claude-code-hooks-vs-git-hooks/index
 [00:34:07] OBSERVE: read blog-brief.md
 [00:34:07] OBSERVE: read docs/blog/uncertainty-heatmap/index.html
 [00:34:09] OBSERVE: read src/structured.rs
+[00:34:12] OBSERVE: read src/objects.rs
