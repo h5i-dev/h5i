@@ -2834,3 +2834,4 @@ _[Checkpoint: 6a3f11a1 — edited docs/blog/persistent-memory-for-claude-code/in
 _[Checkpoint: 6a3f1265 — edited docs/blog/context-dag-versioned-agent-reasoning/index.html; edited docs/blog/what-is-ai-aware-version-control/ind…]_
 ---
 
+[00:07:21] OBSERVE: read src/hooks.rs
