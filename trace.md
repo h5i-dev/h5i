@@ -2842,3 +2842,9 @@ _[Checkpoint: 6a3f1265 — edited docs/blog/context-dag-versioned-agent-reasonin
 [00:10:10] ACT: wrote wrap-bash-works-for-both-runtimes.md
 [00:10:16] OBSERVE: read MEMORY.md
 [00:10:24] ACT: edited MEMORY.md
+
+
+---
+_[Checkpoint: 6a3f14ff — edited docs/blog/claude-code-hooks-vs-git-hooks/index.html; wrote wrap-bash-works-for-both-runtimes.md; edited MEMORY.md]_
+---
+
