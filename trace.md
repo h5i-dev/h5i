@@ -2859,3 +2859,4 @@ _[Checkpoint: 6a3f153e — edited docs/blog/claude-code-hooks-vs-git-hooks/index
 [00:19:35] OBSERVE: read docs/blog/git-notes-vs-h5i-ai-coding-workflows/index.html
 [00:20:06] OBSERVE: read docs/blog/git-communication-layer-ai-agents/index.html
 [00:20:07] OBSERVE: read src/metadata.rs
+[00:20:32] OBSERVE: read docs/blog/what-is-ai-aware-version-control/index.html
