@@ -3001,3 +3001,4 @@ _[Checkpoint: 6a3f18ff — edited docs/blog/claude-code-hooks-vs-git-hooks/index
 [00:34:47] OBSERVE: read src/mcp.rs
 [00:34:50] OBSERVE: read src/prompt_score.rs
 [00:34:50] OBSERVE: read src/lfs.rs
+[00:34:51] ACT: edited docs/blog/context-dag-versioned-agent-reasoning/index.html
