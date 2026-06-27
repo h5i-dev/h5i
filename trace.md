@@ -2914,3 +2914,9 @@ _[Checkpoint: 6a3f17b2 — edited docs/blog/why-git-diffs-are-not-enough-for-ai-
 [00:24:00] ACT: edited docs/blog/claude-code-hooks-vs-git-hooks/index.html
 [00:24:08] ACT: edited docs/blog/claude-code-hooks-vs-git-hooks/index.html
 [00:24:09] ACT: edited docs/blog/why-git-diffs-are-not-enough-for-ai-generated-code/index.html
+
+
+---
+_[Checkpoint: 6a3f1829 — edited docs/blog/claude-code-hooks-vs-git-hooks/index.html; edited docs/blog/claude-code-hooks-vs-git-hooks/index.html; …]_
+---
+
