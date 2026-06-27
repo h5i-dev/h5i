@@ -3360,3 +3360,4 @@ _[Checkpoint: 6a3f1f4f — edited docs/blog/cve-2025-59536-startup-trust-dialog/
 [00:55:45] OBSERVE: read src/msg.rs
 [00:55:54] ACT: edited docs/blog/prompt-injection-in-agent-traces/index.html
 [00:55:59] ACT: edited docs/blog/prompt-injection-in-agent-traces/index.html
+[00:56:01] ACT: edited docs/blog/prompt-injection-in-agent-traces/index.html
