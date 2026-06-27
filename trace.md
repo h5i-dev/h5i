@@ -2854,3 +2854,4 @@ _[Checkpoint: 6a3f14ff — edited docs/blog/claude-code-hooks-vs-git-hooks/index
 _[Checkpoint: 6a3f153e — edited docs/blog/claude-code-hooks-vs-git-hooks/index.html; wrote wrap-bash-works-for-both-runtimes.md; edited MEMORY.md]_
 ---
 
+[00:17:22] OBSERVE: read docs/blog/git-notes-vs-h5i-ai-coding-workflows/index.html
