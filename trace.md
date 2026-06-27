@@ -3316,3 +3316,4 @@ _[Checkpoint: 6a3f1e30 — edited docs/blog/sandboxing-ai-agents-implementation/
 [00:53:33] ACT: edited docs/blog/cve-2026-33068-bypass-permissions-settings/index.html
 [00:53:36] OBSERVE: read src/injection.rs
 [00:53:37] OBSERVE: read src/msg.rs
+[00:53:39] ACT: edited CLAUDE.md
