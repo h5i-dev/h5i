@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>h5i Blog</title>
+    <link>https://h5i.dev/blog/</link>
+    <atom:link href="https://h5i.dev/feed.xml" rel="self" type="application/rss+xml" />
+    <description>Engineering posts on auditable workspaces for AI agents: provenance, sandboxing, token reduction, and multi-agent coordination.</description>
+    <language>en</language>
+    <lastBuildDate>Sun, 21 Jun 2026 00:00:00 +0000</lastBuildDate>
+    <item>
+      <title>Run an AI Agent Ensemble: h5i team</title>
+      <link>https://h5i.dev/blog/agent-ensembles-with-h5i-team/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/agent-ensembles-with-h5i-team/</guid>
+      <pubDate>Sun, 21 Jun 2026 00:00:00 +0000</pubDate>
+      <description>h5i team runs several coding agents on the same task in sealed workspaces, then converges on a winner by a neutral, sandboxed verifier — so a human can merge with proof, hands-off.</description>
+    </item>
+    <item>
+      <title>Why AI Agents Need Auditable Workspaces</title>
+      <link>https://h5i.dev/blog/auditable-workspaces-for-ai-agents/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/auditable-workspaces-for-ai-agents/</guid>
+      <pubDate>Fri, 19 Jun 2026 00:00:00 +0000</pubDate>
+      <description>An auditable workspace is where an AI agent does its work, a Git-backed worktree where every prompt, command, log, policy, and handoff is recorded in your repo and provable after the fact. The definition, the three pillars, and the golden path.</description>
+    </item>
+    <item>
+      <title>How to Measure Prompt Quality Offline: the h5i Prompt Maturity Score</title>
+      <link>https://h5i.dev/blog/prompt-maturity-score/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/prompt-maturity-score/</guid>
+      <pubDate>Wed, 17 Jun 2026 00:00:00 +0000</pubDate>
+      <description>Measure and score prompt quality without an LLM. h5i turns each AI commit's prompt into an explainable 0–100 score from seven classical-NLP signals, offline, deterministic, no API call.</description>
+    </item>
+    <item>
+      <title>Sandboxing AI Agents, Part 4: h5i's Tier Ladder</title>
+      <link>https://h5i.dev/blog/sandboxing-ai-agents-h5i/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/sandboxing-ai-agents-h5i/</guid>
+      <pubDate>Fri, 12 Jun 2026 00:00:00 +0000</pubDate>
+      <description>h5i's env sandbox is a four-tier ladder — workspace, process, supervised, container — that matches confinement to trust and to what the host can actually enforce, fail-closed, with each run captured as Git provenance.</description>
+    </item>
+    <item>
+      <title>Sandboxing AI Agents, Part 3: The Landscape, Compared by Threat Model</title>
+      <link>https://h5i.dev/blog/sandboxing-ai-agents-landscape/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/sandboxing-ai-agents-landscape/</guid>
+      <pubDate>Fri, 12 Jun 2026 00:00:00 +0000</pubDate>
+      <description>A fair survey of AI agent sandbox approaches: nothing/YOLO, git worktrees, language runtimes, kernel confinement (seccomp + Landlock), containers, gVisor/Kata, Firecracker microVMs, and full VMs. Compared by isolation strength, overhead, setup, and egress control.</description>
+    </item>
+    <item>
+      <title>Sandboxing AI Agents, Part 2: Implementing Kernel-Tier Confinement</title>
+      <link>https://h5i.dev/blog/sandboxing-ai-agents-implementation/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/sandboxing-ai-agents-implementation/</guid>
+      <pubDate>Fri, 12 Jun 2026 00:00:00 +0000</pubDate>
+      <description>How to implement a kernel-tier Linux sandbox for AI agents: probe Landlock/seccomp/namespaces, run a functional self-test, and fail closed instead of silently downgrading.</description>
+    </item>
+    <item>
+      <title>Sandboxing AI Agents, Part 1: Foundations</title>
+      <link>https://h5i.dev/blog/sandboxing-ai-agents-foundations/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/sandboxing-ai-agents-foundations/</guid>
+      <pubDate>Fri, 12 Jun 2026 00:00:00 +0000</pubDate>
+      <description>AI agent sandboxing from first principles: the threat model (untrusted code, exfiltration, privilege escalation, resource exhaustion) and the Linux primitives (namespaces, seccomp, Landlock, cgroups) that contain it.</description>
+    </item>
+    <item>
+      <title>The Agent Sandbox With a Review Loop: h5i env</title>
+      <link>https://h5i.dev/blog/agent-sandbox-env/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/agent-sandbox-env/</guid>
+      <pubDate>Wed, 10 Jun 2026 00:00:00 +0000</pubDate>
+      <description>h5i env gives an AI agent an isolated git worktree under a pinned policy. Every run is captured as evidence, then proposed for human apply — nothing reaches your base branch unreviewed.</description>
+    </item>
+    <item>
+      <title>One Schema for Every Tool: Structured Output for AI Agents</title>
+      <link>https://h5i.dev/blog/structured-tool-output-schema/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/structured-tool-output-schema/</guid>
+      <pubDate>Sat, 06 Jun 2026 00:00:00 +0000</pubDate>
+      <description>h5i adds one JSON/YAML result schema for tests, compilers, linters, and type checkers so AI agents can act on tool output.</description>
+    </item>
+    <item>
+      <title>Cut Agent Token Usage 95% with h5i Capture</title>
+      <link>https://h5i.dev/blog/token-reduction-object-store/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/token-reduction-object-store/</guid>
+      <pubDate>Fri, 05 Jun 2026 00:00:00 +0000</pubDate>
+      <description>A content-addressed object store keeps raw tool output out of agent context, cutting tokens about 95% while staying recoverable.</description>
+    </item>
+    <item>
+      <title>Why Git Diffs Are Not Enough for AI-Generated Code</title>
+      <link>https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/</guid>
+      <pubDate>Wed, 03 Jun 2026 00:00:00 +0000</pubDate>
+      <description>A git diff shows the destination, not the journey. For AI-generated code the journey — intent, observed context, test evidence, flagged uncertainty — is where the risk lives. Review AI code by provenance, not lines alone.</description>
+    </item>
+    <item>
+      <title>What Is AI-Aware Version Control? The Record a Diff Can't Hold</title>
+      <link>https://h5i.dev/blog/what-is-ai-aware-version-control/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/what-is-ai-aware-version-control/</guid>
+      <pubDate>Wed, 03 Jun 2026 00:00:00 +0000</pubDate>
+      <description>AI-aware version control adds the record a diff structurally cannot hold: which agent and model, from what prompt, with what context observed, verified by what tests, flagged by what review — captured as Git-native data, not a separate SaaS.</description>
+    </item>
+    <item>
+      <title>How to Track Claude Code Prompts and Diffs in Git</title>
+      <link>https://h5i.dev/blog/track-claude-code-prompts-diffs-git/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/track-claude-code-prompts-diffs-git/</guid>
+      <pubDate>Wed, 03 Jun 2026 00:00:00 +0000</pubDate>
+      <description>Track Claude Code prompts, file edits, diffs, and test evidence in Git using h5i provenance and Claude Code lifecycle hooks.</description>
+    </item>
+    <item>
+      <title>How to Review Code Written by AI Agents</title>
+      <link>https://h5i.dev/blog/review-code-written-by-ai-agents/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/review-code-written-by-ai-agents/</guid>
+      <pubDate>Wed, 03 Jun 2026 00:00:00 +0000</pubDate>
+      <description>A provenance-first AI code review checklist: review intent, context coverage, risk, and test evidence before the diff. Make provenance a merge requirement.</description>
+    </item>
+    <item>
+      <title>Git as the Communication Layer for AI Agents</title>
+      <link>https://h5i.dev/blog/git-communication-layer-ai-agents/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/git-communication-layer-ai-agents/</guid>
+      <pubDate>Wed, 03 Jun 2026 00:00:00 +0000</pubDate>
+      <description>A Git ref with compare-and-swap writes and union-merge-by-id is a lossless multi-writer mailbox for AI agents — durable multi-agent coordination, asks, reviews, and handoffs with no broker.</description>
+    </item>
+    <item>
+      <title>Git Notes vs h5i for AI Coding Workflows</title>
+      <link>https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/</guid>
+      <pubDate>Wed, 03 Jun 2026 00:00:00 +0000</pubDate>
+      <description>h5i is built on git notes, not a competitor to them. The deciding question for AI provenance: does the metadata have behavior — must it be queried, rendered into a PR packet, or moved between agents?</description>
+    </item>
+    <item>
+      <title>Claude Code Hooks vs Git Hooks: Two Lifecycles, Two Trust Models</title>
+      <link>https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/</guid>
+      <pubDate>Wed, 03 Jun 2026 00:00:00 +0000</pubDate>
+      <description>Claude Code hooks fire in the agent tool loop; Git hooks fire on repository operations. They see different things and carry different trust guarantees — here is how to layer both.</description>
+    </item>
+    <item>
+      <title>The i5h Protocol: Git-Native Messaging Between AI Agents</title>
+      <link>https://h5i.dev/blog/i5h-agent-to-agent-messaging/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/i5h-agent-to-agent-messaging/</guid>
+      <pubDate>Sun, 31 May 2026 00:00:00 +0000</pubDate>
+      <description>The i5h wire format: typed JSON messages in a Git ref (refs/h5i/msg), append-only, with compare-and-swap sends and union-merge by id — server-less, offline-capable agent-to-agent messaging.</description>
+    </item>
+    <item>
+      <title>The AI Pull Request Body: h5i's Review Surface for Agent Work</title>
+      <link>https://h5i.dev/blog/pr-body-ai-code-review/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/pr-body-ai-code-review/</guid>
+      <pubDate>Sun, 24 May 2026 00:00:00 +0000</pubDate>
+      <description>The AI pull request body, generated from captured provenance — prompt, model, tests, risk, and agent messages — so reviewers triage evidence, not a self-report. Sticky GitHub comment via h5i share pr.</description>
+    </item>
+    <item>
+      <title>Context DAG: Version-Controlled Reasoning for AI Agents</title>
+      <link>https://h5i.dev/blog/context-dag-versioned-agent-reasoning/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/context-dag-versioned-agent-reasoning/</guid>
+      <pubDate>Sun, 24 May 2026 00:00:00 +0000</pubDate>
+      <description>Version an AI agent's reasoning as a Git-backed DAG in refs/h5i/context: typed OBSERVE/THINK/ACT/NOTE/MERGE nodes that branch, merge, and pin to commit SHAs you can restore and diff — for Claude Code and Codex.</description>
+    </item>
+    <item>
+      <title>Prompt Injection in Agent Traces: Stored Text Is Untrusted</title>
+      <link>https://h5i.dev/blog/prompt-injection-in-agent-traces/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/prompt-injection-in-agent-traces/</guid>
+      <pubDate>Wed, 06 May 2026 00:00:00 +0000</pubDate>
+      <description>Stored agent traces and pulled cross-agent messages are untrusted input — one log can hide a prompt-injection payload for a downstream agent and an ANSI terminal-escape payload for a human's terminal. How h5i scans traces and sanitizes pulled fields.</description>
+    </item>
+    <item>
+      <title>Giving Claude Code Persistent Memory Across Sessions</title>
+      <link>https://h5i.dev/blog/persistent-memory-for-claude-code/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/persistent-memory-for-claude-code/</guid>
+      <pubDate>Wed, 06 May 2026 00:00:00 +0000</pubDate>
+      <description>Give Claude Code persistent memory across sessions with versioned reasoning, per-commit context snapshots, and automatic SessionStart restoration.</description>
+    </item>
+    <item>
+      <title>From Git Blame to AI Blame for AI-Era Code</title>
+      <link>https://h5i.dev/blog/from-git-blame-to-ai-blame/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/from-git-blame-to-ai-blame/</guid>
+      <pubDate>Wed, 06 May 2026 00:00:00 +0000</pubDate>
+      <description>git blame names the human who committed a line, not the model that wrote it. h5i AI blame adds the prompt, agent, and test result per line — and survives the move to agent-written code.</description>
+    </item>
+    <item>
+      <title>CVE-2026-33068: When a Repo's settings.json Decides Trust</title>
+      <link>https://h5i.dev/blog/cve-2026-33068-bypass-permissions-settings/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/cve-2026-33068-bypass-permissions-settings/</guid>
+      <pubDate>Wed, 06 May 2026 00:00:00 +0000</pubDate>
+      <description>CVE-2026-33068 explained: a committed Claude Code .claude/settings.json could bypass the workspace trust dialog by setting permissions.defaultMode to bypassPermissions. Mechanics, CVSS, and the fix in 2.1.53.</description>
+    </item>
+    <item>
+      <title>CVE-2025-59536: Claude Code Trust Dialog Bypass</title>
+      <link>https://h5i.dev/blog/cve-2025-59536-startup-trust-dialog/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/cve-2025-59536-startup-trust-dialog/</guid>
+      <pubDate>Wed, 06 May 2026 00:00:00 +0000</pubDate>
+      <description>CVE-2025-59536 explained: Claude Code before 1.0.111 could execute project code before the startup trust dialog was accepted.</description>
+    </item>
+    <item>
+      <title>Auditing AI-Generated Code: A Practical Framework</title>
+      <link>https://h5i.dev/blog/auditing-ai-generated-code/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/auditing-ai-generated-code/</guid>
+      <pubDate>Wed, 06 May 2026 00:00:00 +0000</pubDate>
+      <description>Auditing AI-generated code is a provenance-aggregation problem. Score four deterministic risk vectors — blind edits, uncertainty, scope creep, prompt injection — across many commits to produce a ranked review queue and a compliance report.</description>
+    </item>
+    <item>
+      <title>Claude Code Uncertainty Heatmap for AI Code Review</title>
+      <link>https://h5i.dev/blog/uncertainty-heatmap/</link>
+      <guid isPermaLink="true">https://h5i.dev/blog/uncertainty-heatmap/</guid>
+      <pubDate>Wed, 15 Apr 2026 00:00:00 +0000</pubDate>
+      <description>Mine the hedges in an AI agent's reasoning trace (assuming, might break, not sure) into a per-file uncertainty heatmap that routes reviewer attention to risky AI-assisted edits.</description>
+    </item>
+  </channel>
+</rss>
