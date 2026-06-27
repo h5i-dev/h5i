@@ -3343,3 +3343,4 @@ _[Checkpoint: 6a3f1f3f — edited docs/blog/cve-2025-59536-startup-trust-dialog/
 ---
 
 [00:54:26] OBSERVE: read src/metadata.rs
+[00:54:29] OBSERVE: read src/injection.rs
