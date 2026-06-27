@@ -2961,3 +2961,4 @@ _[Checkpoint: 6a3f189c — edited docs/blog/claude-code-hooks-vs-git-hooks/index
 _[Checkpoint: 6a3f18ff — edited docs/blog/claude-code-hooks-vs-git-hooks/index.html; edited docs/blog/review-code-written-by-ai-agents/index.html…]_
 ---
 
+[00:33:11] ACT: wrote blog-brief.md
