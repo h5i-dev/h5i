@@ -2978,3 +2978,4 @@ _[Checkpoint: 6a3f18ff — edited docs/blog/claude-code-hooks-vs-git-hooks/index
 [00:34:12] OBSERVE: read src/objects.rs
 [00:34:15] OBSERVE: read src/main.rs
 [00:34:16] OBSERVE: read src/structured.rs
+[00:34:17] OBSERVE: read src/cli_routing.rs
