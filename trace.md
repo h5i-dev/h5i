@@ -3195,3 +3195,4 @@ _[Checkpoint: 6a3f1c2f — edited docs/blog/uncertainty-heatmap/index.html; edit
 [00:42:46] OBSERVE: read docs/blog/sandboxing-ai-agents-foundations/index.html
 [00:42:52] OBSERVE: read blog-brief.md
 [00:42:55] OBSERVE: read docs/blog/sandboxing-ai-agents-landscape/index.html
+[00:43:00] OBSERVE: read blog-brief.md
